@@ -923,3 +923,196 @@ hr {
     font-size: 10px !important;
   }
 }
+/* =========================================================
+   MAS CALLNET OFFICIAL BRAND THEME OVERRIDE
+   Website-aligned HRMS visual language
+   White + Deep Navy + Mas Red + Green/Blue accent
+   ========================================================= */
+
+:root {
+  --mas-red: #e5393f;
+  --mas-red-dark: #c92f34;
+  --mas-red-soft: rgba(229, 57, 63, 0.1);
+
+  --mas-green: #55b947;
+  --mas-blue: #2f80ed;
+
+  --mas-navy: #071421;
+  --mas-navy-2: #101d2e;
+  --mas-navy-3: #172438;
+
+  --mas-page: #f8fafc;
+  --mas-white: #ffffff;
+  --mas-text: #111827;
+  --mas-muted: #667085;
+  --mas-border: #edf0f5;
+
+  --mas-shadow-soft: 0 12px 35px rgba(15, 23, 42, 0.08);
+  --mas-shadow-card: 0 20px 60px rgba(15, 23, 42, 0.1);
+  --mas-shadow-red: 0 16px 34px rgba(229, 57, 63, 0.24);
+}
+
+/* Page background like Mas website: clean white/grey */
+body {
+  background:
+    radial-gradient(circle at 12% 8%, rgba(47, 128, 237, 0.08), transparent 26%),
+    radial-gradient(circle at 90% 12%, rgba(85, 185, 71, 0.07), transparent 24%),
+    linear-gradient(180deg, #ffffff 0%, #f8fafc 45%, #f4f6f9 100%) !important;
+  color: var(--mas-text);
+}
+
+/* Main app dark shell/sidebar */
+aside,
+[data-sidebar],
+[class*="sidebar"],
+[class*="Sidebar"] {
+  background:
+    radial-gradient(circle at 20% 0%, rgba(47, 128, 237, 0.16), transparent 28%),
+    linear-gradient(180deg, var(--mas-navy-2), var(--mas-navy)) !important;
+  color: #ffffff !important;
+}
+
+/* Sidebar active item: Mas red */
+aside a[aria-current="page"],
+aside a.active,
+aside [data-active="true"],
+[data-sidebar] a[aria-current="page"],
+[data-sidebar] a.active,
+[data-sidebar] [data-active="true"] {
+  background: linear-gradient(135deg, var(--mas-red), var(--mas-red-dark)) !important;
+  color: #ffffff !important;
+  box-shadow: var(--mas-shadow-red) !important;
+}
+
+/* Header like company website floating white nav */
+header {
+  background: rgba(255, 255, 255, 0.94) !important;
+  backdrop-filter: blur(18px);
+  border-bottom: 1px solid rgba(17, 24, 39, 0.06) !important;
+  box-shadow: 0 10px 32px rgba(15, 23, 42, 0.08) !important;
+}
+
+/* Make primary CTA red like Call Now button */
+.bg-primary,
+button[class*="bg-primary"],
+button[type="submit"],
+button:not([class*="ghost"]):not([class*="outline"]) {
+  background: linear-gradient(135deg, var(--mas-red), var(--mas-red-dark)) !important;
+  color: #ffffff !important;
+  border-color: transparent !important;
+  box-shadow: var(--mas-shadow-red) !important;
+}
+
+.bg-primary:hover,
+button[class*="bg-primary"]:hover,
+button[type="submit"]:hover {
+  background: linear-gradient(135deg, #f04449, #ba2930) !important;
+  color: #ffffff !important;
+}
+
+/* Links and active texts */
+a:hover,
+.text-primary {
+  color: var(--mas-red) !important;
+}
+
+/* Cards: white, rounded, soft shadow like website blocks */
+.bg-card,
+.rounded-lg.border.bg-card,
+[class*="Card"] {
+  background: #ffffff !important;
+  border-color: var(--mas-border) !important;
+  border-radius: 22px !important;
+  box-shadow: var(--mas-shadow-soft) !important;
+}
+
+/* Card hover premium */
+.bg-card:hover,
+.rounded-lg.border.bg-card:hover {
+  border-color: rgba(229, 57, 63, 0.16) !important;
+  box-shadow: var(--mas-shadow-card) !important;
+}
+
+/* Page canvas */
+main > div,
+main .relative.overflow-hidden {
+  background: rgba(255, 255, 255, 0.82) !important;
+  border-color: rgba(255, 255, 255, 0.78) !important;
+  box-shadow: 0 26px 80px rgba(15, 23, 42, 0.08) !important;
+}
+
+/* Inputs */
+input,
+select,
+textarea,
+[role="combobox"] {
+  background: #ffffff !important;
+  border-color: #dce3ed !important;
+  border-radius: 14px !important;
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+[role="combobox"]:focus {
+  border-color: rgba(229, 57, 63, 0.45) !important;
+  box-shadow: 0 0 0 4px rgba(229, 57, 63, 0.1) !important;
+}
+
+/* Badges/chips */
+.inline-flex.items-center.rounded-full,
+[class*="Badge"],
+[class*="badge"] {
+  border-radius: 999px !important;
+  font-weight: 800 !important;
+}
+
+/* Tabs active red */
+[role="tab"][data-state="active"] {
+  color: var(--mas-red) !important;
+}
+
+/* Tables clean white */
+tbody tr {
+  background: #ffffff !important;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.045) !important;
+}
+
+tbody tr:hover {
+  box-shadow: 0 16px 38px rgba(15, 23, 42, 0.08) !important;
+}
+
+/* Auth page: company website style */
+.min-h-screen {
+  background:
+    linear-gradient(rgba(7, 20, 33, 0.72), rgba(7, 20, 33, 0.78)),
+    radial-gradient(circle at 20% 20%, rgba(47, 128, 237, 0.3), transparent 26%),
+    radial-gradient(circle at 80% 16%, rgba(85, 185, 71, 0.22), transparent 24%),
+    linear-gradient(135deg, var(--mas-navy), var(--mas-navy-3)) !important;
+}
+
+.min-h-screen .bg-card,
+.min-h-screen .rounded-lg.border {
+  background: rgba(255, 255, 255, 0.96) !important;
+  border-radius: 30px !important;
+  box-shadow: 0 35px 90px rgba(0, 0, 0, 0.26) !important;
+}
+
+/* Logo treatment */
+img[alt*="Mas"],
+img[alt*="MCN"],
+img[alt*="HRMS"],
+img[alt*="Peoplo"] {
+  object-fit: contain;
+  filter: drop-shadow(0 8px 18px rgba(15, 23, 42, 0.12));
+}
+
+/* Red highlight utility */
+.mas-red-text {
+  color: var(--mas-red) !important;
+}
+
+.mas-red-bg {
+  background: var(--mas-red) !important;
+}
+
