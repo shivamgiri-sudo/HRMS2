@@ -458,3 +458,468 @@ img[alt*="Peoplo"] {
   }
 }
 
+/* =========================================================
+   MCN HRMS Super Premium Theme
+   Inspired by modern HR SaaS UI references
+   Dark sidebar + coral accent + clean cards
+   ========================================================= */
+
+:root {
+  --mcn-navy-950: #111827;
+  --mcn-navy-900: #172033;
+  --mcn-navy-850: #1f2a3d;
+  --mcn-navy-800: #243044;
+
+  --mcn-coral: #f43f5e;
+  --mcn-coral-dark: #e11d48;
+  --mcn-coral-soft: rgba(244, 63, 94, 0.1);
+  --mcn-coral-border: rgba(244, 63, 94, 0.22);
+
+  --mcn-mint: #2dd4bf;
+  --mcn-green: #22c55e;
+  --mcn-blue: #3b82f6;
+  --mcn-yellow: #f59e0b;
+  --mcn-purple: #a855f7;
+
+  --mcn-page: #f7f8fb;
+  --mcn-panel: #ffffff;
+  --mcn-panel-soft: #fbfcfe;
+  --mcn-border: #edf0f5;
+  --mcn-border-strong: #dde3ee;
+
+  --mcn-text: #182235;
+  --mcn-muted: #64748b;
+  --mcn-light-muted: #94a3b8;
+
+  --mcn-radius-sm: 10px;
+  --mcn-radius-md: 14px;
+  --mcn-radius-lg: 18px;
+  --mcn-radius-xl: 24px;
+
+  --mcn-shadow-xs: 0 4px 12px rgba(15, 23, 42, 0.04);
+  --mcn-shadow-sm: 0 10px 28px rgba(15, 23, 42, 0.06);
+  --mcn-shadow-md: 0 18px 45px rgba(15, 23, 42, 0.09);
+  --mcn-shadow-lg: 0 28px 80px rgba(15, 23, 42, 0.13);
+  --mcn-shadow-coral: 0 16px 35px rgba(244, 63, 94, 0.22);
+}
+
+/* Page base */
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  background:
+    radial-gradient(circle at 12% 10%, rgba(244, 63, 94, 0.08), transparent 26%),
+    radial-gradient(circle at 84% 16%, rgba(45, 212, 191, 0.08), transparent 28%),
+    linear-gradient(180deg, #fbfcff 0%, var(--mcn-page) 100%) !important;
+  color: var(--mcn-text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-rendering: geometricPrecision;
+}
+
+/* Main content */
+main {
+  background: transparent !important;
+}
+
+/* App containers */
+.container,
+.mx-auto {
+  max-width: 1440px;
+}
+
+/* =========================================================
+   Sidebar - dark premium shell
+   ========================================================= */
+
+aside,
+[data-sidebar],
+[class*="sidebar"],
+[class*="Sidebar"] {
+  background: linear-gradient(180deg, var(--mcn-navy-900), var(--mcn-navy-950)) !important;
+  color: #e5e7eb !important;
+  border-right: 0 !important;
+  box-shadow: 18px 0 50px rgba(15, 23, 42, 0.12);
+}
+
+aside a,
+aside button,
+[data-sidebar] a,
+[data-sidebar] button,
+[class*="sidebar"] a,
+[class*="sidebar"] button {
+  color: rgba(226, 232, 240, 0.86) !important;
+  border-radius: 12px !important;
+  font-weight: 600;
+  transition: all 0.18s ease;
+}
+
+aside a:hover,
+aside button:hover,
+[data-sidebar] a:hover,
+[data-sidebar] button:hover {
+  background: rgba(255, 255, 255, 0.07) !important;
+  color: #ffffff !important;
+  transform: translateX(2px);
+}
+
+aside a[aria-current="page"],
+aside a.active,
+aside [data-active="true"],
+[data-sidebar] a[aria-current="page"],
+[data-sidebar] a.active,
+[data-sidebar] [data-active="true"] {
+  background: linear-gradient(135deg, var(--mcn-coral), var(--mcn-coral-dark)) !important;
+  color: #ffffff !important;
+  box-shadow: var(--mcn-shadow-coral);
+}
+
+/* Sidebar logo block */
+aside img,
+[data-sidebar] img {
+  filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.22));
+}
+
+/* =========================================================
+   Header
+   ========================================================= */
+
+header {
+  background: rgba(255, 255, 255, 0.92) !important;
+  backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--mcn-border) !important;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.035);
+}
+
+/* Breadcrumb/header text */
+header h1,
+header h2,
+header h3 {
+  color: var(--mcn-text);
+  letter-spacing: -0.03em;
+}
+
+/* =========================================================
+   Cards
+   ========================================================= */
+
+.bg-card,
+.rounded-lg.border,
+[class*="Card"] {
+  background: var(--mcn-panel) !important;
+  border-color: var(--mcn-border) !important;
+}
+
+.bg-card,
+.rounded-lg.border.bg-card,
+[class*="shadow-sm"] {
+  border-radius: var(--mcn-radius-lg) !important;
+  box-shadow: var(--mcn-shadow-sm);
+}
+
+.rounded-lg.border.bg-card,
+.bg-card {
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.rounded-lg.border.bg-card:hover,
+.bg-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(244, 63, 94, 0.16) !important;
+  box-shadow: var(--mcn-shadow-md);
+}
+
+/* KPI card look */
+[class*="grid"] > .bg-card,
+[class*="grid"] > .rounded-lg.border {
+  border-radius: 18px !important;
+}
+
+/* Card headings */
+.bg-card h1,
+.bg-card h2,
+.bg-card h3,
+.bg-card h4 {
+  color: #1e293b;
+  letter-spacing: -0.025em;
+}
+
+/* =========================================================
+   Buttons
+   ========================================================= */
+
+button,
+[role="button"],
+a[class*="button"] {
+  border-radius: 12px !important;
+  font-weight: 700 !important;
+  transition: all 0.18s ease;
+}
+
+button:hover,
+[role="button"]:hover {
+  transform: translateY(-1px);
+}
+
+/* Primary buttons */
+.bg-primary,
+button[class*="bg-primary"] {
+  background: linear-gradient(135deg, var(--mcn-coral), var(--mcn-coral-dark)) !important;
+  color: white !important;
+  border-color: transparent !important;
+  box-shadow: var(--mcn-shadow-coral);
+}
+
+.bg-primary:hover,
+button[class*="bg-primary"]:hover {
+  background: linear-gradient(135deg, #fb315c, #be123c) !important;
+  box-shadow: 0 20px 42px rgba(244, 63, 94, 0.28);
+}
+
+/* Secondary / outline buttons */
+button[class*="outline"],
+.border-input {
+  border-color: var(--mcn-border-strong) !important;
+}
+
+/* =========================================================
+   Inputs, selects, search
+   ========================================================= */
+
+input,
+select,
+textarea,
+[role="combobox"] {
+  border-radius: 12px !important;
+  border-color: var(--mcn-border-strong) !important;
+  background: #ffffff !important;
+  color: var(--mcn-text) !important;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.025);
+  transition: all 0.16s ease;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #a0aec0 !important;
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+[role="combobox"]:focus {
+  border-color: rgba(244, 63, 94, 0.48) !important;
+  box-shadow: 0 0 0 4px rgba(244, 63, 94, 0.1) !important;
+  outline: none !important;
+}
+
+/* =========================================================
+   Tables - clean HR SaaS table
+   ========================================================= */
+
+table {
+  width: 100%;
+  border-collapse: separate !important;
+  border-spacing: 0 8px !important;
+}
+
+thead th {
+  background: transparent !important;
+  color: var(--mcn-light-muted) !important;
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-bottom: none !important;
+  padding-top: 10px !important;
+  padding-bottom: 10px !important;
+}
+
+tbody tr {
+  background: #ffffff !important;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+  transition: all 0.16s ease;
+}
+
+tbody tr:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.075);
+}
+
+tbody td {
+  border-bottom: none !important;
+  color: #334155;
+  font-weight: 500;
+}
+
+tbody td:first-child {
+  border-top-left-radius: 14px;
+  border-bottom-left-radius: 14px;
+}
+
+tbody td:last-child {
+  border-top-right-radius: 14px;
+  border-bottom-right-radius: 14px;
+}
+
+/* =========================================================
+   Status chips / badges
+   ========================================================= */
+
+.inline-flex.items-center.rounded-full,
+[class*="Badge"],
+[class*="badge"] {
+  border-radius: 999px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.01em;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+}
+
+/* Make destructive badges softer */
+.bg-destructive,
+.text-destructive {
+  color: var(--mcn-coral-dark) !important;
+}
+
+/* =========================================================
+   Tabs
+   ========================================================= */
+
+[role="tablist"] {
+  background: #f4f6fa !important;
+  border: 1px solid var(--mcn-border) !important;
+  border-radius: 16px !important;
+  padding: 5px !important;
+  box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+
+[role="tab"] {
+  border-radius: 12px !important;
+  font-weight: 800 !important;
+  color: var(--mcn-muted) !important;
+}
+
+[role="tab"][data-state="active"] {
+  background: #ffffff !important;
+  color: var(--mcn-coral-dark) !important;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
+}
+
+/* =========================================================
+   Dialogs, dropdowns, popovers
+   ========================================================= */
+
+[role="dialog"],
+[role="menu"],
+[data-radix-popper-content-wrapper] > * {
+  border-radius: 20px !important;
+  border-color: var(--mcn-border) !important;
+  box-shadow: var(--mcn-shadow-lg) !important;
+}
+
+/* Dialog inner form feel */
+[role="dialog"] input,
+[role="dialog"] select,
+[role="dialog"] textarea {
+  background: #fbfcfe !important;
+}
+
+/* =========================================================
+   Auth / login page
+   ========================================================= */
+
+.min-h-screen {
+  background:
+    radial-gradient(circle at 18% 16%, rgba(244, 63, 94, 0.15), transparent 28%),
+    radial-gradient(circle at 84% 18%, rgba(45, 212, 191, 0.13), transparent 30%),
+    linear-gradient(135deg, #ffffff 0%, #f6f7fb 55%, #fff5f7 100%) !important;
+}
+
+.min-h-screen .bg-card,
+.min-h-screen .rounded-lg.border {
+  border-radius: 28px !important;
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.12);
+}
+
+/* =========================================================
+   Floating panel effect for forms/cards
+   ========================================================= */
+
+form,
+[role="form"] {
+  border-radius: 18px;
+}
+
+/* =========================================================
+   Small UI polish
+   ========================================================= */
+
+hr {
+  border-color: var(--mcn-border) !important;
+}
+
+.text-muted-foreground {
+  color: var(--mcn-muted) !important;
+}
+
+.border {
+  border-color: var(--mcn-border) !important;
+}
+
+.shadow-sm {
+  box-shadow: var(--mcn-shadow-sm) !important;
+}
+
+.shadow {
+  box-shadow: var(--mcn-shadow-md) !important;
+}
+
+.rounded-md {
+  border-radius: 12px !important;
+}
+
+.rounded-lg {
+  border-radius: 16px !important;
+}
+
+.rounded-xl {
+  border-radius: 20px !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #eef2f7;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+  border: 2px solid #eef2f7;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--mcn-coral);
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+  .bg-card,
+  .rounded-lg.border {
+    border-radius: 18px !important;
+  }
+
+  table {
+    border-spacing: 0 6px !important;
+  }
+
+  thead th {
+    font-size: 10px !important;
+  }
+}
