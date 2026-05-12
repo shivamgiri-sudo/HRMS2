@@ -13,13 +13,13 @@ import {
   LogOut,
   Menu,
   Package,
+  Search,
   Settings,
   Target,
   User,
   UserPlus,
   Users,
   X,
-  Zap,
 } from "lucide-react";
 import { PWAInstallBanner } from "@/components/layout/PWAInstallBanner";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
@@ -59,7 +59,7 @@ interface DashboardLayoutProps {
   children: ReactNode;
 }
 
-const companyLogo = "/company-logo.png?v=21";
+const companyLogo = "/company-logo.png?v=31";
 
 const navGroups: NavGroup[] = [
   {
@@ -69,14 +69,14 @@ const navGroups: NavGroup[] = [
         label: "Dashboard",
         href: "/dashboard",
         icon: <Home className="h-4 w-4" />,
-        description: "Today’s status",
+        description: "Workspace overview",
       },
       {
         label: "Reports",
         href: "/reports",
         icon: <BarChart3 className="h-4 w-4" />,
         adminOnly: true,
-        description: "HR insights",
+        description: "Reports and insights",
       },
     ],
   },
@@ -88,28 +88,28 @@ const navGroups: NavGroup[] = [
         href: "/employees",
         icon: <Users className="h-4 w-4" />,
         adminOnly: true,
-        description: "Workforce directory",
+        description: "Employee directory",
       },
       {
         label: "Team Directory",
         href: "/employees",
         icon: <Users className="h-4 w-4" />,
         employeeOnly: true,
-        description: "Team members",
+        description: "Team directory",
       },
       {
         label: "Departments",
         href: "/departments",
         icon: <Building2 className="h-4 w-4" />,
         adminOnly: true,
-        description: "Org structure",
+        description: "Department structure",
       },
       {
         label: "Onboarding",
         href: "/onboarding",
         icon: <UserPlus className="h-4 w-4" />,
         adminOnly: true,
-        description: "New joiners",
+        description: "New employee onboarding",
       },
     ],
   },
@@ -120,13 +120,13 @@ const navGroups: NavGroup[] = [
         label: "Attendance",
         href: "/attendance",
         icon: <Clock className="h-4 w-4" />,
-        description: "Daily punches",
+        description: "Attendance records",
       },
       {
         label: "Calendar",
         href: "/calendar",
         icon: <Calendar className="h-4 w-4" />,
-        description: "Schedule view",
+        description: "Company calendar",
       },
       {
         label: "Leaves",
@@ -143,21 +143,21 @@ const navGroups: NavGroup[] = [
         label: "Performance",
         href: "/performance",
         icon: <Target className="h-4 w-4" />,
-        description: "Goals & reviews",
+        description: "Goals and performance",
       },
       {
         label: "Assets",
         href: "/assets",
         icon: <Package className="h-4 w-4" />,
         adminOnly: true,
-        description: "Asset tracking",
+        description: "Asset management",
       },
       {
         label: "Payroll",
         href: "/payroll",
         icon: <CreditCard className="h-4 w-4" />,
         adminOnly: true,
-        description: "Salary & payslips",
+        description: "Payroll workspace",
       },
     ],
   },
@@ -169,7 +169,7 @@ const navGroups: NavGroup[] = [
         href: "/settings",
         icon: <Settings className="h-4 w-4" />,
         adminOnly: true,
-        description: "Configurations",
+        description: "System settings",
       },
     ],
   },
@@ -219,11 +219,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       });
   }, [filteredNavGroups, location.pathname]);
 
-  const handleSignOut = async () => {
-    await signOut();
-    navigate("/auth");
-  };
-
   const getUserInitials = () => {
     const name = user?.user_metadata?.full_name || user?.email || "User";
 
@@ -247,40 +242,44 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     return location.pathname === href || location.pathname.startsWith(`${href}/`);
   };
 
+  const handleSignOut = async () => {
+    await signOut();
+    navigate("/auth");
+  };
+
   const pageTitle = activeItem?.label || "Dashboard";
   const pageDescription =
-    activeItem?.description ||
-    "Centralized HRMS workspace for employee and HR operations.";
+    activeItem?.description || "Modern HRMS workspace for daily operations.";
 
   const SidebarContent = () => {
     return (
-      <div className="flex h-full flex-col bg-white">
-        {/* Logo */}
-        <div className="flex h-[72px] items-center gap-3 border-b border-slate-200 px-5">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm">
-            <img
-              src={companyLogo}
-              alt="Company Logo"
-              className="max-h-full max-w-full object-contain"
-            />
-          </div>
+      <div className="flex h-full flex-col bg-slate-950 text-slate-100">
+        <div className="border-b border-white/10 px-5 py-5">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white p-1.5 shadow-lg">
+              <img
+                src={companyLogo}
+                alt="Company Logo"
+                className="max-h-full max-w-full object-contain"
+              />
+            </div>
 
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-slate-950">
-              Mas Callnet
-            </p>
-            <p className="truncate text-[11px] font-medium text-slate-500">
-              HRMS Portal
-            </p>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold tracking-tight text-white">
+                Mas Callnet HRMS
+              </p>
+              <p className="truncate text-[11px] text-slate-400">
+                Employee Portal
+              </p>
+            </div>
           </div>
         </div>
 
-        {/* Navigation */}
         <nav className="flex-1 overflow-y-auto px-3 py-4">
           <div className="space-y-5">
             {filteredNavGroups.map((group) => (
               <div key={group.title}>
-                <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                   {group.title}
                 </p>
 
@@ -294,19 +293,19 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                         to={item.href}
                         onClick={() => setSidebarOpen(false)}
                         className={cn(
-                          "group flex items-center justify-between rounded-xl px-3 py-2 text-xs font-medium transition",
+                          "group flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-medium transition",
                           active
-                            ? "bg-slate-950 text-white shadow-sm"
-                            : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                            ? "bg-white text-slate-950 shadow-md"
+                            : "text-slate-300 hover:bg-white/10 hover:text-white"
                         )}
                       >
                         <span className="flex min-w-0 items-center gap-3">
                           <span
                             className={cn(
-                              "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition",
+                              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition",
                               active
-                                ? "bg-white/12 text-white"
-                                : "bg-slate-100 text-slate-500 group-hover:bg-white group-hover:text-slate-800"
+                                ? "bg-slate-100 text-slate-950"
+                                : "bg-white/5 text-slate-400 group-hover:bg-white/10 group-hover:text-white"
                             )}
                           >
                             {item.icon}
@@ -316,11 +315,11 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                         </span>
 
                         {item.badge ? (
-                          <Badge className="ml-2 h-5 rounded-full bg-sky-100 px-2 text-[10px] font-semibold text-sky-700 hover:bg-sky-100">
+                          <Badge className="ml-2 h-5 rounded-full bg-cyan-100 px-2 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-100">
                             {item.badge}
                           </Badge>
                         ) : active ? (
-                          <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-500" />
                         ) : null}
                       </Link>
                     );
@@ -331,34 +330,31 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
         </nav>
 
-        {/* User Footer */}
-        <div className="border-t border-slate-200 p-3">
+        <div className="border-t border-white/10 p-3">
           <Link
             to="/profile"
             onClick={() => setSidebarOpen(false)}
-            className="flex items-center gap-3 rounded-xl bg-slate-50 p-3 transition hover:bg-slate-100"
+            className="flex items-center gap-3 rounded-2xl bg-white/5 p-3 transition hover:bg-white/10"
           >
-            <Avatar className="h-9 w-9 border border-slate-200">
+            <Avatar className="h-9 w-9 border border-white/10">
               <AvatarImage alt={getUserName()} />
-              <AvatarFallback className="bg-slate-950 text-xs font-semibold text-white">
+              <AvatarFallback className="bg-white text-xs font-semibold text-slate-950">
                 {getUserInitials()}
               </AvatarFallback>
             </Avatar>
 
             <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-semibold text-slate-950">
+              <p className="truncate text-xs font-semibold text-white">
                 {getUserName()}
               </p>
-              <p className="truncate text-[11px] text-slate-500">
-                {user?.email}
-              </p>
+              <p className="truncate text-[11px] text-slate-400">{user?.email}</p>
             </div>
           </Link>
 
           <Link
             to="/changelog"
             onClick={() => setSidebarOpen(false)}
-            className="mt-2 flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-[11px] font-medium text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+            className="mt-2 flex items-center justify-center rounded-xl px-3 py-2 text-[11px] text-slate-500 transition hover:bg-white/5 hover:text-slate-300"
           >
             v{displayVersion}
           </Link>
@@ -368,28 +364,25 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen bg-[#f3f6fb] text-slate-900">
       <PWAInstallBanner />
 
-      {/* Mobile overlay */}
       {sidebarOpen && (
         <button
           type="button"
           aria-label="Close sidebar"
-          className="fixed inset-0 z-40 bg-slate-950/40 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-40 bg-slate-950/50 backdrop-blur-sm lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
-      {/* Desktop Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[252px] border-r border-slate-200 bg-white lg:block">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[260px] border-r border-slate-900 bg-slate-950 shadow-2xl lg:block">
         <SidebarContent />
       </aside>
 
-      {/* Mobile Sidebar */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 w-[280px] border-r border-slate-200 bg-white shadow-2xl transition-transform duration-300 lg:hidden",
+          "fixed inset-y-0 left-0 z-50 w-[280px] bg-slate-950 shadow-2xl transition-transform duration-300 lg:hidden",
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
@@ -398,7 +391,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             type="button"
             variant="ghost"
             size="icon"
-            className="h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100"
+            className="h-8 w-8 rounded-lg text-slate-300 hover:bg-white/10 hover:text-white"
             onClick={() => setSidebarOpen(false)}
           >
             <X className="h-4 w-4" />
@@ -408,11 +401,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         <SidebarContent />
       </aside>
 
-      {/* Main Shell */}
-      <div className="min-h-screen lg:pl-[252px]">
-        {/* Header */}
-        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
-          <div className="flex min-h-[72px] items-center justify-between gap-4 px-4 sm:px-5 lg:px-6">
+      <div className="min-h-screen lg:pl-[260px]">
+        <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 shadow-sm backdrop-blur">
+          <div className="flex min-h-[68px] items-center justify-between gap-4 px-4 sm:px-5 lg:px-6">
             <div className="flex min-w-0 items-center gap-3">
               <Button
                 type="button"
@@ -425,20 +416,25 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               </Button>
 
               <div className="min-w-0">
-                <div className="mb-1 hidden items-center gap-1.5 text-[11px] font-medium text-slate-400 sm:flex">
+                <div className="mb-0.5 hidden items-center gap-1.5 text-[11px] font-medium text-slate-400 sm:flex">
                   <span>HRMS</span>
                   <ChevronRight className="h-3 w-3" />
                   <span className="truncate">{pageTitle}</span>
                 </div>
 
-                <h1 className="truncate text-lg font-semibold tracking-tight text-slate-950">
+                <h1 className="truncate text-[17px] font-semibold tracking-tight text-slate-950">
                   {pageTitle}
                 </h1>
 
-                <p className="hidden truncate text-xs text-slate-500 md:block">
+                <p className="hidden truncate text-[12px] text-slate-500 md:block">
                   {pageDescription}
                 </p>
               </div>
+            </div>
+
+            <div className="hidden w-full max-w-xs items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-400 xl:flex">
+              <Search className="h-4 w-4" />
+              <span>Search HRMS...</span>
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
@@ -550,9 +546,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
         </header>
 
-        {/* Page Content */}
         <main className="px-4 py-5 sm:px-5 lg:px-6">
-          <div className="mx-auto max-w-[1500px]">{children}</div>
+          <div className="mx-auto max-w-[1480px]">{children}</div>
         </main>
       </div>
     </div>
