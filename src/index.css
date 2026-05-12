@@ -1116,3 +1116,36 @@ img[alt*="Peoplo"] {
   background: var(--mas-red) !important;
 }
 
+/* Clean professional HRMS UI polish */
+html {
+  font-size: 14px;
+}
+
+body {
+  background: #f8fafc;
+  color: #0f172a;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+table {
+  font-size: 0.8125rem;
+}
+
+th {
+  font-weight: 600;
+}
+
+.hrms-clean-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
