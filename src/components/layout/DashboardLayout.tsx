@@ -61,7 +61,7 @@ interface DashboardLayoutProps {
   children: ReactNode;
 }
 
-const companyLogo = "/company-logo.png?v=200";
+const companyLogo = "/mcn-logo.png?v=999";
 
 const navGroups: NavGroup[] = [
   {
@@ -193,6 +193,7 @@ const navGroups: NavGroup[] = [
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [logoError, setLogoError] = useState(false);
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -239,6 +240,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         const labelMatch = item.label.toLowerCase().includes(query);
         const groupMatch = item.groupTitle.toLowerCase().includes(query);
         const descriptionMatch = item.description?.toLowerCase().includes(query);
+
         return labelMatch || groupMatch || descriptionMatch;
       })
       .slice(0, 6);
@@ -303,16 +305,24 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const SidebarContent = () => {
     return (
       <div className="flex h-full flex-col bg-[#0f172a] text-slate-100">
+        {/* Brand / Logo */}
         <div className="relative border-b border-white/10 px-4 py-4">
-          <div className="absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.24),transparent_48%)]" />
+          <div className="absolute inset-x-0 top-0 h-32 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.26),transparent_48%)]" />
 
-          <div className="relative rounded-2xl border border-white/10 bg-white/[0.04] p-3">
-            <div className="flex min-h-[58px] items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-xl shadow-slate-950/30">
-              <img
-                src={companyLogo}
-                alt="Company Logo"
-                className="max-h-12 w-auto max-w-[178px] object-contain"
-              />
+          <div className="relative rounded-2xl border border-white/10 bg-white/[0.05] p-3 shadow-xl shadow-slate-950/20">
+            <div className="flex h-[82px] items-center justify-center rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-200 px-4 py-3 shadow-lg">
+              {logoError ? (
+                <div className="flex h-full w-full items-center justify-center rounded-xl bg-slate-950 text-lg font-bold tracking-wide text-white">
+                  MCN
+                </div>
+              ) : (
+                <img
+                  src={companyLogo}
+                  alt="Mas Callnet Logo"
+                  className="block h-16 w-full max-w-[215px] object-contain drop-shadow-md"
+                  onError={() => setLogoError(true)}
+                />
+              )}
             </div>
 
             <div className="mt-3 min-w-0 text-center">
@@ -326,6 +336,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
         </div>
 
+        {/* Navigation */}
         <nav className="mcn-sidebar-scroll flex-1 overflow-y-auto px-3 py-4">
           <div className="space-y-5">
             {filteredNavGroups.map((group) => (
@@ -381,6 +392,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
         </nav>
 
+        {/* User Footer */}
         <div className="border-t border-white/10 p-3">
           <Link
             to="/profile"
@@ -483,6 +495,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               </div>
             </div>
 
+            {/* Working Search */}
             <form
               onSubmit={handleSearchSubmit}
               className="relative hidden w-full max-w-xs xl:block"
