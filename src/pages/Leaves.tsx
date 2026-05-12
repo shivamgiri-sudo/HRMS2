@@ -105,6 +105,21 @@ const metricToneMap = {
   },
 };
 
+const MONTHS = [
+  { value: "0", label: "January" },
+  { value: "1", label: "February" },
+  { value: "2", label: "March" },
+  { value: "3", label: "April" },
+  { value: "4", label: "May" },
+  { value: "5", label: "June" },
+  { value: "6", label: "July" },
+  { value: "7", label: "August" },
+  { value: "8", label: "September" },
+  { value: "9", label: "October" },
+  { value: "10", label: "November" },
+  { value: "11", label: "December" },
+];
+
 const LeaveMetricCard = ({
   label,
   value,
@@ -121,6 +136,7 @@ const LeaveMetricCard = ({
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
             {label}
           </p>
+
           <h3 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
             {value}
           </h3>
@@ -180,10 +196,9 @@ const Leaves = () => {
   const [processedStatusFilter, setProcessedStatusFilter] = useState<
     "all" | "approved" | "rejected"
   >("all");
-  const [processedTypeFilter, setProcessedTypeFilter] = useState<string>("all");
-  const [processedMonthFilter, setProcessedMonthFilter] =
-    useState<string>("all");
-  const [processedYearFilter, setProcessedYearFilter] = useState<string>("all");
+  const [processedTypeFilter, setProcessedTypeFilter] = useState("all");
+  const [processedMonthFilter, setProcessedMonthFilter] = useState("all");
+  const [processedYearFilter, setProcessedYearFilter] = useState("all");
 
   const canApproveLeaves = isAdminOrHR || roles.includes("manager");
 
@@ -279,7 +294,7 @@ const Leaves = () => {
   });
 
   const handleApprove = (id: string) => {
-    const request = requests.find((request) => request.id === id);
+    const request = requests.find((item) => item.id === id);
 
     if (request) {
       setSelectedRequest(request);
@@ -289,7 +304,7 @@ const Leaves = () => {
   };
 
   const handleReject = (id: string) => {
-    const request = requests.find((request) => request.id === id);
+    const request = requests.find((item) => item.id === id);
 
     if (request) {
       setSelectedRequest(request);
@@ -359,21 +374,6 @@ const Leaves = () => {
       )
     ),
   ].sort((a, b) => b - a);
-
-  const MONTHS = [
-    { value: "0", label: "January" },
-    { value: "1", label: "February" },
-    { value: "2", label: "March" },
-    { value: "3", label: "April" },
-    { value: "4", label: "May" },
-    { value: "5", label: "June" },
-    { value: "6", label: "July" },
-    { value: "7", label: "August" },
-    { value: "8", label: "September" },
-    { value: "9", label: "October" },
-    { value: "10", label: "November" },
-    { value: "11", label: "December" },
-  ];
 
   const processedRequests = allProcessedRequests.filter((request) => {
     const statusMatch =
@@ -492,7 +492,15 @@ const Leaves = () => {
     autoTable(doc, {
       startY: startDate || endDate ? 50 : 44,
       head: [
-        ["Employee", "Department", "Type", "Start Date", "End Date", "Days", "Status"],
+        [
+          "Employee",
+          "Department",
+          "Type",
+          "Start Date",
+          "End Date",
+          "Days",
+          "Status",
+        ],
       ],
       body: filteredRequests.map((request) => [
         request.employee.name,
@@ -597,6 +605,7 @@ const Leaves = () => {
             >
               <Icon className="mr-2 h-4 w-4" />
               {option.label}
+
               {sorting.sortConfig.key === option.key && (
                 <span className="ml-2">
                   {sorting.sortConfig.direction === "asc" ? "↑" : "↓"}
@@ -610,7 +619,7 @@ const Leaves = () => {
   );
 
   const renderPaginationControls = (
-    pagination: ReturnType<typeof usePagination>
+    pagination: ReturnType<typeof usePagination<LeaveRequest>>
   ) => {
     if (pagination.totalPages <= 1) return null;
 
@@ -885,7 +894,9 @@ const Leaves = () => {
                           onApprove={
                             canApproveThisRequest ? handleApprove : undefined
                           }
-                          onReject={canApproveThisRequest ? handleReject : undefined}
+                          onReject={
+                            canApproveThisRequest ? handleReject : undefined
+                          }
                         />
                       );
                     })}

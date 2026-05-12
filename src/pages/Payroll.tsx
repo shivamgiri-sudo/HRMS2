@@ -1,8 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import {
-  Calendar,
   CreditCard,
-  Download,
   FileText,
   IndianRupee,
   Loader2,
@@ -11,6 +9,7 @@ import {
   TrendingUp,
   Users,
   Wallet,
+  X,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -164,6 +163,7 @@ const Payroll = () => {
   const [historySearchQuery, setHistorySearchQuery] = useState("");
   const [historyMonth, setHistoryMonth] = useState("all");
   const [historyYear, setHistoryYear] = useState("all");
+  const [historyStatus, setHistoryStatus] = useState("all");
 
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<PayrollRecord | null>(
@@ -213,23 +213,30 @@ const Payroll = () => {
   }, [allRecords]);
 
   const filteredRecords = records.filter((record) => {
-    const search = searchQuery.toLowerCase();
+    const search = searchQuery.trim().toLowerCase();
+
+    if (!search) return true;
 
     return (
       record.employee.name.toLowerCase().includes(search) ||
       record.employee.email.toLowerCase().includes(search) ||
-      record.employeeCode.toLowerCase().includes(search)
+      record.employeeCode.toLowerCase().includes(search) ||
+      record.month.toLowerCase().includes(search) ||
+      record.status.toLowerCase().includes(search)
     );
   });
 
   const filteredHistoryRecords = useMemo(() => {
     return allRecords.filter((record) => {
-      const search = historySearchQuery.toLowerCase();
+      const search = historySearchQuery.trim().toLowerCase();
 
       const matchesSearch =
+        !search ||
         record.employee.name.toLowerCase().includes(search) ||
         record.employee.email.toLowerCase().includes(search) ||
-        record.employeeCode.toLowerCase().includes(search);
+        record.employeeCode.toLowerCase().includes(search) ||
+        record.month.toLowerCase().includes(search) ||
+        record.status.toLowerCase().includes(search);
 
       const matchesMonth =
         historyMonth === "all" || record.monthNum === parseInt(historyMonth);
@@ -237,9 +244,12 @@ const Payroll = () => {
       const matchesYear =
         historyYear === "all" || record.year === parseInt(historyYear);
 
-      return matchesSearch && matchesMonth && matchesYear;
+      const matchesStatus =
+        historyStatus === "all" || record.status === historyStatus;
+
+      return matchesSearch && matchesMonth && matchesYear && matchesStatus;
     });
-  }, [allRecords, historySearchQuery, historyMonth, historyYear]);
+  }, [allRecords, historySearchQuery, historyMonth, historyYear, historyStatus]);
 
   const {
     currentPage,
@@ -649,15 +659,10 @@ const Payroll = () => {
     return (
       <div className="mt-4 flex flex-col items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row">
         <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-slate-500 sm:justify-start">
-          <span>Showing</span>
-          <span className="font-semibold text-slate-700">
-            {(currentPage - 1) * pageSize + 1}
+          <span>
+            Showing {(currentPage - 1) * pageSize + 1} to{" "}
+            {Math.min(currentPage * pageSize, totalItems)} of {totalItems}
           </span>
-          <span>to</span>
-          <span className="font-semibold text-slate-700">
-            {Math.min(currentPage * pageSize, totalItems)}
-          </span>
-          <span>of {totalItems} records</span>
 
           <Select
             value={pageSize.toString()}
@@ -723,16 +728,25 @@ const Payroll = () => {
     );
   };
 
+  const hasCurrentFilters = searchQuery.trim() || monthFilter !== "current";
+  const hasHistoryFilters =
+    historySearchQuery.trim() ||
+    historyMonth !== "all" ||
+    historyYear !== "all" ||
+    historyStatus !== "all";
+
   if (roleLoading) {
     return (
       <DashboardLayout>
         <div className="space-y-5">
           <Skeleton className="h-32 rounded-2xl" />
+
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {[1, 2, 3, 4].map((item) => (
               <Skeleton key={item} className="h-32 rounded-2xl" />
             ))}
           </div>
+
           <Skeleton className="h-96 rounded-2xl" />
         </div>
       </DashboardLayout>
@@ -833,6 +847,7 @@ const Payroll = () => {
                 {currentPending}
               </p>
             </div>
+
             <Badge className="bg-amber-50 text-amber-700 hover:bg-amber-50">
               Draft
             </Badge>
@@ -845,6 +860,7 @@ const Payroll = () => {
                 {currentProcessing}
               </p>
             </div>
+
             <Badge className="bg-sky-50 text-sky-700 hover:bg-sky-50">
               Processing
             </Badge>
@@ -857,6 +873,7 @@ const Payroll = () => {
                 {currentPaid}
               </p>
             </div>
+
             <Badge className="bg-emerald-50 text-emerald-700 hover:bg-emerald-50">
               Completed
             </Badge>
@@ -885,12 +902,12 @@ const Payroll = () => {
 
             <TabsContent value="current" className="mt-0 space-y-4">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
+                <div className="grid gap-3 lg:grid-cols-[1fr_220px_auto]">
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
                     <Input
-                      placeholder="Search employee name, email or code..."
+                      placeholder="Search employee name, email, code, month or status..."
                       className="h-11 rounded-xl border-slate-200 bg-white pl-10 text-sm shadow-sm"
                       value={searchQuery}
                       onChange={(event) => setSearchQuery(event.target.value)}
@@ -907,6 +924,20 @@ const Payroll = () => {
                       <SelectItem value="all">All Records</SelectItem>
                     </SelectContent>
                   </Select>
+
+                  {hasCurrentFilters && (
+                    <button
+                      type="button"
+                      className="inline-flex h-11 items-center justify-center gap-1 rounded-xl px-3 text-xs font-semibold text-slate-500 transition hover:bg-white hover:text-slate-900"
+                      onClick={() => {
+                        setSearchQuery("");
+                        setMonthFilter("current");
+                      }}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      Clear
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -942,7 +973,7 @@ const Payroll = () => {
                   }
                 />
               ) : (
-                <div className="overflow-hidden rounded-xl border border-slate-200">
+                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
                   <PayrollTable
                     records={filteredRecords}
                     onView={handleView}
@@ -960,7 +991,7 @@ const Payroll = () => {
 
             <TabsContent value="history" className="mt-0 space-y-4">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <div className="grid gap-3 xl:grid-cols-[1fr_180px_180px_auto]">
+                <div className="grid gap-3 xl:grid-cols-[1fr_160px_160px_160px_auto]">
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
@@ -1004,17 +1035,34 @@ const Payroll = () => {
                     </SelectContent>
                   </Select>
 
-                  <Button
-                    variant="outline"
-                    className="h-11 rounded-xl border-slate-200 bg-white px-4 text-xs font-semibold shadow-sm"
-                    onClick={() => {
-                      setHistorySearchQuery("");
-                      setHistoryMonth("all");
-                      setHistoryYear("all");
-                    }}
-                  >
-                    Clear Filters
-                  </Button>
+                  <Select value={historyStatus} onValueChange={setHistoryStatus}>
+                    <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+
+                    <SelectContent>
+                      <SelectItem value="all">All Status</SelectItem>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="processing">Processing</SelectItem>
+                      <SelectItem value="paid">Paid</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  {hasHistoryFilters && (
+                    <button
+                      type="button"
+                      className="inline-flex h-11 items-center justify-center gap-1 rounded-xl px-3 text-xs font-semibold text-slate-500 transition hover:bg-white hover:text-slate-900"
+                      onClick={() => {
+                        setHistorySearchQuery("");
+                        setHistoryMonth("all");
+                        setHistoryYear("all");
+                        setHistoryStatus("all");
+                      }}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      Clear
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1035,7 +1083,7 @@ const Payroll = () => {
                 />
               ) : (
                 <>
-                  <div className="overflow-hidden rounded-xl border border-slate-200">
+                  <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
                     <PayrollTable
                       records={paginatedHistoryRecords}
                       onView={handleView}

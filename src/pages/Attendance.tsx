@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -166,6 +167,7 @@ const AttendanceMetricCard = ({
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
             {label}
           </p>
+
           <h3 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
             {value}
           </h3>
@@ -256,7 +258,7 @@ const Attendance = () => {
   );
 
   const { data: currentEmployee } = useQuery<EmployeeSchedule | null>({
-    queryKey: ["current-employee-schedule"],
+    queryKey: ["current-employee-schedule", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("employees")
@@ -270,7 +272,7 @@ const Attendance = () => {
 
       return data as EmployeeSchedule | null;
     },
-    enabled: !!user,
+    enabled: !!user?.id,
   });
 
   const { data: todayRecord, isLoading: todayLoading } =
@@ -847,8 +849,8 @@ const Attendance = () => {
                   </h1>
 
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                    Track clock-in, work mode, breaks, monthly summary and attendance
-                    history.
+                    Track clock-in, work mode, breaks, monthly summary and
+                    attendance history.
                   </p>
                 </div>
               </div>
@@ -1220,7 +1222,7 @@ const Attendance = () => {
                   className="mt-4 h-10 w-full rounded-xl border-slate-200 bg-white text-xs font-semibold"
                   asChild
                 >
-                  <a href="/settings">Edit Schedule</a>
+                  <Link to="/settings">Edit Schedule</Link>
                 </Button>
               </div>
             )}
@@ -1598,7 +1600,7 @@ const Attendance = () => {
                     <span className="block">
                       You have only worked{" "}
                       {formatHoursWorked(calculateCurrentHoursWorked())} today.
-                      The required minimum is 9 hours.
+                      Your configured shift requires more working time.
                     </span>
                   )}
 

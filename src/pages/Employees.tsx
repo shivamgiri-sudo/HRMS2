@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   Building2,
@@ -8,6 +8,7 @@ import {
   UserCheck,
   UserPlus,
   Users,
+  X,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -63,7 +64,7 @@ interface EmployeeMetricCardProps {
   title: string;
   value: string | number;
   description: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
   tone: "sky" | "emerald" | "indigo" | "amber";
 }
 
@@ -102,12 +103,15 @@ const EmployeeMetricCard = ({
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
             {title}
           </p>
+
           <h3 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
             {value}
           </h3>
         </div>
 
-        <div className={`rounded-xl p-2.5 ring-1 ${style.icon}`}>{icon}</div>
+        <div className={`rounded-xl p-2.5 ring-1 ${style.icon}`}>
+          {icon}
+        </div>
       </div>
 
       <p className="mt-3 text-xs leading-5 text-slate-500">{description}</p>
@@ -136,10 +140,16 @@ const Employees = () => {
   const bulkDeleteMutation = useBulkDeleteEmployees();
   const bulkStatusMutation = useBulkUpdateEmployeeStatus();
 
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+
   const filteredEmployees = employees.filter((employee) => {
     const matchesSearch =
-      employee.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      employee.email.toLowerCase().includes(searchQuery.toLowerCase());
+      !normalizedSearch ||
+      employee.name.toLowerCase().includes(normalizedSearch) ||
+      employee.email.toLowerCase().includes(normalizedSearch) ||
+      employee.employeeCode.toLowerCase().includes(normalizedSearch) ||
+      employee.designation.toLowerCase().includes(normalizedSearch) ||
+      employee.department.toLowerCase().includes(normalizedSearch);
 
     const matchesDepartment =
       departmentFilter === "all" || employee.department === departmentFilter;
@@ -419,6 +429,8 @@ const Employees = () => {
     }
   };
 
+  const hasActiveFilters = searchQuery.trim() || departmentFilter !== "all";
+
   return (
     <DashboardLayout>
       <div className="space-y-5">
@@ -546,10 +558,10 @@ const Employees = () => {
               <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
               <Input
-                placeholder="Search by employee name or email..."
+                placeholder="Search by name, email, employee no., designation or department..."
                 className="h-11 rounded-xl border-slate-200 bg-white pl-10 text-sm shadow-sm"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(event) => setSearchQuery(event.target.value)}
               />
             </div>
 
@@ -586,6 +598,20 @@ const Employees = () => {
               <span className="rounded-full bg-indigo-50 px-3 py-1 font-medium text-indigo-700">
                 Search: {searchQuery}
               </span>
+            )}
+
+            {hasActiveFilters && (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+                onClick={() => {
+                  setSearchQuery("");
+                  setDepartmentFilter("all");
+                }}
+              >
+                <X className="h-3 w-3" />
+                Clear Filters
+              </button>
             )}
           </div>
         </section>
@@ -649,7 +675,7 @@ const Employees = () => {
             </Card>
           ) : (
             <div className="space-y-4">
-              <div className="overflow-hidden rounded-xl border border-slate-200">
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
                 <EmployeeTable
                   employees={paginatedEmployees}
                   onView={(employee) => setViewEmployee(employee)}

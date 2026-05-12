@@ -112,7 +112,7 @@ const StatCard = ({
 }: StatCardProps) => {
   const styles = statToneMap[tone];
 
-  const card = (
+  const content = (
     <div
       className={`h-full rounded-2xl border p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md ${styles.card}`}
     >
@@ -121,32 +121,36 @@ const StatCard = ({
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
             {title}
           </p>
-          <h3 className={`mt-2 truncate text-2xl font-semibold tracking-tight ${styles.value}`}>
+
+          <h3
+            className={`mt-2 truncate text-2xl font-semibold tracking-tight ${styles.value}`}
+          >
             {value}
           </h3>
         </div>
 
-        <div className={`rounded-xl p-2.5 ring-1 ${styles.icon}`}>
-          {icon}
-        </div>
+        <div className={`rounded-xl p-2.5 ring-1 ${styles.icon}`}>{icon}</div>
       </div>
 
       <p className="mt-3 text-xs leading-5 text-slate-500">{description}</p>
     </div>
   );
 
-  if (onClick) {
-    return (
-      <button type="button" onClick={onClick} className="h-full w-full text-left">
-        {card}
-      </button>
-    );
-  }
+  if (!onClick) return content;
 
-  return card;
+  return (
+    <button type="button" onClick={onClick} className="h-full w-full text-left">
+      {content}
+    </button>
+  );
 };
 
-const SectionPanel = ({ title, description, action, children }: SectionPanelProps) => {
+const SectionPanel = ({
+  title,
+  description,
+  action,
+  children,
+}: SectionPanelProps) => {
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="mb-4 flex items-start justify-between gap-3">
@@ -154,8 +158,11 @@ const SectionPanel = ({ title, description, action, children }: SectionPanelProp
           <h2 className="text-sm font-semibold tracking-tight text-slate-950">
             {title}
           </h2>
+
           {description && (
-            <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              {description}
+            </p>
           )}
         </div>
 
@@ -269,8 +276,8 @@ const Index = () => {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {[1, 2, 3, 4].map((i) => (
-              <Skeleton key={i} className="h-32 rounded-2xl" />
+            {[1, 2, 3, 4].map((item) => (
+              <Skeleton key={item} className="h-32 rounded-2xl" />
             ))}
           </div>
 
@@ -296,9 +303,9 @@ const Index = () => {
       <div className="space-y-5">
         <UpdateNotification />
 
-        {/* Page Hero */}
+        {/* Hero */}
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="grid gap-0 lg:grid-cols-[1fr_310px]">
+          <div className="grid gap-0 lg:grid-cols-[1fr_320px]">
             <div className="relative p-5 sm:p-6">
               <div className="absolute inset-y-0 left-0 w-1 bg-slate-950" />
 
@@ -313,7 +320,7 @@ const Index = () => {
                 </h1>
 
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                  A clean summary of your attendance, leaves, approvals, assets
+                  Clean summary of your attendance, leaves, approvals, assets
                   and team updates.
                 </p>
 
@@ -374,7 +381,9 @@ const Index = () => {
 
               <div className="mt-3 flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">
                 <CheckCircle2 className="h-4 w-4" />
-                {stats?.onLeaveToday ? "You are on leave today" : "You are marked active today"}
+                {stats?.onLeaveToday
+                  ? "You are on leave today"
+                  : "You are marked active today"}
               </div>
             </div>
           </div>
@@ -384,15 +393,17 @@ const Index = () => {
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {isLoading ? (
             <>
-              {[1, 2, 3, 4].map((i) => (
-                <Skeleton key={i} className="h-32 rounded-2xl" />
+              {[1, 2, 3, 4].map((item) => (
+                <Skeleton key={item} className="h-32 rounded-2xl" />
               ))}
             </>
           ) : (
             <>
               <StatCard
                 title="Leave Balance"
-                value={`${stats?.availableLeaves || 0} / ${stats?.totalLeaves || 0}`}
+                value={`${stats?.availableLeaves || 0} / ${
+                  stats?.totalLeaves || 0
+                }`}
                 description="Available balance for the current leave cycle."
                 icon={<CalendarDays className="h-5 w-5" />}
                 tone="sky"
@@ -428,7 +439,9 @@ const Index = () => {
                 }
                 icon={<ClipboardCheck className="h-5 w-5" />}
                 tone={hasPendingApprovals ? "amber" : "slate"}
-                onClick={hasPendingApprovals ? () => navigate("/leaves") : undefined}
+                onClick={
+                  hasPendingApprovals ? () => navigate("/leave-approvals") : undefined
+                }
               />
             </>
           )}
@@ -460,7 +473,10 @@ const Index = () => {
             <DropdownMenuContent align="end" className="z-50 w-56 bg-popover">
               {quickActions.map((action) => (
                 <DropdownMenuItem key={action.title} asChild>
-                  <Link to={action.path} className="flex cursor-pointer items-center gap-2 text-xs">
+                  <Link
+                    to={action.path}
+                    className="flex cursor-pointer items-center gap-2 text-xs"
+                  >
                     {action.icon}
                     {action.title}
                   </Link>
@@ -483,6 +499,7 @@ const Index = () => {
               <div className="rounded-xl bg-sky-50 p-2.5 text-sky-700 ring-1 ring-sky-100">
                 <Users className="h-4 w-4" />
               </div>
+
               <div>
                 <h3 className="text-sm font-semibold text-slate-950">
                   Employee Workspace
@@ -499,6 +516,7 @@ const Index = () => {
               <div className="rounded-xl bg-emerald-50 p-2.5 text-emerald-700 ring-1 ring-emerald-100">
                 <Wallet className="h-4 w-4" />
               </div>
+
               <div>
                 <h3 className="text-sm font-semibold text-slate-950">
                   HR Operations
@@ -515,6 +533,7 @@ const Index = () => {
               <div className="rounded-xl bg-indigo-50 p-2.5 text-indigo-700 ring-1 ring-indigo-100">
                 <ClipboardCheck className="h-4 w-4" />
               </div>
+
               <div>
                 <h3 className="text-sm font-semibold text-slate-950">
                   Approval Flow
@@ -543,7 +562,7 @@ const Index = () => {
           <WhosOut />
         </SectionPanel>
 
-        {/* Main Dashboard Grid */}
+        {/* Dashboard Grid */}
         <section className="grid gap-5 xl:grid-cols-[1.35fr_0.65fr]">
           <div className="space-y-5">
             <SectionPanel

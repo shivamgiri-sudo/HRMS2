@@ -13,6 +13,7 @@ import {
   Smartphone,
   UserCheck,
   Wallet,
+  X,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -157,7 +158,8 @@ const AssetMetricCard = ({
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
             {label}
           </p>
-          <h3 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+
+          <h3 className="mt-2 truncate text-2xl font-semibold tracking-tight text-slate-950">
             {value}
           </h3>
         </div>
@@ -250,10 +252,16 @@ const Assets = () => {
   const { data: assetHistory = [], isLoading: isHistoryLoading } =
     useAssetHistory(historyAssetId);
 
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+
   const filteredAssets = assets.filter((asset) => {
     const matchesSearch =
-      asset.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      asset.serialNumber.toLowerCase().includes(searchQuery.toLowerCase());
+      !normalizedSearch ||
+      asset.name.toLowerCase().includes(normalizedSearch) ||
+      asset.serialNumber.toLowerCase().includes(normalizedSearch) ||
+      asset.type.toLowerCase().includes(normalizedSearch) ||
+      asset.status.toLowerCase().includes(normalizedSearch) ||
+      asset.assignedTo?.name.toLowerCase().includes(normalizedSearch);
 
     const matchesType = typeFilter === "all" || asset.type === typeFilter;
     const matchesStatus = statusFilter === "all" || asset.status === statusFilter;
@@ -292,7 +300,9 @@ const Assets = () => {
     (asset) => asset.status === "available"
   ).length;
 
-  const assignedAssets = assets.filter((asset) => asset.status === "assigned").length;
+  const assignedAssets = assets.filter(
+    (asset) => asset.status === "assigned"
+  ).length;
 
   const maintenanceAssets = assets.filter(
     (asset) => asset.status === "maintenance"
@@ -800,7 +810,7 @@ const Assets = () => {
               <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
               <Input
-                placeholder="Search by asset name or serial number..."
+                placeholder="Search by asset name, serial number, status or assigned employee..."
                 className="h-11 rounded-xl border-slate-200 bg-white pl-10 text-sm shadow-sm"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
@@ -893,18 +903,18 @@ const Assets = () => {
                 </span>
               )}
 
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 rounded-full px-3 text-xs"
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
                 onClick={() => {
                   setSearchQuery("");
                   setTypeFilter("all");
                   setStatusFilter("all");
                 }}
               >
+                <X className="h-3 w-3" />
                 Clear Filters
-              </Button>
+              </button>
             </div>
           )}
         </section>
@@ -1447,6 +1457,7 @@ const Assets = () => {
           open={isHistoryDialogOpen}
           onOpenChange={(open) => {
             setIsHistoryDialogOpen(open);
+
             if (!open) {
               setHistoryAssetId(null);
               setSelectedAsset(null);
@@ -1501,6 +1512,7 @@ const Assets = () => {
                             <p className="truncate font-medium text-slate-950">
                               {assignment.employee.name}
                             </p>
+
                             <p className="mt-0.5 text-xs text-slate-500">
                               {assignment.assignedDate} —{" "}
                               {assignment.returnedDate || "Present"}
