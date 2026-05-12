@@ -60,7 +60,7 @@ interface DashboardLayoutProps {
   children: ReactNode;
 }
 
-const companyLogo = "/company-logo.png?v=51";
+const companyLogo = "/company-logo.png?v=101";
 
 const navGroups: NavGroup[] = [
   {
@@ -262,19 +262,20 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const SidebarContent = () => {
     return (
       <div className="flex h-full flex-col bg-[#0f172a] text-slate-100">
-        <div className="relative border-b border-white/10 px-5 py-5">
-          <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.22),transparent_45%)]" />
+        {/* Brand */}
+        <div className="relative border-b border-white/10 px-4 py-4">
+          <div className="absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.24),transparent_48%)]" />
 
-          <div className="relative flex items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white p-1.5 shadow-xl shadow-slate-950/30">
+          <div className="relative rounded-2xl border border-white/10 bg-white/[0.04] p-3">
+            <div className="flex min-h-[58px] items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-xl shadow-slate-950/30">
               <img
                 src={companyLogo}
                 alt="Company Logo"
-                className="max-h-full max-w-full object-contain"
+                className="max-h-12 w-auto max-w-[178px] object-contain"
               />
             </div>
 
-            <div className="min-w-0">
+            <div className="mt-3 min-w-0 text-center">
               <p className="truncate text-[13px] font-semibold tracking-tight text-white">
                 Mas Callnet HRMS
               </p>
@@ -285,6 +286,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
         </div>
 
+        {/* Navigation */}
         <nav className="mcn-sidebar-scroll flex-1 overflow-y-auto px-3 py-4">
           <div className="space-y-5">
             {filteredNavGroups.map((group) => (
@@ -340,6 +342,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
         </nav>
 
+        {/* Sidebar user */}
         <div className="border-t border-white/10 p-3">
           <Link
             to="/profile"
