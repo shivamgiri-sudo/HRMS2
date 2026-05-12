@@ -26,7 +26,7 @@ import {
 import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 
-const companyLogo = "/mcn-logo.png";
+const companyLogo = "/company-logo.png?v=999";
 
 const loginSchema = z.object({
   email: z.string().trim().email("Please enter a valid email address"),
@@ -51,6 +51,7 @@ const signupSchema = z
 
 const Auth = () => {
   const [isLoading, setIsLoading] = useState(false);
+  const [logoError, setLogoError] = useState(false);
 
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -67,7 +68,8 @@ const Auth = () => {
 
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showSignupPassword, setShowSignupPassword] = useState(false);
-  const [showSignupConfirmPassword, setShowSignupConfirmPassword] = useState(false);
+  const [showSignupConfirmPassword, setShowSignupConfirmPassword] =
+    useState(false);
 
   const { signIn, signUp, user } = useAuth();
   const navigate = useNavigate();
@@ -116,7 +118,10 @@ const Auth = () => {
       if (error.message.includes("Invalid login credentials")) {
         showAlert("Login Alert", "Invalid email or password. Please try again.");
       } else if (error.message.includes("Email not confirmed")) {
-        showAlert("Email Verification Pending", "Please verify your email before signing in.");
+        showAlert(
+          "Email Verification Pending",
+          "Please verify your email before signing in."
+        );
       } else {
         showAlert("Login Alert", error.message);
       }
@@ -133,9 +138,12 @@ const Auth = () => {
 
     setIsLoading(true);
 
-    const { error } = await supabase.auth.resetPasswordForEmail(resetEmail.trim(), {
-      redirectTo: `${window.location.origin}/reset-password`,
-    });
+    const { error } = await supabase.auth.resetPasswordForEmail(
+      resetEmail.trim(),
+      {
+        redirectTo: `${window.location.origin}/reset-password`,
+      }
+    );
 
     setIsLoading(false);
 
@@ -232,20 +240,30 @@ const Auth = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-[#f3f6fb]">
       <div className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-8">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.16),transparent_35%),radial-gradient(circle_at_bottom_right,rgba(79,70,229,0.14),transparent_35%)]" />
-        <div className="absolute inset-x-0 top-0 h-64 bg-gradient-to-b from-white to-transparent" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.16),transparent_35%),radial-gradient(circle_at_bottom_right,rgba(79,70,229,0.12),transparent_35%)]" />
+        <div className="absolute inset-x-0 top-0 h-72 bg-gradient-to-b from-white to-transparent" />
 
         <div className="relative w-full max-w-md">
           <Card className="overflow-hidden rounded-[2rem] border border-white bg-white/95 shadow-2xl shadow-slate-200/80 backdrop-blur">
             <CardHeader className="space-y-5 px-7 pb-4 pt-8 text-center">
-              <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl border border-slate-100 bg-white p-3 shadow-lg">
-                <img
-                  src={companyLogo}
-                  alt="Company Logo"
-                  className="max-h-full max-w-full object-contain"
-                />
+              {/* Polished company logo plate */}
+              <div className="mx-auto w-full max-w-[315px] rounded-[26px] border border-slate-200 bg-white p-3 shadow-2xl shadow-slate-200/80">
+                <div className="flex h-[108px] items-center justify-center rounded-[22px] border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-200 px-5 py-4 shadow-xl">
+                  {logoError ? (
+                    <div className="flex h-full w-full items-center justify-center rounded-2xl bg-slate-950 text-2xl font-bold tracking-wide text-white">
+                      MCN
+                    </div>
+                  ) : (
+                    <img
+                      src={companyLogo}
+                      alt="Mas Callnet Logo"
+                      className="block h-20 w-full max-w-[255px] object-contain drop-shadow-md"
+                      onError={() => setLogoError(true)}
+                    />
+                  )}
+                </div>
               </div>
 
               <div>
@@ -279,7 +297,10 @@ const Auth = () => {
                 <TabsContent value="login" className="mt-6">
                   <form onSubmit={handleLogin} className="space-y-4">
                     <div className="space-y-2">
-                      <Label htmlFor="login-email" className="text-sm font-medium text-slate-700">
+                      <Label
+                        htmlFor="login-email"
+                        className="text-sm font-medium text-slate-700"
+                      >
                         Email
                       </Label>
 
@@ -305,7 +326,10 @@ const Auth = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="login-password" className="text-sm font-medium text-slate-700">
+                      <Label
+                        htmlFor="login-password"
+                        className="text-sm font-medium text-slate-700"
+                      >
                         Password
                       </Label>
 
@@ -327,7 +351,9 @@ const Auth = () => {
                           variant="ghost"
                           size="sm"
                           className="absolute right-2 top-1/2 h-9 w-9 -translate-y-1/2 rounded-xl p-0 text-slate-500 hover:bg-slate-100"
-                          onClick={() => setShowLoginPassword(!showLoginPassword)}
+                          onClick={() =>
+                            setShowLoginPassword(!showLoginPassword)
+                          }
                           tabIndex={-1}
                         >
                           {showLoginPassword ? (
@@ -385,7 +411,10 @@ const Auth = () => {
 
                   {showForgotPassword && (
                     <div className="mt-5 rounded-2xl border border-sky-100 bg-sky-50/70 p-4">
-                      <form onSubmit={handleForgotPassword} className="space-y-3">
+                      <form
+                        onSubmit={handleForgotPassword}
+                        className="space-y-3"
+                      >
                         <div>
                           <p className="text-sm font-semibold text-slate-950">
                             Reset Password
@@ -434,7 +463,10 @@ const Auth = () => {
                 <TabsContent value="signup" className="mt-6">
                   <form onSubmit={handleSignup} className="space-y-4">
                     <div className="space-y-2">
-                      <Label htmlFor="signup-name" className="text-sm font-medium text-slate-700">
+                      <Label
+                        htmlFor="signup-name"
+                        className="text-sm font-medium text-slate-700"
+                      >
                         Full Name
                       </Label>
 
@@ -460,7 +492,10 @@ const Auth = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="signup-email" className="text-sm font-medium text-slate-700">
+                      <Label
+                        htmlFor="signup-email"
+                        className="text-sm font-medium text-slate-700"
+                      >
                         Email
                       </Label>
 
@@ -486,7 +521,10 @@ const Auth = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="signup-password" className="text-sm font-medium text-slate-700">
+                      <Label
+                        htmlFor="signup-password"
+                        className="text-sm font-medium text-slate-700"
+                      >
                         Password
                       </Label>
 
@@ -508,7 +546,9 @@ const Auth = () => {
                           variant="ghost"
                           size="sm"
                           className="absolute right-2 top-1/2 h-9 w-9 -translate-y-1/2 rounded-xl p-0 text-slate-500 hover:bg-slate-100"
-                          onClick={() => setShowSignupPassword(!showSignupPassword)}
+                          onClick={() =>
+                            setShowSignupPassword(!showSignupPassword)
+                          }
                           tabIndex={-1}
                         >
                           {showSignupPassword ? (
@@ -527,7 +567,10 @@ const Auth = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="signup-confirm" className="text-sm font-medium text-slate-700">
+                      <Label
+                        htmlFor="signup-confirm"
+                        className="text-sm font-medium text-slate-700"
+                      >
                         Confirm Password
                       </Label>
 
@@ -536,10 +579,14 @@ const Auth = () => {
 
                         <Input
                           id="signup-confirm"
-                          type={showSignupConfirmPassword ? "text" : "password"}
+                          type={
+                            showSignupConfirmPassword ? "text" : "password"
+                          }
                           placeholder="Confirm password"
                           value={signupConfirmPassword}
-                          onChange={(e) => setSignupConfirmPassword(e.target.value)}
+                          onChange={(e) =>
+                            setSignupConfirmPassword(e.target.value)
+                          }
                           disabled={isLoading}
                           className="h-12 rounded-2xl border-slate-200 bg-white pl-11 pr-12 shadow-sm focus-visible:ring-sky-400"
                         />
@@ -550,7 +597,9 @@ const Auth = () => {
                           size="sm"
                           className="absolute right-2 top-1/2 h-9 w-9 -translate-y-1/2 rounded-xl p-0 text-slate-500 hover:bg-slate-100"
                           onClick={() =>
-                            setShowSignupConfirmPassword(!showSignupConfirmPassword)
+                            setShowSignupConfirmPassword(
+                              !showSignupConfirmPassword
+                            )
                           }
                           tabIndex={-1}
                         >
