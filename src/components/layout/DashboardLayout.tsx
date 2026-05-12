@@ -326,10 +326,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             </div>
 
             <div className="mt-3 min-w-0 text-center">
-              <p className="truncate text-[13px] font-semibold tracking-tight text-white">
+              <p className="truncate text-[14px] font-semibold tracking-tight text-white">
                 Mas Callnet HRMS
               </p>
-              <p className="truncate text-[11px] text-slate-400">
+              <p className="truncate text-[12px] text-slate-400">
                 Employee Portal
               </p>
             </div>
@@ -341,7 +341,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           <div className="space-y-5">
             {filteredNavGroups.map((group) => (
               <div key={group.title}>
-                <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                <p className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                   {group.title}
                 </p>
 
@@ -355,7 +355,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                         to={item.href}
                         onClick={() => setSidebarOpen(false)}
                         className={cn(
-                          "group flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-medium transition",
+                          "group flex items-center justify-between rounded-xl px-3 py-2.5 text-[13.5px] font-semibold transition",
                           active
                             ? "bg-white text-slate-950 shadow-lg shadow-slate-950/20"
                             : "text-slate-300 hover:bg-white/10 hover:text-white"
@@ -364,7 +364,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                         <span className="flex min-w-0 items-center gap-3">
                           <span
                             className={cn(
-                              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition",
+                              "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition",
                               active
                                 ? "bg-slate-100 text-slate-950"
                                 : "bg-white/5 text-slate-400 group-hover:bg-white/10 group-hover:text-white"
