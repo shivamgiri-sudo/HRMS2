@@ -2,6 +2,7 @@ import { ReactNode, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   BarChart3,
+  Bell,
   Building2,
   Calendar,
   CalendarDays,
@@ -59,7 +60,7 @@ interface DashboardLayoutProps {
   children: ReactNode;
 }
 
-const companyLogo = "/company-logo.png?v=31";
+const companyLogo = "/company-logo.png?v=51";
 
 const navGroups: NavGroup[] = [
   {
@@ -144,6 +145,13 @@ const navGroups: NavGroup[] = [
         href: "/performance",
         icon: <Target className="h-4 w-4" />,
         description: "Goals and performance",
+      },
+      {
+        label: "Reviews",
+        href: "/reviews-management",
+        icon: <ClipboardList className="h-4 w-4" />,
+        adminOnly: true,
+        description: "Performance reviews",
       },
       {
         label: "Assets",
@@ -253,10 +261,12 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   const SidebarContent = () => {
     return (
-      <div className="flex h-full flex-col bg-slate-950 text-slate-100">
-        <div className="border-b border-white/10 px-5 py-5">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white p-1.5 shadow-lg">
+      <div className="flex h-full flex-col bg-[#0f172a] text-slate-100">
+        <div className="relative border-b border-white/10 px-5 py-5">
+          <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.22),transparent_45%)]" />
+
+          <div className="relative flex items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white p-1.5 shadow-xl shadow-slate-950/30">
               <img
                 src={companyLogo}
                 alt="Company Logo"
@@ -265,7 +275,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             </div>
 
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold tracking-tight text-white">
+              <p className="truncate text-[13px] font-semibold tracking-tight text-white">
                 Mas Callnet HRMS
               </p>
               <p className="truncate text-[11px] text-slate-400">
@@ -275,7 +285,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-4">
+        <nav className="mcn-sidebar-scroll flex-1 overflow-y-auto px-3 py-4">
           <div className="space-y-5">
             {filteredNavGroups.map((group) => (
               <div key={group.title}>
@@ -295,7 +305,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                         className={cn(
                           "group flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-medium transition",
                           active
-                            ? "bg-white text-slate-950 shadow-md"
+                            ? "bg-white text-slate-950 shadow-lg shadow-slate-950/20"
                             : "text-slate-300 hover:bg-white/10 hover:text-white"
                         )}
                       >
@@ -376,17 +386,17 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         />
       )}
 
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[260px] border-r border-slate-900 bg-slate-950 shadow-2xl lg:block">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[260px] border-r border-slate-900 bg-[#0f172a] shadow-2xl lg:block">
         <SidebarContent />
       </aside>
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 w-[280px] bg-slate-950 shadow-2xl transition-transform duration-300 lg:hidden",
+          "fixed inset-y-0 left-0 z-50 w-[280px] bg-[#0f172a] shadow-2xl transition-transform duration-300 lg:hidden",
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
-        <div className="absolute right-3 top-3">
+        <div className="absolute right-3 top-3 z-10">
           <Button
             type="button"
             variant="ghost"
@@ -402,7 +412,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       </aside>
 
       <div className="min-h-screen lg:pl-[260px]">
-        <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 shadow-sm backdrop-blur">
+        <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 shadow-sm shadow-slate-200/50 backdrop-blur">
           <div className="flex min-h-[68px] items-center justify-between gap-4 px-4 sm:px-5 lg:px-6">
             <div className="flex min-w-0 items-center gap-3">
               <Button
@@ -442,7 +452,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 <Button
                   asChild
                   size="sm"
-                  className="hidden h-9 rounded-xl bg-slate-950 px-3 text-xs font-medium text-white hover:bg-slate-800 sm:inline-flex"
+                  className="hidden h-9 rounded-xl bg-slate-950 px-3 text-xs font-medium text-white shadow-sm hover:bg-slate-800 sm:inline-flex"
                 >
                   <Link to="/onboarding">
                     <UserPlus className="mr-2 h-3.5 w-3.5" />
@@ -453,7 +463,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 <Button
                   asChild
                   size="sm"
-                  className="hidden h-9 rounded-xl bg-slate-950 px-3 text-xs font-medium text-white hover:bg-slate-800 sm:inline-flex"
+                  className="hidden h-9 rounded-xl bg-slate-950 px-3 text-xs font-medium text-white shadow-sm hover:bg-slate-800 sm:inline-flex"
                 >
                   <Link to="/leaves">
                     <CalendarDays className="mr-2 h-3.5 w-3.5" />
@@ -462,7 +472,18 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 </Button>
               )}
 
-              {isAdminOrHR && <NotificationBell />}
+              {isAdminOrHR ? (
+                <NotificationBell />
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9 rounded-xl border-slate-200 bg-white text-slate-500 shadow-sm"
+                >
+                  <Bell className="h-4 w-4" />
+                </Button>
+              )}
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
