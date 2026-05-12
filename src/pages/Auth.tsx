@@ -26,7 +26,7 @@ import {
 import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 
-const companyLogo = "/company-logo.png";
+const companyLogo = "/mcn-logo.png";
 
 const loginSchema = z.object({
   email: z.string().trim().email("Please enter a valid email address"),
