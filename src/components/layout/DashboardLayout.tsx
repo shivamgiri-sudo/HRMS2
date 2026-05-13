@@ -125,6 +125,12 @@ const navGroups: NavGroup[] = [
         description: "Attendance records",
       },
       {
+        label: "Attendance Regularization",
+        href: "/attendance-regularization",
+        icon: <ClipboardList className="h-4 w-4" />,
+        description: "Attendance correction workflow",
+      },
+      {
         label: "Calendar",
         href: "/calendar",
         icon: <Calendar className="h-4 w-4" />,
