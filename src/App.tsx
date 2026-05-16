@@ -34,6 +34,17 @@ import Departments from "./pages/Departments";
 import CompanyCalendar from "./pages/CompanyCalendar";
 import NotificationPreferences from "./pages/NotificationPreferences";
 import Changelog from "./pages/Changelog";
+
+import ModuleLauncher from "./pages/ModuleLauncher";
+import NativeATSDashboard from "./pages/NativeATSDashboard";
+import NativeATSCandidateRegistration from "./pages/NativeATSCandidateRegistration";
+import NativeATSRecruiterDashboard from "./pages/NativeATSRecruiterDashboard";
+import NativeLMSMyLearning from "./pages/NativeLMSMyLearning";
+import NativeLMSCoordinator from "./pages/NativeLMSCoordinator";
+import NativeWFMRoster from "./pages/NativeWFMRoster";
+import UnifiedPerformanceCommandCenter from "./pages/UnifiedPerformanceCommandCenter";
+import UnifiedAccessControl from "./pages/UnifiedAccessControl";
+import NativePlaceholderPage from "./pages/NativePlaceholderPage";
 import Auth from "./pages/Auth";
 import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
@@ -222,6 +233,143 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <NotificationPreferences />
+                </ProtectedRoute>
+              }
+            />
+
+
+            {/* Native Workforce OS pages */}
+            <Route
+              path="/modules"
+              element={
+                <ProtectedRoute>
+                  <ModuleLauncher />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/ats/dashboard"
+              element={
+                <ProtectedRoute>
+                  <NativeATSDashboard />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/ats/candidate-registration"
+              element={
+                <ProtectedRoute>
+                  <NativeATSCandidateRegistration />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/ats/recruiter/my-candidates"
+              element={
+                <ProtectedRoute>
+                  <NativeATSRecruiterDashboard />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/ats/sourcing-analysis"
+              element={
+                <ProtectedRoute>
+                  <NativePlaceholderPage title="ATS Sourcing Analysis" module="ATS" />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/lms/my-learning"
+              element={
+                <ProtectedRoute>
+                  <NativeLMSMyLearning />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/lms/coordinator"
+              element={
+                <ProtectedRoute>
+                  <NativeLMSCoordinator />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/lms/admin"
+              element={
+                <ProtectedRoute>
+                  <NativePlaceholderPage title="LMS Admin" module="LMS" />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/lms/management-dashboard"
+              element={
+                <ProtectedRoute>
+                  <NativePlaceholderPage title="LMS Management Dashboard" module="LMS" />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/wfm/roster"
+              element={
+                <ProtectedRoute>
+                  <NativeWFMRoster />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/wfm/live-tracker"
+              element={
+                <ProtectedRoute>
+                  <NativePlaceholderPage title="WFM Live Tracker" module="WFM" />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/quality/dashboard"
+              element={
+                <ProtectedRoute>
+                  <NativePlaceholderPage title="Quality Dashboard" module="Quality" />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/operations/dashboard"
+              element={
+                <ProtectedRoute>
+                  <NativePlaceholderPage title="Operations Dashboard" module="Operations" />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/performance/command-center"
+              element={
+                <ProtectedRoute>
+                  <UnifiedPerformanceCommandCenter />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/settings/access-control"
+              element={
+                <ProtectedRoute>
+                  <UnifiedAccessControl />
                 </ProtectedRoute>
               }
             />

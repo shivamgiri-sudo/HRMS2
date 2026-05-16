@@ -64,6 +64,9 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   PROCESS_MASTER: "import_process_upload_batch",
   DEPARTMENT_MASTER: "import_department_upload_batch",
   ASSET_MASTER: "import_asset_upload_batch",
+  BRANCH_MASTER: "import_branch_upload_batch",
+  LOB_MASTER: "import_lob_upload_batch",
+  DESIGNATION_MASTER: "import_designation_upload_batch",
 };
 
 function getImportRpc(uploadTypeCode: string) {
@@ -347,6 +350,37 @@ function getFallbackSampleValue(
     notes: "Imported from Bulk Upload Hub",
   };
 
+  const branchSamples: Record<string, string> = {
+    branchcode: "OKAYA",
+    branchname: "Okaya",
+    city: "Noida",
+    state: "Uttar Pradesh",
+    country: "India",
+    active: "true",
+    activestatus: "true",
+    description: "Imported branch master record",
+  };
+
+  const lobSamples: Record<string, string> = {
+    lobcode: "ONF_KYC",
+    lobname: "KYC",
+    processcode: "ONF_KYC",
+    processname: "Onfido KYC",
+    active: "true",
+    activestatus: "true",
+    description: "Imported LOB master record",
+  };
+
+  const designationSamples: Record<string, string> = {
+    designationcode: "EXEC",
+    designationname: "Executive",
+    departmentname: "Operations",
+    level: "L1",
+    active: "true",
+    activestatus: "true",
+    description: "Imported designation master record",
+  };
+
   if (normalizedUploadType === "EMPLOYEE_MASTER" && normalizedHeader in employeeSamples) {
     return employeeSamples[normalizedHeader];
   }
@@ -361,6 +395,18 @@ function getFallbackSampleValue(
 
   if (normalizedUploadType === "ASSET_MASTER" && normalizedHeader in assetSamples) {
     return assetSamples[normalizedHeader];
+  }
+
+  if (normalizedUploadType === "BRANCH_MASTER" && normalizedHeader in branchSamples) {
+    return branchSamples[normalizedHeader];
+  }
+
+  if (normalizedUploadType === "LOB_MASTER" && normalizedHeader in lobSamples) {
+    return lobSamples[normalizedHeader];
+  }
+
+  if (normalizedUploadType === "DESIGNATION_MASTER" && normalizedHeader in designationSamples) {
+    return designationSamples[normalizedHeader];
   }
 
   if (normalizedHeader.includes("date")) return "16-05-2026";
@@ -386,13 +432,16 @@ function buildTemplateRow(template: UploadTemplate, includeSampleValues: boolean
   const isProcessMaster = uploadTypeCode === "PROCESS_MASTER";
   const isDepartmentMaster = uploadTypeCode === "DEPARTMENT_MASTER";
   const isAssetMaster = uploadTypeCode === "ASSET_MASTER";
+  const isBranchMaster = uploadTypeCode === "BRANCH_MASTER";
+  const isLobMaster = uploadTypeCode === "LOB_MASTER";
+  const isDesignationMaster = uploadTypeCode === "DESIGNATION_MASTER";
 
   return getTemplateHeaders(template).map((header) => {
     if (!includeSampleValues) return "";
 
-    // Employee Master, Process Master, Department Master, and Asset Master must always use frontend-safe sample values first.
+    // Core HRMS master imports must always use frontend-safe sample values first.
     // This prevents unsafe database sample values from causing avoidable upload errors when the sample is uploaded directly.
-    if (isEmployeeMaster || isProcessMaster || isDepartmentMaster || isAssetMaster) {
+    if (isEmployeeMaster || isProcessMaster || isDepartmentMaster || isAssetMaster || isBranchMaster || isLobMaster || isDesignationMaster) {
       return getFallbackSampleValue(
         template.upload_type_code,
         header,
@@ -442,6 +491,9 @@ function buildTemplateGuide(template: UploadTemplate) {
     "8. For Department Master, keep ManagerCode and ManagerEmail blank unless that manager already exists in Employee Master.",
     "9. For Asset Master, Status should be a valid HRMS asset status such as available, assigned, maintenance, retired, or lost.",
     "10. For Asset Master, PurchaseDate and WarrantyEndDate must use DD-MM-YYYY format.",
+    "11. For Branch Master, BranchCode must be unique, for example OKAYA or TPZ.",
+    "12. For LOB Master, ProcessCode or ProcessName should match an existing Process Master record.",
+    "13. For Designation Master, DepartmentName should exactly match an existing HRMS department, for example Operations.",
     "",
     "Column order:",
     ...headers.map((header, index) => `${index + 1}. ${header}${required.has(header) ? "  [Required]" : "  [Optional]"}`),
@@ -878,7 +930,7 @@ export default function BulkUploadHub() {
                 </h1>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
                   Manage upload templates, upload CSV/Excel files, stage rows,
-                  validate required columns, and import validated Employee Master, Process Master, Department Master, and Asset Master rows directly into HRMS.
+                  validate required columns, and import validated Employee, Process, Department, Asset, Branch, LOB, and Designation master rows directly into HRMS.
                 </p>
               </div>
 

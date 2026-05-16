@@ -1,7 +1,9 @@
 import { type FormEvent, type ReactNode, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
+  Activity,
   BarChart3,
+  BookOpen,
   Bell,
   Building2,
   Calendar,
@@ -14,6 +16,7 @@ import {
   LogOut,
   Menu,
   Package,
+  ShieldCheck,
   Search,
   Settings,
   Target,
@@ -72,6 +75,12 @@ const navGroups: NavGroup[] = [
         href: "/dashboard",
         icon: <Home className="h-4 w-4" />,
         description: "Workspace overview",
+      },
+      {
+        label: "My Modules",
+        href: "/modules",
+        icon: <Package className="h-4 w-4" />,
+        description: "Role-wise ATS, LMS, WFM and performance modules",
       },
       {
         label: "Reports",
@@ -180,6 +189,71 @@ const navGroups: NavGroup[] = [
         icon: <CreditCard className="h-4 w-4" />,
         adminOnly: true,
         description: "Payroll workspace",
+      },
+    ],
+  },
+  {
+    title: "Workforce OS",
+    items: [
+      {
+        label: "ATS Dashboard",
+        href: "/ats/dashboard",
+        icon: <UserPlus className="h-4 w-4" />,
+        adminOnly: true,
+        description: "Recruitment command center",
+      },
+      {
+        label: "My Candidate Queue",
+        href: "/ats/recruiter/my-candidates",
+        icon: <ClipboardList className="h-4 w-4" />,
+        description: "Assigned recruitment queue",
+      },
+      {
+        label: "My Learning",
+        href: "/lms/my-learning",
+        icon: <BookOpen className="h-4 w-4" />,
+        description: "Learning path and assigned modules",
+      },
+      {
+        label: "LMS Coordinator",
+        href: "/lms/coordinator",
+        icon: <Users className="h-4 w-4" />,
+        adminOnly: true,
+        description: "Training batch and trainee coordination",
+      },
+      {
+        label: "Roster Planning",
+        href: "/wfm/roster",
+        icon: <Clock className="h-4 w-4" />,
+        adminOnly: true,
+        description: "WFM roster and shift planning",
+      },
+      {
+        label: "Quality Dashboard",
+        href: "/quality/dashboard",
+        icon: <ShieldCheck className="h-4 w-4" />,
+        adminOnly: true,
+        description: "Quality, defects and coaching",
+      },
+      {
+        label: "Operations Dashboard",
+        href: "/operations/dashboard",
+        icon: <Activity className="h-4 w-4" />,
+        adminOnly: true,
+        description: "Process productivity and SLA",
+      },
+      {
+        label: "Performance Command Center",
+        href: "/performance/command-center",
+        icon: <BarChart3 className="h-4 w-4" />,
+        description: "Date/month filtered performance intelligence",
+      },
+      {
+        label: "Access Control",
+        href: "/settings/access-control",
+        icon: <Settings className="h-4 w-4" />,
+        adminOnly: true,
+        description: "Role and page access management",
       },
     ],
   },
