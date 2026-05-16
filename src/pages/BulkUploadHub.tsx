@@ -66,6 +66,7 @@ const statusClass: Record<string, string> = {
   validation_failed: "bg-amber-50 text-amber-700 border-amber-200",
   importing: "bg-indigo-50 text-indigo-700 border-indigo-200",
   imported: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  imported_with_errors: "bg-amber-50 text-amber-700 border-amber-200",
   failed: "bg-rose-50 text-rose-700 border-rose-200",
   cancelled: "bg-slate-100 text-slate-500 border-slate-200",
 };
@@ -208,8 +209,9 @@ export default function BulkUploadHub() {
       batches: batches.length,
       validated: batches.filter((batch) => batch.batch_status === "validated")
         .length,
-      imported: batches.filter((batch) => batch.batch_status === "imported")
-        .length,
+      imported: batches.filter((batch) =>
+        ["imported", "imported_with_errors"].includes(batch.batch_status)
+      ).length,
       errors: batches.reduce((total, batch) => total + batch.error_rows, 0),
     };
   }, [templates, batches]);
@@ -316,6 +318,10 @@ export default function BulkUploadHub() {
 
   function validateRows(template: UploadTemplate, rows: CsvRow[]) {
     const requiredColumns = template.required_columns || [];
+    const allowedColumns = new Set([
+      ...(template.required_columns || []),
+      ...(template.optional_columns || []),
+    ]);
 
     return rows.map((row, index) => {
       const errors: string[] = [];
@@ -325,6 +331,12 @@ export default function BulkUploadHub() {
 
         if (value === undefined || value === null || String(value).trim() === "") {
           errors.push(`${column} is required`);
+        }
+      });
+
+      Object.keys(row).forEach((column) => {
+        if (column && !allowedColumns.has(column)) {
+          errors.push(`Unknown column: ${column}`);
         }
       });
 
@@ -461,56 +473,33 @@ export default function BulkUploadHub() {
     }
   }
 
-  async function markValidRowsAsImported(batch: UploadBatch) {
+  async function importBatchToTarget(batch: UploadBatch) {
     setMessage(null);
     setErrorMessage(null);
     setIsProcessing(true);
 
     try {
-      const { data: rows, error: rowLoadError } = await db
-        .from("upload_batch_row")
-        .select("*")
-        .eq("upload_batch_id", batch.id)
-        .eq("row_status", "valid");
-
-      if (rowLoadError) throw new Error(rowLoadError.message);
-
-      const validRows = (rows || []) as UploadBatchRow[];
-
-      if (validRows.length === 0) {
-        throw new Error("No valid rows available to import.");
+      if (batch.upload_type_code !== "EMPLOYEE_MASTER") {
+        throw new Error(
+          `Import mapping for ${batch.upload_type_code} is not enabled yet. This upload can be staged and validated, but only Employee Master import is production-enabled in this fix.`
+        );
       }
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const { data, error } = await db.rpc("import_upload_batch", {
+        p_batch_id: batch.id,
+      });
 
-      const { error: rowUpdateError } = await db
-        .from("upload_batch_row")
-        .update({
-          row_status: "imported",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("upload_batch_id", batch.id)
-        .eq("row_status", "valid");
+      if (error) throw new Error(error.message);
 
-      if (rowUpdateError) throw new Error(rowUpdateError.message);
-
-      const { error: batchUpdateError } = await db
-        .from("upload_batch")
-        .update({
-          imported_rows: validRows.length,
-          batch_status:
-            batch.error_rows > 0 ? "imported_with_errors" : "imported",
-          imported_by: user?.id || null,
-          imported_at: new Date().toISOString(),
-        })
-        .eq("id", batch.id);
-
-      if (batchUpdateError) throw new Error(batchUpdateError.message);
+      const result = data || {};
+      if (result.ok === false) {
+        throw new Error(result.message || "Import action failed.");
+      }
 
       setMessage(
-        "Valid rows marked as imported. Target-table insert logic can be attached per upload type next."
+        `Import completed. Imported ${result.importedRows || 0} row(s). ${
+          result.errorRows ? `${result.errorRows} row(s) failed and are visible in View Rows.` : ""
+        }`
       );
 
       await loadData();
@@ -539,7 +528,7 @@ export default function BulkUploadHub() {
                 </h1>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
                   Manage upload templates, upload CSV/Excel files, stage rows,
-                  validate required columns, and track upload batches.
+                  validate required columns, and import validated Employee Master rows directly into HRMS.
                 </p>
               </div>
 
@@ -844,11 +833,11 @@ export default function BulkUploadHub() {
 
                               {batch.valid_rows > batch.imported_rows && (
                                 <button
-                                  onClick={() => markValidRowsAsImported(batch)}
+                                  onClick={() => importBatchToTarget(batch)}
                                   disabled={isProcessing}
                                   className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
                                 >
-                                  Mark Imported
+                                  Import to HRMS
                                 </button>
                               )}
                             </div>
