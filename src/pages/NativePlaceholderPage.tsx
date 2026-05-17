@@ -1,6 +1,7 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import NativeLMSAdmin from "./NativeLMSAdmin";
 import NativeLMSManagementDashboard from "./NativeLMSManagementDashboard";
+import NativeWFMLiveTracker from "./NativeWFMLiveTracker";
 
 export default function NativePlaceholderPage({ title, module }: { title: string; module: string }) {
   if (title === "LMS Admin") {
@@ -9,6 +10,10 @@ export default function NativePlaceholderPage({ title, module }: { title: string
 
   if (title === "LMS Management Dashboard") {
     return <NativeLMSManagementDashboard />;
+  }
+
+  if (title === "WFM Live Tracker") {
+    return <NativeWFMLiveTracker />;
   }
 
   return (
