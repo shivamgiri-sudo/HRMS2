@@ -200,70 +200,91 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const userInitials = user?.email?.slice(0, 2).toUpperCase() || "MC";
 
   const SidebarContent = () => (
-    <div className="flex h-full flex-col">
-      <div className="flex h-16 items-center gap-3 border-b border-sidebar-border px-4">
-        <Link to="/dashboard" className="flex items-center gap-3">
-          {logoError ? (
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sidebar-accent text-sm font-bold text-sidebar-accent-foreground">MCN</div>
-          ) : (
-            <img src={companyLogo} alt="MAS Callnet" className="h-9 w-9 rounded-xl object-contain" onError={() => setLogoError(true)} />
-          )}
-          <div>
-            <p className="text-sm font-bold leading-tight text-sidebar-foreground">MAS Callnet</p>
-            <p className="text-xs text-sidebar-foreground/60">HRMS</p>
-          </div>
-        </Link>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-3">
-        {filteredNavGroups.map((group) => (
-          <div key={group.title} className="mb-5">
-            <p className="mb-2 px-2 text-xs font-semibold uppercase tracking-wider text-sidebar-foreground/50">{group.title}</p>
-            <div className="space-y-1">
-              {group.items.map((item) => {
-                const isActive = location.pathname === item.href || location.pathname.startsWith(item.href + "/");
-                return (
-                  <Link
-                    key={item.href}
-                    to={item.href}
-                    onClick={() => setSidebarOpen(false)}
-                    className={cn(
-                      "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
-                      isActive
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-soft"
-                        : "text-sidebar-foreground/75 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-                    )}
-                  >
-                    <span className={cn("transition-transform group-hover:scale-110", isActive && "text-sidebar-accent-foreground")}>{item.icon}</span>
-                    <span className="flex-1 truncate">{item.label}</span>
-                    {item.badge && <Badge variant="secondary" className="h-5 min-w-5 rounded-full px-1.5 text-xs">{item.badge}</Badge>}
-                    {isActive && <ChevronRight className="h-4 w-4" />}
-                  </Link>
-                );
-              })}
+    <div className="flex h-full flex-col bg-[#0f172a] text-slate-100">
+      <div className="relative border-b border-white/10 px-4 py-4">
+        <div className="absolute inset-x-0 top-0 h-32 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.26),transparent_48%)]" />
+        <div className="relative rounded-2xl border border-white/10 bg-white/[0.05] p-3 shadow-xl shadow-slate-950/20">
+          <Link to="/dashboard">
+            <div className="flex h-[82px] items-center justify-center rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-200 px-4 py-3 shadow-lg">
+              {logoError ? (
+                <div className="flex h-full w-full items-center justify-center rounded-xl bg-slate-950 text-lg font-bold tracking-wide text-white">MCN</div>
+              ) : (
+                <img src={companyLogo} alt="MAS Callnet" className="block h-16 w-full max-w-[215px] object-contain drop-shadow-md" onError={() => setLogoError(true)} />
+              )}
             </div>
-          </div>
-        ))}
+            <div className="mt-3 min-w-0 text-center">
+              <p className="truncate text-[14px] font-semibold tracking-tight text-white">MAS Callnet HRMS</p>
+              <p className="truncate text-[12px] text-slate-400">Employee Portal</p>
+            </div>
+          </Link>
+        </div>
       </div>
 
-      <div className="border-t border-sidebar-border p-3">
-        <Badge variant="outline" className="mb-2 w-full justify-center border-sidebar-border text-sidebar-foreground/70">v{displayVersion}</Badge>
+      <nav className="mcn-sidebar-scroll flex-1 overflow-y-auto px-3 py-4">
+        <div className="space-y-5">
+          {filteredNavGroups.map((group) => (
+            <div key={group.title}>
+              <p className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{group.title}</p>
+              <div className="space-y-1">
+                {group.items.map((item) => {
+                  const isActive = location.pathname === item.href || location.pathname.startsWith(item.href + "/");
+                  return (
+                    <Link
+                      key={`${group.title}-${item.label}`}
+                      to={item.href}
+                      onClick={() => setSidebarOpen(false)}
+                      className={cn(
+                        "group flex items-center justify-between rounded-xl px-3 py-2.5 text-[13.5px] font-semibold transition",
+                        isActive
+                          ? "bg-white text-slate-950 shadow-lg shadow-slate-950/20"
+                          : "text-slate-300 hover:bg-white/10 hover:text-white"
+                      )}
+                    >
+                      <span className="flex min-w-0 items-center gap-3">
+                        <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition", isActive ? "bg-slate-100 text-slate-950" : "bg-white/5 text-slate-400 group-hover:bg-white/10 group-hover:text-white")}>
+                          {item.icon}
+                        </span>
+                        <span className="truncate">{item.label}</span>
+                      </span>
+                      {item.badge ? (
+                        <Badge className="ml-2 h-5 rounded-full bg-cyan-100 px-2 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-100">{item.badge}</Badge>
+                      ) : isActive ? (
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+                      ) : null}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </nav>
+
+      <div className="border-t border-white/10 p-3">
+        <Link to="/changelog" onClick={() => setSidebarOpen(false)} className="flex items-center justify-center rounded-xl px-3 py-2 text-[11px] text-slate-500 transition hover:bg-white/5 hover:text-slate-300">
+          v{displayVersion}
+        </Link>
       </div>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-background">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 border-r border-sidebar-border bg-sidebar lg:block"><SidebarContent /></aside>
-      {sidebarOpen && <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setSidebarOpen(false)} />}
-      <aside className={cn("fixed inset-y-0 left-0 z-50 w-72 border-r border-sidebar-border bg-sidebar transition-transform duration-300 lg:hidden", sidebarOpen ? "translate-x-0" : "-translate-x-full")}>
-        <div className="absolute right-3 top-3"><Button variant="ghost" size="icon" onClick={() => setSidebarOpen(false)}><X className="h-5 w-5" /></Button></div>
+    <div className="min-h-screen bg-[#f3f6fb] text-slate-900">
+      <PWAInstallBanner />
+      {sidebarOpen && (
+        <button type="button" aria-label="Close sidebar" className="fixed inset-0 z-40 bg-slate-950/50 backdrop-blur-sm lg:hidden" onClick={() => setSidebarOpen(false)} />
+      )}
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[260px] border-r border-slate-900 bg-[#0f172a] shadow-2xl lg:block"><SidebarContent /></aside>
+      <aside className={cn("fixed inset-y-0 left-0 z-50 w-[280px] bg-[#0f172a] shadow-2xl transition-transform duration-300 lg:hidden", sidebarOpen ? "translate-x-0" : "-translate-x-full")}>
+        <div className="absolute right-3 top-3 z-10">
+          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-slate-300 hover:bg-white/10 hover:text-white" onClick={() => setSidebarOpen(false)}><X className="h-4 w-4" /></Button>
+        </div>
         <SidebarContent />
       </aside>
-      <div className="lg:pl-72">
-        <header className="sticky top-0 z-20 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/75">
-          <div className="flex h-16 items-center gap-4 px-4 sm:px-6">
-            <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSidebarOpen(true)}><Menu className="h-5 w-5" /></Button>
+      <div className="min-h-screen lg:pl-[260px]">
+        <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 shadow-sm shadow-slate-200/50 backdrop-blur">
+          <div className="flex min-h-[68px] items-center gap-4 px-4 sm:px-5 lg:px-6">
+            <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 rounded-xl text-slate-600 hover:bg-slate-100 lg:hidden" onClick={() => setSidebarOpen(true)}><Menu className="h-5 w-5" /></Button>
             <form onSubmit={handleSearchSubmit} className="relative max-w-md flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search modules, people, reports..." className="pl-10" />
@@ -278,6 +299,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 </div>
               )}
             </form>
+            <div className="ml-auto flex shrink-0 items-center gap-2">
             <NotificationBell />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -292,9 +314,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 <DropdownMenuItem onClick={handleSignOut} disabled={isSigningOut}><LogOut className="mr-2 h-4 w-4" />{isSigningOut ? "Signing out..." : "Sign out"}</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            </div>
           </div>
         </header>
-        <main className="p-4 sm:p-6 lg:p-8"><PWAInstallBanner />{children}</main>
+        <main className="px-4 py-5 sm:px-5 lg:px-6">{children}</main>
       </div>
     </div>
   );
