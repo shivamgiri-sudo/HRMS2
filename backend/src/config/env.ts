@@ -12,7 +12,15 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   SUPABASE_ANON_KEY: z.string().min(1),
 
-  ACTIVE_DB_PROVIDER: z.enum(["supabase", "sqlserver"]).default("supabase")
+  ACTIVE_DB_PROVIDER: z.enum(["supabase", "sqlserver", "mysql"]).default("supabase"),
+
+  // MySQL (mas_hrms) — optional, only required when ACTIVE_DB_PROVIDER includes mysql modules
+  DB_HOST:     z.string().default("localhost"),
+  DB_PORT:     z.coerce.number().default(3306),
+  DB_USER:     z.string().default("root"),
+  DB_PASSWORD: z.string().default(""),
+  DB_NAME:     z.string().default("mas_hrms"),
+  DB_POOL_MAX: z.coerce.number().default(10),
 });
 
 const parsed = envSchema.safeParse(process.env);
