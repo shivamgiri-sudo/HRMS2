@@ -21,6 +21,12 @@ const envSchema = z.object({
   DB_PASSWORD: z.string().default(""),
   DB_NAME:     z.string().default("mas_hrms"),
   DB_POOL_MAX: z.coerce.number().default(10),
+  PORTAL_JWT_SECRET: z.string().min(32).default("change-me-in-production-portal-secret-32ch"),
+  SMTP_HOST:   z.string().default("smtp.gmail.com"),
+  SMTP_PORT:   z.coerce.number().default(587),
+  SMTP_USER:   z.string().default(""),
+  SMTP_PASS:   z.string().default(""),
+  SMTP_FROM:   z.string().default("noreply@mascallnet.com"),
 });
 
 const parsed = envSchema.safeParse(process.env);
