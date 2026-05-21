@@ -13,6 +13,7 @@ import { leaveRouter } from "./modules/leave/leave.routes.js";
 import { payrollRouter } from "./modules/payroll/payroll.routes.js";
 import { employeeRouter } from "./modules/employees/employee.routes.js";
 import { kpiRouter } from "./modules/kpi/kpi.routes.js";
+import { portalRouter } from "./modules/portal/portal.routes.js";
 
 export const app = express();
 
@@ -49,6 +50,7 @@ app.use("/api/leave", leaveRouter);
 app.use("/api/payroll", payrollRouter);
 app.use("/api/employees", employeeRouter);
 app.use("/api/kpi", kpiRouter);
+app.use("/api/portal", portalRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

@@ -25,6 +25,13 @@ export function errorHandler(
   }
 
   if (error instanceof Error) {
+    const statusCode = (error as Error & { statusCode?: number }).statusCode;
+    if (statusCode && statusCode >= 400 && statusCode < 600) {
+      return res.status(statusCode).json({
+        success: false,
+        message: error.message
+      });
+    }
     return res.status(500).json({
       success: false,
       message: error.message
