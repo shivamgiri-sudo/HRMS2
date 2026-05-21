@@ -29,6 +29,20 @@ function assertProcessAccess(req: ClientAuthRequest): void {
   }
 }
 
+async function assertCommentaryAccess(req: ClientAuthRequest): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT process_id FROM management_commentary WHERE id = ? LIMIT 1",
+    [req.params.id]
+  );
+  const processId = (rows as RowDataPacket[])[0]?.process_id as string | undefined;
+  if (!processId) {
+    throw Object.assign(new Error("Commentary not found"), { statusCode: 404 });
+  }
+  if (!req.portalUser!.processIds.includes(processId)) {
+    throw Object.assign(new Error("Process not in your access list"), { statusCode: 403 });
+  }
+}
+
 async function logAccess(req: ClientAuthRequest, page: string): Promise<void> {
   try {
     await db.execute(
@@ -114,11 +128,13 @@ export const portalController = {
   },
 
   async acknowledgeCommentary(req: ClientAuthRequest, res: Response) {
+    await assertCommentaryAccess(req);
     await portalCommentaryService.acknowledge(req.params.id, req.portalUser!.clientUserId);
     res.json({ ok: true });
   },
 
   async replyCommentary(req: ClientAuthRequest, res: Response) {
+    await assertCommentaryAccess(req);
     const parsed = replyCommentarySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     await portalCommentaryService.addReply(req.params.id, req.portalUser!.clientUserId, parsed.data.text);
@@ -174,7 +190,9 @@ export const portalController = {
       [id, parsed.data.clientId, parsed.data.email, parsed.data.name, parsed.data.designation ?? null, JSON.stringify(parsed.data.processIds)]
     );
     const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM client_user WHERE id = ? LIMIT 1", [id]);
-    res.status(201).json({ data: (rows as RowDataPacket[])[0] });
+    const created = (rows as RowDataPacket[])[0];
+    if (!created) throw new Error("Failed to fetch created client user");
+    res.status(201).json({ data: created });
   },
 
   async listClientUsers(_req: Request, res: Response) {
