@@ -43,7 +43,11 @@ export const portalAuthService = {
       [randomUUID(), email, hash, expiresAt.toISOString().slice(0, 19).replace("T", " ")]
     );
 
-    await portalAuthService.sendOtpEmail(email, otp);
+    try {
+      await portalAuthService.sendOtpEmail(email, otp);
+    } catch (err) {
+      console.error("Failed to send OTP email:", err);
+    }
   },
 
   async verifyOtp(email: string, otp: string): Promise<string> {
@@ -65,12 +69,17 @@ export const portalAuthService = {
       "SELECT id, client_id, process_ids FROM client_user WHERE email = ? AND is_active = 1 LIMIT 1",
       [email]
     );
-    const user = (userRows as RowDataPacket[])[0] as ClientUser & RowDataPacket;
-    if (!user) throw new Error("User not found");
+    const user = (userRows as RowDataPacket[])[0];
+    if (!user || !user.id || !user.client_id || !user.process_ids) throw new Error("User not found");
 
-    const processIds: string[] = typeof user.process_ids === "string"
-      ? JSON.parse(user.process_ids)
-      : user.process_ids;
+    let processIds: string[];
+    try {
+      processIds = typeof user.process_ids === "string"
+        ? JSON.parse(user.process_ids)
+        : (user.process_ids as string[]);
+    } catch {
+      throw new Error("Invalid process_ids data");
+    }
 
     return portalAuthService.issueToken({
       clientUserId: user.id,
@@ -92,5 +101,6 @@ export const portalAuthService = {
       subject: "Your MAS Callnet Portal OTP",
       text: `Your one-time password is: ${otp}\n\nValid for 10 minutes. Do not share this code.`,
     });
+    await transport.close();
   },
 };
