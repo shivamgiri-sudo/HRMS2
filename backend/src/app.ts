@@ -12,6 +12,7 @@ import { wfmRouter } from "./modules/wfm/wfm.routes.js";
 import { leaveRouter } from "./modules/leave/leave.routes.js";
 import { payrollRouter } from "./modules/payroll/payroll.routes.js";
 import { employeeRouter } from "./modules/employees/employee.routes.js";
+import { kpiRouter } from "./modules/kpi/kpi.routes.js";
 
 export const app = express();
 
@@ -47,6 +48,7 @@ app.use("/api/wfm", wfmRouter);
 app.use("/api/leave", leaveRouter);
 app.use("/api/payroll", payrollRouter);
 app.use("/api/employees", employeeRouter);
+app.use("/api/kpi", kpiRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
