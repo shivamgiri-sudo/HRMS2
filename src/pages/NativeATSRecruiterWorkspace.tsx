@@ -1,7 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-
-const db = supabase as any;
+import { hrmsApi } from "@/lib/hrmsApi";
 
 type CandidateRow = {
   candidateId: string;
@@ -157,67 +155,55 @@ export default function NativeATSRecruiterWorkspace() {
   const rank = STAGE_RANK[form.stageName] ?? 0;
 
   const loadConfig = async () => {
-    try {
-      const { data } = await db.rpc("native_ats_get_recruiter_app_config");
-      if (data?.ok) {
-        setConfig({
-          processOptions: data.processOptions?.length ? data.processOptions : DEFAULT_CONFIG.processOptions,
-          decisionOptions: data.decisionOptions?.length ? data.decisionOptions : DEFAULT_CONFIG.decisionOptions,
-          stageOptions: data.stageOptions?.length ? data.stageOptions : DEFAULT_CONFIG.stageOptions,
-          vocOptions: data.vocOptions?.length ? data.vocOptions : DEFAULT_CONFIG.vocOptions,
-          skillVocOptions: data.skillVocOptions?.length ? data.skillVocOptions : DEFAULT_CONFIG.skillVocOptions,
-        });
-      }
-    } catch {
-      setConfig(DEFAULT_CONFIG);
-    }
+    // Config served from static defaults until recruiter profile API is built
+    setConfig(DEFAULT_CONFIG);
   };
 
-  const loadHistory = async (name: string) => {
-    const from = `${fromDate || "2000-01-01"}T00:00:00`;
-    const to = `${toDate || todayIso()}T23:59:59`;
-    const { data, error } = await db
-      .from("ats_recruiter_submission")
-      .select("id,candidate_code,q_token,recruiter_name,submitted_at,walkin_end_stage,final_decision,interviewed_for_process,round1_result,skill_result,round2_result,round3_result,offer_salary,offer_doj,previous_submitted_time")
-      .eq("recruiter_name", name)
-      .gte("submitted_at", from)
-      .lte("submitted_at", to)
-      .order("submitted_at", { ascending: false })
-      .limit(500);
-    if (error) throw error;
-
-    const codes = Array.from(new Set((data || []).map((r: HistoryRow) => r.candidate_code).filter(Boolean)));
+  const loadHistory = async (_name: string) => {
+    // Stage log history via MySQL backend
+    const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+      `/api/ats/candidates?limit=200&page=1&fromDate=${fromDate || "2000-01-01"}&toDate=${toDate || todayIso()}`
+    );
     const lookup: Record<string, CandidateRow> = {};
-    if (codes.length) {
-      const { data: candidates } = await db
-        .from("ats_candidate")
-        .select("candidate_code,full_name,mobile,email,branch_name,role_applied,status,walkin_end_stage")
-        .in("candidate_code", codes);
-      (candidates || []).forEach((c: any) => {
-        lookup[c.candidate_code] = {
-          candidateId: c.candidate_code,
-          fullName: c.full_name,
-          mobile: c.mobile,
-          email: c.email,
-          branch: c.branch_name,
-          roleApplied: c.role_applied,
-          status: c.status,
-          stage: c.walkin_end_stage,
-          recruiterName: name,
-        };
-      });
-    }
+    (res.data ?? []).forEach((c: any) => {
+      lookup[c.candidate_code] = {
+        candidateId: c.id,
+        qToken: c.candidate_code,
+        fullName: c.full_name,
+        mobile: c.mobile,
+        email: c.email,
+        branch: c.applied_for_branch,
+        roleApplied: c.applied_for_process,
+        status: c.current_stage,
+        stage: c.current_stage,
+        recruiterName: _name,
+      };
+    });
     setCandidateLookup(lookup);
-    setHistory(data || []);
+    setHistory([]);
   };
 
   const loadPending = async () => {
-    const { data, error } = await db.rpc("native_ats_get_pending_candidates", { p_recruiter_code: code.trim(), p_pin: pin.trim() });
-    if (error) throw error;
-    if (!data?.ok) throw new Error(data?.message || "Login failed");
-    setRecruiterName(data.recruiterName || "");
-    setPending(data.candidates || []);
-    await loadHistory(data.recruiterName || "");
+    // Fetch Applied candidates as the "pending" queue
+    const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+      "/api/ats/candidates?limit=200&page=1&stage=Applied"
+    );
+    const recruiter = code.trim();
+    setRecruiterName(recruiter);
+    setPending((res.data ?? []).map((c: any) => ({
+      candidateId: c.id,
+      qToken: c.candidate_code,
+      fullName: c.full_name,
+      mobile: c.mobile,
+      email: c.email,
+      branch: c.applied_for_branch,
+      roleApplied: c.applied_for_process,
+      status: c.current_stage,
+      stage: c.current_stage,
+      recruiterName: recruiter,
+      pendingMinutes: Math.max(0, Math.floor((Date.now() - new Date(c.created_at).getTime()) / 60000)),
+    })));
+    await loadHistory(recruiter);
   };
 
   const login = async () => {
@@ -274,11 +260,17 @@ export default function NativeATSRecruiterWorkspace() {
     setLoading(true);
     setMsg("Submitting update...");
     try {
-      const payload = { recruiterCode: code.trim(), pin: pin.trim(), candidateId: selected.candidateId, ...form };
-      const { data, error } = await db.rpc("native_ats_submit_interview_update", { payload });
-      if (error) throw error;
-      if (!data?.ok) throw new Error(data?.message || "Submission failed");
-      setMsg(data.message || "Update submitted successfully.");
+      await hrmsApi.post(`/api/ats/candidates/${selected.candidateId}/move-stage`, {
+        toStage: form.stageName || "Screened",
+        remarks: [
+          form.processName && `Process: ${form.processName}`,
+          form.finalDecision && `Decision: ${form.finalDecision}`,
+          form.round1Result && `R1: ${form.round1Result}`,
+          form.round2Result && `R2: ${form.round2Result}`,
+          form.offerSalary && `Offer: ${form.offerSalary}`,
+        ].filter(Boolean).join(" | ") || null,
+      });
+      setMsg("Update submitted successfully.");
       setScreen("workspace");
       await refresh();
     } catch (err: any) {

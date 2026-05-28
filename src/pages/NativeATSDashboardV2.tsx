@@ -257,10 +257,11 @@ export default function NativeATSDashboardV2() {
     setConverting(row.id);
     setMessage("");
     try {
-      const { data, error } = await db.rpc("native_ats_convert_selected_candidate_to_employee", { p_candidate_id: row.id, p_employee_code: null });
-      if (error) throw error;
-      if (!data?.ok) throw new Error(data?.message || "Conversion failed");
-      setMessage(`${data.message || "Moved to HRMS onboarding."} Employee Code: ${data.employeeCode || "-"}`);
+      await hrmsApi.post("/api/ats/onboarding-bridge", {
+        candidateId: row.id,
+        bridgeDate: new Date().toISOString().slice(0, 10),
+      });
+      setMessage("Moved to HRMS onboarding. HR can now assign employee code.");
       await loadData();
     } catch (err: any) {
       setMessage(err?.message || "Unable to move candidate to HRMS onboarding");

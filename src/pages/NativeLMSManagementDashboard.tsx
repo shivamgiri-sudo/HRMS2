@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BarChart3, BookOpen, CheckCircle2, Clock, RefreshCcw, ShieldCheck, Users } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { supabase } from "@/integrations/supabase/client";
 
-const db = supabase as any;
 
 type AnyRow = Record<string, any>;
 const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : 0);

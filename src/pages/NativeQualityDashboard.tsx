@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, RefreshCcw, Search, ShieldCheck, Target, Users } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { supabase } from "@/integrations/supabase/client";
 
-const db = supabase as any;
 type Row = Record<string, any>;
 
 const today = () => new Date().toISOString().slice(0, 10);

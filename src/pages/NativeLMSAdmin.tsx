@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BookOpen, ClipboardList, FileQuestion, Layers, Plus, RefreshCcw, Send, ShieldCheck } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { supabase } from "@/integrations/supabase/client";
 
-const db = supabase as any;
 
 type AnyRow = Record<string, any>;
 
