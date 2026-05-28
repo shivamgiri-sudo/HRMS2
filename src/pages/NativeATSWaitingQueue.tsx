@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Clock, RefreshCcw, Search, Users } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { supabase } from "@/integrations/supabase/client";
+import { hrmsApi } from "@/lib/hrmsApi";
 
-const db = supabase as any;
 
 type Candidate = {
   id: string;
@@ -89,46 +88,26 @@ export default function NativeATSWaitingQueue() {
     setLoading(true);
     setMessage("");
     try {
-      const { data: candidates, error } = await db
-        .from("ats_candidate")
-        .select("id,candidate_code,full_name,mobile,email,branch_name,role_applied,recruiter_name,status,walkin_end_stage,created_at")
-        .order("created_at", { ascending: false })
-        .limit(1000);
-      if (error) throw error;
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+        "/api/ats/candidates?limit=500&page=1&stage=Applied"
+      );
 
-      const ids = (candidates || []).map((r: Candidate) => r.id).filter(Boolean);
-      const codes = (candidates || []).map((r: Candidate) => r.candidate_code).filter(Boolean);
-
-      const [{ data: assignments }, { data: submissions }] = await Promise.all([
-        ids.length
-          ? db.from("ats_candidate_assignment").select("candidate_id,recruiter_name,recruiter_mobile,recruiter_email,branch_name,assignment_status,assigned_at").in("candidate_id", ids)
-          : Promise.resolve({ data: [] }),
-        codes.length
-          ? db.from("ats_recruiter_submission").select("candidate_code,final_decision,submitted_at").in("candidate_code", codes)
-          : Promise.resolve({ data: [] }),
-      ]);
-
-      const assignmentById = new Map<string, Assignment>();
-      (assignments || []).forEach((a: Assignment) => assignmentById.set(a.candidate_id, a));
-
-      const latestSubmissionByCode = new Map<string, Submission>();
-      (submissions || []).forEach((s: Submission) => {
-        const old = latestSubmissionByCode.get(s.candidate_code || "");
-        if (!old || new Date(s.submitted_at || 0).getTime() > new Date(old.submitted_at || 0).getTime()) latestSubmissionByCode.set(s.candidate_code || "", s);
-      });
-
-      const waiting = (candidates || [])
-        .map((c: Candidate) => {
-          const latest = latestSubmissionByCode.get(c.candidate_code || "");
-          const created = new Date(c.created_at || 0).getTime();
-          return {
-            ...c,
-            assignment: assignmentById.get(c.id),
-            submitted: !!latest?.final_decision,
-            pendingMinutes: Math.max(0, Math.floor((Date.now() - created) / 60000)),
-          };
-        })
-        .filter((r: WaitingRow) => !r.submitted && (r.status || "Waiting") === "Waiting");
+      const waiting = (res.data ?? []).map((c: any) => ({
+        id: c.id,
+        candidate_code: c.candidate_code,
+        q_token: c.candidate_code,
+        full_name: c.full_name,
+        mobile: c.mobile,
+        email: c.email ?? undefined,
+        branch_name: c.applied_for_branch ?? undefined,
+        role_applied: c.applied_for_process ?? undefined,
+        recruiter_name: c.sourcing_channel ?? undefined,
+        status: c.current_stage ?? "Applied",
+        created_at: c.created_at,
+        assignment: undefined,
+        submitted: false,
+        pendingMinutes: Math.max(0, Math.floor((Date.now() - new Date(c.created_at || 0).getTime()) / 60000)),
+      }));
 
       setRows(waiting);
     } catch (err: any) {

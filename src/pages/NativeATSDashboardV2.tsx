@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock, Filter, RefreshCcw, Search, TrendingUp, UserCheck, Users } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { supabase } from "@/integrations/supabase/client";
+import { hrmsApi } from "@/lib/hrmsApi";
 
-const db = supabase as any;
 
 type Candidate = {
   id: string;
@@ -163,34 +162,29 @@ export default function NativeATSDashboardV2() {
     setLoading(true);
     setMessage("");
     try {
-      const { data: candidates, error } = await db
-        .from("ats_candidate")
-        .select("id,candidate_code,q_token,full_name,mobile,email,branch_name,role_applied,recruiter_name,status,walkin_end_stage,source_system,metadata,created_at")
-        .order("created_at", { ascending: false })
-        .limit(1500);
-      if (error) throw error;
-
-      const ids = (candidates || []).map((r: Candidate) => r.id).filter(Boolean);
-      const codes = (candidates || []).map((r: Candidate) => r.candidate_code).filter(Boolean);
-      const [{ data: assignments }, { data: submissions }, { data: lifecycles }] = await Promise.all([
-        ids.length ? db.from("ats_candidate_assignment").select("candidate_id,recruiter_name,recruiter_mobile,recruiter_email,branch_name,assignment_status,assigned_at").in("candidate_id", ids) : Promise.resolve({ data: [] }),
-        codes.length ? db.from("ats_recruiter_submission").select("id,candidate_id,candidate_code,recruiter_name,submitted_at,walkin_end_stage,final_decision,interviewed_for_process,round1_result,skill_result,round2_result,round3_result,offer_salary,offer_doj,previous_submitted_time").in("candidate_code", codes) : Promise.resolve({ data: [] }),
-        ids.length ? db.from("ats_candidate_lifecycle").select("candidate_id,lifecycle_stage,lifecycle_status,employee_id,metadata,selected_at,joined_at").in("candidate_id", ids) : Promise.resolve({ data: [] }),
-      ]);
-
-      const assignmentById = new Map<string, Assignment>();
-      (assignments || []).forEach((a: Assignment) => assignmentById.set(a.candidate_id, a));
-      const lifecycleById = new Map<string, Lifecycle>();
-      (lifecycles || []).forEach((l: Lifecycle) => lifecycleById.set(l.candidate_id || "", l));
-      const latestSubmissionByCode = new Map<string, Submission>();
-      (submissions || []).forEach((s: Submission) => {
-        const old = latestSubmissionByCode.get(s.candidate_code || "");
-        if (!old || new Date(s.submitted_at || 0).getTime() > new Date(old.submitted_at || 0).getTime()) latestSubmissionByCode.set(s.candidate_code || "", s);
-      });
-
-      const enriched = (candidates || []).map((c: Candidate) => ({ ...c, assignment: assignmentById.get(c.id), submission: latestSubmissionByCode.get(c.candidate_code || ""), lifecycle: lifecycleById.get(c.id) }));
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+        "/api/ats/candidates?limit=1500&page=1"
+      );
+      const enriched = (res.data ?? []).map((c: any) => ({
+        id: c.id,
+        candidate_code: c.candidate_code,
+        q_token: c.candidate_code,
+        full_name: c.full_name,
+        mobile: c.mobile,
+        email: c.email ?? undefined,
+        branch_name: c.applied_for_branch ?? undefined,
+        role_applied: c.applied_for_process ?? undefined,
+        recruiter_name: c.sourcing_channel ?? undefined,
+        status: c.current_stage ?? "Applied",
+        walkin_end_stage: c.current_stage ?? undefined,
+        source_system: c.sourcing_channel ?? undefined,
+        created_at: c.created_at,
+        assignment: undefined,
+        submission: undefined,
+        lifecycle: undefined,
+      }));
       setRows(enriched);
-      setSelected((old) => old ? enriched.find((r: Row) => r.id === old.id) || enriched[0] || null : enriched[0] || null);
+      setSelected((old: any) => old ? enriched.find((r: any) => r.id === old.id) || enriched[0] || null : enriched[0] || null);
     } catch (err: any) {
       setMessage(err?.message || "Unable to load ATS dashboard");
     } finally {

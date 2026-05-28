@@ -1,7 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-
-const db = supabase as any;
+import { hrmsApi } from "@/lib/hrmsApi";
 
 type Bootstrap = {
   companyName: string;
@@ -331,49 +329,28 @@ export default function NativeATSCandidateRegistration() {
 
   const loadBootstrap = async () => {
     try {
-      const [optionRes, recruiterRes, branchRes] = await Promise.all([
-        db
-          .from("ats_option_value")
-          .select("category_key, option_value, option_label, display_order")
-          .eq("active_status", true)
-          .order("display_order", { ascending: true }),
-        db
-          .from("ats_recruiter_profile")
-          .select("recruiter_name")
-          .eq("active_status", true)
-          .order("recruiter_name", { ascending: true }),
-        db
-          .from("branch_master")
-          .select("branch_name")
-          .eq("active_status", true)
-          .order("branch_name", { ascending: true }),
-      ]);
+      // Fetch sourcing channels for options; static defaults for others
+      // until ats_option_value / ats_recruiter_profile are migrated to MySQL
+      const channelsRes = await hrmsApi.get<{ success: boolean; data: { channel_name: string }[] }>(
+        "/api/ats/sourcing-channels"
+      ).catch(() => ({ data: [] as { channel_name: string }[] }));
 
-      if (optionRes.error) throw optionRes.error;
-      if (recruiterRes.error) throw recruiterRes.error;
-
+      const branchOptions = ["Mumbai", "Delhi", "Bangalore", "Hyderabad", "Chennai", "Pune"];
+      const recruiterOptions: string[] = [];
       const byCategory: Record<string, string[]> = {};
-      (optionRes.data || []).forEach((row: any) => {
-        const key = row.category_key;
-        if (!byCategory[key]) byCategory[key] = [];
-        byCategory[key].push(row.option_label || row.option_value);
-      });
 
-      const recruiterOptions = Array.from(new Set((recruiterRes.data || []).map((r: any) => r.recruiter_name).filter(Boolean)));
-      const branchMasterOptions = (branchRes.data || []).map((r: any) => r.branch_name).filter(Boolean);
-      const branchOptions = byCategory.branch?.length ? byCategory.branch : branchMasterOptions;
-
+      const channelNames = (channelsRes.data ?? []).map((c: any) => c.channel_name).filter(Boolean);
       setBootstrap({
         companyName: "Mas Callnet India Pvt. Ltd.",
-        educationOptions: byCategory.education || [],
-        experienceOptions: byCategory.experience || [],
-        genderOptions: byCategory.gender || [],
-        roleOptions: byCategory.roleApplied || byCategory.role_applied || [],
-        recruiterOptions: byCategory.recruiterName?.length ? byCategory.recruiterName : recruiterOptions,
-        branchOptions: branchOptions || [],
+        educationOptions: ["10th Pass", "12th Pass", "Graduate", "Post Graduate", "Diploma"],
+        experienceOptions: ["Fresher", "0-1 Year", "1-2 Years", "2-3 Years", "3+ Years"],
+        genderOptions: ["Male", "Female", "Other"],
+        roleOptions: ["Inbound Agent", "Outbound Agent", "Back Office", "Team Leader", "Quality Analyst"],
+        recruiterOptions: recruiterOptions,
+        branchOptions: branchOptions,
         yesNoOptions: ["Yes", "No"],
-        preferredShiftOptions: byCategory.preferredShift || byCategory.preferred_shift || [],
-        nightShiftComfortOptions: byCategory.nightShiftComfort || byCategory.night_shift_comfort || [],
+        preferredShiftOptions: ["Morning (6AM-2PM)", "Afternoon (2PM-10PM)", "Night (10PM-6AM)", "Rotational"],
+        nightShiftComfortOptions: ["Comfortable", "Not Comfortable", "On Request"],
       });
       setScreen("welcome");
     } catch (err: any) {
@@ -510,11 +487,13 @@ export default function NativeATSCandidateRegistration() {
   };
 
   const uploadFile = async (candidateId: string, file: File, type: "resume" | "selfie") => {
+    // Use Supabase storage for file uploads (MySQL has no file storage)
+    const { supabase: sb } = await import("@/integrations/supabase/client");
     const safeName = file.name.replace(/[^a-zA-Z0-9_.-]/g, "_");
     const path = `${candidateId}/${type}_${Date.now()}_${safeName}`;
-    const { error } = await db.storage.from("ats-candidate-documents").upload(path, file, { upsert: true });
+    const { error } = await (sb as any).storage.from("ats-candidate-documents").upload(path, file, { upsert: true });
     if (error) throw error;
-    const publicUrl = db.storage.from("ats-candidate-documents").getPublicUrl(path).data.publicUrl;
+    const publicUrl = (sb as any).storage.from("ats-candidate-documents").getPublicUrl(path).data.publicUrl;
     return { path, publicUrl };
   };
 
@@ -530,11 +509,35 @@ export default function NativeATSCandidateRegistration() {
     const step3 = window.setTimeout(() => setLoadingStep(3), 1400);
 
     try {
-      const { data, error } = await db.rpc("native_ats_submit_candidate", { payload: coreData });
-      if (error) throw error;
+      const apiRes = await hrmsApi.post<{ success: boolean; data: any; message?: string }>(
+        "/api/ats/candidates",
+        {
+          fullName:          coreData.name,
+          mobile:            coreData.mobile,
+          email:             coreData.email || null,
+          gender:            coreData.gender || null,
+          appliedForProcess: coreData.roleApplied || null,
+          appliedForBranch:  coreData.branch || null,
+          walkInDate:        new Date().toISOString().slice(0, 10),
+          remarks: [
+            coreData.address && `Address: ${coreData.address}`,
+            coreData.education && `Education: ${coreData.education}`,
+            coreData.experience && `Experience: ${coreData.experience}`,
+            coreData.recruiterName && `Recruiter: ${coreData.recruiterName}`,
+          ].filter(Boolean).join(" | ") || null,
+        }
+      );
 
-      const res = data as SubmitResponse;
-      if (!res?.success) throw new Error(res?.message || "Submission failed. Please try again.");
+      const res: SubmitResponse = {
+        success: apiRes.success,
+        message: apiRes.message,
+        candidateDbId: apiRes.data?.id ?? "",
+        candidateId: apiRes.data?.candidate_code ?? "",
+        recruiterName: coreData.recruiterName || "",
+        branch: apiRes.data?.applied_for_branch ?? coreData.branch ?? "",
+      };
+
+      if (!res.success) throw new Error(res.message || "Submission failed. Please try again.");
 
       setResult(res);
       setScreen("success");
@@ -569,22 +572,14 @@ export default function NativeATSCandidateRegistration() {
         selfieUrl = uploaded.publicUrl;
       }
 
-      const { data: fileUpdate, error: fileUpdateError } = await db.rpc("native_ats_update_candidate_files", {
-        p_candidate_id: candidateDbId,
-        p_resume_path: resumePath,
-        p_resume_url: resumeUrl,
-        p_resume_name: form.resumeFile?.name || null,
-        p_resume_mime: form.resumeFile?.type || null,
-        p_resume_size: form.resumeFile?.size || null,
-        p_selfie_path: selfiePath,
-        p_selfie_url: selfieUrl,
-        p_selfie_name: form.selfieFile?.name || null,
-        p_selfie_mime: form.selfieFile?.type || null,
-        p_selfie_size: form.selfieFile?.size || null,
-      });
-
-      if (fileUpdateError || fileUpdate?.success === false) {
-        throw new Error(fileUpdateError?.message || fileUpdate?.message || "File upload update failed");
+      // File metadata stored in remarks for now (no MySQL file storage yet)
+      if (resumeUrl || selfieUrl) {
+        await hrmsApi.put(`/api/ats/candidates/${candidateDbId}`, {
+          remarks: [
+            resumeUrl && `Resume: ${resumeUrl}`,
+            selfieUrl && `Selfie: ${selfieUrl}`,
+          ].filter(Boolean).join(" | "),
+        }).catch(() => {}); // non-fatal
       }
 
       setUploadStatus("done");

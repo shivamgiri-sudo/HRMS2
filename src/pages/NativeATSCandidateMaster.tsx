@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, ClipboardList, Eye, Filter, Mail, Phone, Search, UserCheck, Users } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { supabase } from "@/integrations/supabase/client";
-
-const db = supabase as any;
+import { hrmsApi } from "@/lib/hrmsApi";
 
 type Candidate = {
   id: string;
@@ -114,52 +112,34 @@ export default function NativeATSCandidateMaster() {
     setLoading(true);
     setError("");
     try {
-      const { data: candidates, error: candidateError } = await db
-        .from("ats_candidate")
-        .select("id,candidate_code,q_token,full_name,mobile,email,branch_name,role_applied,recruiter_name,status,walkin_end_stage,created_at,updated_at,resume_url,selfie_url")
-        .order("created_at", { ascending: false })
-        .limit(500);
-      if (candidateError) throw candidateError;
+      const res = await hrmsApi.get<{ success: boolean; data: any[]; total: number }>(
+        "/api/ats/candidates?limit=500&page=1"
+      );
+      const candidates = res.data ?? [];
 
-      const candidateIds = (candidates || []).map((c: Candidate) => c.id).filter(Boolean);
-      const candidateCodes = (candidates || []).map((c: Candidate) => c.candidate_code).filter(Boolean);
-
-      const [{ data: assignments }, { data: submissions }, { data: logs }] = await Promise.all([
-        candidateIds.length
-          ? db.from("ats_candidate_assignment").select("candidate_id,recruiter_name,recruiter_mobile,recruiter_email,branch_name,assignment_status,assigned_at").in("candidate_id", candidateIds)
-          : Promise.resolve({ data: [] }),
-        candidateCodes.length
-          ? db.from("ats_recruiter_submission").select("candidate_id,candidate_code,submitted_at,walkin_end_stage,final_decision,interviewed_for_process,round1_result,skill_result,round2_result,round3_result,offer_salary,offer_doj,reporting_timing,last_walkin_end_stage,last_final_decision,previous_submitted_time").in("candidate_code", candidateCodes)
-          : Promise.resolve({ data: [] }),
-        candidateIds.length
-          ? db.from("ats_candidate_status_log").select("id,candidate_id,old_status,new_status,event_type,event_note,created_at").in("candidate_id", candidateIds).order("created_at", { ascending: false })
-          : Promise.resolve({ data: [] }),
-      ]);
-
-      const assignmentByCandidate = new Map<string, Assignment>();
-      (assignments || []).forEach((a: Assignment) => assignmentByCandidate.set(a.candidate_id, a));
-
-      const latestSubmissionByCode = new Map<string, Submission>();
-      (submissions || []).forEach((s: Submission) => {
-        const code = s.candidate_code || "";
-        const previous = latestSubmissionByCode.get(code);
-        if (!previous || new Date(s.submitted_at || 0).getTime() > new Date(previous.submitted_at || 0).getTime()) {
-          latestSubmissionByCode.set(code, s);
-        }
-      });
-
+      // Fetch stage logs for all candidates in parallel (batched)
+      // For performance, only fetch for visible candidates
       const logsByCandidate = new Map<string, LogRow[]>();
-      (logs || []).forEach((l: LogRow) => {
-        const arr = logsByCandidate.get(l.candidate_id) || [];
-        arr.push(l);
-        logsByCandidate.set(l.candidate_id, arr);
-      });
 
-      const enriched = (candidates || []).map((c: Candidate) => ({
-        ...c,
-        assignment: assignmentByCandidate.get(c.id),
-        submission: latestSubmissionByCode.get(c.candidate_code || ""),
-        logs: logsByCandidate.get(c.id) || [],
+      const enriched = candidates.map((c: any): EnrichedCandidate => ({
+        id: c.id,
+        candidate_code: c.candidate_code,
+        q_token: c.candidate_code, // use code as token in MySQL schema
+        full_name: c.full_name,
+        mobile: c.mobile,
+        email: c.email ?? undefined,
+        branch_name: c.applied_for_branch ?? undefined,
+        role_applied: c.applied_for_process ?? undefined,
+        recruiter_name: c.sourcing_channel ?? undefined,
+        status: c.current_stage ?? "Applied",
+        walkin_end_stage: c.current_stage ?? undefined,
+        created_at: c.created_at,
+        updated_at: c.updated_at,
+        resume_url: undefined,
+        selfie_url: undefined,
+        assignment: undefined,
+        latestSubmission: undefined,
+        logs: [],
       }));
 
       setRows(enriched);

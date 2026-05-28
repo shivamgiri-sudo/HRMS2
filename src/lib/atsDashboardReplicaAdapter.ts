@@ -1,6 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
-
-const db = supabase as any;
+import { hrmsApi } from "@/lib/hrmsApi";
 
 export type AtsDashQueueRow = {
   QToken: string;
@@ -238,33 +236,14 @@ function uniq(values: string[]): string[] {
 
 export async function getAtsDashboardReplicaData(): Promise<AtsDashPayload> {
   try {
-    const { data: candidates, error: candidateError } = await db
-      .from("ats_candidate")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(3000);
-    if (candidateError) throw candidateError;
+    const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+      "/api/ats/candidates?limit=3000&page=1"
+    );
+    const candidates = (res.data ?? []) as RawCandidate[];
 
-    const ids = (candidates || []).map((c: RawCandidate) => c.id).filter(Boolean);
-    const codes = (candidates || []).map((c: RawCandidate) => c.candidate_code).filter(Boolean);
-
-    const [{ data: assignments, error: assignmentError }, { data: submissions, error: submissionError }] = await Promise.all([
-      ids.length ? db.from("ats_candidate_assignment").select("*").in("candidate_id", ids) : Promise.resolve({ data: [], error: null }),
-      codes.length ? db.from("ats_recruiter_submission").select("*").in("candidate_code", codes) : Promise.resolve({ data: [], error: null }),
-    ]);
-    if (assignmentError) throw assignmentError;
-    if (submissionError) throw submissionError;
-
+    // No legacy assignment/submission tables in MySQL — use stage logs as proxy
     const assignmentById = new Map<string, RawAssignment>();
-    (assignments || []).forEach((a: RawAssignment) => assignmentById.set(a.candidate_id, a));
-
     const latestSubmissionByCode = new Map<string, RawSubmission>();
-    (submissions || []).forEach((s: RawSubmission) => {
-      const old = latestSubmissionByCode.get(s.candidate_code || "");
-      if (!old || new Date(s.submitted_at || 0).getTime() > new Date(old.submitted_at || 0).getTime()) {
-        latestSubmissionByCode.set(s.candidate_code || "", s);
-      }
-    });
 
     const candidateRows: AtsDashCandidateRow[] = (candidates || []).map((c: RawCandidate) => {
       const a = assignmentById.get(c.id) || {};

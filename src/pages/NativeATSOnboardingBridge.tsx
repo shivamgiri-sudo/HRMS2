@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { supabase } from "@/integrations/supabase/client";
-
-const db = supabase as any;
+import { hrmsApi } from "@/lib/hrmsApi";
 
 type Row = {
   id: string;
@@ -44,52 +42,29 @@ export default function NativeATSOnboardingBridge() {
     setLoading(true);
     setMessage("");
     try {
-      const { data: candidates, error } = await db
-        .from("ats_candidate")
-        .select("id,candidate_code,full_name,mobile,email,branch_name,role_applied,recruiter_name,status,created_at")
-        .order("created_at", { ascending: false })
-        .limit(500);
-      if (error) throw error;
-
-      const ids = (candidates || []).map((r: Row) => r.id).filter(Boolean);
-      const codes = (candidates || []).map((r: Row) => r.candidate_code).filter(Boolean);
-
-      const [{ data: submissions }, { data: lifecycles }] = await Promise.all([
-        codes.length
-          ? db
-              .from("ats_recruiter_submission")
-              .select("candidate_code,final_decision,walkin_end_stage,interviewed_for_process,offer_salary,offer_doj,submitted_at")
-              .in("candidate_code", codes)
-          : Promise.resolve({ data: [] }),
-        ids.length
-          ? db.from("ats_candidate_lifecycle").select("candidate_id,employee_id,metadata,lifecycle_stage").in("candidate_id", ids)
-          : Promise.resolve({ data: [] }),
-      ]);
-
-      const latestByCode = new Map<string, any>();
-      (submissions || []).forEach((s: any) => {
-        const old = latestByCode.get(s.candidate_code || "");
-        if (!old || new Date(s.submitted_at || 0).getTime() > new Date(old.submitted_at || 0).getTime()) latestByCode.set(s.candidate_code || "", s);
-      });
-
-      const lifecycleById = new Map<string, any>();
-      (lifecycles || []).forEach((l: any) => lifecycleById.set(l.candidate_id || "", l));
-
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+        "/api/ats/candidates?limit=500&page=1"
+      );
       setRows(
-        (candidates || []).map((r: Row) => {
-          const latest = latestByCode.get(r.candidate_code || "") || {};
-          const lifecycle = lifecycleById.get(r.id) || {};
-          return {
-            ...r,
-            latest_decision: latest.final_decision || r.status || "Waiting",
-            latest_stage: latest.walkin_end_stage || "Arrival",
-            latest_process: latest.interviewed_for_process || "-",
-            offer_salary: latest.offer_salary || "",
-            offer_doj: latest.offer_doj || "",
-            employee_id: lifecycle.employee_id || "",
-            employee_code: lifecycle.metadata?.employee_code || "",
-          };
-        })
+        (res.data ?? []).map((c: any) => ({
+          id: c.id,
+          candidate_code: c.candidate_code,
+          full_name: c.full_name,
+          mobile: c.mobile,
+          email: c.email ?? undefined,
+          branch_name: c.applied_for_branch ?? undefined,
+          role_applied: c.applied_for_process ?? undefined,
+          recruiter_name: c.sourcing_channel ?? undefined,
+          status: c.current_stage ?? "Applied",
+          created_at: c.created_at,
+          latest_decision: c.current_stage ?? "Applied",
+          latest_stage: c.current_stage ?? "Applied",
+          latest_process: c.applied_for_process ?? "-",
+          offer_salary: "",
+          offer_doj: "",
+          employee_id: "",
+          employee_code: "",
+        }))
       );
     } catch (err: any) {
       setMessage(err.message || "Unable to load candidates");
@@ -102,16 +77,14 @@ export default function NativeATSOnboardingBridge() {
     setConverting(id);
     setMessage("");
     try {
-      const { data, error } = await db.rpc("native_ats_convert_selected_candidate_to_employee", {
-        p_candidate_id: id,
-        p_employee_code: null,
+      await hrmsApi.post("/api/ats/onboarding-bridge", {
+        candidateId: id,
+        bridgeDate: new Date().toISOString().slice(0, 10),
       });
-      if (error) throw error;
-      if (!data?.ok) throw new Error(data?.message || "Conversion failed");
-      setMessage(`${data.message} Employee Code: ${data.employeeCode || "-"}`);
+      setMessage("Onboarding bridge created. HR can now assign employee code.");
       await load();
     } catch (err: any) {
-      setMessage(err.message || "Unable to convert candidate");
+      setMessage(err.message || "Unable to create onboarding bridge");
     } finally {
       setConverting("");
     }
