@@ -2,9 +2,9 @@ name: Deploy to Vercel
 
 on:
   push:
-    branches: [VERCEL]
+    branches: [main]
   pull_request:
-    branches: [VERCEL]
+    branches: [main]
   workflow_dispatch:
 
 env:
