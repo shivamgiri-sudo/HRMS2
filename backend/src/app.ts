@@ -25,6 +25,8 @@ import { lifecycleRouter } from "./modules/lifecycle/lifecycle.routes.js";
 import { assetsRouter } from "./modules/assets/assets.routes.js";
 import { helpdeskRouter } from "./modules/helpdesk/helpdesk.routes.js";
 import { lettersRouter } from "./modules/letters/letters.routes.js";
+import { atsExtRouter } from "./modules/ats-extensions/ats-ext.routes.js";
+import { wfmExtRouter } from "./modules/wfm-extensions/wfm-ext.routes.js";
 
 export const app = express();
 
@@ -79,6 +81,8 @@ app.use("/api/lifecycle", lifecycleRouter);
 app.use("/api/assets-mgmt", assetsRouter);
 app.use("/api/helpdesk", helpdeskRouter);
 app.use("/api/letters", lettersRouter);
+app.use("/api/ats-ext", atsExtRouter);
+app.use("/api/wfm-ext", wfmExtRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

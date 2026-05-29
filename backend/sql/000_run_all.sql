@@ -18,6 +18,7 @@ SOURCE sql/012_client_portal.sql;
 SOURCE sql/012_roster_shift_times.sql;
 SOURCE sql/015_platform_foundation.sql;
 SOURCE sql/016_employee_lifecycle.sql;
+SOURCE sql/017_ats_wfm_completion.sql;
 
 SELECT 'mas_hrms schema complete' AS status;
 SHOW TABLES;
