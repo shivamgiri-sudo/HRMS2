@@ -1,9 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://unanckifivwkziwvnjtc.supabase.co';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://bebminxoqdjzzfhnrsge.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVuYW5ja2lmaXZ3a3ppd3ZuanRjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0MjkxOTcsImV4cCI6MjA5NDAwNTE5N30.VJyrrnfcdta0tnmBv8-6_gbjoeAGqPYeuQWVdEw7UVE';
+  'sb_publishable_djqNhT51UKmkO5UXwxzNyA_pMgvaF2b';
 
 const realSupabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {
