@@ -1,6 +1,9 @@
+import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
+import type { Request } from "express";
 import { db } from "../../db/mysql.js";
 import { supabaseAdmin } from "../../db/supabaseAdmin.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 
 export interface RbacMismatch {
   user_id: string;
@@ -79,4 +82,69 @@ export async function getRbacReconciliation(): Promise<ReconciliationReport> {
     mismatches,
     checked_at: new Date().toISOString(),
   };
+}
+
+// ── Role administration (MySQL-authoritative writes) ─────────────────────────
+
+export async function assignRole(userId: string, roleKey: string, actorUserId: string, req?: Request): Promise<void> {
+  const [catalog] = await db.execute<RowDataPacket[]>(
+    "SELECT role_key FROM workforce_role_catalog WHERE role_key = ? AND active_status = 1 LIMIT 1",
+    [roleKey]
+  );
+  if ((catalog as RowDataPacket[]).length === 0) {
+    throw Object.assign(new Error(`Role not in catalog: ${roleKey}`), { statusCode: 400 });
+  }
+  await db.execute(
+    "INSERT INTO user_roles (id, user_id, role_key, active_status) VALUES (?, ?, ?, 1) ON DUPLICATE KEY UPDATE active_status = 1",
+    [randomUUID(), userId, roleKey]
+  );
+  await logSensitiveAction({ actor_user_id: actorUserId, action_type: "ROLE_ASSIGNED", module_key: "ACCESS_CONTROL", entity_type: "user", entity_id: userId, change_summary: { role_key: roleKey }, req });
+}
+
+export async function revokeRole(userId: string, roleKey: string, actorUserId: string, req?: Request): Promise<void> {
+  await db.execute(
+    "UPDATE user_roles SET active_status = 0 WHERE user_id = ? AND role_key = ?",
+    [userId, roleKey]
+  );
+  await logSensitiveAction({ actor_user_id: actorUserId, action_type: "ROLE_REVOKED", module_key: "ACCESS_CONTROL", entity_type: "user", entity_id: userId, change_summary: { role_key: roleKey }, req });
+}
+
+export async function getUserRoles(userId: string): Promise<{ role_key: string; role_name: string }[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ur.role_key, wrc.role_name FROM user_roles ur
+     JOIN workforce_role_catalog wrc ON wrc.role_key = ur.role_key
+     WHERE ur.user_id = ? AND ur.active_status = 1 ORDER BY ur.role_key`,
+    [userId]
+  );
+  return rows as { role_key: string; role_name: string }[];
+}
+
+export async function listRoleCatalog() {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT role_key, role_name, description FROM workforce_role_catalog WHERE active_status = 1 ORDER BY role_key"
+  );
+  return rows as RowDataPacket[];
+}
+
+// ── Sensitive action log query (admin only) ───────────────────────────────────
+
+export async function querySensitiveActionLog(filters: {
+  actor_user_id?: string; module_key?: string; action_type?: string;
+  entity_type?: string; entity_id?: string; limit?: number;
+}) {
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (filters.actor_user_id) { conds.push("actor_user_id = ?"); params.push(filters.actor_user_id); }
+  if (filters.module_key)    { conds.push("module_key = ?");    params.push(filters.module_key); }
+  if (filters.action_type)   { conds.push("action_type = ?");   params.push(filters.action_type); }
+  if (filters.entity_type)   { conds.push("entity_type = ?");   params.push(filters.entity_type); }
+  if (filters.entity_id)     { conds.push("entity_id = ?");     params.push(filters.entity_id); }
+  const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
+  const limit = Math.min(filters.limit ?? 100, 500);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, actor_user_id, action_type, module_key, entity_type, entity_id, ip_address, change_summary, acted_at
+     FROM sensitive_action_log ${where} ORDER BY acted_at DESC LIMIT ${limit}`,
+    params
+  );
+  return rows as RowDataPacket[];
 }

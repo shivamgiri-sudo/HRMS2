@@ -19,6 +19,8 @@ import { atsRouter } from "./modules/ats/ats.routes.js";
 import { exitRouter } from "./modules/exit/exit.routes.js";
 import { migrationRouter } from "./modules/migration/migration.routes.js";
 import { accessRouter } from "./modules/access/access.routes.js";
+import { orgRouter } from "./modules/org/org.routes.js";
+import { workflowRouter } from "./modules/workflow/workflow.routes.js";
 
 export const app = express();
 
@@ -67,6 +69,8 @@ app.use("/api/ats", atsRouter);
 app.use("/api/exit", exitRouter);
 app.use("/api/migration", migrationRouter);
 app.use("/api/access", accessRouter);
+app.use("/api/org", orgRouter);
+app.use("/api/workflow", workflowRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
