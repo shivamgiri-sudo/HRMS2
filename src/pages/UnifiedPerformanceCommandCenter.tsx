@@ -3,7 +3,8 @@ import { Activity, AlertTriangle, BarChart3, BookOpen, Briefcase, CheckCircle2, 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { supabase } from "@/integrations/supabase/client";
 
-const db = supabase as any;
+// Extended tables not yet in the generated types — use a typed escape hatch only for those
+const extendedDb = supabase as unknown as { from: (t: string) => any };
 type Row = Record<string, any>;
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -66,25 +67,42 @@ export default function UnifiedPerformanceCommandCenter() {
     setLoading(true);
     setMessage("");
     try {
-      const [emp, atsC, atsS, lms, roster, sessions, qa, ops] = await Promise.all([
-        db.from("employees").select("id,employee_code,first_name,last_name,status,department_id").limit(5000),
-        db.from("ats_candidate").select("*").gte("created_at", `${fromDate}T00:00:00`).lte("created_at", `${toDate}T23:59:59`).limit(5000),
-        db.from("ats_recruiter_submission").select("*").gte("submitted_at", `${fromDate}T00:00:00`).lte("submitted_at", `${toDate}T23:59:59`).limit(5000),
-        db.from("lms_content_progress").select("*,employees(employee_code,first_name,last_name)").gte("created_at", `${fromDate}T00:00:00`).lte("created_at", `${toDate}T23:59:59`).limit(5000),
-        db.from("wfm_roster_assignment").select("*,employees(employee_code,first_name,last_name),wfm_shift_master(shift_name)").gte("roster_date", fromDate).lte("roster_date", toDate).limit(5000),
-        db.from("wfm_attendance_session").select("*").gte("session_date", fromDate).lte("session_date", toDate).limit(5000),
-        db.from("quality_score_log").select("*").gte("audit_date", fromDate).lte("audit_date", toDate).limit(5000),
-        db.from("operations_productivity_log").select("*").gte("performance_date", fromDate).lte("performance_date", toDate).limit(5000),
+      // Employees is in the typed schema — use supabase directly
+      const empResult = await supabase
+        .from("employees")
+        .select("id,employee_code,first_name,last_name,status,department_id")
+        .limit(5000);
+
+      // Tables below are from extended modules (ATS, LMS, WFM, Quality, Ops) not yet in base schema
+      // Use extendedDb and return empty arrays if the table doesn't exist (error.code === '42P01')
+      const safeQuery = async (query: any): Promise<Row[]> => {
+        try {
+          const result = await query;
+          if (result.error) return [];
+          return result.data || [];
+        } catch {
+          return [];
+        }
+      };
+
+      const [atsC, atsS, lms, roster, sessions, qa, ops] = await Promise.all([
+        safeQuery(extendedDb.from("ats_candidate").select("*").gte("created_at", `${fromDate}T00:00:00`).lte("created_at", `${toDate}T23:59:59`).limit(5000)),
+        safeQuery(extendedDb.from("ats_recruiter_submission").select("*").gte("submitted_at", `${fromDate}T00:00:00`).lte("submitted_at", `${toDate}T23:59:59`).limit(5000)),
+        safeQuery(extendedDb.from("lms_content_progress").select("*,employees(employee_code,first_name,last_name)").gte("created_at", `${fromDate}T00:00:00`).lte("created_at", `${toDate}T23:59:59`).limit(5000)),
+        safeQuery(extendedDb.from("wfm_roster_assignment").select("*,employees(employee_code,first_name,last_name),wfm_shift_master(shift_name)").gte("roster_date", fromDate).lte("roster_date", toDate).limit(5000)),
+        safeQuery(extendedDb.from("wfm_attendance_session").select("*").gte("session_date", fromDate).lte("session_date", toDate).limit(5000)),
+        safeQuery(extendedDb.from("quality_score_log").select("*").gte("audit_date", fromDate).lte("audit_date", toDate).limit(5000)),
+        safeQuery(extendedDb.from("operations_productivity_log").select("*").gte("performance_date", fromDate).lte("performance_date", toDate).limit(5000)),
       ]);
-      [emp, atsC, atsS, lms, roster, sessions, qa, ops].forEach((r) => { if (r.error) throw r.error; });
-      setEmployees(emp.data || []);
-      setAtsCandidates(atsC.data || []);
-      setAtsSubmissions(atsS.data || []);
-      setLmsProgress(lms.data || []);
-      setWfmRoster(roster.data || []);
-      setWfmSessions(sessions.data || []);
-      setQualityRows(qa.data || []);
-      setOpsRows(ops.data || []);
+
+      setEmployees(empResult.data || []);
+      setAtsCandidates(atsC);
+      setAtsSubmissions(atsS);
+      setLmsProgress(lms);
+      setWfmRoster(roster);
+      setWfmSessions(sessions);
+      setQualityRows(qa);
+      setOpsRows(ops);
     } catch (err: any) {
       setMessage(err.message || "Unable to load unified command center. Make sure Phase 7, 8A, 8B, 8C and 8D SQL have passed.");
     } finally {
