@@ -1,12 +1,27 @@
 # MAS Callnet PeopleOS — Implementation Tracker
 
-> **Last updated:** 2026-05-29 (Package A — Charter Adoption)  
+> **Last updated:** 2026-05-29 (Package B — Roster & Shift Governance)  
 > **Source of truth:** This file. Update on every task completion or decision change.  
 > **Production safety:** Rows marked `Approval Required: YES` must not be executed without explicit written approval.
 
 > **Approval-control rule:** Every implementation task that changes code, schema, API behaviour, environment/configuration, data writes, access control, integrations, deployment settings or user-visible functionality requires an approved package before execution, even when local-only. The "Approval Required" column identifies additional task-specific approval and must never be interpreted as permission for autonomous implementation.
 
 > ⚠️ **Process-control deviation recorded 2026-05-29:** Required KPI and Client Portal schema objects were created in the target PeopleOS application database (`mas_hrms`) before the approval checkpoint was completed during Package 0-A. No changes were made to upstream operational source databases. Further schema execution on `mas_hrms` is frozen pending approval. Merge pending reconciliation. See `PHASE_0_AUDIT_REPORT.md`.
+
+---
+
+## Package B — Roster & Shift Governance
+
+> **Status:** ✅ DONE — 2026-05-29  
+> **Branch:** `package-b/roster-shift-governance`
+
+| Item | Detail | Status |
+|---|---|---|
+| SQL `020_roster_governance.sql` | `wfm_shift_template` (versioned), `weekly_roster_cycle` (draft→closed lifecycle), `roster_daily_assignment` (per-employee per-day with ack), `roster_change_log` (mandatory post-publish audit), `roster_coverage_action` (gap tracking), `portal_roster_aggregate` (published-only) | ✅ DONE |
+| API `/api/roster-gov/*` | Shift template CRUD, cycle lifecycle + status transitions, daily assignment bulk upsert, employee self-acknowledgement, post-publish change audit, coverage actions, client-portal aggregate | ✅ DONE |
+| Security — employee scoping | Employee self-service via `getEmployeeForUser`; cannot see other employees' roster; portal aggregate contains no individual employee data; all writes audited via `logSensitiveAction` | ✅ DONE |
+| Tests | 23 tests: shift template CRUD (200/201/400/403), cycle create/status/invalid transition, admin sees all/employee sees own/employee A cannot see B, employee acknowledgement, change log + audit, coverage create + resolve, portal aggregate 400 without params, employee 403 on admin endpoints | ✅ DONE |
+| SQL not executed | `020_roster_governance.sql` added to `000_run_all.sql` order but NOT executed on any database | ✅ CONFIRMED |
 
 ---
 

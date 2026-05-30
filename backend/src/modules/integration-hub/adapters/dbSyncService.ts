@@ -52,7 +52,7 @@ export async function syncDatabaseConnector(
     return result;
   }
 
-  const cfg = (connector.config_json ?? {}) as DbConfig;
+  const cfg = (connector.config_json ?? {}) as unknown as DbConfig;
   if (!cfg.host || !cfg.database) {
     result.errors.push("Missing host or database in config_json");
     return result;

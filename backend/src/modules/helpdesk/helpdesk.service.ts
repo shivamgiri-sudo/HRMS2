@@ -30,7 +30,7 @@ export const helpdeskService = {
     return rows as RowDataPacket[];
   },
 
-  async getTicket(id: string) {
+  async getTicket(id: string): Promise<(RowDataPacket & { employee_id: string; comments: RowDataPacket[] }) | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM helpdesk_ticket WHERE id = ? LIMIT 1", [id]
     );
@@ -39,7 +39,7 @@ export const helpdeskService = {
     const [comments] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM helpdesk_ticket_comment WHERE ticket_id = ? ORDER BY created_at ASC", [id]
     );
-    return { ...ticket, comments };
+    return { ...ticket, employee_id: ticket.employee_id as string, comments: comments as RowDataPacket[] };
   },
 
   async createTicket(data: { employee_id: string; category: string; subject: string; description: string; priority?: string }) {

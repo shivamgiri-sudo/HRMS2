@@ -15,10 +15,15 @@ export interface DbFetchResult {
   durationMs: number;
 }
 
+/**
+ * Execute a parameterised read-only source query. Connector query parameters
+ * arrive from approved mapping/sync rules; retain one cast at the external DB
+ * boundary because mysql2 does not accept an assembled unknown[] at compile time.
+ */
 export async function fetchFromDatabase(
   config: DbAdapterConfig,
   query: string,
-  params: unknown[] = []
+  params: readonly unknown[] = []
 ): Promise<DbFetchResult> {
   const start = Date.now();
 
@@ -34,7 +39,7 @@ export async function fetchFromDatabase(
   });
 
   try {
-    const [rows] = await pool.execute(query, params);
+    const [rows] = await pool.execute(query, params as any[]);
     const durationMs = Date.now() - start;
     await pool.end();
     return {
@@ -122,22 +127,22 @@ export function buildCdrAggregateQuery(
   } = opts;
 
   let where = "WHERE 1=1";
-  if (fromDate) where += ` AND ${dateCol} >= '${fromDate}'`;
-  if (toDate)   where += ` AND ${dateCol} <= '${toDate}'`;
+  if (fromDate) where += ` AND DATE(${dateCol}) >= '${fromDate}'`;
+  if (toDate)   where += ` AND DATE(${dateCol}) <= '${toDate}'`;
 
   return `
     SELECT
-      ${agentIdCol}                      AS employee_code,
-      ${agentNameCol}                    AS employee_name,
-      DATE(${dateCol})                   AS session_date,
-      ${campaignCol}                     AS process_name,
-      COUNT(*)                           AS total_calls,
-      SUM(CAST(${talkCol} AS UNSIGNED))  AS total_talk_sec,
-      ${dispositionCol}                  AS disposition
+      ${agentIdCol}                    AS employee_code,
+      ${agentNameCol}                  AS employee_name,
+      DATE(${dateCol})                 AS session_date,
+      ${campaignCol}                   AS process_name,
+      ROUND(SUM(${talkCol}) / 60)      AS login_minutes,
+      COUNT(*)                         AS total_calls,
+      SUM(CASE WHEN ${dispositionCol} IS NOT NULL THEN 1 ELSE 0 END) AS dispositioned_calls
     FROM ${tableName}
     ${where}
-    GROUP BY ${agentIdCol}, ${agentNameCol}, DATE(${dateCol}), ${campaignCol}, ${dispositionCol}
-    ORDER BY session_date DESC, employee_code
+    GROUP BY ${agentIdCol}, ${agentNameCol}, DATE(${dateCol}), ${campaignCol}
+    ORDER BY DATE(${dateCol}) DESC, total_calls DESC
     LIMIT 10000
   `.trim();
 }

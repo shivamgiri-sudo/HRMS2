@@ -120,10 +120,9 @@ describe("atsService.createCandidate", () => {
   });
 
   it("inserts candidate and returns it", async () => {
-    mockExecute.mockResolvedValueOnce([[]]); // no duplicate
-    mockExecute.mockResolvedValueOnce([[{ max_code: "ATS-20260001" }]]); // code generation
+    mockExecute.mockResolvedValueOnce([[]]); // no duplicate mobile
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // INSERT
-    mockExecute.mockResolvedValueOnce([[fakeCandidate]]); // re-fetch
+    mockExecute.mockResolvedValueOnce([[fakeCandidate]]); // re-fetch by id
     const result = await atsService.createCandidate(
       { fullName: "Rahul Sharma", mobile: "9876543210", walkInDate: "2026-05-20" },
       "user-1"

@@ -1,227 +1,77 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 
-interface Shift {
-  id: string;
-  shift_code: string;
-  shift_name: string;
-  start_time: string;
-  end_time: string;
-  branch_name: string | null;
-  process_name: string | null;
-  active_status: number;
-  created_at: string;
-}
+type Process = { id: string; process_name?: string; process_code?: string };
+type Shift = { id: string; shift_code: string; shift_name: string; start_time: string; end_time: string; version: number };
+type Cycle = { id: string; week_start_date: string; week_end_date: string; status: string };
+type Row = { id: string; employee_id: string; roster_date: string; shift_template_id: string | null; is_week_off: number; acknowledgement_status: string };
+const next: Record<string, string> = { draft: "submitted", submitted: "reviewed", reviewed: "published", published: "acknowledged", acknowledged: "active", active: "variance_review", variance_review: "attendance_locked", attendance_locked: "payroll_input_ready", payroll_input_ready: "closed" };
+const today = new Date().toISOString().slice(0, 10);
 
 export default function NativeWFMRoster() {
   const qc = useQueryClient();
-  const [form, setForm] = useState({
-    shiftCode: "",
-    shiftName: "",
-    startTime: "09:00",
-    endTime: "18:00",
-    branchName: "",
-    processName: "",
-  });
-  const [message, setMessage] = useState("");
-  const [showInactive, setShowInactive] = useState(false);
+  const [processId, setProcessId] = useState("");
+  const [cycleId, setCycleId] = useState("");
+  const [notice, setNotice] = useState("");
+  const [shift, setShift] = useState({ code: "DAY", name: "Day Shift", start: "09:00", end: "18:00" });
+  const [cycle, setCycle] = useState({ start: today, end: today, hc: "" });
+  const [action, setAction] = useState({ date: today, gap: "", cause: "", plan: "" });
+  const [rowsJson, setRowsJson] = useState("[]");
 
-  const { data: shifts = [] } = useQuery<Shift[]>({
-    queryKey: ["wfm-shifts", showInactive],
-    queryFn: async () => {
-      const status = showInactive ? "all" : "active";
-      const res = await hrmsApi.get<{ success: boolean; data: Shift[] }>(
-        `/api/wfm/shifts?activeStatus=${status}`
-      );
-      return res.data ?? [];
-    },
-  });
+  const processes = useQuery({ queryKey: ["processes"], queryFn: async () => (await hrmsApi.get<{ data: Process[] }>("/api/processes")).data ?? [] });
+  const shifts = useQuery({ queryKey: ["gov-shifts", processId], enabled: !!processId, queryFn: async () => (await hrmsApi.get<{ data: Shift[] }>(`/api/roster-gov/shifts/templates?process_id=${processId}&active_status=1`)).data ?? [] });
+  const cycles = useQuery({ queryKey: ["gov-cycles", processId], enabled: !!processId, queryFn: async () => (await hrmsApi.get<{ data: Cycle[] }>(`/api/roster-gov/cycles?process_id=${processId}`)).data ?? [] });
+  const assignments = useQuery({ queryKey: ["gov-rows", cycleId], enabled: !!cycleId, queryFn: async () => (await hrmsApi.get<{ data: Row[] }>(`/api/roster-gov/cycles/${cycleId}/assignments`)).data ?? [] });
+  const selected = (cycles.data ?? []).find((c) => c.id === cycleId);
 
-  const activeShifts = useMemo(() => shifts.filter((s) => s.active_status !== 0), [shifts]);
-  const inactiveShifts = useMemo(() => shifts.filter((s) => s.active_status === 0), [shifts]);
+  async function run(task: () => Promise<void>, success: string) {
+    setNotice("");
+    try { await task(); setNotice(success); } catch (error: any) { setNotice(error.message ?? "Action failed"); }
+  }
 
-  const save = async () => {
-    setMessage("");
-    if (!form.shiftCode.trim() || !form.shiftName.trim()) {
-      setMessage("Shift code and name are required.");
-      return;
-    }
-    try {
-      await hrmsApi.post("/api/wfm/shifts", {
-        shiftCode: form.shiftCode.trim(),
-        shiftName: form.shiftName.trim(),
-        startTime: form.startTime,
-        endTime: form.endTime,
-        branchName: form.branchName.trim() || null,
-        processName: form.processName.trim() || null,
-      });
-      setMessage("Shift saved.");
-      setForm({ shiftCode: "", shiftName: "", startTime: "09:00", endTime: "18:00", branchName: "", processName: "" });
-      qc.invalidateQueries({ queryKey: ["wfm-shifts"] });
-    } catch (err: any) {
-      setMessage(err.message || "Failed to save shift.");
-    }
-  };
-
-  const deactivate = async (shift: Shift) => {
-    const reason = window.prompt(`Deactivate shift ${shift.shift_code}? Enter reason:`, "No longer required");
-    if (reason === null) return;
-    try {
-      await hrmsApi.put(`/api/wfm/shifts/${shift.id}`, { activeStatus: false });
-      setMessage("Shift deactivated. Existing historical roster remains safe.");
-      qc.invalidateQueries({ queryKey: ["wfm-shifts"] });
-    } catch (err: any) {
-      setMessage(err.message || "Failed to deactivate shift.");
-    }
-  };
-
-  const restore = async (shift: Shift) => {
-    try {
-      await hrmsApi.put(`/api/wfm/shifts/${shift.id}`, { activeStatus: true });
-      setMessage("Shift restored.");
-      qc.invalidateQueries({ queryKey: ["wfm-shifts"] });
-    } catch (err: any) {
-      setMessage(err.message || "Failed to restore shift.");
-    }
-  };
-
-  return (
-    <DashboardLayout>
-      <div className="space-y-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">Native WFM</p>
-            <h1 className="mt-2 text-3xl font-black text-slate-950">Roster Planning & Shift Master</h1>
-            <p className="mt-2 max-w-4xl text-slate-600">Create branch/process mapped shifts. Deactivate is soft-delete to protect historical attendance.</p>
-          </div>
-          <label className="flex items-center gap-2 rounded-2xl border bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm cursor-pointer">
-            <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
-            Show inactive shifts
-          </label>
-        </div>
-
-        {message && (
-          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-bold text-blue-800">
-            {message}
-          </div>
-        )}
-
-        <div className="rounded-3xl border bg-white p-5 shadow-sm">
-          <h2 className="font-black text-slate-950">Create Shift</h2>
-          <div className="mt-4 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <input
-              value={form.shiftCode}
-              onChange={(e) => setForm({ ...form, shiftCode: e.target.value })}
-              placeholder="Shift code"
-              className="rounded-xl border px-4 py-3"
-            />
-            <input
-              value={form.shiftName}
-              onChange={(e) => setForm({ ...form, shiftName: e.target.value })}
-              placeholder="Shift name"
-              className="rounded-xl border px-4 py-3"
-            />
-            <input
-              type="time"
-              value={form.startTime}
-              onChange={(e) => setForm({ ...form, startTime: e.target.value })}
-              className="rounded-xl border px-4 py-3"
-            />
-            <input
-              type="time"
-              value={form.endTime}
-              onChange={(e) => setForm({ ...form, endTime: e.target.value })}
-              className="rounded-xl border px-4 py-3"
-            />
-            <input
-              value={form.branchName}
-              onChange={(e) => setForm({ ...form, branchName: e.target.value })}
-              placeholder="Branch (optional)"
-              className="rounded-xl border px-4 py-3"
-            />
-            <input
-              value={form.processName}
-              onChange={(e) => setForm({ ...form, processName: e.target.value })}
-              placeholder="Process (optional)"
-              className="rounded-xl border px-4 py-3"
-            />
-          </div>
-          <button
-            onClick={save}
-            className="mt-3 rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white cursor-pointer hover:bg-slate-800 transition-colors"
-          >
-            Save Shift
-          </button>
-        </div>
-
-        <div className="rounded-3xl border bg-white p-5 shadow-sm">
-          <h2 className="font-black text-slate-950">Active Shift Master</h2>
-          {activeShifts.length === 0 ? (
-            <p className="mt-4 text-sm text-slate-500">No active shifts yet.</p>
-          ) : (
-            <div className="mt-4 overflow-auto">
-              <table className="w-full min-w-[800px] text-sm">
-                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-                  <tr>
-                    <th className="p-3">Shift</th>
-                    <th className="p-3">Timing</th>
-                    <th className="p-3">Branch</th>
-                    <th className="p-3">Process</th>
-                    <th className="p-3">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {activeShifts.map((s) => (
-                    <tr key={s.id} className="border-t">
-                      <td className="p-3">
-                        <b>{s.shift_code}</b>
-                        <p className="text-xs text-slate-500">{s.shift_name}</p>
-                      </td>
-                      <td className="p-3">{s.start_time} – {s.end_time}</td>
-                      <td className="p-3">{s.branch_name || "All"}</td>
-                      <td className="p-3">{s.process_name || "All"}</td>
-                      <td className="p-3">
-                        <button
-                          onClick={() => deactivate(s)}
-                          className="cursor-pointer rounded-xl bg-rose-600 px-4 py-2 text-xs font-bold text-white hover:bg-rose-700 transition-colors"
-                        >
-                          Deactivate
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-        {showInactive && inactiveShifts.length > 0 && (
-          <div className="rounded-3xl border bg-white p-5 shadow-sm">
-            <h2 className="font-black text-slate-950">Inactive / Deactivated Shifts</h2>
-            <div className="mt-4 space-y-2">
-              {inactiveShifts.map((s) => (
-                <div key={s.id} className="rounded-2xl border p-3">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <b>{s.shift_code} — {s.shift_name}</b>
-                      <p className="text-xs text-slate-500">{s.start_time} – {s.end_time}</p>
-                    </div>
-                    <button
-                      onClick={() => restore(s)}
-                      className="cursor-pointer rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 transition-colors"
-                    >
-                      Restore
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+  return <DashboardLayout><div className="space-y-6">
+    <header className="rounded-3xl bg-slate-950 p-6 text-white">
+      <p className="text-xs font-black uppercase tracking-[.22em] text-blue-300">WFM · Roster Governance</p>
+      <h1 className="mt-2 text-3xl font-black">Weekly Roster & Shift Control</h1>
+      <p className="mt-2 text-sm text-slate-300">Process Manager and WFM jointly own draft-to-publish planning in their mapped process. TL/AM manage exceptions, not published roster truth.</p>
+    </header>
+    {notice && <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm font-semibold text-blue-800">{notice}</div>}
+    <section className="rounded-3xl border bg-white p-5">
+      <label className="text-sm font-bold">Authorised Process<select value={processId} onChange={(e) => { setProcessId(e.target.value); setCycleId(""); }} className="mt-2 block w-full rounded-xl border p-3"><option value="">Select process</option>{(processes.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.process_name ?? p.process_code ?? p.id}</option>)}</select></label>
+    </section>
+    {processId && <>
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Panel title="Shift Template" hint="Mapped WFM/Admin creates process shift versions.">
+          <div className="grid gap-2 sm:grid-cols-2"><Field label="Code" value={shift.code} set={(v) => setShift({ ...shift, code: v })}/><Field label="Name" value={shift.name} set={(v) => setShift({ ...shift, name: v })}/><Field label="Start" type="time" value={shift.start} set={(v) => setShift({ ...shift, start: v })}/><Field label="End" type="time" value={shift.end} set={(v) => setShift({ ...shift, end: v })}/></div>
+          <button className="mt-3 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white" onClick={() => run(async () => { await hrmsApi.post("/api/roster-gov/shifts/templates", { process_id: processId, shift_code: shift.code, shift_name: shift.name, start_time: shift.start, end_time: shift.end, effective_from: today }); await qc.invalidateQueries({ queryKey: ["gov-shifts", processId] }); }, "Shift template created.")}>Save Shift</button>
+          <div className="mt-3 space-y-2">{(shifts.data ?? []).map((s) => <div key={s.id} className="rounded-xl border p-3 text-sm"><b>{s.shift_code}</b> · {s.shift_name}<span className="float-right text-slate-500">{s.start_time}–{s.end_time}</span></div>)}</div>
+        </Panel>
+        <Panel title="Weekly Cycle" hint="Mapped Process Manager/WFM creates and publishes.">
+          <div className="grid gap-2 sm:grid-cols-3"><Field label="Start" type="date" value={cycle.start} set={(v) => setCycle({ ...cycle, start: v })}/><Field label="End" type="date" value={cycle.end} set={(v) => setCycle({ ...cycle, end: v })}/><Field label="Required HC" type="number" value={cycle.hc} set={(v) => setCycle({ ...cycle, hc: v })}/></div>
+          <button className="mt-3 rounded-xl bg-blue-700 px-4 py-3 text-sm font-bold text-white" onClick={() => run(async () => { const r = await hrmsApi.post<{ data: Cycle }>("/api/roster-gov/cycles", { process_id: processId, week_start_date: cycle.start, week_end_date: cycle.end, required_hc_json: { weekly_required_hc: Number(cycle.hc || 0) } }); setCycleId(r.data.id); await qc.invalidateQueries({ queryKey: ["gov-cycles", processId] }); }, "Draft cycle created.")}>Create Draft Cycle</button>
+          <div className="mt-3 space-y-2">{(cycles.data ?? []).map((c) => <button key={c.id} onClick={() => setCycleId(c.id)} className={`block w-full rounded-xl border p-3 text-left text-sm ${cycleId === c.id ? "bg-blue-50 border-blue-400" : ""}`}><b>{c.week_start_date} – {c.week_end_date}</b><span className="float-right capitalize">{c.status.replaceAll("_", " ")}</span></button>)}</div>
+        </Panel>
       </div>
-    </DashboardLayout>
-  );
+      {selected && <>
+        <Panel title={`Selected Cycle · ${selected.status.replaceAll("_", " ")}`} hint="Published roster assignments cannot be overwritten without recorded change control.">
+          {next[selected.status] && <button className="rounded-xl bg-emerald-700 px-4 py-3 text-sm font-bold text-white" onClick={() => run(async () => { await hrmsApi.post(`/api/roster-gov/cycles/${cycleId}/status`, { status: next[selected.status] }); await qc.invalidateQueries({ queryKey: ["gov-cycles", processId] }); }, `Roster moved to ${next[selected.status]}.`)}>Advance to {next[selected.status].replaceAll("_", " ")}</button>}
+        </Panel>
+        <div className="grid gap-5 xl:grid-cols-2">
+          <Panel title="Draft Allocations" hint="JSON import until grid editor is added; validated against process and active shift.">
+            <textarea className="w-full rounded-xl border p-3 font-mono text-xs" rows={6} value={rowsJson} onChange={(e) => setRowsJson(e.target.value)} />
+            <button className="mt-3 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white" onClick={() => run(async () => { await hrmsApi.post(`/api/roster-gov/cycles/${cycleId}/assignments/bulk`, { assignments: JSON.parse(rowsJson) }); await qc.invalidateQueries({ queryKey: ["gov-rows", cycleId] }); }, "Assignments validated and saved.")}>Save Assignments</button>
+          </Panel>
+          <Panel title="Coverage Accountability" hint="TL/AM can raise or close scoped recovery actions without changing roster truth.">
+            <div className="grid gap-2 sm:grid-cols-2"><Field label="Date" type="date" value={action.date} set={(v) => setAction({ ...action, date: v })}/><Field label="Gap HC" type="number" value={action.gap} set={(v) => setAction({ ...action, gap: v })}/><Field label="Root Cause" value={action.cause} set={(v) => setAction({ ...action, cause: v })}/><Field label="Recovery Plan" value={action.plan} set={(v) => setAction({ ...action, plan: v })}/></div>
+            <button className="mt-3 rounded-xl bg-amber-600 px-4 py-3 text-sm font-bold text-white" onClick={() => run(async () => { await hrmsApi.post("/api/roster-gov/coverage-actions", { cycle_id: cycleId, action_date: action.date, coverage_gap: Number(action.gap || 0), root_cause: action.cause, recovery_plan: action.plan }); }, "Coverage action raised.")}>Raise Action</button>
+          </Panel>
+        </div>
+        <Panel title="Roster Assignments" hint="Acknowledgement is captured employee-wise after publication."><table className="w-full text-sm"><thead><tr className="border-b text-left text-slate-500"><th className="p-2">Employee</th><th>Date</th><th>Shift</th><th>WO</th><th>Acknowledgement</th></tr></thead><tbody>{(assignments.data ?? []).map((r) => <tr className="border-b" key={r.id}><td className="p-2">{r.employee_id}</td><td>{r.roster_date}</td><td>{r.shift_template_id ?? "—"}</td><td>{r.is_week_off ? "Yes" : "No"}</td><td className="capitalize">{r.acknowledgement_status}</td></tr>)}</tbody></table></Panel>
+      </>}
+    </>}
+  </div></DashboardLayout>;
 }
+function Panel({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) { return <section className="rounded-3xl border bg-white p-5 shadow-sm"><h2 className="text-lg font-black">{title}</h2><p className="mb-4 mt-1 text-sm text-slate-500">{hint}</p>{children}</section>; }
+function Field({ label, value, set, type = "text" }: { label: string; value: string; set: (v: string) => void; type?: string }) { return <label className="text-xs font-bold uppercase text-slate-500">{label}<input className="mt-1 block w-full rounded-xl border p-3 text-sm text-slate-900" type={type} value={value} onChange={(e) => set(e.target.value)} /></label>; }

@@ -16,7 +16,9 @@ export const wfmController = {
   async listShifts(req: AuthenticatedRequest, res: Response) {
     const { activeStatus } = req.query as { activeStatus?: string };
     const filters =
-      activeStatus === "active" || activeStatus === "inactive" ? { activeStatus } : undefined;
+      activeStatus === "active" || activeStatus === "inactive"
+        ? { activeStatus: activeStatus as "active" | "inactive" }
+        : undefined;
     const data = await wfmService.listShifts(filters);
     return res.json({ success: true, data });
   },

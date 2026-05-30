@@ -2,139 +2,101 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type {
-  AtsCandidate, AtsCandidateStageLog, AtsOnboardingBridge, AtsSourcingChannel,
-  CandidateListFilters, CreateCandidateInput, CreateOnboardingBridgeInput,
+  AtsCandidate,
+  AtsCandidateStageLog,
+  AtsOnboardingBridge,
+  AtsSourcingChannel,
+  CandidateListFilters,
+  CreateCandidateInput,
+  CreateOnboardingBridgeInput,
   PaginatedResult,
 } from "./ats.types.js";
 
-function generateCandidateCode(lastCode: string | null): string {
-  const year = new Date().getFullYear();
-  const prefix = `ATS-${year}`;
-  if (!lastCode || !lastCode.startsWith(prefix)) return `${prefix}0001`;
-  const seq = parseInt(lastCode.replace(`${prefix}`, ""), 10) || 0;
-  return `${prefix}${String(seq + 1).padStart(4, "0")}`;
+function candidateCode(): string {
+  return `CND-${Date.now().toString(36).toUpperCase()}`;
 }
 
 export const atsService = {
-  async getCandidate(id: string): Promise<AtsCandidate> {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM ats_candidate WHERE id = ? LIMIT 1", [id]
-    );
-    const rec = (rows as AtsCandidate[])[0];
-    if (!rec) throw new Error("Candidate not found");
-    return rec;
-  },
-
   async listCandidates(filters: CandidateListFilters): Promise<PaginatedResult<AtsCandidate>> {
-    const { page, limit, stage, branch, process: proc, search, fromDate, toDate } = filters;
-    const offset = (page - 1) * limit;
     const conds: string[] = ["active_status = 1"];
     const params: unknown[] = [];
-
-    if (stage)    { conds.push("current_stage = ?");       params.push(stage); }
-    if (branch)   { conds.push("applied_for_branch = ?");  params.push(branch); }
-    if (proc)     { conds.push("applied_for_process = ?"); params.push(proc); }
-    if (fromDate) { conds.push("walk_in_date >= ?");       params.push(fromDate); }
-    if (toDate)   { conds.push("walk_in_date <= ?");       params.push(toDate); }
-    if (search) {
+    if (filters.stage)    { conds.push("current_stage = ?");         params.push(filters.stage); }
+    if (filters.branch)   { conds.push("applied_for_branch = ?");   params.push(filters.branch); }
+    if (filters.process)  { conds.push("applied_for_process = ?");  params.push(filters.process); }
+    if (filters.search) {
       conds.push("(full_name LIKE ? OR mobile LIKE ? OR candidate_code LIKE ?)");
-      const s = `%${search}%`;
-      params.push(s, s, s);
+      const search = `%${filters.search}%`;
+      params.push(search, search, search);
     }
-
+    if (filters.fromDate) { conds.push("walk_in_date >= ?"); params.push(filters.fromDate); }
+    if (filters.toDate)   { conds.push("walk_in_date <= ?"); params.push(filters.toDate); }
     const where = `WHERE ${conds.join(" AND ")}`;
+    const offset = (filters.page - 1) * filters.limit;
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM ats_candidate ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      [...params, filters.limit, offset]
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM ats_candidate ${where}`, params
+      `SELECT COUNT(*) AS total FROM ats_candidate ${where}`,
+      params
     );
-    const total = (countRows as { total: number }[])[0]?.total ?? 0;
-    return { data: rows as AtsCandidate[], total, page, limit };
+    return { data: rows as AtsCandidate[], total: Number(countRows[0]?.total ?? 0), page: filters.page, limit: filters.limit };
   },
 
-  async createCandidate(input: CreateCandidateInput, _userId: string): Promise<AtsCandidate> {
+  async getCandidate(id: string): Promise<AtsCandidate> {
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM ats_candidate WHERE id = ? LIMIT 1", [id]);
+    const candidate = (rows as AtsCandidate[])[0];
+    if (!candidate) throw new Error("Candidate not found");
+    return candidate;
+  },
+
+  async createCandidate(input: CreateCandidateInput, userId: string): Promise<AtsCandidate> {
     const [dup] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM ats_candidate WHERE mobile = ? LIMIT 1", [input.mobile]
     );
-    if ((dup as RowDataPacket[]).length > 0) throw new Error("This mobile already registered today");
+    if ((dup as RowDataPacket[]).length > 0) throw new Error("This mobile already registered");
 
-    const [codeRow] = await db.execute<RowDataPacket[]>(
-      "SELECT MAX(candidate_code) AS max_code FROM ats_candidate WHERE candidate_code LIKE ?",
-      [`ATS-${new Date().getFullYear()}%`]
-    );
-    const lastCode = (codeRow as { max_code: string | null }[])[0]?.max_code ?? null;
-    const candidateCode = generateCandidateCode(lastCode);
     const id = randomUUID();
-
     await db.execute(
       `INSERT INTO ats_candidate
-         (id, candidate_code, full_name, mobile, email, gender, date_of_birth,
-          current_stage, applied_for_process, applied_for_branch,
-          sourcing_channel, referred_by, walk_in_date, remarks)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'Applied', ?, ?, ?, ?, ?, ?)`,
-      [
-        id, candidateCode, input.fullName.trim(), input.mobile.trim(),
-        input.email ?? null, input.gender ?? null, input.dateOfBirth ?? null,
-        input.appliedForProcess ?? null, input.appliedForBranch ?? null,
-        input.sourcingChannel ?? null, input.referredBy ?? null,
-        input.walkInDate ?? null, input.remarks ?? null,
-      ]
+         (id, candidate_code, full_name, mobile, email, gender, date_of_birth, applied_for_process,
+          applied_for_branch, sourcing_channel, referred_by, walk_in_date, remarks, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, candidateCode(), input.fullName, input.mobile, input.email ?? null, input.gender ?? null,
+       input.dateOfBirth ?? null, input.appliedForProcess ?? null, input.appliedForBranch ?? null,
+       input.sourcingChannel ?? null, input.referredBy ?? null, input.walkInDate ?? null, input.remarks ?? null, userId]
     );
     return this.getCandidate(id);
   },
 
-  async updateCandidate(
-    id: string,
-    input: Partial<CreateCandidateInput>,
-    _userId: string
-  ): Promise<AtsCandidate> {
-    await this.getCandidate(id);
+  async updateCandidate(id: string, input: Partial<CreateCandidateInput>, _userId: string): Promise<AtsCandidate> {
     const sets: string[] = [];
     const params: unknown[] = [];
-
-    if (input.fullName           !== undefined) { sets.push("full_name = ?");            params.push(input.fullName.trim()); }
-    if (input.email              !== undefined) { sets.push("email = ?");                params.push(input.email ?? null); }
-    if (input.gender             !== undefined) { sets.push("gender = ?");               params.push(input.gender ?? null); }
-    if (input.dateOfBirth        !== undefined) { sets.push("date_of_birth = ?");        params.push(input.dateOfBirth ?? null); }
-    if (input.appliedForProcess  !== undefined) { sets.push("applied_for_process = ?");  params.push(input.appliedForProcess ?? null); }
-    if (input.appliedForBranch   !== undefined) { sets.push("applied_for_branch = ?");   params.push(input.appliedForBranch ?? null); }
-    if (input.sourcingChannel    !== undefined) { sets.push("sourcing_channel = ?");     params.push(input.sourcingChannel ?? null); }
-    if (input.referredBy         !== undefined) { sets.push("referred_by = ?");          params.push(input.referredBy ?? null); }
-    if (input.walkInDate         !== undefined) { sets.push("walk_in_date = ?");         params.push(input.walkInDate ?? null); }
-    if (input.remarks            !== undefined) { sets.push("remarks = ?");              params.push(input.remarks ?? null); }
-
-    if (sets.length > 0) {
+    const fields: Array<[keyof CreateCandidateInput, string]> = [
+      ["fullName", "full_name"], ["email", "email"], ["gender", "gender"], ["dateOfBirth", "date_of_birth"],
+      ["appliedForProcess", "applied_for_process"], ["appliedForBranch", "applied_for_branch"],
+      ["sourcingChannel", "sourcing_channel"], ["referredBy", "referred_by"], ["walkInDate", "walk_in_date"], ["remarks", "remarks"],
+    ];
+    fields.forEach(([key, column]) => {
+      if (input[key] !== undefined) { sets.push(`${column} = ?`); params.push(input[key] ?? null); }
+    });
+    if (sets.length) {
       params.push(id);
       await db.execute(`UPDATE ats_candidate SET ${sets.join(", ")} WHERE id = ?`, params);
     }
     return this.getCandidate(id);
   },
 
-  async moveStage(
-    id: string,
-    toStage: string,
-    userId: string,
-    remarks?: string
-  ): Promise<AtsCandidate> {
-    const candidate = await this.getCandidate(id);
-    const fromStage = candidate.current_stage;
-
+  async moveStage(candidateId: string, toStage: string, userId: string, remarks?: string): Promise<AtsCandidate> {
+    const candidate = await this.getCandidate(candidateId);
+    await db.execute("UPDATE ats_candidate SET current_stage = ?, updated_at = NOW() WHERE id = ?", [toStage, candidateId]);
     await db.execute(
-      "UPDATE ats_candidate SET current_stage = ? WHERE id = ?",
-      [toStage, id]
+      `INSERT INTO ats_candidate_stage_log (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [randomUUID(), candidateId, candidate.current_stage, toStage, remarks ?? null, userId]
     );
-
-    await db.execute(
-      `INSERT INTO ats_candidate_stage_log
-         (id, candidate_id, from_stage, to_stage, stage_date, remarks, updated_by)
-       VALUES (UUID(), ?, ?, ?, NOW(), ?, ?)`,
-      [id, fromStage, toStage, remarks ?? null, userId]
-    );
-
-    return this.getCandidate(id);
+    return this.getCandidate(candidateId);
   },
 
   async listStageLogs(candidateId: string): Promise<AtsCandidateStageLog[]> {
@@ -149,8 +111,7 @@ export const atsService = {
     input: CreateOnboardingBridgeInput,
     userId: string
   ): Promise<AtsOnboardingBridge> {
-    await this.getCandidate(input.candidateId); // throws if not found
-
+    await this.getCandidate(input.candidateId);
     const [existing] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1",
       [input.candidateId]
@@ -164,16 +125,13 @@ export const atsService = {
        VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
       [id, input.candidateId, input.bridgeDate, input.offerLetterUrl ?? null, input.joiningDate ?? null, input.notes ?? null, userId]
     );
-
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM ats_onboarding_bridge WHERE id = ? LIMIT 1", [id]
-    );
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM ats_onboarding_bridge WHERE id = ? LIMIT 1", [id]);
     return (rows as AtsOnboardingBridge[])[0];
   },
 
   async updateOnboardingBridge(
     id: string,
-    input: { employeeId?: string; joiningDate?: string; status?: string; offerLetterUrl?: string; notes?: string },
+    input: { employeeId?: string | null; joiningDate?: string | null; status?: string; offerLetterUrl?: string | null; notes?: string | null },
     _userId: string
   ): Promise<AtsOnboardingBridge> {
     const sets: string[] = [];
@@ -183,23 +141,18 @@ export const atsService = {
     if (input.status         !== undefined) { sets.push("status = ?");           params.push(input.status); }
     if (input.offerLetterUrl !== undefined) { sets.push("offer_letter_url = ?"); params.push(input.offerLetterUrl ?? null); }
     if (input.notes          !== undefined) { sets.push("notes = ?");            params.push(input.notes ?? null); }
-
     if (sets.length > 0) {
       params.push(id);
       await db.execute(`UPDATE ats_onboarding_bridge SET ${sets.join(", ")} WHERE id = ?`, params);
     }
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM ats_onboarding_bridge WHERE id = ? LIMIT 1", [id]
-    );
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM ats_onboarding_bridge WHERE id = ? LIMIT 1", [id]);
     const rec = (rows as AtsOnboardingBridge[])[0];
     if (!rec) throw new Error("Onboarding bridge not found");
     return rec;
   },
 
   async listSourcingChannels(): Promise<AtsSourcingChannel[]> {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM ats_sourcing_channel WHERE active_status = 1 ORDER BY channel_name ASC"
-    );
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM ats_sourcing_channel WHERE active_status = 1 ORDER BY channel_name ASC");
     return rows as AtsSourcingChannel[];
   },
 
@@ -211,24 +164,10 @@ export const atsService = {
     if (filters.branch)   { conds.push("applied_for_branch = ?"); params.push(filters.branch); }
     if (filters.process)  { conds.push("applied_for_process = ?"); params.push(filters.process); }
     const where = `WHERE ${conds.join(" AND ")}`;
-
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         current_stage,
-         COUNT(*) AS count,
-         SUM(CASE WHEN DATE(created_at) = CURDATE() THEN 1 ELSE 0 END) AS today_count
-       FROM ats_candidate ${where}
-       GROUP BY current_stage`,
-      params
+      `SELECT current_stage, COUNT(*) AS count FROM ats_candidate ${where} GROUP BY current_stage`, params
     );
-
-    const [total] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM ats_candidate ${where}`, params
-    );
-
-    return {
-      total: (total as { total: number }[])[0]?.total ?? 0,
-      by_stage: rows as { current_stage: string; count: number; today_count: number }[],
-    };
+    const [total] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total FROM ats_candidate ${where}`, params);
+    return { by_stage: rows, total: Number(total[0]?.total ?? 0) };
   },
 };

@@ -28,6 +28,54 @@ export async function hasRole(userId: string, ...roles: string[]): Promise<boole
 }
 
 /**
+ * MySQL-authoritative scope check for process-owned workflows.
+ *
+ * `user_assignment_scope` is the source of truth for scoped roles such as
+ * manager, assistant_manager and tl. A query/body process_id is never treated
+ * as access permission without this check.
+ *
+ * Supported access entries:
+ * - scope_type = 'all': role may access all processes.
+ * - scope_type = 'process' or 'team': process_id must match; an optional
+ *   branch restriction must also match when present on the scope record.
+ * - scope_type = 'branch': caller must be operating inside that branch.
+ */
+export async function hasProcessScope(
+  userId: string,
+  processId: string,
+  branchId: string | null | undefined,
+  ...roles: string[]
+): Promise<boolean> {
+  if (!processId || roles.length === 0) return false;
+
+  const placeholders = roles.map(() => "?").join(", ");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id
+       FROM user_assignment_scope
+      WHERE user_id = ?
+        AND role_key IN (${placeholders})
+        AND active_status = 1
+        AND (
+          scope_type = 'all'
+          OR (
+            scope_type IN ('process', 'team')
+            AND process_id = ?
+            AND (branch_id IS NULL OR branch_id = ?)
+          )
+          OR (
+            scope_type = 'branch'
+            AND branch_id IS NOT NULL
+            AND branch_id = ?
+          )
+        )
+      LIMIT 1`,
+    [userId, ...roles, processId, branchId ?? null, branchId ?? null]
+  );
+
+  return rows.length > 0;
+}
+
+/**
  * Middleware: allow admin/hr to proceed for any employee.
  * Allow employee self-service only when :employeeId matches their own mapped employee record.
  * 403 otherwise.

@@ -14,7 +14,7 @@ export const integrationController = {
     const { activeStatus } = req.query as { activeStatus?: string };
     const filters =
       activeStatus === "active" || activeStatus === "inactive"
-        ? { activeStatus }
+        ? { activeStatus: activeStatus as "active" | "inactive" | "all" }
         : undefined;
     const data = await integrationService.list(filters);
     return res.json({ success: true, data });
