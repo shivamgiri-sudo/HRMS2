@@ -140,6 +140,14 @@ router.post("/cycles/:id/acknowledge", h(async (req: AuthenticatedRequest, res: 
   return res.json({ data });
 }));
 
+// Get employee's own roster assignments for a cycle
+router.get("/my-roster/:cycleId", h(async (req: AuthenticatedRequest, res: Response) => {
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+  const data = await rosterGovernanceService.getAssignments(req.params.cycleId, emp.id);
+  return res.json({ success: true, data });
+}));
+
 // ── Change Log ────────────────────────────────────────────────────────────────
 router.get("/cycles/:id/changes", h(async (req: AuthenticatedRequest, res: Response) => {
   if (!(await requireCycleMonitor(req, res))) return;

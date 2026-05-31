@@ -107,6 +107,9 @@ const NativeExitManagement          = lazy(() => import("./pages/NativeExitManag
 const NativeKPIConfiguration        = lazy(() => import("./pages/NativeKPIConfiguration"));
 const NativeProcessConfig           = lazy(() => import("./pages/NativeProcessConfig"));
 const NativeLeaveTypeConfig         = lazy(() => import("./pages/NativeLeaveTypeConfig"));
+const NativeMyRoster                = lazy(() => import("./pages/NativeMyRoster"));
+const NativeRTABoard                = lazy(() => import("./pages/NativeRTABoard"));
+const NativeWalkinQueue             = lazy(() => import("./pages/NativeWalkinQueue"));
 
 // Portal
 const PortalLogin                   = lazy(() => import("./pages/portal/PortalLogin"));
@@ -245,6 +248,9 @@ const App = () => (
               <Route path="/kpi-config" element={<ProtectedRoute><Gate pageCode="KPI_CONFIG"><NativeKPIConfiguration /></Gate></ProtectedRoute>} />
               <Route path="/process-config" element={<ProtectedRoute><Gate pageCode="PROCESS_CONFIG"><NativeProcessConfig /></Gate></ProtectedRoute>} />
               <Route path="/leave-types" element={<ProtectedRoute><Gate pageCode="LEAVE_TYPES"><NativeLeaveTypeConfig /></Gate></ProtectedRoute>} />
+              <Route path="/my-roster" element={<ProtectedRoute><NativeMyRoster /></ProtectedRoute>} />
+              <Route path="/rta-board" element={<ProtectedRoute><Gate pageCode="RTA_BOARD"><NativeRTABoard /></Gate></ProtectedRoute>} />
+              <Route path="/ats/walkin-queue" element={<ProtectedRoute><Gate pageCode="ATS_WAITING_QUEUE"><NativeWalkinQueue /></Gate></ProtectedRoute>} />
               <Route path="/changelog" element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>

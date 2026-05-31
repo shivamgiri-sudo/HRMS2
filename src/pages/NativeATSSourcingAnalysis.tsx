@@ -30,6 +30,7 @@ const PIPELINE_STAGES = [
   "Interview",
   "Offer",
   "Joined",
+  "Converted",
 ] as const;
 
 type PipelineStage = (typeof PIPELINE_STAGES)[number];
@@ -100,9 +101,14 @@ export default function NativeATSSourcingAnalysis() {
   // ── Derived data ─────────────────────────────────────────────────────────────
 
   // Build pipeline funnel data from by_stage
+  // "Converted" maps to the 'converted' stage key in ats_candidate
   const pipelineFunnel = PIPELINE_STAGES.map((stage) => {
     const key = stage.toLowerCase();
-    const count = stats?.by_stage?.[key] ?? stats?.by_stage?.[stage] ?? 0;
+    let count = stats?.by_stage?.[key] ?? stats?.by_stage?.[stage] ?? 0;
+    if (stage === "Converted") {
+      // Also check alternate key spellings
+      count = stats?.by_stage?.["converted"] ?? stats?.by_stage?.["Converted"] ?? 0;
+    }
     return { stage, count };
   });
 
@@ -132,6 +138,7 @@ export default function NativeATSSourcingAnalysis() {
     Interview: "bg-amber-500",
     Offer: "bg-orange-500",
     Joined: "bg-emerald-500",
+    Converted: "bg-teal-600",
   };
 
   // Stage text colours for labels
@@ -141,6 +148,7 @@ export default function NativeATSSourcingAnalysis() {
     Interview: "text-amber-700",
     Offer: "text-orange-700",
     Joined: "text-emerald-700",
+    Converted: "text-teal-700",
   };
 
   // ── Render ───────────────────────────────────────────────────────────────────

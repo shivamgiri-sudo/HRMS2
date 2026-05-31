@@ -164,10 +164,48 @@ export const atsService = {
     if (filters.branch)   { conds.push("applied_for_branch = ?"); params.push(filters.branch); }
     if (filters.process)  { conds.push("applied_for_process = ?"); params.push(filters.process); }
     const where = `WHERE ${conds.join(" AND ")}`;
-    const [rows] = await db.execute<RowDataPacket[]>(
+
+    const [stageRows] = await db.execute<RowDataPacket[]>(
       `SELECT current_stage, COUNT(*) AS count FROM ats_candidate ${where} GROUP BY current_stage`, params
     );
-    const [total] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total FROM ats_candidate ${where}`, params);
-    return { by_stage: rows, total: Number(total[0]?.total ?? 0) };
+    const [total] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM ats_candidate ${where}`, params
+    );
+    const [sourceRows] = await db.execute<RowDataPacket[]>(
+      `SELECT sourcing_channel, COUNT(*) AS count FROM ats_candidate ${where} GROUP BY sourcing_channel`, params
+    );
+    const [convRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM ats_candidate ${where} AND current_stage IN ('converted','Onboarded','Selected')`, params
+    );
+    // Approximate time-to-hire using updated_at as proxy for converted candidates
+    const [timeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT AVG(DATEDIFF(updated_at, created_at)) AS avg_days
+         FROM ats_candidate
+        WHERE active_status = 1 AND current_stage = 'converted'`, []
+    );
+
+    const totalCount = Number(total[0]?.total ?? 0);
+    const convertedCount = Number(convRows[0]?.cnt ?? 0);
+
+    // Build by_stage as Record<string, number> keyed by stage name
+    const by_stage: Record<string, number> = {};
+    for (const row of stageRows as { current_stage: string; count: number }[]) {
+      by_stage[row.current_stage] = Number(row.count);
+    }
+
+    // Build by_source as Record<string, number>
+    const by_source: Record<string, number> = {};
+    for (const row of sourceRows as { sourcing_channel: string | null; count: number }[]) {
+      const key = row.sourcing_channel ?? "unknown";
+      by_source[key] = Number(row.count);
+    }
+
+    return {
+      total_candidates: totalCount,
+      by_stage,
+      by_source,
+      conversion_rate: totalCount > 0 ? Math.round((convertedCount / totalCount) * 1000) / 10 : 0,
+      time_to_hire_avg: Number(timeRows[0]?.avg_days ?? 0),
+    };
   },
 };

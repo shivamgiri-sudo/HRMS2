@@ -1,8 +1,10 @@
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { Request } from "express";
+
+const OFFER_TOKEN_SALT = "offer-salt";
 
 // ── Manpower Requisition ──────────────────────────────────────────────────────
 
@@ -114,19 +116,80 @@ export const offerService = {
     return rows as RowDataPacket[];
   },
 
+  generateToken(offerId: string, candidateEmail: string): string {
+    return createHash("sha256")
+      .update(`${offerId}${candidateEmail}${OFFER_TOKEN_SALT}`)
+      .digest("hex");
+  },
+
   async create(data: Record<string, unknown>, preparedBy: string, req?: Request) {
     const id = randomUUID();
+
+    // Fetch candidate email for token generation
+    const [candRows] = await db.execute<RowDataPacket[]>(
+      "SELECT email FROM ats_candidate WHERE id = ? LIMIT 1",
+      [data.candidate_id]
+    );
+    const candidateEmail: string = (candRows as RowDataPacket[])[0]?.email ?? "";
+    const acceptToken = offerService.generateToken(id, candidateEmail);
+
     await db.execute(
       `INSERT INTO ats_offer (id, candidate_id, requisition_id, offered_ctc, offered_designation,
-         offered_process, offered_branch, offer_date, offer_expiry_date, joining_date, prepared_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         offered_process, offered_branch, offer_date, offer_expiry_date, joining_date, prepared_by, accept_token)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, data.candidate_id, data.requisition_id ?? null, data.offered_ctc ?? null,
        data.offered_designation ?? null, data.offered_process ?? null, data.offered_branch ?? null,
-       data.offer_date, data.offer_expiry_date ?? null, data.joining_date ?? null, preparedBy]
+       data.offer_date, data.offer_expiry_date ?? null, data.joining_date ?? null, preparedBy, acceptToken]
     );
     await logSensitiveAction({ actor_user_id: preparedBy, action_type: "OFFER_CREATED", module_key: "ATS", entity_type: "candidate", entity_id: data.candidate_id as string, req });
     const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM ats_offer WHERE id = ? LIMIT 1", [id]);
     return (rows as RowDataPacket[])[0];
+  },
+
+  async respondToOffer(
+    offerId: string,
+    action: "accepted" | "declined",
+    token: string,
+    candidateName: string,
+    remarks?: string
+  ): Promise<void> {
+    // Fetch offer + candidate email to validate token
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT o.id, o.status, o.accept_token, o.candidate_id, c.email
+         FROM ats_offer o
+         JOIN ats_candidate c ON c.id = o.candidate_id
+        WHERE o.id = ? LIMIT 1`,
+      [offerId]
+    );
+    const offer = (rows as RowDataPacket[])[0];
+    if (!offer) throw new Error("Offer not found");
+    if (offer.status !== "sent" && offer.status !== "pending") {
+      throw new Error("Offer is no longer pending response");
+    }
+
+    const expectedToken = offerService.generateToken(
+      offerId,
+      (offer.email as string) ?? ""
+    );
+    if (token !== expectedToken) throw new Error("Invalid or expired token");
+
+    const timestamp = new Date().toISOString().slice(0, 19).replace("T", " ");
+    await db.execute(
+      `UPDATE ats_offer
+          SET status = ?, responded_at = NOW(), candidate_response_name = ?,
+              rejection_reason = COALESCE(?, rejection_reason), updated_at = NOW()
+        WHERE id = ?`,
+      [action, candidateName, remarks ?? null, offerId]
+    );
+
+    // Mirror stage on candidate record
+    const newStage = action === "accepted" ? "offer_accepted" : "offer_declined";
+    await db.execute(
+      "UPDATE ats_candidate SET current_stage = ?, updated_at = NOW() WHERE id = ?",
+      [newStage, offer.candidate_id]
+    );
+
+    void timestamp; // used for documentation clarity only
   },
 
   async updateStatus(offerId: string, status: string, reason: string | undefined, actorId: string, req?: Request) {

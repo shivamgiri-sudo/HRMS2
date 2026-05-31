@@ -4,6 +4,13 @@ import { db } from "../../db/mysql.js";
 import { payrollService } from "./payroll.service.js";
 import type { SalaryPrepRun } from "./payroll.types.js";
 
+interface TaxDeclarationRow {
+  declared_hra: number;
+  declared_80c: number;
+  declared_80d: number;
+  regime: string;
+}
+
 const LOCKED_STATUSES = new Set(["locked", "disbursed"]);
 
 // ─── Gratuity ─────────────────────────────────────────────────────────────────
@@ -174,13 +181,23 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     throw new Error(`Cannot recalculate a ${run.status} run`);
   }
 
-  // 2. Statutory config
-  const [statRows] = await db.execute<RowDataPacket[]>(
-    "SELECT * FROM statutory_config LIMIT 1"
+  // 2a. Load statutory config as flat key→value map (for TDS slab lookups)
+  const [statKvRows] = await db.execute<RowDataPacket[]>(
+    "SELECT config_key, config_value FROM statutory_config"
   );
-  const stat: StatutoryRow = (statRows as StatutoryRow[])[0] ?? {
-    pf_employee_pct: 12, esic_employee_pct: 0.75,
-    esic_wage_limit: 21000, pf_wage_limit: 15000, professional_tax: 200,
+  const statConfig: StatutoryConfigMap = {};
+  for (const r of statKvRows as Array<{ config_key: string; config_value: number }>) {
+    // Normalise keys to lowercase so calculateTds() lookups work
+    statConfig[r.config_key.toLowerCase()] = Number(r.config_value);
+  }
+
+  // 2b. Legacy flat-row fallback (PF / ESIC / PT values)
+  const stat: StatutoryRow = {
+    pf_employee_pct:  statConfig["pf_employee_pct"]  ?? statConfig["pf_employee_pct"]  ?? 12,
+    esic_employee_pct: statConfig["esic_employee_pct"] ?? 0.75,
+    esic_wage_limit:  statConfig["esic_wage_limit"]  ?? 21000,
+    pf_wage_limit:    statConfig["pf_wage_limit"]    ?? 15000,
+    professional_tax: statConfig["professional_tax"] ?? 200,
   };
 
   // 3. Fetch eligible employees (scoped to run's process/branch filters)
@@ -213,6 +230,10 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   const [year, month] = run.run_month.split("-").map(Number);
   const daysInMonth = new Date(year, month, 0).getDate();
   const defaultWorkingDays = 26; // BPO standard; can be refined later
+
+  // Derive financial year string e.g. "2025-26" for months April–March
+  const fyStartYear = month >= 4 ? year : year - 1;
+  const financialYear = `${fyStartYear}-${String(fyStartYear + 1).slice(2)}`;
 
   let totalGross = 0;
   let totalDed = 0;
@@ -249,24 +270,60 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
 
     const grossMonthly = emp.ctc_annual / 12;
 
+    // 5a. Fetch tax declaration for this employee / financial year
+    const [declRows] = await db.execute<RowDataPacket[]>(
+      "SELECT declared_hra, declared_80c, declared_80d, regime FROM tax_declaration WHERE employee_id = ? AND financial_year = ? LIMIT 1",
+      [emp.employee_id, financialYear]
+    );
+    const decl = (declRows as TaxDeclarationRow[])[0] ?? null;
+
+    // 5b. Compute TDS via annual projection
+    const annualGross = grossMonthly * 12;
+    const declHra  = decl ? Number(decl.declared_hra)  : 0;
+    const decl80c  = decl ? Number(decl.declared_80c)  : 0;
+    const decl80d  = decl ? Number(decl.declared_80d)  : 0;
+    // Standard deduction applied inside calculateTds; additional declaration deductions here
+    const taxableIncome = Math.max(0, annualGross - declHra - decl80c - decl80d);
+    const tdsResult = calculateTds(taxableIncome, statConfig);
+    const tdsMonthly = tdsResult.tds_monthly;
+
+    // 5c. LWP deduction
+    const workingDays = att.working_days || defaultWorkingDays;
+    const lwpDays = att.lwp_days || 0;
+    const lwpDeduction = lwpDays > 0 ? Math.round((grossMonthly / workingDays) * lwpDays * 100) / 100 : 0;
+    const grossAfterLwp = Math.max(0, grossMonthly - lwpDeduction);
+
+    // 5d. Salary advance monthly recovery
+    const [advRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(ROUND(amount / recovery_months, 2)), 0) AS monthly_recovery
+         FROM salary_advance_log
+        WHERE employee_id = ? AND status = 'active'`,
+      [emp.employee_id]
+    );
+    const advanceRecovery = Number((advRows as Array<{ monthly_recovery: number }>)[0]?.monthly_recovery ?? 0);
+
     // Resolve PT from slab when employee has a state_code, else fall back to config value
     const professionalTax = emp.state_code
-      ? await getPtFromSlab(emp.state_code, grossMonthly)
+      ? await getPtFromSlab(emp.state_code, grossAfterLwp)
       : stat.professional_tax;
 
     const calc = payrollService.calculateNetSalary({
-      grossMonthlyCTC: grossMonthly,
-      workingDays: att.working_days || defaultWorkingDays,
-      lwpDays: att.lwp_days || 0,
+      grossMonthlyCTC: grossAfterLwp,
+      workingDays,
+      lwpDays: 0, // LWP already applied above; pass 0 to avoid double-deduction
       pfEmployeePct: stat.pf_employee_pct,
       esicEmployeePct: stat.esic_employee_pct,
       esicWageLimit: stat.esic_wage_limit,
       pfWageLimit: stat.pf_wage_limit,
       professionalTax,
-      tds: 0, // TDS computed separately at annual projection
+      tds: tdsMonthly,
       basicPct: emp.basic_pct ?? 40,
       hraPct: emp.hra_pct ?? 20,
     });
+
+    // Net pay = payrollService net + advance recovery deducted on top
+    const netPayFinal = Math.max(0, calc.net_salary - advanceRecovery);
+    const totalDedFinal = calc.total_deductions + advanceRecovery + lwpDeduction;
 
     // 6. Upsert prep line
     await db.execute(
@@ -275,27 +332,30 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
           working_days, present_days, leave_days, lwp_days, late_marks, dialer_hours,
           gross_salary, total_deductions, net_salary,
           pf_employee, pf_employer, esic_employee, esic_employer,
-          professional_tax, tds, status)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
+          professional_tax, tds, tds_amount, lwp_deduction, advance_recovery, status)
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
        ON DUPLICATE KEY UPDATE
          working_days = VALUES(working_days), present_days = VALUES(present_days),
          lwp_days = VALUES(lwp_days), gross_salary = VALUES(gross_salary),
          total_deductions = VALUES(total_deductions), net_salary = VALUES(net_salary),
          pf_employee = VALUES(pf_employee), pf_employer = VALUES(pf_employer),
          esic_employee = VALUES(esic_employee), esic_employer = VALUES(esic_employer),
-         professional_tax = VALUES(professional_tax), status = 'calculated'`,
+         professional_tax = VALUES(professional_tax),
+         tds = VALUES(tds), tds_amount = VALUES(tds_amount),
+         lwp_deduction = VALUES(lwp_deduction), advance_recovery = VALUES(advance_recovery),
+         status = 'calculated'`,
       [
         runId, emp.employee_id, emp.employee_code,
         att.working_days, att.present_days, att.leave_days, att.lwp_days, att.late_marks, att.dialer_hours,
-        calc.gross_salary, calc.total_deductions, calc.net_salary,
+        calc.gross_salary, totalDedFinal, netPayFinal,
         calc.pf_employee, calc.pf_employer, calc.esic_employee, calc.esic_employer,
-        calc.professional_tax, calc.tds,
+        calc.professional_tax, tdsMonthly, tdsMonthly, lwpDeduction, advanceRecovery,
       ]
     );
 
     totalGross += calc.gross_salary;
-    totalDed   += calc.total_deductions;
-    totalNet   += calc.net_salary;
+    totalDed   += totalDedFinal;
+    totalNet   += netPayFinal;
   }
 
   // 7. Update run totals + status

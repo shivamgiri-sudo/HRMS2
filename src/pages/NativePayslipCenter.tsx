@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   AlertTriangle, CheckCircle2, Download, Eye, FileText,
-  Loader, RefreshCcw, Users, X,
+  Loader, RefreshCcw, Users, X, BookOpen,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -50,10 +50,27 @@ type Payslip = {
   pt_amount: number;
   lwp_deduction?: number;
   advance_recovery?: number;
+  tds_amount?: number;
   total_deductions: number;
   net_pay: number;
   acknowledged_at?: string | null;
   status?: string;
+};
+
+type Form16Data = {
+  financial_year: string;
+  period: string;
+  employee: { name: string; pan: string | null; designation: string | null; period: string };
+  gross_salary: number;
+  standard_deduction: number;
+  tds_deducted: number;
+  net_taxable_income: number;
+  declaration: {
+    hra: number;
+    "80c": number;
+    "80d": number;
+    regime: string;
+  } | null;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -100,17 +117,97 @@ function StatCard({
 
 // ─── Payslip Modal ─────────────────────────────────────────────────────────────
 
+function Form16Modal({ data, onClose }: { data: Form16Data; onClose: () => void }) {
+  const rows: [string, string][] = [
+    ["Financial Year", data.financial_year],
+    ["Employee", data.employee.name],
+    ["PAN", data.employee.pan ?? "N/A"],
+    ["Designation", data.employee.designation ?? "N/A"],
+    ["Period", data.employee.period],
+    ["Gross Salary (monthly)", INR(data.gross_salary)],
+    ["Standard Deduction", INR(data.standard_deduction)],
+    ["TDS Deducted (monthly)", INR(data.tds_deducted)],
+    ["Net Taxable Income (annual)", INR(data.net_taxable_income)],
+  ];
+  if (data.declaration) {
+    rows.push(
+      ["Regime", data.declaration.regime.toUpperCase()],
+      ["Declared HRA", INR(data.declaration.hra)],
+      ["Declared 80C", INR(data.declaration["80c"])],
+      ["Declared 80D", INR(data.declaration["80d"])],
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4">
+      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b p-6">
+          <div>
+            <h2 className="text-lg font-black text-slate-950">Form 16 Part B Data</h2>
+            <p className="text-sm text-slate-500">{data.period}</p>
+          </div>
+          <button onClick={onClose} className="cursor-pointer text-slate-400 hover:text-slate-700 transition-colors">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="p-6">
+          <table className="w-full text-sm">
+            <tbody>
+              {rows.map(([label, value]) => (
+                <tr key={label} className="border-b last:border-0">
+                  <td className="py-2.5 text-slate-500 font-semibold w-1/2">{label}</td>
+                  <td className="py-2.5 font-mono font-semibold text-slate-900 text-right">{value}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="border-t p-6">
+          <button
+            onClick={onClose}
+            className="w-full cursor-pointer rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PayslipModal({
   payslip,
+  runId,
   onClose,
   onAcknowledge,
   acknowledging,
 }: {
   payslip: Payslip;
+  runId: string;
   onClose: () => void;
   onAcknowledge: (id: string) => void;
   acknowledging: boolean;
 }) {
+  const [form16Data, setForm16Data] = useState<Form16Data | null>(null);
+  const [loadingForm16, setLoadingForm16] = useState(false);
+  const [form16Error, setForm16Error] = useState("");
+
+  const fetchForm16 = async () => {
+    setLoadingForm16(true);
+    setForm16Error("");
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: Form16Data }>(
+        `/api/payroll/form16-data/${runId}/${payslip.employee_id}`
+      );
+      setForm16Data(res.data);
+    } catch (err: unknown) {
+      const e = err as Error;
+      setForm16Error(e.message || "Failed to load Form 16 data.");
+    } finally {
+      setLoadingForm16(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
       <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl bg-white shadow-2xl">
@@ -202,6 +299,7 @@ function PayslipModal({
                   ["PF (Employee)", payslip.pf_employee],
                   ["ESIC (Employee)", payslip.esic_employee],
                   ["Professional Tax", payslip.pt_amount],
+                  ...(payslip.tds_amount ? [["TDS (Income Tax)", payslip.tds_amount]] : []),
                   ...(payslip.lwp_deduction ? [["LWP Deduction", payslip.lwp_deduction]] : []),
                   ...(payslip.advance_recovery ? [["Advance Recovery", payslip.advance_recovery]] : []),
                 ].map(([label, amount]) => (
@@ -232,12 +330,27 @@ function PayslipModal({
         </div>
 
         {/* Footer */}
-        <div className="border-t p-6 flex gap-3">
+        {form16Error && (
+          <div className="mx-6 mb-2 text-xs font-semibold text-rose-600">{form16Error}</div>
+        )}
+        <div className="border-t p-6 flex gap-3 flex-wrap">
           <button
             onClick={onClose}
             className="flex-1 cursor-pointer rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
           >
             Close
+          </button>
+          <button
+            onClick={() => { void fetchForm16(); }}
+            disabled={loadingForm16}
+            className="flex-1 cursor-pointer rounded-2xl border border-violet-200 bg-violet-50 py-3 text-sm font-bold text-violet-700 hover:bg-violet-100 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {loadingForm16 ? (
+              <Loader className="h-4 w-4 animate-spin" />
+            ) : (
+              <BookOpen className="h-4 w-4" />
+            )}
+            Form 16 Data
           </button>
           {!payslip.acknowledged_at && (
             <button
@@ -255,6 +368,10 @@ function PayslipModal({
           )}
         </div>
       </div>
+
+      {form16Data && (
+        <Form16Modal data={form16Data} onClose={() => setForm16Data(null)} />
+      )}
     </div>
   );
 }
@@ -575,6 +692,7 @@ export default function NativePayslipCenter() {
       {viewPayslip && (
         <PayslipModal
           payslip={viewPayslip}
+          runId={selectedRunId}
           onClose={() => setViewPayslip(null)}
           onAcknowledge={acknowledgePayslip}
           acknowledging={acknowledging}

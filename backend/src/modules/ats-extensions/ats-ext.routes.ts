@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -8,6 +8,25 @@ import { requisitionService, bgvService, offerService, duplicateService, sourcin
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+
+// ── PUBLIC: Offer Digital Acceptance (accessed via email link — no auth) ──────
+
+router.post("/offers/:id/respond", h(async (req: Request, res: Response) => {
+  const { action, token, candidate_name, remarks } = req.body as {
+    action?: string;
+    token?: string;
+    candidate_name?: string;
+    remarks?: string;
+  };
+  if (!action || (action !== "accepted" && action !== "declined")) {
+    return res.status(400).json({ error: "action must be 'accepted' or 'declined'" });
+  }
+  if (!token) return res.status(400).json({ error: "token is required" });
+  if (!candidate_name?.trim()) return res.status(400).json({ error: "candidate_name is required" });
+
+  await offerService.respondToOffer(req.params.id, action, token, candidate_name.trim(), remarks);
+  return res.json({ ok: true, message: `Offer ${action} successfully` });
+}));
 
 router.use(requireAuth);
 

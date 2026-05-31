@@ -205,6 +205,201 @@ router.post("/uan/:employeeId", requireRole("admin", "hr", "finance"), h(async (
   return res.status(201).json({ success: true, data: (rows as RowDataPacket[])[0] });
 }));
 
+// ─── Disbursements ────────────────────────────────────────────────────────────
+
+// POST /api/payroll/disbursements — record a bank disbursement
+router.post(
+  "/disbursements",
+  requireRole("admin", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { run_id, bank_ref, total_amount, employee_count } = req.body as {
+      run_id: string;
+      bank_ref?: string;
+      total_amount: number;
+      employee_count: number;
+    };
+
+    if (!run_id || total_amount === undefined || employee_count === undefined) {
+      return res.status(400).json({ success: false, message: "run_id, total_amount, employee_count are required" });
+    }
+
+    const [runCheck] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM salary_prep_run WHERE id = ? LIMIT 1",
+      [run_id]
+    );
+    if (!(runCheck as RowDataPacket[]).length) {
+      return res.status(404).json({ success: false, message: "Payroll run not found" });
+    }
+
+    const id = (await import("crypto")).randomUUID();
+    const actorId = req.authUser?.id ?? null;
+    await db.execute(
+      `INSERT INTO payroll_disbursement (id, run_id, bank_ref, total_amount, employee_count, disbursed_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, run_id, bank_ref ?? null, total_amount, employee_count, actorId]
+    );
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM payroll_disbursement WHERE id = ? LIMIT 1",
+      [id]
+    );
+    return res.status(201).json({ success: true, data: (rows as RowDataPacket[])[0] });
+  })
+);
+
+// GET /api/payroll/disbursements/:runId — get disbursement for a run
+router.get(
+  "/disbursements/:runId",
+  requireRole("admin", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM payroll_disbursement WHERE run_id = ? ORDER BY created_at DESC",
+      [req.params.runId]
+    );
+    return res.json({ success: true, data: rows });
+  })
+);
+
+// PATCH /api/payroll/disbursements/:id — update disbursement status
+router.patch(
+  "/disbursements/:id",
+  requireRole("admin", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { status, disbursed_at } = req.body as {
+      status?: "completed" | "failed";
+      disbursed_at?: string;
+    };
+
+    const allowed = new Set(["completed", "failed"]);
+    if (status && !allowed.has(status)) {
+      return res.status(400).json({ success: false, message: "status must be 'completed' or 'failed'" });
+    }
+
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (status)       { sets.push("status = ?");       params.push(status); }
+    if (disbursed_at) { sets.push("disbursed_at = ?"); params.push(disbursed_at); }
+    if (sets.length === 0) {
+      return res.status(400).json({ success: false, message: "No fields to update" });
+    }
+
+    params.push(req.params.id);
+    const [result] = await db.execute(
+      `UPDATE payroll_disbursement SET ${sets.join(", ")} WHERE id = ?`,
+      params
+    ) as unknown as [{ affectedRows: number }, unknown];
+
+    if ((result as { affectedRows: number }).affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Disbursement not found" });
+    }
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM payroll_disbursement WHERE id = ? LIMIT 1",
+      [req.params.id]
+    );
+    return res.json({ success: true, data: (rows as RowDataPacket[])[0] });
+  })
+);
+
+// ─── Form 16 Data ─────────────────────────────────────────────────────────────
+
+// GET /api/payroll/form16-data/:runId/:employeeId — Form 16 Part B structured data
+router.get(
+  "/form16-data/:runId/:employeeId",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { runId, employeeId } = req.params;
+
+    const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
+    if (!isPayrollRole) {
+      const callerEmp = await getEmployeeForUser(req.authUser!.id);
+      if (!callerEmp || callerEmp.id !== employeeId) {
+        return res.status(403).json({ success: false, message: "Forbidden" });
+      }
+    }
+
+    // Load run
+    const [runRows] = await db.execute<RowDataPacket[]>(
+      "SELECT run_month FROM salary_prep_run WHERE id = ? LIMIT 1",
+      [runId]
+    );
+    const run = (runRows as Array<{ run_month: string }>)[0];
+    if (!run) return res.status(404).json({ success: false, message: "Run not found" });
+
+    // Load prep line for gross / TDS
+    const [lineRows] = await db.execute<RowDataPacket[]>(
+      `SELECT spl.gross_salary, spl.tds_amount, spl.tds
+         FROM salary_prep_line spl
+        WHERE spl.run_id = ? AND spl.employee_id = ? LIMIT 1`,
+      [runId, employeeId]
+    );
+    const line = (lineRows as Array<{ gross_salary: number; tds_amount: number; tds: number }>)[0];
+    if (!line) return res.status(404).json({ success: false, message: "Payroll line not found for employee" });
+
+    // Load employee details
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT CONCAT_WS(' ', e.first_name, e.last_name) AS name,
+              ed.pan_number AS pan,
+              dm.designation_name AS designation,
+              e.date_of_joining
+         FROM employees e
+         LEFT JOIN employee_documents ed  ON ed.employee_id = e.id
+         LEFT JOIN designation_master dm  ON dm.id = e.designation_id
+        WHERE e.id = ? LIMIT 1`,
+      [employeeId]
+    );
+    const emp = (empRows as Array<{
+      name: string; pan: string | null; designation: string | null; date_of_joining: string | null;
+    }>)[0];
+
+    // Derive financial year for declaration lookup
+    const [yr, mo] = run.run_month.split("-").map(Number);
+    const fyStart = mo >= 4 ? yr : yr - 1;
+    const financialYear = `${fyStart}-${String(fyStart + 1).slice(2)}`;
+
+    // Load tax declaration
+    const [declRows] = await db.execute<RowDataPacket[]>(
+      "SELECT declared_hra, declared_80c, declared_80d, regime FROM tax_declaration WHERE employee_id = ? AND financial_year = ? LIMIT 1",
+      [employeeId, financialYear]
+    );
+    const decl = (declRows as Array<{
+      declared_hra: number; declared_80c: number; declared_80d: number; regime: string;
+    }>)[0] ?? null;
+
+    const grossSalary = Number(line.gross_salary);
+    const standardDeduction = 75000;
+    const tdsDeducted = Number(line.tds_amount) || Number(line.tds) || 0;
+    const totalDeductions = standardDeduction
+      + (decl ? Number(decl.declared_hra) + Number(decl.declared_80c) + Number(decl.declared_80d) : 0);
+    const netTaxableIncome = Math.max(0, (grossSalary * 12) - totalDeductions);
+
+    return res.json({
+      success: true,
+      data: {
+        financial_year: financialYear,
+        period: run.run_month,
+        employee: {
+          name: emp?.name ?? "",
+          pan: emp?.pan ?? null,
+          designation: emp?.designation ?? null,
+          period: `Apr ${fyStart} – Mar ${fyStart + 1}`,
+        },
+        gross_salary: grossSalary,
+        standard_deduction: standardDeduction,
+        tds_deducted: tdsDeducted,
+        net_taxable_income: netTaxableIncome,
+        declaration: decl
+          ? {
+              hra: Number(decl.declared_hra),
+              "80c": Number(decl.declared_80c),
+              "80d": Number(decl.declared_80d),
+              regime: decl.regime,
+            }
+          : null,
+      },
+    });
+  })
+);
+
 // ─── PT Slabs ─────────────────────────────────────────────────────────────────
 
 // GET /api/payroll/pt-slabs — list PT slabs; optional ?state_code=

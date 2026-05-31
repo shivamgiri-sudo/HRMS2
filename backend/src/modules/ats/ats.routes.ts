@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
+import type { Response } from "express";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { atsController as c } from "./ats.controller.js";
+import { convertCandidateToEmployee } from "./ats.convert.service.js";
 
 export const atsRouter = Router();
 atsRouter.use(requireAuth);
@@ -15,6 +19,19 @@ atsRouter.get("/candidates/:id",                 h(c.getCandidate.bind(c)));
 atsRouter.put("/candidates/:id",                 h(c.updateCandidate.bind(c)));
 atsRouter.post("/candidates/:id/move-stage",     h(c.moveStage.bind(c)));
 atsRouter.get("/candidates/:id/stage-logs",      h(c.listStageLogs.bind(c)));
+
+// Candidate → Employee conversion
+atsRouter.post(
+  "/convert/:candidateId",
+  requireRole("admin", "hr"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const result = await convertCandidateToEmployee(
+      req.params.candidateId,
+      req.authUser!.id
+    );
+    return res.status(201).json({ success: true, data: result });
+  })
+);
 
 // Onboarding bridge
 atsRouter.post("/onboarding-bridge",             h(c.createOnboardingBridge.bind(c)));

@@ -22,6 +22,11 @@ type Row = {
   employee_code?: string;
 };
 
+type ConvertResult = {
+  employee_id: string;
+  employee_code: string;
+};
+
 const badgeTone = (value: string) => {
   const v = (value || "").toLowerCase();
   if (v.includes("selected")) return "bg-emerald-50 text-emerald-700 border-emerald-200";
@@ -37,6 +42,7 @@ export default function NativeATSOnboardingBridge() {
   const [message, setMessage] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
+  const [convertedMap, setConvertedMap] = useState<Record<string, ConvertResult>>({});
 
   const load = async () => {
     setLoading(true);
@@ -77,14 +83,18 @@ export default function NativeATSOnboardingBridge() {
     setConverting(id);
     setMessage("");
     try {
-      await hrmsApi.post("/api/ats/onboarding-bridge", {
-        candidateId: id,
-        bridgeDate: new Date().toISOString().slice(0, 10),
-      });
-      setMessage("Onboarding bridge created. HR can now assign employee code.");
+      const res = await hrmsApi.post<{ success: boolean; data: ConvertResult }>(
+        `/api/ats/convert/${id}`,
+        {}
+      );
+      const result = res.data;
+      setConvertedMap((prev) => ({ ...prev, [id]: result }));
+      setMessage(
+        `Converted successfully! Employee code: ${result.employee_code}. You can now view the employee profile.`
+      );
       await load();
-    } catch (err: any) {
-      setMessage(err.message || "Unable to create onboarding bridge");
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Unable to convert candidate");
     } finally {
       setConverting("");
     }
@@ -104,8 +114,8 @@ export default function NativeATSOnboardingBridge() {
   }, [rows, search, statusFilter]);
 
   const statusOptions = useMemo(() => ["All", ...Array.from(new Set(rows.map((r) => r.latest_decision || r.status || "Waiting")))], [rows]);
-  const selectedCount = rows.filter((r) => r.latest_decision === "Selected").length;
-  const convertedCount = rows.filter((r) => !!r.employee_id).length;
+  const selectedCount = rows.filter((r) => r.latest_decision === "Selected" || r.latest_decision === "offer_accepted").length;
+  const convertedCount = rows.filter((r) => !!r.employee_id || r.status === "converted" || r.latest_decision === "converted").length;
 
   return (
     <DashboardLayout>
@@ -151,18 +161,74 @@ export default function NativeATSOnboardingBridge() {
                 <tbody>
                   {filtered.map((r) => {
                     const decision = r.latest_decision || r.status || "Waiting";
-                    const converted = !!r.employee_id || r.status === "Selected - Onboarding";
-                    const canConvert = decision === "Selected" && !converted;
+                    const newConvert = convertedMap[r.id];
+                    const empCode = newConvert?.employee_code ?? r.employee_code ?? "";
+                    const empId = newConvert?.employee_id ?? r.employee_id ?? "";
+                    const converted = !!empId || decision === "converted";
+                    const canConvert =
+                      !converted &&
+                      (decision === "offer_accepted" || decision === "Selected" || decision === "Offer Accepted");
                     return (
                       <tr key={r.id} className="border-t">
-                        <td className="p-4"><div className="font-bold text-slate-900">{r.full_name || "-"}</div><div className="text-xs text-slate-500">{r.candidate_code || "-"}</div></td>
-                        <td className="p-4 text-slate-600"><div>{r.mobile || "-"}</div><div className="text-xs">{r.email || "-"}</div></td>
-                        <td className="p-4 text-slate-600"><div>{r.branch_name || "-"}</div><div className="text-xs">{r.role_applied || "-"}</div></td>
+                        <td className="p-4">
+                          <div className="font-bold text-slate-900">{r.full_name || "-"}</div>
+                          <div className="text-xs text-slate-500">{r.candidate_code || "-"}</div>
+                        </td>
+                        <td className="p-4 text-slate-600">
+                          <div>{r.mobile || "-"}</div>
+                          <div className="text-xs">{r.email || "-"}</div>
+                        </td>
+                        <td className="p-4 text-slate-600">
+                          <div>{r.branch_name || "-"}</div>
+                          <div className="text-xs">{r.role_applied || "-"}</div>
+                        </td>
                         <td className="p-4 text-slate-600">{r.recruiter_name || "-"}</td>
-                        <td className="p-4"><span className={`rounded-full border px-3 py-1 text-xs font-bold ${badgeTone(decision)}`}>{decision}</span><div className="mt-2 text-xs text-slate-500">{r.latest_stage} • {r.latest_process}</div></td>
-                        <td className="p-4 text-slate-600"><div>{r.offer_salary || "-"}</div><div className="text-xs">DOJ: {r.offer_doj || "-"}</div></td>
-                        <td className="p-4">{converted ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">HRMS Onboarding {r.employee_code || ""}</span> : <span className="rounded-full border bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">Candidate Journey</span>}</td>
-                        <td className="p-4"><button disabled={!canConvert || converting === r.id} onClick={() => convert(r.id)} className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-bold text-white disabled:bg-slate-300">{converting === r.id ? "Converting..." : converted ? "Created" : "Move to HRMS"}</button></td>
+                        <td className="p-4">
+                          <span className={`rounded-full border px-3 py-1 text-xs font-bold ${badgeTone(decision)}`}>{decision}</span>
+                          <div className="mt-2 text-xs text-slate-500">{r.latest_stage} • {r.latest_process}</div>
+                        </td>
+                        <td className="p-4 text-slate-600">
+                          <div>{r.offer_salary || "-"}</div>
+                          <div className="text-xs">DOJ: {r.offer_doj || "-"}</div>
+                        </td>
+                        <td className="p-4">
+                          {converted ? (
+                            <div className="space-y-1">
+                              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+                                Converted {empCode && `• ${empCode}`}
+                              </span>
+                              {empId && (
+                                <div>
+                                  <a
+                                    href={`/employees/${empId}`}
+                                    className="text-xs font-semibold text-blue-600 underline hover:text-blue-800"
+                                  >
+                                    View Employee Profile
+                                  </a>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="rounded-full border bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
+                              Candidate Journey
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-4">
+                          <button
+                            disabled={!canConvert || converting === r.id}
+                            onClick={() => void convert(r.id)}
+                            className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-bold text-white disabled:bg-slate-300"
+                          >
+                            {converting === r.id
+                              ? "Converting..."
+                              : converted
+                              ? "Converted"
+                              : canConvert
+                              ? "Convert to Employee"
+                              : "Not Eligible"}
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
