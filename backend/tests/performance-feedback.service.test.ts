@@ -250,3 +250,205 @@ describe("PerformanceFeedbackService - Cycle Management", () => {
     });
   });
 });
+
+describe("PerformanceFeedbackService - Request Management", () => {
+  let service: PerformanceFeedbackService;
+
+  beforeEach(() => {
+    service = new PerformanceFeedbackService();
+    vi.clearAllMocks();
+  });
+
+  describe("launchCycle", () => {
+    it("should launch cycle and create requests for employees", async () => {
+      const launchData = {
+        employee_ids: ["emp-1", "emp-2", "emp-3"],
+      };
+
+      // Mock employees query with managers
+      const mockEmployees = [
+        { emp_id: "emp-1", reporting_to: "mgr-1" },
+        { emp_id: "emp-2", reporting_to: "mgr-1" },
+        { emp_id: "emp-3", reporting_to: "mgr-2" },
+      ];
+
+      // Mock existing requests check (none exist)
+      mockDb.execute
+        .mockResolvedValueOnce([[mockEmployees[0]], []]) // emp-1 reporting_to
+        .mockResolvedValueOnce([[], []]) // existing request check for emp-1
+        .mockResolvedValueOnce([{ insertId: "req-1" }, []]) // INSERT request emp-1
+        .mockResolvedValueOnce([[mockEmployees[1]], []]) // emp-2 reporting_to
+        .mockResolvedValueOnce([[], []]) // existing request check for emp-2
+        .mockResolvedValueOnce([{ insertId: "req-2" }, []]) // INSERT request emp-2
+        .mockResolvedValueOnce([[mockEmployees[2]], []]) // emp-3 reporting_to
+        .mockResolvedValueOnce([[], []]) // existing request check for emp-3
+        .mockResolvedValueOnce([{ insertId: "req-3" }, []]) // INSERT request emp-3
+        .mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE cycle status
+
+      const result = await service.launchCycle("cycle-123", launchData);
+
+      expect(result.created).toBe(3);
+      expect(result.skipped).toBe(0);
+      expect(result.total).toBe(3);
+      expect(mockDb.execute).toHaveBeenCalledWith(
+        expect.stringContaining("UPDATE performance_feedback_cycle SET status = 'active'"),
+        ["cycle-123"]
+      );
+    });
+
+    it("should skip employees without managers", async () => {
+      const launchData = {
+        employee_ids: ["emp-1", "emp-2"],
+      };
+
+      mockDb.execute
+        .mockResolvedValueOnce([[{ emp_id: "emp-1", reporting_to: "mgr-1" }], []]) // emp-1 has manager
+        .mockResolvedValueOnce([[], []]) // no existing request
+        .mockResolvedValueOnce([{ insertId: "req-1" }, []]) // INSERT request
+        .mockResolvedValueOnce([[], []]) // emp-2 has no manager (empty result)
+        .mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE cycle status
+
+      const result = await service.launchCycle("cycle-123", launchData);
+
+      expect(result.created).toBe(1);
+      expect(result.skipped).toBe(1);
+      expect(result.total).toBe(2);
+    });
+
+    it("should skip employees with existing requests", async () => {
+      const launchData = {
+        employee_ids: ["emp-1"],
+      };
+
+      mockDb.execute
+        .mockResolvedValueOnce([[{ emp_id: "emp-1", reporting_to: "mgr-1" }], []])
+        .mockResolvedValueOnce([[{ request_id: "req-existing" }], []]) // existing request found
+        .mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE cycle status
+
+      const result = await service.launchCycle("cycle-123", launchData);
+
+      expect(result.created).toBe(0);
+      expect(result.skipped).toBe(1);
+      expect(result.total).toBe(1);
+    });
+  });
+
+  describe("getRequests", () => {
+    it("should get all requests without filters", async () => {
+      const mockRequests = [
+        { request_id: "req-1", cycle_id: "cycle-1", status: "pending" },
+        { request_id: "req-2", cycle_id: "cycle-1", status: "submitted" },
+      ];
+
+      mockDb.execute.mockResolvedValueOnce([mockRequests, []]);
+
+      const requests = await service.getRequests({});
+
+      expect(Array.isArray(requests)).toBe(true);
+      expect(requests.length).toBe(2);
+    });
+
+    it("should filter requests by cycle_id", async () => {
+      const mockRequests = [
+        { request_id: "req-1", cycle_id: "cycle-123", status: "pending" },
+      ];
+
+      mockDb.execute.mockResolvedValueOnce([mockRequests, []]);
+
+      const requests = await service.getRequests({ cycle_id: "cycle-123" });
+
+      expect(mockDb.execute).toHaveBeenCalledWith(
+        expect.stringContaining("AND cycle_id = ?"),
+        ["cycle-123"]
+      );
+    });
+
+    it("should filter requests by status", async () => {
+      const mockRequests = [
+        { request_id: "req-1", status: "submitted" },
+      ];
+
+      mockDb.execute.mockResolvedValueOnce([mockRequests, []]);
+
+      const requests = await service.getRequests({ status: "submitted" });
+
+      expect(mockDb.execute).toHaveBeenCalledWith(
+        expect.stringContaining("AND status = ?"),
+        ["submitted"]
+      );
+    });
+
+    it("should filter requests by manager_id", async () => {
+      const mockRequests = [
+        { request_id: "req-1", manager_id: "mgr-1" },
+      ];
+
+      mockDb.execute.mockResolvedValueOnce([mockRequests, []]);
+
+      const requests = await service.getRequests({ manager_id: "mgr-1" });
+
+      expect(mockDb.execute).toHaveBeenCalledWith(
+        expect.stringContaining("AND manager_id = ?"),
+        ["mgr-1"]
+      );
+    });
+
+    it("should filter requests by employee_id", async () => {
+      const mockRequests = [
+        { request_id: "req-1", employee_id: "emp-1" },
+      ];
+
+      mockDb.execute.mockResolvedValueOnce([mockRequests, []]);
+
+      const requests = await service.getRequests({ employee_id: "emp-1" });
+
+      expect(mockDb.execute).toHaveBeenCalledWith(
+        expect.stringContaining("AND employee_id = ?"),
+        ["emp-1"]
+      );
+    });
+  });
+
+  describe("getRequestById", () => {
+    it("should get request by ID", async () => {
+      const mockRequest = {
+        request_id: "req-123",
+        cycle_id: "cycle-1",
+        employee_id: "emp-1",
+        status: "pending",
+      };
+
+      mockDb.execute.mockResolvedValueOnce([[mockRequest], []]);
+
+      const request = await service.getRequestById("req-123");
+
+      expect(request).toBeDefined();
+      expect(request?.request_id).toBe("req-123");
+      expect(mockDb.execute).toHaveBeenCalledWith(
+        "SELECT * FROM performance_feedback_request WHERE request_id = ?",
+        ["req-123"]
+      );
+    });
+
+    it("should return null for non-existent request", async () => {
+      mockDb.execute.mockResolvedValueOnce([[], []]);
+
+      const request = await service.getRequestById("non-existent");
+
+      expect(request).toBeNull();
+    });
+  });
+
+  describe("deleteRequest", () => {
+    it("should delete request by ID", async () => {
+      mockDb.execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+
+      await service.deleteRequest("req-123");
+
+      expect(mockDb.execute).toHaveBeenCalledWith(
+        "DELETE FROM performance_feedback_request WHERE request_id = ?",
+        ["req-123"]
+      );
+    });
+  });
+});
