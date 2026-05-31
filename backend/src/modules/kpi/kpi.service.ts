@@ -2,12 +2,13 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type {
-  KpiAssignment, KpiMetric, KpiScore, KpiSummary, KpiTemplate,
-  KpiTemplateMetric, LeaderboardEntry,
+  FamilySummary, KpiAssignment, KpiFamily, KpiMetric, KpiScore, KpiSummary,
+  KpiTemplate, KpiTemplateMetric, LeaderboardEntry,
 } from "./kpi.types.js";
 import type {
   AddTemplateMetricInput, AssignTemplateInput, BulkScoreInput,
-  CreateMetricInput, CreateTemplateInput, LeaderboardFilters, RecordScoreInput,
+  CreateMetricInput, CreateTemplateInput, LeaderboardFilters,
+  MetricsFilters, RecordScoreInput,
 } from "./kpi.validation.js";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -27,9 +28,16 @@ function toRating(score: number): KpiSummary["rating"] {
 export const kpiService = {
   // ─── Metrics ──────────────────────────────────────────────────────────────
 
-  async listMetrics(): Promise<KpiMetric[]> {
+  async listMetrics(filters: MetricsFilters = {}): Promise<KpiMetric[]> {
+    const conds: string[] = ["active_status = 1"];
+    const params: unknown[] = [];
+    if (filters.family) {
+      conds.push("family = ?");
+      params.push(filters.family);
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM kpi_metric_master WHERE active_status = 1 ORDER BY category, metric_name"
+      `SELECT * FROM kpi_metric_master WHERE ${conds.join(" AND ")} ORDER BY family, category, metric_name`,
+      params
     );
     return rows as KpiMetric[];
   },
@@ -246,6 +254,7 @@ export const kpiService = {
     }
     if (filters.branchId)  { conds.push("e.branch_id = ?");  params.push(filters.branchId); }
     if (filters.processId) { conds.push("e.process_id = ?"); params.push(filters.processId); }
+    if (filters.family)    { conds.push("m.family = ?");     params.push(filters.family); }
     params.push(filters.limit ?? 50);
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -274,5 +283,48 @@ export const kpiService = {
       ...row,
       rating: toRating(Number(row.weighted_score_pct)),
     }));
+  },
+
+  // ─── Family Summary ───────────────────────────────────────────────────────
+
+  async getFamilySummary(processId: string, period: string): Promise<FamilySummary> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         m.family,
+         ROUND(
+           SUM(
+             CASE WHEN m.direction = 'lower_is_better'
+                  THEN LEAST(tm.target_value / NULLIF(ks.actual_value, 0), 1.2)
+                  ELSE LEAST(ks.actual_value / NULLIF(tm.target_value, 0), 1.2)
+             END * tm.weight_pct
+           ) / NULLIF(SUM(tm.weight_pct), 0) * 100, 2
+         ) AS avg_score,
+         COUNT(DISTINCT ks.employee_id) AS employees_scored
+       FROM kpi_score ks
+       JOIN employees e ON e.id = ks.employee_id
+       JOIN kpi_template_metric tm ON tm.metric_id = ks.metric_id
+       JOIN kpi_metric_master m ON m.id = ks.metric_id
+       WHERE ks.period = ? AND e.process_id = ?
+       GROUP BY m.family`,
+      [period, processId]
+    );
+
+    const defaultEntry = { avg_score: 0, employees_scored: 0 };
+    const result: FamilySummary = {
+      operations:  { ...defaultEntry },
+      quality:     { ...defaultEntry },
+      performance: { ...defaultEntry },
+      custom:      { ...defaultEntry },
+    };
+
+    for (const row of rows as Array<{ family: KpiFamily; avg_score: number; employees_scored: number }>) {
+      if (row.family in result) {
+        result[row.family] = {
+          avg_score: Number(row.avg_score),
+          employees_scored: Number(row.employees_scored),
+        };
+      }
+    }
+    return result;
   },
 };

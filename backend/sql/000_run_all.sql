@@ -38,6 +38,9 @@ SOURCE sql/030_dpdp_privacy.sql;
 SOURCE sql/031_breach_log.sql;
 SOURCE sql/032_consent_text_versions.sql;
 SOURCE sql/033_kpi_process_config.sql;
+SOURCE sql/034_kpi_families.sql;
+SOURCE sql/035_portal_published_data.sql;
+SOURCE sql/036_erp_billing.sql;
 
 SELECT 'mas_hrms schema complete' AS status;
 SHOW TABLES;

@@ -12,6 +12,19 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 
 router.use(requireAuth);
 
+// GET /probation-due — employees due for confirmation
+router.get("/probation-due", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const days = req.query.days ? parseInt(req.query.days as string, 10) : 90;
+  const data = await lifecycleService.getProbationDue(days);
+  res.json({ success: true, data, total: data.length });
+}));
+
+// POST /employees/:id/confirm — confirm an employee
+router.post("/employees/:id/confirm", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  await lifecycleService.confirmEmployee(req.params.id, req.authUser!.id, req.body.remarks, req);
+  res.json({ success: true });
+}));
+
 // Admin/HR see any employee; employee sees own
 router.get("/employees/:id/lifecycle", selfOrAdminHr("id"), h(async (req: AuthenticatedRequest, res: Response) => {
   res.json({ data: await lifecycleService.listEvents(req.params.id) });

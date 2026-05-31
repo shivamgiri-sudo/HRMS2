@@ -6,6 +6,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { kpiController as c } from "./kpi.controller.js";
+import { kpiService } from "./kpi.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -34,6 +35,16 @@ router.post("/scores", h(c.recordScore));
 // Summary + Leaderboard
 router.get("/summary/:employeeId/:templateId/:period", h(c.getEmployeeSummary));
 router.get("/leaderboard", h(c.getLeaderboard));
+
+// Family summary — aggregated scores per family for a process/period
+router.get("/family-summary/:processId/:period", requireRole("admin", "hr", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { processId, period } = req.params;
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+    return res.status(400).json({ error: "period must be YYYY-MM" });
+  }
+  const data = await kpiService.getFamilySummary(processId, period);
+  res.json({ success: true, data });
+}));
 
 // Per-process KPI config
 router.get("/process-config/:processId", requireRole("admin", "hr", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {

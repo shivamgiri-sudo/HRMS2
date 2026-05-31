@@ -73,6 +73,94 @@ export const managementService = {
     await logSensitiveAction({ actor_user_id: acknowledgedBy, action_type: "ALERT_ACKNOWLEDGED", module_key: "MANAGEMENT", entity_type: "performance_alert", entity_id: alertId, req });
   },
 
+  // ─── TNI (Training Needs Identification) ───────────────────────────────────
+
+  async listTni(filters: { employee_id?: string; status?: string }) {
+    const conds: string[] = ["1=1"];
+    const params: unknown[] = [];
+    if (filters.employee_id) { conds.push("tn.employee_id = ?"); params.push(filters.employee_id); }
+    if (filters.status)      { conds.push("tn.status = ?");      params.push(filters.status); }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT tn.*, e.employee_code, e.full_name,
+              km.metric_name, km.metric_code,
+              cs.session_type AS coaching_session_type, cs.session_date
+         FROM training_need tn
+         JOIN employees e ON e.id = tn.employee_id
+         LEFT JOIN kpi_metric_master km ON km.id = tn.metric_id
+         LEFT JOIN coaching_session cs ON cs.id = tn.coaching_session_id
+        WHERE ${conds.join(" AND ")}
+        ORDER BY tn.created_at DESC LIMIT 500`,
+      params
+    );
+    return rows as RowDataPacket[];
+  },
+
+  async createTni(data: {
+    employee_id: string;
+    metric_id?: string;
+    need_type: string;
+    description?: string;
+    priority?: string;
+    coaching_session_id?: string;
+  }, identifiedBy: string) {
+    const id = randomUUID();
+    await db.execute(
+      `INSERT INTO training_need
+         (id, employee_id, metric_id, coaching_session_id, need_type, description, priority, identified_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        data.employee_id,
+        data.metric_id ?? null,
+        data.coaching_session_id ?? null,
+        data.need_type,
+        data.description ?? null,
+        data.priority ?? "medium",
+        identifiedBy,
+      ]
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM training_need WHERE id = ? LIMIT 1", [id]
+    );
+    return (rows as RowDataPacket[])[0];
+  },
+
+  async updateTniStatus(tniId: string, status: string) {
+    await db.execute(
+      "UPDATE training_need SET status = ? WHERE id = ?",
+      [status, tniId]
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM training_need WHERE id = ? LIMIT 1", [tniId]
+    );
+    return (rows as RowDataPacket[])[0];
+  },
+
+  async createTniFromCoaching(coachingId: string, overrides: {
+    need_type: string;
+    description?: string;
+    priority?: string;
+    metric_id?: string;
+  }, identifiedBy: string) {
+    const [sessionRows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM coaching_session WHERE id = ? LIMIT 1", [coachingId]
+    );
+    const session = (sessionRows as RowDataPacket[])[0];
+    if (!session) throw new Error("Coaching session not found");
+
+    return this.createTni(
+      {
+        employee_id: session.employee_id as string,
+        need_type: overrides.need_type,
+        description: overrides.description,
+        priority: overrides.priority,
+        metric_id: overrides.metric_id,
+        coaching_session_id: coachingId,
+      },
+      identifiedBy
+    );
+  },
+
   async getDashboardSummary(processId?: string) {
     const proc = processId ? "AND e.process_id = ?" : "";
     const params: unknown[] = processId ? [processId] : [];

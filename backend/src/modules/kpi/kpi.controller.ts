@@ -6,13 +6,16 @@ import {
   createMetricSchema,
   createTemplateSchema,
   leaderboardFiltersSchema,
+  metricsFiltersSchema,
   recordScoreSchema,
 } from "./kpi.validation.js";
 import { kpiService } from "./kpi.service.js";
 
 export const kpiController = {
-  async listMetrics(_req: Request, res: Response) {
-    res.json({ data: await kpiService.listMetrics() });
+  async listMetrics(req: Request, res: Response) {
+    const parsed = metricsFiltersSchema.safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    res.json({ data: await kpiService.listMetrics(parsed.data) });
   },
 
   async createMetric(req: Request, res: Response) {

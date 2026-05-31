@@ -5,6 +5,59 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { Request } from "express";
 
 export const lifecycleService = {
+  // ── Probation / Confirmation ──────────────────────────────────────────────
+
+  async getProbationDue(days: number) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id, e.employee_code, e.full_name, e.date_of_joining,
+              e.employment_status, e.branch_id, b.branch_name,
+              DATEDIFF(NOW(), e.date_of_joining) AS days_on_probation
+       FROM employees e
+       LEFT JOIN branch_master b ON b.id = e.branch_id
+       WHERE e.employment_status = 'Probation'
+         AND DATEDIFF(NOW(), e.date_of_joining) >= ?
+         AND e.active_status = 1
+       ORDER BY e.date_of_joining`,
+      [days]
+    );
+    return rows as RowDataPacket[];
+  },
+
+  async confirmEmployee(
+    employeeId: string,
+    confirmedBy: string,
+    remarks: string | undefined,
+    req?: Request
+  ) {
+    await db.execute(
+      `UPDATE employees SET employment_status = 'Confirmed', updated_at = NOW() WHERE id = ?`,
+      [employeeId]
+    );
+
+    await db.execute(
+      `INSERT INTO employee_journey_log
+         (id, employee_id, event_type, event_date, description, module, triggered_by, metadata)
+       VALUES (?, ?, 'confirmation', CURDATE(), ?, 'LIFECYCLE', ?, ?)`,
+      [
+        randomUUID(),
+        employeeId,
+        remarks ?? "Employment confirmed",
+        confirmedBy,
+        JSON.stringify({ confirmed_by: confirmedBy }),
+      ]
+    );
+
+    await logSensitiveAction({
+      actor_user_id: confirmedBy,
+      action_type: "EMPLOYEE_CONFIRMED",
+      module_key: "LIFECYCLE",
+      entity_type: "employee",
+      entity_id: employeeId,
+      change_summary: { employment_status: "Confirmed", remarks },
+      req,
+    });
+  },
+
   // ── Lifecycle events ─────────────────────────────────────────────────────
 
   async listEvents(employeeId: string) {

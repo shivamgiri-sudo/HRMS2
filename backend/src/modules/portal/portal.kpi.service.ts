@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { KpiScorecard } from "./portal.types.js";
+import { maskPortalEmployee } from "../../shared/portalMask.js";
 
 export const portalKpiService = {
   computeAchievement(actual: number, target: number, direction: string): number {
@@ -103,22 +104,28 @@ export const portalKpiService = {
       }
     }
 
-    return (metricRows as RowDataPacket[]).map(row => {
-      const ach = row.actual_value != null
-        ? portalKpiService.computeAchievement(row.actual_value, row.target_value, row.direction)
+    return (metricRows as RowDataPacket[]).map(rawRow => {
+      // Strip any PII that might bleed in from joined employee columns
+      const row = maskPortalEmployee(rawRow as Record<string, unknown>);
+      const actual = row.actual_value as number | null ?? null;
+      const target = row.target_value as number;
+      const direction = row.direction as string;
+      const ach = actual != null
+        ? portalKpiService.computeAchievement(actual, target, direction)
         : 0;
-      return {
-        metric_id: row.metric_id,
-        metric_code: row.metric_code,
-        metric_name: row.metric_name,
-        unit: row.unit,
-        direction: row.direction,
-        target: row.target_value,
-        actual: row.actual_value ?? null,
+      const scorecard: KpiScorecard = {
+        metric_id: row.metric_id as string,
+        metric_code: row.metric_code as string,
+        metric_name: row.metric_name as string,
+        unit: row.unit as string,
+        direction: direction as "higher_is_better" | "lower_is_better",
+        target,
+        actual,
         achievement_pct: ach,
         rag: portalKpiService.ragFromAchievement(ach),
-        sparkline: sparkMap.get(row.metric_id) ?? [],
+        sparkline: sparkMap.get(row.metric_id as string) ?? [],
       };
+      return scorecard;
     });
   },
 };

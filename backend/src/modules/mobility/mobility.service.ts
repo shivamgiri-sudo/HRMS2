@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 
 interface TransferFilters {
   employee_id?: string;
@@ -85,17 +86,78 @@ export const mobilityService = {
   },
 
   async updateTransfer(id: string, data: ApproveRejectData) {
+    const finalStatus = data.action === "approved" ? "completed" : "rejected";
+
     await db.execute(
-      `UPDATE transfer_record
-       SET status = ?, approved_by = ?, updated_at = NOW()
-       WHERE id = ?`,
-      [data.action, data.approved_by, id]
+      `UPDATE transfer_record SET status = ?, approved_by = ?, updated_at = NOW() WHERE id = ?`,
+      [finalStatus, data.approved_by, id]
     );
+
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM transfer_record WHERE id = ? LIMIT 1",
       [id]
     );
-    return (rows as RowDataPacket[])[0] ?? null;
+    const record = (rows as RowDataPacket[])[0] ?? null;
+
+    if (data.action === "approved" && record) {
+      const { employee_id, transfer_type, from_value, to_value } = record as {
+        employee_id: string;
+        transfer_type: string;
+        from_value: string;
+        to_value: string;
+      };
+
+      if (transfer_type === "branch") {
+        await db.execute(
+          `UPDATE employees SET branch_id = (SELECT id FROM branch_master WHERE branch_name = ? LIMIT 1) WHERE id = ?`,
+          [to_value, employee_id]
+        );
+      } else if (transfer_type === "department") {
+        await db.execute(
+          `UPDATE employees SET department_id = (SELECT id FROM department_master WHERE dept_name = ? LIMIT 1) WHERE id = ?`,
+          [to_value, employee_id]
+        );
+      } else if (transfer_type === "designation") {
+        await db.execute(
+          `UPDATE employees SET designation_id = (SELECT id FROM designation_master WHERE designation_name = ? LIMIT 1) WHERE id = ?`,
+          [to_value, employee_id]
+        );
+      } else if (transfer_type === "process") {
+        await db.execute(
+          `UPDATE employees SET process_id = (SELECT id FROM process_master WHERE process_name = ? LIMIT 1) WHERE id = ?`,
+          [to_value, employee_id]
+        );
+      }
+
+      await db.execute(
+        `INSERT INTO employee_journey_log
+           (id, employee_id, event_type, event_date, description, module, triggered_by, metadata)
+         VALUES (?, ?, 'transfer', CURDATE(), ?, 'MOBILITY', ?, ?)`,
+        [
+          randomUUID(),
+          employee_id,
+          `Transfer: ${from_value} → ${to_value}`,
+          data.approved_by,
+          JSON.stringify({ transfer_id: id, transfer_type, from_value, to_value }),
+        ]
+      );
+
+      await logSensitiveAction({
+        actor_user_id: data.approved_by,
+        action_type: "TRANSFER_APPROVED",
+        module_key: "MOBILITY",
+        entity_type: "employee",
+        entity_id: employee_id,
+        change_summary: { transfer_type, from_value, to_value },
+      });
+    }
+
+    // Re-fetch updated record
+    const [updated] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM transfer_record WHERE id = ? LIMIT 1",
+      [id]
+    );
+    return (updated as RowDataPacket[])[0] ?? null;
   },
 
   // ── Promotions ───────────────────────────────────────────────────────────
@@ -145,16 +207,71 @@ export const mobilityService = {
   },
 
   async updatePromotion(id: string, data: ApproveRejectData) {
+    const finalStatus = data.action === "approved" ? "completed" : "rejected";
+
     await db.execute(
-      `UPDATE promotion_record
-       SET status = ?, approved_by = ?, updated_at = NOW()
-       WHERE id = ?`,
-      [data.action, data.approved_by, id]
+      `UPDATE promotion_record SET status = ?, approved_by = ?, updated_at = NOW() WHERE id = ?`,
+      [finalStatus, data.approved_by, id]
     );
+
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM promotion_record WHERE id = ? LIMIT 1",
       [id]
     );
-    return (rows as RowDataPacket[])[0] ?? null;
+    const record = (rows as RowDataPacket[])[0] ?? null;
+
+    if (data.action === "approved" && record) {
+      const { employee_id, from_designation, to_designation, salary_revision } = record as {
+        employee_id: string;
+        from_designation: string | null;
+        to_designation: string;
+        salary_revision: number | null;
+      };
+
+      await db.execute(
+        `UPDATE employees
+         SET designation_id = (SELECT id FROM designation_master WHERE designation_name = ? LIMIT 1)
+         WHERE id = ?`,
+        [to_designation, employee_id]
+      );
+
+      if (salary_revision != null && salary_revision > 0) {
+        await db.execute(
+          `INSERT INTO employee_salary_assignment
+             (id, employee_id, ctc, effective_date, created_by, created_at)
+           VALUES (?, ?, ?, CURDATE(), ?, NOW())
+           ON DUPLICATE KEY UPDATE ctc = VALUES(ctc), effective_date = VALUES(effective_date)`,
+          [randomUUID(), employee_id, salary_revision, data.approved_by]
+        );
+      }
+
+      await db.execute(
+        `INSERT INTO employee_journey_log
+           (id, employee_id, event_type, event_date, description, module, triggered_by, metadata)
+         VALUES (?, ?, 'promotion', CURDATE(), ?, 'MOBILITY', ?, ?)`,
+        [
+          randomUUID(),
+          employee_id,
+          `Promotion: ${from_designation ?? "–"} → ${to_designation}`,
+          data.approved_by,
+          JSON.stringify({ promotion_id: id, from_designation, to_designation, salary_revision }),
+        ]
+      );
+
+      await logSensitiveAction({
+        actor_user_id: data.approved_by,
+        action_type: "PROMOTION_APPROVED",
+        module_key: "MOBILITY",
+        entity_type: "employee",
+        entity_id: employee_id,
+        change_summary: { from_designation, to_designation, salary_revision },
+      });
+    }
+
+    const [updated] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM promotion_record WHERE id = ? LIMIT 1",
+      [id]
+    );
+    return (updated as RowDataPacket[])[0] ?? null;
   },
 };

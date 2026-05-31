@@ -4,7 +4,10 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
-import { vendorService, contractService, expenseService, procurementService } from "./erp.service.js";
+import {
+  vendorService, contractService, expenseService, procurementService,
+  billingUnitService, billingInvoiceService, expensePolicyService,
+} from "./erp.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -214,6 +217,90 @@ router.patch(
     }
     const data = await procurementService.approve(req.params.id, action, req.authUser!.id, remarks);
     if (!data) return res.status(404).json({ error: "Procurement request not found" });
+    res.json({ success: true, data });
+  })
+);
+
+// ─── Billing Units ────────────────────────────────────────────────────────────
+
+router.get(
+  "/billing-units",
+  requireRole("admin", "finance"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await billingUnitService.list(req.query as { process_id?: string });
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/billing-units",
+  requireRole("admin", "finance"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!req.body.process_id || !req.body.effective_from) {
+      return res.status(400).json({ error: "process_id and effective_from are required" });
+    }
+    const data = await billingUnitService.create(req.body);
+    res.status(201).json({ success: true, data });
+  })
+);
+
+// ─── Billing Invoices ─────────────────────────────────────────────────────────
+
+router.get(
+  "/invoices",
+  requireRole("admin", "finance"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await billingInvoiceService.list(req.query as { process_id?: string; status?: string });
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/invoices/generate",
+  requireRole("admin", "finance"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { process_id, period_from, period_to } = req.body as {
+      process_id?: string; period_from?: string; period_to?: string;
+    };
+    if (!process_id || !period_from || !period_to) {
+      return res.status(400).json({ error: "process_id, period_from, and period_to are required" });
+    }
+    const data = await billingInvoiceService.generate({ process_id, period_from, period_to }, req.authUser!.id);
+    res.status(201).json({ success: true, data });
+  })
+);
+
+router.patch(
+  "/invoices/:id",
+  requireRole("admin", "finance"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await billingInvoiceService.update(req.params.id, req.body);
+    if (!data) return res.status(404).json({ error: "Invoice not found" });
+    res.json({ success: true, data });
+  })
+);
+
+// ─── Expense Policies ────────────────────────────────────────────────────────
+
+router.get(
+  "/expense-policies",
+  requireAuth,
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const data = await expensePolicyService.list();
+    res.json({ success: true, data });
+  })
+);
+
+router.put(
+  "/expense-policies/:category",
+  requireRole("admin", "finance"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const allowed = ["travel","accommodation","meals","transport","communication","office","other"];
+    if (!allowed.includes(req.params.category)) {
+      return res.status(400).json({ error: "Invalid category" });
+    }
+    const data = await expensePolicyService.upsert(req.params.category, req.body);
+    if (!data) return res.status(404).json({ error: "Policy not found" });
     res.json({ success: true, data });
   })
 );

@@ -77,6 +77,7 @@ const NativeAssetsManager           = lazy(() => import("./pages/NativeAssetsMan
 const NativeHelpdesk                = lazy(() => import("./pages/NativeHelpdesk"));
 const NativeLetters                 = lazy(() => import("./pages/NativeLetters"));
 const NativeLifecycle               = lazy(() => import("./pages/NativeLifecycle"));
+const NativeEmployeeLifecycle       = lazy(() => import("./pages/NativeEmployeeLifecycle"));
 const NativeOrgMasters              = lazy(() => import("./pages/NativeOrgMasters"));
 const NativeWorkflowAdmin           = lazy(() => import("./pages/NativeWorkflowAdmin"));
 const NativeBenefitsClaims          = lazy(() => import("./pages/NativeBenefitsClaims"));
@@ -106,6 +107,8 @@ const NativeMigrationConsole        = lazy(() => import("./pages/NativeMigration
 const NativeExitManagement          = lazy(() => import("./pages/NativeExitManagement"));
 const NativeKPIConfiguration        = lazy(() => import("./pages/NativeKPIConfiguration"));
 const NativeProcessConfig           = lazy(() => import("./pages/NativeProcessConfig"));
+const NativeOperationsKPI           = lazy(() => import("./pages/NativeOperationsKPI"));
+const NativePortalDataManager       = lazy(() => import("./pages/NativePortalDataManager"));
 const NativeLeaveTypeConfig         = lazy(() => import("./pages/NativeLeaveTypeConfig"));
 const NativeMyRoster                = lazy(() => import("./pages/NativeMyRoster"));
 const NativeRTABoard                = lazy(() => import("./pages/NativeRTABoard"));
@@ -217,6 +220,7 @@ const App = () => (
               <Route path="/helpdesk" element={<ProtectedRoute><Gate pageCode="HELPDESK"><NativeHelpdesk /></Gate></ProtectedRoute>} />
               <Route path="/letters" element={<ProtectedRoute><Gate pageCode="LETTERS"><NativeLetters /></Gate></ProtectedRoute>} />
               <Route path="/employee-lifecycle" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_LIFECYCLE"><NativeLifecycle /></Gate></ProtectedRoute>} />
+              <Route path="/employee-lifecycle-v2" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_LIFECYCLE"><NativeEmployeeLifecycle /></Gate></ProtectedRoute>} />
               <Route path="/org-masters" element={<ProtectedRoute><Gate pageCode="ORG_MASTERS"><NativeOrgMasters /></Gate></ProtectedRoute>} />
               <Route path="/org-masters/locations-policies" element={<ProtectedRoute><Gate pageCode="ORG_MASTERS"><NativeLocationPolicyMasters /></Gate></ProtectedRoute>} />
               <Route path="/workflow-admin" element={<ProtectedRoute><Gate pageCode="WORKFLOW_ADMIN"><NativeWorkflowAdmin /></Gate></ProtectedRoute>} />
@@ -246,6 +250,8 @@ const App = () => (
               <Route path="/migration-console" element={<ProtectedRoute><NativeMigrationConsole /></ProtectedRoute>} />
               <Route path="/exit-management" element={<ProtectedRoute><NativeExitManagement /></ProtectedRoute>} />
               <Route path="/kpi-config" element={<ProtectedRoute><Gate pageCode="KPI_CONFIG"><NativeKPIConfiguration /></Gate></ProtectedRoute>} />
+              <Route path="/operations-kpi" element={<ProtectedRoute><Gate pageCode="OPERATIONS_KPI"><NativeOperationsKPI /></Gate></ProtectedRoute>} />
+              <Route path="/portal-data-manager" element={<ProtectedRoute><Gate pageCode="PORTAL_DATA_MANAGER"><NativePortalDataManager /></Gate></ProtectedRoute>} />
               <Route path="/process-config" element={<ProtectedRoute><Gate pageCode="PROCESS_CONFIG"><NativeProcessConfig /></Gate></ProtectedRoute>} />
               <Route path="/leave-types" element={<ProtectedRoute><Gate pageCode="LEAVE_TYPES"><NativeLeaveTypeConfig /></Gate></ProtectedRoute>} />
               <Route path="/my-roster" element={<ProtectedRoute><NativeMyRoster /></ProtectedRoute>} />

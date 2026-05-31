@@ -141,7 +141,7 @@ export default function NativeQualityDashboard() {
     try {
       const [lbRes, alertsRes, coachRes] = await Promise.all([
         hrmsApi.get<{ success: boolean; data: LeaderboardEntry[] }>(
-          `/api/kpi/leaderboard?period=${period}`
+          `/api/kpi/leaderboard?period=${period}&family=quality`
         ),
         hrmsApi.get<{ success: boolean; data: Alert[] }>("/api/management/alerts"),
         hrmsApi.get<{ success: boolean; data: CoachingSession[] }>(

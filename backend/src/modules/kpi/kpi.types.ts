@@ -1,13 +1,23 @@
+export type KpiFamily = "operations" | "quality" | "performance" | "custom";
+
 export interface KpiMetric {
   id: string;
   metric_code: string;
   metric_name: string;
+  family: KpiFamily;
   category: "operations" | "quality" | "sales" | "hr" | "custom";
   unit: string;
   direction: "higher_is_better" | "lower_is_better";
   active_status: number;
   created_at: string;
 }
+
+export interface FamilySummaryEntry {
+  avg_score: number;
+  employees_scored: number;
+}
+
+export type FamilySummary = Record<KpiFamily, FamilySummaryEntry>;
 
 export interface KpiTemplate {
   id: string;

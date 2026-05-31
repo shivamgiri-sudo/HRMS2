@@ -49,11 +49,18 @@ export const bulkScoreSchema = z.object({
   })).min(1),
 });
 
+const KPI_FAMILY = z.enum(["operations", "quality", "performance", "custom"]);
+
+export const metricsFiltersSchema = z.object({
+  family: KPI_FAMILY.optional(),
+});
+
 export const leaderboardFiltersSchema = z.object({
   period: z.string().regex(MONTH_REGEX, "period must be YYYY-MM"),
   templateId: z.string().uuid().optional(),
   branchId: z.string().uuid().optional(),
   processId: z.string().uuid().optional(),
+  family: KPI_FAMILY.optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
 });
 
@@ -63,4 +70,5 @@ export type AddTemplateMetricInput = z.infer<typeof addTemplateMetricSchema>;
 export type AssignTemplateInput = z.infer<typeof assignTemplateSchema>;
 export type RecordScoreInput = z.infer<typeof recordScoreSchema>;
 export type BulkScoreInput = z.infer<typeof bulkScoreSchema>;
+export type MetricsFilters = z.infer<typeof metricsFiltersSchema>;
 export type LeaderboardFilters = z.infer<typeof leaderboardFiltersSchema>;
