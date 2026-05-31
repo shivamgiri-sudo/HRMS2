@@ -1,5 +1,5 @@
 /**
- * Role catalog and visibility matrix for PeopleOS.
+ * Role catalog and visibility matrix for MCN HRMS.
  * Defines what each role can access — used by RBAC middleware and frontend feature flags.
  * Super Admin and Admin have full access.
  */

@@ -512,6 +512,80 @@ router.get("/minimum-wages", h(async (req: AuthenticatedRequest, res: Response) 
   return res.json({ success: true, data: rows });
 }));
 
+// ─── NEFT Export ─────────────────────────────────────────────────────────────
+
+// GET /api/payroll/runs/:id/neft-summary — count of employees with/without bank details
+router.get("/runs/:id/neft-summary", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COUNT(*)                                                                          AS total,
+       SUM(CASE WHEN ebd.id IS NOT NULL AND ebd.ifsc_code IS NOT NULL THEN 1 ELSE 0 END) AS with_bank,
+       SUM(CASE WHEN ebd.id IS NULL OR ebd.ifsc_code IS NULL THEN 1 ELSE 0 END)          AS missing_bank,
+       SUM(spl.net_salary)                                                               AS total_net
+     FROM salary_prep_line spl
+     JOIN employees e ON e.id = spl.employee_id
+     LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = spl.employee_id
+     WHERE spl.run_id = ? AND spl.net_salary > 0`,
+    [req.params.id]
+  );
+  res.json({ success: true, data: (rows as RowDataPacket[])[0] });
+}));
+
+// GET /api/payroll/runs/:id/neft-export — generate NEFT disbursement CSV
+router.get("/runs/:id/neft-export", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const runId = req.params.id;
+
+  const [runRows] = await db.execute<RowDataPacket[]>(
+    "SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1",
+    [runId]
+  );
+  const run = (runRows as RowDataPacket[])[0];
+  if (!run) return res.status(404).json({ error: "Run not found" });
+  if (!["locked", "disbursed"].includes(run.status as string)) {
+    return res.status(400).json({ error: "Run must be locked or disbursed to generate NEFT export" });
+  }
+
+  const [lines] = await db.execute<RowDataPacket[]>(
+    `SELECT spl.employee_id, spl.net_salary, spl.gross_salary, spl.total_deductions,
+            e.employee_code, e.full_name, e.email,
+            ebd.bank_name, ebd.ifsc_code,
+            AES_DECRYPT(ebd.account_number, 'hrms-bank-key') AS account_number
+     FROM salary_prep_line spl
+     JOIN employees e ON e.id = spl.employee_id
+     LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = spl.employee_id
+     WHERE spl.run_id = ? AND spl.net_salary > 0
+     ORDER BY e.employee_code`,
+    [runId]
+  );
+
+  // Standard Indian bank NEFT format
+  // Columns: Sr No, Employee Code, Employee Name, Bank Name, IFSC Code, Account Number, Net Amount, Remarks
+  const csvRows = ["Sr No,Employee Code,Employee Name,Bank Name,IFSC Code,Account Number,Net Amount,Remarks"];
+  let srNo = 1;
+  let totalAmount = 0;
+
+  for (const line of lines as RowDataPacket[]) {
+    const accountNo = line.account_number ? String(line.account_number) : "NOT_LINKED";
+    const ifsc = (line.ifsc_code as string | null) ?? "NOT_LINKED";
+    const bank = ((line.bank_name as string | null) ?? "").replace(/,/g, " ");
+    const name = ((line.full_name as string | null) ?? "").replace(/,/g, " ");
+    const amount = Number(line.net_salary).toFixed(2);
+    const remarks = `SALARY ${run.run_month as string}`;
+    csvRows.push(`${srNo},${line.employee_code as string},${name},${bank},${ifsc},${accountNo},${amount},${remarks}`);
+    srNo++;
+    totalAmount += Number(line.net_salary);
+  }
+
+  csvRows.push(`TOTAL,,,,,,${totalAmount.toFixed(2)},`);
+
+  const csv = csvRows.join("\n");
+  const filename = `NEFT_${run.run_month as string}_${runId.slice(0, 8)}.csv`;
+
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.send(csv);
+}));
+
 // ─── ECR / ESIC Challan ───────────────────────────────────────────────────────
 
 // GET /api/payroll/runs/:id/ecr — ECR-format data for a run

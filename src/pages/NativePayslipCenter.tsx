@@ -57,6 +57,13 @@ type Payslip = {
   status?: string;
 };
 
+type NeftSummary = {
+  total: number;
+  with_bank: number;
+  missing_bank: number;
+  total_net: number;
+};
+
 type Form16Data = {
   financial_year: string;
   period: string;
@@ -394,6 +401,10 @@ export default function NativePayslipCenter() {
 
   const [message, setMessage] = useState("");
 
+  const [neftSummary, setNeftSummary] = useState<NeftSummary | null>(null);
+  const [loadingNeft, setLoadingNeft] = useState(false);
+  const [downloadingNeft, setDownloadingNeft] = useState(false);
+
   // ── Load runs ───────────────────────────────────────────────────────────────
   const loadRuns = async () => {
     setLoadingRuns(true);
@@ -439,6 +450,11 @@ export default function NativePayslipCenter() {
       const run = runs.find((r) => r.id === selectedRunId) ?? null;
       setSelectedRun(run);
       void loadLines(selectedRunId);
+      if (run && ["locked", "disbursed"].includes(run.status)) {
+        void loadNeftSummary(selectedRunId);
+      } else {
+        setNeftSummary(null);
+      }
     }
   }, [selectedRunId]);
 
@@ -490,6 +506,43 @@ export default function NativePayslipCenter() {
       setMessage(e.message || "Acknowledgement failed.");
     } finally {
       setAcknowledging(false);
+    }
+  };
+
+  // ── NEFT summary ─────────────────────────────────────────────────────────────
+  const loadNeftSummary = async (runId: string) => {
+    setLoadingNeft(true);
+    setNeftSummary(null);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: NeftSummary }>(
+        `/api/payroll/runs/${runId}/neft-summary`
+      );
+      setNeftSummary(res.data ?? null);
+    } catch {
+      setNeftSummary(null);
+    } finally {
+      setLoadingNeft(false);
+    }
+  };
+
+  // ── NEFT download ─────────────────────────────────────────────────────────────
+  const downloadNeftCsv = async () => {
+    if (!selectedRunId || !selectedRun) return;
+    setDownloadingNeft(true);
+    try {
+      const csvText = await hrmsApi.getRaw(`/api/payroll/runs/${selectedRunId}/neft-export`);
+      const blob = new Blob([csvText], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `NEFT_${selectedRun.year}-${String(selectedRun.month).padStart(2, "0")}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      const e = err as Error;
+      setMessage(e.message || "Failed to download NEFT file.");
+    } finally {
+      setDownloadingNeft(false);
     }
   };
 
@@ -591,6 +644,66 @@ export default function NativePayslipCenter() {
               icon={<CheckCircle2 className="h-5 w-5" />}
               tone="bg-violet-50 text-violet-700"
             />
+          </div>
+        )}
+
+        {/* NEFT Disbursement Card — visible only for locked / disbursed runs */}
+        {canGenerate && (
+          <div className="rounded-3xl border bg-white p-5 shadow-sm space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h2 className="font-black text-slate-950">NEFT Disbursement</h2>
+                <p className="text-sm text-slate-500">Download the bank transfer file for this payroll run.</p>
+              </div>
+              <button
+                onClick={() => { void downloadNeftCsv(); }}
+                disabled={downloadingNeft || loadingNeft}
+                className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white hover:bg-slate-700 transition-colors disabled:opacity-50 cursor-pointer whitespace-nowrap"
+              >
+                {downloadingNeft ? (
+                  <Loader className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+                Download NEFT CSV
+              </button>
+            </div>
+
+            {loadingNeft && (
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <Loader className="h-4 w-4 animate-spin" />
+                Loading bank details summary…
+              </div>
+            )}
+
+            {!loadingNeft && neftSummary && (
+              <div className="grid gap-3 sm:grid-cols-3 text-sm">
+                <div className="rounded-2xl bg-emerald-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">Ready</p>
+                  <p className="mt-1 text-xl font-black text-emerald-800">{neftSummary.with_bank} employees</p>
+                </div>
+                <div className={`rounded-2xl p-4 ${neftSummary.missing_bank > 0 ? "bg-amber-50" : "bg-slate-50"}`}>
+                  <p className={`text-xs font-semibold uppercase tracking-wide ${neftSummary.missing_bank > 0 ? "text-amber-600" : "text-slate-500"}`}>
+                    Missing Bank Details
+                  </p>
+                  <p className={`mt-1 text-xl font-black ${neftSummary.missing_bank > 0 ? "text-amber-800" : "text-slate-400"}`}>
+                    {neftSummary.missing_bank} employees
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-blue-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Total Net</p>
+                  <p className="mt-1 text-xl font-black text-blue-800">{INR(Number(neftSummary.total_net))}</p>
+                </div>
+              </div>
+            )}
+
+            {!loadingNeft && neftSummary && neftSummary.missing_bank > 0 && (
+              <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
+                <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                {neftSummary.missing_bank} employee{neftSummary.missing_bank > 1 ? "s have" : " has"} no bank details linked.
+                They will appear as NOT_LINKED in the exported file.
+              </div>
+            )}
           </div>
         )}
 

@@ -62,7 +62,7 @@ export function generatePayslipPDF(data: PayslipData): jsPDF {
   doc.setTextColor(...COLORS.white);
   doc.setFontSize(24);
   doc.setFont("helvetica", "bold");
-  doc.text(data.companyName || "PEOPLO HR", margin, 25);
+  doc.text(data.companyName || "MCN HRMS", margin, 25);
 
   // Payslip label
   doc.setFontSize(11);

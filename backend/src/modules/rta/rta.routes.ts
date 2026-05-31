@@ -13,6 +13,8 @@ import {
 } from "./rta.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response } from "express";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 
 export const rtaRouter = Router();
 rtaRouter.use(requireAuth);
@@ -225,3 +227,62 @@ rtaRouter.get(
     return res.json({ success: true, data });
   })
 );
+
+// ─── Live Attendance SSE Stream ───────────────────────────────────────────────
+
+// GET /api/rta/live-stream — SSE stream of live attendance summary
+// Sends an immediate snapshot then updates every 30 seconds.
+// Auth is handled by the router-level requireAuth middleware above.
+// EventSource cannot send custom headers, so authentication relies on the
+// session cookie that the browser sends automatically with withCredentials:true.
+rtaRouter.get("/live-stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.flushHeaders();
+
+  const processId = req.query.process_id as string | undefined;
+  const branchId  = req.query.branch_id  as string | undefined;
+  const date      = (req.query.date as string) || new Date().toISOString().slice(0, 10);
+
+  const sendSnapshot = async () => {
+    try {
+      const conds: string[] = ["s.session_date = ?"];
+      const params: unknown[] = [date];
+
+      if (processId) { conds.push("e.process_id = ?"); params.push(processId); }
+      if (branchId)  { conds.push("e.branch_id = ?");  params.push(branchId);  }
+
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(DISTINCT e.id)                                                                AS rostered,
+           SUM(CASE WHEN s.current_status IN ('Logged In','On Break') THEN 1 ELSE 0 END)      AS logged_in,
+           SUM(CASE WHEN s.current_status = 'Logged Out' THEN 1 ELSE 0 END)                   AS logged_out,
+           SUM(CASE WHEN s.id IS NULL THEN 1 ELSE 0 END)                                      AS absent,
+           ROUND(AVG(s.adherence_pct), 1)                                                     AS adherence_pct
+         FROM employees e
+         LEFT JOIN wfm_attendance_session s
+           ON s.employee_id = e.id AND s.session_date = ?
+         WHERE e.employment_status = 'Active'
+           AND e.active_status = 1
+           ${processId ? "AND e.process_id = ?" : ""}
+           ${branchId  ? "AND e.branch_id = ?"  : ""}`,
+        [date, ...params],
+      );
+
+      const data = (rows as RowDataPacket[])[0] ?? {};
+      res.write(`data: ${JSON.stringify({ ts: Date.now(), ...data })}\n\n`);
+    } catch {
+      res.write(`data: ${JSON.stringify({ error: "fetch_failed" })}\n\n`);
+    }
+  };
+
+  void sendSnapshot();
+  const interval = setInterval(() => void sendSnapshot(), 30_000);
+
+  req.on("close", () => {
+    clearInterval(interval);
+    res.end();
+  });
+});

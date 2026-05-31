@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Coffee, LogIn, LogOut, Plus, RefreshCcw, Search,
   UserCheck, Users, Activity,
@@ -65,6 +65,15 @@ export default function NativeWFMLiveTracker() {
     };
   } | null>(null);
 
+  // SSE live summary (overrides liveData.summary when connected)
+  const [sseSummary, setSseSummary] = useState<{
+    rostered: number | null; logged_in: number | null;
+    logged_out: number | null; absent: number | null;
+    adherence_pct: number | null;
+  } | null>(null);
+  const [sseConnected, setSseConnected] = useState(false);
+  const sseTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const [employees, setEmployees] = useState<AnyRow[]>([]);
 
   const [search, setSearch] = useState("");
@@ -93,11 +102,79 @@ export default function NativeWFMLiveTracker() {
     }
   };
 
-  useEffect(() => { void load(); }, [date, user?.id]);
+  // Load detail table whenever date or user changes
+  useEffect(() => { void load(); }, [date, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── SSE live summary with polling fallback ─────────────────────────────────
+  // EventSource sends the session cookie automatically via withCredentials.
+  useEffect(() => {
+    setSseSummary(null);
+
+    const url = `/api/rta/live-stream?date=${date}`;
+    let es: EventSource | null = null;
+
+    const startPollingFallback = () => {
+      setSseConnected(false);
+      if (sseTimerRef.current) return;
+      sseTimerRef.current = setInterval(() => void load(), 30_000);
+    };
+
+    try {
+      es = new EventSource(url, { withCredentials: true });
+
+      es.onopen = () => {
+        setSseConnected(true);
+        if (sseTimerRef.current) {
+          clearInterval(sseTimerRef.current);
+          sseTimerRef.current = null;
+        }
+      };
+
+      es.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (!data.error) {
+            setSseSummary({
+              rostered:     data.rostered     ?? null,
+              logged_in:    data.logged_in    ?? null,
+              logged_out:   data.logged_out   ?? null,
+              absent:       data.absent       ?? null,
+              adherence_pct: data.adherence_pct ?? null,
+            });
+          }
+        } catch { /* ignore parse errors */ }
+      };
+
+      es.onerror = () => {
+        es?.close();
+        setSseConnected(false);
+        startPollingFallback();
+      };
+    } catch {
+      startPollingFallback();
+    }
+
+    return () => {
+      es?.close();
+      if (sseTimerRef.current) {
+        clearInterval(sseTimerRef.current);
+        sseTimerRef.current = null;
+      }
+      setSseConnected(false);
+    };
+  }, [date]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sessions: AnyRow[] = liveData?.sessions ?? [];
-  const summary = liveData?.summary ?? {
+  const baseSummary = liveData?.summary ?? {
     total: 0, logged_in: 0, logged_out: 0, absent: 0, overall_adherence_pct: 0,
+  };
+  // SSE values override the REST summary when available
+  const summary = {
+    total:                sseSummary?.rostered      ?? baseSummary.total,
+    logged_in:            sseSummary?.logged_in     ?? baseSummary.logged_in,
+    logged_out:           sseSummary?.logged_out    ?? baseSummary.logged_out,
+    absent:               sseSummary?.absent        ?? baseSummary.absent,
+    overall_adherence_pct: sseSummary?.adherence_pct ?? baseSummary.overall_adherence_pct,
   };
 
   const processOptions = useMemo(() => uniq(sessions.map((s) => s.process_name ?? "")), [sessions]);

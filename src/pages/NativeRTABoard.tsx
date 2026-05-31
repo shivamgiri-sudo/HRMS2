@@ -73,6 +73,17 @@ interface Process {
 
 type UserRole = "admin" | "hr" | "wfm" | "operations" | "manager" | string;
 
+// ── Live summary shape from SSE ───────────────────────────────────────────────
+
+interface LiveSummary {
+  ts: number;
+  rostered: number | null;
+  logged_in: number | null;
+  logged_out: number | null;
+  absent: number | null;
+  adherence_pct: number | null;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -154,7 +165,7 @@ function StatCard({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-const AUTO_REFRESH_MS = 2 * 60 * 1000; // 2 minutes
+const SSE_FALLBACK_MS = 30_000; // polling interval used when SSE unavailable
 
 const SHRINKAGE_ROLES: UserRole[] = ["admin", "hr", "wfm", "operations", "wfm_manager"];
 
@@ -165,6 +176,8 @@ export default function NativeRTABoard() {
   const [date, setDate]           = useState<string>(today());
   const [processId, setProcessId] = useState<string>("");
   const [notice, setNotice]       = useState<string>("");
+  const [sseConnected, setSseConnected] = useState<boolean>(false);
+  const [liveSummary, setLiveSummary]   = useState<LiveSummary | null>(null);
 
   // ── Processes ───────────────────────────────────────────────────────────────
   const processesQ = useQuery({
@@ -249,32 +262,84 @@ export default function NativeRTABoard() {
     onError: (err: Error) => setNotice(err.message ?? "Acknowledge failed."),
   });
 
-  // ── Summary cards ─────────────────────────────────────────────────────────────
-  const rostered    = snapshot?.rostered_hc  ?? rows.length;
-  const loggedIn    = snapshot?.present_hc   ?? rows.filter((r) => r.attendance_status === "present").length;
-  const absent      = snapshot?.absent_hc    ?? rows.filter((r) => r.attendance_status === "absent").length;
+  // ── Summary cards — SSE data takes precedence over snapshot ──────────────────
+  const rostered    = liveSummary?.rostered   ?? snapshot?.rostered_hc  ?? rows.length;
+  const loggedIn    = liveSummary?.logged_in  ?? snapshot?.present_hc   ?? rows.filter((r) => r.attendance_status === "present").length;
+  const absent      = liveSummary?.absent     ?? snapshot?.absent_hc    ?? rows.filter((r) => r.attendance_status === "absent").length;
   const lateLogins  = snapshot?.late_count   ?? rows.filter((r) => r.attendance_status === "late").length;
   const earlyExits  = rows.filter((r) => r.attendance_status === "early_exit").length;
-  const adherencePct = snapshot?.avg_adherence_pct
+  const adherencePct = liveSummary?.adherence_pct
+    ?? snapshot?.avg_adherence_pct
     ?? (rows.length > 0
       ? Math.round(rows.reduce((s, r) => s + r.adherence_pct, 0) / rows.length)
       : 0);
 
-  // ── Auto-refresh every 2 minutes ─────────────────────────────────────────────
+  // ── Manual refresh (invalidates all queries) ──────────────────────────────────
   const refreshAll = useCallback(() => {
     void qc.invalidateQueries({ queryKey: reconKey });
     void qc.invalidateQueries({ queryKey: alertsKey });
     void qc.invalidateQueries({ queryKey: shrinkageKey });
   }, [date, processId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── SSE connection with polling fallback ──────────────────────────────────────
+  // EventSource cannot send Authorization headers; it relies on the session
+  // cookie sent automatically with withCredentials:true.
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    timerRef.current = setInterval(refreshAll, AUTO_REFRESH_MS);
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+    setLiveSummary(null);
+
+    const params = new URLSearchParams({ date });
+    if (processId) params.set("process_id", processId);
+    const url = `/api/rta/live-stream?${params}`;
+
+    let es: EventSource | null = null;
+
+    const startPollingFallback = () => {
+      setSseConnected(false);
+      if (timerRef.current) return; // already polling
+      timerRef.current = setInterval(refreshAll, SSE_FALLBACK_MS);
     };
-  }, [refreshAll]);
+
+    try {
+      es = new EventSource(url, { withCredentials: true });
+
+      es.onopen = () => {
+        setSseConnected(true);
+        // Cancel any polling fallback that may have started
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+      };
+
+      es.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data) as LiveSummary & { error?: string };
+          if (!data.error) {
+            setLiveSummary(data);
+          }
+        } catch { /* ignore parse errors */ }
+      };
+
+      es.onerror = () => {
+        es?.close();
+        setSseConnected(false);
+        startPollingFallback();
+      };
+    } catch {
+      startPollingFallback();
+    }
+
+    return () => {
+      es?.close();
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      setSseConnected(false);
+    };
+  }, [date, processId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isLoading = reconQ.isFetching || shrinkageQ.isFetching;
 
@@ -291,14 +356,28 @@ export default function NativeRTABoard() {
 
         {/* Header */}
         <header className="rounded-3xl bg-slate-950 p-6 text-white">
-          <p className="text-xs font-black uppercase tracking-[.22em] text-blue-300">
-            RTA · Real-Time Adherence
-          </p>
-          <h1 className="mt-2 text-3xl font-black">RTA Board</h1>
-          <p className="mt-2 text-sm text-slate-300">
-            Planned vs actual attendance reconciliation, shrinkage and adherence alerts.
-            Auto-refreshes every 2 minutes.
-          </p>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[.22em] text-blue-300">
+                RTA · Real-Time Adherence
+              </p>
+              <h1 className="mt-2 text-3xl font-black">RTA Board</h1>
+              <p className="mt-2 text-sm text-slate-300">
+                Planned vs actual attendance reconciliation, shrinkage and adherence alerts.
+              </p>
+            </div>
+            {sseConnected ? (
+              <span className="mt-1 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1.5 text-xs font-black text-emerald-300">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+                Live
+              </span>
+            ) : (
+              <span className="mt-1 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-500/20 px-3 py-1.5 text-xs font-black text-amber-300">
+                <span className="h-2 w-2 rounded-full bg-amber-400" />
+                Polling 30s
+              </span>
+            )}
+          </div>
         </header>
 
         {/* Notice */}
@@ -379,7 +458,7 @@ export default function NativeRTABoard() {
               className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white disabled:bg-slate-300"
             >
               <RefreshCcw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
-              Refresh
+              {sseConnected ? "Live ●" : "Auto-refresh 30s ↻"}
             </button>
             {canLogSnapshot && (
               <button
