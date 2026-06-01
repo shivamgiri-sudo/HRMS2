@@ -44,6 +44,7 @@ import { complianceRouter } from "./modules/compliance/compliance.routes.js";
 import { privacyRouter } from "./modules/privacy/privacy.routes.js";
 import { performanceFeedbackRouter } from "./modules/performance-feedback/performance-feedback.routes.js";
 import { engagementRouter } from "./modules/engagement/engagement.routes.js";
+import { communicationRouter } from "./modules/communication/communication.routes.js";
 
 export const app = express();
 
@@ -117,6 +118,7 @@ app.use("/api/compliance", complianceRouter);
 app.use("/api/privacy", privacyRouter);
 app.use("/api/performance-feedback", performanceFeedbackRouter);
 app.use("/api/engagement", engagementRouter);
+app.use("/api/communication", communicationRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

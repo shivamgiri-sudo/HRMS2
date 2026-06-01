@@ -62,6 +62,7 @@ export const MODULES = [
   "access_control",
   "demo_seed",
   "account_control",
+  "communication",
 ] as const;
 
 export type PeopleOSModule = (typeof MODULES)[number];
@@ -79,7 +80,7 @@ export const ROLE_MODULE_ACCESS: Record<PeopleOSRole, PeopleOSModule[]> = {
     "dashboard", "employees", "ats", "documents", "lifecycle", "assets",
     "helpdesk", "leave", "attendance", "exit", "org", "workflow",
     "workforce_mandate", "reports", "audit_logs", "account_control",
-    "lms", "kpi", "performance_feedback", "engagement",
+    "lms", "kpi", "performance_feedback", "engagement", "communication",
   ],
 
   recruiter: [
@@ -89,7 +90,7 @@ export const ROLE_MODULE_ACCESS: Record<PeopleOSRole, PeopleOSModule[]> = {
   employee: [
     "dashboard", "employees", "documents", "assets", "helpdesk",
     "leave", "attendance", "payslip", "tax_declaration",
-    "lms", "performance", "performance_feedback", "engagement", "wfm_roster",
+    "lms", "performance", "performance_feedback", "engagement", "wfm_roster", "communication",
   ],
 
   wfm: [
@@ -100,17 +101,17 @@ export const ROLE_MODULE_ACCESS: Record<PeopleOSRole, PeopleOSModule[]> = {
   process_manager: [
     "dashboard", "employees", "attendance", "wfm_roster", "wfm_rta",
     "wfm_shrinkage", "workforce_mandate", "leave", "kpi", "performance",
-    "performance_feedback", "engagement", "coaching", "reports", "helpdesk",
+    "performance_feedback", "engagement", "coaching", "communication", "reports", "helpdesk",
   ],
 
   assistant_manager: [
     "dashboard", "employees", "attendance", "wfm_roster",
-    "leave", "kpi", "performance", "performance_feedback", "engagement", "coaching", "helpdesk",
+    "leave", "kpi", "performance", "performance_feedback", "engagement", "coaching", "communication", "helpdesk",
   ],
 
   team_leader: [
     "dashboard", "employees", "attendance", "leave",
-    "kpi", "performance", "performance_feedback", "engagement", "coaching", "helpdesk",
+    "kpi", "performance", "performance_feedback", "engagement", "coaching", "communication", "helpdesk",
   ],
 
   qa: [
