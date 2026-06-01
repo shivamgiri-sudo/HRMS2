@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS communication_template (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_category_active (category, is_active),
-  INDEX idx_created_by (created_by)
+  INDEX idx_created_by (created_by),
+  FOREIGN KEY (created_by) REFERENCES employees(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- =====================================================
