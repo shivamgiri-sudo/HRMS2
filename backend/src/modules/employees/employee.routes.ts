@@ -9,6 +9,19 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 
 router.use(requireAuth);
 
+// GET /api/employees/me — returns the employee record for the logged-in user
+router.get("/me", h(async (req: any, res: any) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+  const { db } = await import("../../db/mysql.js");
+  const [rows] = await db.execute(
+    "SELECT * FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    [userId]
+  ) as any[];
+  if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
+  return res.json({ success: true, data: rows[0] });
+}));
+
 router.get("/", h(c.listEmployees));
 router.post("/", h(c.createEmployee));
 router.get("/:id", h(c.getEmployee));

@@ -30,7 +30,7 @@ export default function NativePerformanceFeedbackAssignments() {
 
   const fetchAssignments = async () => {
     try {
-      const data = await hrmsApi.get("/performance-feedback/my-assignments");
+      const data = await hrmsApi.get("/api/performance-feedback/requests");
       setAssignments(data);
     } catch (error) {
       console.error("Failed to fetch assignments:", error);

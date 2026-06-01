@@ -59,7 +59,7 @@ export default function NativePerformanceFeedbackDevelopmentPlan() {
 
   const fetchDevelopmentPlans = async () => {
     try {
-      const data = await hrmsApi.get("/performance-feedback/development-plans", {
+      const data = await hrmsApi.get("/api/performance-feedback/development-plans", {
         employee_id: user?.id,
       });
       setPlans(data);
@@ -78,7 +78,7 @@ export default function NativePerformanceFeedbackDevelopmentPlan() {
 
     try {
       await hrmsApi.patch(
-        `/performance-feedback/development-plans/${selectedPlan.id}/goals/${goalId}`,
+        `/api/performance-feedback/development-plans/${selectedPlan.id}/goals/${goalId}`,
         {
           status,
           notes,

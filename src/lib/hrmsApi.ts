@@ -5,6 +5,16 @@ import { supabase } from '@/integrations/supabase/client';
 const HRMS_API_URL = import.meta.env.VITE_HRMS_API_URL || 'http://localhost:5055';
 
 async function getAuthHeader(): Promise<Record<string, string>> {
+  // Demo session stored in localStorage by AuthContext
+  const demoRaw = localStorage.getItem('hrms_demo_session');
+  if (demoRaw) {
+    try {
+      const demo = JSON.parse(demoRaw);
+      const token = demo?.access_token;
+      if (token) return { Authorization: `Bearer ${token}` };
+    } catch { /* fall through */ }
+  }
+
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error('No active session');

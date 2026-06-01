@@ -53,7 +53,7 @@ export default function NativePerformanceFeedbackForm() {
 
   const fetchFormTemplate = async () => {
     try {
-      const data = await hrmsApi.get(`/performance-feedback/form/${requestId}`);
+      const data = await hrmsApi.get(`/api/performance-feedback/requests/${requestId}/form`);
       setTemplate(data);
 
       // Initialize ratings
@@ -96,7 +96,7 @@ export default function NativePerformanceFeedbackForm() {
         development_areas: developmentAreas || undefined,
       };
 
-      await hrmsApi.post("/performance-feedback/responses", payload);
+      await hrmsApi.post("/api/performance-feedback/requests", payload);
       navigate("/performance-feedback/my-assignments");
     } catch (error) {
       console.error("Failed to submit feedback:", error);

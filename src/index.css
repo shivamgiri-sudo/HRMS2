@@ -345,3 +345,132 @@ tbody td {
     @apply hover:scale-[1.02] active:scale-[0.98] transition-transform duration-150;
   }
 }
+/* =========================================================
+   Enterprise Design System — MAS CallNet HRMS
+   Primary: #2563EB (blue-600), Accent: #059669 (emerald-600)
+   ========================================================= */
+
+:root {
+  --hrms-primary: #2563EB;
+  --hrms-primary-dark: #1d4ed8;
+  --hrms-primary-light: #eff6ff;
+  --hrms-accent: #059669;
+  --hrms-accent-light: #ecfdf5;
+  --hrms-danger: #dc2626;
+  --hrms-warning: #d97706;
+  --hrms-muted-bg: #f1f5f9;
+  --hrms-border: #e2e8f0;
+  --hrms-text: #0f172a;
+  --hrms-text-muted: #64748b;
+  --hrms-card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06);
+  --hrms-card-shadow-hover: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.07);
+}
+
+/* Enterprise Card */
+@layer utilities {
+  .hrms-card {
+    @apply rounded-xl border border-slate-200 bg-white shadow-sm transition-shadow duration-150;
+    box-shadow: var(--hrms-card-shadow);
+  }
+  .hrms-card:hover {
+    box-shadow: var(--hrms-card-shadow-hover);
+  }
+  .hrms-card-header {
+    @apply border-b border-slate-100 px-5 py-4;
+  }
+  .hrms-card-body {
+    @apply px-5 py-4;
+  }
+
+  /* KPI Stat Cards */
+  .hrms-stat-card {
+    @apply hrms-card px-5 py-4 flex flex-col gap-1;
+  }
+  .hrms-stat-value {
+    @apply text-2xl font-bold text-slate-900 tabular-nums;
+  }
+  .hrms-stat-label {
+    @apply text-xs font-medium text-slate-500 uppercase tracking-wide;
+  }
+  .hrms-stat-delta-up {
+    @apply text-xs font-semibold text-emerald-600;
+  }
+  .hrms-stat-delta-down {
+    @apply text-xs font-semibold text-red-500;
+  }
+
+  /* Page header */
+  .hrms-page-header {
+    @apply mb-6 flex items-center justify-between;
+  }
+  .hrms-page-title {
+    @apply text-xl font-bold text-slate-900;
+  }
+  .hrms-page-subtitle {
+    @apply mt-0.5 text-sm text-slate-500;
+  }
+
+  /* Tables */
+  .hrms-table-wrapper {
+    @apply hrms-card overflow-hidden;
+  }
+  .hrms-table {
+    @apply w-full text-sm;
+  }
+  .hrms-table thead tr {
+    @apply border-b border-slate-100 bg-slate-50;
+  }
+  .hrms-table thead th {
+    @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500;
+  }
+  .hrms-table tbody tr {
+    @apply border-b border-slate-50 transition-colors duration-100 hover:bg-slate-50/70;
+  }
+  .hrms-table tbody td {
+    @apply px-4 py-3 text-slate-700;
+  }
+
+  /* Status badges */
+  .hrms-badge-active    { @apply inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700; }
+  .hrms-badge-pending   { @apply inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700; }
+  .hrms-badge-inactive  { @apply inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600; }
+  .hrms-badge-rejected  { @apply inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-700; }
+  .hrms-badge-approved  { @apply inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700; }
+
+  /* Empty states */
+  .hrms-empty-state {
+    @apply flex flex-col items-center justify-center gap-3 py-16 text-center;
+  }
+  .hrms-empty-icon {
+    @apply h-12 w-12 rounded-full bg-slate-100 p-3 text-slate-400;
+  }
+  .hrms-empty-title {
+    @apply text-base font-semibold text-slate-700;
+  }
+  .hrms-empty-body {
+    @apply text-sm text-slate-500;
+  }
+
+  /* Skeleton loader */
+  .hrms-skeleton {
+    @apply animate-pulse rounded bg-slate-100;
+  }
+  .hrms-skeleton-text {
+    @apply hrms-skeleton h-4 w-full;
+  }
+  .hrms-skeleton-text-sm {
+    @apply hrms-skeleton h-3 w-3/4;
+  }
+}
+
+/* Sidebar scrollbar */
+.mcn-sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.12) transparent;
+}
+.mcn-sidebar-scroll::-webkit-scrollbar { width: 4px; }
+.mcn-sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+.mcn-sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.12);
+  border-radius: 4px;
+}

@@ -307,7 +307,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               <p className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{group.title}</p>
               <div className="space-y-1">
                 {group.items.map((item) => {
-                  const isActive = location.pathname === item.href || location.pathname.startsWith(item.href + "/");
+                  // Exact match for dashboard to avoid matching all routes starting with '/'
+                  const isActive = item.href === "/dashboard"
+                    ? location.pathname === "/dashboard"
+                    : location.pathname === item.href || location.pathname.startsWith(item.href + "/");
                   return (
                     <Link
                       key={`${group.title}-${item.label}`}
@@ -316,12 +319,12 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                       className={cn(
                         "group flex items-center justify-between rounded-xl px-3 py-2.5 text-[13.5px] font-semibold transition",
                         isActive
-                          ? "bg-white text-slate-950 shadow-lg shadow-slate-950/20"
+                          ? "bg-blue-600 text-white shadow-lg shadow-blue-900/40"
                           : "text-slate-300 hover:bg-white/10 hover:text-white"
                       )}
                     >
                       <span className="flex min-w-0 items-center gap-3">
-                        <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition", isActive ? "bg-slate-100 text-slate-950" : "bg-white/5 text-slate-400 group-hover:bg-white/10 group-hover:text-white")}>
+                        <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition", isActive ? "bg-blue-500 text-white" : "bg-white/5 text-slate-400 group-hover:bg-white/10 group-hover:text-white")}>
                           {item.icon}
                         </span>
                         <span className="truncate">{item.label}</span>
@@ -329,7 +332,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                       {item.badge ? (
                         <Badge className="ml-2 h-5 rounded-full bg-cyan-100 px-2 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-100">{item.badge}</Badge>
                       ) : isActive ? (
-                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-blue-200" />
                       ) : null}
                     </Link>
                   );

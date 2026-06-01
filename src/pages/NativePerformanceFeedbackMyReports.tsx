@@ -40,7 +40,7 @@ export default function NativePerformanceFeedbackMyReports() {
   const fetchReports = async () => {
     try {
       // Fetch reports for current user
-      const data = await hrmsApi.get("/performance-feedback/reports", {
+      const data = await hrmsApi.get("/api/performance-feedback/reports", {
         employee_id: user?.id,
       });
 
@@ -203,7 +203,7 @@ export default function NativePerformanceFeedbackMyReports() {
               )}
 
               <Button
-                onClick={() => navigate(`/performance-feedback/reports/${report.id}`)}
+                onClick={() => navigate(`/api/performance-feedback/reports/${report.id}`)}
                 variant="outline"
                 className="w-full"
               >

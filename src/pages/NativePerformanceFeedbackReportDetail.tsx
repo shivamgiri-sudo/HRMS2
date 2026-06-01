@@ -77,7 +77,7 @@ export default function NativePerformanceFeedbackReportDetail() {
 
   const fetchReportDetail = async () => {
     try {
-      const data = await hrmsApi.get(`/performance-feedback/reports/${id}`);
+      const data = await hrmsApi.get(`/api/performance-feedback/reports/${id}`);
       setReport(data);
     } catch (error) {
       console.error("Failed to fetch report detail:", error);
@@ -89,7 +89,7 @@ export default function NativePerformanceFeedbackReportDetail() {
   const fetchTrendData = async () => {
     try {
       // Fetch all reports for the employee to show trend
-      const allReports = await hrmsApi.get("/performance-feedback/reports");
+      const allReports = await hrmsApi.get("/api/performance-feedback/reports");
 
       const trend = allReports
         .slice(0, 5)

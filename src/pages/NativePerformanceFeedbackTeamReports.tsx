@@ -34,7 +34,7 @@ export default function NativePerformanceFeedbackTeamReports() {
 
   const fetchTeamReports = async () => {
     try {
-      const data = await hrmsApi.get("/performance-feedback/team-reports");
+      const data = await hrmsApi.get("/api/performance-feedback/reports");
       setReports(data);
     } catch (error) {
       console.error("Failed to fetch team reports:", error);
