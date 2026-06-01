@@ -122,6 +122,7 @@ const NativeStatutoryConfig         = lazy(() => import("./pages/NativeStatutory
 const NativeTemplateManager         = lazy(() => import("./pages/NativeTemplateManager"));
 const NativeDispatchCenter          = lazy(() => import("./pages/NativeDispatchCenter"));
 const NativeDispatchHistory         = lazy(() => import("./pages/NativeDispatchHistory"));
+const NativeNotificationPreferences = lazy(() => import("./pages/NativeNotificationPreferences"));
 
 // System
 const NativeMigrationConsole        = lazy(() => import("./pages/NativeMigrationConsole"));
@@ -288,6 +289,7 @@ const App = () => (
               <Route path="/communication/templates" element={<ProtectedRoute><NativeTemplateManager /></ProtectedRoute>} />
               <Route path="/communication/dispatch"  element={<ProtectedRoute><NativeDispatchCenter /></ProtectedRoute>} />
               <Route path="/communication/history"   element={<ProtectedRoute><NativeDispatchHistory /></ProtectedRoute>} />
+              <Route path="/communication/preferences" element={<ProtectedRoute><NativeNotificationPreferences /></ProtectedRoute>} />
 
               {/* System */}
               <Route path="/migration-console" element={<ProtectedRoute><NativeMigrationConsole /></ProtectedRoute>} />

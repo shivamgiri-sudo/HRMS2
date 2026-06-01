@@ -184,6 +184,7 @@ const navGroups: NavGroup[] = [
       { label: "Templates",         href: "/communication/templates", icon: <MessageSquare className="h-4 w-4" />, adminOnly: true,  description: "Manage email, SMS and WhatsApp templates" },
       { label: "Dispatch Center",   href: "/communication/dispatch",  icon: <MessageSquare className="h-4 w-4" />,                   description: "Send messages to employees" },
       { label: "Dispatch History",  href: "/communication/history",   icon: <MessageSquare className="h-4 w-4" />, adminOnly: true,  description: "View and retry dispatch logs" },
+      { label: "Notification Prefs", href: "/communication/preferences", icon: <Bell className="h-4 w-4" />,                      description: "Manage notification preferences" },
     ],
   },
   {
