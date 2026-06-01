@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Plus, Settings, ToggleLeft, ToggleRight, Trash2, Edit2, Eye } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { hrmsApi } from '../../lib/api';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../components/ui/button';
@@ -25,6 +26,7 @@ interface CustomizationRule {
 }
 
 export default function NativeCustomizationManager() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState({
     entityType: '',
@@ -98,7 +100,7 @@ export default function NativeCustomizationManager() {
             Configure rules for branch, process, department, designation, and role-based customization
           </p>
         </div>
-        <Button className="flex items-center gap-2">
+        <Button className="flex items-center gap-2" onClick={() => navigate('/customization/new')}>
           <Plus className="w-4 h-4" />
           Create Rule
         </Button>
@@ -192,10 +194,7 @@ export default function NativeCustomizationManager() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <Button variant="ghost" size="sm">
-                      <Eye className="w-4 h-4" />
-                    </Button>
-                    <Button variant="ghost" size="sm">
+                    <Button variant="ghost" size="sm" onClick={() => navigate(`/customization/${rule.id}/edit`)}>
                       <Edit2 className="w-4 h-4" />
                     </Button>
                     <Button

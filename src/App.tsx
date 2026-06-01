@@ -136,6 +136,8 @@ const NativeMyRoster                = lazy(() => import("./pages/NativeMyRoster"
 const NativeRTABoard                = lazy(() => import("./pages/NativeRTABoard"));
 const NativeWalkinQueue             = lazy(() => import("./pages/NativeWalkinQueue"));
 const NativeAttendanceRulesMaster   = lazy(() => import("./pages/NativeAttendanceRulesMaster"));
+const NativeCustomizationManager    = lazy(() => import("./pages/customization/NativeCustomizationManager"));
+const NativeCustomizationRuleEditor = lazy(() => import("./pages/customization/NativeCustomizationRuleEditor"));
 
 // Portal
 const PortalLogin                   = lazy(() => import("./pages/portal/PortalLogin"));
@@ -278,6 +280,9 @@ const App = () => (
               <Route path="/compliance/dpdp" element={<ProtectedRoute><Gate pageCode="DPDP_COMPLIANCE"><NativeDPDPCompliance /></Gate></ProtectedRoute>} />
               <Route path="/integration-hub" element={<ProtectedRoute><Gate pageCode="INTEGRATION_HUB"><NativeIntegrationHub /></Gate></ProtectedRoute>} />
               <Route path="/client-master" element={<ProtectedRoute><Gate pageCode="CLIENT_MASTER"><NativeClientMaster /></Gate></ProtectedRoute>} />
+              <Route path="/customization" element={<ProtectedRoute><Gate pageCode="CUSTOMIZATION_MANAGER"><NativeCustomizationManager /></Gate></ProtectedRoute>} />
+              <Route path="/customization/new" element={<ProtectedRoute><Gate pageCode="CUSTOMIZATION_MANAGER"><NativeCustomizationRuleEditor /></Gate></ProtectedRoute>} />
+              <Route path="/customization/:id/edit" element={<ProtectedRoute><Gate pageCode="CUSTOMIZATION_MANAGER"><NativeCustomizationRuleEditor /></Gate></ProtectedRoute>} />
 
               {/* Payroll */}
               <Route path="/payroll/payslips" element={<ProtectedRoute><Gate pageCode="PAYROLL_PAYSLIPS"><NativePayslipCenter /></Gate></ProtectedRoute>} />
