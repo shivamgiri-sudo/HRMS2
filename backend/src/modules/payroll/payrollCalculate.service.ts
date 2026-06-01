@@ -249,29 +249,68 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     const monthStart = `${run.run_month}-01`;
     const monthEnd   = `${run.run_month}-${String(daysInMonth).padStart(2, "0")}`;
 
-    const [attRows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         ? AS employee_id,
-         ? AS working_days,
-         COUNT(CASE WHEN s.current_status IN ('Logged Out','Logged In') THEN 1 END) AS present_days,
-         0 AS leave_days,
-         (? - COUNT(CASE WHEN s.current_status IN ('Logged Out','Logged In') THEN 1 END)) AS lwp_days,
-         0 AS late_marks,
-         NULL AS dialer_hours
-       FROM wfm_attendance_session s
-       WHERE s.employee_id = ? AND s.session_date BETWEEN ? AND ?`,
-      [emp.employee_id, defaultWorkingDays, defaultWorkingDays, emp.employee_id, monthStart, monthEnd]
+    // Check if attendance_daily_record has been populated for this employee+month
+    const [adrCountRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM attendance_daily_record
+       WHERE employee_id = ? AND record_date BETWEEN ? AND ?`,
+      [emp.employee_id, monthStart, monthEnd]
     );
+    const hasEngineData = Number((adrCountRows[0] as any).cnt ?? 0) > 0;
 
-    const att: AttendanceRow = (attRows as AttendanceRow[])[0] ?? {
-      employee_id: emp.employee_id,
-      working_days: defaultWorkingDays,
-      present_days: defaultWorkingDays,
-      leave_days: 0,
-      lwp_days: 0,
-      late_marks: 0,
-      dialer_hours: null,
-    };
+    let att: AttendanceRow;
+
+    if (hasEngineData) {
+      // Use attendance_daily_record — role-aware (dialler/biometric) with half-days, leaves, holidays
+      const [attRows] = await db.execute<RowDataPacket[]>(
+        `SELECT
+           ? AS employee_id,
+           (SELECT COUNT(*) FROM attendance_daily_record
+            WHERE employee_id = ? AND record_date BETWEEN ? AND ?
+              AND attendance_status NOT IN ('week_off','holiday')) AS working_days,
+           COUNT(CASE WHEN adr.attendance_status = 'present'        THEN 1 END) AS present_days,
+           COUNT(CASE WHEN adr.attendance_status IN ('leave_approved','half_day') THEN 1 END) AS leave_days,
+           COALESCE(SUM(adr.lwp_value), 0)                                       AS lwp_days,
+           COALESCE(SUM(adr.late_mark), 0)                                       AS late_marks,
+           COALESCE(SUM(CASE WHEN adr.attendance_source = 'dialler'
+                              THEN adr.raw_minutes / 60.0 END), NULL)            AS dialer_hours
+         FROM attendance_daily_record adr
+         WHERE adr.employee_id = ? AND adr.record_date BETWEEN ? AND ?`,
+        [emp.employee_id, emp.employee_id, monthStart, monthEnd, emp.employee_id, monthStart, monthEnd]
+      );
+      att = (attRows as AttendanceRow[])[0] ?? {
+        employee_id: emp.employee_id,
+        working_days: defaultWorkingDays,
+        present_days: defaultWorkingDays,
+        leave_days: 0,
+        lwp_days: 0,
+        late_marks: 0,
+        dialer_hours: null,
+      };
+    } else {
+      // Fallback: legacy session-count query (no attendance engine data yet)
+      const [attRows] = await db.execute<RowDataPacket[]>(
+        `SELECT
+           ? AS employee_id,
+           ? AS working_days,
+           COUNT(CASE WHEN s.current_status IN ('Logged Out','Logged In') THEN 1 END) AS present_days,
+           0 AS leave_days,
+           (? - COUNT(CASE WHEN s.current_status IN ('Logged Out','Logged In') THEN 1 END)) AS lwp_days,
+           0 AS late_marks,
+           NULL AS dialer_hours
+         FROM wfm_attendance_session s
+         WHERE s.employee_id = ? AND s.session_date BETWEEN ? AND ?`,
+        [emp.employee_id, defaultWorkingDays, defaultWorkingDays, emp.employee_id, monthStart, monthEnd]
+      );
+      att = (attRows as AttendanceRow[])[0] ?? {
+        employee_id: emp.employee_id,
+        working_days: defaultWorkingDays,
+        present_days: defaultWorkingDays,
+        leave_days: 0,
+        lwp_days: 0,
+        late_marks: 0,
+        dialer_hours: null,
+      };
+    }
 
     const grossMonthly = emp.ctc_annual / 12;
 
