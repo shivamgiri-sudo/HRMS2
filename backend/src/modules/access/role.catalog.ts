@@ -47,6 +47,7 @@ export const MODULES = [
   "quality",
   "performance",
   "performance_feedback",
+  "engagement",
   "coaching",
   "lms",
   "exit",
@@ -78,68 +79,68 @@ export const ROLE_MODULE_ACCESS: Record<PeopleOSRole, PeopleOSModule[]> = {
     "dashboard", "employees", "ats", "documents", "lifecycle", "assets",
     "helpdesk", "leave", "attendance", "exit", "org", "workflow",
     "workforce_mandate", "reports", "audit_logs", "account_control",
-    "lms", "kpi", "performance_feedback",
+    "lms", "kpi", "performance_feedback", "engagement",
   ],
 
   recruiter: [
-    "dashboard", "ats", "helpdesk",
+    "dashboard", "ats", "helpdesk", "engagement",
   ],
 
   employee: [
     "dashboard", "employees", "documents", "assets", "helpdesk",
     "leave", "attendance", "payslip", "tax_declaration",
-    "lms", "performance", "performance_feedback", "wfm_roster",
+    "lms", "performance", "performance_feedback", "engagement", "wfm_roster",
   ],
 
   wfm: [
     "dashboard", "employees", "attendance", "wfm_roster", "wfm_rta",
-    "wfm_shrinkage", "workforce_mandate", "leave", "reports",
+    "wfm_shrinkage", "workforce_mandate", "leave", "reports", "engagement",
   ],
 
   process_manager: [
     "dashboard", "employees", "attendance", "wfm_roster", "wfm_rta",
     "wfm_shrinkage", "workforce_mandate", "leave", "kpi", "performance",
-    "performance_feedback", "coaching", "reports", "helpdesk",
+    "performance_feedback", "engagement", "coaching", "reports", "helpdesk",
   ],
 
   assistant_manager: [
     "dashboard", "employees", "attendance", "wfm_roster",
-    "leave", "kpi", "performance", "performance_feedback", "coaching", "helpdesk",
+    "leave", "kpi", "performance", "performance_feedback", "engagement", "coaching", "helpdesk",
   ],
 
   team_leader: [
     "dashboard", "employees", "attendance", "leave",
-    "kpi", "performance", "performance_feedback", "coaching", "helpdesk",
+    "kpi", "performance", "performance_feedback", "engagement", "coaching", "helpdesk",
   ],
 
   qa: [
     "dashboard", "employees", "quality", "performance", "coaching",
-    "kpi", "reports", "helpdesk",
+    "kpi", "reports", "helpdesk", "engagement",
   ],
 
   trainer: [
-    "dashboard", "lms", "employees", "helpdesk",
+    "dashboard", "lms", "employees", "helpdesk", "engagement",
   ],
 
   finance: [
     "dashboard", "payroll", "payslip", "tax_declaration", "org",
-    "workforce_mandate", "reports", "audit_logs",
+    "workforce_mandate", "reports", "audit_logs", "engagement",
   ],
 
   payroll: [
     "dashboard", "payroll", "payslip", "tax_declaration",
-    "reports", "audit_logs",
+    "reports", "audit_logs", "engagement",
   ],
 
   branch_head: [
     "dashboard", "employees", "attendance", "wfm_roster", "wfm_rta",
     "wfm_shrinkage", "workforce_mandate", "leave", "kpi", "performance",
-    "performance_feedback", "coaching", "reports", "ats",
+    "performance_feedback", "engagement", "coaching", "reports", "ats",
   ],
 
   ceo: [
     "dashboard", "leadership_dashboard", "workforce_mandate",
-    "kpi", "performance", "performance_feedback", "reports", "wfm_shrinkage",
+    "kpi", "performance", "performance_feedback", "engagement", "reports", "wfm_shrinkage",
     "client_portal", "org",
   ],
 

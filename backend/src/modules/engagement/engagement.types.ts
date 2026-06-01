@@ -62,7 +62,7 @@ export interface EmployeeBadgeEarned {
   earned_at: string;
   reason: string | null;
   awarded_by: string | null;
-  metadata_json: Record<string, any> | null;
+  metadata_json: Record<string, unknown> | null;
 }
 
 // 3. Gamification Points Ledger
@@ -237,7 +237,7 @@ export interface AwardBadgeDTO {
   badge_id: string;
   reason?: string;
   awarded_by?: string;
-  metadata_json?: Record<string, any>;
+  metadata_json?: Record<string, unknown>;
 }
 
 // Points DTOs

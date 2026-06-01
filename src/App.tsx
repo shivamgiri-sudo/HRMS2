@@ -80,6 +80,13 @@ const NativePerformanceFeedbackAssignments = lazy(() => import("./pages/NativePe
 const NativePerformanceFeedbackForm = lazy(() => import("./pages/NativePerformanceFeedbackForm"));
 const NativePerformanceFeedbackTeamReports = lazy(() => import("./pages/NativePerformanceFeedbackTeamReports"));
 
+// Engagement
+const NativeEngagement                = lazy(() => import("./pages/NativeEngagement"));
+const NativeBadges                    = lazy(() => import("./pages/NativeBadges"));
+const NativeKudos                     = lazy(() => import("./pages/NativeKudos"));
+const NativeSurveys                   = lazy(() => import("./pages/NativeSurveys"));
+const NativeLeaderboard               = lazy(() => import("./pages/NativeLeaderboard"));
+
 // HR Ops
 const NativeAssetsManager           = lazy(() => import("./pages/NativeAssetsManager"));
 const NativeHelpdesk                = lazy(() => import("./pages/NativeHelpdesk"));
@@ -225,6 +232,13 @@ const App = () => (
               <Route path="/performance-feedback/assignments" element={<ProtectedRoute><NativePerformanceFeedbackAssignments /></ProtectedRoute>} />
               <Route path="/performance-feedback/form/:id" element={<ProtectedRoute><NativePerformanceFeedbackForm /></ProtectedRoute>} />
               <Route path="/performance-feedback/team-reports" element={<ProtectedRoute><NativePerformanceFeedbackTeamReports /></ProtectedRoute>} />
+
+              {/* Engagement */}
+              <Route path="/engagement" element={<ProtectedRoute><NativeEngagement /></ProtectedRoute>} />
+              <Route path="/engagement/badges" element={<ProtectedRoute><NativeBadges /></ProtectedRoute>} />
+              <Route path="/engagement/kudos" element={<ProtectedRoute><NativeKudos /></ProtectedRoute>} />
+              <Route path="/engagement/surveys" element={<ProtectedRoute><NativeSurveys /></ProtectedRoute>} />
+              <Route path="/engagement/leaderboard" element={<ProtectedRoute><NativeLeaderboard /></ProtectedRoute>} />
 
               {/* Client Portal */}
               <Route path="/portal/login" element={<PortalLogin />} />

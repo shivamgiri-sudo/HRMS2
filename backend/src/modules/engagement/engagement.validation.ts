@@ -304,9 +304,9 @@ export const SubmitSurveyResponseSchema = z.object({
 
 export const SubmitPulseCheckSchema = z.object({
   employee_id: z.string().uuid('Invalid employee ID'),
-  mood_rating: z.number().int().min(1).max(10),
-  energy_level: z.number().int().min(1).max(10).optional(),
-  stress_level: z.number().int().min(1).max(10).optional(),
+  mood_rating: z.number().int().min(1).max(5),
+  energy_level: z.number().int().min(1).max(5).optional(),
+  stress_level: z.number().int().min(1).max(5).optional(),
   workload_perception: WorkloadPerceptionSchema.optional(),
   feedback_text: z.string().max(2000).optional(),
   week_start_date: z.string().regex(
@@ -401,8 +401,8 @@ export const PulseCheckFiltersSchema = z.object({
   ).optional(),
   date_from: z.string().datetime().optional(),
   date_to: z.string().datetime().optional(),
-  mood_rating_min: z.number().int().min(1).max(10).optional(),
-  mood_rating_max: z.number().int().min(1).max(10).optional(),
+  mood_rating_min: z.number().int().min(1).max(5).optional(),
+  mood_rating_max: z.number().int().min(1).max(5).optional(),
 }).refine(
   (data) => {
     if (

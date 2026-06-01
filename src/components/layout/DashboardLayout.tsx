@@ -2,6 +2,7 @@ import { type FormEvent, type ReactNode, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Activity,
+  Award,
   BarChart3,
   BookOpen,
   Bell,
@@ -18,6 +19,7 @@ import {
   FileText,
   GitBranch,
   HelpCircle,
+  Heart,
   Home,
   Landmark,
   LogOut,
@@ -27,7 +29,9 @@ import {
   ShieldCheck,
   Search,
   Settings,
+  Sparkles,
   Target,
+  Trophy,
   User,
   UserMinus,
   UserPlus,
@@ -131,6 +135,16 @@ const navGroups: NavGroup[] = [
       { label: "My Assignments", href: "/performance-feedback/assignments", icon: <ClipboardCheck className="h-4 w-4" />, adminOnly: true, description: "Pending feedback assignments" },
       { label: "Team Feedback", href: "/performance-feedback/team-reports", icon: <Users className="h-4 w-4" />, adminOnly: true, description: "Team feedback reports and analytics" },
       { label: "Development Plans", href: "/performance-feedback/development-plan", icon: <Target className="h-4 w-4" />, description: "Personal development plans and goals" },
+    ],
+  },
+  {
+    title: "Engagement",
+    items: [
+      { label: "My Engagement", href: "/engagement", icon: <Sparkles className="h-4 w-4" />, description: "Points, tier progress and recent appreciation" },
+      { label: "Badges", href: "/engagement/badges", icon: <Award className="h-4 w-4" />, description: "Recognition badges and milestones" },
+      { label: "Kudos Wall", href: "/engagement/kudos", icon: <Heart className="h-4 w-4" />, description: "Celebrate contributions from colleagues" },
+      { label: "Surveys & Pulse", href: "/engagement/surveys", icon: <ClipboardList className="h-4 w-4" />, description: "Employee feedback and weekly pulse" },
+      { label: "Leaderboard", href: "/engagement/leaderboard", icon: <Trophy className="h-4 w-4" />, description: "Top engagement points and tiers" },
     ],
   },
   {

@@ -16,6 +16,15 @@ import type {
   BadgeCriteria,
 } from './engagement.types.js';
 import crypto from 'crypto';
+import { addPoints } from './gamification.service.js';
+
+export type AutoAwardActivity =
+  | 'performance_review'
+  | 'attendance'
+  | 'survey_completed'
+  | 'payslip_acknowledged'
+  | 'kpi_score_recorded'
+  | 'tenure';
 
 // =====================================================
 // BADGE MANAGEMENT
@@ -29,7 +38,7 @@ export async function getBadges(filters?: BadgeFilters): Promise<BadgeMaster[]> 
     SELECT badge_id, badge_name, badge_description, badge_icon,
            badge_category, points_value, criteria_json, is_active,
            created_at, updated_at
-    FROM badge_master
+    FROM gamification_badge_master
     WHERE 1=1
   `;
   const params: unknown[] = [];
@@ -76,7 +85,7 @@ export async function getBadgeById(badgeId: string): Promise<BadgeMaster | null>
     SELECT badge_id, badge_name, badge_description, badge_icon,
            badge_category, points_value, criteria_json, is_active,
            created_at, updated_at
-    FROM badge_master
+    FROM gamification_badge_master
     WHERE badge_id = ?
   `;
 
@@ -107,7 +116,7 @@ export async function createBadge(data: CreateBadgeDTO): Promise<BadgeMaster> {
   const now = new Date().toISOString();
 
   const sql = `
-    INSERT INTO badge_master (
+    INSERT INTO gamification_badge_master (
       badge_id, badge_name, badge_description, badge_icon,
       badge_category, points_value, criteria_json, is_active,
       created_at, updated_at
@@ -182,7 +191,7 @@ export async function updateBadge(
   params.push(new Date().toISOString());
   params.push(badgeId);
 
-  const sql = `UPDATE badge_master SET ${fields.join(', ')} WHERE badge_id = ?`;
+  const sql = `UPDATE gamification_badge_master SET ${fields.join(', ')} WHERE badge_id = ?`;
 
   await db.executeRun(sql, params);
 
@@ -193,7 +202,7 @@ export async function updateBadge(
  * Deactivate badge (soft delete)
  */
 export async function deactivateBadge(badgeId: string): Promise<boolean> {
-  const sql = `UPDATE badge_master SET is_active = 0, updated_at = ? WHERE badge_id = ?`;
+  const sql = `UPDATE gamification_badge_master SET is_active = 0, updated_at = ? WHERE badge_id = ?`;
   const [result] = await db.executeRun(sql, [new Date().toISOString(), badgeId]);
   return (result as ResultSetHeader).affectedRows > 0;
 }
@@ -208,7 +217,7 @@ export async function deactivateBadge(badgeId: string): Promise<boolean> {
 export async function awardBadge(data: AwardBadgeDTO): Promise<EmployeeBadgeEarned> {
   // Check if employee exists
   const [empRows] = await db.execute<RowDataPacket[]>(
-    'SELECT employee_id FROM employee_master WHERE employee_id = ?',
+    'SELECT id FROM employees WHERE id = ?',
     [data.employee_id]
   );
   if (empRows.length === 0) {
@@ -255,7 +264,15 @@ export async function awardBadge(data: AwardBadgeDTO): Promise<EmployeeBadgeEarn
 
   await db.executeRun(sql, params);
 
-  // TODO: Award points via points service when implemented
+  if (badge.points_value > 0) {
+    await addPoints(
+      data.employee_id,
+      badge.points_value,
+      'badge_earned',
+      `Badge earned: ${badge.badge_name}`,
+      earnedId
+    );
+  }
 
   return {
     earned_id: earnedId,
@@ -287,7 +304,7 @@ export async function getEmployeeBadges(employeeId: string): Promise<
       ebe.reason, ebe.awarded_by, ebe.metadata_json,
       bm.badge_name, bm.badge_icon, bm.badge_category, bm.points_value
     FROM employee_badge_earned ebe
-    JOIN badge_master bm ON ebe.badge_id = bm.badge_id
+    JOIN gamification_badge_master bm ON ebe.badge_id = bm.badge_id
     WHERE ebe.employee_id = ?
     ORDER BY ebe.earned_at DESC
   `;
@@ -301,7 +318,7 @@ export async function getEmployeeBadges(employeeId: string): Promise<
     earned_at: row.earned_at as string,
     reason: row.reason as string | null,
     awarded_by: row.awarded_by as string | null,
-    metadata_json: row.metadata_json as Record<string, any> | null,
+    metadata_json: row.metadata_json as Record<string, unknown> | null,
     badge_name: row.badge_name as string,
     badge_icon: row.badge_icon as string | null,
     badge_category: row.badge_category as string,
@@ -318,7 +335,7 @@ export async function getEmployeeBadges(employeeId: string): Promise<
  */
 export async function checkAutoAwards(
   employeeId: string,
-  activityType: string
+  activityType: AutoAwardActivity
 ): Promise<EmployeeBadgeEarned[]> {
   const awarded: EmployeeBadgeEarned[] = [];
 
@@ -332,6 +349,12 @@ export async function checkAutoAwards(
     case 'survey_completed':
       awarded.push(...(await checkSurveyBadges(employeeId)));
       break;
+    case 'payslip_acknowledged':
+      awarded.push(...(await checkPayslipBadges(employeeId)));
+      break;
+    case 'kpi_score_recorded':
+      awarded.push(...(await checkKpiBadges(employeeId)));
+      break;
     case 'tenure':
       awarded.push(...(await checkTenureBadges(employeeId)));
       break;
@@ -343,22 +366,42 @@ export async function checkAutoAwards(
 }
 
 /**
+ * Queue a best-effort badge evaluation after a protected workflow succeeds.
+ */
+export function queueAutoAwards(employeeId: string, activityType: AutoAwardActivity): void {
+  const timeout = setTimeout(() => {
+    void checkAutoAwards(employeeId, activityType).catch((error: unknown) => {
+      console.error(`Failed to evaluate ${activityType} badges for ${employeeId}`, error);
+    });
+  }, 0);
+  timeout.unref();
+}
+
+function areConsecutiveMonthlyPeriods(rows: RowDataPacket[]): boolean {
+  const periods = rows.map((row) => {
+    const [year, month] = String(row.period).split("-").map(Number);
+    return Number.isInteger(year) && Number.isInteger(month) ? year * 12 + month : Number.NaN;
+  });
+  return periods.every((period, index) => index === 0 || periods[index - 1] - period === 1);
+}
+
+/**
  * Check performance badges (top_performer, revenue_champion)
  */
 async function checkPerformanceBadges(employeeId: string): Promise<EmployeeBadgeEarned[]> {
   const awarded: EmployeeBadgeEarned[] = [];
 
-  // Top Performer: Rating >= 4.5 in last review
+  // Top Performer: Rating >= 4.5 in the latest generated feedback report
   const [perfRows] = await db.execute<RowDataPacket[]>(
-    `SELECT overall_rating
-     FROM performance_review
+    `SELECT overall_score
+     FROM performance_feedback_report
      WHERE employee_id = ?
-     ORDER BY review_date DESC
+     ORDER BY report_generated_at DESC
      LIMIT 1`,
     [employeeId]
   );
 
-  if (perfRows.length > 0 && perfRows[0].overall_rating >= 4.5) {
+  if (perfRows.length > 0 && perfRows[0].overall_score >= 4.5) {
     const badge = await findBadgeByName('Top Performer');
     if (badge) {
       try {
@@ -371,40 +414,6 @@ async function checkPerformanceBadges(employeeId: string): Promise<EmployeeBadge
         awarded.push(earned);
       } catch (err) {
         // Badge already awarded or other error - skip
-      }
-    }
-  }
-
-  // Revenue Champion: Check if top 10% in revenue (dialer_db.user_revenue)
-  // Note: dialer_db is read-only external DB
-  const [revenueRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       (SELECT COUNT(*) FROM dialer_db.user_revenue WHERE revenue > ur.revenue) as better_count,
-       (SELECT COUNT(*) FROM dialer_db.user_revenue) as total_count
-     FROM dialer_db.user_revenue ur
-     WHERE ur.user_id = ?`,
-    [employeeId]
-  );
-
-  if (revenueRows.length > 0) {
-    const betterCount = revenueRows[0].better_count as number;
-    const totalCount = revenueRows[0].total_count as number;
-    const percentile = (betterCount / totalCount) * 100;
-
-    if (percentile <= 10) {
-      const badge = await findBadgeByName('Revenue Champion');
-      if (badge) {
-        try {
-          const earned = await awardBadge({
-            employee_id: employeeId,
-            badge_id: badge.badge_id,
-            reason: 'Top 10% in revenue generation',
-            awarded_by: 'system',
-          });
-          awarded.push(earned);
-        } catch (err) {
-          // Badge already awarded or other error - skip
-        }
       }
     }
   }
@@ -422,11 +431,11 @@ async function checkAttendanceBadges(employeeId: string): Promise<EmployeeBadgeE
   const [earlyRows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*) as total_days,
-       SUM(CASE WHEN TIME(check_in_time) < '09:00:00' THEN 1 ELSE 0 END) as early_count
-     FROM attendance
+       SUM(CASE WHEN TIME(login_time) < '09:00:00' THEN 1 ELSE 0 END) as early_count
+     FROM wfm_attendance_session
      WHERE employee_id = ?
-       AND check_in_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-       AND check_in_time IS NOT NULL`,
+       AND login_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+       AND login_time IS NOT NULL`,
     [employeeId]
   );
 
@@ -452,15 +461,23 @@ async function checkAttendanceBadges(employeeId: string): Promise<EmployeeBadgeE
 
   // Perfect Attendance: No absences in last 90 days
   const [absenceRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as absence_count
-     FROM attendance
-     WHERE employee_id = ?
-       AND check_in_time IS NULL
-       AND date >= DATE_SUB(NOW(), INTERVAL 90 DAY)`,
+    `SELECT
+       COUNT(*) as rostered_days,
+       SUM(CASE WHEN s.id IS NULL OR s.login_time IS NULL THEN 1 ELSE 0 END) as absence_count
+     FROM wfm_roster_assignment ra
+     LEFT JOIN wfm_attendance_session s
+       ON s.employee_id = ra.employee_id AND s.session_date = ra.roster_date
+     WHERE ra.employee_id = ?
+       AND ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+       AND ra.roster_status NOT IN ('Week Off', 'Holiday')`,
     [employeeId]
   );
 
-  if (absenceRows.length > 0 && absenceRows[0].absence_count === 0) {
+  if (
+    absenceRows.length > 0 &&
+    absenceRows[0].rostered_days >= 60 &&
+    absenceRows[0].absence_count === 0
+  ) {
     const badge = await findBadgeByName('Perfect Attendance');
     if (badge) {
       try {
@@ -486,22 +503,125 @@ async function checkAttendanceBadges(employeeId: string): Promise<EmployeeBadgeE
 async function checkSurveyBadges(employeeId: string): Promise<EmployeeBadgeEarned[]> {
   const awarded: EmployeeBadgeEarned[] = [];
 
-  // Survey Champion: Completed 10+ surveys
+  // Survey Champion: Completed 10+ surveys or pulse checks
   const [surveyRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(DISTINCT survey_id) as survey_count
-     FROM survey_response
-     WHERE employee_id = ?`,
-    [employeeId]
+    `SELECT
+       (SELECT COUNT(DISTINCT survey_id) FROM survey_response WHERE employee_id = ?)
+       +
+       (SELECT COUNT(*) FROM pulse_check WHERE employee_id = ?) as participation_count`,
+    [employeeId, employeeId]
   );
 
-  if (surveyRows.length > 0 && surveyRows[0].survey_count >= 10) {
+  if (surveyRows.length > 0 && surveyRows[0].participation_count >= 10) {
     const badge = await findBadgeByName('Survey Champion');
     if (badge) {
       try {
         const earned = await awardBadge({
           employee_id: employeeId,
           badge_id: badge.badge_id,
-          reason: 'Completed 10+ surveys',
+          reason: 'Completed 10+ surveys or pulse checks',
+          awarded_by: 'system',
+        });
+        awarded.push(earned);
+      } catch (err) {
+        // Badge already awarded or other error - skip
+      }
+    }
+  }
+
+  return awarded;
+}
+
+/**
+ * Check payslip acknowledgement badges.
+ */
+async function checkPayslipBadges(employeeId: string): Promise<EmployeeBadgeEarned[]> {
+  const awarded: EmployeeBadgeEarned[] = [];
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) as acknowledgement_count
+     FROM salary_payslip
+     WHERE employee_id = ? AND acknowledged_at IS NOT NULL`,
+    [employeeId]
+  );
+
+  if (rows.length > 0 && rows[0].acknowledgement_count >= 10) {
+    const badge = await findBadgeByName('Payslip Champion');
+    if (badge) {
+      try {
+        const earned = await awardBadge({
+          employee_id: employeeId,
+          badge_id: badge.badge_id,
+          reason: 'Acknowledged 10+ payslips',
+          awarded_by: 'system',
+        });
+        awarded.push(earned);
+      } catch (err) {
+        // Badge already awarded or other error - skip
+      }
+    }
+  }
+
+  return awarded;
+}
+
+/**
+ * Check KPI badges from the last three recorded periods.
+ */
+async function checkKpiBadges(employeeId: string): Promise<EmployeeBadgeEarned[]> {
+  const awarded: EmployeeBadgeEarned[] = [];
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ks.period,
+            ROUND(
+              SUM(
+                LEAST(
+                  CASE
+                    WHEN km.direction = 'lower_is_better'
+                      THEN CASE WHEN ks.actual_value > 0 THEN ktm.target_value / ks.actual_value ELSE 1.2 END
+                    ELSE CASE WHEN ktm.target_value > 0 THEN ks.actual_value / ktm.target_value ELSE 0 END
+                  END,
+                  1.2
+                ) * ktm.weight_pct
+              ) / NULLIF(SUM(ktm.weight_pct), 0) * 100,
+              2
+            ) as weighted_score_pct
+     FROM kpi_score ks
+     JOIN kpi_template_metric ktm ON ktm.metric_id = ks.metric_id
+     JOIN kpi_metric_master km ON km.id = ks.metric_id
+     WHERE ks.employee_id = ?
+       AND ktm.template_id = (
+         SELECT ka.template_id
+         FROM kpi_assignment ka
+         LEFT JOIN employees e ON e.id = ?
+         WHERE ka.active_status = 1
+           AND (
+             ka.employee_id = ?
+             OR (ka.employee_id IS NULL AND ka.designation_id = e.designation_id)
+             OR (ka.employee_id IS NULL AND ka.designation_id IS NULL AND ka.department_id = e.department_id)
+           )
+         ORDER BY
+           (ka.employee_id IS NOT NULL) DESC,
+           (ka.designation_id IS NOT NULL) DESC,
+           (ka.department_id IS NOT NULL) DESC
+         LIMIT 1
+       )
+     GROUP BY ks.period
+     ORDER BY ks.period DESC
+     LIMIT 3`,
+    [employeeId, employeeId, employeeId]
+  );
+
+  if (
+    rows.length === 3 &&
+    areConsecutiveMonthlyPeriods(rows) &&
+    rows.every((row) => Number(row.weighted_score_pct) >= 100)
+  ) {
+    const badge = await findBadgeByName('Top Performer');
+    if (badge) {
+      try {
+        const earned = await awardBadge({
+          employee_id: employeeId,
+          badge_id: badge.badge_id,
+          reason: 'Exceeded KPI targets for 3 consecutive months',
           awarded_by: 'system',
         });
         awarded.push(earned);
@@ -522,7 +642,7 @@ async function checkTenureBadges(employeeId: string): Promise<EmployeeBadgeEarne
 
   // Get employee join date
   const [empRows] = await db.execute<RowDataPacket[]>(
-    'SELECT date_of_joining FROM employee_master WHERE employee_id = ?',
+    'SELECT date_of_joining FROM employees WHERE id = ?',
     [employeeId]
   );
 
@@ -530,12 +650,13 @@ async function checkTenureBadges(employeeId: string): Promise<EmployeeBadgeEarne
 
   const joinDate = new Date(empRows[0].date_of_joining as string);
   const now = new Date();
-  const tenureMonths =
+  let tenureMonths =
     (now.getFullYear() - joinDate.getFullYear()) * 12 + (now.getMonth() - joinDate.getMonth());
+  if (now.getDate() < joinDate.getDate()) tenureMonths -= 1;
 
   const tenureMilestones = [
-    { months: 6, name: '6 Month Champion' },
-    { months: 12, name: '1 Year Veteran' },
+    { months: 6, name: '6 Month Milestone' },
+    { months: 12, name: '1 Year Anniversary' },
     { months: 24, name: '2 Year Veteran' },
     { months: 60, name: '5 Year Legend' },
   ];
@@ -570,7 +691,7 @@ async function findBadgeByName(badgeName: string): Promise<BadgeMaster | null> {
     `SELECT badge_id, badge_name, badge_description, badge_icon,
             badge_category, points_value, criteria_json, is_active,
             created_at, updated_at
-     FROM badge_master
+     FROM gamification_badge_master
      WHERE badge_name = ? AND is_active = 1`,
     [badgeName]
   );

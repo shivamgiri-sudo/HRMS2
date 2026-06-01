@@ -153,17 +153,24 @@ export async function getLeaderboard(
     SELECT
       gpl.employee_id,
       CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')) as employee_name,
-      SUM(gpl.points_delta) as total_points,
+      gpl.total_points as total_points,
       COALESCE(gtm.tier_name, 'No Tier') as current_tier,
-      ROW_NUMBER() OVER (ORDER BY SUM(gpl.points_delta) DESC) as \`rank\`,
-      COUNT(DISTINCT ebe.earned_id) as badges_earned
-    FROM gamification_points_ledger gpl
-    LEFT JOIN employees e ON gpl.employee_id = e.employee_id
+      ROW_NUMBER() OVER (ORDER BY gpl.total_points DESC) as \`rank\`,
+      COALESCE(badges.badges_earned, 0) as badges_earned
+    FROM (
+      SELECT employee_id, SUM(points_delta) as total_points
+      FROM gamification_points_ledger
+      WHERE 1=1 ${dateFilter.replaceAll('gpl.', '')}
+      GROUP BY employee_id
+    ) gpl
+    LEFT JOIN employees e ON gpl.employee_id = e.id
     LEFT JOIN employee_tier_status ets ON gpl.employee_id = ets.employee_id
     LEFT JOIN gamification_tier_master gtm ON ets.current_tier_id = gtm.tier_id
-    LEFT JOIN employee_badge_earned ebe ON gpl.employee_id = ebe.employee_id
-    WHERE 1=1 ${dateFilter}
-    GROUP BY gpl.employee_id, employee_name, gtm.tier_name
+    LEFT JOIN (
+      SELECT employee_id, COUNT(*) as badges_earned
+      FROM employee_badge_earned
+      GROUP BY employee_id
+    ) badges ON gpl.employee_id = badges.employee_id
     ORDER BY total_points DESC
     LIMIT ?
   `;
