@@ -58,18 +58,32 @@ type PoshAnnualReport = {
   complaints_malicious: number;
 };
 
+type MaternityRecordType = 'delivery' | 'adoption' | 'miscarriage' | 'surrogacy';
+type MaternityStatus = 'applied' | 'approved' | 'active' | 'completed' | 'rejected';
+
 type MaternityRecord = {
   id: string;
   employee_id: string;
   employee_name?: string;
   employee_code?: string;
+  record_type: MaternityRecordType;
+  child_birth_order: number;
+  entitled_weeks: number;
   expected_delivery_date: string | null;
   actual_delivery_date: string | null;
   leave_start_date: string;
   leave_end_date: string | null;
   paid_weeks: number;
+  nursing_break_granted: number;
+  nursing_break_end_date: string | null;
+  work_from_home_option: number;
   complications: number;
-  status: "applied" | "approved" | "active" | "completed" | "rejected";
+  status: MaternityStatus;
+  approved_by: string | null;
+  leave_request_id: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 type Tab = "bonus" | "posh" | "maternity" | "summary";
@@ -693,306 +707,230 @@ function MaternityTab() {
   const [records, setRecords] = useState<MaternityRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [showModal, setShowModal] = useState(false);
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
 
-  const [form, setForm] = useState({
+  const [addForm, setAddForm] = useState({
     employee_id: "",
+    record_type: "delivery" as MaternityRecordType,
+    child_birth_order: 1,
     expected_delivery_date: "",
     leave_start_date: "",
-    paid_weeks: "26",
     complications: false,
+    notes: "",
   });
 
-  const [updateForm, setUpdateForm] = useState<{
-    id: string;
-    status: string;
-    actual_delivery_date: string;
-    leave_end_date: string;
-  }>({ id: "", status: "", actual_delivery_date: "", leave_end_date: "" });
-  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await hrmsApi.get<{ success: boolean; data: MaternityRecord[] }>("/api/compliance/maternity");
+        if (!cancelled) setRecords(res.data ?? []);
+      } catch (err) {
+        if (!cancelled) setMessage(err instanceof Error ? err.message : "Failed to load");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
-  const load = async () => {
-    setLoading(true);
-    setMessage("");
-    try {
-      const res = await hrmsApi.get<{ success: boolean; data: MaternityRecord[] }>("/api/compliance/maternity");
-      setRecords(res.data ?? []);
-    } catch (err: unknown) {
-      setMessage(err instanceof Error ? err.message : "Failed to load maternity records");
-    } finally {
-      setLoading(false);
-    }
+  const reload = async () => {
+    const res = await hrmsApi.get<{ success: boolean; data: MaternityRecord[] }>("/api/compliance/maternity");
+    setRecords(res.data ?? []);
   };
 
-  useEffect(() => { void load(); }, []);
-
-  const submit = async () => {
-    if (!form.employee_id.trim()) return setMessage("Employee ID is required");
-    if (!form.leave_start_date) return setMessage("Leave start date is required");
+  const handleAdd = async () => {
     try {
-      const paid_weeks = parseInt(form.paid_weeks, 10);
-      const finalPaidWeeks = form.complications ? paid_weeks + 4 : paid_weeks;
       await hrmsApi.post("/api/compliance/maternity", {
-        employee_id: form.employee_id.trim(),
-        expected_delivery_date: form.expected_delivery_date || undefined,
-        leave_start_date: form.leave_start_date,
-        paid_weeks: finalPaidWeeks,
-        complications: form.complications,
+        ...addForm,
+        expected_delivery_date: addForm.expected_delivery_date || null,
+        notes: addForm.notes || null,
       });
-      setShowModal(false);
-      setForm({ employee_id: "", expected_delivery_date: "", leave_start_date: "", paid_weeks: "26", complications: false });
-      setMessage("Maternity record added");
-      await load();
-    } catch (err: unknown) {
-      setMessage(err instanceof Error ? err.message : "Submission failed");
+      setMessage("Maternity application submitted");
+      setShowAdd(false);
+      await reload();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Failed to submit");
     }
   };
 
-  const submitUpdate = async () => {
-    if (!updateForm.id) return;
-    setUpdatingId(updateForm.id);
+  const handleApprove = async (id: string) => {
+    setApprovingId(id);
     try {
-      await hrmsApi.patch(`/api/compliance/maternity/${updateForm.id}`, {
-        status: updateForm.status || undefined,
-        actual_delivery_date: updateForm.actual_delivery_date || undefined,
-        leave_end_date: updateForm.leave_end_date || undefined,
-      });
-      setShowUpdateModal(false);
-      await load();
-    } catch (err: unknown) {
-      setMessage(err instanceof Error ? err.message : "Update failed");
+      await hrmsApi.post(`/api/compliance/maternity/${id}/approve`, {});
+      setMessage("Approved — leave request auto-created");
+      await reload();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Approval failed");
     } finally {
-      setUpdatingId(null);
+      setApprovingId(null);
     }
+  };
+
+  const parityLabel = (r: MaternityRecord) => {
+    if (r.record_type === 'adoption') return 'Adoption (8 wks)';
+    if (r.record_type === 'miscarriage') return 'Miscarriage (6 wks)';
+    if (r.record_type === 'surrogacy') return 'Surrogacy (6 wks)';
+    if (r.child_birth_order === 1) return '1st child (26 wks)';
+    if (r.child_birth_order === 2) return '2nd child (26 wks)';
+    return `${r.child_birth_order}rd+ child (12 wks)`;
+  };
+
+  const statusColor: Record<string, string> = {
+    applied:   'bg-yellow-100 text-yellow-800',
+    approved:  'bg-blue-100 text-blue-800',
+    active:    'bg-green-100 text-green-800',
+    completed: 'bg-slate-100 text-slate-700',
+    rejected:  'bg-red-100 text-red-800',
   };
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3">
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="font-black text-slate-950">Maternity Benefit Records</h3>
         <button
-          onClick={() => load()}
-          disabled={loading}
-          className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors cursor-pointer disabled:opacity-50"
+          onClick={() => setShowAdd(s => !s)}
+          className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
         >
-          <RefreshCcw className="h-4 w-4" />
-          Refresh
-        </button>
-        <button
-          onClick={() => setShowModal(true)}
-          className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white hover:bg-slate-800 transition-colors cursor-pointer"
-        >
-          <Plus className="h-4 w-4" />
-          Add Record
+          {showAdd ? 'Cancel' : '+ New Application'}
         </button>
       </div>
 
       {message && (
-        <div className="flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-bold text-blue-800">
-          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-          {message}
-        </div>
+        <p className="rounded-xl bg-amber-50 px-4 py-2 text-sm text-amber-800">{message}</p>
       )}
 
-      <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
-        <div className="border-b p-5">
-          <h3 className="font-black text-slate-950">Maternity Benefit Records</h3>
-          <p className="text-sm text-slate-500">{records.length} records</p>
-        </div>
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader className="h-8 w-8 animate-spin text-slate-400" />
-          </div>
-        ) : records.length === 0 ? (
-          <div className="py-16 text-center text-slate-400">
-            <Baby className="mx-auto mb-3 h-10 w-10 opacity-30" />
-            <p className="font-semibold">No maternity records found.</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] text-sm">
-              <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-                <tr>
-                  {["Employee", "Exp. Delivery", "Leave Start", "Leave End", "Paid Weeks", "Complications", "Status", "Action"].map((h) => (
-                    <th key={h} className="p-4 font-semibold">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {records.map((r) => (
-                  <tr key={r.id} className="border-t hover:bg-slate-50/80 transition-colors">
-                    <td className="p-4">
-                      <div className="font-bold text-slate-950">{r.employee_name ?? r.employee_id}</div>
-                      <div className="text-xs font-mono text-slate-400">{r.employee_code}</div>
-                    </td>
-                    <td className="p-4 font-mono text-slate-600">{r.expected_delivery_date?.slice(0, 10) ?? "–"}</td>
-                    <td className="p-4 font-mono text-slate-600">{r.leave_start_date?.slice(0, 10)}</td>
-                    <td className="p-4 font-mono text-slate-600">{r.leave_end_date?.slice(0, 10) ?? "–"}</td>
-                    <td className="p-4 font-bold text-slate-950">{r.paid_weeks}w</td>
-                    <td className="p-4">
-                      {r.complications ? (
-                        <Badge label="+4 weeks" color="bg-amber-50 text-amber-700" />
-                      ) : "–"}
-                    </td>
-                    <td className="p-4">
-                      <Badge label={r.status} color={MATERNITY_STATUS_COLOR[r.status] ?? "bg-slate-100 text-slate-600"} />
-                    </td>
-                    <td className="p-4">
-                      <button
-                        onClick={() => {
-                          setUpdateForm({ id: r.id, status: r.status, actual_delivery_date: r.actual_delivery_date ?? "", leave_end_date: r.leave_end_date ?? "" });
-                          setShowUpdateModal(true);
-                        }}
-                        disabled={updatingId === r.id}
-                        className="cursor-pointer rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-700 transition-colors disabled:opacity-50"
-                      >
-                        Update
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Add Record Modal */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md rounded-3xl bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b p-6">
-              <h2 className="text-lg font-black text-slate-950">Add Maternity Record</h2>
-              <button onClick={() => setShowModal(false)} className="cursor-pointer text-slate-400 hover:text-slate-700 transition-colors">
-                <X className="h-5 w-5" />
-              </button>
+      {showAdd && (
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+          <h4 className="font-bold text-slate-800">New Maternity Application</h4>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-slate-600">Employee ID</label>
+              <input
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                value={addForm.employee_id}
+                onChange={e => setAddForm(f => ({ ...f, employee_id: e.target.value }))}
+                placeholder="UUID of employee"
+              />
             </div>
-            <div className="space-y-4 p-6">
+            <div>
+              <label className="text-xs font-semibold text-slate-600">Type</label>
+              <select
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                value={addForm.record_type}
+                onChange={e => setAddForm(f => ({ ...f, record_type: e.target.value as MaternityRecordType }))}>
+                <option value="delivery">Delivery</option>
+                <option value="adoption">Adoption (8 weeks)</option>
+                <option value="miscarriage">Miscarriage / Stillbirth (6 weeks)</option>
+                <option value="surrogacy">Surrogacy (6 weeks)</option>
+              </select>
+            </div>
+            {addForm.record_type === 'delivery' && (
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Employee ID <span className="text-red-500">*</span></label>
-                <input
-                  value={form.employee_id}
-                  onChange={(e) => setForm({ ...form, employee_id: e.target.value })}
-                  placeholder="Employee UUID"
-                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Expected Delivery</label>
-                  <input
-                    type="date"
-                    value={form.expected_delivery_date}
-                    onChange={(e) => setForm({ ...form, expected_delivery_date: e.target.value })}
-                    className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Leave Start <span className="text-red-500">*</span></label>
-                  <input
-                    type="date"
-                    value={form.leave_start_date}
-                    onChange={(e) => setForm({ ...form, leave_start_date: e.target.value })}
-                    className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Paid Weeks (default 26)</label>
-                <input
-                  type="number"
-                  value={form.paid_weeks}
-                  onChange={(e) => setForm({ ...form, paid_weeks: e.target.value })}
-                  min={1}
-                  max={52}
-                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
-                />
-              </div>
-              <label className="flex cursor-pointer items-center gap-3 rounded-2xl border p-3 hover:bg-slate-50">
-                <input
-                  type="checkbox"
-                  checked={form.complications}
-                  onChange={(e) => setForm({ ...form, complications: e.target.checked })}
-                  className="h-4 w-4 rounded border-slate-300 accent-slate-950"
-                />
-                <span className="text-sm font-semibold text-slate-700">Complications (adds 4 additional weeks)</span>
-              </label>
-            </div>
-            <div className="flex gap-3 border-t p-6">
-              <button
-                onClick={() => setShowModal(false)}
-                className="flex-1 cursor-pointer rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={submit}
-                className="flex-1 cursor-pointer rounded-2xl bg-slate-950 py-3 text-sm font-bold text-white hover:bg-slate-800 transition-colors"
-              >
-                Add Record
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Update Status Modal */}
-      {showUpdateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md rounded-3xl bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b p-6">
-              <h2 className="text-lg font-black text-slate-950">Update Maternity Record</h2>
-              <button onClick={() => setShowUpdateModal(false)} className="cursor-pointer text-slate-400 hover:text-slate-700 transition-colors">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-4 p-6">
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Status</label>
+                <label className="text-xs font-semibold text-slate-600">Child Birth Order</label>
                 <select
-                  value={updateForm.status}
-                  onChange={(e) => setUpdateForm({ ...updateForm, status: e.target.value })}
-                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 cursor-pointer"
-                >
-                  {["applied", "approved", "active", "completed", "rejected"].map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
+                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  value={addForm.child_birth_order}
+                  onChange={e => setAddForm(f => ({ ...f, child_birth_order: parseInt(e.target.value) }))}>
+                  <option value={1}>1st child — 26 weeks</option>
+                  <option value={2}>2nd child — 26 weeks</option>
+                  <option value={3}>3rd+ child — 12 weeks</option>
                 </select>
               </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Actual Delivery Date</label>
-                <input
-                  type="date"
-                  value={updateForm.actual_delivery_date}
-                  onChange={(e) => setUpdateForm({ ...updateForm, actual_delivery_date: e.target.value })}
-                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Leave End Date</label>
-                <input
-                  type="date"
-                  value={updateForm.leave_end_date}
-                  onChange={(e) => setUpdateForm({ ...updateForm, leave_end_date: e.target.value })}
-                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
-                />
-              </div>
+            )}
+            <div>
+              <label className="text-xs font-semibold text-slate-600">Leave Start Date</label>
+              <input
+                type="date"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                value={addForm.leave_start_date}
+                onChange={e => setAddForm(f => ({ ...f, leave_start_date: e.target.value }))}
+              />
             </div>
-            <div className="flex gap-3 border-t p-6">
-              <button
-                onClick={() => setShowUpdateModal(false)}
-                className="flex-1 cursor-pointer rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={submitUpdate}
-                className="flex-1 cursor-pointer rounded-2xl bg-slate-950 py-3 text-sm font-bold text-white hover:bg-slate-800 transition-colors"
-              >
-                Save
-              </button>
+            <div>
+              <label className="text-xs font-semibold text-slate-600">Expected Delivery Date</label>
+              <input
+                type="date"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                value={addForm.expected_delivery_date}
+                onChange={e => setAddForm(f => ({ ...f, expected_delivery_date: e.target.value }))}
+              />
+            </div>
+            <div className="flex items-center gap-2 col-span-2">
+              <input
+                type="checkbox"
+                id="complications"
+                checked={addForm.complications}
+                onChange={e => setAddForm(f => ({ ...f, complications: e.target.checked }))}
+              />
+              <label htmlFor="complications" className="text-sm text-slate-700">
+                Medical complications (+4 weeks)
+              </label>
             </div>
           </div>
+          <button
+            onClick={handleAdd}
+            className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+          >
+            Submit Application
+          </button>
+        </div>
+      )}
+
+      {loading ? (
+        <p className="text-sm text-slate-400">Loading...</p>
+      ) : records.length === 0 ? (
+        <p className="text-sm text-slate-500">No maternity records found.</p>
+      ) : (
+        <div className="space-y-3">
+          {records.map(r => (
+            <div key={r.id} className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="font-semibold text-slate-900">{r.employee_name ?? r.employee_id}</p>
+                  <p className="text-xs text-slate-500">{r.employee_code}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusColor[r.status] ?? 'bg-slate-100 text-slate-700'}`}>
+                    {r.status}
+                  </span>
+                  {r.status === 'applied' && (
+                    <button
+                      onClick={() => handleApprove(r.id)}
+                      disabled={approvingId === r.id}
+                      className="rounded-xl bg-green-600 px-3 py-1 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {approvingId === r.id ? 'Approving...' : 'Approve'}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-xs text-slate-600">
+                <span><b>Type:</b> {r.record_type}</span>
+                <span><b>Parity:</b> {parityLabel(r)}</span>
+                <span><b>Entitled:</b> {r.entitled_weeks} weeks ({r.entitled_weeks * 7} days)</span>
+                <span><b>Start:</b> {r.leave_start_date}</span>
+                <span><b>End:</b> {r.leave_end_date ?? '—'}</span>
+                {r.complications ? (
+                  <span className="text-orange-700 font-semibold">+4 weeks complications</span>
+                ) : (
+                  <span />
+                )}
+                {r.nursing_break_granted ? (
+                  <span className="col-span-3 text-purple-700">
+                    Nursing breaks granted until {r.nursing_break_end_date ?? '—'}
+                  </span>
+                ) : null}
+                {r.leave_request_id && (
+                  <span className="col-span-3 text-green-700 text-xs">
+                    ✓ Leave request auto-created
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
