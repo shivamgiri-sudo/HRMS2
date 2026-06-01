@@ -102,34 +102,47 @@ export const maternityService = {
     // Auto-create leave_request for the maternity period
     const leaveReqId = randomUUID();
     const totalDays = record.entitled_weeks * 7;
-    await db.execute(
-      `INSERT INTO leave_request
-         (id, employee_id, leave_type_id, from_date, to_date, total_days, reason, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'Maternity leave — auto-created on approval', 'approved')`,
-      [
-        leaveReqId,
-        record.employee_id,
-        leaveTypeId,
-        record.leave_start_date,
-        record.leave_end_date,
-        totalDays,
-      ]
-    );
 
-    // Log the auto-approval in leave_approval_log
-    await db.execute(
-      `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
-       VALUES (UUID(), ?, 'approved', ?, 'Auto-approved via maternity benefit record')`,
-      [leaveReqId, approverId]
-    );
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
 
-    // Update maternity record: status → approved, link leave_request_id
-    await db.execute(
-      `UPDATE maternity_benefit_record
-          SET status = 'approved', approved_by = ?, leave_request_id = ?
-        WHERE id = ?`,
-      [approverId, leaveReqId, id]
-    );
+      await conn.execute(
+        `INSERT INTO leave_request
+           (id, employee_id, leave_type_id, from_date, to_date, total_days, reason, status)
+         VALUES (?, ?, ?, ?, ?, ?, 'Maternity leave — auto-created on approval', 'approved')`,
+        [
+          leaveReqId,
+          record.employee_id,
+          leaveTypeId,
+          record.leave_start_date,
+          record.leave_end_date,
+          totalDays,
+        ]
+      );
+
+      // Log the auto-approval in leave_approval_log
+      await conn.execute(
+        `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
+         VALUES (UUID(), ?, 'approved', ?, 'Auto-approved via maternity benefit record')`,
+        [leaveReqId, approverId]
+      );
+
+      // Update maternity record: status → approved, link leave_request_id
+      await conn.execute(
+        `UPDATE maternity_benefit_record
+            SET status = 'approved', approved_by = ?, leave_request_id = ?
+          WHERE id = ?`,
+        [approverId, leaveReqId, id]
+      );
+
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
 
     return (await this.getById(id))!;
   },
@@ -144,8 +157,8 @@ export const maternityService = {
     if (dto.actual_delivery_date !== undefined) {
       sets.push('actual_delivery_date = ?');
       params.push(dto.actual_delivery_date);
-      // Auto-compute nursing break end date when delivery date is set and not yet computed
-      if (dto.actual_delivery_date && !record.nursing_break_end_date) {
+      // Always recompute nursing break end date when a delivery date is provided
+      if (dto.actual_delivery_date) {
         sets.push('nursing_break_end_date = ?');
         params.push(computeNursingBreakEndDate(dto.actual_delivery_date));
       }
