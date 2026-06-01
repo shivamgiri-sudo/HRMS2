@@ -97,8 +97,13 @@ class DispatchService {
       return;
     }
 
+    const [logRows] = await db.execute<RowDataPacket[]>(
+      'SELECT subject FROM dispatch_log WHERE id = ?', [dispatchId]
+    );
+    const subject = (logRows[0] as any)?.subject ?? '';
+
     const body = channel === 'email' ? rendered.html : (rendered.text ?? rendered.html);
-    const result = await provider.send(contact, '', body);
+    const result = await provider.send(contact, subject, body);
 
     await db.execute(
       `UPDATE dispatch_log SET status = ?, error_message = ?, sent_at = IF(? = 'sent', NOW(), sent_at) WHERE id = ?`,
@@ -134,7 +139,9 @@ class DispatchService {
       "UPDATE dispatch_log SET status = 'queued', retry_count = retry_count + 1 WHERE id = ?",
       [dispatchId]
     );
-    await this._deliver(dispatchId, log.channel, log.recipient_contact, { html: log.body_preview });
+    this._deliver(dispatchId, log.channel, log.recipient_contact, { html: log.body_preview }).catch(err =>
+      console.error(`[dispatch] retry delivery failed for ${dispatchId}:`, err)
+    );
   }
 
   async getLogs(filters: DispatchLogFilters): Promise<PaginatedDispatchLogs> {
@@ -165,7 +172,7 @@ class DispatchService {
 
   async getStats(): Promise<DispatchStats> {
     const [[today]]   = await db.execute<RowDataPacket[]>("SELECT COUNT(*) c FROM dispatch_log WHERE DATE(sent_at) = CURDATE()");
-    const [[deliv]]   = await db.execute<RowDataPacket[]>("SELECT COUNT(*) t, SUM(status = 'delivered') d FROM dispatch_log WHERE sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+    const [[deliv]]   = await db.execute<RowDataPacket[]>("SELECT COUNT(*) t, SUM(status = 'sent') d FROM dispatch_log WHERE sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
     const [[opened]]  = await db.execute<RowDataPacket[]>("SELECT COUNT(*) t, SUM(status = 'opened') o FROM dispatch_log WHERE channel = 'email' AND sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
     const [[failed]]  = await db.execute<RowDataPacket[]>("SELECT COUNT(*) c FROM dispatch_log WHERE status = 'failed' AND retry_count < 3");
     const [chRows]    = await db.execute<RowDataPacket[]>("SELECT channel, COUNT(*) c FROM dispatch_log WHERE DATE(sent_at) = CURDATE() GROUP BY channel");
