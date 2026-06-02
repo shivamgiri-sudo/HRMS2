@@ -166,3 +166,7 @@
 {"type":"edit","file":"/home/shuvam/mas-callnet-hrms/CUSTOMIZATION-TESTS.md","timestamp":1780338857469,"sessionId":null}
 {"type":"edit","file":"/home/shuvam/mas-callnet-hrms/backend/vitest.config.ts","timestamp":1780344563879,"sessionId":null}
 {"type":"edit","file":"/home/shuvam/mas-callnet-hrms/backend/src/modules/communication/__tests__/template-render.test.ts","timestamp":1780365000462,"sessionId":null}
+{"type":"edit","file":"/home/shuvam/mas-callnet-hrms/backend/src/modules/employees/__tests__/validation.test.ts","timestamp":1780365998877,"sessionId":null}
+{"type":"edit","file":"/home/shuvam/mas-callnet-hrms/backend/src/modules/employees/__tests__/validation.test.ts","timestamp":1780366007835,"sessionId":null}
+{"type":"edit","file":"/home/shuvam/mas-callnet-hrms/backend/src/modules/payroll/__tests__/calculations.test.ts","timestamp":1780366068682,"sessionId":null}
+{"type":"edit","file":"/home/shuvam/mas-callnet-hrms/backend/src/modules/payroll/__tests__/calculations.test.ts","timestamp":1780366086892,"sessionId":null}
