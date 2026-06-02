@@ -220,7 +220,7 @@ const Index = () => {
   };
 
   const getUserFirstName = () => {
-    const fullName = user?.user_metadata?.full_name || user?.email || "User";
+    const fullName = user?.email || "User";
     return fullName.split(" ")[0];
   };
 

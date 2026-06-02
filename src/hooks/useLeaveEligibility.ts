@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useAuth } from "@/contexts/AuthContext";
 
 export interface EligibilityRow {
   id: string;
@@ -28,6 +29,7 @@ export function useLeaveEligibility(employeeId: string | undefined) {
 }
 
 export function useUpdateLeaveEligibility() {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -52,11 +54,10 @@ export function useUpdateLeaveEligibility() {
       const toDeleteRows = (existing ?? []).filter((r) => !desiredIds.has(r.leave_type_id));
 
       if (toInsert.length > 0) {
-        const { data: userData } = await supabase.auth.getUser();
         const rows = toInsert.map((leave_type_id) => ({
           employee_id: employeeId,
           leave_type_id,
-          created_by: userData.user?.id ?? null,
+          created_by: user?.id ?? null,
         }));
         const { error: insErr } = await supabase
           .from("employee_leave_eligibility")

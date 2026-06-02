@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 type UploadTemplate = {
@@ -509,6 +510,7 @@ function csvHealthHasBlockingError(health: CsvHealth | null) {
 }
 
 export default function BulkUploadHub() {
+  const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [templates, setTemplates] = useState<UploadTemplate[]>([]);
@@ -758,10 +760,6 @@ export default function BulkUploadHub() {
     setIsProcessing(true);
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
       let batchNo: string;
       try {
         const { data: rpcBatchNo, error: batchNoError } = await supabase.rpc(

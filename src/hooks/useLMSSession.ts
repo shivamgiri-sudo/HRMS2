@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from "react";
-import { supabase } from "@/integrations/supabase/client";
 
 const SESSION_KEY = "lms_token";
 const LMS_API_URL = import.meta.env.VITE_LMS_API_URL as string;
@@ -43,11 +42,15 @@ export const useLMSSession = (): LMSSessionState => {
       setError(null);
 
       try {
-        // Get current Supabase session
-        const { data, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) throw new Error(sessionError.message);
-
-        const accessToken = data?.session?.access_token;
+        // Get current MySQL JWT or demo session token
+        const demoRaw = localStorage.getItem('hrms_demo_session');
+        let accessToken: string | null = null;
+        if (demoRaw) {
+          try { accessToken = JSON.parse(demoRaw)?.access_token ?? null; } catch {}
+        }
+        if (!accessToken) {
+          accessToken = localStorage.getItem('hrms_access_token');
+        }
         if (!accessToken) {
           if (!cancelled) {
             setLmsToken(null);

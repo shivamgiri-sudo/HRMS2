@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 type RequestStatus =
@@ -99,6 +100,7 @@ const emptyForm = {
 };
 
 export default function AttendanceRegularization() {
+  const { user } = useAuth();
   const [requests, setRequests] = useState<EmployeeRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -184,10 +186,6 @@ export default function AttendanceRegularization() {
       setIsSubmitting(false);
       return;
     }
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
 
     // Try to insert into employee_requests; fall back gracefully if table doesn't exist yet.
     try {
