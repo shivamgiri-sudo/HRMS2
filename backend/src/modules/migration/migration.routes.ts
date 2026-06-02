@@ -12,3 +12,8 @@ migrationRouter.get("/status", h(async (_req: any, res: any) => {
   const data = await migrationService.getModuleStatus();
   return res.json({ success: true, data });
 }));
+
+migrationRouter.get("/legacy-status", h(async (_req: any, res: any) => {
+  const data = await migrationService.getLegacyMigrationStatus();
+  return res.json({ success: true, data });
+}));

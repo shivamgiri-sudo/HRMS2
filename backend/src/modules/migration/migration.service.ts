@@ -32,4 +32,33 @@ export const migrationService = {
     }
     return results;
   },
+
+  async getLegacyMigrationStatus(): Promise<Record<string, number>> {
+    const tables = [
+      "employee_statutory_info",
+      "employee_salary_snapshot",
+      "employee_client_mapping",
+      "employee_kpi_assignment",
+      "employee_legacy_meta",
+    ];
+    const counts: Record<string, number> = {};
+    for (const t of tables) {
+      try {
+        const [rows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS cnt FROM ${t}`);
+        counts[t] = (rows as { cnt: number }[])[0]?.cnt ?? 0;
+      } catch {
+        counts[t] = -1; // table does not exist yet
+      }
+    }
+    // Also add base employee count with legacy_emp_id populated
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM employees WHERE legacy_emp_id IS NOT NULL`
+      );
+      counts['employees_migrated'] = (rows as { cnt: number }[])[0]?.cnt ?? 0;
+    } catch {
+      counts['employees_migrated'] = 0;
+    }
+    return counts;
+  },
 };
