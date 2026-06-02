@@ -7,11 +7,13 @@ const router = Router();
 const h = (fn: any) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 // POST /api/auth/login — public
+// Accepts: { identifier: "email or employee code", password } OR legacy { email, password }
 router.post('/login', h(async (req: any, res: any) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'email and password required' });
+  const identifier = req.body.identifier || req.body.email;
+  const { password } = req.body;
+  if (!identifier || !password) return res.status(400).json({ error: 'identifier (email or employee code) and password required' });
   try {
-    const tokens = await authService.login(email, password);
+    const tokens = await authService.login(identifier, password);
     res.json({ data: tokens });
   } catch (err: any) {
     res.status(401).json({ error: err.message || 'Authentication failed' });

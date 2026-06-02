@@ -1,6 +1,27 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
-import { app } from '../../../app';
+
+// Mock Supabase and DB before importing app
+vi.mock('../../../db/supabaseAdmin.js', () => ({
+  supabaseAdmin: {},
+  supabaseAuthClient: { auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'demo-admin-id', email: 'admin@mascallnet.com' } }, error: null }) } },
+}));
+vi.mock('../../../db/mysql.js', () => ({
+  db: { execute: vi.fn().mockResolvedValue([[], []]), getConnection: vi.fn() },
+  pingDb: vi.fn(),
+}));
+
+import { app } from '../../../app.js';
+import { db } from '../../../db/mysql.js';
+
+const mockExecute = db.execute as ReturnType<typeof vi.fn>;
+
+const fakeRule = {
+  id: 'rule-test-001', rule_name: 'Test Rule', entity_type: 'leave_type',
+  config_type: 'override', config_data: JSON.stringify({ max_days: 10 }),
+  priority: 5, is_active: 1, scope_type: null, scope_id: null,
+  created_by: 'demo-admin-id', created_at: new Date().toISOString(),
+};
 
 // Integration tests for Customization API
 describe('Customization API', () => {
@@ -8,7 +29,49 @@ describe('Customization API', () => {
   const hrToken = 'mock-token-hr';
   const employeeToken = 'mock-token-employee';
 
-  let testRuleId: string;
+  let testRuleId = 'rule-test-001';
+
+  // Map demo user IDs to roles (mirrors DEMO_TOKEN_MAP in authMiddleware)
+  const USER_ROLES: Record<string, string> = {
+    'demo-admin-id':     'admin',
+    'demo-hr-id':        'hr',
+    'demo-employee-id':  'employee',
+    'demo-manager-id':   'process_manager',
+  };
+
+  // Track pending priority updates so getRule returns updated data after update
+  let _pendingPriority: number | null = null;
+
+  beforeAll(() => {
+    // Route mock responses by SQL pattern; role resolved from params
+    mockExecute.mockImplementation(async (sql: string, params?: unknown[]) => {
+      const s = (sql as string).replace(/\s+/g, ' ').toLowerCase();
+      if (s.includes('user_roles')) {
+        const userId = params?.[0] as string;
+        const role = USER_ROLES[userId] ?? 'employee';
+        return [[{ role_key: role }], []];
+      }
+      if (s.includes('select count') && s.includes('customization_rule')) {
+        return [[{ total: 1 }], []];
+      }
+      if (s.includes('update') && s.includes('customization_rule')) {
+        // Capture the priority being set (it's before the WHERE clause id param)
+        const priorityIdx = (params ?? []).findIndex(p => typeof p === 'number');
+        if (priorityIdx !== -1) _pendingPriority = params![priorityIdx] as number;
+        return [{ affectedRows: 1 }, []];
+      }
+      if (s.includes('customization_rule') && s.includes('select')) {
+        const hasNonExistent = (params ?? []).some(p => typeof p === 'string' && p.includes('non-existent'));
+        if (hasNonExistent) return [[], []];
+        const rule = _pendingPriority !== null
+          ? { ...fakeRule, priority: _pendingPriority }
+          : fakeRule;
+        _pendingPriority = null;
+        return [[rule], []];
+      }
+      return [{ affectedRows: 1, insertId: 1 }, []];
+    });
+  });
 
   describe('POST /api/customization/rules', () => {
     it('should create rule (admin)', async () => {

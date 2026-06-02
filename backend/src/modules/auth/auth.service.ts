@@ -18,10 +18,20 @@ export interface AuthTokens {
 }
 
 export const authService = {
-  async login(email: string, password: string): Promise<AuthTokens> {
+  async login(identifier: string, password: string): Promise<AuthTokens> {
+    // identifier can be email OR employee_code — try both
+    const trimmed = identifier.trim();
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT id, email, password_hash, is_blocked FROM auth_user WHERE email = ? LIMIT 1',
-      [email.toLowerCase().trim()]
+      `SELECT au.id, au.email, au.password_hash, au.is_blocked
+         FROM auth_user au
+        WHERE au.email = ?
+        UNION
+       SELECT au.id, au.email, au.password_hash, au.is_blocked
+         FROM auth_user au
+         JOIN employees e ON e.user_id = au.id
+        WHERE e.employee_code = ?
+        LIMIT 1`,
+      [trimmed.toLowerCase(), trimmed.toUpperCase()]
     );
     const user = rows[0];
     if (!user) throw new Error('Invalid credentials');

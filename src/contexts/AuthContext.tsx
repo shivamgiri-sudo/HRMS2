@@ -110,7 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const response = await fetch(`${import.meta.env.VITE_HRMS_API_URL || ''}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ identifier: email, password }),
       });
       if (response.ok) {
         const { data: authData } = await response.json();

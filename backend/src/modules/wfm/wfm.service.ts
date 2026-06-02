@@ -36,7 +36,7 @@ export const wfmService = {
   async getAttendancePolicy(employeeId: string): Promise<typeof DEFAULT_ATTENDANCE_POLICY> {
     try {
       const result = await getEffectiveConfig(employeeId, 'attendance_policy', null, DEFAULT_ATTENDANCE_POLICY);
-      return result.config;
+      return result.config as typeof DEFAULT_ATTENDANCE_POLICY;
     } catch (err) {
       console.warn('Customization error for attendance policy:', err);
       return DEFAULT_ATTENDANCE_POLICY;

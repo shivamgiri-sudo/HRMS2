@@ -34,7 +34,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 const companyLogo = "/mcn-logo.png?v=999";
 
 const loginSchema = z.object({
-  email: z.string().trim().email("Please enter a valid email address"),
+  identifier: z.string().trim().min(1, "Please enter your email or employee code"),
   password: z.string().min(6, "Password must be at least 6 characters"),
 });
 
@@ -57,7 +57,7 @@ const signupSchema = z
 const Auth = () => {
   const [isLoading, setIsLoading] = useState(false);
 
-  const [loginEmail, setLoginEmail] = useState("");
+  const [loginIdentifier, setLoginIdentifier] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
 
   const [showForgotPassword, setShowForgotPassword] = useState(false);
@@ -98,7 +98,7 @@ const Auth = () => {
     setErrors({});
 
     const result = loginSchema.safeParse({
-      email: loginEmail,
+      identifier: loginIdentifier,
       password: loginPassword,
     });
 
@@ -117,7 +117,7 @@ const Auth = () => {
 
     setIsLoading(true);
 
-    const { error } = await signIn(loginEmail, loginPassword);
+    const { error } = await signIn(loginIdentifier, loginPassword);
 
     setIsLoading(false);
 
@@ -301,29 +301,29 @@ const Auth = () => {
                   <form onSubmit={handleLogin} className="space-y-4">
                     <div className="space-y-2">
                       <Label
-                        htmlFor="login-email"
+                        htmlFor="login-identifier"
                         className="text-sm font-medium text-slate-700"
                       >
-                        Email
+                        Email or Employee Code
                       </Label>
 
                       <div className="relative">
                         <Mail className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
                         <Input
-                          id="login-email"
-                          type="email"
-                          placeholder="name@company.com"
-                          value={loginEmail}
-                          onChange={(e) => setLoginEmail(e.target.value)}
+                          id="login-identifier"
+                          type="text"
+                          placeholder="name@company.com or EMP-001"
+                          value={loginIdentifier}
+                          onChange={(e) => setLoginIdentifier(e.target.value)}
                           disabled={isLoading}
                           className="h-12 rounded-2xl border-slate-200 bg-white pl-11 text-slate-900 shadow-sm placeholder:text-slate-400 focus-visible:border-sky-400 focus-visible:ring-sky-400"
                         />
                       </div>
 
-                      {errors.login_email && (
+                      {errors.login_identifier && (
                         <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-                          {errors.login_email}
+                          {errors.login_identifier}
                         </p>
                       )}
                     </div>
@@ -386,7 +386,7 @@ const Auth = () => {
                         className="h-auto p-0 text-xs font-semibold text-sky-700 hover:text-slate-950"
                         onClick={() => {
                           setShowForgotPassword(true);
-                          setResetEmail(loginEmail);
+                          setResetEmail(loginIdentifier.includes('@') ? loginIdentifier : '');
                         }}
                       >
                         Forgot password?

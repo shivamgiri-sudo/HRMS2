@@ -1,12 +1,15 @@
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { rosterMasterService } from './roster-master.service.js';
+
+type Request = AuthenticatedRequest;
 
 export const rosterMasterController = {
   // ========== Templates ==========
   async createTemplate(req: Request, res: Response) {
     const template = await rosterMasterService.createTemplate({
       ...req.body,
-      created_by: req.user?.userId,
+      created_by: req.authUser?.id,
     });
     res.status(201).json(template);
   },
@@ -45,7 +48,7 @@ export const rosterMasterController = {
   // ========== Week-Off Preferences ==========
   async createWeekOffPreference(req: Request, res: Response) {
     const preference = await rosterMasterService.createWeekOffPreference({
-      employee_id: req.user?.userId!,
+      employee_id: req.authUser?.id!,
       preferred_day: req.body.preferred_day,
       alternate_day: req.body.alternate_day,
     });
@@ -54,7 +57,7 @@ export const rosterMasterController = {
   },
 
   async getMyWeekOffPreference(req: Request, res: Response) {
-    const preference = await rosterMasterService.getWeekOffPreference(req.user?.userId!);
+    const preference = await rosterMasterService.getWeekOffPreference(req.authUser?.id!);
 
     if (!preference) {
       return res.status(404).json({ error: 'No preference found' });
@@ -77,7 +80,7 @@ export const rosterMasterController = {
   async approveWeekOffPreference(req: Request, res: Response) {
     const preference = await rosterMasterService.approveWeekOffPreference(
       req.params.employee_id,
-      req.user?.userId!
+      req.authUser?.id!
     );
 
     res.json(preference);

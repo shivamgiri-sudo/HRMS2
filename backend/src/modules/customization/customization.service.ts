@@ -55,6 +55,7 @@ export const customizationService = {
       total,
       page,
       limit,
+      totalPages: Math.ceil(total / limit),
     };
   },
 
@@ -297,10 +298,3 @@ function parseRuleRow(row: any): CustomizationRule {
   };
 }
 
-// Type for PaginatedResult
-interface PaginatedResult<T> {
-  data: T[];
-  total: number;
-  page: number;
-  limit: number;
-}

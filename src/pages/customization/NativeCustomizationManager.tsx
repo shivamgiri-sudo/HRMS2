@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Plus, Settings, ToggleLeft, ToggleRight, Trash2, Edit2, Eye } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { hrmsApi } from '../../lib/api';
+import { hrmsApi } from '@/lib/hrmsApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';

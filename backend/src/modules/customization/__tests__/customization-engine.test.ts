@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { CustomizationRule, CustomizationContext } from '../customization.types';
+import type { CustomizationRule, CustomizationContext } from '../customization.types.js';
 
 // Mock the engine functions for testing
 describe('Customization Engine', () => {

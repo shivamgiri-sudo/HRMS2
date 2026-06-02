@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Save } from 'lucide-react';
-import { hrmsApi } from '../../lib/api';
+import { hrmsApi } from '@/lib/hrmsApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../components/ui/button';
 import { Label } from '../../components/ui/label';

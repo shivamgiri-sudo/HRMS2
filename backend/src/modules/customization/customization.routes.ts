@@ -44,6 +44,9 @@ router.get('/rules/:id', requireRole('admin', 'hr'), async (req, res, next) => {
     const rule = await customizationService.getRule(req.params.id);
     res.json(rule);
   } catch (error) {
+    if (error instanceof Error && error.message === 'Rule not found') {
+      return res.status(404).json({ error: 'Rule not found' });
+    }
     next(error);
   }
 });
