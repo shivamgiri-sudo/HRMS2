@@ -161,6 +161,7 @@ const navGroups: NavGroup[] = [
     items: [
       { label: "ATS Dashboard", href: "/ats/dashboard", icon: <UserPlus className="h-4 w-4" />, pageCode: "ATS_DASHBOARD", description: "Recruitment command center" },
       { label: "ATS Extensions", href: "/ats/extensions", icon: <GitBranch className="h-4 w-4" />, pageCode: "ATS_EXTENSIONS", description: "Requisitions, BGV, offers and analytics" },
+      { label: 'Form Config', href: '/ats/form-config', icon: <Settings className="h-4 w-4" />, adminOnly: true },
       { label: "Jobs Portal", href: "/jobs", icon: <Briefcase className="h-4 w-4" />, pageCode: "JOBS_PORTAL", description: "Job postings, walk-in queue and vacancy analytics" },
       { label: "Walk-in Queue", href: "/ats/walkin-queue", icon: <Users className="h-4 w-4" />, pageCode: "ATS_WAITING_QUEUE", description: "Real-time walk-in candidate queue" },
       { label: "My Candidate Queue", href: "/ats/recruiter/my-candidates", icon: <ClipboardList className="h-4 w-4" />, pageCode: "ATS_RECRUITER_QUEUE", description: "Assigned recruitment queue" },

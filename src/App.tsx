@@ -56,6 +56,7 @@ const NativeATSRecruiterWorkspace   = lazy(() => import("./pages/NativeATSRecrui
 const NativeATSDashboardV2          = lazy(() => import("./pages/NativeATSDashboardV2"));
 const NativeATSSourcingAnalysis     = lazy(() => import("./pages/NativeATSSourcingAnalysis"));
 const NativeATSExtensions           = lazy(() => import("./pages/NativeATSExtensions"));
+const NativeATSFormConfig           = lazy(() => import("./pages/NativeATSFormConfig"));
 
 // LMS
 const NativeLMSMyLearning           = lazy(() => import("./pages/NativeLMSMyLearning"));
@@ -231,6 +232,7 @@ const App = () => (
               <Route path="/ats/dashboard-v2" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSDashboardV2 /></Gate></ProtectedRoute>} />
               <Route path="/ats/sourcing-analysis" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSSourcingAnalysis /></Gate></ProtectedRoute>} />
               <Route path="/ats/extensions" element={<ProtectedRoute><Gate pageCode="ATS_EXTENSIONS"><NativeATSExtensions /></Gate></ProtectedRoute>} />
+              <Route path="/ats/form-config" element={<ProtectedRoute><NativeATSFormConfig /></ProtectedRoute>} />
 
               {/* LMS */}
               <Route path="/lms/my-learning" element={<ProtectedRoute><Gate pageCode="LMS_MY_LEARNING"><NativeLMSMyLearning /></Gate></ProtectedRoute>} />
