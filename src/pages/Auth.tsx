@@ -16,7 +16,6 @@ import {
 import { DEMO_CREDENTIALS } from "@/lib/demoCreds";
 
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
 import { Button } from "@/components/ui/button";
@@ -76,7 +75,7 @@ const Auth = () => {
   const [showSignupConfirmPassword, setShowSignupConfirmPassword] =
     useState(false);
 
-  const { signIn, signUp, user } = useAuth();
+  const { signIn, signUp, forgotPassword, user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -145,12 +144,7 @@ const Auth = () => {
 
     setIsLoading(true);
 
-    const { error } = await supabase.auth.resetPasswordForEmail(
-      resetEmail.trim(),
-      {
-        redirectTo: `${window.location.origin}/reset-password`,
-      }
-    );
+    const { error } = await forgotPassword(resetEmail.trim());
 
     setIsLoading(false);
 
@@ -159,7 +153,7 @@ const Auth = () => {
     } else {
       toast({
         title: "Reset Link Sent",
-        description: "Please check your email for the password reset link.",
+        description: "If that email is registered, a reset link has been sent.",
       });
 
       setShowForgotPassword(false);
@@ -244,7 +238,7 @@ const Auth = () => {
     } else {
       toast({
         title: "Account Created",
-        description: "Please check your email to verify your account.",
+        description: "Your account has been created. Please log in.",
       });
     }
   };
