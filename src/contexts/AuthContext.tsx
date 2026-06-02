@@ -38,6 +38,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    // Check for MySQL JWT session (new auth path)
+    const mysqlToken = localStorage.getItem('hrms_access_token');
+    if (mysqlToken) {
+      try {
+        // Decode JWT payload (no verification needed client-side — server verifies on each request)
+        const [, payloadB64] = mysqlToken.split('.');
+        const payload = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')));
+        if (payload?.sub && payload?.exp && payload.exp * 1000 > Date.now()) {
+          setUser({ id: payload.sub, email: payload.email } as any);
+          setIsLoading(false);
+          return;
+        }
+      } catch {
+        // Malformed token — clear and fall through
+        localStorage.removeItem('hrms_access_token');
+        localStorage.removeItem('hrms_refresh_token');
+      }
+    }
+
     // Set up auth state listener FIRST
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
@@ -86,15 +105,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { error: new Error("Incorrect password for demo account") };
     }
 
+    // Try MySQL JWT auth first
+    try {
+      const response = await fetch(`${import.meta.env.VITE_HRMS_API_URL || ''}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      if (response.ok) {
+        const { data: authData } = await response.json();
+        localStorage.setItem('hrms_access_token', authData.accessToken);
+        localStorage.setItem('hrms_refresh_token', authData.refreshToken);
+        // Set user state from MySQL auth response
+        setUser({ id: authData.user.id, email: authData.user.email } as any);
+        queryClient.invalidateQueries();
+        return { error: null };
+      }
+    } catch (networkErr) {
+      // Network failure — fall through to Supabase
+      console.warn('MySQL auth endpoint unreachable, falling back to Supabase', networkErr);
+    }
+
+    // Fall back to Supabase auth (for users not yet in auth_user table)
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
-    
+
     if (error) {
       return { error: error as Error };
     }
-    
+
     // Check if user is blocked
     if (data.user) {
       const { data: profile, error: profileError } = await supabase
@@ -102,18 +143,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .select('blocked')
         .eq('id', data.user.id)
         .single();
-      
+
       if (profileError) {
         console.error('Error checking blocked status:', profileError);
       }
-      
+
       if (profile?.blocked) {
         // Sign out the user immediately
         await supabase.auth.signOut({ scope: 'local' });
         return { error: new Error('Your account has been blocked. Please contact an administrator.') };
       }
     }
-    
+
     return { error: null };
   };
 
@@ -147,6 +188,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsSigningOut(true);
     try {
       localStorage.removeItem("hrms_demo_session");
+      localStorage.removeItem('hrms_access_token');
+      localStorage.removeItem('hrms_refresh_token');
       await supabase.auth.signOut({ scope: 'local' });
     } catch (error) {
       console.error('Sign out error:', error);

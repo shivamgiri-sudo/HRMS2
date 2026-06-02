@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { supabaseAuthClient } from "../db/supabaseAdmin.js";
+import { authService } from '../modules/auth/auth.service.js';
 
 export interface AuthenticatedRequest extends Request {
   authUser?: {
@@ -63,21 +64,26 @@ export async function requireAuth(
       return next();
     }
 
-    const { data, error } = await supabaseAuthClient.auth.getUser(token);
+    // Try MySQL JWT first (new auth path)
+    const mysqlUser = authService.verifyAccessToken(token);
+    if (mysqlUser) {
+      req.authUser = { id: mysqlUser.id, email: mysqlUser.email };
+      return next();
+    }
 
-    if (error || !data.user) {
+    // Fall back to Supabase JWT (existing auth path — keep until all clients migrated)
+    const { data, error } = await supabaseAuthClient.auth.getUser(token);
+    if (error || !data?.user) {
       return res.status(401).json({
         success: false,
         message: "Invalid or expired token"
       });
     }
-
     req.authUser = {
       id: data.user.id,
-      email: data.user.email
+      email: data.user.email ?? "",
     };
-
-    return next();
+    next();
   } catch (error) {
     return next(error);
   }

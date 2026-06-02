@@ -15,6 +15,13 @@ async function getAuthHeader(): Promise<Record<string, string>> {
     } catch { /* fall through */ }
   }
 
+  // Check MySQL JWT token (new auth path)
+  const mysqlToken = localStorage.getItem('hrms_access_token');
+  if (mysqlToken) {
+    return { Authorization: `Bearer ${mysqlToken}` };
+  }
+
+  // Fall back to Supabase session token
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error('No active session');

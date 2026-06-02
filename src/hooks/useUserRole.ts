@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
 import { Database } from "@/integrations/supabase/types";
 import { DEMO_CREDENTIALS } from "@/lib/demoCreds";
@@ -76,6 +77,27 @@ export const useUserRole = () => {
             can_export: true,
           })),
         };
+      }
+
+      // MySQL backend path — if hrms_access_token present, use /api/access/me
+      if (localStorage.getItem('hrms_access_token')) {
+        const res = await hrmsApi.get<{ success: boolean; data: any }>('/access/me');
+        const d = (res as any).data;
+        if (d) {
+          const roles = (d.roles ?? []) as AppRole[];
+          const scopeRoleKeys: string[] = (d.scopes ?? []).map((s: any) => s.role_key as string).filter(Boolean);
+          const roleKeys = Array.from(new Set([...roles.map(String), ...scopeRoleKeys, 'employee']));
+          return {
+            roles,
+            roleKeys,
+            primaryRole: getPrimaryRole(roles),
+            employeeId: d.employee?.id ?? null,
+            employeeCode: d.employee?.employee_code ?? null,
+            employeeName: d.employee ? `${d.employee.first_name ?? ''} ${d.employee.last_name ?? ''}`.trim() : null,
+            scopes: d.scopes ?? [],
+            pages: d.pagePerms ?? [],
+          };
+        }
       }
 
       const [{ data: roleRows, error: roleError }, { data: employeeRows, error: employeeError }, { data: scopeRows, error: scopeError }] = await Promise.all([

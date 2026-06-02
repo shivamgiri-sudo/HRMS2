@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
+import { db } from "../../db/mysql.js";
 import { employeeController as c } from "./employee.controller.js";
 import { appendJourneyEvent, listJourneyEvents } from "./journeyLog.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
@@ -22,6 +23,18 @@ router.get("/me", h(async (req: any, res: any) => {
   ) as any[];
   if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
   return res.json({ success: true, data: rows[0] });
+}));
+
+// GET /api/employees/stats — aggregate counts (must be before /:id to avoid route collision)
+router.get("/stats", h(async (_req: any, res: any) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COUNT(*) AS total_employees,
+       COUNT(CASE WHEN employment_status = 'active' THEN 1 END) AS active_employees,
+       COUNT(CASE WHEN DATEDIFF(NOW(), date_of_joining) <= 90 THEN 1 END) AS new_joiners_90d
+     FROM employees WHERE active_status = 1`
+  );
+  res.json({ data: rows[0] });
 }));
 
 router.get("/", h(c.listEmployees));

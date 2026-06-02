@@ -22,6 +22,7 @@ const envSchema = z.object({
   DB_NAME:     z.string().default("mas_hrms"),
   DB_POOL_MAX: z.coerce.number().default(10),
   PORTAL_JWT_SECRET: z.string().min(32).default("change-me-in-production-portal-secret-32ch"),
+  JWT_SECRET: z.string().min(32).default('change-me-jwt-secret-32characters!!'),
   // Must be explicitly "true" to enable demo bypass. Production default is disabled.
   PORTAL_DEMO_BYPASS: z.string().optional().default("false"),
   // Required secret for payroll bank account AES encryption. Must be set in production.
@@ -45,11 +46,16 @@ if (!parsed.success) {
 
 const KNOWN_INSECURE_DEFAULTS = [
   "change-me-in-production-portal-secret-32ch",
+  "change-me-jwt-secret-32characters!!",
 ];
 
 if (parsed.data.NODE_ENV === "production") {
   if (KNOWN_INSECURE_DEFAULTS.includes(parsed.data.PORTAL_JWT_SECRET)) {
     console.error("[FATAL] PORTAL_JWT_SECRET must be changed from the default value in production.");
+    process.exit(1);
+  }
+  if (KNOWN_INSECURE_DEFAULTS.includes(parsed.data.JWT_SECRET)) {
+    console.error("[FATAL] JWT_SECRET must be changed from the default value in production.");
     process.exit(1);
   }
   if (parsed.data.PAYROLL_BANK_KEY === "hrms-bank-key-dev") {

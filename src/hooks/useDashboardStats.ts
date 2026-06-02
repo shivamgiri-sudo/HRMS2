@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect } from "react";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
@@ -46,8 +47,13 @@ export function useDashboardStats() {
   const queryClient = useQueryClient();
   const { isAdminOrHR, isLoading: roleLoading } = useIsAdminOrHR();
 
-  // Subscribe to real-time changes on leave_requests
+  // Real-time invalidation: use Supabase channel when on Supabase auth,
+  // otherwise rely on refetchInterval polling (MySQL auth path).
   useEffect(() => {
+    if (localStorage.getItem('hrms_access_token')) {
+      // MySQL auth path — polling via refetchInterval handles freshness, no realtime needed
+      return;
+    }
     const channel = supabase
       .channel("dashboard-leave-requests")
       .on(
@@ -71,6 +77,7 @@ export function useDashboardStats() {
 
   return useQuery({
     queryKey: ["dashboard-stats", user?.id, isAdminOrHR],
+    refetchInterval: 30000,
     queryFn: async () => {
       // Local demo mode bypass
       if (user?.id === "demo-user-id") {
@@ -85,6 +92,27 @@ export function useDashboardStats() {
           usedLeaves: 8,
           availableLeaves: 22,
         };
+      }
+
+      // MySQL backend path — use /api/employees/stats for aggregate counts
+      if (localStorage.getItem('hrms_access_token')) {
+        try {
+          const res = await hrmsApi.get<{ data: any }>('/employees/stats');
+          const stats = (res as any).data ?? {};
+          return {
+            totalEmployees: stats.total_employees ?? null,
+            onLeaveToday: 0,
+            assetsAssigned: 0,
+            pendingPayroll: null,
+            pendingApprovals: 0,
+            isEmployee: true,
+            totalLeaves: null,
+            usedLeaves: null,
+            availableLeaves: null,
+          };
+        } catch {
+          // Fall through to Supabase path on error
+        }
       }
 
       // For regular employees, show personal stats only
