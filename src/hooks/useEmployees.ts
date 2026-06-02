@@ -173,13 +173,13 @@ export function useDepartments() {
         ];
       }
 
-      const { data, error } = await supabase
-        .from("departments")
-        .select("id, name, description")
-        .order("name");
-
-      if (error) throw error;
-      return data || [];
+      const res = await hrmsApi.get<{ data: any[] }>("/api/org/departments");
+      return (res.data ?? []).map((d: any) => ({
+        id: d.id,
+        name: d.dept_name,
+        code: d.dept_code,
+        description: d.description ?? "",
+      }));
     },
   });
 }

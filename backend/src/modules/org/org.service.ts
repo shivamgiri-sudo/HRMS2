@@ -89,18 +89,25 @@ export const branchService = {
 export const departmentService = {
   list: (employeeId?: string) => listActive("department_master", "dept_name", "department", employeeId),
   getById: (id: string) => getById("department_master", id),
-  async create(data: { dept_code: string; dept_name: string; branch_id?: string }) {
+  async create(data: { dept_code: string; dept_name: string; branch_id?: string; description?: string }) {
     const id = randomUUID();
-    await db.execute(
-      "INSERT INTO department_master (id, dept_code, dept_name, branch_id) VALUES (?, ?, ?, ?)",
-      [id, data.dept_code, data.dept_name, data.branch_id ?? null]
-    );
+    try {
+      await db.execute(
+        "INSERT INTO department_master (id, dept_code, dept_name, branch_id, description) VALUES (?, ?, ?, ?, ?)",
+        [id, data.dept_code, data.dept_name, data.branch_id ?? null, data.description ?? null]
+      );
+    } catch (err: any) {
+      if (err.code === 'ER_DUP_ENTRY' && err.message?.includes('dept_code')) {
+        throw Object.assign(new Error('A department with a similar name already exists. Please use a unique name or code.'), { statusCode: 400 });
+      }
+      throw err;
+    }
     return getById("department_master", id);
   },
-  async update(id: string, data: { dept_name?: string; branch_id?: string }) {
+  async update(id: string, data: { dept_name?: string; branch_id?: string; description?: string }) {
     await db.execute(
-      "UPDATE department_master SET dept_name = COALESCE(?, dept_name), branch_id = COALESCE(?, branch_id), updated_at = NOW() WHERE id = ?",
-      [data.dept_name ?? null, data.branch_id ?? null, id]
+      "UPDATE department_master SET dept_name = COALESCE(?, dept_name), branch_id = COALESCE(?, branch_id), description = COALESCE(?, description), updated_at = NOW() WHERE id = ?",
+      [data.dept_name ?? null, data.branch_id ?? null, data.description ?? null, id]
     );
     return getById("department_master", id);
   },

@@ -13,7 +13,7 @@ leaveRouter.use(requireAuth);
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 leaveRouter.get("/types",                         h(leaveController.listLeaveTypes.bind(leaveController)));
-leaveRouter.post("/types",                        h(leaveController.createLeaveType.bind(leaveController)));
+leaveRouter.post("/types", requireRole("admin", "hr"), h(leaveController.createLeaveType.bind(leaveController)));
 
 // PUT /types/:id — update leave type (admin/hr)
 leaveRouter.put(
