@@ -49,8 +49,12 @@ async function migrateOneEmployee(
   const empStatus = isLeft ? 'Resigned' : 'Active';
   const activeStatus = isLeft ? 0 : 1;
 
-  const doj     = parseLegacyDate(row.DOJ);
-  const dob     = parseLegacyDate(row.DOB);
+  const doj = parseLegacyDate(row.DOJ);
+  if (!doj) {
+    result.errors.push({ empCode: row.EmpCode, error: 'Missing or invalid date_of_joining (DOJ)' });
+    return;
+  }
+  const dob      = parseLegacyDate(row.DOB);
   const exitDate = isLeft ? parseLegacyDate(row.LeftDate) : null;
 
   const branchId      = row.Location ? (masters.branch.get(row.Location.trim()) ?? null)      : null;
@@ -83,7 +87,7 @@ async function migrateOneEmployee(
       row.EmpCode, firstName, lastName,
       row.EmailId ?? null, row.PMobNo ?? null,
       normalizeGender(row.Gender),
-      dob, doj ?? '2000-01-01', exitDate,
+      dob, doj, exitDate,
       row.EmpType ?? 'OnRoll', empStatus, activeStatus,
       branchId, departmentId, processId, designationId,
       row.BiometricCode ?? null, row.Band ?? null,
@@ -158,8 +162,19 @@ async function migrateOneEmployee(
         pay_mode, salary_payment_mode)
      VALUES (?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
+       snapshot_date = VALUES(snapshot_date),
        basic = VALUES(basic), hra = VALUES(hra), conveyance = VALUES(conveyance),
-       gross = VALUES(gross), net_in_hand = VALUES(net_in_hand)`,
+       da = VALUES(da), portfolio_allowance = VALUES(portfolio_allowance),
+       medical_allowance = VALUES(medical_allowance), lta = VALUES(lta),
+       mobile_allowance = VALUES(mobile_allowance), special_allowance = VALUES(special_allowance),
+       other_allowance = VALUES(other_allowance), bonus = VALUES(bonus),
+       gross = VALUES(gross), net_in_hand = VALUES(net_in_hand),
+       ctc_offered = VALUES(ctc_offered), package = VALUES(package),
+       epf_employee = VALUES(epf_employee), esic_employee = VALUES(esic_employee),
+       epf_employer = VALUES(epf_employer), esic_employer = VALUES(esic_employer),
+       professional_tax = VALUES(professional_tax), gratuity = VALUES(gratuity),
+       admin_charges = VALUES(admin_charges), pli = VALUES(pli),
+       pay_mode = VALUES(pay_mode), salary_payment_mode = VALUES(salary_payment_mode)`,
     [
       employeeId,
       toDecimal(row.bs), toDecimal(row.hra), toDecimal(row.conv), toDecimal(row.da),
