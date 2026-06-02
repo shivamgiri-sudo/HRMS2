@@ -22,7 +22,7 @@ describe('calculateSalary', () => {
 
   it('caps PF employee at 1800/month (21600/year)', () => {
     const r = calculateSalary(1000000, 50, 50, false);
-    expect(r.pf_employee).toBeLessThanOrEqual(21600);
+    expect(r.pf_employee).toBeCloseTo(1800, 0); // monthly cap = ₹1,800
   });
 
   it('all values stored as monthly (annual / 12)', () => {

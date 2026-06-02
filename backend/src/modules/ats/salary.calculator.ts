@@ -30,36 +30,43 @@ export function calculateSalary(
   hraPct: number,
   _isMetro: boolean,
 ): SalaryComponents {
-  // Iterative approach: estimate gross first, then compute statutory deductions
-  // Use rough first pass to determine ESIC eligibility
-  const roughGross = annualCtc * 0.88;
-  const roughMonthlyGross = roughGross / 12;
-  const esicApplies = roughMonthlyGross <= 21000;
+  // Single-pass: derive gross from CTC by subtracting employer-side costs.
+  // We don't know gross yet, so approximate employer PF/ESIC/gratuity iteratively.
+  // Use CTC * 0.88 as starting estimate for gross to determine ESIC eligibility only.
+  const estimatedMonthlyGross = (annualCtc * 0.88) / 12;
+  const esicApplies = estimatedMonthlyGross <= 21000;
 
-  const roughBasic = roughGross * (basicPct / 100);
-  const pfEmployer = roughBasic * 0.12;
-  const esicEmployer = esicApplies ? roughGross * 0.0325 : 0;
-  const gratuityAnnual = (roughBasic / 26 / 12) * 15;
-  const adminCharges = roughBasic * 0.005;
+  // Employer-side annual costs (deducted from CTC to get gross)
+  // These are computed on gross which we don't know yet — use an iterative solve.
+  // In practice one pass is accurate enough for HRM purposes.
+  const estimatedGross = annualCtc * 0.88;
+  const estimatedBasic = estimatedGross * (basicPct / 100);
+  const pfEmployerAnnual = estimatedBasic * 0.12;
+  const esicEmployerAnnual = esicApplies ? estimatedGross * 0.0325 : 0;
+  const gratuityAnnual = (estimatedBasic / 26 / 12) * 15;
+  const adminChargesAnnual = estimatedBasic * 0.005;
 
-  const gross = annualCtc - pfEmployer - esicEmployer - gratuityAnnual - adminCharges;
+  const gross = annualCtc - pfEmployerAnnual - esicEmployerAnnual - gratuityAnnual - adminChargesAnnual;
   const monthlyGross = gross / 12;
-  const esicAppliesFinal = monthlyGross <= 21000;
 
+  // Recompute all derived values on the actual gross
   const basic = gross * (basicPct / 100);
   const hra = basic * (hraPct / 100);
   const conveyance = 19200; // ₹1,600/month × 12
   const da = 0;
   const special = gross - basic - hra - conveyance - da;
 
-  const pfEmployee = Math.min(basic * 0.12, 21600); // capped ₹1,800/month × 12
-  const pfEmp = basic * 0.12;
-  const esicEmployee = esicAppliesFinal ? gross * 0.0075 : 0;
-  const esicEmp = esicAppliesFinal ? gross * 0.0325 : 0;
+  // Statutory deductions (employee side)
+  const pfEmployee = Math.min(basic * 0.12, 21600); // capped at ₹1,800/month × 12
+  const esicEmployee = esicApplies ? gross * 0.0075 : 0;
   const professionalTax = 2400; // ₹200/month × 12
-  const bonus = basic * 0.0833;
+
+  // Employer side (returned for display/records — already used to derive gross above)
+  const pfEmployer = estimatedBasic * 0.12; // consistent with gross derivation
+  const esicEmployer = esicApplies ? gross * 0.0325 : 0;
   const gratuity = (basic / 26 / 12) * 15;
-  const adminCh = basic * 0.005;
+  const adminCharges = basic * 0.005;
+  const bonus = basic * 0.0833;
 
   const netInHand = gross - pfEmployee - esicEmployee - professionalTax;
 
@@ -76,12 +83,12 @@ export function calculateSalary(
     other_allowance:   0,
     bonus:             m(bonus),
     pf_employee:       m(pfEmployee),
-    pf_employer:       m(pfEmp),
+    pf_employer:       m(pfEmployer),
     esic_employee:     m(esicEmployee),
-    esic_employer:     m(esicEmp),
+    esic_employer:     m(esicEmployer),
     professional_tax:  m(professionalTax),
     gratuity:          m(gratuity),
-    admin_charges:     m(adminCh),
+    admin_charges:     m(adminCharges),
     net_in_hand:       m(netInHand),
   };
 }
