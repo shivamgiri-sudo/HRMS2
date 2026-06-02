@@ -179,3 +179,13 @@ VALUES
   ('PTRL', 'Paternity Leave (Legacy)',  5, 0, 1, 1),
   ('MTRL', 'Maternity Leave (Legacy)', 90, 0, 1, 1)
 ON DUPLICATE KEY UPDATE leave_name = VALUES(leave_name);
+
+-- ── Idempotency constraint for leave migration ────────────────────────────────
+
+SET @s = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+   WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='leave_request'
+     AND CONSTRAINT_NAME='uq_leave_req')=0,
+  'ALTER TABLE leave_request ADD UNIQUE KEY uq_leave_req (employee_id, leave_type_id, from_date, to_date)',
+  'SELECT 1');
+PREPARE p FROM @s; EXECUTE p; DEALLOCATE PREPARE p;
