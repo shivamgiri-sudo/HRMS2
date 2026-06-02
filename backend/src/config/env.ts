@@ -8,9 +8,9 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(5000),
   FRONTEND_URL: z.string().url().default("http://localhost:5173"),
 
-  SUPABASE_URL: z.string().url(),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
-  SUPABASE_ANON_KEY: z.string().min(1),
+  SUPABASE_URL: z.string().url().optional().default("https://placeholder.supabase.co"),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().default("placeholder"),
+  SUPABASE_ANON_KEY: z.string().default("placeholder"),
 
   ACTIVE_DB_PROVIDER: z.enum(["supabase", "sqlserver", "mysql"]).default("supabase"),
 

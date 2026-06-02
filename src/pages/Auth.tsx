@@ -11,12 +11,10 @@ import {
   LockKeyhole,
   Mail,
   ShieldCheck,
-  UserRound,
 } from "lucide-react";
 import { DEMO_CREDENTIALS } from "@/lib/demoCreds";
 
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
 import { Button } from "@/components/ui/button";
@@ -38,22 +36,6 @@ const loginSchema = z.object({
   password: z.string().min(6, "Password must be at least 6 characters"),
 });
 
-const signupSchema = z
-  .object({
-    fullName: z
-      .string()
-      .trim()
-      .min(2, "Name must be at least 2 characters")
-      .max(100, "Name is too long"),
-    email: z.string().trim().email("Please enter a valid email address"),
-    password: z.string().min(6, "Password must be at least 6 characters"),
-    confirmPassword: z.string(),
-  })
-  .refine((data) => data.password === data.confirmPassword, {
-    message: "Passwords don't match",
-    path: ["confirmPassword"],
-  });
-
 const Auth = () => {
   const [isLoading, setIsLoading] = useState(false);
 
@@ -64,19 +46,11 @@ const Auth = () => {
   const [showDemoPanel, setShowDemoPanel] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
 
-  const [signupName, setSignupName] = useState("");
-  const [signupEmail, setSignupEmail] = useState("");
-  const [signupPassword, setSignupPassword] = useState("");
-  const [signupConfirmPassword, setSignupConfirmPassword] = useState("");
-
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const [showLoginPassword, setShowLoginPassword] = useState(false);
-  const [showSignupPassword, setShowSignupPassword] = useState(false);
-  const [showSignupConfirmPassword, setShowSignupConfirmPassword] =
-    useState(false);
 
-  const { signIn, signUp, user } = useAuth();
+  const { signIn, user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -135,118 +109,13 @@ const Auth = () => {
     }
   };
 
-  const handleForgotPassword = async (e: FormEvent) => {
+  const handleForgotPassword = (e: FormEvent) => {
     e.preventDefault();
-
-    if (!resetEmail.trim()) {
-      showAlert("Reset Password", "Please enter your registered email address.");
-      return;
-    }
-
-    setIsLoading(true);
-
-    const { error } = await supabase.auth.resetPasswordForEmail(
-      resetEmail.trim(),
-      {
-        redirectTo: `${window.location.origin}/reset-password`,
-      }
+    showAlert(
+      "Password Reset",
+      "Password reset is managed by your HR Admin. Please contact hr@mascallnet.com"
     );
-
-    setIsLoading(false);
-
-    if (error) {
-      showAlert("Reset Password", error.message);
-    } else {
-      toast({
-        title: "Reset Link Sent",
-        description: "Please check your email for the password reset link.",
-      });
-
-      setShowForgotPassword(false);
-    }
-  };
-
-  const handleSignup = async (e: FormEvent) => {
-    e.preventDefault();
-    setErrors({});
-
-    const result = signupSchema.safeParse({
-      fullName: signupName,
-      email: signupEmail,
-      password: signupPassword,
-      confirmPassword: signupConfirmPassword,
-    });
-
-    if (!result.success) {
-      const fieldErrors: Record<string, string> = {};
-
-      result.error.errors.forEach((err) => {
-        if (err.path[0]) {
-          fieldErrors[`signup_${err.path[0]}`] = err.message;
-        }
-      });
-
-      setErrors(fieldErrors);
-      return;
-    }
-
-    setIsLoading(true);
-
-    try {
-      const { data: settings } = await supabase
-        .from("organization_settings")
-        .select("setting_value")
-        .eq("setting_key", "domain_whitelist")
-        .single();
-
-      if (settings?.setting_value) {
-        const whitelist = settings.setting_value as unknown as {
-          enabled: boolean;
-          domains: string[];
-        };
-
-        if (whitelist.enabled && whitelist.domains.length > 0) {
-          const emailDomain = signupEmail.split("@")[1]?.toLowerCase();
-
-          const isAllowed = whitelist.domains.some(
-            (domain) => emailDomain === domain.toLowerCase()
-          );
-
-          if (!isAllowed) {
-            setIsLoading(false);
-
-            showAlert(
-              "Registration Restricted",
-              "Only approved company email domains are allowed. Please contact your administrator."
-            );
-
-            return;
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Error checking domain whitelist:", error);
-    }
-
-    const { error } = await signUp(signupEmail, signupPassword, signupName);
-
-    setIsLoading(false);
-
-    if (error) {
-      if (error.message.includes("User already registered")) {
-        showAlert(
-          "Account Already Exists",
-          "An account with this email already exists. Please login instead."
-        );
-      } else {
-        showAlert("Signup Alert", error.message);
-      }
-    } else {
-      toast({
-        title: "Account Created",
-        description: "Please check your email to verify your account.",
-      });
-    }
+    setShowForgotPassword(false);
   };
 
   return (
@@ -451,7 +320,7 @@ const Auth = () => {
                             type="button"
                             disabled={isLoading}
                             onClick={async () => {
-                              setLoginEmail(cred.email);
+                              setLoginIdentifier(cred.email);
                               setLoginPassword(cred.password);
                               setIsLoading(true);
                               await signIn(cred.email, cred.password);
@@ -482,7 +351,7 @@ const Auth = () => {
                           </p>
 
                           <p className="mt-1 text-xs text-slate-500">
-                            Enter your registered email address.
+                            Password reset is managed by your HR Admin.
                           </p>
                         </div>
 
@@ -501,11 +370,7 @@ const Auth = () => {
                             className="rounded-2xl bg-slate-950 text-white hover:bg-slate-800"
                             disabled={isLoading}
                           >
-                            {isLoading ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              "Send Link"
-                            )}
+                            Contact HR
                           </Button>
 
                           <Button
@@ -523,181 +388,22 @@ const Auth = () => {
                 </TabsContent>
 
                 <TabsContent value="signup" className="mt-6">
-                  <form onSubmit={handleSignup} className="space-y-4">
-                    <div className="space-y-2">
-                      <Label
-                        htmlFor="signup-name"
-                        className="text-sm font-medium text-slate-700"
-                      >
-                        Full Name
-                      </Label>
-
-                      <div className="relative">
-                        <UserRound className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-
-                        <Input
-                          id="signup-name"
-                          type="text"
-                          placeholder="Your full name"
-                          value={signupName}
-                          onChange={(e) => setSignupName(e.target.value)}
-                          disabled={isLoading}
-                          className="h-12 rounded-2xl border-slate-200 bg-white pl-11 shadow-sm focus-visible:ring-sky-400"
-                        />
-                      </div>
-
-                      {errors.signup_fullName && (
-                        <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-                          {errors.signup_fullName}
-                        </p>
-                      )}
+                  <div className="flex flex-col items-center gap-4 rounded-2xl border border-slate-100 bg-slate-50 p-6 text-center">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 text-white shadow-md">
+                      <ShieldCheck className="h-6 w-6" />
                     </div>
-
-                    <div className="space-y-2">
-                      <Label
-                        htmlFor="signup-email"
-                        className="text-sm font-medium text-slate-700"
-                      >
-                        Email
-                      </Label>
-
-                      <div className="relative">
-                        <Mail className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-
-                        <Input
-                          id="signup-email"
-                          type="email"
-                          placeholder="name@company.com"
-                          value={signupEmail}
-                          onChange={(e) => setSignupEmail(e.target.value)}
-                          disabled={isLoading}
-                          className="h-12 rounded-2xl border-slate-200 bg-white pl-11 shadow-sm focus-visible:ring-sky-400"
-                        />
-                      </div>
-
-                      {errors.signup_email && (
-                        <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-                          {errors.signup_email}
-                        </p>
-                      )}
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">
+                        New accounts are created by HR Admin
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Please contact your HR team to get access.
+                      </p>
+                      <p className="mt-2 text-xs font-medium text-sky-700">
+                        hr@mascallnet.com
+                      </p>
                     </div>
-
-                    <div className="space-y-2">
-                      <Label
-                        htmlFor="signup-password"
-                        className="text-sm font-medium text-slate-700"
-                      >
-                        Password
-                      </Label>
-
-                      <div className="relative">
-                        <LockKeyhole className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-
-                        <Input
-                          id="signup-password"
-                          type={showSignupPassword ? "text" : "password"}
-                          placeholder="Create password"
-                          value={signupPassword}
-                          onChange={(e) => setSignupPassword(e.target.value)}
-                          disabled={isLoading}
-                          className="h-12 rounded-2xl border-slate-200 bg-white pl-11 pr-12 shadow-sm focus-visible:ring-sky-400"
-                        />
-
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="absolute right-2 top-1/2 h-9 w-9 -translate-y-1/2 rounded-xl p-0 text-slate-500 hover:bg-slate-100"
-                          onClick={() =>
-                            setShowSignupPassword(!showSignupPassword)
-                          }
-                          tabIndex={-1}
-                        >
-                          {showSignupPassword ? (
-                            <EyeOff className="h-4 w-4" />
-                          ) : (
-                            <Eye className="h-4 w-4" />
-                          )}
-                        </Button>
-                      </div>
-
-                      {errors.signup_password && (
-                        <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-                          {errors.signup_password}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label
-                        htmlFor="signup-confirm"
-                        className="text-sm font-medium text-slate-700"
-                      >
-                        Confirm Password
-                      </Label>
-
-                      <div className="relative">
-                        <LockKeyhole className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-
-                        <Input
-                          id="signup-confirm"
-                          type={
-                            showSignupConfirmPassword ? "text" : "password"
-                          }
-                          placeholder="Confirm password"
-                          value={signupConfirmPassword}
-                          onChange={(e) =>
-                            setSignupConfirmPassword(e.target.value)
-                          }
-                          disabled={isLoading}
-                          className="h-12 rounded-2xl border-slate-200 bg-white pl-11 pr-12 shadow-sm focus-visible:ring-sky-400"
-                        />
-
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="absolute right-2 top-1/2 h-9 w-9 -translate-y-1/2 rounded-xl p-0 text-slate-500 hover:bg-slate-100"
-                          onClick={() =>
-                            setShowSignupConfirmPassword(
-                              !showSignupConfirmPassword
-                            )
-                          }
-                          tabIndex={-1}
-                        >
-                          {showSignupConfirmPassword ? (
-                            <EyeOff className="h-4 w-4" />
-                          ) : (
-                            <Eye className="h-4 w-4" />
-                          )}
-                        </Button>
-                      </div>
-
-                      {errors.signup_confirmPassword && (
-                        <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-                          {errors.signup_confirmPassword}
-                        </p>
-                      )}
-                    </div>
-
-                    <Button
-                      type="submit"
-                      className="h-12 w-full rounded-2xl bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/60 transition hover:-translate-y-0.5 hover:bg-slate-800"
-                      disabled={isLoading}
-                    >
-                      {isLoading ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Creating account...
-                        </>
-                      ) : (
-                        <>
-                          Create Account
-                          <ArrowRight className="ml-2 h-4 w-4" />
-                        </>
-                      )}
-                    </Button>
-                  </form>
+                  </div>
                 </TabsContent>
               </Tabs>
 
