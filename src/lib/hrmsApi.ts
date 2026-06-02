@@ -1,5 +1,3 @@
-import { supabase } from '@/integrations/supabase/client';
-
 // Empty string = use Vercel proxy (same origin, /api/* rewritten to Railway)
 // Local dev = http://localhost:5055
 const HRMS_API_URL = import.meta.env.VITE_HRMS_API_URL || 'http://localhost:5055';
@@ -15,17 +13,12 @@ async function getAuthHeader(): Promise<Record<string, string>> {
     } catch { /* fall through */ }
   }
 
-  // Check MySQL JWT token (new auth path)
+  // MySQL JWT token — only auth method
   const mysqlToken = localStorage.getItem('hrms_access_token');
   if (mysqlToken) {
     return { Authorization: `Bearer ${mysqlToken}` };
   }
-
-  // Fall back to Supabase session token
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) throw new Error('No active session');
-  return { Authorization: `Bearer ${token}` };
+  return {};
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {

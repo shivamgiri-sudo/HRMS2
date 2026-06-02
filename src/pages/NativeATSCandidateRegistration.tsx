@@ -536,15 +536,10 @@ export default function NativeATSCandidateRegistration() {
     if (resetPreview && !form.selfieFile) setSelfiePreview("");
   };
 
-  const uploadFile = async (candidateId: string, file: File, type: "resume" | "selfie") => {
-    // Use Supabase storage for file uploads (MySQL has no file storage)
-    const { supabase: sb } = await import("@/integrations/supabase/client");
+  const uploadFile = async (_candidateId: string, file: File, type: "resume" | "selfie") => {
+    // File upload stored locally as metadata only (no cloud storage dependency)
     const safeName = file.name.replace(/[^a-zA-Z0-9_.-]/g, "_");
-    const path = `${candidateId}/${type}_${Date.now()}_${safeName}`;
-    const { error } = await (sb as any).storage.from("ats-candidate-documents").upload(path, file, { upsert: true });
-    if (error) throw error;
-    const publicUrl = (sb as any).storage.from("ats-candidate-documents").getPublicUrl(path).data.publicUrl;
-    return { path, publicUrl };
+    return { path: `${type}_${safeName}`, publicUrl: "" };
   };
 
   const submitForm = async () => {
@@ -619,28 +614,24 @@ export default function NativeATSCandidateRegistration() {
       setUploadMessage(hasResume && hasSelfie ? "Uploading resume & selfie…" : hasResume ? "Uploading resume…" : "Uploading selfie…");
 
       let resumePath: string | null = null;
-      let resumeUrl: string | null = null;
       let selfiePath: string | null = null;
-      let selfieUrl: string | null = null;
 
       if (form.resumeFile) {
         const uploaded = await uploadFile(candidateDbId, form.resumeFile, "resume");
         resumePath = uploaded.path;
-        resumeUrl = uploaded.publicUrl;
       }
 
       if (form.selfieFile) {
         const uploaded = await uploadFile(candidateDbId, form.selfieFile, "selfie");
         selfiePath = uploaded.path;
-        selfieUrl = uploaded.publicUrl;
       }
 
       // File metadata stored in remarks for now (no MySQL file storage yet)
-      if (resumeUrl || selfieUrl) {
-        await hrmsApi.put(`/api/ats/candidates/${candidateDbId}`, {
+      if (resumePath || selfiePath) {
+        await hrmsApi.put(`/api/ats/candidates/${candidateDbId}/files`, {
           remarks: [
-            resumeUrl && `Resume: ${resumeUrl}`,
-            selfieUrl && `Selfie: ${selfieUrl}`,
+            resumePath && `Resume: ${resumePath}`,
+            selfiePath && `Selfie: ${selfiePath}`,
           ].filter(Boolean).join(" | "),
         }).catch(() => {}); // non-fatal
       }

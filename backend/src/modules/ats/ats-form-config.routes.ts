@@ -12,6 +12,39 @@ router.get('/form-config/bootstrap', h(async (_req: any, res: any) => {
   res.json({ success: true, data });
 }));
 
+// PUBLIC — candidate self-registration (no auth, public-facing walk-in form)
+router.post('/candidates', h(async (req: any, res: any) => {
+  const { db } = await import('../../db/mysql.js');
+  const { fullName, mobile, email, gender, appliedForProcess, appliedForBranch, walkInDate, remarks, sourcing_channel } = req.body;
+  if (!fullName?.trim() || !mobile?.trim()) {
+    return res.status(400).json({ success: false, message: 'Full name and mobile are required' });
+  }
+  // Generate candidate code
+  const candidateCode = 'CND-' + Date.now().toString(36).toUpperCase();
+  // Check for duplicate mobile
+  const [existing] = await db.execute('SELECT id FROM ats_candidate WHERE mobile = ? LIMIT 1', [mobile.trim()]);
+  if ((existing as any[]).length > 0) {
+    return res.status(409).json({ success: false, message: 'A candidate with this mobile number is already registered.' });
+  }
+  const [result] = await db.execute(
+    `INSERT INTO ats_candidate (id, candidate_code, full_name, mobile, email, gender, applied_for_process, applied_for_branch, walk_in_date, remarks, sourcing_channel, current_stage, active_status)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Applied', 1)`,
+    [candidateCode, fullName.trim(), mobile.trim(), email || null, gender || null, appliedForProcess || null, appliedForBranch || null, walkInDate || new Date().toISOString().slice(0,10), remarks || null, sourcing_channel || 'Walk-In']
+  ) as any;
+  // Fetch the created row
+  const [rows] = await db.execute('SELECT id, candidate_code, applied_for_branch FROM ats_candidate WHERE mobile = ? LIMIT 1', [mobile.trim()]) as any;
+  const created = (rows as any[])[0];
+  return res.status(201).json({ success: true, data: { id: created.id, candidate_code: created.candidate_code, applied_for_branch: created.applied_for_branch } });
+}));
+
+// PUBLIC — update candidate with file URLs after upload (non-sensitive, uses candidate ID)
+router.put('/candidates/:id/files', h(async (req: any, res: any) => {
+  const { db } = await import('../../db/mysql.js');
+  const { remarks } = req.body;
+  await db.execute('UPDATE ats_candidate SET remarks = CONCAT(COALESCE(remarks, ""), " | ", ?) WHERE id = ?', [remarks, req.params.id]);
+  return res.json({ success: true });
+}));
+
 // ADMIN/HR — auth required from here
 router.use(requireAuth);
 
