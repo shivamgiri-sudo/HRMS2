@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { rosterCapacityService } from './roster-capacity.service.js';
 
 // ========== Types ==========
 export interface RosterTemplate {
@@ -40,6 +41,8 @@ export interface WeekOffPreference {
   approved: number;
   approved_by: string | null;
   approved_at: string | null;
+  submission_order: number | null;
+  auto_approved: number;
   created_at: string;
 }
 
@@ -296,6 +299,62 @@ class RosterMasterService {
           if (preference?.approved && preference.preferred_day === dayOfWeek) {
             is_week_off = true;
             shift_template_id = null;
+          }
+
+          // Check capacity if trying to assign week-off
+          if (is_week_off) {
+            const capacityCheck = await rosterCapacityService.checkCapacity(
+              batch.process_id,
+              dateStr,
+              dayOfWeek
+            );
+
+            if (!capacityCheck.can_allocate) {
+              // Capacity full - try alternate day if preference exists
+              if (preference?.alternate_day !== null && preference?.alternate_day !== undefined) {
+                const alternateDayOfWeek = preference.alternate_day;
+                if (alternateDayOfWeek === dayOfWeek) {
+                  // Alternate same as preferred, assign work day
+                  is_week_off = false;
+                  shift_template_id = patternDay.shift_template_id;
+
+                  // Notify employee preference not fulfilled
+                  await rosterCapacityService.createNotification({
+                    employee_id,
+                    preference_id: preference.id,
+                    notification_type: 'capacity_full',
+                    message: `Week-off preference for ${dateStr} could not be fulfilled due to capacity limits. Assigned work day instead.`,
+                    roster_date: dateStr,
+                  });
+                }
+                // Else check alternate day capacity in future enhancement
+              } else {
+                // No alternate, assign work day
+                is_week_off = false;
+                shift_template_id = patternDay.shift_template_id;
+
+                // Notify if preference was requested
+                if (preference?.approved) {
+                  await rosterCapacityService.createNotification({
+                    employee_id,
+                    preference_id: preference.id,
+                    notification_type: 'capacity_full',
+                    message: `Week-off preference for ${dateStr} could not be fulfilled due to capacity limits.`,
+                    roster_date: dateStr,
+                  });
+                }
+              }
+            } else if (preference?.approved) {
+              // Capacity available, allocate in capacity log
+              await rosterCapacityService.allocateWeekOff({
+                process_id: batch.process_id,
+                day_of_week: dayOfWeek,
+                allocation_date: dateStr,
+                employee_id,
+                preference_id: preference.id,
+                auto_approved: preference.auto_approved === 1,
+              });
+            }
           }
 
           // Check if assignment already exists
