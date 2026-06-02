@@ -6,11 +6,11 @@ import { resolve } from 'path';
 dotenv.config({ path: resolve(process.cwd(), '.env') });
 
 export const LEGACY_SRC: ConnectionOptions = {
-  host:        '<LEGACY_HOST>',       // Fill in: 122.184.128.90
+  host:        '192.168.10.22',       // Fill in: 122.184.128.90
   port:        3306,
-  user:        '<LEGACY_USER>',       // Fill in: root
-  password:    '<LEGACY_PASSWORD>',   // Fill in: (provided separately)
-  database:    '<LEGACY_DATABASE>',   // Fill in: legacy source DB name
+  user:        'shivam_user',       // Fill in: root
+  password:    'qwersdfg!@#hjk',   // Fill in: (provided separately)
+  database:    'db_bill',   // Fill in: legacy source DB name
   dateStrings: true,
   timezone:    'local',
 };
@@ -21,10 +21,10 @@ export const LEGACY_TABLES = {
 } as const;
 
 export const DST: ConnectionOptions = {
-  host:        process.env.DB_HOST     ?? 'localhost',
+  host:        process.env.DB_HOST     ?? '122.184.128.90',
   port:        Number(process.env.DB_PORT ?? 3306),
   user:        process.env.DB_USER     ?? 'root',
-  password:    process.env.DB_PASSWORD ?? '',
+  password:    process.env.DB_PASSWORD ?? 'vicidialnow',
   database:    process.env.DB_NAME     ?? 'mas_hrms',
   dateStrings: false,
   timezone:    '+00:00',
