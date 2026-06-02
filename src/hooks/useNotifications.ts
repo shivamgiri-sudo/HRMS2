@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
 
 export interface Notification {
@@ -13,6 +13,20 @@ export interface Notification {
   created_at: string;
 }
 
+// Map work_inbox_item rows to Notification shape
+function mapInboxItem(item: any): Notification {
+  return {
+    id: item.id,
+    user_id: item.user_id,
+    title: item.title,
+    message: item.description || '',
+    type: item.type,
+    read: item.is_read === 1 || item.is_read === true,
+    link: item.action_url || null,
+    created_at: item.created_at,
+  };
+}
+
 export const useNotifications = () => {
   const { user } = useAuth();
 
@@ -20,18 +34,11 @@ export const useNotifications = () => {
     queryKey: ["notifications", user?.id],
     queryFn: async () => {
       if (!user?.id) return [];
-      
-      const { data, error } = await supabase
-        .from("notifications")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
-        .limit(50);
-
-      if (error) throw error;
-      return data as Notification[];
+      const res = await hrmsApi.get('/inbox');
+      return (res.data?.data ?? []).map(mapInboxItem) as Notification[];
     },
     enabled: !!user?.id,
+    refetchInterval: 60000,
   });
 };
 
@@ -42,17 +49,11 @@ export const useUnreadNotificationsCount = () => {
     queryKey: ["notifications-unread-count", user?.id],
     queryFn: async () => {
       if (!user?.id) return 0;
-      
-      const { count, error } = await supabase
-        .from("notifications")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", user.id)
-        .eq("read", false);
-
-      if (error) throw error;
-      return count || 0;
+      const res = await hrmsApi.get('/inbox/count');
+      return Number(res.data?.count ?? 0);
     },
     enabled: !!user?.id,
+    refetchInterval: 60000,
   });
 };
 
@@ -62,12 +63,7 @@ export const useMarkNotificationRead = () => {
 
   return useMutation({
     mutationFn: async (notificationId: string) => {
-      const { error } = await supabase
-        .from("notifications")
-        .update({ read: true })
-        .eq("id", notificationId);
-
-      if (error) throw error;
+      await hrmsApi.patch(`/inbox/${notificationId}/read`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] });
@@ -83,14 +79,7 @@ export const useMarkAllNotificationsRead = () => {
   return useMutation({
     mutationFn: async () => {
       if (!user?.id) return;
-      
-      const { error } = await supabase
-        .from("notifications")
-        .update({ read: true })
-        .eq("user_id", user.id)
-        .eq("read", false);
-
-      if (error) throw error;
+      await hrmsApi.patch('/inbox/mark-all-read');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] });
