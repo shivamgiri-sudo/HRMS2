@@ -50,7 +50,7 @@ PREPARE p FROM @s; EXECUTE p; DEALLOCATE PREPARE p;
 SET @s = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
    WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employees' AND COLUMN_NAME='legacy_emp_id')=0,
-  'ALTER TABLE employees ADD COLUMN legacy_emp_id INT NULL',
+  'ALTER TABLE employees ADD COLUMN legacy_emp_id BIGINT NULL',
   'SELECT 1');
 PREPARE p FROM @s; EXECUTE p; DEALLOCATE PREPARE p;
 
@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS employee_statutory_info (
   epf_date     DATE,
   created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+  FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+  INDEX idx_statutory_emp (employee_id)
 );
 
 -- ── employee_salary_snapshot ─────────────────────────────────────────────────
@@ -104,7 +105,8 @@ CREATE TABLE IF NOT EXISTS employee_salary_snapshot (
   pay_mode            VARCHAR(50),
   salary_payment_mode VARCHAR(50),
   created_at          DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+  FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+  INDEX idx_salary_emp (employee_id)
 );
 
 -- ── employee_client_mapping ───────────────────────────────────────────────────
@@ -164,7 +166,8 @@ CREATE TABLE IF NOT EXISTS employee_legacy_meta (
   updated_by           VARCHAR(255),
   official_email       VARCHAR(255),
   created_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+  FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+  INDEX idx_legacy_meta_emp (employee_id)
 );
 
 -- ── Additional legacy leave type codes ───────────────────────────────────────
