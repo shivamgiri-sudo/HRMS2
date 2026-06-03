@@ -58,16 +58,23 @@ export function usePayrollRecords(month?: number, year?: number) {
   });
 }
 
+export interface PayrollStats {
+  totalPayroll: number | null;
+  employeeCount: number | null;
+  avgSalary: number | null;
+  pending: number | null;
+}
+
 export function usePayrollStats() {
-  return useQuery({
+  return useQuery<PayrollStats>({
     queryKey: ["payroll-stats"],
-    queryFn: async () => {
+    queryFn: async (): Promise<PayrollStats> => {
       console.warn("Payroll run management requires backend payroll module");
       return {
-        totalPayroll: 0,
-        employeeCount: 0,
-        avgSalary: 0,
-        pending: 0,
+        totalPayroll: null,
+        employeeCount: null,
+        avgSalary: null,
+        pending: null,
       };
     },
   });

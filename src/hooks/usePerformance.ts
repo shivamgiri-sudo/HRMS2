@@ -41,7 +41,7 @@ export function useGoals(employeeId: string | undefined) {
     queryFn: async () => {
       if (!employeeId) return [];
 
-      const res = await hrmsApi.get<{ data: any[] }>(`/api/goals/goals?employeeId=${employeeId}`);
+      const res = await hrmsApi.get<{ data: any[] }>(`/api/goals/goals?employee_id=${employeeId}`);
       return (res.data ?? []) as Goal[];
     },
     enabled: !!employeeId,

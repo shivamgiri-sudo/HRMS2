@@ -94,7 +94,7 @@ export const leaveService = {
   },
 
   async listRequests(filters: LeaveRequestFilters): Promise<PaginatedResult<LeaveRequest>> {
-    const { page, limit, employeeId, leaveTypeId, status, fromDate, toDate } = filters;
+    const { page, limit, employeeId, leaveTypeId, status, fromDate, toDate, activeOn } = filters;
     const offset = (page - 1) * limit;
     const conds: string[] = [];
     const params: unknown[] = [];
@@ -103,6 +103,8 @@ export const leaveService = {
     if (status)      { conds.push("status = ?");         params.push(status); }
     if (fromDate)    { conds.push("from_date >= ?");     params.push(fromDate); }
     if (toDate)      { conds.push("to_date <= ?");       params.push(toDate); }
+    if (activeOn)    { conds.push("from_date <= ?");     params.push(activeOn);
+                       conds.push("to_date >= ?");       params.push(activeOn); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM leave_request ${where} ORDER BY applied_at DESC LIMIT ${limit} OFFSET ${offset}`,

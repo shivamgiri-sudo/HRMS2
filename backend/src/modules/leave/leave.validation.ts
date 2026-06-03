@@ -33,6 +33,7 @@ export const leaveRequestFiltersSchema = z.object({
   status: z.string().optional(),
   fromDate: z.string().regex(DATE_REGEX).optional(),
   toDate: z.string().regex(DATE_REGEX).optional(),
+  activeOn: z.string().regex(DATE_REGEX).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
