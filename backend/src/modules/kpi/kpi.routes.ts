@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
@@ -25,11 +26,43 @@ router.get("/templates/:id/metrics", requireRole("admin", "hr", "manager", "qa",
 router.post("/templates/:id/metrics", requireRole("admin", "manager", "process_manager"), h(c.addTemplateMetric));
 
 // Assignments — static path before dynamic
-router.post("/assignments", requireRole("admin", "manager", "process_manager"), h(c.assignTemplate));
+router.post("/assignments",
+  requireRole("admin", "manager", "process_manager"),
+  requireScopedRole(["manager", "process_manager"], async (req) => {
+    // Resolve employee's branch/process
+    const [rows] = await db.execute(
+      'SELECT branch_id, process_id FROM employees WHERE id = ? LIMIT 1',
+      [req.body.employee_id]
+    ) as any[];
+    const emp = rows[0];
+    return {
+      branchId: emp?.branch_id,
+      processId: emp?.process_id
+    };
+  }),
+  h(c.assignTemplate)
+);
 router.get("/assignments/employee/:employeeId", requireRole("admin", "hr", "manager", "qa"), h(c.getEmployeeTemplate));  // TODO: Add self-scope
 
 // Scores — static path before dynamic
-router.post("/scores/bulk", requireRole("admin", "manager", "qa"), h(c.bulkRecordScores));
+router.post("/scores/bulk",
+  requireRole("admin", "manager", "qa"),
+  requireScopedRole(["manager", "qa"], async (req) => {
+    // Bulk scores - check first employee's scope
+    const firstEmpId = req.body.scores?.[0]?.employee_id;
+    if (!firstEmpId) return {};
+    const [rows] = await db.execute(
+      'SELECT branch_id, process_id FROM employees WHERE id = ? LIMIT 1',
+      [firstEmpId]
+    ) as any[];
+    const emp = rows[0];
+    return {
+      branchId: emp?.branch_id,
+      processId: emp?.process_id
+    };
+  }),
+  h(c.bulkRecordScores)
+);
 router.post("/scores", requireRole("admin", "manager", "qa"), h(c.recordScore));  // TODO: Add self-scope for employees
 
 // Summary + Leaderboard
