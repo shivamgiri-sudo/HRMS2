@@ -4,6 +4,8 @@ import type { Response } from "express";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireScopedRole, getTargetFromBodyOrQuery } from "../../middleware/scopeMiddleware.js";
+import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { autoRosterSyncedService as s } from "./auto-roster-synced.service.js";
 
@@ -43,6 +45,7 @@ router.get(
 router.post(
   "/requirements",
   requireRole("admin", "wfm"),
+  requireScopedRole(["wfm"], getTargetFromBodyOrQuery),
   h(async (req, res) => {
     const body = z.object({
       process_id: z.string().uuid().nullable().optional(),
@@ -76,6 +79,7 @@ router.get(
 router.post(
   "/plans",
   requireRole("admin", "wfm"),
+  requireScopedRole(["wfm"], getTargetFromBodyOrQuery),
   h(async (req, res) => {
     const body = z.object({
       plan_name: z.string().trim().min(1).max(255),
@@ -94,6 +98,11 @@ router.post(
 router.post(
   "/plans/:id/generate",
   requireRole("admin", "wfm"),
+  requireScopedRole(["wfm"], async (req) => {
+    // Resolve scope from plan
+    const plan = await s.getPlanById(req.params.id);
+    return { processId: plan?.process_id, branchId: plan?.branch_id };
+  }),
   h(async (req, res) => res.json({ success: true, data: await s.generateDraft(req.params.id, req.authUser!.id) }))
 );
 
@@ -118,12 +127,20 @@ router.get(
 router.post(
   "/plans/:id/submit",
   requireRole("admin", "wfm"),
+  requireScopedRole(["wfm"], async (req) => {
+    const plan = await s.getPlanById(req.params.id);
+    return { processId: plan?.process_id, branchId: plan?.branch_id };
+  }),
   h(async (req, res) => res.json({ success: true, data: await s.submitForApproval(req.params.id, req.authUser!.id) }))
 );
 
 router.post(
   "/plans/:id/approve",
   requireRole("admin", "process_manager"),
+  requireScopedRole(["process_manager"], async (req) => {
+    const plan = await s.getPlanById(req.params.id);
+    return { processId: plan?.process_id, branchId: plan?.branch_id };
+  }),
   h(async (req, res) => {
     const body = z.object({ remarks: z.string().max(700).optional() }).parse(req.body ?? {});
     res.json({ success: true, data: await s.approve(req.params.id, req.authUser!.id, body.remarks) });
@@ -133,6 +150,10 @@ router.post(
 router.post(
   "/plans/:id/reject",
   requireRole("admin", "process_manager"),
+  requireScopedRole(["process_manager"], async (req) => {
+    const plan = await s.getPlanById(req.params.id);
+    return { processId: plan?.process_id, branchId: plan?.branch_id };
+  }),
   h(async (req, res) => {
     const body = z.object({ remarks: z.string().trim().min(5).max(700) }).parse(req.body);
     res.json({ success: true, data: await s.reject(req.params.id, req.authUser!.id, body.remarks) });
@@ -142,6 +163,10 @@ router.post(
 router.post(
   "/plans/:id/publish",
   requireRole("admin", "process_manager"),
+  requireScopedRole(["process_manager"], async (req) => {
+    const plan = await s.getPlanById(req.params.id);
+    return { processId: plan?.process_id, branchId: plan?.branch_id };
+  }),
   h(async (req, res) => res.json({ success: true, data: await s.publish(req.params.id, req.authUser!.id) }))
 );
 
@@ -175,6 +200,11 @@ router.get(
 router.patch(
   "/assignments/:id/published-change",
   requireRole("admin", "process_manager"),
+  requireScopedRole(["process_manager"], async (req) => {
+    // Resolve scope from assignment
+    const assignment = await s.getAssignmentById(req.params.id);
+    return { processId: assignment?.process_id, branchId: assignment?.branch_id };
+  }),
   h(async (req, res) => {
     const body = z.object({
       new_shift_id: z.string().uuid().nullable().optional(),

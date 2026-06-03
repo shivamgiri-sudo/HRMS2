@@ -1098,4 +1098,26 @@ export const autoRosterSyncedService = {
     );
     return { acknowledged: true };
   },
+
+  // Helper methods for scope resolution
+  async getPlanById(planId: string) {
+    const { db } = await import("../../db/mysql.js");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, process_id, branch_id FROM wfm_roster_plan WHERE id = ? LIMIT 1`,
+      [planId]
+    );
+    return (rows[0] as AnyRow | undefined) ?? null;
+  },
+
+  async getAssignmentById(assignmentId: string) {
+    const { db } = await import("../../db/mysql.js");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ra.id, rp.process_id, rp.branch_id
+       FROM wfm_roster_assignment ra
+       JOIN wfm_roster_plan rp ON rp.id = ra.plan_id
+       WHERE ra.id = ? LIMIT 1`,
+      [assignmentId]
+    );
+    return (rows[0] as AnyRow | undefined) ?? null;
+  },
 };
