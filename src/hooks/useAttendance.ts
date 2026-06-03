@@ -1,7 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { USE_HRMS_BACKEND } from "@/lib/dataSource";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 
 export interface AttendanceRecord {
@@ -45,31 +43,10 @@ export function useAttendance(month?: Date, employeeId?: string) {
   return useQuery({
     queryKey: ["attendance", start, end, employeeId ?? "all"],
     queryFn: async () => {
-      if (USE_HRMS_BACKEND.attendance) {
-        const params = new URLSearchParams({ fromDate: start, toDate: end, limit: "200" });
-        if (employeeId) params.set("employeeId", employeeId);
-        const res = await hrmsApi.get<{ success: boolean; data: any[] }>(`/api/wfm/sessions?${params}`);
-        return (res.data || []) as unknown as AttendanceRecord[];
-      }
-
-      let query = supabase
-        .from("attendance_records")
-        .select(`
-          *,
-          employee:employees(first_name, last_name, employee_code, working_hours_start, working_hours_end)
-        `)
-        .gte("date", start)
-        .lte("date", end)
-        .order("date", { ascending: false });
-
-      if (employeeId) {
-        query = query.eq("employee_id", employeeId);
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-      return (data || []) as unknown as AttendanceRecord[];
+      const params = new URLSearchParams({ fromDate: start, toDate: end, limit: "200" });
+      if (employeeId) params.set("employeeId", employeeId);
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(`/api/wfm/attendance/daily?${params}`);
+      return (res.data || []) as unknown as AttendanceRecord[];
     },
     enabled: employeeId === undefined ? true : !!employeeId,
   });
@@ -83,29 +60,30 @@ export function useTodayAttendance(employeeId?: string) {
     queryKey: ["attendance-today", today, employeeId],
     queryFn: async () => {
       if (!employeeId) return null;
-      
-      // First check today's record
-      const { data: todayData, error: todayError } = await supabase
-        .from("attendance_records")
-        .select("*")
-        .eq("date", today)
-        .eq("employee_id", employeeId)
-        .maybeSingle();
 
-      if (todayError) throw todayError;
-      if (todayData) return todayData as unknown as AttendanceRecord | null;
+      // First check today's record
+      try {
+        const res = await hrmsApi.get<{ success: boolean; data: any }>(
+          `/api/wfm/attendance/daily/${employeeId}/${today}`
+        );
+        if (res.data) return res.data as unknown as AttendanceRecord;
+      } catch {
+        // 404 means no record yet — fall through
+      }
 
       // If no today record, check for yesterday's unclosed record (cross-midnight shifts)
-      const { data: yesterdayData, error: yesterdayError } = await supabase
-        .from("attendance_records")
-        .select("*")
-        .eq("date", yesterday)
-        .eq("employee_id", employeeId)
-        .is("clock_out", null)
-        .maybeSingle();
+      try {
+        const res = await hrmsApi.get<{ success: boolean; data: any }>(
+          `/api/wfm/attendance/daily/${employeeId}/${yesterday}`
+        );
+        const record = res.data as any;
+        // Only return if clock_out is null (still open shift)
+        if (record && !record.clock_out_time) return record as unknown as AttendanceRecord;
+      } catch {
+        // No record for yesterday either
+      }
 
-      if (yesterdayError) throw yesterdayError;
-      return yesterdayData as unknown as AttendanceRecord | null;
+      return null;
     },
     enabled: !!employeeId,
   });
@@ -116,26 +94,14 @@ export function useClockIn() {
 
   return useMutation({
     mutationFn: async ({ employeeId, location, workMode }: { employeeId: string; location?: LocationData; workMode?: WorkMode }) => {
-      const today = format(new Date(), "yyyy-MM-dd");
-      const now = new Date().toISOString();
-
-      const { data, error } = await supabase
-        .from("attendance_records")
-        .insert({
-          employee_id: employeeId,
-          date: today,
-          clock_in: now,
-          status: "present",
-          clock_in_latitude: location?.latitude,
-          clock_in_longitude: location?.longitude,
-          clock_in_location_name: location?.locationName,
-          work_mode: workMode,
-        } as any)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.post<{ success: boolean; data: any }>("/api/wfm/attendance/clock-in", {
+        employee_id: employeeId,
+        work_mode: workMode ?? "office",
+        latitude: location?.latitude ?? null,
+        longitude: location?.longitude ?? null,
+        location_name: location?.locationName ?? null,
+      });
+      return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["attendance"] });
@@ -148,64 +114,18 @@ export function useClockOut() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ recordId, clockIn, location, customClockOut }: { recordId: string; clockIn: string; location?: LocationData; customClockOut?: Date }) => {
-      const clockOutTime = customClockOut || new Date();
-      const clockInTime = new Date(clockIn);
-      const grossHours = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
-
-      // Auto-resume any open break before clocking out
-      const { data: openBreak } = await supabase
-        .from("attendance_breaks" as any)
-        .select("id")
-        .eq("attendance_record_id", recordId)
-        .is("resume_time", null)
-        .maybeSingle();
-
-      if (openBreak) {
-        await supabase
-          .from("attendance_breaks" as any)
-          .update({ resume_time: clockOutTime.toISOString() } as any)
-          .eq("id", (openBreak as any).id);
-      }
-
-      // Calculate total break duration
-      const { data: breaks } = await supabase
-        .from("attendance_breaks" as any)
-        .select("pause_time, resume_time")
-        .eq("attendance_record_id", recordId);
-
-      let breakHours = 0;
-      if (breaks) {
-        breakHours = (breaks as any[]).reduce((total: number, b: any) => {
-          const resumeMs = b.resume_time ? new Date(b.resume_time).getTime() : clockOutTime.getTime();
-          const pauseMs = new Date(b.pause_time).getTime();
-          return total + (resumeMs - pauseMs) / (1000 * 60 * 60);
-        }, 0);
-      }
-
-      const totalHours = Math.max(0, grossHours - breakHours);
-
-      const { data, error } = await supabase
-        .from("attendance_records")
-        .update({
-          clock_out: clockOutTime.toISOString(),
-          total_hours: Math.round(totalHours * 100) / 100,
-          clock_out_latitude: location?.latitude,
-          clock_out_longitude: location?.longitude,
-          clock_out_location_name: location?.locationName,
-        } as any)
-        .eq("id", recordId)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
+    mutationFn: async ({ recordId, location }: { recordId: string; clockIn: string; location?: LocationData; customClockOut?: Date }) => {
+      const res = await hrmsApi.post<{ success: boolean; data: any }>("/api/wfm/attendance/clock-out", {
+        record_id: recordId,
+        latitude: location?.latitude ?? null,
+        longitude: location?.longitude ?? null,
+        location_name: location?.locationName ?? null,
+      });
+      return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["attendance"] });
       queryClient.invalidateQueries({ queryKey: ["attendance-today"] });
-      queryClient.invalidateQueries({ queryKey: ["active-break"] });
-      queryClient.invalidateQueries({ queryKey: ["attendance-breaks"] });
     },
   });
 }
@@ -217,17 +137,9 @@ export function useAttendanceReport(month: Date) {
   return useQuery({
     queryKey: ["attendance-report", start, end],
     queryFn: async () => {
-      const { data: records, error } = await supabase
-        .from("attendance_records")
-        .select(`
-          *,
-          employee:employees(first_name, last_name, employee_code, department:departments!employees_department_id_fkey(name))
-        `)
-        .gte("date", start)
-        .lte("date", end)
-        .order("date", { ascending: false });
-
-      if (error) throw error;
+      const params = new URLSearchParams({ fromDate: start, toDate: end, limit: "500" });
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(`/api/wfm/attendance/daily?${params}`);
+      const records = res.data || [];
 
       // Group by employee
       const employeeMap = new Map<string, {
@@ -243,17 +155,16 @@ export function useAttendanceReport(month: Date) {
         wfoDays: number;
       }>();
 
-      records?.forEach((record) => {
-        const emp = record.employee as { first_name: string; last_name: string; employee_code: string; department: { name: string } | null } | null;
-        if (!emp) return;
-
+      records.forEach((record: any) => {
         const key = record.employee_id;
         if (!employeeMap.has(key)) {
+          const firstName = record.first_name ?? record.employee?.first_name ?? "";
+          const lastName = record.last_name ?? record.employee?.last_name ?? "";
           employeeMap.set(key, {
             employeeId: record.employee_id,
-            employeeName: `${emp.first_name} ${emp.last_name}`,
-            employeeCode: emp.employee_code,
-            department: emp.department?.name || "-",
+            employeeName: `${firstName} ${lastName}`.trim() || "Unknown",
+            employeeCode: record.employee_code ?? record.employee?.employee_code ?? "",
+            department: record.department_name ?? record.employee?.department?.name ?? "-",
             records: [],
             totalDays: 0,
             totalHours: 0,
@@ -267,9 +178,9 @@ export function useAttendanceReport(month: Date) {
         empData.records.push(record as unknown as AttendanceRecord);
         empData.totalDays++;
         empData.totalHours += record.total_hours || 0;
-        if (record.status === "present") empData.presentDays++;
-        if (record.status === "late") empData.lateDays++;
-        if (record.work_mode === "wfo") empData.wfoDays++;
+        if (record.attendance_status === "present" || record.status === "present") empData.presentDays++;
+        if (record.attendance_status === "late" || record.status === "late") empData.lateDays++;
+        if (record.work_mode === "wfo" || record.work_mode === "office") empData.wfoDays++;
       });
 
       return Array.from(employeeMap.values());

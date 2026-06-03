@@ -1,7 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { USE_HRMS_BACKEND } from "@/lib/dataSource";
 import { eachDayOfInterval, isWeekend, parseISO, isSameDay } from "date-fns";
 import { toast } from "sonner";
 
@@ -17,24 +15,14 @@ export function useLeaveTypes() {
   return useQuery({
     queryKey: ["leave-types"],
     queryFn: async () => {
-      if (USE_HRMS_BACKEND.leave) {
-        const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/leave/types");
-        return (res.data || []).map((t: any): LeaveType => ({
-          id: t.id,
-          name: t.type_name ?? t.name,
-          description: t.description ?? null,
-          days_per_year: t.max_days_per_year ?? t.days_per_year ?? 0,
-          is_paid: t.is_paid ?? null,
-        }));
-      }
-
-      const { data, error } = await supabase
-        .from("leave_types")
-        .select("*")
-        .order("name");
-
-      if (error) throw error;
-      return data as LeaveType[];
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/leave/types");
+      return (res.data || []).map((t: any): LeaveType => ({
+        id: t.id,
+        name: t.leave_name ?? t.type_name ?? t.name,
+        description: t.description ?? null,
+        days_per_year: t.max_days_per_year ?? t.days_per_year ?? 0,
+        is_paid: t.paid_leave != null ? Boolean(t.paid_leave) : (t.is_paid ?? null),
+      }));
     },
   });
 }
@@ -58,58 +46,55 @@ export function useSubmitLeaveRequest() {
       endDate: Date;
       reason: string;
     }) => {
-      // Fetch company holidays for the date range
+      // Fetch company holidays for the date range to calculate business days
       const year = startDate.getFullYear();
-      const { data: holidays } = await supabase
-        .from("company_events")
-        .select("event_date")
-        .eq("is_holiday", true)
-        .gte("event_date", `${year}-01-01`)
-        .lte("event_date", `${year}-12-31`);
-
-      const holidayDates = (holidays || []).map((h) => parseISO(h.event_date));
+      let holidayDates: Date[] = [];
+      try {
+        const holidayRes = await hrmsApi.get<{ success: boolean; data: any[] }>(
+          `/api/org/events?is_holiday=true&start=${year}-01-01&end=${year}-12-31`
+        );
+        holidayDates = (holidayRes.data || []).map((h: any) => parseISO(h.event_date));
+      } catch {
+        // Non-fatal — proceed without holiday exclusion
+      }
 
       // Calculate business days count (excluding weekends and public holidays)
       const daysCount = eachDayOfInterval({ start: startDate, end: endDate })
         .filter((d) => !isWeekend(d) && !holidayDates.some((hd) => isSameDay(d, hd))).length;
 
       const formatLocalDate = (d: Date) => {
-        const year = d.getFullYear();
-        const month = String(d.getMonth() + 1).padStart(2, "0");
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
         const day = String(d.getDate()).padStart(2, "0");
-        return `${year}-${month}-${day}`;
+        return `${y}-${m}-${day}`;
       };
-      const startDateStr = formatLocalDate(startDate);
-      const endDateStr = formatLocalDate(endDate);
+      const fromDate = formatLocalDate(startDate);
+      const toDate = formatLocalDate(endDate);
 
-      const { data, error } = await supabase
-        .from("leave_requests")
-        .insert({
-          employee_id: employeeId,
-          leave_type_id: leaveTypeId,
-          start_date: startDateStr,
-          end_date: endDateStr,
-          days_count: daysCount,
-          reason: reason.trim() || null,
-          status: "pending",
-        })
-        .select()
-        .single();
+      const res = await hrmsApi.post<{ success: boolean; data: any }>("/api/leave/requests", {
+        employeeId,
+        leaveTypeId,
+        fromDate,
+        toDate,
+        totalDays: daysCount,
+        reason: reason.trim() || null,
+      });
 
-      if (error) throw error;
+      const data = res.data;
 
       // Notify manager (fire and forget)
-      supabase.functions.invoke("leave-submission-notification", {
-        body: {
-          request_id: data.id,
-          employee_id: employeeId,
+      hrmsApi.post("/api/communication/dispatch/send", {
+        template_code: "leave_submission",
+        recipient_employee_ids: [employeeId],
+        variables: {
           leave_type: leaveTypeName,
-          start_date: startDateStr,
-          end_date: endDateStr,
-          days_count: daysCount,
+          from_date: fromDate,
+          to_date: toDate,
+          total_days: daysCount,
           reason: reason.trim() || undefined,
-        }
-      }).catch(err => {
+        },
+        channel_type: "email",
+      }).catch((err) => {
         console.error("Failed to send leave submission notification:", err);
       });
 
@@ -120,7 +105,7 @@ export function useSubmitLeaveRequest() {
       queryClient.invalidateQueries({ queryKey: ["leave-balances"] });
       toast.success("Leave request submitted successfully");
     },
-    onError: (error) => {
+    onError: (error: Error) => {
       toast.error("Failed to submit leave request: " + error.message);
     },
   });

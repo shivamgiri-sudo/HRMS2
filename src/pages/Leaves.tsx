@@ -39,7 +39,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLeaveRequests, useLeaveStats } from "@/hooks/useLeaves";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
-import { supabase } from "@/integrations/supabase/client";
+import { hrmsApi } from "@/lib/hrmsApi";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -206,16 +206,12 @@ const Leaves = () => {
     queryKey: ["my-employee-id", user?.id],
     queryFn: async () => {
       if (!user?.id) return null;
-
-      const { data, error } = await supabase
-        .from("employees")
-        .select("id")
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      if (error) throw error;
-
-      return data?.id ?? null;
+      try {
+        const res = await hrmsApi.get<{ success: boolean; data: any }>("/api/employees/me");
+        return res.data?.id ?? null;
+      } catch {
+        return null;
+      }
     },
     enabled: !!user?.id,
   });
@@ -233,40 +229,34 @@ const Leaves = () => {
       status: "approved" | "rejected";
       reviewNotes: string;
     }) => {
-      const { data: employeeData } = await supabase
-        .from("employees")
-        .select("id, first_name, last_name")
-        .eq("user_id", user?.id)
-        .maybeSingle();
+      // Get reviewer info for notification
+      let reviewerName = "HR Team";
+      try {
+        const meRes = await hrmsApi.get<{ success: boolean; data: any }>("/api/employees/me");
+        const emp = meRes.data;
+        if (emp?.first_name) reviewerName = `${emp.first_name} ${emp.last_name ?? ""}`.trim();
+      } catch {
+        // non-fatal
+      }
 
-      const { error } = await supabase
-        .from("leave_requests")
-        .update({
+      await hrmsApi.patch(`/api/leave/requests/${requestId}/review`, {
+        status,
+        reviewNotes: reviewNotes.trim() || null,
+      });
+
+      // Notify employee (fire and forget)
+      hrmsApi.post("/api/communication/dispatch/send", {
+        template_code: "leave_status",
+        recipient_employee_ids: [],
+        variables: {
           status,
-          review_notes: reviewNotes.trim() || null,
-          reviewed_by: employeeData?.id || null,
-          reviewed_at: new Date().toISOString(),
-        })
-        .eq("id", requestId);
-
-      if (error) throw error;
-
-      const reviewerName = employeeData
-        ? `${employeeData.first_name} ${employeeData.last_name}`
-        : "HR Team";
-
-      supabase.functions
-        .invoke("leave-status-notification", {
-          body: {
-            request_id: requestId,
-            status,
-            reviewer_name: reviewerName,
-            review_notes: reviewNotes.trim() || undefined,
-          },
-        })
-        .catch((err) => {
-          console.error("Failed to send leave status notification:", err);
-        });
+          reviewer_name: reviewerName,
+          review_notes: reviewNotes.trim() || undefined,
+        },
+        channel_type: "email",
+      }).catch((err) => {
+        console.error("Failed to send leave status notification:", err);
+      });
 
       return status;
     },

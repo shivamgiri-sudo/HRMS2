@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { startOfMonth, endOfMonth, format } from "date-fns";
 
 export interface CompanyEvent {
@@ -14,6 +14,20 @@ export interface CompanyEvent {
   created_at: string;
 }
 
+function mapRow(row: any): CompanyEvent {
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description ?? null,
+    event_date: row.event_date,
+    end_date: row.end_date ?? null,
+    event_type: row.event_type ?? "general",
+    is_holiday: Boolean(row.is_holiday),
+    is_recurring: Boolean(row.is_recurring ?? false),
+    created_at: row.created_at ?? "",
+  };
+}
+
 export function useCompanyEvents(month?: Date) {
   const targetMonth = month || new Date();
   const start = format(startOfMonth(targetMonth), "yyyy-MM-dd");
@@ -22,15 +36,10 @@ export function useCompanyEvents(month?: Date) {
   return useQuery({
     queryKey: ["company-events", start, end],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("company_events")
-        .select("*")
-        .gte("event_date", start)
-        .lte("event_date", end)
-        .order("event_date", { ascending: true });
-
-      if (error) throw error;
-      return data as CompanyEvent[];
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+        `/api/org/events?start=${start}&end=${end}`
+      );
+      return (res.data || []).map(mapRow);
     },
   });
 }
@@ -39,13 +48,8 @@ export function useAllCompanyEvents() {
   return useQuery({
     queryKey: ["company-events-all"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("company_events")
-        .select("*")
-        .order("event_date", { ascending: true });
-
-      if (error) throw error;
-      return data as CompanyEvent[];
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/org/events");
+      return (res.data || []).map(mapRow);
     },
   });
 }
@@ -62,14 +66,8 @@ export function useCreateCompanyEvent() {
       event_type: string;
       is_holiday: boolean;
     }) => {
-      const { data, error } = await supabase
-        .from("company_events")
-        .insert(event)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.post<{ success: boolean; data: any }>("/api/org/events", event);
+      return mapRow(res.data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["company-events"] });
@@ -94,15 +92,8 @@ export function useUpdateCompanyEvent() {
       event_type: string;
       is_holiday: boolean;
     }) => {
-      const { data, error } = await supabase
-        .from("company_events")
-        .update(event)
-        .eq("id", id)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.put<{ success: boolean; data: any }>(`/api/org/events/${id}`, event);
+      return mapRow(res.data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["company-events"] });
@@ -116,12 +107,7 @@ export function useDeleteCompanyEvent() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase
-        .from("company_events")
-        .delete()
-        .eq("id", id);
-
-      if (error) throw error;
+      await hrmsApi.delete(`/api/org/events/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["company-events"] });

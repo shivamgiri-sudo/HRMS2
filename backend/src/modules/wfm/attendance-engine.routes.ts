@@ -1,7 +1,12 @@
 import { Router } from 'express';
+import { randomUUID } from 'crypto';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { attendanceEngineService, type CorrectionInput } from './attendance-engine.service.js';
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import type { Response } from 'express';
 import { z } from 'zod';
 
 const router = Router();
@@ -149,6 +154,50 @@ router.patch('/daily/:employeeId/:date', requireRole('admin', 'hr', 'wfm'), h(as
 router.get('/summary/:employeeId/:month', h(async (req, res) => {
   const data = await attendanceEngineService.getMonthlySummary(req.params.employeeId, req.params.month);
   return res.json({ success: true, data });
+}));
+
+// POST /clock-in
+router.post('/clock-in', h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employee_id, work_mode, latitude, longitude, location_name } = req.body;
+  if (!employee_id) return res.status(400).json({ error: 'employee_id required' });
+  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date().toISOString();
+  const id = randomUUID();
+  // Check if record already exists for today
+  const [existing] = await db.execute<RowDataPacket[]>(
+    'SELECT id FROM attendance_daily_record WHERE employee_id = ? AND work_date = ? LIMIT 1',
+    [employee_id, today]
+  );
+  if ((existing as RowDataPacket[]).length > 0) {
+    return res.status(409).json({ error: 'Already clocked in today' });
+  }
+  await db.execute(
+    `INSERT INTO attendance_daily_record
+       (id, employee_id, work_date, clock_in_time, work_mode, clock_in_lat, clock_in_lng, clock_in_location, attendance_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'present')`,
+    [id, employee_id, today, now, work_mode ?? 'office', latitude ?? null, longitude ?? null, location_name ?? null]
+  );
+  const [rows] = await db.execute<RowDataPacket[]>(
+    'SELECT * FROM attendance_daily_record WHERE id = ? LIMIT 1', [id]
+  );
+  res.status(201).json({ success: true, data: (rows as RowDataPacket[])[0] });
+}));
+
+// POST /clock-out
+router.post('/clock-out', h(async (req: AuthenticatedRequest, res: Response) => {
+  const { record_id, latitude, longitude, location_name } = req.body;
+  if (!record_id) return res.status(400).json({ error: 'record_id required' });
+  const now = new Date().toISOString();
+  await db.execute(
+    `UPDATE attendance_daily_record
+     SET clock_out_time = ?, clock_out_lat = ?, clock_out_lng = ?, clock_out_location = ?
+     WHERE id = ?`,
+    [now, latitude ?? null, longitude ?? null, location_name ?? null, record_id]
+  );
+  const [rows] = await db.execute<RowDataPacket[]>(
+    'SELECT * FROM attendance_daily_record WHERE id = ? LIMIT 1', [record_id]
+  );
+  res.json({ success: true, data: (rows as RowDataPacket[])[0] });
 }));
 
 export { router as attendanceEngineRouter };

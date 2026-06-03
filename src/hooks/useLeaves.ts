@@ -1,7 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { USE_HRMS_BACKEND } from "@/lib/dataSource";
 import { format } from "date-fns";
 
 export interface LeaveRequest {
@@ -24,6 +22,47 @@ export interface LeaveRequest {
   };
   reviewedAt?: string;
   reviewNotes?: string;
+}
+
+function mapRawToLeaveRequest(req: any): LeaveRequest {
+  // Backend MySQL rows use from_date/to_date/total_days/applied_at
+  // and include joined employee fields at top level or nested
+  const empName = req.employee_name
+    ?? (req.first_name && req.last_name ? `${req.first_name} ${req.last_name}` : null)
+    ?? req.employee?.name
+    ?? "Unknown";
+
+  const dept = req.department_name ?? req.employee?.department ?? "Unassigned";
+  const avatar = req.avatar_url ?? req.employee?.avatar ?? undefined;
+
+  const startRaw = req.from_date ?? req.start_date;
+  const endRaw = req.to_date ?? req.end_date;
+  const days = req.total_days ?? req.days_count ?? 0;
+  const submittedRaw = req.applied_at ?? req.created_at;
+  const typeName = req.leave_type_name ?? req.leave_type?.name ?? req.type ?? "Unknown";
+  const reviewerName = req.reviewer_name ?? req.reviewed_by_name ?? undefined;
+  const reviewedAtRaw = req.reviewed_at ?? undefined;
+  const reviewNotes = req.review_notes ?? req.remarks ?? undefined;
+
+  return {
+    id: req.id,
+    employeeId: req.employee_id,
+    employee: {
+      name: empName,
+      avatar,
+      department: dept,
+    },
+    type: typeName,
+    startDate: startRaw ? format(new Date(startRaw), "MMM d, yyyy") : "",
+    endDate: endRaw ? format(new Date(endRaw), "MMM d, yyyy") : "",
+    days,
+    reason: req.reason || "",
+    status: req.status as LeaveRequest["status"],
+    submittedAt: submittedRaw ? format(new Date(submittedRaw), "MMM d, yyyy 'at' h:mm a") : "",
+    reviewedBy: reviewerName ? { name: reviewerName } : undefined,
+    reviewedAt: reviewedAtRaw ? format(new Date(reviewedAtRaw), "MMM d, yyyy 'at' h:mm a") : undefined,
+    reviewNotes: reviewNotes || undefined,
+  };
 }
 
 export function useLeaveRequests() {
@@ -66,77 +105,11 @@ export function useLeaveRequests() {
             reviewedAt: "May 19, 2026 at 11:00 AM",
             reviewNotes: "Approved, backup resource arranged.",
           }
-        ];
+        ] as LeaveRequest[];
       }
 
-      if (USE_HRMS_BACKEND.leave) {
-        const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/leave/requests");
-        return (res.data || []) as unknown as LeaveRequest[];
-      }
-
-      const { data, error } = await supabase
-        .from("leave_requests")
-        .select(`
-          id,
-          start_date,
-          end_date,
-          days_count,
-          reason,
-          status,
-          employee_id,
-          created_at,
-          reviewed_by,
-          reviewed_at,
-          review_notes,
-          leave_type:leave_types(name)
-        `)
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-
-      // Fetch employee details separately to avoid the multiple relationship issue
-      const employeeIds = [...new Set((data || []).map((r) => r.employee_id))];
-      const reviewerIds = [...new Set((data || []).filter(r => r.reviewed_by).map((r) => r.reviewed_by))];
-      const allEmployeeIds = [...new Set([...employeeIds, ...reviewerIds])];
-      
-      const { data: employees } = await supabase
-        .from("employees")
-        .select(`
-          id,
-          first_name,
-          last_name,
-          avatar_url,
-          department:departments!employees_department_id_fkey(name)
-        `)
-        .in("id", allEmployeeIds);
-
-      const employeeMap = new Map(
-        (employees || []).map((e) => [e.id, e])
-      );
-
-      return (data || []).map((req): LeaveRequest => {
-        const emp = employeeMap.get(req.employee_id);
-        const reviewer = req.reviewed_by ? employeeMap.get(req.reviewed_by) : null;
-        return {
-          id: req.id,
-          employeeId: req.employee_id,
-          employee: {
-            name: emp ? `${emp.first_name} ${emp.last_name}` : "Unknown",
-            avatar: emp?.avatar_url || undefined,
-            department: emp?.department?.name || "Unassigned",
-          },
-          type: req.leave_type?.name || "Unknown",
-          startDate: format(new Date(req.start_date), "MMM d, yyyy"),
-          endDate: format(new Date(req.end_date), "MMM d, yyyy"),
-          days: req.days_count,
-          reason: req.reason || "",
-          status: req.status as LeaveRequest["status"],
-          submittedAt: format(new Date(req.created_at), "MMM d, yyyy 'at' h:mm a"),
-          reviewedBy: reviewer ? { name: `${reviewer.first_name} ${reviewer.last_name}` } : undefined,
-          reviewedAt: req.reviewed_at ? format(new Date(req.reviewed_at), "MMM d, yyyy 'at' h:mm a") : undefined,
-          reviewNotes: req.review_notes || undefined,
-        };
-      });
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/leave/requests");
+      return (res.data || []).map(mapRawToLeaveRequest);
     },
   });
 }
@@ -150,15 +123,12 @@ export function useLeaveStats() {
         return { pending: 1, approved: 1, rejected: 0 };
       }
 
-      const { data, error } = await supabase
-        .from("leave_requests")
-        .select("id, status");
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/leave/requests");
+      const data = res.data || [];
 
-      if (error) throw error;
-
-      const pending = data?.filter((r) => r.status === "pending").length || 0;
-      const approved = data?.filter((r) => r.status === "approved").length || 0;
-      const rejected = data?.filter((r) => r.status === "rejected").length || 0;
+      const pending = data.filter((r) => r.status === "pending").length;
+      const approved = data.filter((r) => r.status === "approved").length;
+      const rejected = data.filter((r) => r.status === "rejected").length;
 
       return { pending, approved, rejected };
     },
@@ -178,13 +148,13 @@ export function useLeaveTypes() {
         ];
       }
 
-      const { data, error } = await supabase
-        .from("leave_types")
-        .select("id, name, days_per_year, is_paid")
-        .order("name");
-
-      if (error) throw error;
-      return data || [];
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/leave/types");
+      return (res.data || []).map((t: any) => ({
+        id: t.id,
+        name: t.leave_name ?? t.type_name ?? t.name,
+        days_per_year: t.max_days_per_year ?? t.days_per_year ?? 0,
+        is_paid: t.paid_leave != null ? Boolean(t.paid_leave) : (t.is_paid ?? null),
+      }));
     },
   });
 }
@@ -194,15 +164,10 @@ export function useUpdateLeaveStatus() {
 
   return useMutation({
     mutationFn: async ({ id, status }: { id: string; status: "approved" | "rejected" }) => {
-      const { error } = await supabase
-        .from("leave_requests")
-        .update({ 
-          status,
-          reviewed_at: new Date().toISOString(),
-        })
-        .eq("id", id);
-
-      if (error) throw error;
+      await hrmsApi.patch(`/api/leave/requests/${id}/review`, {
+        status,
+        reviewNotes: null,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leave-requests"] });

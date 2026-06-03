@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response } from "express";
 import { leaveController } from "./leave.controller.js";
@@ -84,3 +85,11 @@ leaveRouter.patch("/requests/:id/review",         h(leaveController.reviewReques
 leaveRouter.get("/balance/:employeeId",           h(leaveController.getBalance.bind(leaveController)));
 leaveRouter.get("/holidays",                      h(leaveController.listHolidays.bind(leaveController)));
 leaveRouter.post("/holidays",                     h(leaveController.createHoliday.bind(leaveController)));
+
+// GET /eligibility/:employeeId — returns all active leave types (all employees are eligible)
+leaveRouter.get("/eligibility/:employeeId", h(async (_req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT id, leave_code, leave_name, max_days_per_year, carry_forward, requires_approval, paid_leave FROM leave_type_master WHERE active_status = 1 ORDER BY leave_name ASC"
+  );
+  res.json({ success: true, data: rows });
+}));
