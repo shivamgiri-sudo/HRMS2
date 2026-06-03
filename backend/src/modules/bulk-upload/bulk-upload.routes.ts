@@ -11,6 +11,21 @@ const router = Router();
 const h = (fn: any) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 router.use(requireAuth);
 
+router.get("/templates", requireRole("admin", "hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM upload_template_master WHERE active_status = 1 ORDER BY upload_type_code ASC"
+    );
+    res.json({ success: true, data: rows });
+  } catch (err: any) {
+    // Table may not exist yet — return empty array gracefully
+    if (err.code === "ER_NO_SUCH_TABLE" || String(err.message).includes("doesn't exist")) {
+      return res.json({ success: true, data: [] });
+    }
+    throw err;
+  }
+}));
+
 router.get("/batches", requireRole("admin", "hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM upload_batch ORDER BY created_at DESC LIMIT 50"
@@ -76,6 +91,20 @@ router.post("/batches/:id/rows", requireRole("admin", "hr"), h(async (req: Authe
     );
   }
   res.status(201).json({ success: true, count: rows.length });
+}));
+
+// POST /batches/:id/import — placeholder for batch import (RPC equivalent)
+router.post("/batches/:id/import", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  // This is a placeholder for batch import logic that was previously handled by Supabase RPCs.
+  // Actual import logic should be implemented per upload_type_code.
+  const { id } = req.params;
+  const { rpc_name } = req.body as { rpc_name?: string };
+
+  // For now, return a not-implemented message so the frontend knows the feature needs backend work
+  return res.status(501).json({
+    success: false,
+    error: `Import function '${rpc_name || "unknown"}' for batch ${id} is not yet implemented in the MySQL backend. Please implement the import logic.`,
+  });
 }));
 
 export { router as bulkUploadRouter };

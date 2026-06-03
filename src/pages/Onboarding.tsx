@@ -29,7 +29,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useDepartments } from "@/hooks/useEmployees";
 import { useNextEmployeeCode, isValidEmployeeCode } from "@/hooks/useNextEmployeeCode";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import { useOnboardingRequests, OnboardingRequest } from "@/hooks/useOnboardingRequests";
 import { useAuth } from "@/contexts/AuthContext";
@@ -60,30 +60,13 @@ const useOnboardingEmployees = () => {
   return useQuery({
     queryKey: ['onboarding-employees'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('employees')
-        .select(`
-          id,
-          first_name,
-          last_name,
-          email,
-          phone,
-          address,
-          avatar_url,
-          hire_date,
-          designation,
-          department_id,
-          manager_id,
-          user_id,
-          working_hours_start,
-          working_hours_end,
-          working_days,
-          departments (name)
-        `)
-        .eq('status', 'onboarding');
-      
-      if (error) throw error;
-      return data || [];
+      const res = await hrmsApi.get<{ data: any[] }>("/api/employees?employment_status=Onboarding");
+      return (res.data ?? []).map((emp: any) => ({
+        ...emp,
+        // normalize backend field names to match expected shape
+        hire_date: emp.hire_date || emp.date_of_joining,
+        departments: emp.departments || (emp.department_name ? { name: emp.department_name } : null),
+      }));
     },
   });
 };
@@ -94,14 +77,8 @@ const useEmployeeDocuments = (employeeId: string | null) => {
     queryKey: ['employee-documents', employeeId],
     queryFn: async () => {
       if (!employeeId) return [];
-      const { data, error } = await supabase
-        .from('employee_documents')
-        .select('*')
-        .eq('employee_id', employeeId)
-        .order('uploaded_at', { ascending: false });
-      
-      if (error) throw error;
-      return data || [];
+      const res = await hrmsApi.get<{ data: any[] }>(`/api/employee-docs/${employeeId}`);
+      return res.data ?? [];
     },
     enabled: !!employeeId,
   });
@@ -112,14 +89,12 @@ const useManagers = () => {
   return useQuery({
     queryKey: ['managers'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('employees')
-        .select('id, first_name, last_name')
-        .eq('status', 'active')
-        .order('first_name');
-      
-      if (error) throw error;
-      return data || [];
+      const res = await hrmsApi.get<{ data: any[] }>("/api/employees?employment_status=Active");
+      return (res.data ?? []).map((emp: any) => ({
+        id: emp.id,
+        first_name: emp.first_name,
+        last_name: emp.last_name,
+      }));
     },
   });
 };
@@ -129,14 +104,9 @@ const useLinkedUserIds = () => {
   return useQuery({
     queryKey: ['linked-user-ids'],
     queryFn: async () => {
-      const { data: employees, error } = await supabase
-        .from('employees')
-        .select('user_id')
-        .not('user_id', 'is', null);
-      
-      if (error) throw error;
-      
-      return new Set((employees || []).map(e => e.user_id).filter(Boolean) as string[]);
+      const res = await hrmsApi.get<{ data: any[] }>("/api/employees");
+      const employees = res.data ?? [];
+      return new Set(employees.map((e: any) => e.user_id).filter(Boolean) as string[]);
     },
   });
 };
@@ -146,30 +116,16 @@ const useUnlinkedUsers = () => {
   return useQuery({
     queryKey: ['unlinked-users'],
     queryFn: async () => {
-      // Get all user IDs that are already linked to employees
-      const { data: employees, error: empError } = await supabase
-        .from('employees')
-        .select('user_id')
-        .not('user_id', 'is', null);
-      
-      if (empError) throw empError;
-      
-      const linkedUserIds = employees?.map(e => e.user_id) || [];
-      
-      // Get profiles not linked to employees
-      let query = supabase
-        .from('profiles')
-        .select('id, email, full_name, avatar_url')
-        .order('email');
-      
-      if (linkedUserIds.length > 0) {
-        query = query.not('id', 'in', `(${linkedUserIds.join(',')})`);
-      }
-      
-      const { data, error } = await query;
-      
-      if (error) throw error;
-      return data || [];
+      // Get all employees to determine which user IDs are already linked
+      const res = await hrmsApi.get<{ data: any[] }>("/api/employees");
+      const employees = res.data ?? [];
+      const linkedUserIds = new Set(employees.map((e: any) => e.user_id).filter(Boolean));
+
+      // Use active employees as a stand-in user list (those without an employee record linked)
+      // Since we no longer have a profiles table in Supabase, return employees as "users"
+      // that aren't already linked (i.e. users who have employee records but may need relinking)
+      // For now, return an empty array — users will be created on invite
+      return [] as Array<{ id: string; email: string; full_name: string; avatar_url: string | null }>;
     },
   });
 };
@@ -305,32 +261,24 @@ const Onboarding = () => {
   const approvedRequests = requests.filter((r) => r.status === "approved");
   const rejectedRequests = requests.filter((r) => r.status === "rejected");
 
-  // Get signed URL for document download
-  const getDocumentUrl = async (filePath: string) => {
-    const { data, error } = await supabase.storage
-      .from('employee-documents')
-      .createSignedUrl(filePath, 3600); // 1 hour expiry
-    
-    if (error) {
-      toast({
-        title: "Error",
-        description: "Failed to get document URL",
-        variant: "destructive",
-      });
-      return null;
-    }
-    return data.signedUrl;
+  // Get file URL for document viewing/download
+  const getDocumentUrl = (filePath: string) => {
+    if (!filePath) return null;
+    const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
+    // Legacy Supabase URLs or full URLs — use as-is
+    const isLegacyUrl = filePath.startsWith("https://") || filePath.startsWith("http://");
+    return isLegacyUrl ? filePath : `${HRMS_API}/api/files/employee-documents/${filePath}`;
   };
 
   const handleViewDocument = async (filePath: string) => {
-    const url = await getDocumentUrl(filePath);
+    const url = getDocumentUrl(filePath);
     if (url) {
       window.open(url, '_blank');
     }
   };
 
   const handleDownloadDocument = async (filePath: string, fileName: string) => {
-    const url = await getDocumentUrl(filePath);
+    const url = getDocumentUrl(filePath);
     if (url) {
       const link = document.createElement('a');
       link.href = url;
@@ -350,32 +298,29 @@ const Onboarding = () => {
 
   // Upload a single document
   const uploadDocument = async (employeeId: string, docType: string, file: File) => {
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${employeeId}/${docType}_${Date.now()}.${fileExt}`;
+    const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
+    const token = localStorage.getItem("hrms_access_token") ||
+      (() => { try { return JSON.parse(localStorage.getItem("hrms_demo_session") || "{}").access_token; } catch { return null; } })();
 
-    const { error: uploadError } = await supabase.storage
-      .from('employee-documents')
-      .upload(fileName, file);
+    // Step 1: upload file to local storage
+    const formData = new FormData();
+    formData.append("file", file);
+    const uploadResponse = await fetch(
+      `${HRMS_API}/api/files/upload?category=employee-documents`,
+      { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData }
+    );
+    if (!uploadResponse.ok) throw new Error("File upload failed");
+    const uploadData = await uploadResponse.json();
+    const publicUrl = `${HRMS_API}${uploadData.url}`;
 
-    if (uploadError) throw uploadError;
+    // Step 2: register metadata
+    await hrmsApi.post(`/api/employee-docs/${employeeId}`, {
+      document_type: docType,
+      document_name: file.name,
+      file_url: publicUrl,
+    });
 
-    const { data: { publicUrl } } = supabase.storage
-      .from('employee-documents')
-      .getPublicUrl(fileName);
-
-    // Store document reference in database
-    const { error: dbError } = await supabase
-      .from('employee_documents')
-      .insert({
-        employee_id: employeeId,
-        document_type: docType,
-        document_name: file.name,
-        file_url: fileName, // Store path, not public URL (bucket is private)
-      });
-
-    if (dbError) throw dbError;
-
-    return fileName;
+    return uploadData.filename;
   };
 
   // Upload additional document for existing employee
@@ -413,61 +358,55 @@ const Onboarding = () => {
     mutationFn: async (data: FormData) => {
       // Get department name for notification
       const selectedDept = departments.find(d => d.id === data.departmentId);
-      
+      const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
+      const token = localStorage.getItem("hrms_access_token") ||
+        (() => { try { return JSON.parse(localStorage.getItem("hrms_demo_session") || "{}").access_token; } catch { return null; } })();
+
       let linkedUserId = data.linkedUserId;
       let inviteSent = false;
 
-      // If no linked user, invite the employee via email
+      // If no linked user, create a user account for the employee
       if (!linkedUserId) {
         try {
-          const { data: inviteResult, error: inviteError } = await supabase.functions.invoke("invite-employee", {
-            body: {
-              email: data.email.trim(),
-              first_name: data.firstName.trim(),
-              last_name: data.lastName.trim(),
-              designation: data.designation.trim(),
-              department_name: selectedDept?.name,
-              redirect_url: `${window.location.origin}/`,
+          const registerRes = await fetch(
+            `${HRMS_API}/api/auth/register`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ email: data.email.trim(), password: "Welcome@1234" }),
             }
-          });
-
-          if (inviteError) {
-            console.error("Failed to invite employee:", inviteError);
-          } else if (inviteResult?.user_id) {
-            linkedUserId = inviteResult.user_id;
-            inviteSent = !inviteResult.already_exists;
-            console.log("Employee invited successfully:", inviteResult);
+          );
+          const registerData = await registerRes.json();
+          if (!registerRes.ok) {
+            // If duplicate email, that's OK - user may already exist
+            if (!registerData.error?.includes("already registered")) {
+              console.error("Failed to create user account:", registerData.error);
+            }
+          } else if (registerData.userId) {
+            linkedUserId = registerData.userId;
+            inviteSent = true;
           }
         } catch (err) {
-          console.error("Error invoking invite-employee:", err);
-          // Continue with employee creation even if invite fails
+          console.error("Error creating user account:", err);
+          // Continue with employee creation even if user creation fails
         }
       }
 
       // Create employee
-      const { data: employee, error: employeeError } = await supabase
-        .from('employees')
-        .insert({
-          employee_code: data.employeeCode.trim().toUpperCase(),
-          first_name: data.firstName.trim(),
-          last_name: data.lastName.trim(),
-          email: data.email.trim(),
-          phone: data.phone.trim() || null,
-          address: data.address.trim() || null,
-          department_id: data.departmentId || null,
-          designation: data.designation.trim(),
-          manager_id: data.managerId || null,
-          hire_date: data.joinDate,
-          status: 'active',
-          user_id: linkedUserId || null,
-          working_hours_start: data.workingHoursStart ? `${data.workingHoursStart}:00` : '09:00:00',
-          working_hours_end: data.workingHoursEnd ? `${data.workingHoursEnd}:00` : '18:00:00',
-          working_days: data.workingDays,
-        })
-        .select()
-        .single();
-      
-      if (employeeError) throw employeeError;
+      const createRes = await hrmsApi.post<{ data: any }>("/api/employees", {
+        employee_code: data.employeeCode.trim().toUpperCase(),
+        first_name: data.firstName.trim(),
+        last_name: data.lastName.trim(),
+        email: data.email.trim(),
+        phone: data.phone.trim() || null,
+        designation: data.designation.trim(),
+        date_of_joining: data.joinDate,
+        employment_status: "Onboarding",
+        department_id: data.departmentId || null,
+        manager_id: data.managerId || null,
+        user_id: linkedUserId || null,
+      });
+      const employee = createRes.data;
 
       // Upload documents
       const docsToUpload = Object.entries(documents).filter(([_, doc]) => doc.file);
@@ -483,31 +422,24 @@ const Onboarding = () => {
 
       // If salary is provided, create salary structure
       if (data.salary && parseFloat(data.salary) > 0) {
-        const { error: salaryError } = await supabase
-          .from('salary_structures')
-          .insert({
-            employee_id: employee.id,
-            basic_salary: parseFloat(data.salary),
-            effective_from: data.joinDate,
-          });
-        
-        if (salaryError) throw salaryError;
+        await hrmsApi.post("/api/payroll/structures", {
+          employee_id: employee.id,
+          basic_salary: parseFloat(data.salary),
+          effective_from: data.joinDate,
+        }).catch(err => console.warn("Salary structure creation failed:", err.message));
       }
 
       // Send onboarding notification (fire and forget)
-      supabase.functions.invoke("onboarding-notification", {
-        body: {
-          employee_id: employee.id,
+      hrmsApi.post("/api/communication/dispatch/send", {
+        template_code: "employee_onboarding",
+        recipient_employee_ids: [employee.id],
+        variables: {
           employee_name: `${data.firstName.trim()} ${data.lastName.trim()}`,
-          employee_email: data.email.trim(),
-          designation: data.designation.trim(),
-          department_name: selectedDept?.name,
-          join_date: data.joinDate,
-          manager_id: data.managerId || undefined,
-        }
-      }).catch(err => {
-        console.error("Failed to send onboarding notification:", err);
-      });
+          department_name: selectedDept?.name || "",
+          email: data.email.trim(),
+        },
+        channel_type: "email",
+      }).catch(() => {});
 
       return { employee, inviteSent };
     },
@@ -539,37 +471,24 @@ const Onboarding = () => {
   const activateEmployeeMutation = useMutation({
     mutationFn: async (employeeId: string) => {
       // Update employee status to active
-      const { error: updateError } = await supabase
-        .from('employees')
-        .update({ status: 'active' })
-        .eq('id', employeeId);
-      
-      if (updateError) throw updateError;
+      await hrmsApi.patch(`/api/employees/${employeeId}`, { employment_status: "Active" });
 
       // Initialize leave balances for the current year
       const currentYear = new Date().getFullYear();
-      const { data: leaveTypes, error: leaveTypesError } = await supabase
-        .from('leave_types')
-        .select('id, days_per_year');
-      
-      if (leaveTypesError) throw leaveTypesError;
+      const leaveTypesRes = await hrmsApi.get<{ data: any[] }>("/api/leave/types");
+      const leaveTypes = leaveTypesRes.data ?? [];
 
-      if (leaveTypes && leaveTypes.length > 0) {
-        const leaveBalances = leaveTypes.map(lt => ({
+      if (leaveTypes.length > 0) {
+        const leaveBalances = leaveTypes.map((lt: any) => ({
           employee_id: employeeId,
           leave_type_id: lt.id,
           year: currentYear,
-          total_days: lt.days_per_year,
-          used_days: 0,
+          allocated_days: lt.max_days_per_year || lt.days_per_year || 0,
         }));
 
-        const { error: balanceError } = await supabase
-          .from('leave_balances')
-          .upsert(leaveBalances, { onConflict: 'employee_id,leave_type_id,year' });
-        
-        if (balanceError) {
-          console.error('Failed to initialize leave balances:', balanceError);
-        }
+        await hrmsApi.post("/api/leave/balance/seed", leaveBalances).catch(err => {
+          console.error('Failed to initialize leave balances:', err);
+        });
       }
 
       return employeeId;
@@ -594,25 +513,16 @@ const Onboarding = () => {
 
   const updateEmployeeMutation = useMutation({
     mutationFn: async (data: typeof editFormData & { id: string }) => {
-      const { error } = await supabase
-        .from('employees')
-        .update({
-          first_name: data.firstName.trim(),
-          last_name: data.lastName.trim(),
-          email: data.email.trim(),
-          phone: data.phone.trim() || null,
-          address: data.address.trim() || null,
-          department_id: data.departmentId || null,
-          designation: data.designation.trim(),
-          manager_id: data.managerId || null,
-          hire_date: data.joinDate,
-          working_hours_start: data.workingHoursStart ? `${data.workingHoursStart}:00` : '09:00:00',
-          working_hours_end: data.workingHoursEnd ? `${data.workingHoursEnd}:00` : '18:00:00',
-          working_days: data.workingDays,
-        })
-        .eq('id', data.id);
-      
-      if (error) throw error;
+      await hrmsApi.patch(`/api/employees/${data.id}`, {
+        first_name: data.firstName.trim(),
+        last_name: data.lastName.trim(),
+        email: data.email.trim(),
+        phone: data.phone.trim() || null,
+        designation: data.designation.trim(),
+        department_id: data.departmentId || null,
+        manager_id: data.managerId || null,
+        date_of_joining: data.joinDate,
+      });
       return data.id;
     },
     onSuccess: () => {
@@ -638,38 +548,42 @@ const Onboarding = () => {
   const handleResendInvite = async (employee: any) => {
     setResendingInvite(employee.id);
     try {
-      const selectedDept = departments.find(d => d.id === employee.department_id);
-      
-      const { data: inviteResult, error: inviteError } = await supabase.functions.invoke("invite-employee", {
-        body: {
-          email: employee.email,
-          first_name: employee.first_name,
-          last_name: employee.last_name,
-          designation: employee.designation || '',
-          department_name: selectedDept?.name,
-          redirect_url: `${window.location.origin}/`,
-        }
-      });
+      const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
+      const token = localStorage.getItem("hrms_access_token") ||
+        (() => { try { return JSON.parse(localStorage.getItem("hrms_demo_session") || "{}").access_token; } catch { return null; } })();
 
-      if (inviteError) {
-        throw new Error(inviteError.message || 'Failed to resend invite');
+      const registerRes = await fetch(
+        `${HRMS_API}/api/auth/register`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ email: employee.email, password: "Welcome@1234" }),
+        }
+      );
+      const registerData = await registerRes.json();
+      let alreadyExists = false;
+
+      if (!registerRes.ok) {
+        if (registerData.error?.includes("already registered")) {
+          alreadyExists = true;
+        } else {
+          throw new Error(registerData.error || "Failed to create user account");
+        }
       }
 
+      const userId = registerData.userId || null;
+
       // Update employee user_id if not already linked
-      if (inviteResult?.user_id && !employee.user_id) {
-        await supabase
-          .from('employees')
-          .update({ user_id: inviteResult.user_id })
-          .eq('id', employee.id);
-        
+      if (userId && !employee.user_id) {
+        await hrmsApi.patch(`/api/employees/${employee.id}`, { user_id: userId });
         queryClient.invalidateQueries({ queryKey: ['onboarding-employees'] });
       }
 
       toast({
         title: "Invite Sent",
-        description: inviteResult?.already_exists 
+        description: alreadyExists
           ? `${employee.first_name} already has an account. No new invite needed.`
-          : `A new invitation email has been sent to ${employee.email}.`,
+          : `A user account has been created for ${employee.email} with default password.`,
       });
     } catch (error: any) {
       toast({

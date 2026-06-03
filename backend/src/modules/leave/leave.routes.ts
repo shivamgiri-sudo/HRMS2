@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { randomUUID } from "crypto";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
@@ -85,6 +86,22 @@ leaveRouter.patch("/requests/:id/review",         h(leaveController.reviewReques
 leaveRouter.get("/balance/:employeeId",           h(leaveController.getBalance.bind(leaveController)));
 leaveRouter.get("/holidays",                      h(leaveController.listHolidays.bind(leaveController)));
 leaveRouter.post("/holidays",                     h(leaveController.createHoliday.bind(leaveController)));
+
+// POST /balance/seed — bulk seed leave balances during onboarding
+leaveRouter.post("/balance/seed", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const rows = req.body as Array<{ employee_id: string; leave_type_id: string; year: number; allocated_days: number }>;
+  if (!Array.isArray(rows)) return res.status(400).json({ error: "Array required" });
+  for (const row of rows) {
+    if (!row.employee_id || !row.leave_type_id || !row.year || row.allocated_days === undefined) continue;
+    await db.execute(
+      `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, balance_days)
+       VALUES (?, ?, ?, ?, ?, 0, ?)
+       ON DUPLICATE KEY UPDATE allocated_days = VALUES(allocated_days), balance_days = VALUES(allocated_days) - used_days`,
+      [randomUUID(), row.employee_id, row.leave_type_id, row.year, row.allocated_days, row.allocated_days]
+    );
+  }
+  res.json({ success: true, count: rows.length });
+}));
 
 // GET /eligibility/:employeeId — returns all active leave types (all employees are eligible)
 leaveRouter.get("/eligibility/:employeeId", h(async (_req: AuthenticatedRequest, res: Response) => {

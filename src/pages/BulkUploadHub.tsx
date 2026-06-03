@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
@@ -555,76 +555,36 @@ export default function BulkUploadHub() {
     setIsLoading(true);
     setErrorMessage(null);
 
-    const [templatesResult, batchesResult] = await Promise.all([
-      supabase
-        .from("upload_template_master" as any)
-        .select("*")
-        .eq("active_status", true)
-        .order("upload_type_code", { ascending: true }),
-      supabase
-        .from("upload_batch" as any)
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(25),
-    ]);
+    try {
+      const [templatesResult, batchesResult] = await Promise.all([
+        hrmsApi.get<{ success: boolean; data: UploadTemplate[] }>("/api/bulk-upload/templates").catch(() => ({ success: true, data: [] as UploadTemplate[] })),
+        hrmsApi.get<{ success: boolean; data: UploadBatch[] }>("/api/bulk-upload/batches").catch(() => ({ success: true, data: [] as UploadBatch[] })),
+      ]);
 
-    if (templatesResult.error) {
-      // If the upload_template_master table does not exist yet, show graceful empty state
-      const isTableMissing =
-        templatesResult.error.code === "42P01" ||
-        String(templatesResult.error.message).includes("does not exist");
-      if (isTableMissing) {
-        setTemplates([]);
-        setBatches([]);
-        setIsLoading(false);
-        return;
+      const loadedTemplates = templatesResult.data || [];
+      setTemplates(loadedTemplates);
+      setBatches(batchesResult.data || []);
+
+      if (!selectedTemplateCode && loadedTemplates.length > 0) {
+        setSelectedTemplateCode(loadedTemplates[0].upload_type_code);
       }
-      setErrorMessage(templatesResult.error.message);
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to load data");
+    } finally {
       setIsLoading(false);
-      return;
     }
-
-    if (batchesResult.error) {
-      const isTableMissing =
-        batchesResult.error.code === "42P01" ||
-        String(batchesResult.error.message).includes("does not exist");
-      if (isTableMissing) {
-        setBatches([]);
-        setIsLoading(false);
-        return;
-      }
-      setErrorMessage(batchesResult.error.message);
-      setIsLoading(false);
-      return;
-    }
-
-    const loadedTemplates = (templatesResult.data || []) as UploadTemplate[];
-    setTemplates(loadedTemplates);
-    setBatches((batchesResult.data || []) as UploadBatch[]);
-
-    if (!selectedTemplateCode && loadedTemplates.length > 0) {
-      setSelectedTemplateCode(loadedTemplates[0].upload_type_code);
-    }
-
-    setIsLoading(false);
   }
 
   async function loadBatchRows(batch: UploadBatch) {
     setSelectedBatch(batch);
     setSelectedBatchRows([]);
 
-    const { data, error } = await supabase
-      .from("upload_batch_row" as any)
-      .select("*")
-      .eq("upload_batch_id", batch.id)
-      .order("row_no", { ascending: true });
-
-    if (error) {
-      setErrorMessage(error.message);
-      return;
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: UploadBatchRow[] }>(`/api/bulk-upload/batches/${batch.id}/rows`);
+      setSelectedBatchRows(res.data || []);
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to load batch rows");
     }
-
-    setSelectedBatchRows((data || []) as UploadBatchRow[]);
   }
 
   useEffect(() => {
@@ -760,31 +720,22 @@ export default function BulkUploadHub() {
     setIsProcessing(true);
 
     try {
-      let batchNo: string;
-      try {
-        const { data: rpcBatchNo, error: batchNoError } = await supabase.rpc(
-          "generate_upload_batch_no" as any
-        );
-        if (batchNoError) throw new Error(batchNoError.message);
-        batchNo = rpcBatchNo as string;
-      } catch {
-        batchNo = `BATCH-${Date.now()}`;
-      }
+      const batchNo = `BATCH-${Date.now()}`;
 
-      const safeFileName = `${Date.now()}-${selectedFile.name.replace(
-        /[^a-zA-Z0-9._-]/g,
-        "_"
-      )}`;
-      const filePath = `${selectedTemplate.upload_type_code}/${safeFileName}`;
+      const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
+      const token = localStorage.getItem("hrms_access_token") ||
+        (() => { try { return JSON.parse(localStorage.getItem("hrms_demo_session") || "{}").access_token; } catch { return null; } })();
 
-      const { error: uploadError } = await supabase.storage
-        .from(BULK_UPLOAD_BUCKET)
-        .upload(filePath, selectedFile, {
-          cacheControl: "3600",
-          upsert: false,
-        });
-
-      if (uploadError) throw new Error(uploadError.message);
+      // Upload file to local storage
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      const uploadResponse = await fetch(
+        `${HRMS_API}/api/files/upload?category=bulk-uploads`,
+        { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData }
+      );
+      if (!uploadResponse.ok) throw new Error("File upload failed");
+      const uploadData = await uploadResponse.json();
+      const filePath = uploadData.url; // "/api/files/bulk-uploads/uuid.csv"
 
       let parsedRows: CsvRow[] = [];
       let stagedRows: ReturnType<typeof validateRows> = [];
@@ -815,40 +766,27 @@ export default function BulkUploadHub() {
             ? "validation_failed"
             : "validated";
 
-      const { data: batch, error: batchError } = await supabase
-        .from("upload_batch" as any)
-        .insert({
-          upload_batch_no: batchNo,
-          upload_type_code: selectedTemplate.upload_type_code,
-          original_file_name: selectedFile.name,
-          file_path: filePath,
-          file_size_bytes: selectedFile.size,
-          total_rows: stagedRows.length,
-          valid_rows: validRows,
-          error_rows: errorRows,
-          imported_rows: 0,
-          batch_status: batchStatus,
-          uploaded_by: user?.id || null,
-          validated_by: stagedRows.length > 0 ? user?.id || null : null,
-          validated_at: stagedRows.length > 0 ? new Date().toISOString() : null,
-          error_summary:
-            errorRows > 0 ? `${errorRows} row(s) have validation errors` : null,
-          metadata: {
-            source: "frontend_bulk_upload_hub",
-            csv_preview_available: selectedFile.name
-              .toLowerCase()
-              .endsWith(".csv"),
-          },
-        })
-        .select("*")
-        .single();
-
-      if (batchError) throw new Error(batchError.message);
+      const batchRes = await hrmsApi.post<{ data: any }>("/api/bulk-upload/batches", {
+        upload_batch_no: batchNo,
+        upload_type_code: selectedTemplate.upload_type_code,
+        original_file_name: selectedFile.name,
+        file_path: filePath,
+        file_size_bytes: selectedFile.size,
+        total_rows: stagedRows.length,
+        valid_rows: validRows,
+        error_rows: errorRows,
+        batch_status: batchStatus,
+        error_summary: errorRows > 0 ? `${errorRows} row(s) have validation errors` : null,
+        metadata: {
+          source: "frontend_bulk_upload_hub",
+          csv_preview_available: selectedFile.name.toLowerCase().endsWith(".csv"),
+        },
+      });
+      const batch = batchRes.data;
 
       if (stagedRows.length > 0) {
-        const { error: rowError } = await supabase.from("upload_batch_row" as any).insert(
+        await hrmsApi.post(`/api/bulk-upload/batches/${batch.id}/rows`,
           stagedRows.map((row) => ({
-            upload_batch_id: batch.id,
             row_no: row.rowNo,
             raw_data: row.rawData,
             normalized_data: row.normalizedData,
@@ -856,8 +794,6 @@ export default function BulkUploadHub() {
             error_messages: row.errors,
           }))
         );
-
-        if (rowError) throw new Error(rowError.message);
       }
 
       setMessage("Upload batch created successfully.");
@@ -901,20 +837,15 @@ export default function BulkUploadHub() {
     setMessage(`Import started for ${batch.upload_batch_no}. Please wait...`);
 
     try {
-      const { data, error } = await supabase.rpc(rpcName as any, {
-        p_batch_id: batch.id,
+      const res = await hrmsApi.post<{ success: boolean; data?: any; error?: string }>(`/api/bulk-upload/batches/${batch.id}/import`, {
+        rpc_name: rpcName,
       });
 
-      if (error) {
-        if (error.code === "42883" || error.message?.includes("does not exist")) {
-          throw new Error(
-            `Import function for ${batch.upload_type_code} is not set up on this Supabase project yet. Please run the migration to create the import RPCs.`
-          );
-        }
-        throw new Error(error.message || "Import RPC failed.");
+      if (!res.success) {
+        throw new Error(res.error || "Import action failed.");
       }
 
-      const result = data || {};
+      const result = res.data || {};
       if (result.ok === false) {
         throw new Error(result.message || "Import action failed.");
       }
