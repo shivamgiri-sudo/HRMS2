@@ -58,6 +58,7 @@ import rosterCapacityRouter from "./modules/roster/roster-capacity.routes.js";
 import { reportingRouter } from "./modules/reporting/reporting.routes.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { roleAssignmentRouter } from "./modules/admin/role-assignment.routes.js";
+import { clientRouter } from "./modules/portal/client.routes.js";
 
 export const app = express();
 
@@ -104,6 +105,7 @@ app.use("/api/payroll", payrollRouter);
 app.use("/api/employees", employeeRouter);
 app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
+app.use("/api", clientRouter); // Client management + enhanced portal user routes
 app.use("/api/ats", atsFormConfigRouter);
 app.use("/api/ats", atsRouter);
 app.use("/api/exit", exitRouter);
