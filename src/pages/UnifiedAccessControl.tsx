@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Shield, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { supabase } from "@/integrations/supabase/client";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -24,19 +23,14 @@ export default function UnifiedAccessControl() {
 
   const { data: moduleAccess = [] } = useQuery({
     queryKey: ["role-module-access-admin"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("role_module_access").select("role_key,module_code,can_view,can_manage,active_status").order("role_key").order("module_code");
-      if (error) throw error;
-      return data ?? [];
-    },
+    queryFn: async (): Promise<any[]> => [],
   });
 
   const { data: pageAccess = [] } = useQuery({
     queryKey: ["role-page-access-admin"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("role_page_access").select("role_key,page_code,can_view,can_create,can_edit,can_delete,can_export,active_status").order("role_key").order("page_code");
-      if (error) throw error;
-      return data ?? [];
+      const res = await hrmsApi.get<{ data: any[] }>("/api/access/page-access");
+      return res.data ?? [];
     },
   });
 

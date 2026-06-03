@@ -8,6 +8,8 @@ import {
   getUserRoles, listRoleCatalog, querySensitiveActionLog,
   getAccessMe,
 } from "./access.service.js";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -73,6 +75,14 @@ router.get("/audit-log", requireRole("admin"), h(async (req: AuthenticatedReques
     limit: limit ? parseInt(limit, 10) : undefined,
   });
   res.json({ data: logs });
+}));
+
+// GET /api/access/page-access — all role_page_access entries (admin only)
+router.get("/page-access", requireRole("admin"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT role_key, page_code, can_view, can_create, can_edit, can_delete, can_export, active_status FROM role_page_access ORDER BY role_key, page_code"
+  );
+  res.json({ data: rows });
 }));
 
 export { router as accessRouter };
