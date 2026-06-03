@@ -3,8 +3,16 @@ import type { CommunicationProvider, Attachment } from '../provider.interface.js
 import type { ProviderResponse, DeliveryStatus } from '../../communication.types.js';
 
 export class TwilioWhatsAppProvider implements CommunicationProvider {
-  private client = twilio(process.env.TWILIO_ACCOUNT_SID!, process.env.TWILIO_AUTH_TOKEN!);
-  private from = process.env.TWILIO_WHATSAPP_NUMBER!;
+  private client: ReturnType<typeof twilio>;
+  private from: string;
+
+  constructor(accountSid?: string, authToken?: string, whatsappNumber?: string) {
+    const sid  = accountSid     ?? process.env.TWILIO_ACCOUNT_SID    ?? '';
+    const tok  = authToken      ?? process.env.TWILIO_AUTH_TOKEN     ?? '';
+    const num  = whatsappNumber ?? process.env.TWILIO_WHATSAPP_NUMBER ?? '';
+    this.from  = num.startsWith('whatsapp:') ? num : `whatsapp:${num}`;
+    this.client = twilio(sid, tok);
+  }
 
   async send(recipient: string, _subject: string, body: string): Promise<ProviderResponse> {
     try {
