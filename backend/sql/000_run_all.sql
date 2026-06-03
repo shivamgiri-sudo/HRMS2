@@ -61,6 +61,21 @@ SOURCE sql/049_report_master.sql;
 SOURCE sql/050_auth_mysql.sql;
 SOURCE sql/051_ats_form_config.sql;
 -- NOTE: SOURCE sql/043_demo_data.sql; -- development seed only, do not run in production
+-- Additive migrations (applied automatically by runPendingMigrations on startup)
+SOURCE sql/052_legacy_migration_tables.sql;
+SOURCE sql/053_password_reset.sql;
+SOURCE sql/054_ats_onboarding_flow.sql;
+SOURCE sql/060_roster_master.sql;
+SOURCE sql/061_roster_capacity.sql;
+SOURCE sql/062_ats_candidate_created_by.sql;
+SOURCE sql/064_leave_type_updated_at.sql;
+SOURCE sql/065_department_description.sql;
+SOURCE sql/066_company_events.sql;
+SOURCE sql/067_org_settings.sql;
+SOURCE sql/068_upload_batch.sql;
+SOURCE sql/069_upload_batch_row_unique.sql;
+SOURCE sql/070_attendance_clock_columns.sql;
+SOURCE sql/071_communication_provider_config.sql;
 
 SELECT 'mas_hrms schema complete' AS status;
 SHOW TABLES;
