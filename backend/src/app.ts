@@ -61,6 +61,7 @@ import { roleAssignmentRouter } from "./modules/admin/role-assignment.routes.js"
 import { clientRouter } from "./modules/portal/client.routes.js";
 import { autoRosterSyncedRouter } from "./modules/wfm/auto-roster-synced.routes.js";
 import { controlTowerRouter } from "./modules/control-tower/control-tower.routes.js";
+import { payrollComplianceRouter } from "./modules/payroll-compliance/payrollCompliance.routes.js";
 
 export const app = express();
 
@@ -105,6 +106,7 @@ app.use("/api/wfm", wfmRouter);
 app.use("/api/wfm/roster", rosterRouter);
 app.use("/api/leave", leaveRouter);
 app.use("/api/payroll", payrollRouter);
+app.use("/api/payroll-compliance", payrollComplianceRouter); // India statutory compliance & registers
 app.use("/api/employees", employeeRouter);
 app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
