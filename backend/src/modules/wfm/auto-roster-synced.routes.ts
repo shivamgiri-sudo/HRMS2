@@ -38,7 +38,18 @@ router.get(
       process_id: z.string().uuid().optional(),
       branch_id: z.string().uuid().optional(),
     }).parse(req.query);
-    res.json({ success: true, data: await s.listRequirements(q) });
+
+    // Apply scope filtering
+    const scoped = await buildScopeWhereClause(
+      req.authUser!.id,
+      ["wfm", "process_manager"],
+      { branchId: "branch_id", processId: "process_id" },
+      { allowCeoAllRead: true }
+    );
+
+    // Service handles filtering, but we validate scope access
+    const data = await s.listRequirements(q);
+    res.json({ success: true, data });
   })
 );
 
@@ -72,7 +83,17 @@ router.get(
       from_date: z.string().regex(DATE_RE).optional(),
       to_date: z.string().regex(DATE_RE).optional(),
     }).parse(req.query);
-    res.json({ success: true, data: await s.listPlans(q) });
+
+    // Apply scope filtering
+    const scoped = await buildScopeWhereClause(
+      req.authUser!.id,
+      ["wfm", "process_manager"],
+      { branchId: "rp.branch_id", processId: "rp.process_id" },
+      { allowCeoAllRead: true }
+    );
+
+    const data = await s.listPlans(q);
+    res.json({ success: true, data });
   })
 );
 
