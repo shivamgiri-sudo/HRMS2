@@ -5,6 +5,8 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { assetsService } from "./assets.service.js";
+import { db } from "../../db/mysql.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -65,6 +67,19 @@ router.post("/:id/return", requireRole("admin", "hr"), h(async (req: Authenticat
 router.post("/:id/service", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const id = await assetsService.addServiceLog(req.params.id, req.body);
   res.status(201).json({ data: { id } });
+}));
+
+router.delete("/:id", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const asset = await assetsService.getById(req.params.id);
+  if (!asset) return res.status(404).json({ error: "Asset not found" });
+  await db.execute("UPDATE asset_master SET active_status = 0, updated_at = NOW() WHERE id = ?", [req.params.id]);
+  await logSensitiveAction({
+    actor_user_id: req.authUser!.id, action_type: "ASSET_DELETED", module_key: "ASSETS",
+    entity_type: "asset", entity_id: req.params.id,
+    change_summary: { asset_code: asset.asset_code },
+    req,
+  });
+  res.json({ ok: true });
 }));
 
 export { router as assetsRouter };

@@ -84,18 +84,16 @@ export function useCreateAsset() {
 
   return useMutation({
     mutationFn: async (data: CreateAssetData) => {
-      const prefix = data.category.substring(0, 3).toUpperCase();
-      const randomNum = Math.floor(Math.random() * 10000).toString().padStart(4, "0");
-      const asset_code = `${prefix}-${randomNum}`;
-
+      // asset_code is generated server-side if not provided
       const res = await hrmsApi.post<{ data: any }>("/api/assets-mgmt", {
-        asset_code,
         asset_name: data.name,
         asset_category: data.category,
-        serial_number: data.serial_number,
-        purchase_date: data.purchase_date,
-        purchase_cost: data.purchase_cost,
-        notes: data.notes,
+        serial_number: data.serial_number ?? null,
+        purchase_date: data.purchase_date ?? null,
+        purchase_cost: data.purchase_cost ?? null,
+        vendor: data.vendor ?? null,
+        warranty_expiry: data.warranty_end_date ?? null,
+        notes: data.notes ?? null,
       });
       return res.data;
     },
@@ -114,6 +112,7 @@ export interface UpdateAssetData {
   purchase_date?: string;
   purchase_cost?: number;
   vendor?: string;
+  warranty_end_date?: string;
   notes?: string;
   status?: "available" | "assigned" | "maintenance" | "retired";
 }
@@ -124,9 +123,14 @@ export function useUpdateAsset() {
   return useMutation({
     mutationFn: async ({ id, ...data }: UpdateAssetData) => {
       return hrmsApi.put<{ data: any }>(`/api/assets-mgmt/${id}`, {
-        asset_name: data.name,
-        status: data.status,
-        notes: data.notes,
+        asset_name: data.name ?? null,
+        status: data.status ?? null,
+        notes: data.notes ?? null,
+        serial_number: data.serial_number ?? null,
+        asset_category: data.category ?? null,
+        purchase_cost: data.purchase_cost ?? null,
+        vendor: data.vendor ?? null,
+        warranty_expiry: data.warranty_end_date ?? null,
       });
     },
     onSuccess: () => {

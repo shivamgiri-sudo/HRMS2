@@ -13,10 +13,15 @@ export const assetsService = {
     if (filters.category)  { conds.push("a.asset_category = ?");  params.push(filters.category); }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT a.*, b.branch_name,
-              IF(aa.employee_id IS NOT NULL, JSON_OBJECT('employee_id', aa.employee_id, 'assigned_date', aa.assigned_date), NULL) AS current_assignment
+              IF(aa.employee_id IS NOT NULL,
+                 JSON_OBJECT('employee_id', aa.employee_id,
+                             'employee_name', CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')),
+                             'assigned_date', aa.assigned_date),
+                 NULL) AS current_assignment
        FROM asset_master a
        LEFT JOIN branch_master b ON b.id = a.branch_id
        LEFT JOIN asset_assignment aa ON aa.asset_id = a.id AND aa.returned_date IS NULL
+       LEFT JOIN employees e ON e.id = aa.employee_id
        WHERE ${conds.join(" AND ")} ORDER BY a.asset_code`,
       params
     );
@@ -34,11 +39,12 @@ export const assetsService = {
 
   async create(data: Record<string, unknown>) {
     const id = randomUUID();
+    const code = (data.asset_code as string) || `AST-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
     await db.execute(
       `INSERT INTO asset_master (id, asset_code, asset_name, asset_category, asset_type, serial_number,
          purchase_date, purchase_cost, vendor, warranty_expiry, branch_id, notes)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, data.asset_code, data.asset_name, data.asset_category, data.asset_type ?? null,
+      [id, code, data.asset_name, data.asset_category, data.asset_type ?? null,
        data.serial_number ?? null, data.purchase_date ?? null, data.purchase_cost ?? null,
        data.vendor ?? null, data.warranty_expiry ?? null, data.branch_id ?? null, data.notes ?? null]
     );
@@ -48,8 +54,13 @@ export const assetsService = {
   async update(id: string, data: Record<string, unknown>) {
     await db.execute(
       `UPDATE asset_master SET asset_name = COALESCE(?, asset_name), status = COALESCE(?, status),
-         notes = COALESCE(?, notes), branch_id = COALESCE(?, branch_id), updated_at = NOW() WHERE id = ?`,
-      [data.asset_name ?? null, data.status ?? null, data.notes ?? null, data.branch_id ?? null, id]
+         notes = COALESCE(?, notes), branch_id = COALESCE(?, branch_id),
+         serial_number = COALESCE(?, serial_number), asset_category = COALESCE(?, asset_category),
+         purchase_cost = COALESCE(?, purchase_cost), vendor = COALESCE(?, vendor),
+         warranty_expiry = COALESCE(?, warranty_expiry), updated_at = NOW() WHERE id = ?`,
+      [data.asset_name ?? null, data.status ?? null, data.notes ?? null, data.branch_id ?? null,
+       data.serial_number ?? null, data.asset_category ?? null, data.purchase_cost ?? null,
+       data.vendor ?? null, data.warranty_expiry ?? null, id]
     );
     return this.getById(id);
   },
