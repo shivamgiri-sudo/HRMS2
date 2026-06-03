@@ -59,6 +59,7 @@ import { reportingRouter } from "./modules/reporting/reporting.routes.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { roleAssignmentRouter } from "./modules/admin/role-assignment.routes.js";
 import { clientRouter } from "./modules/portal/client.routes.js";
+import { autoRosterSyncedRouter } from "./modules/wfm/auto-roster-synced.routes.js";
 
 export const app = express();
 
@@ -98,6 +99,7 @@ app.use("/api/health", healthRouter);
 app.use("/api/admin", roleAssignmentRouter);
 app.use("/api/processes", processRouter);
 app.use("/api/integration-hub", integrationRouter);
+app.use("/api/wfm/auto-roster", autoRosterSyncedRouter); // MUST be before /api/wfm/roster
 app.use("/api/wfm", wfmRouter);
 app.use("/api/wfm/roster", rosterRouter);
 app.use("/api/leave", leaveRouter);

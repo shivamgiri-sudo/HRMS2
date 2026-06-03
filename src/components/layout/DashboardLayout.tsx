@@ -175,6 +175,7 @@ const navGroups: NavGroup[] = [
       { label: "My Roster", href: "/my-roster", icon: <Calendar className="h-4 w-4" />, description: "View and acknowledge your weekly roster" },
       { label: "Roster Preferences", href: "/roster-preference", icon: <CalendarClock className="h-4 w-4" />, description: "Submit and review shift and week-off preferences" },
       { label: "Roster Planning", href: "/wfm/roster", icon: <Clock className="h-4 w-4" />, pageCode: "WFM_ROSTER", description: "WFM roster and shift planning" },
+      { label: "Auto Roster", href: "/wfm/auto-roster", icon: <Calendar className="h-4 w-4" />, pageCode: "WFM_AUTO_ROSTER", description: "Automated roster generation and PM approval" },
       { label: "WFM Live Tracker", href: "/wfm/live-tracker", icon: <Clock className="h-4 w-4" />, pageCode: "WFM_LIVE_TRACKER", description: "Live shift and break tracker" },
       { label: "RTA Board", href: "/rta-board", icon: <Activity className="h-4 w-4" />, pageCode: "RTA_BOARD", description: "Real-time adherence, shrinkage and reconciliation" },
       { label: "WFM Extensions", href: "/wfm/extensions", icon: <Activity className="h-4 w-4" />, pageCode: "WFM_EXTENSIONS", description: "Swaps, conflicts, coverage, attrition" },
