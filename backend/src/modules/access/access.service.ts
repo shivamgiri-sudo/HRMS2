@@ -208,6 +208,28 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
     }));
   }
 
+  // 5. User page overrides — take precedence over role-based access
+  const [userPageRows] = await db.execute<RowDataPacket[]>(
+    `SELECT page_code, can_view, can_create, can_edit, can_delete, can_export
+     FROM user_page_access
+     WHERE user_id = ? AND active_status = 1`,
+    [userId]
+  );
+
+  // Merge: user overrides replace role-based for matching page_code
+  const pageMap = new Map(pages.map(p => [p.page_code, p]));
+  for (const userPage of userPageRows as any[]) {
+    pageMap.set(userPage.page_code, {
+      page_code: userPage.page_code,
+      can_view: Boolean(userPage.can_view),
+      can_create: Boolean(userPage.can_create),
+      can_edit: Boolean(userPage.can_edit),
+      can_delete: Boolean(userPage.can_delete),
+      can_export: Boolean(userPage.can_export),
+    });
+  }
+  pages = Array.from(pageMap.values());
+
   return {
     userId,
     email: undefined, // email not stored in MySQL — caller knows it from auth

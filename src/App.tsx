@@ -76,6 +76,7 @@ const NativeWFMExtensions           = lazy(() => import("./pages/NativeWFMExtens
 // Performance & Management
 const UnifiedPerformanceCommandCenter = lazy(() => import("./pages/UnifiedPerformanceCommandCenter"));
 const UnifiedAccessControl          = lazy(() => import("./pages/UnifiedAccessControl"));
+const SuperAdminAccessControl       = lazy(() => import("./pages/SuperAdminAccessControl"));
 const NativeManagementDashboard     = lazy(() => import("./pages/NativeManagementDashboard"));
 
 // Performance Feedback
@@ -263,6 +264,7 @@ const App = () => (
               {/* Performance */}
               <Route path="/performance/command-center" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><UnifiedPerformanceCommandCenter /></Gate></ProtectedRoute>} />
               <Route path="/settings/access-control" element={<ProtectedRoute><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />
+              <Route path="/super-admin/page-access" element={<ProtectedRoute><SuperAdminAccessControl /></ProtectedRoute>} />
               <Route path="/settings/call-centre-config" element={<ProtectedRoute><NativeCallCentreConfig /></ProtectedRoute>} />
 
               {/* Performance Feedback */}

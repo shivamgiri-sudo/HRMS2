@@ -187,6 +187,7 @@ const navGroups: NavGroup[] = [
       { label: "Mobility", href: "/mobility", icon: <GitBranch className="h-4 w-4" />, pageCode: "MOBILITY", description: "Transfers and promotions" },
       { label: "Performance Command Center", href: "/performance/command-center", icon: <BarChart3 className="h-4 w-4" />, pageCode: "WORKFORCE_COMMAND_CENTER", description: "Unified workforce intelligence" },
       { label: "Access Control", href: "/settings/access-control", icon: <Settings className="h-4 w-4" />, pageCode: "ACCESS_CONTROL", roles: ["admin"], description: "Role and page access management" },
+      { label: "Super Admin Page Access", href: "/super-admin/page-access", icon: <ShieldCheck className="h-4 w-4" />, roles: ["admin"], description: "Assign specific pages to users" },
       { label: "KPI Configuration", href: "/kpi-config", icon: <Target className="h-4 w-4" />, pageCode: "KPI_CONFIG", roles: ["admin", "hr", "manager", "process_manager"], description: "Per-process KPI targets and rating thresholds" },
     ],
   },
