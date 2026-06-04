@@ -12,7 +12,7 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
 }));
 
 vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn() },
+  db: { execute: vi.fn().mockResolvedValue([[], []]) },
   pingDb: vi.fn(),
 }));
 

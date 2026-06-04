@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn() },
+  db: { execute: vi.fn().mockResolvedValue([[], []]) },
 }));
 vi.mock("../src/modules/engagement/badge.service.js", () => ({
   checkAutoAwards: vi.fn(),

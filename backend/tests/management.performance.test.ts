@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 vi.mock("../src/db/supabaseAdmin.js", () => ({ supabaseAdmin: {}, supabaseAuthClient: { auth: { getUser: vi.fn() } } }));
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn() }, pingDb: vi.fn() }));
+vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
 import { app } from "../src/app.js";
 import { db } from "../src/db/mysql.js";
 import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";

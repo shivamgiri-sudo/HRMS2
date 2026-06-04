@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock the db module before importing the service
 vi.mock("../src/db/mysql", () => ({
   db: {
-    execute: vi.fn(),
+    execute: vi.fn().mockResolvedValue([[], []]),
     executeRun: vi.fn(),
     end: vi.fn(),
   },

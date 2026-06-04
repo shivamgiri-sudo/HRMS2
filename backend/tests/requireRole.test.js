@@ -4,7 +4,7 @@ import request from "supertest";
 // Mock the MySQL pool
 vi.mock("../src/db/mysql.js", () => ({
     db: {
-        execute: vi.fn(),
+        execute: vi.fn().mockResolvedValue([[], []]),
     },
     pingDb: vi.fn(),
 }));

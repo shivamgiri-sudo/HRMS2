@@ -21,7 +21,7 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
 const mockConnection = {
-  execute: vi.fn(),
+  execute: vi.fn().mockResolvedValue([[], []]),
   beginTransaction: vi.fn().mockResolvedValue(undefined),
   commit: vi.fn().mockResolvedValue(undefined),
   rollback: vi.fn().mockResolvedValue(undefined),
@@ -30,9 +30,9 @@ const mockConnection = {
 
 vi.mock("../src/db/mysql.js", () => ({
   db: {
-    execute: vi.fn(),
+    execute: vi.fn().mockResolvedValue([[], []]),
     executeRun: vi.fn(),
-    getConnection: vi.fn(),
+    getConnection: vi.fn().mockResolvedValue([[], []]),
   },
   pingDb: vi.fn(),
 }));

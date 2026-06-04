@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn() },
+  db: { execute: vi.fn().mockResolvedValue([[], []]) },
 }));
 vi.mock("../src/modules/integration-hub/integration.service.js", () => ({
   integrationService: {

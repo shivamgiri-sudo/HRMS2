@@ -7,7 +7,7 @@ vi.mock('../../../db/supabaseAdmin.js', () => ({
   supabaseAuthClient: { auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'demo-admin-id', email: 'admin@mascallnet.com' } }, error: null }) } },
 }));
 vi.mock('../../../db/mysql.js', () => ({
-  db: { execute: vi.fn().mockResolvedValue([[], []]), getConnection: vi.fn() },
+  db: { execute: vi.fn().mockResolvedValue([[], []]), getConnection: vi.fn().mockResolvedValue([[], []]) },
   pingDb: vi.fn(),
 }));
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn() } }));
+vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) } }));
 
 import { portalKpiService } from "../src/modules/portal/portal.kpi.service.js";
 

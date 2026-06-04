@@ -6,7 +6,7 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
 vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn() },
+  db: { execute: vi.fn().mockResolvedValue([[], []]) },
   pingDb: vi.fn(),
 }));
 vi.mock("../src/modules/ats/ats.service.js", () => ({

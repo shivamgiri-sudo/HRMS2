@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../src/db/mysql.js", () => ({
-    db: { execute: vi.fn() },
+    db: { execute: vi.fn().mockResolvedValue([[], []]) },
 }));
 import { db } from "../src/db/mysql.js";
 import { atsService } from "../src/modules/ats/ats.service.js";

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn() } }));
+vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) } }));
 
 import { portalAuthService } from "../src/modules/portal/portal.auth.service.js";
 
