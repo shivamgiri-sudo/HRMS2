@@ -26,6 +26,10 @@ import {
 } from "lucide-react";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 
@@ -59,30 +63,31 @@ type ExperienceCard = {
   iconTone: string;
   metric: string;
   badge: string;
+  progress: number;
 };
 
 const experienceCards: ExperienceCard[] = [
-  { title: "Employee Home", href: "/dashboard", icon: <Sparkles className="h-5 w-5" />, gradient: "from-blue-600 to-cyan-500", iconTone: "bg-blue-500 text-white", metric: "96%", badge: "My Space" },
-  { title: "Payroll", href: "/payroll", icon: <CreditCard className="h-5 w-5" />, gradient: "from-emerald-600 to-teal-400", iconTone: "bg-emerald-500 text-white", metric: "₹", badge: "Pay Hub" },
-  { title: "ATS → Onboard", href: "/ats/command-center", icon: <Briefcase className="h-5 w-5" />, gradient: "from-violet-600 to-indigo-500", iconTone: "bg-violet-500 text-white", metric: "AI", badge: "Hiring" },
-  { title: "Auto Roster", href: "/wfm/auto-roster", icon: <Calendar className="h-5 w-5" />, gradient: "from-amber-500 to-orange-500", iconTone: "bg-amber-500 text-white", metric: "98%", badge: "WFM" },
-  { title: "Engagement", href: "/engagement", icon: <Heart className="h-5 w-5" />, gradient: "from-rose-600 to-pink-500", iconTone: "bg-rose-500 text-white", metric: "4.8", badge: "Pulse" },
-  { title: "Offboarding", href: "/exit/command-center", icon: <ClipboardCheck className="h-5 w-5" />, gradient: "from-slate-800 to-slate-600", iconTone: "bg-slate-800 text-white", metric: "F&F", badge: "Exit" },
+  { title: "Employee Home", href: "/dashboard", icon: <Sparkles className="h-5 w-5" />, gradient: "from-blue-600 to-cyan-500", iconTone: "bg-blue-600 text-white", metric: "96%", badge: "My Space", progress: 96 },
+  { title: "Payroll", href: "/payroll", icon: <CreditCard className="h-5 w-5" />, gradient: "from-emerald-600 to-teal-400", iconTone: "bg-emerald-600 text-white", metric: "₹", badge: "Pay Hub", progress: 88 },
+  { title: "ATS → Onboard", href: "/ats/command-center", icon: <Briefcase className="h-5 w-5" />, gradient: "from-violet-600 to-indigo-500", iconTone: "bg-violet-600 text-white", metric: "AI", badge: "Hiring", progress: 92 },
+  { title: "Auto Roster", href: "/wfm/auto-roster", icon: <Calendar className="h-5 w-5" />, gradient: "from-amber-500 to-orange-500", iconTone: "bg-amber-500 text-white", metric: "98%", badge: "WFM", progress: 98 },
+  { title: "Engagement", href: "/engagement", icon: <Heart className="h-5 w-5" />, gradient: "from-rose-600 to-pink-500", iconTone: "bg-rose-600 text-white", metric: "4.8", badge: "Pulse", progress: 84 },
+  { title: "Offboarding", href: "/exit/command-center", icon: <ClipboardCheck className="h-5 w-5" />, gradient: "from-slate-900 to-slate-600", iconTone: "bg-slate-900 text-white", metric: "F&F", badge: "Exit", progress: 76 },
 ];
 
 const intelligenceCards = [
-  { title: "AI JD", value: "Ready", icon: <Bot className="h-4 w-4" />, tone: "text-blue-700 bg-blue-50 ring-blue-100" },
-  { title: "Candidate Score", value: "Smart", icon: <Target className="h-4 w-4" />, tone: "text-violet-700 bg-violet-50 ring-violet-100" },
-  { title: "Assessment", value: "Live", icon: <FileText className="h-4 w-4" />, tone: "text-emerald-700 bg-emerald-50 ring-emerald-100" },
-  { title: "Agency", value: "Tracked", icon: <Users className="h-4 w-4" />, tone: "text-amber-700 bg-amber-50 ring-amber-100" },
+  { title: "AI JD", value: "Ready", icon: <Bot className="h-4 w-4" />, tone: "border-blue-100 bg-blue-50 text-blue-700" },
+  { title: "Candidate Score", value: "Smart", icon: <Target className="h-4 w-4" />, tone: "border-violet-100 bg-violet-50 text-violet-700" },
+  { title: "Assessment", value: "Live", icon: <FileText className="h-4 w-4" />, tone: "border-emerald-100 bg-emerald-50 text-emerald-700" },
+  { title: "Agency", value: "Tracked", icon: <Users className="h-4 w-4" />, tone: "border-amber-100 bg-amber-50 text-amber-700" },
 ];
 
 const workflowSteps = ["Selected", "Onboard", "BGV", "Employee ID", "Payroll"];
 
 const shiftRows = [
-  { name: "Morning", team: "Domestic", time: "09:00 - 18:00", color: "bg-amber-400", fill: "w-[92%]" },
-  { name: "Evening", team: "Chat", time: "13:00 - 22:00", color: "bg-rose-500", fill: "w-[78%]" },
-  { name: "Night", team: "International", time: "22:00 - 07:00", color: "bg-blue-700", fill: "w-[86%]" },
+  { name: "Morning", team: "Domestic", time: "09:00 - 18:00", color: "bg-amber-400", value: 92 },
+  { name: "Evening", team: "Chat", time: "13:00 - 22:00", color: "bg-rose-500", value: 78 },
+  { name: "Night", team: "International", time: "22:00 - 07:00", color: "bg-blue-700", value: 86 },
 ];
 
 const fallbackPages: PageRow[] = [
@@ -124,152 +129,154 @@ export default function ModuleLauncher() {
   return (
     <DashboardLayout>
       <div className="min-h-screen space-y-6 bg-[#f6f8fc] pb-8">
-        <section className="overflow-hidden rounded-[2rem] border border-slate-200 bg-slate-950 shadow-xl shadow-slate-200/70">
+        <Card className="overflow-hidden rounded-[2rem] border-slate-200 bg-slate-950 text-white shadow-2xl shadow-slate-300/50">
           <div className="grid xl:grid-cols-[1.15fr_0.85fr]">
-            <div className="relative p-6 text-white sm:p-8">
+            <CardContent className="relative p-6 sm:p-8">
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_0%_0%,rgba(59,130,246,0.45),transparent_30%),radial-gradient(circle_at_80%_20%,rgba(16,185,129,0.22),transparent_28%),radial-gradient(circle_at_70%_100%,rgba(244,63,94,0.24),transparent_30%)]" />
               <div className="relative">
-                <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-bold text-cyan-100 backdrop-blur">
-                  <CheckCircle2 className="h-3.5 w-3.5" /> Premium PeopleOS
-                </div>
-                <h1 className="mt-5 max-w-3xl text-3xl font-black tracking-tight sm:text-5xl">
-                  MAS Command Workspace
-                </h1>
+                <Badge className="border border-white/15 bg-white/10 text-cyan-100 hover:bg-white/10">
+                  <CheckCircle2 className="mr-2 h-3.5 w-3.5" /> Premium PeopleOS
+                </Badge>
+                <h1 className="mt-5 max-w-3xl text-3xl font-black tracking-tight sm:text-5xl">MAS Command Workspace</h1>
                 <div className="mt-6 grid max-w-3xl gap-3 sm:grid-cols-3">
-                  {[
-                    ["Role Views", "12+"],
-                    ["Live Modules", "40+"],
-                    ["Workflow Ready", "100%"],
-                  ].map(([title, value]) => (
-                    <div key={title} className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-md">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">{title}</p>
-                      <p className="mt-1 text-2xl font-black text-white">{value}</p>
-                    </div>
+                  {[["Role Views", "12+"], ["Live Modules", "40+"], ["Workflow Ready", "100%"]].map(([title, value]) => (
+                    <Card key={title} className="rounded-2xl border-white/10 bg-white/10 text-white shadow-none backdrop-blur-md">
+                      <CardContent className="p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">{title}</p>
+                        <p className="mt-1 text-2xl font-black">{value}</p>
+                      </CardContent>
+                    </Card>
                   ))}
                 </div>
               </div>
-            </div>
+            </CardContent>
 
-            <div className="border-t border-white/10 bg-white/[0.04] p-5 text-white xl:border-l xl:border-t-0">
-              <div className="rounded-[1.75rem] border border-white/10 bg-white/10 p-4 shadow-2xl backdrop-blur-md">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">My Space</p>
-                    <h2 className="mt-1 text-2xl font-black">Today</h2>
-                  </div>
-                  <span className="rounded-full bg-emerald-400 px-3 py-1 text-xs font-black text-emerald-950">Live</span>
-                </div>
-                <div className="mt-5 grid grid-cols-2 gap-3">
-                  <div className="rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-400 p-4 shadow-lg shadow-blue-950/20">
-                    <p className="text-xs font-bold text-blue-50">Check-in</p>
-                    <button className="mt-8 w-full rounded-xl bg-white py-2 text-xs font-black text-blue-700 shadow">Start</button>
-                  </div>
-                  <div className="space-y-3">
-                    <div className="rounded-2xl bg-white p-3 text-slate-950"><p className="text-xs font-bold text-slate-500">Attendance</p><p className="text-xl font-black">96%</p></div>
-                    <div className="rounded-2xl bg-white p-3 text-slate-950"><p className="text-xs font-bold text-slate-500">Punctuality</p><p className="text-xl font-black">91%</p></div>
-                  </div>
-                </div>
-                <div className="mt-3 grid grid-cols-4 gap-2 text-xs font-black text-slate-950">
-                  {[["Pay", <WalletCards className="h-4 w-4" />], ["Leave", <Calendar className="h-4 w-4" />], ["Kudos", <Heart className="h-4 w-4" />], ["Help", <Zap className="h-4 w-4" />]].map(([label, icon]) => (
-                    <div key={String(label)} className="flex flex-col items-center gap-1 rounded-2xl bg-white p-3">
-                      {icon}<span>{label}</span>
+            <CardContent className="border-t border-white/10 bg-white/[0.04] p-5 xl:border-l xl:border-t-0">
+              <Card className="rounded-[1.75rem] border-white/10 bg-white/10 text-white shadow-2xl backdrop-blur-md">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">My Space</p>
+                      <h2 className="mt-1 text-2xl font-black">Today</h2>
                     </div>
-                  ))}
-                </div>
-              </div>
-            </div>
+                    <Badge className="bg-emerald-400 text-emerald-950 hover:bg-emerald-400">Live</Badge>
+                  </div>
+                  <div className="mt-5 grid grid-cols-2 gap-3">
+                    <div className="rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-400 p-4 shadow-lg shadow-blue-950/20">
+                      <p className="text-xs font-bold text-blue-50">Check-in</p>
+                      <Button className="mt-8 w-full bg-white text-blue-700 hover:bg-blue-50">Start</Button>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="rounded-2xl bg-white p-3 text-slate-950"><p className="text-xs font-bold text-slate-500">Attendance</p><p className="text-xl font-black">96%</p></div>
+                      <div className="rounded-2xl bg-white p-3 text-slate-950"><p className="text-xs font-bold text-slate-500">Punctuality</p><p className="text-xl font-black">91%</p></div>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-4 gap-2 text-xs font-black text-slate-950">
+                    {[["Pay", <WalletCards className="h-4 w-4" />], ["Leave", <Calendar className="h-4 w-4" />], ["Kudos", <Heart className="h-4 w-4" />], ["Help", <Zap className="h-4 w-4" />]].map(([label, icon]) => (
+                      <div key={String(label)} className="flex flex-col items-center gap-1 rounded-2xl bg-white p-3">
+                        {icon}<span>{label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </CardContent>
           </div>
-        </section>
+        </Card>
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {experienceCards.map((card) => (
-            <Link key={card.title} to={card.href} className="group overflow-hidden rounded-[1.6rem] border border-slate-200 bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-2xl hover:shadow-slate-300/60">
+            <Card key={card.title} className="group overflow-hidden rounded-[1.6rem] border-slate-200 bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-2xl hover:shadow-slate-300/60">
               <div className={`h-1.5 bg-gradient-to-r ${card.gradient}`} />
-              <div className="p-5">
+              <CardContent className="p-5">
                 <div className="flex items-center justify-between">
                   <div className={`rounded-2xl p-3 shadow-lg ${card.iconTone}`}>{card.icon}</div>
-                  <span className="rounded-full bg-slate-950 px-3 py-1 text-[11px] font-black text-white">{card.badge}</span>
+                  <Badge className="bg-slate-950 text-white hover:bg-slate-900">{card.badge}</Badge>
                 </div>
                 <div className="mt-5 flex items-end justify-between">
                   <div>
-                    <h3 className="text-lg font-black text-slate-950">{card.title}</h3>
+                    <CardTitle className="text-lg font-black text-slate-950">{card.title}</CardTitle>
                     <p className="mt-1 text-xs font-bold uppercase tracking-wide text-slate-400">Open module</p>
                   </div>
                   <p className="text-3xl font-black text-slate-900">{card.metric}</p>
                 </div>
-                <div className="mt-4 h-2 rounded-full bg-slate-100">
-                  <div className={`h-2 rounded-full bg-gradient-to-r ${card.gradient} w-4/5`} />
-                </div>
-              </div>
-            </Link>
+                <Progress value={card.progress} className="mt-4 h-2 bg-slate-100 [&>div]:bg-slate-950" />
+                <Button asChild variant="ghost" className="mt-4 h-8 px-0 text-blue-700 hover:bg-transparent hover:text-blue-900">
+                  <Link to={card.href}>Open <ArrowRight className="ml-1 h-4 w-4" /></Link>
+                </Button>
+              </CardContent>
+            </Card>
           ))}
         </section>
 
         <section className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
-          <div className="rounded-[1.6rem] border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between">
+          <Card className="rounded-[1.6rem] border-slate-200 bg-white shadow-sm">
+            <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.12em] text-blue-700">Onboarding</p>
-                <h2 className="text-2xl font-black text-slate-950">Hire → Employee</h2>
+                <CardTitle className="text-2xl font-black text-slate-950">Hire → Employee</CardTitle>
               </div>
               <div className="rounded-2xl bg-blue-600 p-3 text-white shadow-lg shadow-blue-200"><TrendingUp className="h-5 w-5" /></div>
-            </div>
-            <div className="mt-6 grid gap-3">
+            </CardHeader>
+            <CardContent className="grid gap-3 pt-3">
               {workflowSteps.map((step, index) => (
                 <div key={step} className="flex items-center gap-3">
                   <div className={`flex h-10 w-10 items-center justify-center rounded-2xl text-sm font-black text-white ${index < 3 ? "bg-emerald-500" : "bg-blue-600"}`}>{index < 3 ? "✓" : index + 1}</div>
                   <div className="flex-1 rounded-2xl bg-slate-50 px-4 py-3 font-black text-slate-900">{step}</div>
                 </div>
               ))}
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
-          <div className="rounded-[1.6rem] border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between">
+          <Card className="rounded-[1.6rem] border-slate-200 bg-white shadow-sm">
+            <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.12em] text-emerald-700">Roster</p>
-                <h2 className="text-2xl font-black text-slate-950">Coverage View</h2>
+                <CardTitle className="text-2xl font-black text-slate-950">Coverage View</CardTitle>
               </div>
               <div className="rounded-2xl bg-emerald-500 p-3 text-white shadow-lg shadow-emerald-200"><Clock className="h-5 w-5" /></div>
-            </div>
-            <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200">
-              <div className="grid grid-cols-3 bg-slate-950 text-xs font-black uppercase tracking-wide text-white">
-                <div className="p-3">Shift</div><div className="p-3">Team</div><div className="p-3">Coverage</div>
-              </div>
-              {shiftRows.map((row) => (
-                <div key={row.name} className="grid grid-cols-3 border-t border-slate-200 text-sm">
-                  <div className="flex items-center gap-3 p-3"><span className={`h-4 w-4 rounded-full ${row.color}`} /> <span className="font-black text-slate-900">{row.name}</span></div>
-                  <div className="p-3 font-semibold text-slate-600">{row.team}</div>
-                  <div className="p-3">
-                    <div className="h-2 rounded-full bg-slate-100"><div className={`h-2 rounded-full bg-slate-950 ${row.fill}`} /></div>
-                    <p className="mt-1 text-[11px] font-bold text-slate-400">{row.time}</p>
-                  </div>
+            </CardHeader>
+            <CardContent className="pt-3">
+              <div className="overflow-hidden rounded-2xl border border-slate-200">
+                <div className="grid grid-cols-3 bg-slate-950 text-xs font-black uppercase tracking-wide text-white">
+                  <div className="p-3">Shift</div><div className="p-3">Team</div><div className="p-3">Coverage</div>
                 </div>
-              ))}
-            </div>
-          </div>
+                {shiftRows.map((row) => (
+                  <div key={row.name} className="grid grid-cols-3 border-t border-slate-200 text-sm">
+                    <div className="flex items-center gap-3 p-3"><span className={`h-4 w-4 rounded-full ${row.color}`} /> <span className="font-black text-slate-900">{row.name}</span></div>
+                    <div className="p-3 font-semibold text-slate-600">{row.team}</div>
+                    <div className="p-3">
+                      <Progress value={row.value} className="h-2 bg-slate-100 [&>div]:bg-slate-950" />
+                      <p className="mt-1 text-[11px] font-bold text-slate-400">{row.time}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         </section>
 
         <section className="grid gap-4 lg:grid-cols-4">
           {intelligenceCards.map((card) => (
-            <div key={card.title} className="rounded-[1.4rem] border border-slate-200 bg-white p-5 shadow-sm">
-              <div className={`flex h-11 w-11 items-center justify-center rounded-2xl ring-1 ${card.tone}`}>{card.icon}</div>
-              <p className="mt-4 text-sm font-black text-slate-950">{card.title}</p>
-              <p className="mt-1 text-2xl font-black text-slate-900">{card.value}</p>
-            </div>
+            <Card key={card.title} className="rounded-[1.4rem] border-slate-200 bg-white shadow-sm">
+              <CardContent className="p-5">
+                <div className={`flex h-11 w-11 items-center justify-center rounded-2xl border ${card.tone}`}>{card.icon}</div>
+                <p className="mt-4 text-sm font-black text-slate-950">{card.title}</p>
+                <p className="mt-1 text-2xl font-black text-slate-900">{card.value}</p>
+              </CardContent>
+            </Card>
           ))}
         </section>
 
-        <section className="rounded-[1.6rem] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center justify-between gap-4">
+        <Card className="rounded-[1.6rem] border-slate-200 bg-white shadow-sm">
+          <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">Navigation</p>
-              <h2 className="text-2xl font-black text-slate-950">Role Map</h2>
+              <CardTitle className="text-2xl font-black text-slate-950">Role Map</CardTitle>
             </div>
-            {isLoading && <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-500">Loading</span>}
-          </div>
-
-          <div className="grid gap-5 lg:grid-cols-2">
+            {isLoading && <Badge variant="secondary">Loading</Badge>}
+          </CardHeader>
+          <CardContent className="grid gap-5 pt-3 lg:grid-cols-2">
             {Object.entries(grouped).map(([moduleCode, modulePages]) => (
               <div key={moduleCode} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="mb-4 flex items-center gap-3">
@@ -281,16 +288,18 @@ export default function ModuleLauncher() {
                 </div>
                 <div className="grid gap-2">
                   {modulePages.slice(0, 6).map((page) => (
-                    <Link key={page.page_code} to={page.route_path || "/dashboard"} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3 transition hover:border-blue-300 hover:bg-blue-50">
-                      <p className="font-bold text-slate-900">{page.page_name}</p>
-                      <ChevronRight className="h-4 w-4 text-slate-500" />
-                    </Link>
+                    <Button key={page.page_code} asChild variant="outline" className="h-auto justify-between rounded-xl border-slate-200 bg-white p-3 font-bold text-slate-900 hover:border-blue-300 hover:bg-blue-50">
+                      <Link to={page.route_path || "/dashboard"}>
+                        <span>{page.page_name}</span>
+                        <ChevronRight className="h-4 w-4 text-slate-500" />
+                      </Link>
+                    </Button>
                   ))}
                 </div>
               </div>
             ))}
-          </div>
-        </section>
+          </CardContent>
+        </Card>
       </div>
     </DashboardLayout>
   );
