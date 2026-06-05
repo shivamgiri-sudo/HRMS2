@@ -14,6 +14,7 @@ import { leaveRouter } from "./modules/leave/leave.routes.js";
 import { payrollRouter } from "./modules/payroll/payroll.routes.js";
 import { employeeRouter } from "./modules/employees/employee.routes.js";
 import { kpiRouter } from "./modules/kpi/kpi.routes.js";
+import { kpiProcessRoleRouter } from "./modules/kpi/kpi.process-role.routes.js";
 import { portalRouter } from "./modules/portal/portal.routes.js";
 import { atsRouter } from "./modules/ats/ats.routes.js";
 import { atsFormConfigRouter } from "./modules/ats/ats-form-config.routes.js";
@@ -58,6 +59,7 @@ import { rosterMasterRouter } from "./modules/roster/roster-master.routes.js";
 import rosterCapacityRouter from "./modules/roster/roster-capacity.routes.js";
 import { reportingRouter } from "./modules/reporting/reporting.routes.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
+import { authLaunchRouter } from "./modules/auth/auth-launch.routes.js";
 import { roleAssignmentRouter } from "./modules/admin/role-assignment.routes.js";
 import { clientRouter } from "./modules/portal/client.routes.js";
 import { autoRosterSyncedRouter } from "./modules/wfm/auto-roster-synced.routes.js";
@@ -100,6 +102,7 @@ app.get("/", (_req, res) => {
 });
 
 app.use("/api/auth", authRouter);
+app.use("/api/auth/launch", authLaunchRouter);
 app.use("/api/health", healthRouter);
 app.use("/api/admin", roleAssignmentRouter);
 app.use("/api/processes", processRouter);
@@ -111,6 +114,7 @@ app.use("/api/leave", leaveRouter);
 app.use("/api/payroll", payrollRouter);
 app.use("/api/payroll-compliance", payrollComplianceRouter); // India statutory compliance & registers
 app.use("/api/employees", employeeRouter);
+app.use("/api/kpi/process-role", kpiProcessRoleRouter);
 app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
 app.use("/api", clientRouter); // Client management + enhanced portal user routes
