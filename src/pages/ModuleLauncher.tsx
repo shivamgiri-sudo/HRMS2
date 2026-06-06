@@ -28,6 +28,21 @@ type PageRow = {
   module_master?: { module_name: string; module_group: string | null } | null;
 };
 
+function fallbackPageFromCode(pageCode: string): PageRow {
+  return {
+    page_code: pageCode,
+    module_code: pageCode.split("_")[0] || "HRMS",
+    page_name: pageCode
+      .toLowerCase()
+      .split("_")
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" "),
+    page_description: "Open workspace",
+    route_path: "/dashboard",
+    display_order: 999,
+  };
+}
+
 export default function ModuleLauncher() {
   const access = useWorkforceAccess();
 
@@ -35,9 +50,13 @@ export default function ModuleLauncher() {
     queryKey: ["workforce-module-launcher", access.visiblePageCodes],
     queryFn: async () => {
       if (!access.visiblePageCodes.length) return [] as PageRow[];
-      const res = await hrmsApi.get<{ success?: boolean; data?: PageRow[] }>("/api/access/pages/catalog");
-      const catalog = Array.isArray(res.data) ? res.data : [];
-      return catalog.filter((page) => access.visiblePageCodes.includes(page.page_code));
+      try {
+        const res = await hrmsApi.get<{ success?: boolean; data?: PageRow[] }>("/api/access/pages/my-catalog");
+        const catalog = Array.isArray(res.data) ? res.data : [];
+        return catalog.filter((page) => access.visiblePageCodes.includes(page.page_code));
+      } catch {
+        return access.visiblePageCodes.map(fallbackPageFromCode);
+      }
     },
     enabled: !access.isLoading,
   });
