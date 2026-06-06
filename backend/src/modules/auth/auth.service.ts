@@ -22,6 +22,66 @@ function mysqlDateTime(date: Date): string {
   return date.toISOString().slice(0, 19).replace('T', ' ');
 }
 
+function normalizeEmail(value: string): string {
+  return value.toLowerCase().trim();
+}
+
+async function ensureEmployeeRole(userId: string): Promise<void> {
+  try {
+    const [roleRows] = await db.execute<RowDataPacket[]>(
+      'SELECT role_key FROM workforce_role_catalog WHERE role_key = ? AND active_status = 1 LIMIT 1',
+      ['employee']
+    );
+    if (!roleRows[0]) return;
+    await db.execute(
+      'INSERT INTO user_roles (id, user_id, role_key, active_status) VALUES (UUID(), ?, ?, 1) ON DUPLICATE KEY UPDATE active_status = 1',
+      [userId, 'employee']
+    );
+  } catch {
+    // Non-fatal. Login account preparation must not fail only because role catalog is unavailable.
+  }
+}
+
+async function createOrRepairEmployeeAuthUser(employee: RowDataPacket, email: string): Promise<string | null> {
+  const existingUserId = employee.user_id ? String(employee.user_id) : '';
+
+  if (existingUserId) {
+    const [byId] = await db.execute<RowDataPacket[]>(
+      'SELECT id, is_blocked FROM auth_user WHERE id = ? LIMIT 1',
+      [existingUserId]
+    );
+    if (byId[0]) {
+      if (Number(byId[0].is_blocked ?? 0) === 1) return null;
+      await db.execute('UPDATE auth_user SET email = ?, must_change_password = 1 WHERE id = ?', [email, existingUserId]);
+      await ensureEmployeeRole(existingUserId);
+      return existingUserId;
+    }
+  }
+
+  const [byEmail] = await db.execute<RowDataPacket[]>(
+    'SELECT id, is_blocked FROM auth_user WHERE email = ? LIMIT 1',
+    [email]
+  );
+  if (byEmail[0]) {
+    if (Number(byEmail[0].is_blocked ?? 0) === 1) return null;
+    const userId = String(byEmail[0].id);
+    await db.execute('UPDATE employees SET user_id = ? WHERE id = ?', [userId, employee.id]);
+    await db.execute('UPDATE auth_user SET must_change_password = 1 WHERE id = ?', [userId]);
+    await ensureEmployeeRole(userId);
+    return userId;
+  }
+
+  const userId = crypto.randomUUID();
+  const randomPasswordHash = await bcrypt.hash(crypto.randomBytes(24).toString('hex'), 10);
+  await db.execute<ResultSetHeader>(
+    'INSERT INTO auth_user (id, email, password_hash, must_change_password) VALUES (?, ?, ?, 1)',
+    [userId, email, randomPasswordHash]
+  );
+  await db.execute('UPDATE employees SET user_id = ? WHERE id = ?', [userId, employee.id]);
+  await ensureEmployeeRole(userId);
+  return userId;
+}
+
 export const authService = {
   async login(identifier: string, password: string): Promise<AuthTokens> {
     // identifier can be email OR employee_code — try both
@@ -29,14 +89,14 @@ export const authService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT au.id, au.email, au.password_hash, au.is_blocked, COALESCE(au.must_change_password, 0) AS must_change_password
          FROM auth_user au
-        WHERE au.email = ?
+        WHERE LOWER(au.email) = LOWER(?)
         UNION
        SELECT au.id, au.email, au.password_hash, au.is_blocked, COALESCE(au.must_change_password, 0) AS must_change_password
          FROM auth_user au
          JOIN employees e ON e.user_id = au.id
-        WHERE e.employee_code = ?
+        WHERE UPPER(e.employee_code) = UPPER(?)
         LIMIT 1`,
-      [trimmed.toLowerCase(), trimmed.toUpperCase()]
+      [trimmed, trimmed]
     );
     const user = rows[0];
     if (!user) throw new Error('Invalid credentials');
@@ -106,7 +166,7 @@ export const authService = {
     const id = userId || crypto.randomUUID();
     await db.execute<ResultSetHeader>(
       'INSERT INTO auth_user (id, email, password_hash) VALUES (?, ?, ?)',
-      [id, email.toLowerCase().trim(), hash]
+      [id, normalizeEmail(email), hash]
     );
     return id;
   },
@@ -158,12 +218,29 @@ export const authService = {
   },
 
   async forgotPassword(email: string): Promise<string | null> {
+    const normalizedEmail = normalizeEmail(email);
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT id FROM auth_user WHERE email = ? AND is_blocked = 0 LIMIT 1',
-      [email.toLowerCase().trim()]
+      'SELECT id FROM auth_user WHERE LOWER(email) = LOWER(?) AND is_blocked = 0 LIMIT 1',
+      [normalizedEmail]
     );
-    if (!rows[0]) return null; // silent — don't leak whether email exists
-    return this.createPasswordResetTokenByUserId(rows[0].id, 1);
+    if (rows[0]) return this.createPasswordResetTokenByUserId(rows[0].id, 1);
+
+    // First-time employee access fallback. If launch bootstrap has not yet created
+    // auth_user, prepare an active employee account from employees.email/official_email.
+    const [employeeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, email, official_email, user_id, active_status
+         FROM employees
+        WHERE active_status = 1
+          AND (LOWER(email) = LOWER(?) OR LOWER(official_email) = LOWER(?))
+        LIMIT 1`,
+      [normalizedEmail, normalizedEmail]
+    );
+    const employee = employeeRows[0];
+    if (!employee) return null; // silent — don't leak whether email exists
+
+    const userId = await createOrRepairEmployeeAuthUser(employee, normalizedEmail);
+    if (!userId) return null;
+    return this.createPasswordResetTokenByUserId(userId, 1);
   },
 
   async resetPassword(rawToken: string, newPassword: string): Promise<void> {
