@@ -36,26 +36,46 @@ export type UserRoleData = {
   pages: WorkforcePageAccess[];
 };
 
-const getPrimaryRole = (roles: AppRole[]): AppRole | null => {
-  // Priority order for primary role determination
-  if (roles.includes("admin")) return "admin";
-  if (roles.includes("hr")) return "hr";
-  if (roles.includes("ceo")) return "ceo";
-  if (roles.includes("branch_head")) return "branch_head";
-  if (roles.includes("process_manager")) return "process_manager";
-  if (roles.includes("manager")) return "manager";
-  if (roles.includes("wfm")) return "wfm";
-  if (roles.includes("finance")) return "finance";
-  if (roles.includes("payroll")) return "payroll";
-  if (roles.includes("qa")) return "qa";
-  if (roles.includes("recruiter")) return "recruiter";
-  if (roles.includes("trainer")) return "trainer";
-  if (roles.includes("tl")) return "tl";
-  if (roles.includes("employee")) return "employee";
-  return null;
+const ROLE_ALIASES: Record<string, string[]> = {
+  manager: ["process_manager"],
+  process_manager: ["manager"],
+  tl: ["team_leader"],
+  team_leader: ["tl"],
 };
 
 const unique = <T,>(values: T[]) => Array.from(new Set(values.filter(Boolean)));
+
+function expandRoleKeys(values: string[]): string[] {
+  const expanded = new Set(values.filter(Boolean));
+  for (const role of values) {
+    for (const alias of ROLE_ALIASES[role] ?? []) expanded.add(alias);
+  }
+  return Array.from(expanded);
+}
+
+const getPrimaryRole = (roles: AppRole[]): AppRole | null => {
+  const expanded = expandRoleKeys(roles);
+  const priority: AppRole[] = [
+    "admin",
+    "hr",
+    "ceo",
+    "branch_head",
+    "process_manager",
+    "manager",
+    "assistant_manager",
+    "wfm",
+    "finance",
+    "payroll",
+    "qa",
+    "recruiter",
+    "trainer",
+    "team_leader",
+    "tl",
+    "employee",
+  ];
+
+  return priority.find((role) => expanded.includes(role)) ?? null;
+};
 
 export const useUserRole = () => {
   const { user } = useAuth();
@@ -65,18 +85,18 @@ export const useUserRole = () => {
     queryFn: async (): Promise<UserRoleData | null> => {
       if (!user?.id) return null;
 
-      // Local demo mode bypass — per-role
-      const demoCred = DEMO_CREDENTIALS.find(c => c.userId === user.id);
+      const demoCred = DEMO_CREDENTIALS.find((credential) => credential.userId === user.id);
       if (demoCred) {
+        const demoRole = demoCred.role as AppRole;
         return {
-          roles: [demoCred.role as AppRole],
-          roleKeys: [demoCred.role, "employee"],
-          primaryRole: demoCred.role as AppRole,
+          roles: [demoRole],
+          roleKeys: expandRoleKeys([demoRole, "employee"]),
+          primaryRole: getPrimaryRole([demoRole]),
           employeeId: demoCred.employeeId,
           employeeCode: demoCred.employeeCode,
           employeeName: demoCred.fullName,
           scopes: [],
-          pages: demoCred.pages.map(code => ({
+          pages: demoCred.pages.map((code) => ({
             page_code: code,
             can_view: true,
             can_create: true,
@@ -87,28 +107,34 @@ export const useUserRole = () => {
         };
       }
 
-      // MySQL backend path — if hrms_access_token present, use /api/access/me
-      if (localStorage.getItem('hrms_access_token')) {
-        const res = await hrmsApi.get<{ success: boolean; data: any }>('/api/access/me');
-        const d = (res as any).data;
-        if (d) {
-          const roles = (d.roles ?? []) as AppRole[];
-          const scopeRoleKeys: string[] = (d.scopes ?? []).map((s: any) => s.role_key as string).filter(Boolean);
-          const roleKeys = Array.from(new Set([...roles.map(String), ...scopeRoleKeys, 'employee']));
+      if (localStorage.getItem("hrms_access_token")) {
+        const response = await hrmsApi.get<{ success: boolean; data: any }>("/api/access/me");
+        const data = response.data;
+
+        if (data) {
+          const roles = unique((data.roles ?? []).map(String)) as AppRole[];
+          const scopeRoleKeys = (data.scopes ?? [])
+            .map((scope: WorkforceScope) => scope.role_key)
+            .filter(Boolean);
+          const roleKeys = expandRoleKeys([...roles, ...scopeRoleKeys, "employee"]);
+
           return {
             roles,
             roleKeys,
             primaryRole: getPrimaryRole(roles),
-            employeeId: d.employeeId ?? d.employee?.id ?? null,
-            employeeCode: d.employeeCode ?? d.employee?.employee_code ?? null,
-            employeeName: d.employeeName ?? (d.employee ? `${d.employee.first_name ?? ''} ${d.employee.last_name ?? ''}`.trim() : null),
-            scopes: d.scopes ?? [],
-            pages: d.pages ?? d.pagePerms ?? [],
+            employeeId: data.employeeId ?? data.employee?.id ?? null,
+            employeeCode: data.employeeCode ?? data.employee?.employee_code ?? null,
+            employeeName:
+              data.employeeName ??
+              (data.employee
+                ? `${data.employee.first_name ?? ""} ${data.employee.last_name ?? ""}`.trim()
+                : null),
+            scopes: data.scopes ?? [],
+            pages: data.pages ?? data.pagePerms ?? [],
           };
         }
       }
 
-      // No MySQL token — unauthenticated; do not fall back to Supabase
       return {
         roles: [],
         roleKeys: [],
@@ -128,15 +154,15 @@ export const useUserRole = () => {
 
 export const useIsAdminOrHR = () => {
   const { data, isLoading, error } = useUserRole();
-  const roles = data?.roles ?? [];
+  const roleKeys = data?.roleKeys ?? [];
 
   return {
-    isAdminOrHR: roles.includes("admin") || roles.includes("hr"),
+    isAdminOrHR: roleKeys.includes("admin") || roleKeys.includes("hr"),
     isLoading,
     error,
     role: data?.primaryRole ?? null,
-    roles,
-    roleKeys: data?.roleKeys ?? [],
+    roles: data?.roles ?? [],
+    roleKeys,
   };
 };
 
@@ -144,8 +170,13 @@ export const useWorkforceAccess = () => {
   const roleQuery = useUserRole();
 
   const access = useMemo(() => {
-    const pageSet = new Set((roleQuery.data?.pages ?? []).filter((p) => p.can_view).map((p) => p.page_code));
-    const roleKeys = roleQuery.data?.roleKeys ?? [];
+    const pageSet = new Set(
+      (roleQuery.data?.pages ?? [])
+        .filter((permission) => permission.can_view)
+        .map((permission) => permission.page_code),
+    );
+    const roleKeys = expandRoleKeys(roleQuery.data?.roleKeys ?? []);
+
     return {
       canViewPage: (pageCode: string) => pageSet.has(pageCode),
       visiblePageCodes: Array.from(pageSet),
@@ -154,7 +185,7 @@ export const useWorkforceAccess = () => {
       employeeId: roleQuery.data?.employeeId ?? null,
       employeeCode: roleQuery.data?.employeeCode ?? null,
       employeeName: roleQuery.data?.employeeName ?? null,
-      hasAnyRole: (...roles: string[]) => roles.some(r => roleKeys.includes(r)),
+      hasAnyRole: (...roles: string[]) => expandRoleKeys(roles).some((role) => roleKeys.includes(role)),
     };
   }, [roleQuery.data]);
 
@@ -164,8 +195,7 @@ export const useWorkforceAccess = () => {
   };
 };
 
-/** Check if user has any of the specified roles */
 export const useHasRole = (...roles: string[]) => {
   const { roleKeys } = useWorkforceAccess();
-  return roles.some(r => roleKeys.includes(r));
+  return expandRoleKeys(roles).some((role) => roleKeys.includes(role));
 };
