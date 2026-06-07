@@ -1,4 +1,7 @@
 import mysql from "mysql2/promise";
+import sql from "mssql";
+
+export type DbDialect = "mysql" | "mssql";
 
 export interface DbAdapterConfig {
   host: string;
@@ -6,7 +9,9 @@ export interface DbAdapterConfig {
   database: string;
   user: string;
   password: string;
-  db_type?: "mysql"; // currently only MySQL
+  db_type?: DbDialect;
+  encrypt?: boolean;
+  trustServerCertificate?: boolean;
 }
 
 export interface DbFetchResult {
@@ -15,135 +20,183 @@ export interface DbFetchResult {
   durationMs: number;
 }
 
-/**
- * Execute a parameterised read-only source query. Connector query parameters
- * arrive from approved mapping/sync rules; retain one cast at the external DB
- * boundary because mysql2 does not accept an assembled unknown[] at compile time.
- */
+const IDENTIFIER_PART = /^[A-Za-z_][A-Za-z0-9_$]*$/;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+export function assertSafeIdentifier(identifier: string, label = "identifier"): string {
+  const value = String(identifier ?? "").trim();
+  const parts = value.split(".");
+  if (!value || parts.some((part) => !IDENTIFIER_PART.test(part))) {
+    throw new Error(`Invalid ${label}: ${value || "(blank)"}`);
+  }
+  return value;
+}
+
+export function quoteIdentifier(identifier: string, dialect: DbDialect): string {
+  return assertSafeIdentifier(identifier)
+    .split(".")
+    .map((part) => dialect === "mssql" ? `[${part}]` : `\`${part}\``)
+    .join(".");
+}
+
+function safeDate(value: string | undefined, label: string): string | undefined {
+  if (value === undefined || value === "") return undefined;
+  if (!ISO_DATE.test(value)) throw new Error(`${label} must be YYYY-MM-DD`);
+  return value;
+}
+
+/** Execute a read-only query against an approved MySQL or SQL Server source. */
 export async function fetchFromDatabase(
   config: DbAdapterConfig,
   query: string,
-  params: readonly unknown[] = []
+  params: readonly unknown[] = [],
 ): Promise<DbFetchResult> {
   const start = Date.now();
+  const dialect = config.db_type ?? "mysql";
+
+  if (dialect === "mssql") {
+    const pool = await new sql.ConnectionPool({
+      server: config.host,
+      port: config.port || 1433,
+      user: config.user,
+      password: config.password,
+      database: config.database,
+      connectionTimeout: 10_000,
+      requestTimeout: 60_000,
+      pool: { min: 0, max: 3, idleTimeoutMillis: 30_000 },
+      options: {
+        encrypt: config.encrypt ?? false,
+        trustServerCertificate: config.trustServerCertificate ?? true,
+      },
+    }).connect();
+
+    try {
+      const request = pool.request();
+      params.forEach((value, index) => request.input(`p${index}`, value as any));
+      const result = await request.query(query);
+      const rows = (result.recordset ?? []) as Record<string, unknown>[];
+      return { rows, rowCount: rows.length, durationMs: Date.now() - start };
+    } finally {
+      await pool.close().catch(() => undefined);
+    }
+  }
 
   const pool = mysql.createPool({
-    host:            config.host,
-    port:            config.port,
-    user:            config.user,
-    password:        config.password,
-    database:        config.database,
+    host: config.host,
+    port: config.port || 3306,
+    user: config.user,
+    password: config.password,
+    database: config.database,
     connectionLimit: 3,
-    connectTimeout:  10000,
-    timezone:        "+00:00",
+    connectTimeout: 10_000,
+    timezone: "+00:00",
   });
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [rows] = await pool.execute(query, params as any);
-    const durationMs = Date.now() - start;
-    await pool.end();
-    return {
-      rows: rows as Record<string, unknown>[],
-      rowCount: (rows as unknown[]).length,
-      durationMs,
-    };
-  } catch (err) {
-    await pool.end().catch(() => {});
-    throw err;
+    const resultRows = rows as Record<string, unknown>[];
+    return { rows: resultRows, rowCount: resultRows.length, durationMs: Date.now() - start };
+  } finally {
+    await pool.end().catch(() => undefined);
   }
 }
 
-/**
- * Build a daily aggregate query for vicidial_agent_log style tables.
- * Returns: user (agent_code), session_date, total_login_minutes, campaign_id
- */
 export function buildDialerAggregateQuery(
   tableName: string,
   opts: {
+    dialect?: DbDialect;
     agentCodeCol?: string;
     dateCol?: string;
     talkCol?: string;
+    pauseCol?: string;
     campaignCol?: string;
     fromDate?: string;
     toDate?: string;
-  } = {}
+  } = {},
 ): string {
-  const {
-    agentCodeCol = "user",
-    dateCol      = "event_time",
-    talkCol      = "talk_sec",
-    campaignCol  = "campaign_id",
-    fromDate,
-    toDate,
-  } = opts;
+  const dialect = opts.dialect ?? "mysql";
+  const table = quoteIdentifier(tableName, dialect);
+  const agent = quoteIdentifier(opts.agentCodeCol ?? "user", dialect);
+  const date = quoteIdentifier(opts.dateCol ?? "event_time", dialect);
+  const talk = quoteIdentifier(opts.talkCol ?? "talk_sec", dialect);
+  const pause = quoteIdentifier(opts.pauseCol ?? "pause_sec", dialect);
+  const campaign = quoteIdentifier(opts.campaignCol ?? "campaign_id", dialect);
+  const fromDate = safeDate(opts.fromDate, "fromDate");
+  const toDate = safeDate(opts.toDate, "toDate");
+  const dayExpr = dialect === "mssql" ? `CAST(${date} AS date)` : `DATE(${date})`;
 
   let where = "WHERE 1=1";
-  if (fromDate) where += ` AND DATE(${dateCol}) >= '${fromDate}'`;
-  if (toDate)   where += ` AND DATE(${dateCol}) <= '${toDate}'`;
+  if (fromDate) where += ` AND ${dayExpr} >= '${fromDate}'`;
+  if (toDate) where += ` AND ${dayExpr} <= '${toDate}'`;
+  where += dialect === "mssql"
+    ? ` AND ${agent} LIKE '[A-Z][A-Z]%[0-9]'`
+    : ` AND ${agent} REGEXP '^[A-Z]{2,4}[0-9]{4,6}$'`;
+
+  const top = dialect === "mssql" ? "TOP (10000) " : "";
+  const limit = dialect === "mysql" ? "LIMIT 10000" : "";
 
   return `
-    SELECT
-      ${agentCodeCol}              AS employee_code,
-      DATE(${dateCol})             AS session_date,
-      ${campaignCol}               AS process_name,
-      ROUND(SUM(${talkCol}) / 60)  AS login_minutes,
-      ROUND(SUM(pause_sec) / 60)   AS break_minutes,
-      COUNT(*)                     AS event_count
-    FROM ${tableName}
+    SELECT ${top}
+      ${agent} AS employee_code,
+      ${dayExpr} AS session_date,
+      ${campaign} AS process_name,
+      ROUND(SUM(${talk}) / 60.0, 0) AS login_minutes,
+      ROUND(SUM(${pause}) / 60.0, 0) AS break_minutes,
+      COUNT(*) AS event_count
+    FROM ${table}
     ${where}
-      AND ${agentCodeCol} REGEXP '^[A-Z]{2,4}[0-9]{4,6}$'
-    GROUP BY ${agentCodeCol}, DATE(${dateCol}), ${campaignCol}
-    ORDER BY DATE(${dateCol}) DESC, login_minutes DESC
-    LIMIT 10000
+    GROUP BY ${agent}, ${dayExpr}, ${campaign}
+    ORDER BY ${dayExpr} DESC, login_minutes DESC
+    ${limit}
   `.trim();
 }
 
-/**
- * Build query for CDR-style tables (cdr_in_*, cdr_ob_*).
- * Returns per-agent per-day call counts and durations.
- */
 export function buildCdrAggregateQuery(
   tableName: string,
   opts: {
-    agentIdCol?:   string;
+    dialect?: DbDialect;
+    agentIdCol?: string;
     agentNameCol?: string;
-    dateCol?:      string;
-    talkCol?:      string;
-    campaignCol?:  string;
+    dateCol?: string;
+    talkCol?: string;
+    campaignCol?: string;
     dispositionCol?: string;
     fromDate?: string;
     toDate?: string;
-  } = {}
+  } = {},
 ): string {
-  const {
-    agentIdCol    = "AgentId",
-    agentNameCol  = "AgentName",
-    dateCol       = "CallDate",
-    talkCol       = "CallDurationSecond",
-    campaignCol   = "CampaignName",
-    dispositionCol = "Disposition",
-    fromDate,
-    toDate,
-  } = opts;
+  const dialect = opts.dialect ?? "mysql";
+  const table = quoteIdentifier(tableName, dialect);
+  const agentId = quoteIdentifier(opts.agentIdCol ?? "AgentId", dialect);
+  const agentName = quoteIdentifier(opts.agentNameCol ?? "AgentName", dialect);
+  const date = quoteIdentifier(opts.dateCol ?? "CallDate", dialect);
+  const talk = quoteIdentifier(opts.talkCol ?? "CallDurationSecond", dialect);
+  const campaign = quoteIdentifier(opts.campaignCol ?? "CampaignName", dialect);
+  const disposition = quoteIdentifier(opts.dispositionCol ?? "Disposition", dialect);
+  const fromDate = safeDate(opts.fromDate, "fromDate");
+  const toDate = safeDate(opts.toDate, "toDate");
+  const dayExpr = dialect === "mssql" ? `CAST(${date} AS date)` : `DATE(${date})`;
 
   let where = "WHERE 1=1";
-  if (fromDate) where += ` AND DATE(${dateCol}) >= '${fromDate}'`;
-  if (toDate)   where += ` AND DATE(${dateCol}) <= '${toDate}'`;
+  if (fromDate) where += ` AND ${dayExpr} >= '${fromDate}'`;
+  if (toDate) where += ` AND ${dayExpr} <= '${toDate}'`;
+
+  const top = dialect === "mssql" ? "TOP (10000) " : "";
+  const limit = dialect === "mysql" ? "LIMIT 10000" : "";
 
   return `
-    SELECT
-      ${agentIdCol}                    AS employee_code,
-      ${agentNameCol}                  AS employee_name,
-      DATE(${dateCol})                 AS session_date,
-      ${campaignCol}                   AS process_name,
-      ROUND(SUM(${talkCol}) / 60)      AS login_minutes,
-      COUNT(*)                         AS total_calls,
-      SUM(CASE WHEN ${dispositionCol} IS NOT NULL THEN 1 ELSE 0 END) AS dispositioned_calls
-    FROM ${tableName}
+    SELECT ${top}
+      ${agentId} AS employee_code,
+      ${agentName} AS employee_name,
+      ${dayExpr} AS session_date,
+      ${campaign} AS process_name,
+      ROUND(SUM(${talk}) / 60.0, 0) AS login_minutes,
+      COUNT(*) AS total_calls,
+      SUM(CASE WHEN ${disposition} IS NOT NULL THEN 1 ELSE 0 END) AS dispositioned_calls
+    FROM ${table}
     ${where}
-    GROUP BY ${agentIdCol}, ${agentNameCol}, DATE(${dateCol}), ${campaignCol}
-    ORDER BY DATE(${dateCol}) DESC, total_calls DESC
-    LIMIT 10000
+    GROUP BY ${agentId}, ${agentName}, ${dayExpr}, ${campaign}
+    ORDER BY ${dayExpr} DESC, total_calls DESC
+    ${limit}
   `.trim();
 }
