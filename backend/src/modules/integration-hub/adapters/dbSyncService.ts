@@ -1,21 +1,29 @@
-import { randomUUID } from "crypto";
-import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import { fetchFromDatabase, buildDialerAggregateQuery, buildCdrAggregateQuery } from "./databaseAdapter.js";
+import {
+  assertSafeIdentifier,
+  buildCdrAggregateQuery,
+  buildDialerAggregateQuery,
+  fetchFromDatabase,
+  type DbDialect,
+} from "./databaseAdapter.js";
 import type { IntegrationConfig } from "../integration.types.js";
 
 interface DbConfig {
-  db_type?: string;
+  db_type?: "mysql" | "mssql" | "sqlserver";
   host: string;
-  port: number;
+  port?: number;
   database: string;
   source_tables: string[];
   target_table: string;
   agent_code_column?: string;
+  agent_name_column?: string;
   date_column?: string;
   talk_col?: string;
   pause_col?: string;
   campaign_col?: string;
+  disposition_col?: string;
+  encrypt?: boolean;
+  trust_server_certificate?: boolean;
   sync_mode?: "daily_aggregate" | "daily_snapshot" | "incremental";
 }
 
@@ -27,111 +35,160 @@ interface SyncResult {
   errors: string[];
 }
 
-/**
- * Get DB credentials from environment using the secret_name as key prefix.
- * Convention: secret_name = "dialer_db_creds"
- *   → env vars: DIALER_DB_CREDS_USER, DIALER_DB_CREDS_PASS
- * Falls back to the shared shivam_user credentials for the 122.184.128.90 server.
- */
+function parseConfig(value: IntegrationConfig["config_json"]): DbConfig {
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as DbConfig;
+    } catch {
+      throw new Error("Connector config_json is not valid JSON");
+    }
+  }
+  return (value ?? {}) as unknown as DbConfig;
+}
+
 function getDbCredentials(secretName: string): { user: string; password: string } {
-  const prefix = (secretName ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "_");
-  const user     = process.env[`${prefix}_USER`]     ?? process.env.DB_USER ?? "shivam_user";
-  const password = process.env[`${prefix}_PASS`]     ?? process.env.DB_PASSWORD ?? "";
+  const prefix = String(secretName ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  if (!prefix) throw new Error("Database connector secret_name is required");
+
+  const user = process.env[`${prefix}_USER`];
+  const password = process.env[`${prefix}_PASS`] ?? process.env[`${prefix}_PASSWORD`];
+  if (!user || !password) {
+    throw new Error(`Missing connector credentials: ${prefix}_USER and ${prefix}_PASS/PASSWORD`);
+  }
+
   return { user, password };
+}
+
+function dialectFor(config: DbConfig): DbDialect {
+  return config.db_type === "mssql" || config.db_type === "sqlserver" ? "mssql" : "mysql";
 }
 
 export async function syncDatabaseConnector(
   connector: IntegrationConfig,
-  opts: { fromDate?: string; toDate?: string; userId?: string } = {}
+  opts: { fromDate?: string; toDate?: string; userId?: string } = {},
 ): Promise<SyncResult> {
-  const result: SyncResult = { rows_fetched: 0, rows_inserted: 0, rows_skipped: 0, duration_ms: 0, errors: [] };
-  const start = Date.now();
+  const result: SyncResult = {
+    rows_fetched: 0,
+    rows_inserted: 0,
+    rows_skipped: 0,
+    duration_ms: 0,
+    errors: [],
+  };
+  const startedAt = Date.now();
 
-  if (connector.integration_type !== "database") {
-    result.errors.push("Not a database connector");
-    return result;
-  }
+  try {
+    if (connector.integration_type !== "database") throw new Error("Not a database connector");
+    if (!connector.active_status) throw new Error("Database connector is inactive");
 
-  const cfg = (connector.config_json ?? {}) as unknown as DbConfig;
-  if (!cfg.host || !cfg.database) {
-    result.errors.push("Missing host or database in config_json");
-    return result;
-  }
+    const config = parseConfig(connector.config_json);
+    if (!config.host || !config.database) throw new Error("Missing host or database in config_json");
+    if (!Array.isArray(config.source_tables) || config.source_tables.length === 0) {
+      throw new Error("At least one approved source table is required");
+    }
 
-  const creds = getDbCredentials(connector.secret_name ?? "");
+    // The legacy dialer connector currently promotes only into this controlled table.
+    // Generic HRMS master-data mappings must use the staged Data Tunnel engine.
+    if (config.target_table !== "dialer_session_log") {
+      throw new Error("Unsupported target table. Use an approved staged mapping for HRMS master data");
+    }
 
-  const fromDate = opts.fromDate ?? new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-  const toDate   = opts.toDate   ?? new Date().toISOString().slice(0, 10);
+    assertSafeIdentifier(config.target_table, "target table");
+    const credentials = getDbCredentials(connector.secret_name ?? "");
+    const dialect = dialectFor(config);
+    const fromDate = opts.fromDate ?? new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const toDate = opts.toDate ?? new Date().toISOString().slice(0, 10);
 
-  for (const sourceTable of (cfg.source_tables ?? [])) {
-    try {
-      // Build appropriate query based on table naming pattern
-      let query: string;
-      const isVicidial = sourceTable.startsWith("vicidial_agent_log");
-      const isCdr = sourceTable.startsWith("cdr_");
+    for (const sourceTable of config.source_tables) {
+      try {
+        assertSafeIdentifier(sourceTable, "source table");
+        const plainTableName = sourceTable.split(".").at(-1) ?? sourceTable;
+        const isVicidial = plainTableName.startsWith("vicidial_agent_log");
+        const isCdr = plainTableName.startsWith("cdr_");
 
-      if (isVicidial) {
-        query = buildDialerAggregateQuery(sourceTable, {
-          agentCodeCol: cfg.agent_code_column ?? "user",
-          dateCol:      cfg.date_column       ?? "event_time",
-          talkCol:      cfg.talk_col          ?? "talk_sec",
-          campaignCol:  cfg.campaign_col      ?? "campaign_id",
-          fromDate,
-          toDate,
-        });
-      } else if (isCdr) {
-        query = buildCdrAggregateQuery(sourceTable, {
-          agentIdCol:  cfg.agent_code_column ?? "AgentId",
-          dateCol:     cfg.date_column       ?? "CallDate",
-          talkCol:     "CallDurationSecond",
-          campaignCol: cfg.campaign_col      ?? "CampaignName",
-          fromDate,
-          toDate,
-        });
-      } else {
-        // Generic: just select all rows in date range
-        query = `SELECT * FROM ${sourceTable} WHERE 1=1 LIMIT 5000`;
-      }
+        let query: string;
+        if (isVicidial) {
+          query = buildDialerAggregateQuery(sourceTable, {
+            dialect,
+            agentCodeCol: config.agent_code_column ?? "user",
+            dateCol: config.date_column ?? "event_time",
+            talkCol: config.talk_col ?? "talk_sec",
+            pauseCol: config.pause_col ?? "pause_sec",
+            campaignCol: config.campaign_col ?? "campaign_id",
+            fromDate,
+            toDate,
+          });
+        } else if (isCdr) {
+          query = buildCdrAggregateQuery(sourceTable, {
+            dialect,
+            agentIdCol: config.agent_code_column ?? "AgentId",
+            agentNameCol: config.agent_name_column ?? "AgentName",
+            dateCol: config.date_column ?? "CallDate",
+            talkCol: config.talk_col ?? "CallDurationSecond",
+            campaignCol: config.campaign_col ?? "CampaignName",
+            dispositionCol: config.disposition_col ?? "Disposition",
+            fromDate,
+            toDate,
+          });
+        } else {
+          throw new Error("Source table is not an approved dialer/CDR pattern; configure it through staged mapping");
+        }
 
-      const fetched = await fetchFromDatabase(
-        { host: cfg.host, port: cfg.port ?? 3306, database: cfg.database, user: creds.user, password: creds.password },
-        query
-      );
+        const fetched = await fetchFromDatabase({
+          host: config.host,
+          port: config.port ?? (dialect === "mssql" ? 1433 : 3306),
+          database: config.database,
+          user: credentials.user,
+          password: credentials.password,
+          db_type: dialect,
+          encrypt: config.encrypt ?? false,
+          trustServerCertificate: config.trust_server_certificate ?? true,
+        }, query);
 
-      result.rows_fetched += fetched.rowCount;
+        result.rows_fetched += fetched.rowCount;
 
-      // Write rows to target table (dialer_session_log for vicidial/cdr)
-      if (cfg.target_table === "dialer_session_log" && fetched.rowCount > 0) {
         for (const row of fetched.rows) {
+          const employeeCode = String(row.employee_code ?? "").trim();
+          const sessionDate = String(row.session_date ?? toDate).slice(0, 10);
+          if (!employeeCode || !/^\d{4}-\d{2}-\d{2}$/.test(sessionDate)) {
+            result.rows_skipped++;
+            continue;
+          }
+
           try {
             await db.execute(
               `INSERT INTO dialer_session_log
                  (id, integration_key, employee_code, session_date, login_minutes, process_name, source_system)
                VALUES (UUID(), ?, ?, ?, ?, ?, ?)
                ON DUPLICATE KEY UPDATE
-                 login_minutes = login_minutes + VALUES(login_minutes),
+                 login_minutes = VALUES(login_minutes),
+                 process_name = VALUES(process_name),
                  source_system = VALUES(source_system)`,
               [
                 connector.integration_key,
-                String(row.employee_code ?? row.user ?? ""),
-                String(row.session_date  ?? row.CallDate ?? toDate),
-                Number(row.login_minutes ?? (Number(row.total_talk_sec ?? 0) / 60)),
-                String(row.process_name  ?? row.campaign_id ?? ""),
-                `${cfg.database}.${sourceTable}`,
-              ]
+                employeeCode,
+                sessionDate,
+                Number(row.login_minutes ?? 0),
+                String(row.process_name ?? "").trim(),
+                `${config.database}.${sourceTable}`,
+              ],
             );
             result.rows_inserted++;
-          } catch {
+          } catch (error) {
             result.rows_skipped++;
+            if (result.errors.length < 25) {
+              result.errors.push(`${sourceTable}/${employeeCode}: ${error instanceof Error ? error.message : String(error)}`);
+            }
           }
         }
+      } catch (error) {
+        result.errors.push(`${sourceTable}: ${error instanceof Error ? error.message : String(error)}`);
       }
-
-    } catch (err: any) {
-      result.errors.push(`${sourceTable}: ${err.message}`);
     }
+  } catch (error) {
+    result.errors.push(error instanceof Error ? error.message : String(error));
+  } finally {
+    result.duration_ms = Date.now() - startedAt;
   }
 
-  result.duration_ms = Date.now() - start;
   return result;
 }
