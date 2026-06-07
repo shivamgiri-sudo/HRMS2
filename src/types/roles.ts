@@ -1,4 +1,17 @@
 export type AppRole =
-  | "admin" | "hr" | "manager" | "employee" | "recruiter"
-  | "qa" | "wfm" | "finance" | "trainer" | "ceo"
-  | "process_manager" | "team_leader";
+  | "admin"
+  | "hr"
+  | "ceo"
+  | "branch_head"
+  | "process_manager"
+  | "manager"
+  | "assistant_manager"
+  | "team_leader"
+  | "tl"
+  | "wfm"
+  | "finance"
+  | "payroll"
+  | "qa"
+  | "trainer"
+  | "recruiter"
+  | "employee";
