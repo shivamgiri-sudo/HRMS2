@@ -8,14 +8,26 @@ import { syncDatabaseConnector } from "./adapters/dbSyncService.js";
 export const integrationRouter = Router();
 
 integrationRouter.use(requireAuth);
-integrationRouter.use(requireRole("admin"));  // ALL integration operations admin-only
+integrationRouter.use(requireRole("admin"));
 
+// Static routes must always be declared before /:key routes.
 integrationRouter.get("/runs", (req, res, next) => {
   integrationController.listRuns(req as any, res).catch(next);
 });
 
 integrationRouter.post("/field-maps/confirm", (req, res, next) => {
   integrationController.confirmFieldMap(req as any, res).catch(next);
+});
+
+// GET /api/integration-hub/db-connectors — list only active database connectors.
+integrationRouter.get("/db-connectors", async (_req: any, res: any, next: any) => {
+  try {
+    const all = await integrationService.list({ activeStatus: "active" });
+    const dbConnectors = all.filter((connector) => connector.integration_type === "database");
+    return res.json({ success: true, data: dbConnectors });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 integrationRouter.get("/", (req, res, next) => {
@@ -54,32 +66,27 @@ integrationRouter.put("/:key/schedule", (req, res, next) => {
   integrationController.upsertSchedule(req as any, res).catch(next);
 });
 
-// POST /api/integration-hub/:key/db-sync — pull from external DB and write to mas_hrms
+// POST /api/integration-hub/:key/db-sync — pull from an approved external DB connector.
 integrationRouter.post("/:key/db-sync", async (req: any, res: any, next: any) => {
   try {
     const connector = await integrationService.getByKey(req.params.key);
     if (connector.integration_type !== "database") {
       return res.status(400).json({ success: false, message: "Not a database connector" });
     }
+
     const { fromDate, toDate } = req.body ?? {};
     const result = await syncDatabaseConnector(connector, {
       fromDate,
       toDate,
       userId: req.authUser?.id,
     });
+
     return res.json({
       success: result.errors.length === 0,
       data: result,
       message: `Synced ${result.rows_inserted} rows from ${connector.integration_name}`,
     });
-  } catch (err) { next(err); }
-});
-
-// GET /api/integration-hub/db-connectors — list only database type connectors with status
-integrationRouter.get("/db-connectors", async (req: any, res: any, next: any) => {
-  try {
-    const all = await integrationService.list({ activeStatus: "active" });
-    const dbConnectors = all.filter((c) => c.integration_type === "database");
-    return res.json({ success: true, data: dbConnectors });
-  } catch (err) { next(err); }
+  } catch (error) {
+    return next(error);
+  }
 });
