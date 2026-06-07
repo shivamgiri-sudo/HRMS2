@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,8 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Lock } from "lucide-react";
 import hrHubLogo from "@/assets/brand/mcn-logo.png";
-
-const API_URL = import.meta.env.VITE_HRMS_API_URL || 'http://localhost:5055';
+import { hrmsApi } from "@/lib/hrmsApi";
 
 const ResetPassword = () => {
   const [password, setPassword] = useState("");
@@ -20,15 +19,18 @@ const ResetPassword = () => {
   const { toast } = useToast();
 
   useEffect(() => {
-    const t = searchParams.get('token');
-    setToken(t);
+    setToken(searchParams.get("token"));
   }, [searchParams]);
 
-  const handleReset = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleReset = async (event: React.FormEvent) => {
+    event.preventDefault();
 
-    if (password.length < 6) {
-      toast({ title: "Error", description: "Password must be at least 6 characters.", variant: "destructive" });
+    if (!token) {
+      toast({ title: "Error", description: "This reset link is invalid or expired.", variant: "destructive" });
+      return;
+    }
+    if (password.length < 8) {
+      toast({ title: "Error", description: "Password must be at least 8 characters.", variant: "destructive" });
       return;
     }
     if (password !== confirmPassword) {
@@ -38,20 +40,15 @@ const ResetPassword = () => {
 
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/auth/reset-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, password }),
+      await hrmsApi.post<{ success: boolean }>("/api/auth/reset-password", { token, password });
+      toast({ title: "Password Updated", description: "Your password has been reset. Please log in." });
+      navigate("/auth", { replace: true });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to reset password.",
+        variant: "destructive",
       });
-      const json = await res.json();
-      if (!res.ok) {
-        toast({ title: "Error", description: json.error || "Failed to reset password.", variant: "destructive" });
-      } else {
-        toast({ title: "Password Updated", description: "Your password has been reset. Please log in." });
-        navigate("/auth", { replace: true });
-      }
-    } catch {
-      toast({ title: "Error", description: "Network error. Please try again.", variant: "destructive" });
     } finally {
       setIsLoading(false);
     }
@@ -83,17 +80,17 @@ const ResetPassword = () => {
             <Lock className="h-6 w-6 text-primary" />
           </div>
           <CardTitle className="text-2xl">Set New Password</CardTitle>
-          <CardDescription>Enter your new password below.</CardDescription>
+          <CardDescription>Use at least 8 characters for your new password.</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleReset} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="new-password">New Password</Label>
-              <Input id="new-password" type="password" placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} disabled={isLoading} />
+              <Input id="new-password" type="password" autoComplete="new-password" placeholder="••••••••" value={password} onChange={(event) => setPassword(event.target.value)} disabled={isLoading} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="confirm-password">Confirm Password</Label>
-              <Input id="confirm-password" type="password" placeholder="••••••••" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} disabled={isLoading} />
+              <Input id="confirm-password" type="password" autoComplete="new-password" placeholder="••••••••" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} disabled={isLoading} />
             </div>
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" />Updating...</>) : "Update Password"}
