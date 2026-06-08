@@ -143,6 +143,20 @@ export const useIsAdminOrHR = () => {
   };
 };
 
+export const useCanAccessPayroll = () => {
+  const { data, isLoading, error } = useUserRole();
+  const roleKeys = data?.roleKeys ?? [];
+
+  return {
+    canAccessPayroll: roleKeys.includes("admin") || roleKeys.includes("hr") || roleKeys.includes("finance") || roleKeys.includes("payroll"),
+    isLoading,
+    error,
+    role: data?.primaryRole ?? null,
+    roles: data?.roles ?? [],
+    roleKeys,
+  };
+};
+
 export const useWorkforceAccess = () => {
   const roleQuery = useUserRole();
 
