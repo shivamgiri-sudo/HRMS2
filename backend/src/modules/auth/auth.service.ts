@@ -236,14 +236,14 @@ export const authService = {
     if (rows[0]) return this.createPasswordResetTokenByUserId(rows[0].id, 1);
 
     // First-time employee access fallback. If launch bootstrap has not yet created
-    // auth_user, prepare employee account from employees.email/official_email.
+    // auth_user, prepare employee account from employees.email.
     // Includes both active and inactive employees (35K+ total).
     const [employeeRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, email, official_email, user_id, active_status
+      `SELECT id, email, user_id, active_status
          FROM employees
-        WHERE (LOWER(email) = LOWER(?) OR LOWER(official_email) = LOWER(?))
+        WHERE LOWER(email) = LOWER(?)
         LIMIT 1`,
-      [normalizedEmail, normalizedEmail]
+      [normalizedEmail]
     );
     const employee = employeeRows[0];
     if (!employee) return null; // silent — don't leak whether email exists
