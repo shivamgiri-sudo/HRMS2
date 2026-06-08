@@ -1,23 +1,11 @@
 import { randomUUID } from "crypto";
+import bcrypt from "bcryptjs";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { Employee, PaginatedResult } from "./employee.types.js";
 import type { CreateEmployeeInput, EmployeeFilters, UpdateEmployeeInput } from "./employee.validation.js";
-import { assignRole } from "../access/access.service.js";
-import { appendJourneyEvent, appendJourneyEvents } from "./journeyLog.service.js";
 
-const assignSalary = async (
-  employeeId: string,
-  structureId: string,
-  ctcAnnual: number,
-  effectiveFrom: string,
-  actorUserId: string
-) => {
-  const [currentRows] = await db.execute<RowDataPacket[]>(
-    "SELECT ctc_annual FROM employee_salary_assignment WHERE employee_id = ? AND active_status = 1 LIMIT 1",
-    [employeeId]
-  );
-  const previousCtc = currentRows[0]?.ctc_annual ?? null;
+const assignSalary = async (employeeId: string, structureId: string, ctcAnnual: number, effectiveFrom: string) => {
   await db.execute(
     "UPDATE employee_salary_assignment SET active_status = 0 WHERE employee_id = ? AND active_status = 1",
     [employeeId]
@@ -27,42 +15,65 @@ const assignSalary = async (
     "INSERT INTO employee_salary_assignment (id, employee_id, structure_id, ctc_annual, effective_from) VALUES (?, ?, ?, ?, ?)",
     [asgId, employeeId, structureId, ctcAnnual, effectiveFrom]
   );
-  await db.execute("UPDATE employees SET ctc = ? WHERE id = ?", [ctcAnnual, employeeId]);
-  await appendJourneyEvent({
-    employeeId,
-    eventType: previousCtc == null ? "salary_setup" : "increment",
-    eventDate: effectiveFrom,
-    description: previousCtc == null ? "Initial annual CTC assigned" : "Annual compensation revised",
-    oldValue: previousCtc == null ? undefined : String(previousCtc),
-    newValue: String(ctcAnnual),
-    module: "PAYROLL",
-    triggeredBy: actorUserId,
-    metadata: { structure_id: structureId, salary_assignment_id: asgId },
-  });
 };
 
-async function getEmployeeContext(id: string) {
-  const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.*,
-            COALESCE(NULLIF(TRIM(e.official_email), ''), e.email) AS email,
-            e.personal_email,
-            COALESCE(e.personal_phone, e.personal_mobile) AS personal_phone,
-            d.designation_name, dept.dept_name, b.branch_name, p.process_name,
-            CONCAT(m.first_name, ' ', COALESCE(m.last_name, '')) AS manager_name
-       FROM employees e
-       LEFT JOIN designation_master d ON d.id = e.designation_id
-       LEFT JOIN department_master dept ON dept.id = e.department_id
-       LEFT JOIN branch_master b ON b.id = e.branch_id
-       LEFT JOIN process_master p ON p.id = e.process_id
-       LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
-      WHERE e.id = ? LIMIT 1`,
-    [id]
+/**
+ * Auto-create auth_user for employee with valid email.
+ * Links employees.user_id to auth_user.id so employee can login via password reset.
+ */
+const createAuthUserForEmployee = async (employeeId: string, email: string): Promise<string | null> => {
+  const normalizedEmail = email.toLowerCase().trim();
+
+  // Check if auth_user already exists for this email
+  const [existingAuth] = await db.execute<RowDataPacket[]>(
+    'SELECT id, is_blocked FROM auth_user WHERE LOWER(email) = LOWER(?) LIMIT 1',
+    [normalizedEmail]
   );
-  return rows[0] ?? null;
-}
+
+  if (existingAuth.length > 0) {
+    const authUser = existingAuth[0];
+    if (Number(authUser.is_blocked ?? 0) === 1) {
+      return null; // Don't link to blocked accounts
+    }
+    // Link existing auth_user to this employee
+    await db.execute('UPDATE employees SET user_id = ? WHERE id = ?', [authUser.id, employeeId]);
+    return String(authUser.id);
+  }
+
+  // Create new auth_user with random password (user must reset via "Forgot Password")
+  const userId = randomUUID();
+  const randomPassword = randomUUID(); // Secure random password
+  const passwordHash = await bcrypt.hash(randomPassword, 10);
+
+  await db.execute(
+    'INSERT INTO auth_user (id, email, password_hash, must_change_password, is_blocked) VALUES (?, ?, ?, 1, 0)',
+    [userId, normalizedEmail, passwordHash]
+  );
+
+  // Link employee to auth_user
+  await db.execute('UPDATE employees SET user_id = ? WHERE id = ?', [userId, employeeId]);
+
+  // Assign default "employee" role if exists
+  try {
+    const [roleCheck] = await db.execute<RowDataPacket[]>(
+      'SELECT role_key FROM workforce_role_catalog WHERE role_key = ? AND active_status = 1 LIMIT 1',
+      ['employee']
+    );
+    if (roleCheck.length > 0) {
+      await db.execute(
+        'INSERT INTO user_roles (id, user_id, role_key, active_status) VALUES (UUID(), ?, ?, 1) ON DUPLICATE KEY UPDATE active_status = 1',
+        [userId, 'employee']
+      );
+    }
+  } catch {
+    // Non-fatal - role assignment failure shouldn't block employee creation
+  }
+
+  return userId;
+};
 
 export const employeeService = {
-  async createEmployee(input: CreateEmployeeInput, userId: string): Promise<Employee> {
+  async createEmployee(input: CreateEmployeeInput, _userId: string): Promise<Employee> {
     const [dup] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM employees WHERE employee_code = ? LIMIT 1",
       [input.employeeCode]
@@ -70,24 +81,21 @@ export const employeeService = {
     if ((dup as RowDataPacket[]).length > 0) throw new Error("Employee code already exists");
 
     const id = randomUUID();
+    // salary_start_date defaults to date_of_joining when not explicitly set
     const salaryStartDate = input.salaryStartDate ?? input.dateOfJoining;
     await db.execute(
       `INSERT INTO employees
-         (id, employee_code, first_name, last_name, email, official_email, mobile,
-          personal_email, personal_phone, gender,
+         (id, employee_code, first_name, last_name, email, mobile, gender,
           date_of_birth, date_of_joining, salary_start_date, employment_type,
           branch_id, department_id, process_id, designation_id, reporting_manager_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         input.employeeCode,
         input.firstName,
         input.lastName ?? null,
         input.email ?? null,
-        input.email ?? null,
         input.mobile ?? null,
-        input.personalEmail ?? null,
-        input.personalMobile ?? null,
         input.gender ?? null,
         input.dateOfBirth ?? null,
         input.dateOfJoining,
@@ -100,223 +108,77 @@ export const employeeService = {
         input.reportingManagerId ?? null,
       ]
     );
-    const employee = await this.getEmployee(id);
 
-    if (input.structureId && input.ctcAnnual) {
-      const salaryDate = input.salaryStartDate ?? input.dateOfJoining;
-      await assignSalary(id, input.structureId, input.ctcAnnual, salaryDate, userId);
+    // CRITICAL FIX: Auto-create auth_user if employee has valid email
+    // This ensures employees can login via "Forgot Password" flow immediately
+    if (input.email && input.email.includes('@') && input.email.toLowerCase() !== 'n/a') {
+      try {
+        await createAuthUserForEmployee(id, input.email);
+      } catch (error) {
+        // Log but don't block employee creation if auth fails
+        console.error(`[WARN] Failed to auto-create auth for employee ${input.employeeCode}:`, error);
+      }
     }
 
-    await appendJourneyEvent({
-      employeeId: id,
-      eventType: "joining",
-      eventDate: input.dateOfJoining,
-      description: `Employee joined as ${employee.designation_id ? "a designated team member" : "an employee"}`,
-      module: "ONBOARDING",
-      triggeredBy: userId,
-      metadata: {
-        branch_id: input.branchId,
-        department_id: input.departmentId,
-        process_id: input.processId,
-        designation_id: input.designationId,
-        reporting_manager_id: input.reportingManagerId,
-      },
-    });
+    const employee = await this.getEmployee(id);
+
+    // Auto-assign salary when structureId + ctcAnnual provided at creation
+    if (input.structureId && input.ctcAnnual) {
+      const salaryDate = input.salaryStartDate ?? input.dateOfJoining;
+      await assignSalary(id, input.structureId, input.ctcAnnual, salaryDate);
+    }
 
     return employee;
   },
 
   async getEmployee(id: string): Promise<Employee> {
-    const rec = await getEmployeeContext(id) as Employee | null;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM employees WHERE id = ? LIMIT 1", [id]
+    );
+    const rec = (rows as Employee[])[0];
     if (!rec) throw new Error("Employee not found");
     return rec;
   },
 
-  async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } | string }): Promise<PaginatedResult<Employee>> {
-    const { page, limit, status, recordStatus, processId, branchId, departmentId, search, scopeFilter, includeAnalytics } = filters;
+  async listEmployees(filters: EmployeeFilters & { scopeFilter?: string }): Promise<PaginatedResult<Employee>> {
+    const { page, limit, status, processId, branchId, search, scopeFilter } = filters;
     const offset = (page - 1) * limit;
-    const conds: string[] = [];
+    const conds: string[] = ["active_status = 1"];
     const params: unknown[] = [];
 
-    const inactiveStatusSql =
-      "('Inactive', 'inactive', 'INACTIVE', 'Terminated', 'terminated', 'TERMINATED', 'Offboarded', 'offboarded', 'OFFBOARDED', 'Absconded', 'absconded', 'ABSCONDED', 'Resigned', 'resigned', 'RESIGNED', 'Left', 'left', 'LEFT', 'Separated', 'separated', 'SEPARATED')";
+    if (status)    { conds.push("employment_status = ?"); params.push(status); }
+    if (processId) { conds.push("process_id = ?");        params.push(processId); }
+    if (branchId)  { conds.push("branch_id = ?");         params.push(branchId); }
+    if (search)    { conds.push("(full_name LIKE ? OR employee_code LIKE ?)"); params.push(`%${search}%`, `%${search}%`); }
 
-    if (recordStatus === "active") {
-      conds.push(`e.active_status = 1 AND (e.employment_status IS NULL OR e.employment_status NOT IN ${inactiveStatusSql})`);
-    } else if (recordStatus === "inactive") {
-      conds.push("e.active_status = 0");
-    } else {
-      conds.push("e.active_status IN (0, 1)");
-    }
-
-    if (status)    { conds.push("LOWER(e.employment_status) = LOWER(?)"); params.push(status); }
-    if (processId) {
-      conds.push("e.process_id = ?");
-      params.push(processId);
-    }
-    if (branchId)  {
-      conds.push("e.branch_id = ?");
-      params.push(branchId);
-    }
-    if (departmentId) {
-      conds.push("e.department_id = ?");
-      params.push(departmentId);
-    }
-    if (search)    {
-      const term = `%${search}%`;
-      // Comprehensive search: indexed fields + all relevant employee attributes
-      conds.push(`(
-        COALESCE(e.full_name, '') LIKE ?
-        OR CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) LIKE ?
-        OR COALESCE(e.first_name, '') LIKE ?
-        OR COALESCE(e.last_name, '') LIKE ?
-        OR e.employee_code LIKE ?
-        OR COALESCE(e.biometric_code, '') LIKE ?
-        OR COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email, '') LIKE ?
-        OR COALESCE(e.email, '') LIKE ?
-        OR COALESCE(e.mobile, '') LIKE ?
-        OR COALESCE(e.alternate_mobile, '') LIKE ?
-        OR COALESCE(dept.dept_name, '') LIKE ?
-        OR COALESCE(desig.designation_name, '') LIKE ?
-        OR COALESCE(b.branch_name, '') LIKE ?
-        OR COALESCE(p.process_name, '') LIKE ?
-        OR COALESCE(cc.cost_centre_name, '') LIKE ?
-        OR COALESCE(e.cost_center_code, '') LIKE ?
-        OR COALESCE(TRIM(CONCAT(m.first_name, ' ', COALESCE(m.last_name, ''))), '') LIKE ?
-        OR CAST(COALESCE(e.legacy_emp_id, e.legacy_id, '') AS CHAR) LIKE ?
-      )`);
-      params.push(term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term);
-    }
-
+    // Apply scope filter from middleware
     if (scopeFilter) {
-      if (typeof scopeFilter === 'object' && scopeFilter.sql) {
-        const scopeClause = String(scopeFilter.sql).replace(/^WHERE\s+/i, '').trim();
-        if (scopeClause) {
-          conds.push(`(${scopeClause})`);
-          params.push(...(scopeFilter.params || []));
-        }
-      } else if (typeof scopeFilter === 'string') {
-        const scopeClause = scopeFilter.replace(/^WHERE\s+/i, '').trim();
-        if (scopeClause) conds.push(`(${scopeClause})`);
-      }
+      const scopeClause = String(scopeFilter).replace(/^WHERE\s+/i, '').trim();
+      if (scopeClause) conds.push(`(${scopeClause})`);
     }
 
     const where = `WHERE ${conds.join(" AND ")}`;
-    const fromWithJoins = `
-       FROM employees e
-       LEFT JOIN department_master  dept  ON dept.id  = e.department_id  AND dept.active_status  = 1
-       LEFT JOIN designation_master desig ON desig.id = e.designation_id AND desig.active_status = 1
-       LEFT JOIN branch_master      b     ON b.id     = e.branch_id      AND b.active_status     = 1
-       LEFT JOIN process_master     p     ON p.id     = e.process_id     AND p.active_status     = 1
-       LEFT JOIN cost_centre_master cc    ON cc.id    = e.cost_centre_id
-       LEFT JOIN employees          m     ON m.id     = COALESCE(e.reporting_manager_id, e.manager_id)`;
-    const needsFilterJoins = Boolean(processId || branchId || departmentId || search);
-    const fromForCounts = needsFilterJoins ? fromWithJoins : "FROM employees e";
-    const fromForProcessBreakdown = needsFilterJoins
-      ? fromWithJoins
-      : `
-       FROM employees e
-       LEFT JOIN process_master p ON p.id = e.process_id AND p.active_status = 1`;
 
-    // Run data, combined-stats, and optional analytics in parallel — no sequential waterfall
-    const analyticsQuery: Promise<[RowDataPacket[], unknown]> = includeAnalytics
-      ? db.execute<RowDataPacket[]>(
-          `SELECT
-             e.process_id,
-             COALESCE(NULLIF(TRIM(p.process_name), ''), 'Unassigned') AS process_name,
-             COUNT(DISTINCT CASE
-               WHEN e.active_status = 1
-                AND (e.employment_status IS NULL OR e.employment_status NOT IN ${inactiveStatusSql})
-               THEN e.id END) AS active_count,
-             COUNT(DISTINCT CASE
-               WHEN e.active_status = 0
-               THEN e.id END) AS inactive_count,
-             COUNT(DISTINCT e.id) AS total_count
-           ${fromForProcessBreakdown}
-           ${where}
-           GROUP BY e.process_id, process_name
-           ORDER BY total_count DESC, process_name ASC
-           LIMIT 12`,
-          params
-        )
-      : Promise.resolve([[], undefined] as unknown as [RowDataPacket[], unknown]);
-
-    const [[rows], [statsRows], [processBreakdownRows]] = await Promise.all([
-      db.execute<RowDataPacket[]>(
-        `SELECT e.*,
-           COALESCE(NULLIF(TRIM(e.first_name), ''), NULLIF(TRIM(e.full_name), ''), '') AS first_name,
-           COALESCE(e.last_name, '') AS last_name,
-           e.id AS employee_id,
-           COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS email,
-           dept.dept_name         AS department_name,
-           desig.designation_name AS designation_name,
-           b.branch_name,
-           p.process_name,
-           cc.cost_centre_name,
-           TRIM(CONCAT(m.first_name, ' ', COALESCE(m.last_name, ''))) AS reporting_manager_name
-         ${fromWithJoins}
-         ${where}
-         ORDER BY e.employee_code ASC
-         LIMIT ${limit} OFFSET ${offset}`,
-        params
-      ),
-      // count + stats merged into one query — eliminates a separate COUNT round-trip
-      db.execute<RowDataPacket[]>(
-        `SELECT
-           COUNT(DISTINCT e.id) AS total_employees,
-           COUNT(DISTINCT CASE
-             WHEN e.active_status = 1
-              AND (e.employment_status IS NULL OR e.employment_status NOT IN ${inactiveStatusSql})
-             THEN e.id END) AS active_employees,
-           COUNT(DISTINCT CASE
-             WHEN e.active_status = 0
-             THEN e.id END) AS inactive_employees,
-           COUNT(DISTINCT e.department_id) AS department_count
-         ${fromForCounts}
-         ${where}`,
-        params
-      ),
-      analyticsQuery,
-    ]);
-
-    return {
-      data: rows as Employee[],
-      total: Number((statsRows as any)[0]?.total_employees ?? 0),
-      page,
-      limit,
-      stats: {
-        total_employees: Number((statsRows as any)[0]?.total_employees ?? 0),
-        active_employees: Number((statsRows as any)[0]?.active_employees ?? 0),
-        inactive_employees: Number((statsRows as any)[0]?.inactive_employees ?? 0),
-        department_count: Number((statsRows as any)[0]?.department_count ?? 0),
-      },
-      process_breakdown: (processBreakdownRows as any[]).map((row) => ({
-        process_id: row.process_id ?? null,
-        process_name: row.process_name ?? "Unassigned",
-        active_count: Number(row.active_count ?? 0),
-        inactive_count: Number(row.inactive_count ?? 0),
-        total_count: Number(row.total_count ?? 0),
-      })),
-    };
+    // Use string interpolation for LIMIT/OFFSET to avoid parameter binding issues
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM employees ${where} ORDER BY employee_code ASC LIMIT ${limit} OFFSET ${offset}`,
+      params
+    );
+    const [countRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM employees ${where}`, params
+    );
+    return { data: rows as Employee[], total: (countRows as any)[0]?.total ?? 0, page, limit };
   },
 
   async updateEmployee(id: string, input: UpdateEmployeeInput, _userId: string): Promise<Employee> {
-    const before = await getEmployeeContext(id);
-    if (!before) throw new Error("Employee not found");
+    await this.getEmployee(id);
     const sets: string[] = [];
     const params: unknown[] = [];
 
-    // CRITICAL: Employee code and name cannot be modified after creation
-    // if (input.employeeCode      !== undefined) { sets.push("employee_code = ?");        params.push(input.employeeCode); }
-    // if (input.firstName         !== undefined) { sets.push("first_name = ?");           params.push(input.firstName); }
-    // if (input.lastName          !== undefined) { sets.push("last_name = ?");            params.push(input.lastName ?? null); }
-    if (input.email             !== undefined) {
-      sets.push("email = ?", "official_email = ?");
-      params.push(input.email ?? null, input.email ?? null);
-    }
+    if (input.firstName         !== undefined) { sets.push("first_name = ?");           params.push(input.firstName); }
+    if (input.lastName          !== undefined) { sets.push("last_name = ?");            params.push(input.lastName ?? null); }
+    if (input.email             !== undefined) { sets.push("email = ?");                params.push(input.email ?? null); }
     if (input.mobile            !== undefined) { sets.push("mobile = ?");               params.push(input.mobile ?? null); }
-    if (input.personalEmail     !== undefined) { sets.push("personal_email = ?");       params.push(input.personalEmail ?? null); }
-    if (input.personalMobile    !== undefined) { sets.push("personal_phone = ?, personal_mobile = ?"); params.push(input.personalMobile ?? null, input.personalMobile ?? null); }
     if (input.gender            !== undefined) { sets.push("gender = ?");               params.push(input.gender); }
     if (input.dateOfBirth       !== undefined) { sets.push("date_of_birth = ?");        params.push(input.dateOfBirth ?? null); }
     if (input.dateOfJoining     !== undefined) { sets.push("date_of_joining = ?");      params.push(input.dateOfJoining); }
@@ -328,96 +190,15 @@ export const employeeService = {
     if (input.departmentId      !== undefined) { sets.push("department_id = ?");        params.push(input.departmentId ?? null); }
     if (input.processId         !== undefined) { sets.push("process_id = ?");           params.push(input.processId ?? null); }
     if (input.designationId     !== undefined) { sets.push("designation_id = ?");       params.push(input.designationId ?? null); }
-    if (input.designationName   !== undefined) {
-      sets.push("designation_id = (SELECT id FROM designation_master WHERE LOWER(TRIM(designation_name)) = LOWER(TRIM(?)) AND active_status = 1 ORDER BY created_at DESC LIMIT 1)");
-      params.push(input.designationName ?? "");
-    }
     if (input.reportingManagerId !== undefined) { sets.push("reporting_manager_id = ?"); params.push(input.reportingManagerId ?? null); }
-    if (input.address1          !== undefined) { sets.push("address1 = ?");              params.push(input.address1 ?? null); }
-    if (input.city              !== undefined) { sets.push("city = ?");                  params.push(input.city ?? null); }
-    if (input.country           !== undefined) { sets.push("country = ?");               params.push(input.country ?? null); }
-    if (input.workingHoursStart !== undefined) { sets.push("working_hours_start = ?");   params.push(input.workingHoursStart ?? null); }
-    if (input.workingHoursEnd   !== undefined) { sets.push("working_hours_end = ?");     params.push(input.workingHoursEnd ?? null); }
-    if (input.workingDays       !== undefined) { sets.push("working_days = ?");          params.push(input.workingDays == null ? null : JSON.stringify(input.workingDays)); }
     if (input.photoUrl          !== undefined) { sets.push("photo_url = ?");            params.push(input.photoUrl ?? null); }
     if (input.userId            !== undefined) { sets.push("user_id = ?");              params.push(input.userId ?? null); }
-    if ((input as any).ctc      !== undefined) { sets.push("ctc = ?");                 params.push((input as any).ctc ?? null); }
 
     if (sets.length > 0) {
       params.push(id);
       await db.execute(`UPDATE employees SET ${sets.join(", ")} WHERE id = ?`, params);
     }
-
-    if (input.designationId) {
-      try {
-        const updated = await this.getEmployee(id);
-        if (updated.user_id) {
-          const [mapRows] = await db.execute<RowDataPacket[]>(
-            `SELECT role_key FROM designation_role_map
-             WHERE designation_id = ? AND active_status = 1`,
-            [input.designationId]
-          );
-          for (const { role_key } of mapRows as any[]) {
-            await assignRole(updated.user_id, role_key as string, _userId, undefined);
-          }
-        }
-      } catch (err) {
-        console.error("[employee.service] designation role auto-assign failed:", err);
-      }
-    }
-
-    const updated = await this.getEmployee(id);
-    const after = await getEmployeeContext(id);
-
-    if (after) {
-      const today = new Date().toISOString().slice(0, 10);
-      const pendingEvents: Parameters<typeof appendJourneyEvents>[0] = [];
-
-      const changes = [
-        ["designation_id", "designation_change", before.designation_name, after.designation_name],
-        ["department_id", "department_change", before.dept_name, after.dept_name],
-        ["branch_id", "branch_change", before.branch_name, after.branch_name],
-        ["process_id", "process_change", before.process_name, after.process_name],
-        ["reporting_manager_id", "reporting_change", before.manager_name, after.manager_name],
-        ["employment_status", "status_change", before.employment_status, after.employment_status],
-        ["employment_type", "employment_type_change", before.employment_type, after.employment_type],
-        ["date_of_exit", "exit_date_change", before.date_of_exit, after.date_of_exit],
-      ] as const;
-
-      for (const [field, eventType, oldValue, newValue] of changes) {
-        if (String(before[field] ?? "") === String(after[field] ?? "")) continue;
-        pendingEvents.push({
-          employeeId: id,
-          eventType,
-          eventDate: today,
-          description: `${field.replace(/_/g, " ")} updated`,
-          oldValue: oldValue == null ? undefined : String(oldValue),
-          newValue: newValue == null ? undefined : String(newValue),
-          module: "EMPLOYEE",
-          triggeredBy: _userId,
-          metadata: { field },
-        });
-      }
-
-      if ((input as any).ctc !== undefined && Number(before.ctc ?? 0) !== Number(after.ctc ?? 0)) {
-        pendingEvents.push({
-          employeeId: id,
-          eventType: before.ctc == null ? "salary_setup" : "increment",
-          eventDate: today,
-          description: before.ctc == null ? "Initial annual CTC assigned" : "Annual compensation revised",
-          oldValue: before.ctc == null ? undefined : String(before.ctc),
-          newValue: after.ctc == null ? undefined : String(after.ctc),
-          module: "PAYROLL",
-          triggeredBy: _userId,
-          metadata: { field: "ctc" },
-        });
-      }
-
-      // Single DB round-trip for all change events
-      await appendJourneyEvents(pendingEvents);
-    }
-
-    return updated;
+    return this.getEmployee(id);
   },
 
   async deactivateEmployee(id: string, _userId: string): Promise<void> {
@@ -426,15 +207,5 @@ export const employeeService = {
       "UPDATE employees SET active_status = 0, employment_status = 'Inactive' WHERE id = ?",
       [id]
     );
-    await appendJourneyEvent({
-      employeeId: id,
-      eventType: "status_change",
-      eventDate: new Date().toISOString().slice(0, 10),
-      description: "Employee profile deactivated",
-      oldValue: "Active",
-      newValue: "Inactive",
-      module: "EMPLOYEE",
-      triggeredBy: _userId,
-    });
   },
 };

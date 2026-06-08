@@ -9,9 +9,8 @@ const _pool: Pool = mysql.createPool({
   database:           env.DB_NAME,
   connectionLimit:    env.DB_POOL_MAX,
   waitForConnections: true,
-  queueLimit:         200,   // reject after 200 queued — prevents unbounded memory growth under spike
-  connectTimeout:     10000,
-  timezone:           "local",
+  queueLimit:         0,
+  timezone:           "Z", // Force UTC timezone for all datetime operations
   decimalNumbers:     true,
 });
 
@@ -39,33 +38,3 @@ export async function pingDb(): Promise<void> {
   await conn.ping();
   conn.release();
 }
-
-// ── Billing DB (db_bill) — READ-ONLY pool ────────────────────────────────────
-// Only created when BILL_DB_HOST is configured.
-let _billPool: Pool | null = null;
-
-function getBillPool(): Pool {
-  if (_billPool) return _billPool;
-  if (!env.BILL_DB_HOST) {
-    throw new Error("BILL_DB_HOST is not configured. Set it in .env to use billing DB features.");
-  }
-  _billPool = mysql.createPool({
-    host:               env.BILL_DB_HOST,
-    port:               env.BILL_DB_PORT,
-    user:               env.BILL_DB_USER,
-    password:           env.BILL_DB_PASSWORD,
-    database:           env.BILL_DB_NAME,
-    connectionLimit:    5,
-    waitForConnections: true,
-    queueLimit:         0,
-    timezone:           "+00:00",
-    decimalNumbers:     true,
-  });
-  return _billPool;
-}
-
-export const billDb = {
-  execute<T extends QueryResult = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, FieldPacket[]]> {
-    return getBillPool().execute<T>(sql, params as AnyParams);
-  },
-};
