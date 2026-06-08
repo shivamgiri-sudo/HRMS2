@@ -1,0 +1,189 @@
+name: Local Deployment Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - "src/**"
+      - "backend/**"
+      - ".github/workflows/local-deployment-smoke.yml"
+
+jobs:
+  smoke:
+    name: Build, migrate, seed and login smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      NODE_ENV: development
+      PORT: 5055
+      FRONTEND_URL: http://localhost:8080
+      ACTIVE_DB_PROVIDER: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: rootpass
+      DB_NAME: mas_hrms
+      DB_POOL_MAX: 10
+      JWT_SECRET: local-ci-jwt-secret-minimum-32-characters
+      PORTAL_JWT_SECRET: local-ci-portal-secret-minimum-32-characters
+      PAYROLL_BANK_KEY: local-ci-bank-key-32-characters
+      COMM_SECRET: local-ci-comm-secret-32-characters
+      ENABLE_SCHEDULERS: "false"
+      SEED_DEMO_DATA: "false"
+      LEGACY_SYNC_ENABLED: "false"
+      PORTAL_DEMO_BYPASS: "false"
+      INTERNAL_DEMO_BYPASS: "false"
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: 587
+      SMTP_USER: ""
+      SMTP_PASS: ""
+      SMTP_FROM: noreply@example.com
+      SMTP_FROM_NAME: MAS Callnet HRMS
+      NCOSEC_DB_HOST: ""
+      NCOSEC_DB_PORT: 1433
+      NCOSEC_DB_USER: ""
+      NCOSEC_DB_PASSWORD: ""
+      NCOSEC_DB_NAME: NCOSEC
+      NCOSEC_DB_ENCRYPT: "false"
+      DIALER_DB_HOST: ""
+      DIALER_DB_PORT: 3306
+      DIALER_DB_USER: ""
+      DIALER_DB_PASSWORD: ""
+      DIALER_DB_NAME: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Backend typecheck
+        working-directory: backend
+        run: npm run typecheck
+
+      - name: Backend build
+        working-directory: backend
+        run: npm run build
+
+      - name: Frontend build
+        run: npm run build
+
+      - name: Start backend and run migrations
+        working-directory: backend
+        run: |
+          npm start > ../backend-smoke.log 2>&1 &
+          echo $! > ../backend-smoke.pid
+
+      - name: Wait for backend health
+        run: |
+          node <<'NODE'
+          const deadline = Date.now() + 120000;
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+          async function main() {
+            let lastText = '';
+            while (Date.now() < deadline) {
+              try {
+                const res = await fetch('http://localhost:5055/api/health');
+                lastText = await res.text();
+                if (res.ok) {
+                  const json = JSON.parse(lastText);
+                  if (json?.db === 'ok' && json?.migrations?.status === 'ok' && Array.isArray(json?.migrations?.failed) && json.migrations.failed.length === 0) {
+                    console.log(JSON.stringify(json, null, 2));
+                    return;
+                  }
+                }
+              } catch (error) {
+                lastText = error instanceof Error ? error.message : String(error);
+              }
+              await sleep(3000);
+            }
+            console.error('Backend did not become healthy. Last response/error:');
+            console.error(lastText);
+            process.exit(1);
+          }
+
+          main();
+          NODE
+
+      - name: Seed demo auth users
+        working-directory: backend
+        run: npm run seed:demo
+
+      - name: Validate demo logins
+        run: |
+          node <<'NODE'
+          const users = [
+            ['admin@mascallnet.com', 'Admin@123'],
+            ['hr@mascallnet.com', 'Hr@123456'],
+            ['tl@mascallnet.com', 'TeamLead@1'],
+          ];
+
+          async function login(identifier, password) {
+            const res = await fetch('http://localhost:5055/api/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ identifier, password }),
+            });
+            const text = await res.text();
+            if (!res.ok) throw new Error(`${identifier} login failed: HTTP ${res.status} ${text}`);
+            const json = JSON.parse(text);
+            if (!json?.data?.accessToken || !json?.data?.refreshToken) {
+              throw new Error(`${identifier} login response missing tokens: ${text}`);
+            }
+            console.log(`login ok: ${identifier}`);
+          }
+
+          async function main() {
+            for (const [identifier, password] of users) await login(identifier, password);
+          }
+
+          main().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Upload backend smoke log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-smoke-log
+          path: backend-smoke.log
+          if-no-files-found: ignore
+
+      - name: Stop backend
+        if: always()
+        run: |
+          if [ -f backend-smoke.pid ]; then
+            kill "$(cat backend-smoke.pid)" || true
+          fi
