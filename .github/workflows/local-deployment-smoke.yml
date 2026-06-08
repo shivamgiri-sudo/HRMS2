@@ -8,15 +8,17 @@ on:
     paths:
       - "package.json"
       - "package-lock.json"
+      - "playwright.config.ts"
+      - "e2e/**"
       - "src/**"
       - "backend/**"
       - ".github/workflows/local-deployment-smoke.yml"
 
 jobs:
   smoke:
-    name: Build, migrate, seed and login smoke
+    name: Build, migrate, seed, login and browser smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
 
     services:
       mysql:
@@ -32,6 +34,10 @@ jobs:
           --health-retries=20
 
     env:
+      # Opt into the future GitHub JavaScript action runtime now.
+      # Project runtime is still controlled by setup-node below.
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
       NODE_ENV: development
       PORT: 5055
       FRONTEND_URL: http://localhost:8080
@@ -69,6 +75,10 @@ jobs:
       DIALER_DB_PASSWORD: ""
       DIALER_DB_NAME: ""
 
+      VITE_HRMS_API_URL: http://localhost:5055
+      VITE_ENABLE_DEMO_LOGIN: "true"
+      PLAYWRIGHT_BASE_URL: http://localhost:8080
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -97,6 +107,9 @@ jobs:
       - name: Frontend build
         run: npm run build
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Start backend and run migrations
         working-directory: backend
         run: |
@@ -106,8 +119,19 @@ jobs:
       - name: Wait for backend health
         run: |
           node <<'NODE'
+          const fs = require('node:fs');
           const deadline = Date.now() + 120000;
           const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+          function dumpBackendLog() {
+            try {
+              console.error('\n----- backend-smoke.log -----');
+              console.error(fs.readFileSync('backend-smoke.log', 'utf8').slice(-12000));
+              console.error('----- end backend-smoke.log -----\n');
+            } catch (error) {
+              console.error('Could not read backend-smoke.log:', error instanceof Error ? error.message : String(error));
+            }
+          }
 
           async function main() {
             let lastText = '';
@@ -129,6 +153,7 @@ jobs:
             }
             console.error('Backend did not become healthy. Last response/error:');
             console.error(lastText);
+            dumpBackendLog();
             process.exit(1);
           }
 
@@ -142,6 +167,7 @@ jobs:
       - name: Validate demo logins
         run: |
           node <<'NODE'
+          const fs = require('node:fs');
           const users = [
             ['admin@mascallnet.com', 'Admin@123'],
             ['hr@mascallnet.com', 'Hr@123456'],
@@ -169,21 +195,76 @@ jobs:
 
           main().catch((error) => {
             console.error(error);
+            try {
+              console.error('\n----- backend-smoke.log -----');
+              console.error(fs.readFileSync('backend-smoke.log', 'utf8').slice(-12000));
+              console.error('----- end backend-smoke.log -----\n');
+            } catch {}
             process.exit(1);
           });
           NODE
 
-      - name: Upload backend smoke log on failure
+      - name: Start frontend preview
+        run: |
+          npm run preview -- --host 0.0.0.0 --port 8080 > frontend-smoke.log 2>&1 &
+          echo $! > frontend-smoke.pid
+
+      - name: Wait for frontend preview
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const deadline = Date.now() + 90000;
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+          async function main() {
+            let lastText = '';
+            while (Date.now() < deadline) {
+              try {
+                const res = await fetch('http://localhost:8080/auth');
+                lastText = await res.text();
+                if (res.ok && lastText.includes('<div id="root">')) {
+                  console.log('frontend preview ok');
+                  return;
+                }
+              } catch (error) {
+                lastText = error instanceof Error ? error.message : String(error);
+              }
+              await sleep(3000);
+            }
+            console.error('Frontend preview did not become healthy. Last response/error:');
+            console.error(lastText);
+            try {
+              console.error('\n----- frontend-smoke.log -----');
+              console.error(fs.readFileSync('frontend-smoke.log', 'utf8').slice(-8000));
+              console.error('----- end frontend-smoke.log -----\n');
+            } catch {}
+            process.exit(1);
+          }
+
+          main();
+          NODE
+
+      - name: Run Playwright browser smoke tests
+        run: npm run test:e2e:smoke
+
+      - name: Upload smoke artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: backend-smoke-log
-          path: backend-smoke.log
+          name: local-deployment-smoke-artifacts
+          path: |
+            backend-smoke.log
+            frontend-smoke.log
+            playwright-report/
+            test-results/
           if-no-files-found: ignore
 
-      - name: Stop backend
+      - name: Stop services
         if: always()
         run: |
           if [ -f backend-smoke.pid ]; then
             kill "$(cat backend-smoke.pid)" || true
+          fi
+          if [ -f frontend-smoke.pid ]; then
+            kill "$(cat frontend-smoke.pid)" || true
           fi
