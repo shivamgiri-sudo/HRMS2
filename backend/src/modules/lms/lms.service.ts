@@ -225,4 +225,32 @@ export const lmsService = {
     );
     return rows as RowDataPacket[];
   },
+
+  async getProgressSummary() {
+    // Aggregate progress stats per employee
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         e.id AS employee_id,
+         e.employee_code,
+         CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+         COUNT(DISTINCT lp.module_id) AS modules_assigned,
+         SUM(CASE WHEN lp.status = 'completed' THEN 1 ELSE 0 END) AS modules_completed,
+         ROUND(
+           (SUM(CASE WHEN lp.status = 'completed' THEN 1 ELSE 0 END) * 100.0) /
+           NULLIF(COUNT(DISTINCT lp.module_id), 0),
+           0
+         ) AS completion_percent,
+         COUNT(DISTINCT lc.id) AS certifications_earned,
+         MAX(lp.synced_at) AS last_activity
+       FROM employees e
+       LEFT JOIN lms_employee_mapping lem ON lem.employee_id = e.id AND lem.is_active = 1
+       LEFT JOIN lms_learning_progress_snapshot lp ON lp.employee_id = e.id
+       LEFT JOIN lms_certification_snapshot lc ON lc.employee_id = e.id
+       WHERE e.active_status = 1
+       GROUP BY e.id, e.employee_code, e.first_name, e.last_name
+       HAVING modules_assigned > 0
+       ORDER BY employee_name`
+    );
+    return rows as RowDataPacket[];
+  },
 };

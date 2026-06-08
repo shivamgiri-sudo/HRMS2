@@ -13,7 +13,6 @@ import bgvVerificationRouter from "./bgv-verification.routes.js";
 import multer from "multer";
 import path from "path";
 import { randomUUID } from "crypto";
-import fs from "fs";
 
 export const atsRouter = Router();
 
