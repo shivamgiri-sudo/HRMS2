@@ -81,6 +81,13 @@ const MIGRATION_MANIFEST: string[] = [
   "070_attendance_clock_columns.sql",
   "071_communication_provider_config.sql",
   "102_biometric_tables.sql",
+  // Additive migrations not in 000_run_all but with active backend dependencies
+  "060_legacy_sync_schema.sql",
+  "062_employees_legacy_fields.sql",
+  "067_employee_task_system.sql",
+  "099_ats_candidate_uploads.sql",
+  "100_user_page_access.sql",
+  "125_kpi_process_role_engine.sql",
 ];
 
 export type MigrationHealth = {
@@ -207,7 +214,7 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
           if (!statement) return false;
           const upper = statement.toUpperCase();
           // SOURCE is a MySQL client directive — not valid in programmatic execute()
-          return !upper.startsWith("SOURCE ");
+          return !upper.startsWith("SOURCE ") && !upper.startsWith("USE ");
         });
 
       try {
