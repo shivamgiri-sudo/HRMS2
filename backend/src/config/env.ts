@@ -29,13 +29,13 @@ const envSchema = z.object({
   PORTAL_JWT_SECRET: z.string().min(32).default("change-me-in-production-portal-secret-32ch"),
   JWT_SECRET: z.string().min(32).default('change-me-jwt-secret-32characters!!'),
   // Must be explicitly "true" to enable demo bypass. Production default is disabled.
-  PORTAL_DEMO_BYPASS: z.string().optional().default("false"),
+  PORTAL_DEMO_BYPASS: z.string().default("false"),
   // Required secret for payroll bank account AES encryption. Must be set in production.
   PAYROLL_BANK_KEY: z.string().min(16).default("hrms-bank-key-dev"),
   // Dedicated AES-256-GCM key for communication provider secrets. Falls back to PAYROLL_BANK_KEY if not set.
   COMM_SECRET: z.string().min(16).optional(),
   // Enables mock-token demo bypass. Must NOT be "true" in production.
-  INTERNAL_DEMO_BYPASS: z.string().optional().default("false"),
+  INTERNAL_DEMO_BYPASS: z.string().default("false"),
   // Set to "true" to start tenure, communication, attendance, and legacy sync workers.
   ENABLE_SCHEDULERS: z.string().default("false"),
   // Set to "true" to run 043_demo_data.sql during migrations (local dev only).
