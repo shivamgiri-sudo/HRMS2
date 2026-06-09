@@ -164,8 +164,8 @@ export const accountControlService = {
        FROM account_control_log
        WHERE user_id = ?
        ORDER BY created_at DESC
-       LIMIT ${safeLimit}`,
-      [userId]
+       LIMIT ?`,
+      [userId, safeLimit]
     );
     return rows as RowDataPacket[];
   },
