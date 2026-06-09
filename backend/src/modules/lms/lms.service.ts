@@ -233,11 +233,11 @@ export const lmsService = {
          e.id AS employee_id,
          e.employee_code,
          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
-         COUNT(DISTINCT lp.module_id) AS modules_assigned,
+         COUNT(DISTINCT lp.course_id) AS modules_assigned,
          SUM(CASE WHEN lp.status = 'completed' THEN 1 ELSE 0 END) AS modules_completed,
          ROUND(
            (SUM(CASE WHEN lp.status = 'completed' THEN 1 ELSE 0 END) * 100.0) /
-           NULLIF(COUNT(DISTINCT lp.module_id), 0),
+           NULLIF(COUNT(DISTINCT lp.course_id), 0),
            0
          ) AS completion_percent,
          COUNT(DISTINCT lc.id) AS certifications_earned,
