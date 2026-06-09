@@ -86,7 +86,7 @@ function isAllowedOrigin(origin: string): boolean {
   // Allow localhost only in non-production environments
   if (env.NODE_ENV !== "production" && (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:"))) return true;
   if (allowedOrigins().includes(origin)) return true;
-  return /^https:\/\/([a-z0-9-]+\.)*vercel\.app$/i.test(origin) && allowedOrigins().some((allowed) => allowed.endsWith(".vercel.app"));
+  return false;
 }
 
 app.use(
