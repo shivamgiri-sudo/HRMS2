@@ -2,16 +2,16 @@
 
 > Session: HRMS1 Manager/TL E2E Baseline  
 > Date: 2026-06-10  
-> Commit: df5593b4ef1807dc8b0145644f13d67e07cda14d  
+> Commit: 5d0dc72 (merged main with employee + manager docs)  
 
 ---
 
 ## 1. Current Commit
 
-- **SHA**: `df5593b4ef1807dc8b0145644f13d67e07cda14d`
-- **Message**: `fix(leave): include max_days_per_year in balance query + correct dashboard leave calculations`
+- **SHA**: `5d0dc72`
+- **Message**: `docs: merge employee and manager E2E documentation`
 - **Branch**: `main`
-- **Status**: Clean working tree (no uncommitted changes at audit start)
+- **Status**: Clean working tree after merge
 
 ---
 
@@ -129,4 +129,14 @@ echo "Creating e2e/manager.smoke.ts ..."
 
 ---
 
-*Last updated: 2026-06-10 | Commit: df5593b4ef1807dc8b0145644f13d67e07cda14d*
+*Last updated: 2026-06-10 | Commit: 5d0dc72 | Status: Docs published to main*
+
+---
+
+## 9. Session Completion
+
+- **Baseline recorded**: Frontend build clean, backend 93% pass (customization auth failures preserved)
+- **Documentation created**: 4 files (539 lines) merged with employee docs (334dd62)
+- **Pushed to**: `https://github.com/shivamgiri-sudo/HRMS1.git` main
+- **Next session start**: `npx playwright test e2e/manager.smoke.ts --project=chromium`
+- **Context released**: All findings documented; resume is the single source of truth for resumption
