@@ -3,9 +3,33 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 
+// ── Whitelisted master tables to prevent SQL injection ────────────────────────
+const MASTER_TABLE_WHITELIST = new Set([
+  "branch_master",
+  "department_master",
+  "lob_master",
+  "designation_master",
+  "campaign_master",
+  "cost_centre_master",
+  "grade_band_master",
+  "location_master",
+  "policy_master",
+]);
+
 // ── Generic list/get helpers ──────────────────────────────────────────────────
 
+function assertMasterTable(table: string): void {
+  if (!MASTER_TABLE_WHITELIST.has(table)) {
+    throw new Error(`Invalid master table: ${table}`);
+  }
+}
+
 async function listActive(table: string, orderCol = "created_at", entityType?: string, employeeId?: string): Promise<RowDataPacket[]> {
+  assertMasterTable(table);
+  // orderCol must be a valid MySQL identifier (letters, digits, underscore)
+  if (!/^[A-Za-z0-9_]+$/.test(orderCol)) {
+    throw new Error(`Invalid orderCol: ${orderCol}`);
+  }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM ${table} WHERE active_status = 1 ORDER BY ${orderCol}`
   );
@@ -28,6 +52,7 @@ async function listActive(table: string, orderCol = "created_at", entityType?: s
 }
 
 async function getById(table: string, id: string): Promise<RowDataPacket | null> {
+  assertMasterTable(table);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM ${table} WHERE id = ? LIMIT 1`,
     [id]
@@ -36,6 +61,7 @@ async function getById(table: string, id: string): Promise<RowDataPacket | null>
 }
 
 async function softDelete(table: string, id: string): Promise<void> {
+  assertMasterTable(table);
   await db.execute(`UPDATE ${table} SET active_status = 0 WHERE id = ?`, [id]);
 }
 
