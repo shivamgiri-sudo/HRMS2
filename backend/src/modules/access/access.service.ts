@@ -128,12 +128,12 @@ export async function querySensitiveActionLog(filters: {
   if (filters.entity_type)   { conds.push("entity_type = ?");   params.push(filters.entity_type); }
   if (filters.entity_id)     { conds.push("entity_id = ?");     params.push(filters.entity_id); }
   const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
-  const limit = Math.min(filters.limit ?? 100, 500);
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, actor_user_id, action_type, module_key, entity_type, entity_id, ip_address, change_summary, acted_at
-     FROM sensitive_action_log ${where} ORDER BY acted_at DESC LIMIT ${limit}`,
-    params
-  );
+    const limit = Math.min(filters.limit ?? 100, 500);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, actor_user_id, action_type, module_key, entity_type, entity_id, ip_address, change_summary, acted_at
+     FROM sensitive_action_log ${where} ORDER BY acted_at DESC LIMIT ?`,
+      [...params, limit]
+    );
   return rows as RowDataPacket[];
 }
 

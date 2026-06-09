@@ -161,8 +161,8 @@ export const leaveService = {
                        conds.push("to_date >= ?");       params.push(activeOn); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM leave_request ${where} ORDER BY applied_at DESC LIMIT ${limit} OFFSET ${offset}`,
-      params
+      `SELECT * FROM leave_request ${where} ORDER BY applied_at DESC LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM leave_request ${where}`, params

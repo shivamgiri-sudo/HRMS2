@@ -138,8 +138,8 @@ export const controlTowerService = {
     if (query.processId) { conds.push("process_id = ?"); params.push(query.processId); }
     const limit = Math.min(Number(query.limit ?? 50), 200);
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM global_event_log WHERE ${conds.join(" AND ")} ORDER BY created_at DESC LIMIT ${limit}`,
-      params
+      `SELECT * FROM global_event_log WHERE ${conds.join(" AND ")} ORDER BY created_at DESC LIMIT ?`,
+      [...params, limit]
     );
     const visible = [] as any[];
     for (const row of rows as any[]) {
@@ -184,8 +184,8 @@ export const controlTowerService = {
     if (query.priority) { conds.push("priority = ?"); params.push(query.priority); }
     const limit = Math.min(Number(query.limit ?? 100), 250);
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM work_inbox_item WHERE ${conds.join(" AND ")} ORDER BY FIELD(priority,'critical','high','medium','low'), COALESCE(due_at, '2999-12-31'), created_at DESC LIMIT ${limit}`,
-      params
+      `SELECT * FROM work_inbox_item WHERE ${conds.join(" AND ")} ORDER BY FIELD(priority,'critical','high','medium','low'), COALESCE(due_at, '2999-12-31'), created_at DESC LIMIT ?`,
+      [...params, limit]
     );
     const visible = [] as any[];
     for (const row of rows as any[]) {
