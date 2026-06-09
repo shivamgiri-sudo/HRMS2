@@ -37,7 +37,7 @@ function normalizeSourceChannel(channel: string | null | undefined): string | nu
 }
 
 export const atsService = {
-  async listCandidates(filters: CandidateListFilters): Promise<PaginatedResult<AtsCandidate>> {
+  async listCandidates(filters: CandidateListFilters & { scopeFilter?: { sql: string; params: unknown[] } | string }): Promise<PaginatedResult<AtsCandidate>> {
     const conds: string[] = ["active_status = 1"];
     const params: unknown[] = [];
     if (filters.stage)    { conds.push("current_stage = ?");         params.push(filters.stage); }
@@ -51,18 +51,26 @@ export const atsService = {
     if (filters.fromDate) { conds.push("walk_in_date >= ?"); params.push(filters.fromDate); }
     if (filters.toDate)   { conds.push("walk_in_date <= ?"); params.push(filters.toDate); }
 
-    // Apply scope filter from middleware
-    if ((filters as any).scopeFilter) {
-      const scopeClause = String((filters as any).scopeFilter).replace(/^WHERE\s+/i, '').trim();
-      if (scopeClause) conds.push(`(${scopeClause})`);
+    // Apply scope filter from middleware (object {sql, params} or legacy string)
+    if (filters.scopeFilter) {
+      if (typeof filters.scopeFilter === 'object' && filters.scopeFilter.sql) {
+        const scopeClause = String(filters.scopeFilter.sql).replace(/^WHERE\s+/i, '').trim();
+        if (scopeClause) {
+          conds.push(`(${scopeClause})`);
+          params.push(...(filters.scopeFilter.params || []));
+        }
+      } else if (typeof filters.scopeFilter === 'string') {
+        const scopeClause = filters.scopeFilter.replace(/^WHERE\s+/i, '').trim();
+        if (scopeClause) conds.push(`(${scopeClause})`);
+      }
     }
 
     const where = `WHERE ${conds.join(" AND ")}`;
     const offset = (filters.page - 1) * filters.limit;
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM ats_candidate ${where} ORDER BY created_at DESC LIMIT ${filters.limit} OFFSET ${offset}`,
-      params
+      `SELECT * FROM ats_candidate ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [...params, filters.limit, offset]
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM ats_candidate ${where}`,
