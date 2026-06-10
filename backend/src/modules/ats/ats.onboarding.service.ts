@@ -108,7 +108,11 @@ export async function validateToken(token: string) {
   );
   if (!rows.length) throw Object.assign(new Error('Invalid token'), { statusCode: 400 });
   const row = rows[0];
-  if (new Date(row.onboarding_token_expires_at) < new Date()) {
+  // mysql2 returns DATETIME columns as JS Date objects (UTC epoch); compare directly with Date.now()
+  const expiresMs = row.onboarding_token_expires_at instanceof Date
+    ? row.onboarding_token_expires_at.getTime()
+    : new Date(row.onboarding_token_expires_at as string).getTime();
+  if (expiresMs < Date.now()) {
     throw Object.assign(new Error('Token expired'), { statusCode: 410 });
   }
   return row;

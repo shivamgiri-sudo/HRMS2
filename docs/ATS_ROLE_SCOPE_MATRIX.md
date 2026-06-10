@@ -1,9 +1,9 @@
 # ATS Role ↔ Scope Matrix
 
-> Version: 8.0.0  
+> Version: 9.0.0  
 > Date: 2026-06-10  
-> Commit: post-S8 (see git log)
-> Session: 8 — BGV multi-provider adapter infra; CI-FP-01/02/03/04 fixed (requireFormApiKey on 5 public form endpoints)
+> Commit: post-S9 (see git log)
+> Session: 9 — Upload ownership (mobile check); send-token row-scope; validateToken timezone safety
 
 ---
 
@@ -187,6 +187,7 @@ export async function requireCandidateScope(
 | 6.0.0 | 2026-06-10 | Audit Agent | Session 6: recruiter verify endpoint (bcrypt+biometric); my-candidates scoped to recruiter's assigned Waiting candidates; submission via ats_interview_submission with ownership check |
 | 7.0.0 | 2026-06-10 | Audit Agent | Session 7: CI-BGV-01 HMAC-SHA256 webhook (timingSafeEqual); BGV queue+candidate+manual-review+waive row-scope; onboarding bridge POST+PATCH row-scope; validateToken/ensureConsent statusCode fix |
 | 8.0.0 | 2026-06-10 | Audit Agent | Session 8: CI-FP-01/02/03/04 fixed (requireFormApiKey on POST intake+bgv+doc-upload+confirmation+recruiter-devices); BGV multi-provider adapter infra (InfinityAiBgvAdapter, DigioBgvAdapter, factory) |
+| 9.0.0 | 2026-06-10 | Audit Agent | Session 9: Issue 4 upload ownership (mobile field required + DB match); Issue 17 send-token row-scope (hasScopedAccess on candidate branch/process); Issue 3 validateToken expiry UTC-safe |
 
 ---
 

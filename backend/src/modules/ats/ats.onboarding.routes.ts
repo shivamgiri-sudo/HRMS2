@@ -8,7 +8,7 @@ import {
   listPendingApprovals, approveOffer, rejectOffer,
 } from './ats.onboarding.service.js';
 import { calculateSalary } from './salary.calculator.js';
-import { buildScopeWhereClause } from '../../shared/scopeAccess.js';
+import { buildScopeWhereClause, hasScopedAccess } from '../../shared/scopeAccess.js';
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2';
 
@@ -42,7 +42,31 @@ router.post(
   requireAuth,
   requireRole('hr', 'recruiter', 'admin'),
   h(async (req: AuthenticatedRequest, res) => {
-    const result = await sendOnboardingToken(req.params!.candidateId, req.authUser!.id);
+    const candidateId = req.params!.candidateId;
+    const userId = req.authUser!.id;
+
+    // Row-scope: load candidate's branch/process, then verify actor has access
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT applied_for_branch, applied_for_process FROM ats_candidate WHERE id = ? AND active_status = 1`,
+      [candidateId],
+    );
+    if (!rows.length) {
+      res.status(404).json({ ok: false, error: 'Candidate not found' });
+      return;
+    }
+    const cand = rows[0];
+    const allowed = await hasScopedAccess(
+      userId,
+      ['hr', 'recruiter'],
+      { branchId: cand.applied_for_branch, processId: cand.applied_for_process },
+      { allowAdminBypass: true },
+    );
+    if (!allowed) {
+      res.status(403).json({ ok: false, error: 'Access denied' });
+      return;
+    }
+
+    const result = await sendOnboardingToken(candidateId, userId);
     res.json({ ok: true, ...result });
   }),
 );

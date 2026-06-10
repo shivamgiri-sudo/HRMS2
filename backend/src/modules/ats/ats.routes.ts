@@ -187,22 +187,26 @@ const candidateUpload = multer({
   },
 });
 
-// PUBLIC endpoint for candidate uploads (within 1 hour of registration)
+// PUBLIC endpoint for candidate uploads (within 1 hour of registration).
+// Caller must supply the candidate's registered mobile to prove ownership.
 atsRouter.post(
   "/candidates/:id/upload",
   candidateUpload.single("file"),
   h(async (req: any, res: any) => {
     const { id } = req.params;
-    const { type } = req.body; // "resume" or "selfie"
+    const { type, mobile } = req.body; // "resume" or "selfie" + registered mobile for ownership proof
 
     if (!type || !["resume", "selfie"].includes(type)) {
       return res.status(400).json({ success: false, message: "type must be 'resume' or 'selfie'" });
     }
+    if (!mobile || typeof mobile !== "string" || !mobile.trim()) {
+      return res.status(400).json({ success: false, message: "mobile is required to verify upload ownership" });
+    }
 
-    // Verify candidate exists and was created recently (within 1 hour)
+    // Verify candidate exists, mobile matches, and was created recently (within 1 hour)
     const { db } = await import("../../db/mysql.js");
     const [rows] = await db.execute(
-      `SELECT id, created_at FROM ats_candidate WHERE id = ?`,
+      `SELECT id, mobile, created_at FROM ats_candidate WHERE id = ?`,
       [id]
     ) as any[];
 
@@ -211,9 +215,15 @@ atsRouter.post(
     }
 
     const candidate = rows[0];
+
+    // Ownership check: supplied mobile must match the candidate's registered mobile
+    if (String(candidate.mobile).trim() !== String(mobile).trim()) {
+      return res.status(403).json({ success: false, message: "Mobile number does not match" });
+    }
+
     const createdAt = new Date(candidate.created_at);
-    const now = new Date();
-    const hoursSinceCreation = (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60);
+    const nowMs = Date.now();
+    const hoursSinceCreation = (nowMs - createdAt.getTime()) / (1000 * 60 * 60);
 
     if (hoursSinceCreation > 1) {
       return res.status(403).json({
@@ -228,7 +238,6 @@ atsRouter.post(
 
     const fileUrl = `/uploads/candidates/${req.file.filename}`;
 
-    // Store file reference in candidate record
     const updateField = type === "resume" ? "resume_url" : "selfie_url";
     await db.execute(
       `UPDATE ats_candidate SET ${updateField} = ? WHERE id = ?`,
