@@ -464,8 +464,8 @@ export const attendanceEngineService = {
     if (filters.attendanceStatus) { q += ' AND attendance_status = ?'; p.push(filters.attendanceStatus); }
     const cq = q.replace('SELECT *', 'SELECT COUNT(*) AS total');
     const [countRows] = await db.execute<RowDataPacket[]>(cq, p);
-    q += ' ORDER BY record_date DESC LIMIT ? OFFSET ?';
-    const [rows] = await db.execute<RowDataPacket[]>(q, [...p, limit, offset]);
+    q += ` ORDER BY record_date DESC LIMIT ${limit} OFFSET ${offset}`;
+    const [rows] = await db.execute<RowDataPacket[]>(q, p);
     return { data: rows as AttendanceDailyRecord[], total: (countRows[0] as any).total, page, limit };
   },
 
