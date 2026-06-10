@@ -1,6 +1,6 @@
 # ATS E2E Audit — Session Resume
 
-> Session: HRMS1 ATS End-to-End Audit (Session 11)
+> Session: HRMS1 ATS End-to-End Audit (Session 12)
 > Date: 2026-06-10
 > Commit: see git log (post-S11)
 > Scope: ATS module + directly dependent onboarding / BGV / offer / training flows
@@ -535,6 +535,10 @@
 | S11-A | P1 | `GET /api/ats-full-parity/web-data` — no actor-scope enforcement; branch_head could query any branch via untrusted query param | `atsFullParity.service.ts`, `atsFullParity.routes.ts` | ✅ Fixed S11 — `buildScopeWhereClause` injected into SQL; admin/hr/ceo bypass |
 | S11-B | P1 | `GET /api/ats-full-parity/queue` — same actor-scope gap as web-data | `atsFullParity.routes.ts` | ✅ Fixed S11 — same scope pattern applied |
 | S11-C | P1 | `GET /api/ats-full-parity/daily-report/snapshot` — branch_head could preview all branches' daily report | `atsFullParity.service.ts`, `atsFullParity.routes.ts` | ✅ Fixed S11 — `actorId` passed through `dailyReportSnapshot()` to `webData()` |
+| S12-A | P1 | `GET /recruiter/my-candidates` — untrusted `?recruiterName=` param; any recruiter could view another's queue | `ats.routes.ts` | ✅ Fixed S12 — JWT-bound via `resolveRecruiterForActor`; admin/hr override only |
+| S12-B | P1 | `GET /recruiter/submission-history` — untrusted `?recruiterCode=` param; history leakage | `ats.routes.ts` | ✅ Fixed S12 — JWT-bound; admin/hr override only |
+| S12-C | P1 | `POST /recruiter-submission` — `recruiterCode` in body untrusted; full recruiter impersonation | `atsFullParity.routes.ts` | ✅ Fixed S12 — JWT identity enforced; mismatch → 403; admin/hr bypass |
+| S12-D | P1 | `GET /journey` — no scope check; any ATS user could look up any candidate | `atsFullParity.routes.ts` | ✅ Fixed S12 — `hasScopedAccess` on candidate branch/process; admin/hr/ceo bypass |
 
 ---
 
@@ -587,9 +591,80 @@
 
 ---
 
+## 2g. Session 12 — Fixes Applied
+
+### Fix 1 (S12): `resolveRecruiterForActor` helper
+
+**New function**: `backend/src/modules/ats-full-parity/recruiterInterview.service.ts`
+- `resolveRecruiterForActor(userId)`: resolves the `ats_recruiter_roster` row linked to the JWT `auth_user.id` via `employees.user_id → employees.id → ats_recruiter_roster.employee_id`. Returns `RecruiterProfile | null`. Returns null when the user has no linked recruiter profile.
+
+### Fix 2 (S12): `GET /recruiter/my-candidates` — recruiterName tampering
+
+**Issue**: Endpoint accepted an untrusted `?recruiterName=` query param. Any authenticated recruiter could view any other recruiter's pending candidate queue.
+
+**File modified**: `backend/src/modules/ats/ats.routes.ts`
+- Now resolves recruiter name from JWT → `resolveRecruiterForActor`; ignores untrusted query param.
+- Non-linked actors receive 403 `"No recruiter profile linked to this account"`.
+- Admin/hr privilege override: may supply `?recruiterName=` to inspect any recruiter's queue.
+
+### Fix 3 (S12): `GET /recruiter/submission-history` — recruiterCode tampering
+
+**Issue**: Same pattern — `?recruiterCode=` was untrusted; any recruiter could read any other recruiter's submission history.
+
+**File modified**: `backend/src/modules/ats/ats.routes.ts`
+- Now resolves recruiter code from JWT → `resolveRecruiterForActor`.
+- Admin/hr privilege override: may supply `?recruiterCode=` to inspect any recruiter's history.
+
+### Fix 4 (S12): `POST /recruiter-submission` — recruiterCode impersonation
+
+**Issue**: `recruiterCode` from the request body was trusted without verification. Any user with role recruiter/manager could submit interview results as any other recruiter.
+
+**File modified**: `backend/src/modules/ats-full-parity/atsFullParity.routes.ts`
+- For non-admin/non-hr actors: derives recruiter identity from JWT → `resolveRecruiterForActor`; ignores body `recruiterCode` unless it matches the linked profile (mismatch → 403).
+- For admin/hr actors: body `recruiterCode` is still respected to allow on-behalf submission.
+- Returns 403 when no recruiter profile is linked to the actor.
+
+### Fix 5 (S12): `GET /journey` — no scope check
+
+**Issue**: Any authenticated user with ATS access could look up any candidate's full journey (stage history, emails, notifications) by mobile, name, email, or code — cross-branch data leakage.
+
+**File modified**: `backend/src/modules/ats-full-parity/atsFullParity.routes.ts`
+- Added `hasScopedAccess` import from `scopeAccess.js`.
+- After `candidateJourney()` resolves, non-admin/hr/ceo actors have `hasScopedAccess` called on the candidate's `applied_for_branch` / `applied_for_process`. Returns 403 if denied.
+- Admin/hr/ceo actors bypass the scope check.
+
+### Tests (S12)
+
+**New file**: `backend/tests/ats.s12.ownership.test.ts` — 13 tests:
+- TC-S12-01: `GET /recruiter/my-candidates` — recruiter uses JWT name, body param ignored
+- TC-S12-02: `GET /recruiter/my-candidates` — no linked profile → 403
+- TC-S12-03: `GET /recruiter/my-candidates` — admin with override param → uses override
+- TC-S12-04: `GET /recruiter/submission-history` — recruiter uses JWT code, body param ignored
+- TC-S12-05: `GET /recruiter/submission-history` — no linked profile → 403
+- TC-S12-06: `GET /recruiter/submission-history` — hr with override code → uses override
+- TC-S12-07: `POST /recruiter-submission` — matching body code → allowed
+- TC-S12-08: `POST /recruiter-submission` — mismatched body code → 403 impersonation blocked
+- TC-S12-09: `POST /recruiter-submission` — no linked profile → 403
+- TC-S12-10: `POST /recruiter-submission` — admin with different code → allowed (privilege bypass)
+- TC-S12-11: `GET /journey` — admin → no scope check called
+- TC-S12-12: `GET /journey` — branch_head scope denied → 403
+- TC-S12-13: `GET /journey` — recruiter scope allowed → 200
+
+**Build results (S12)**:
+
+| Artifact | Result |
+|----------|--------|
+| `npx tsc --noEmit` (backend) | ✅ 0 new errors (pre-existing leave.routes.ts:134 unchanged) |
+| `npx vitest run` (ATS suite, 10 files) | ✅ 160/160 pass (147 prior + 13 new S12) |
+| `npm run build` (frontend) | ✅ Clean |
+
+**Total ATS tests: 160/160**
+
+---
+
 ## 6. Exact Next Task
 
-**S11 is complete. All open issues closed.**
+**S12 is complete. All open issues closed.**
 
 | Issue | Priority | Location | Status |
 |-------|----------|----------|--------|
@@ -624,8 +699,9 @@
 | 9.0.0 | 2026-06-10 | Audit Agent | Session 9: Issue 4 upload ownership (mobile verification); Issue 17 send-token row-scope (hasScopedAccess); Issue 3 validateToken timezone safety (Date/string branch); 13 new tests; 139 total ATS tests |
 | 10.0.0 | 2026-06-10 | Audit Agent | Session 10: Issues 8/9/10/19/20 closed; stage-logs scope added; frontend upload passes mobile; candidate list cache (1-min TTL); both typechecks clean; 139 tests pass |
 | 11.0.0 | 2026-06-10 | Audit Agent | Session 11: S11-A/B/C scope gaps fixed (web-data + queue + daily-report actor-scope via buildScopeWhereClause); 8 new tests; 147 total ATS tests |
+| 12.0.0 | 2026-06-10 | Audit Agent | Session 12: S12-A/B/C/D recruiter ownership (my-candidates, submission-history, recruiter-submission impersonation, journey scope); resolveRecruiterForActor helper; 13 new tests; 160 total ATS tests |
 
 ---
 
-**AUDIT STATUS**: 🟢 ALL ATS ISSUES RESOLVED (S11) — every P0/P1/P2/P3 item closed including S11 scope gaps. Only BGV live keys and manual E2E smoke remain; both blocked on external dependencies.
+**AUDIT STATUS**: 🟢 ALL ATS ISSUES RESOLVED (S12) — every P0/P1/P2/P3 item closed including S12 ownership/impersonation gaps. Only BGV live keys and manual E2E smoke remain; both blocked on external dependencies.
 **NEXT ACTION**: Provide Infinity AI / Digio API keys to activate live BGV; then run manual E2E smoke test.

@@ -1,9 +1,9 @@
 # ATS Role ↔ Scope Matrix
 
-> Version: 11.0.0  
+> Version: 12.0.0  
 > Date: 2026-06-10  
-> Commit: post-S11 (see git log)
-> Session: 11 — S11-A/B/C: web-data + queue + daily-report actor-scope enforcement via buildScopeWhereClause
+> Commit: post-S12 (see git log)
+> Session: 12 — S12-A/B/C/D recruiter ownership enforcement (JWT-bound recruiterCode/name; impersonation block; journey scope)
 
 ---
 
@@ -115,6 +115,10 @@
 | `GET /api/ats-full-parity/web-data` | ✅ | ✅ `buildScopeWhereClause` in SQL | ✅ `buildScopeWhereClause` in SQL | — | **✅ Fixed S11** | S11 |
 | `GET /api/ats-full-parity/queue` | ✅ | ✅ `buildScopeWhereClause` in SQL | ✅ `buildScopeWhereClause` in SQL | — | **✅ Fixed S11** | S11 |
 | `GET /api/ats-full-parity/daily-report/snapshot` | ✅ | ✅ actorId forwarded to webData() | ✅ actorId forwarded to webData() | — | **✅ Fixed S11** | S11 |
+| `GET /api/ats/recruiter/my-candidates` | ✅ | N/A | N/A | ✅ JWT→resolveRecruiterForActor | **✅ Fixed S12** (was untrusted query param) | S12 |
+| `GET /api/ats/recruiter/submission-history` | ✅ | N/A | N/A | ✅ JWT→resolveRecruiterForActor | **✅ Fixed S12** (was untrusted query param) | S12 |
+| `POST /api/ats-full-parity/recruiter-submission` | ✅ | N/A | N/A | ✅ JWT→resolveRecruiterForActor; body mismatch → 403 | **✅ Fixed S12** (was body-trusted recruiterCode) | S12 |
+| `GET /api/ats-full-parity/journey` | ✅ | ✅ `hasScopedAccess` on candidate branch | ✅ `hasScopedAccess` on candidate process | ✅ | **✅ Fixed S12** (was unchecked) | S12 |
 
 ---
 
@@ -193,6 +197,7 @@ export async function requireCandidateScope(
 | 9.0.0 | 2026-06-10 | Audit Agent | Session 9: Issue 4 upload ownership (mobile field required + DB match); Issue 17 send-token row-scope (hasScopedAccess on candidate branch/process); Issue 3 validateToken expiry UTC-safe |
 | 10.0.0 | 2026-06-10 | Audit Agent | Session 10: stage-logs row-scope added (GET /candidates/:id/stage-logs); all remaining P3 issues closed; 139 tests; frontend + backend typechecks clean |
 | 11.0.0 | 2026-06-10 | Audit Agent | Session 11: S11-A web-data + S11-B queue + S11-C daily-report-snapshot actor-scope enforcement; buildScopeWhereClause injected into SQL; admin/hr/ceo bypass; 8 new tests |
+| 12.0.0 | 2026-06-10 | Audit Agent | Session 12: S12-A/B my-candidates + submission-history JWT-bound; S12-C recruiter-submission impersonation blocked; S12-D journey scope check; resolveRecruiterForActor helper; 13 new tests |
 
 ---
 

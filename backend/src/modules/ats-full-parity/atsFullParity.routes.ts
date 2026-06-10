@@ -3,8 +3,9 @@ import { timingSafeEqual } from "crypto";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { env } from "../../config/env.js";
+import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { atsFullParityService as svc } from "./atsFullParity.service.js";
-import { submitInterviewUpdate } from "./recruiterInterview.service.js";
+import { submitInterviewUpdate, resolveRecruiterForActor } from "./recruiterInterview.service.js";
 
 export const atsFullParityRouter = Router();
 
@@ -89,35 +90,63 @@ atsFullParityRouter.get("/queue", requireRole("admin", "hr", "recruiter", "manag
   res.json({ success: true, data: data.queueRows });
 }));
 
-atsFullParityRouter.get("/journey", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req, res) => {
+atsFullParityRouter.get("/journey", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: any, res) => {
   const query = String(req.query.query || "").trim();
   if (!query) return res.status(400).json({ success: false, message: "query required" });
   const data = await svc.candidateJourney(query);
   if (!data) return res.status(404).json({ success: false, message: "Candidate not found" });
+  // Scope check: admin/hr/ceo may view any candidate; all other roles require branch/process match
+  const role = req.authUser?.role as string | undefined;
+  const isPrivileged = role === "admin" || role === "hr" || role === "ceo";
+  if (!isPrivileged) {
+    const candidate = data.candidate as any;
+    const allowed = await hasScopedAccess(
+      req.authUser!.id,
+      ["recruiter", "manager", "branch_head", "process_manager"],
+      { branchId: candidate.applied_for_branch ?? null, processId: candidate.applied_for_process ?? null },
+      { allowAdminBypass: true },
+    );
+    if (!allowed) return res.status(403).json({ success: false, message: "Access denied: candidate outside your scope" });
+  }
   res.json({ success: true, data });
 }));
 
 atsFullParityRouter.post("/recruiter-submission", requireRole("admin", "hr", "recruiter", "manager"), h(async (req: any, res) => {
-  // recruiterCode must be supplied in the body (obtained from POST /api/ats/recruiter/verify)
-  const recruiterCode = String(req.body?.recruiterCode ?? "").trim();
-  if (!recruiterCode) {
-    return res.status(400).json({ success: false, message: "recruiterCode is required in the request body" });
+  const role = req.authUser?.role as string | undefined;
+  const isPrivileged = role === "admin" || role === "hr";
+  const bodyCode = String(req.body?.recruiterCode ?? "").trim();
+
+  let recruiterProfile: import("./recruiterInterview.service.js").RecruiterProfile;
+
+  if (isPrivileged && bodyCode) {
+    // Admin/HR may submit on behalf of any active recruiter
+    const { db: _db } = await import("../../db/mysql.js");
+    const [recRows] = await _db.execute(
+      `SELECT id, name, recruiter_code, email, branch, employee_id FROM ats_recruiter_roster WHERE recruiter_code = ? AND active_status = 1 LIMIT 1`,
+      [bodyCode]
+    ) as any;
+    if (!recRows[0]) return res.status(403).json({ success: false, message: "Recruiter not found or inactive" });
+    recruiterProfile = {
+      id: recRows[0].id,
+      name: recRows[0].name,
+      recruiterCode: recRows[0].recruiter_code,
+      branch: recRows[0].branch ?? "",
+      email: recRows[0].email ?? null,
+      employeeId: recRows[0].employee_id ?? null,
+    };
+  } else {
+    // Derive recruiter identity from JWT — prevents impersonation
+    const resolved = await resolveRecruiterForActor(req.authUser!.id);
+    if (!resolved) {
+      return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
+    }
+    // If the caller also supplied a recruiterCode in the body, verify it matches their linked profile
+    if (bodyCode && bodyCode !== resolved.recruiterCode) {
+      return res.status(403).json({ success: false, message: "recruiterCode in body does not match your linked recruiter profile" });
+    }
+    recruiterProfile = resolved;
   }
-  // Resolve recruiter profile from DB (no PIN re-check here — JWT already validates user)
-  const { db: _db } = await import("../../db/mysql.js");
-  const [recRows] = await _db.execute(
-    `SELECT id, name, recruiter_code, email, branch, employee_id FROM ats_recruiter_roster WHERE recruiter_code = ? AND active_status = 1 LIMIT 1`,
-    [recruiterCode]
-  ) as any;
-  if (!recRows[0]) return res.status(403).json({ success: false, message: "Recruiter not found or inactive" });
-  const recruiterProfile = {
-    id: recRows[0].id,
-    name: recRows[0].name,
-    recruiterCode: recRows[0].recruiter_code,
-    branch: recRows[0].branch ?? "",
-    email: recRows[0].email ?? null,
-    employeeId: recRows[0].employee_id ?? null,
-  };
+
   const result = await submitInterviewUpdate(req.body, req.authUser?.id, recruiterProfile);
   res.json({ success: true, data: result.submission, action: result.action, message: `Submission ${result.action} successfully` });
 }));

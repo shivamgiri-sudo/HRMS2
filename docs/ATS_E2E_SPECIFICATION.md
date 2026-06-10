@@ -1,10 +1,10 @@
 # ATS E2E Specification
 
-> Version: 11.0.0  
+> Version: 12.0.0  
 > Date: 2026-06-10  
-> Commit: post-S11 (see git log)
+> Commit: post-S12 (see git log)
 > Scope: ATS module + onboarding / BGV / offer / training dependency flows  
-> Session: 11 — S11-A/B/C scope gaps fixed (web-data + queue + daily-report actor scope); 8 new tests; 147 total ATS tests
+> Session: 12 — S12-A/B/C/D recruiter ownership (my-candidates, submission-history, recruiter-submission impersonation, journey scope); 13 new tests; 160 total ATS tests
 
 ---
 
@@ -151,7 +151,8 @@ Converted employee → LMS integration layer → learner mapping
 | ATS BGV Provider | `backend/tests/ats.bgv.provider.test.ts` | 23 | 0 | 0 | S8: roughNameMatchScore, MockAdapter, InfinityAi/Digio guard throws, factory singleton, requireFormApiKey logic |
 | ATS S9 Fixes | `backend/tests/ats.s9.fixes.test.ts` | 13 | 0 | 0 | S9: upload mobile ownership (5 cases), send-token scope (4 cases), validateToken Date/string safety (4 cases) |
 | ATS S11 Scope | `backend/tests/ats.s11.scope.test.ts` | 8 | 0 | 0 | S11: webData actorId injection (4), web-data route branch_head/admin (2), queue route pm/hr (2) |
-| **Total ATS** | | **147** | **0** | **0** | |
+| ATS S12 Ownership | `backend/tests/ats.s12.ownership.test.ts` | 13 | 0 | 0 | S12: my-candidates JWT ownership (3), submission-history JWT ownership (3), recruiter-submission impersonation (4), journey scope (3) |
+| **Total ATS** | | **160** | **0** | **0** | |
 | Non-ATS suites | various | 1101 | 25 | 56 | Pre-existing failures in leave, integrationHub, customization, routes.integration — unchanged from S3 baseline |
 
 **Session 2 New Test Failures**:
@@ -211,10 +212,14 @@ Before any ATS production deployment:
 - [x] CI-FP-01/02/03/04: ats-full-parity public form endpoints now require X-ATS-Api-Key (S8: requireFormApiKey via timingSafeEqual)
 - [x] Frontend build passes (`npm run build`) (S7: ✓ clean)
 - [ ] Backend typecheck clean — `leave.routes.ts:134` `leaveService` error must be fixed (pre-existing, non-ATS)
-- [x] Backend test pass rate >= 95 % (S11: 147/147 ATS tests pass; pre-existing 25 non-ATS failures unchanged)
+- [x] Backend test pass rate >= 95 % (S12: 160/160 ATS tests pass; pre-existing 25 non-ATS failures unchanged)
 - [x] `GET /api/ats-full-parity/web-data` enforces actor scope via buildScopeWhereClause (S11)
 - [x] `GET /api/ats-full-parity/queue` enforces actor scope (S11)
 - [x] `GET /api/ats-full-parity/daily-report/snapshot` forwards actorId to webData (S11)
+- [x] `GET /api/ats/recruiter/my-candidates` tied to JWT identity (S12)
+- [x] `GET /api/ats/recruiter/submission-history` tied to JWT identity (S12)
+- [x] `POST /api/ats-full-parity/recruiter-submission` prevents recruiterCode impersonation (S12)
+- [x] `GET /api/ats-full-parity/journey` adds hasScopedAccess on candidate branch/process (S12)
 - [ ] Manual E2E smoke of registration → stage move → onboarding → conversion
 
 ---
@@ -234,6 +239,7 @@ Before any ATS production deployment:
 | 9.0.0 | 2026-06-10 | Audit Agent | Session 9: Issue 4 upload ownership (mobile); Issue 17 send-token row-scope; Issue 3 validateToken timezone safety; 13 new tests (139 ATS total) |
 | 10.0.0 | 2026-06-10 | Audit Agent | Session 10: All P3 issues closed (8/9/10/19/20); stage-logs scope; frontend upload mobile; candidate list cache; SMTP warn; dedup normalizeSourceChannel; test script |
 | 11.0.0 | 2026-06-10 | Audit Agent | Session 11: S11-A/B/C web-data + queue + daily-report actor-scope enforcement; 8 new tests; 147 total ATS tests |
+| 12.0.0 | 2026-06-10 | Audit Agent | Session 12: S12-A/B/C/D recruiter ownership (my-candidates, submission-history, recruiter-submission, journey scope); resolveRecruiterForActor helper; 13 new tests; 160 total ATS tests |
 
 ---
 

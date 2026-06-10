@@ -71,6 +71,34 @@ function nvlNum(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// ── Recruiter resolve from JWT ────────────────────────────────────────────────
+
+/**
+ * Resolves the recruiter profile linked to the given auth_user.id.
+ * Uses the chain: employees.user_id → employees.id → ats_recruiter_roster.employee_id.
+ * Returns null if no recruiter row is linked to this user.
+ */
+export async function resolveRecruiterForActor(userId: string): Promise<RecruiterProfile | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT r.id, r.name, r.recruiter_code, r.email, r.branch, r.employee_id
+       FROM ats_recruiter_roster r
+       JOIN employees e ON e.id = r.employee_id
+      WHERE e.user_id = ? AND r.active_status = 1
+      LIMIT 1`,
+    [userId]
+  );
+  const rec = (rows as any[])[0];
+  if (!rec) return null;
+  return {
+    id: rec.id,
+    name: rec.name,
+    recruiterCode: rec.recruiter_code,
+    branch: rec.branch ?? "",
+    email: rec.email ?? null,
+    employeeId: rec.employee_id ?? null,
+  };
+}
+
 // ── Recruiter verify ──────────────────────────────────────────────────────────
 
 export interface RecruiterProfile {
