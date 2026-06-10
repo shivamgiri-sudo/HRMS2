@@ -11,6 +11,7 @@ import { convertCandidateToEmployee } from "./ats.convert.service.js";
 import onboardingRouter from "./ats.onboarding.routes.js";
 import onboardingFullRouter from "./onboarding-full.routes.js";
 import bgvVerificationRouter from "./bgv-verification.routes.js";
+import { atsQueueService } from "./ats.queue.service.js";
 import multer from "multer";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -242,6 +243,81 @@ atsRouter.post(
     });
   })
 );
+
+// ── Queue Token Management ────────────────────────────────────────────────────
+
+// POST /api/ats/queue-tokens — create arrival token for a candidate (HR/recruiter)
+atsRouter.post("/queue-tokens", requireRole("admin", "hr", "recruiter"), h(async (req: any, res: any) => {
+  const { candidateId, arrivalTime } = req.body;
+  if (!candidateId || typeof candidateId !== 'string') {
+    return res.status(400).json({ success: false, message: "candidateId is required" });
+  }
+  const arrival = arrivalTime ?? new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const data = await atsQueueService.createToken(candidateId, arrival);
+  return res.status(201).json({ success: true, data });
+}));
+
+// GET /api/ats/queue-tokens/candidate/:candidateId — active token for a candidate
+atsRouter.get("/queue-tokens/candidate/:candidateId", requireRole("admin", "hr", "recruiter"), h(async (req: any, res: any) => {
+  const data = await atsQueueService.getTokenByCandidateId(req.params.candidateId);
+  return res.json({ success: true, data });
+}));
+
+// POST /api/ats/queue-tokens/:id/walk-out — mark candidate as walked out
+atsRouter.post("/queue-tokens/:id/walk-out", requireRole("admin", "hr", "recruiter"), h(async (req: any, res: any) => {
+  const data = await atsQueueService.walkOut(req.params.id);
+  return res.json({ success: true, data });
+}));
+
+// POST /api/ats/queue-tokens/re-entry — re-entry after walk-out
+atsRouter.post("/queue-tokens/re-entry", requireRole("admin", "hr", "recruiter"), h(async (req: any, res: any) => {
+  const { candidateId, arrivalTime } = req.body;
+  if (!candidateId || typeof candidateId !== 'string') {
+    return res.status(400).json({ success: false, message: "candidateId is required" });
+  }
+  const arrival = arrivalTime ?? new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const data = await atsQueueService.reEntry(candidateId, arrival);
+  return res.status(201).json({ success: true, data });
+}));
+
+// PATCH /api/ats/queue-tokens/:id/assign-recruiter
+atsRouter.patch("/queue-tokens/:id/assign-recruiter", requireRole("admin", "hr", "recruiter"), h(async (req: any, res: any) => {
+  const { recruiterId } = req.body;
+  const data = await atsQueueService.assignRecruiter(req.params.id, recruiterId ?? null);
+  return res.json({ success: true, data });
+}));
+
+// PATCH /api/ats/queue-tokens/:id/assign-interviewer
+atsRouter.patch("/queue-tokens/:id/assign-interviewer", requireRole("admin", "hr", "recruiter"), h(async (req: any, res: any) => {
+  const { interviewerId } = req.body;
+  const data = await atsQueueService.assignInterviewer(req.params.id, interviewerId ?? null);
+  return res.json({ success: true, data });
+}));
+
+// PATCH /api/ats/queue-tokens/:id/stage
+atsRouter.patch("/queue-tokens/:id/stage", requireRole("admin", "hr", "recruiter"), h(async (req: any, res: any) => {
+  const { stage } = req.body;
+  if (!stage || typeof stage !== 'string') {
+    return res.status(400).json({ success: false, message: "stage is required" });
+  }
+  const data = await atsQueueService.updateStage(req.params.id, stage);
+  return res.json({ success: true, data });
+}));
+
+// GET /api/ats/queue-tokens/active — full active queue with wait times and >20min alerts
+atsRouter.get("/queue-tokens/active", requireRole("admin", "hr", "recruiter", "manager"), h(async (req: any, res: any) => {
+  const scoped = await buildScopeWhereClause(
+    req.authUser!.id,
+    ["hr", "recruiter"],
+    { branchId: "c.applied_for_branch", processId: "c.applied_for_process" },
+    { allowCeoAllRead: true }
+  );
+  const data = await atsQueueService.listActiveQueue(
+    { sql: scoped.sql ?? '', params: scoped.params ?? [] },
+    new Date()
+  );
+  return res.json({ success: true, data, alert_count: data.filter((r) => r.over_threshold).length });
+}));
 
 // Onboarding flow — token generation, profile submission, offer mgmt, approve/reject
 atsRouter.use("/onboarding", onboardingRouter);
