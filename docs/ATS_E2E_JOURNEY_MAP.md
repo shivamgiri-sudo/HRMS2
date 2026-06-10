@@ -1,453 +1,302 @@
-# ATS End-to-End Journey Map
+# ATS E2E Journey Map
 
-> Version: 1.0.0
+> Version: 4.0.0
 > Date: 2026-06-10
-> Commit: `f095cbe3651b8f9845256d88213f30594aed4ade`
-> Source: Mapped from live code — backend + frontend fully audited
-
----
-
-## Legend
-
-| Symbol | Meaning |
-|--------|---------|
-| ✅ | Implemented and verified in code |
-| 🟡 | Partial — code exists but gaps noted |
-| 🔴 | Missing / not implemented |
-| ⚠ | Risk / known issue |
+> Commit: post-S4 (see git log)
+> Session: 4 — journey map refreshed; approve/reject scope fixed; full API audit completed
 
 ---
 
 ## Candidate Unique Key
 
-| Field | Constraint | Logic |
-|-------|------------|-------|
-| `id` | UUID (PK) | `randomUUID()` on creation |
-| `candidate_code` | Unique | `ATS-YYYYNNN` format, year + 4-digit sequence |
-| `mobile` | Unique | Service checks `SELECT id FROM ats_candidate WHERE mobile = ?` before insert — throws "This mobile already registered" |
-| `email` | Not unique | Allowed same email from multiple mobiles |
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | UUID PK | Internal primary key |
+| `candidate_code` | VARCHAR(50) UNIQUE | External reference `CND-{timestamp}` |
+| `mobile` | VARCHAR(20) UNIQUE (enforced in service) | Primary duplicate-check key |
+
+Mobile uniqueness is enforced in `ats.service.ts` `createCandidate()` with:
+```sql
+SELECT id FROM ats_candidate WHERE mobile = ? LIMIT 1
+```
+Email is nullable and NOT unique — used for communication only.
 
 ---
 
-## Stage 0 — Pre-Visit (Walk-in / Sourcing)
+## Recruiter Ownership
 
-| Layer | Detail |
-|-------|--------|
-| **Trigger** | Walk-in at branch, referral, LinkedIn, job board, online form |
-| **Frontend route** | `/interview-registration` (public) |
-| **Component** | `src/pages/ats/NativeATSCandidateRegistration.tsx` |
-| **API — bootstrap** | `GET /api/ats/form-config/bootstrap` → `{ fields, branchOptions, roleOptions, recruiterOptions, educationOptions, ... }` |
-| **DB (bootstrap)** | `ats_form_config`, `ats_sourcing_channel`, `ats_recruiter` |
-| **Roles** | Public (no auth) |
-| **Branch/Process scope** | None at this stage — candidate self-reports branch/process |
-| **Next stage** | Stage 1 — Arrival + Registration |
+- `ats_candidate.created_by` → `auth_user.id` of the creating user
+- `ats_candidate.recruiter_name` → VARCHAR(255) free-text name for display
 
 ---
 
-## Stage 1 — Arrival + Registration
+## Stage State Machine
+
+```
+Applied
+  ↓ moveStage
+Screening
+  ↓ moveStage
+[Interview 1 / Interview 2 / Client Round]  ← freeform string
+  ↓ moveStage
+Selected  →  onboarding_sent (profile_status)
+               ↓  candidate fills /onboard or /onboard-full
+             profile_submitted
+               ↓  HR saves offer → branch_head approves
+             onboarded  →  current_stage = 'converted'
+
+Any stage → Rejected  (sends rejection email)
+```
+
+`current_stage` is VARCHAR(100) — no DB ENUM constraint; validated in application layer.
+
+### current_stage values in use
+
+| Value | Set by |
+|-------|--------|
+| `Applied` | Default on `createCandidate()` |
+| `Screening` | `moveStage` call |
+| `Interview 1` / `Interview 2` / `Client Round` | `moveStage` (freeform) |
+| `Selected` | `moveStage` — also triggers email |
+| `Rejected` | `moveStage` — also triggers rejection email |
+| `converted` | `approveOffer()` transaction OR `convertCandidateToEmployee()` |
+
+### profile_status values (ENUM on ats_candidate)
+
+| Value | Trigger |
+|-------|---------|
+| `registered` | `createCandidate()` |
+| `selected` | `moveStage` to Selected |
+| `onboarding_sent` | `sendOnboardingToken()` |
+| `profile_submitted` | `submitProfile()` (legacy) or `onboarding-full/final-section` |
+| `onboarded` | `approveOffer()` transaction |
+
+---
+
+## Stage-by-Stage Map
+
+### Stage 1 — Pre-Visit / Arrival / Registration (Public)
 
 | Layer | Detail |
 |-------|--------|
-| **Frontend route** | `/interview-registration` |
+| **Frontend route** | `/interview-registration`, `/candidate-registration`, `/walkin-registration` (all resolve to same component) |
 | **Component** | `NativeATSCandidateRegistration.tsx` |
 | **API call** | `POST /api/ats/candidates` |
-| **Request body** | `{ name, mobile, email, address, education, experience, gender, roleApplied, recruiterName, branch, rotationalShift, preferredShift, nightShiftComfort, leavesRequired, ownTwoWheeler, idProofAvailable, educationProofAvailable }` |
-| **Backend route** | `POST /api/ats/candidates` — public, no auth |
-| **Middleware** | None (public endpoint) |
-| **Service** | `atsService.createCandidate(input, userId)` |
-| **Duplicate check** | `SELECT id FROM ats_candidate WHERE mobile = ? LIMIT 1` → 409 "This mobile already registered" |
-| **Insert query** | `INSERT INTO ats_candidate (id, candidate_code, full_name, mobile, email, gender, date_of_birth, applied_for_process, applied_for_branch, sourcing_channel, referred_by, walk_in_date, remarks, created_by, ...)` |
-| **Stage set to** | `current_stage = 'Applied'` (default) |
-| **profile_status** | `'registered'` (default) |
-| **Response** | `{ success, candidateDbId, candidateId (candidate_code), recruiterName, recruiterMobile, recruiterEmail, branch }` |
-| **Side effects** | `POST /api/privacy/consent` (non-blocking, DPDP consent log) |
-| **File upload** | `POST /api/ats/candidates/:id/upload` — public, 1-hour window after creation |
-| **Upload validation** | Type: `resume` or `selfie`; types: PDF/JPG/PNG; max 5 MB; `randomUUID()` filename |
-| **Upload DB** | `UPDATE ats_candidate SET resume_url = ? / selfie_url = ?` |
-| **DB tables** | `ats_candidate`, `ats_sourcing_channel` |
-| **Key columns** | `id, candidate_code, full_name, mobile, email, current_stage='Applied', profile_status='registered', active_status=1, walk_in_date, applied_for_branch, applied_for_process, sourcing_channel, resume_url, selfie_url` |
-| **Allowed roles** | Public |
-| **Next stage** | Stage 2 — Eligibility Screening |
+| **Backend route** | `ats.routes.ts` → `c.createCandidate.bind(c)` (public) |
+| **Middleware** | None (public) |
+| **Service** | `ats.service.ts` `createCandidate()` |
+| **SQL** | INSERT into `ats_candidate`; mobile uniqueness check prior |
+| **DB tables** | `ats_candidate`, `ats_form_config*` (bootstrap form schema) |
+| **Key columns written** | id, candidate_code, full_name, mobile, email, gender, date_of_birth, applied_for_process, applied_for_branch, sourcing_channel, referred_by, walk_in_date, remarks, created_by, profile_status='registered', current_stage='Applied' |
+| **Response** | `{ success: true, data: AtsCandidate, message: "Candidate registered" }` |
+| **Next stage** | Recruiter manually moves to Screening |
+| **Allowed roles** | Public (no auth) |
+| **Scope** | N/A |
+
+**File upload (within 1 hour of registration):**
+- `POST /api/ats/candidates/:id/upload` — public, time-window gated
+- Writes `resume_url` or `selfie_url` on `ats_candidate`
 
 ---
 
-## Stage 2 — Eligibility / Duplicate Check
+### Stage 2 — Eligibility / Duplicate Check
+
+- **No automated eligibility flow** — HR reviews candidate profile manually.
+- Duplicate detection: `candidate_duplicate_detection` table (via `ats-ext` service); matches on mobile, PII hash.
+- Duplicate log columns: candidate_id, matched_with_id, match_reason, match_score, resolved, resolution_note.
+
+---
+
+### Stage 3 — Queue
 
 | Layer | Detail |
 |-------|--------|
-| **Frontend route** | `/ats/waiting-queue` or `/ats/walkin-queue` |
-| **Components** | `NativeATSWaitingQueue.tsx`, `NativeWalkinQueue.tsx` |
-| **API — waiting queue** | `GET /api/ats/waiting-queue?limit=100` → candidates where `current_stage IN ('New','Screening')` |
-| **API — walkin queue** | `GET /api/ats/walkin-queue?limit=100` → candidates where `sourcing_channel = 'Walk-In'` |
-| **Scope** | Both endpoints now use `buildScopeWhereClause` (fixed S2) |
-| **Recruiter assignment** | `recruiter_name` stored on candidate at registration (via `referred_by` / `recruiterName` field) |
-| **Duplicate detection** | `mobile` uniqueness prevents re-registration; `duplicate_of` column links to original candidate |
-| **Duplicate table** | `ats_duplicate_log` (from `017_ats_wfm_completion.sql`) |
-| **Re-apply logic** | If candidate's `ats_onboarding_request.status = 'rejected'` → ON DUPLICATE KEY resets to `'pending'` |
-| **Allowed roles** | `admin`, `hr`, `recruiter` (walkin-queue); `admin`, `hr`, `recruiter`, `manager` (waiting-queue) |
-| **Branch/Process scope** | `buildScopeWhereClause` on `applied_for_branch` + `applied_for_process` |
-| **Next stage** | Stage 3 — Screening |
+| **Frontend routes** | `/ats/waiting-queue` → `NativeATSWaitingQueue.tsx`; `/ats/walkin-queue` → `NativeWalkinQueue.tsx` |
+| **API calls** | `GET /api/ats/waiting-queue`; `GET /api/ats/walkin-queue` |
+| **Backend route** | `ats.routes.ts` lines 115-154 |
+| **Middleware** | requireAuth, requireRole |
+| **Scope** | `buildScopeWhereClause(userId, roles, { branchId: "c.applied_for_branch", processId: "c.applied_for_process" })` |
+| **SQL** | `WHERE current_stage IN ('New','Screening') [scope] ORDER BY walk_in_date DESC LIMIT 100` |
+| **DB tables** | `ats_candidate` |
+| **Allowed roles** | admin, hr, recruiter (walkin); admin, hr, recruiter, manager (waiting) |
 
 ---
 
-## Stage 3 — Screening
+### Stage 4 — Screening / Assessment / Interviews
 
 | Layer | Detail |
 |-------|--------|
-| **Frontend route** | `/ats/recruiter/workspace` |
-| **Component** | `NativeATSRecruiterWorkspace.tsx` |
-| **API — load queue** | `GET /api/ats/candidates?limit=200&page=1&stage=Applied` |
-| **API — move stage** | `POST /api/ats/candidates/:id/move-stage` |
-| **Request body** | `{ toStage: "Screened" \| "Rejected" \| "Hold", remarks: string[] }` |
-| **Backend route** | `POST /api/ats/candidates/:id/move-stage` |
-| **Middleware** | `requireAuth` → `requireRole("admin","recruiter","manager")` → `hasScopedAccess` (row-scope) |
-| **Service** | `atsService.moveStage(candidateId, toStage, userId, remarks)` |
-| **DB** | `UPDATE ats_candidate SET current_stage = ?, updated_at = NOW() WHERE id = ?` |
-| **Stage log** | `INSERT INTO ats_candidate_stage_log (id, candidate_id, from_stage, to_stage, remarks, updated_by)` |
-| **Email trigger** | On `toStage = 'Selected'` → `sendSelectedEmail()`; on `'Rejected'` → `sendRejectedEmail()` |
-| **Email table** | `ats_email_log (id, candidate_id, email_type, to_email, subject, body, status, sent_at)` |
-| **DB tables** | `ats_candidate`, `ats_candidate_stage_log`, `ats_email_log` |
-| **Stage log query** | `GET /api/ats/candidates/:id/stage-logs` → `SELECT * FROM ats_candidate_stage_log WHERE candidate_id = ? ORDER BY stage_date DESC` |
-| **Allowed roles** | `admin`, `recruiter`, `manager` |
-| **Branch/Process scope** | `hasScopedAccess` on candidate's `applied_for_branch` + `applied_for_process` |
-| **Next stage** | Stage 4 — Assessment OR Stage 5 — Interview 1 (depending on process) |
+| **Frontend routes** | `/ats/candidate-master` → `NativeATSCandidateMaster.tsx`; `/ats/recruiter/workspace` → `NativeATSRecruiterWorkspace.tsx` |
+| **API calls** | `GET /api/ats/candidates`, `GET /api/ats/candidates/:id`, `POST /api/ats/candidates/:id/move-stage` |
+| **Middleware** | requireAuth, requireRole, `hasScopedAccess` on detail/mutation endpoints |
+| **Service** | `ats.service.ts` `moveStage()` |
+| **SQL (moveStage)** | `UPDATE ats_candidate SET current_stage = ? WHERE id = ?`; INSERT into `ats_candidate_stage_log` |
+| **DB tables** | `ats_candidate`, `ats_candidate_stage_log`, `ats_interview_slot` |
+| **Stage log columns** | id, candidate_id, from_stage, to_stage, stage_date, remarks, updated_by, interview_slot_id |
+| **Email side-effects** | Selected → `sendSelectedEmail()`; Rejected → `sendRejectedEmail()` |
+| **Next stage** | Selected → HR sends onboarding token; Rejected → closed |
+| **Allowed roles** | admin, hr, recruiter (list/get); admin, recruiter, manager (move-stage) |
+| **Scope** | `hasScopedAccess(userId, roles, { branchId, processId }, { allowAdminBypass: true })` |
+
+**Assessment:** No formal assessment endpoint; custom stage values used (e.g. "Assessment", "Test"). `ats_interview_slot` links via `stage_log.interview_slot_id`.
 
 ---
 
-## Stage 4 — Assessment
+### Stage 5 — Onboarding Token
 
 | Layer | Detail |
 |-------|--------|
-| **Frontend route** | Not a dedicated page — assessment managed via `move-stage` or external LMS integration |
-| **Component** | — |
-| **Assessment fields on ats_candidate** | No direct assessment score columns on `ats_candidate` in current schema |
-| **Interview slot** | `ats_interview_slot (id, slot_date, slot_time, branch_id, process_id, max_capacity, registered)` |
-| **Stage log link** | `ats_candidate_stage_log.interview_slot_id` — links stage transition to a slot |
-| **Status** | 🟡 Partial — slot schema exists; no dedicated assessment service or API |
-| **Gap** | No MCQ/test score stored on candidate; no assessment-to-stage pipeline |
-| **Next stage** | Stage 5 — Interview 1 |
+| **Frontend route** | `/ats/onboarding-requests` → `NativeHROnboardingRequests.tsx` |
+| **API call** | `POST /api/ats/onboarding/send-token/:candidateId` |
+| **Middleware** | requireAuth, requireRole('hr','recruiter','admin') |
+| **Service** | `ats.onboarding.service.ts` `sendOnboardingToken()` |
+| **Token** | `randomUUID() + '-' + randomUUID()`, expires 7 days |
+| **DB writes** | `ats_onboarding_request` (upsert, status='pending'); `ats_onboarding_bridge` (token + expiry); `ats_candidate.profile_status='onboarding_sent'` |
+| **Email** | `sendOnboardingTokenEmail()` → `{FRONTEND_URL}/onboard?token={token}` |
+| **Scope gap** | No `hasScopedAccess` on candidateId — P1 open |
+
+**Candidate fills form at `/onboard?token=...` or `/onboard-full?token=...`**
 
 ---
 
-## Stage 5 — Interview 1 / Interview 2 / Client Round
+### Stage 6 — Profile Submission (Token-gated, Public)
+
+Two paths:
+
+**Legacy (`/onboard?token=...` → `POST /api/ats/onboarding/submit-profile`):**
+- Service: `submitProfile()` in `ats.onboarding.service.ts`
+- Writes masked+hashed PII to `ats_candidate`: `aadhar_number` (masked), `aadhar_number_hash`, `pan_number` (masked), `pan_number_hash`, `bank_account_no` (masked), `bank_account_no_hash`
+- Sets `profile_status='profile_submitted'`, `ats_onboarding_request.status='in_progress'`
+
+**Full (`/onboard-full?token=...` → `POST /api/ats/onboarding-full/employee-details` etc.):**
+- 8 steps: employee-details, bank-details, qualification, family, experience, final-section, documents, submit
+- PII stored in `candidate_onboarding_profile` (masked + hashed — separate table, NOT `ats_candidate`)
+- PAN: `pan_number_masked` (AB*****34F) + `pan_number_hash` (SHA-256)
+- Aadhaar: `aadhaar_number_masked` (XXXX-XXXX-LAST4) + `aadhaar_number_hash` (SHA-256)
+- Bank: `account_no_masked` (XXXXXX-LAST4) + `account_no_hash` (SHA-256)
+
+---
+
+### Stage 7 — BGV
 
 | Layer | Detail |
 |-------|--------|
-| **Frontend route** | `/ats/recruiter/workspace` (stage move) |
-| **Component** | `NativeATSRecruiterWorkspace.tsx` |
-| **API** | `POST /api/ats/candidates/:id/move-stage` with `toStage: "Interview 1" \| "Interview 2" \| "Client Round"` |
-| **Backend route** | `POST /api/ats/candidates/:id/move-stage` |
-| **Middleware** | `requireAuth` → `requireRole("admin","recruiter","manager")` → `hasScopedAccess` |
-| **DB** | Same as Stage 3 — `ats_candidate` + `ats_candidate_stage_log` |
-| **Interview slot link** | `ats_candidate_stage_log.interview_slot_id` references `ats_interview_slot.id` |
-| **Stage values** | Free text via `toStage` — not enum-constrained in DB (validation in `ats.validation.ts`) |
-| **Allowed roles** | `admin`, `recruiter`, `manager` |
-| **Branch/Process scope** | `hasScopedAccess` |
-| **Next stage** | Stage 6 — Selected → Onboarding |
+| **Frontend route** | `/ats/bgv` → `NativeBGVVerificationCenter.tsx` |
+| **Public (token-gated) APIs** | `POST /bgv/consent`, `POST /bgv/verify/pan`, `POST /bgv/verify/bank`, `POST /bgv/verify/aadhaar-offline`, `POST /bgv/digilocker/start`, `POST /bgv/provider/callback` |
+| **HR APIs** | `GET /bgv/queue`, `GET /bgv/candidates/:id`, `POST /bgv/candidates/:id/manual-review`, `POST /bgv/candidates/:id/waive` |
+| **DB tables** | `candidate_bgv_consent`, `candidate_bgv_check`, `candidate_bgv_verification_event`, `candidate_bank_verification`, `candidate_onboarding_document`, `candidate_digilocker_session` |
+| **BGV status field** | `ats_candidate.bgv_status` VARCHAR(50) default 'pending' |
+| **BGV check statuses** | pending / clear / adverse (per check type: address, education, employment, criminal) |
+| **Scope gap** | No `hasScopedAccess` on any HR BGV endpoint — P1 open |
+| **P0 gap** | `POST /bgv/provider/callback` has no provider signature validation |
 
 ---
 
-## Stage 6 — Selected → Onboarding Token
+### Stage 8 — Offer
 
 | Layer | Detail |
 |-------|--------|
-| **Trigger** | Recruiter moves stage to `"Selected"` |
-| **Email side effect** | `sendSelectedEmail(candidate)` fires async (failure does not block stage move) |
-| **Frontend route** | `/ats/onboarding-bridge` or `/ats/onboarding-requests` |
-| **Component** | `NativeATSOnboardingBridge.tsx` |
-| **API — send token** | `POST /api/ats/onboarding/send-token/:candidateId` |
-| **Backend route** | `POST /api/ats/onboarding/send-token/:candidateId` |
-| **Middleware** | `requireAuth` → `requireRole("hr","recruiter","admin")` |
-| **Service** | `atsOnboardingService.sendOnboardingToken(candidateId, requestedBy)` |
-| **DB operations** | 1. INSERT `ats_onboarding_request` (ON DUPLICATE KEY reset if rejected) 2. INSERT/UPDATE `ats_onboarding_bridge` (token + 7-day expiry) 3. UPDATE `ats_candidate SET profile_status = 'onboarding_sent'` |
-| **Token** | `randomUUID()` — stored as `ats_onboarding_bridge.onboarding_token` |
-| **Token expiry** | 7 days — `onboarding_token_expires_at = NOW() + INTERVAL 7 DAY` |
-| **Expiry risk** | ⚠ Server-side check: `new Date(row.onboarding_token_expires_at) < new Date()` — timezone drift risk if server/DB TZ differ |
-| **Email** | Sends link: `${FRONTEND_URL}/onboard?token=<token>` |
-| **DB tables** | `ats_onboarding_bridge`, `ats_onboarding_request`, `ats_candidate`, `ats_email_log` |
-| **profile_status** | `'onboarding_sent'` |
-| **Allowed roles** | `hr`, `recruiter`, `admin` |
-| **Branch/Process scope** | ⚠ None — no `hasScopedAccess` on send-token endpoint |
-| **Next stage** | Stage 7 — BGV + Candidate Profile Submission |
+| **Frontend route** | `/ats/onboarding-requests` → `NativeHROnboardingRequests.tsx` |
+| **API calls** | `GET /api/ats/onboarding/requests`, `POST /api/ats/onboarding/requests/:id/offer`, `PATCH /api/ats/onboarding/requests/:id/offer` |
+| **Middleware** | requireAuth, requireRole('hr','recruiter','admin') |
+| **Scope** | `buildScopeWhereClause` on `r.branch_id` for GET; no row-scope for POST/PATCH — P1 open |
+| **Service** | `saveOffer()` |
+| **Salary calc** | `calculateSalary(ctc, basic_pct, hra_pct, isMetro)` from `salary_band_master` |
+| **DB tables** | `ats_employment_offer`, `ats_onboarding_request`, `salary_band_master` |
+| **Key offer columns** | emp_type, date_of_joining, salary_band, offered_ctc, basic, hra, conveyance, da, special_allowance, other_allowance, bonus, gross, pf_employee, pf_employer, esic_employee, esic_employer, professional_tax, gratuity, admin_charges, net_in_hand, status (draft/submitted) |
+| **On submit** | `ats_onboarding_request.status='offer_submitted'`; email sent to branch_head |
 
 ---
 
-## Stage 7 — Candidate Profile Submission (Onboarding Token)
+### Stage 9 — Offer Approval / Joining
 
 | Layer | Detail |
 |-------|--------|
-| **Frontend route** | `/onboard?token=<uuid>` (public, token-based) |
-| **Component** | `CandidateOnboardingPage.tsx` |
-| **API — validate** | `GET /api/ats/onboarding/validate-token?token=<uuid>` |
-| **Validation DB** | `SELECT ... FROM ats_onboarding_bridge b JOIN ats_candidate c WHERE b.onboarding_token = ?` |
-| **Expiry check** | `onboarding_token_expires_at < NOW()` → 410 Gone |
-| **API — submit** | `POST /api/ats/onboarding/submit-profile` |
-| **Submit body** | `{ token, father_name, dob, current_address, permanent_address, aadhar_number, pan_number, uan_number, bank_account_no, bank_ifsc, bank_name, emergency_contact_name, emergency_contact_mobile, resume_url, selfie_url }` |
-| **Submit DB** | `UPDATE ats_candidate SET father_name=?, current_address=?, permanent_address=?, date_of_birth=?, aadhar_number=?, pan_number=?, uan_number=?, bank_account_no=?, bank_ifsc=?, bank_name=?, emergency_contact_name=?, emergency_contact_mobile=?, resume_url=?, selfie_url=?, profile_status='profile_submitted', profile_submitted_at=NOW()` |
-| **profile_status** | `'profile_submitted'` |
-| **DB tables** | `ats_onboarding_bridge`, `ats_candidate`, `ats_onboarding_request` |
-| **Allowed roles** | Public (token auth only) |
-| **Full onboarding path** | `/onboard-full?token=<uuid>` → `CandidateOnboardingFullPage.tsx` → extended profile via `onboarding-full.routes.ts` |
-| **Full onboarding tables** | `candidate_onboarding_profile`, `candidate_onboarding_bank_detail`, `candidate_onboarding_document`, `candidate_onboarding_qualification`, `candidate_onboarding_family`, `candidate_onboarding_experience`, `candidate_onboarding_submission_log` |
-| **Next stage** | Stage 8 — BGV |
+| **Frontend route** | `/ats/offer-approvals` → `NativeBranchHeadApproval.tsx` |
+| **API calls** | `GET /api/ats/onboarding/pending-approval`, `POST /api/ats/onboarding/offers/:id/approve`, `POST /api/ats/onboarding/offers/:id/reject` |
+| **Middleware** | requireAuth, requireRole('branch_head','admin') |
+| **Scope** | `buildScopeWhereClause` on `r.branch_id` (GET); `hasScopedAccess` on `applied_for_branch/process` (approve/reject) — **Fixed S4** |
+| **Service** | `approveOffer()` — 12-step atomic transaction |
+| **Transaction steps** | Lock employee_code via `FOR UPDATE`; create auth_user; create employee; create salary_snapshot; insert offer_approval; update request/bridge/candidate; assign employee role; commit; send welcome email |
+| **DB tables written** | `auth_user`, `employees`, `employee_salary_snapshot`, `ats_offer_approval`, `ats_onboarding_request`, `ats_onboarding_bridge`, `ats_candidate`, `user_roles` |
+| **Final state** | `ats_candidate.current_stage='converted'`, `profile_status='onboarded'` |
+| **Allowed roles** | branch_head (own branch), admin (all) |
 
 ---
 
-## Stage 8 — BGV (Background Verification)
+### Stage 10 — Rejection / Walk-out Closure
 
 | Layer | Detail |
 |-------|--------|
-| **Frontend route** | `/ats/bgv` |
-| **Component** | `NativeBGVVerificationCenter.tsx` |
-| **API — queue** | `GET /api/ats/bgv/queue?status=<optional>` |
-| **API — detail** | `GET /api/ats/bgv/candidates/:candidateId` |
-| **API — manual review** | `POST /api/ats/bgv/candidates/:candidateId/manual-review` → `{ checkId, status, remarks }` |
-| **API — waive** | `POST /api/ats/bgv/candidates/:candidateId/waive` → `{ checkId, reason }` |
-| **Token-driven BGV (candidate self-serve)** | `POST /api/ats/bgv/consent`, `POST /api/ats/bgv/verify/pan`, `POST /api/ats/bgv/verify/bank`, `POST /api/ats/bgv/verify/aadhaar-offline`, `POST /api/ats/bgv/digilocker/start` |
-| **BGV checks** | `aadhaar` (25 pts), `pan` (20 pts), `bank` (20 pts), `address` (10 pts), `education` (10 pts), `experience` (10 pts), `photo_match` (5 pts) |
-| **Overall status** | `'hold'` if critical mismatch (aadhaar/pan/bank); `'clear'` if all mandatory; `'conditional'` if score ≥ 60; `'pending'` otherwise |
-| **employee_creation_ready** | `!critical_mismatch && aadhaar_clear && pan_clear` |
-| **payroll_activation_ready** | `!critical_mismatch && pan_clear && bank_clear` |
-| **Provider** | `MockBgvProviderAdapter` (live provider key configurable via env) |
-| **DB tables** | `candidate_bgv_consent`, `candidate_bgv_check`, `candidate_bgv_api_request_log`, `candidate_bgv_verification_event`, `candidate_bgv_exception`, `candidate_digilocker_session`, `candidate_bank_verification`, `candidate_onboarding_profile`, `candidate_onboarding_bank_detail`, `candidate_onboarding_document` |
-| **Scope gap** | ⚠ `GET /api/ats/bgv/queue` and candidate BGV routes — role check present but NO `hasScopedAccess` row-scope |
-| **Allowed roles** | `admin`, `hr`, `recruiter` (queue + detail); `admin`, `hr` (manual review + waive) |
-| **bgv_status on candidate** | `ats_candidate.bgv_status VARCHAR(50) DEFAULT 'pending'` (from `017_ats_wfm_completion.sql`) |
-| **Next stage** | Stage 9 — Offer |
+| **Via moveStage** | `POST /api/ats/candidates/:id/move-stage` with `toStage='Rejected'` |
+| **Via offer rejection** | `POST /api/ats/onboarding/offers/:id/reject` |
+| **Rejection fields** | `ats_candidate_stage_log.remarks`; `ats_offer_approval.remarks`; `ats_offer_approval.action='rejected'` |
+| **Email** | `sendRejectedEmail()` logged to `ats_email_log` |
+| **Email log columns** | id, candidate_id, email_type, sent_to, status (sent/failed/skipped), error_message, sent_at |
 
 ---
 
-## Stage 9 — Offer
+### Stage 11 — Training / Post-Selection
 
-| Layer | Detail |
-|-------|--------|
-| **Frontend route** | `/ats/onboarding-requests` |
-| **Component** | `NativeHROnboardingRequests.tsx` |
-| **API — list requests** | `GET /api/ats/onboarding/requests` |
-| **List DB** | `SELECT r.*, c.*, b.branch_name, o.offer_status, o.offered_ctc FROM ats_onboarding_request r JOIN ats_candidate c ON c.id = r.candidate_id LEFT JOIN branch_master b ... LEFT JOIN ats_employment_offer o ...` |
-| **Scope gap** | ⚠ `branchId` param always `undefined` from router — all requests visible to all hr/recruiter/admin |
-| **API — salary calc** | `POST /api/ats/onboarding/calculate-salary` → `{ ctc, salary_band }` → returns all components |
-| **Salary calc logic** | `salary.calculator.ts` — `basicPct` and `hraPct` from `salary_band_master`; metro/non-metro HRA |
-| **Salary bands** | `salary_band_master (band_code, band_name, basic_pct, hra_pct, is_metro)` — seeded: D, C, B, A, M |
-| **API — save offer** | `POST /api/ats/onboarding/requests/:id/offer` → draft or submit |
-| **API — update offer** | `PATCH /api/ats/onboarding/requests/:id/offer` |
-| **Offer fields** | `ats_employment_offer (id, onboarding_request_id, offered_ctc, gross, basic, hra, conveyance, da, special_allowance, other_allowance, bonus, epf_employee, epf_employer, esic_employee, esic_employer, professional_tax, gratuity, admin_charges, net_in_hand, emp_type, date_of_joining, salary_band, status)` |
-| **Offer status flow** | `draft` → `submitted` (via submit=true) → `approved` \| `rejected` |
-| **DB tables** | `ats_onboarding_request`, `ats_employment_offer`, `salary_band_master`, `ats_email_log` |
-| **Allowed roles** | `hr`, `recruiter`, `admin` |
-| **Branch/Process scope** | ⚠ No scope — all branches visible |
-| **Next stage** | Stage 10 — Offer Approval |
+- Linked via employee → LMS integration layer (`020_lms_integration.sql`)
+- `training_need` table: status (identified/mapped_to_lms/in_training/completed/closed)
+- Employee task system: `TRAINING_INDUCTION`, `TRAINING_PROCESS` task types
+- No ATS-native training endpoint — hand-off is via employee conversion event
 
 ---
 
-## Stage 10 — Offer Approval (Branch Head)
+## Assessment Fields
 
-| Layer | Detail |
-|-------|--------|
-| **Frontend route** | `/ats/offer-approvals` |
-| **Component** | `NativeBranchHeadApproval.tsx` |
-| **API — pending** | `GET /api/ats/onboarding/pending-approval` |
-| **Pending DB** | `SELECT o.*, r.branch_id, c.*, b.branch_name FROM ats_employment_offer o JOIN ats_onboarding_request r ... WHERE o.status = 'submitted' AND (? IS NULL OR r.branch_id = ?)` |
-| **Scope gap** | ⚠ `branchId` param always `undefined` — branch head sees all branches' pending offers |
-| **API — approve** | `POST /api/ats/onboarding/offers/:id/approve` |
-| **Approve transaction** | Full atomic transaction — 12 operations (see Section 6 of backend report) |
-| **Transaction creates** | `auth_user` (password_hash, must_change_password=1) + `employees` + `employee_salary_snapshot` + `ats_offer_approval` (action='approved') + updates `ats_onboarding_request`, `ats_onboarding_bridge`, `ats_candidate` + assigns `user_roles` (role_key='employee') |
-| **Employee code** | `MAX(CAST(SUBSTRING(employee_code,4) AS UNSIGNED)) FROM employees WHERE employee_code LIKE 'MAS%' FOR UPDATE` — row-locked sequence |
-| **profile_status** | Set to `'onboarded'` on approve |
-| **current_stage** | Set to `'converted'` on approve |
-| **API — reject** | `POST /api/ats/onboarding/offers/:id/reject` |
-| **Reject ops** | INSERT `ats_offer_approval (action='rejected')` + UPDATE `ats_onboarding_request (status='rejected')` + UPDATE `ats_employment_offer (status='draft')` |
-| **DB tables** | `ats_employment_offer`, `ats_offer_approval`, `ats_onboarding_request`, `ats_onboarding_bridge`, `ats_candidate`, `employees`, `auth_user`, `employee_salary_snapshot`, `user_roles` |
-| **Allowed roles** | `branch_head`, `admin` |
-| **Branch/Process scope** | ⚠ Role check exists; `branchId` param always `undefined` (no row-scope) |
-| **Welcome email** | Sent post-transaction (non-blocking) |
-| **Next stage** | Stage 11 — Joining |
+No formal assessment endpoint in current code. Fields in use:
+- `ats_interview_slot.slot_date`, `slot_time`, `branch_id`, `process_id`, `max_capacity`, `registered`
+- `ats_candidate_stage_log.interview_slot_id` links a stage move to a slot
+- Assessment scores: not in schema — custom remarks used
 
 ---
 
-## Stage 11 — Joining
+## Rejection Fields Summary
 
-| Layer | Detail |
-|-------|--------|
-| **Trigger** | Offer approved — `ats_onboarding_bridge.status = 'joined'`, `hr_approved_by` + `hr_approved_at` set |
-| **Employee record** | `employees (id, employee_code='MAS#####', first_name, last_name, email, mobile, branch_id, process_id, designation_id, date_of_joining, employment_type='Full Time', employment_status='Active', user_id)` |
-| **Auth account** | `auth_user (id, email, password_hash, must_change_password=1)` — candidate logs in, forced password change |
-| **Salary snapshot** | `employee_salary_snapshot (id, employee_id, snapshot_date, ctc_offered, basic, hra, conveyance, da, special_allowance, other_allowance, bonus, gross, epf_employee, epf_employer, esic_employee, esic_employer, professional_tax, gratuity, admin_charges, net_in_hand)` |
-| **Role** | `user_roles (user_id, role_key='employee', active_status=1)` |
-| **Alt path** | `POST /api/ats/convert/:candidateId` (admin/hr) — simpler conversion without full offer flow |
-| **Convert** | Creates `employees` record, sets `current_stage='converted'`, updates bridge |
-| **Branch/Process scope** | `hasScopedAccess` (fixed S2) |
-| **DB tables** | `employees`, `auth_user`, `employee_salary_snapshot`, `user_roles`, `ats_candidate`, `ats_onboarding_bridge` |
-| **Next stage** | Stage 12 — Training / Post-Selection |
+| Table | Column | Notes |
+|-------|--------|-------|
+| `ats_candidate` | `current_stage='Rejected'` | Stage value |
+| `ats_candidate_stage_log` | `to_stage, remarks, updated_by` | Audit trail |
+| `ats_offer_approval` | `action='rejected', remarks` | Offer-level rejection |
+| `ats_onboarding_request` | `status='rejected'` | Request-level rejection |
+| `ats_email_log` | `email_type='rejected'` | Email audit |
 
 ---
 
-## Stage 12 — Training / Post-Selection
+## Offer / BGV / Training Fields
 
-| Layer | Detail |
-|-------|--------|
-| **System** | External LMS (deployed separately) — HRMS integrates via Integration Hub |
-| **HRMS side** | LMS Integration Layer (Phase 6 — not yet built) |
-| **Current state** | Employee created → LMS learner mapping is planned but not implemented |
-| **Expected** | `LMS learner sync` — employee_id → LMS learner_id mapping |
-| **Tables planned** | Not yet in `mas_hrms` schema |
-| **Status** | 🔴 Not implemented |
+### Offer (ats_employment_offer)
+emp_type (OnRoll/OffRoll), date_of_joining, date_of_salary, profile, department_id, designation_id, cost_centre, reporting_manager_id, role_type, salary_band, offered_ctc, basic, hra, conveyance, da, special_allowance, other_allowance, bonus, gross, pf_employee, pf_employer, esic_employee, esic_employer, professional_tax, gratuity, admin_charges, net_in_hand, status (draft/submitted)
 
----
+### BGV (candidate_bgv_check)
+check_type, status (pending/clear/adverse), verified_at, match_score, matched_name, matched_dob, remarks, verified_by
 
-## Stage 13 — Rejection / Walk-out Closure
-
-| Layer | Detail |
-|-------|--------|
-| **Rejection via stage move** | `POST /api/ats/candidates/:id/move-stage` → `{ toStage: "Rejected" }` |
-| **Rejection fields on ats_candidate** | `current_stage = 'Rejected'`; `ats_candidate_stage_log (to_stage='Rejected', remarks)` |
-| **Offer rejection** | `ats_employment_offer.status = 'draft'` (reverted); `ats_onboarding_request.status = 'rejected'`; `ats_offer_approval.action = 'rejected'` + remarks; `ats_offer.rejection_reason` (from `017_ats_wfm_completion.sql`) |
-| **Email** | `sendRejectedEmail(candidate)` — async, non-blocking |
-| **Re-apply** | Mobile uniqueness blocks re-registration with same mobile; `ats_onboarding_request` ON DUPLICATE KEY resets status if previously rejected |
-| **active_status** | `active_status = 0` to soft-delete/archive candidate |
-| **DB tables** | `ats_candidate`, `ats_candidate_stage_log`, `ats_employment_offer`, `ats_onboarding_request`, `ats_offer_approval`, `ats_email_log` |
-| **Allowed roles** | `admin`, `recruiter`, `manager` (stage move); `branch_head`, `admin` (offer reject) |
+### Training (training_need + employee_task)
+status (identified/mapped_to_lms/in_training/completed/closed), task_type (TRAINING_INDUCTION/TRAINING_PROCESS), assigned_to, due_date, completed_at
 
 ---
 
-## Full Journey State Machine
+## Open Scope Gaps (post-S4)
 
-```
-Public Registration
-        │
-        ▼
-  [Applied] ─────────────────────────────────────────────── [Rejected]
-        │                                                        ▲
-        ▼                                                        │
-  Recruiter reviews queue (waiting-queue / walkin-queue)         │
-        │                                                        │
-        ├─── move-stage → [Screened]                             │
-        │         │                                              │
-        │         ├─── [Interview 1] ──► [Interview 2] ──► [Client Round]
-        │         │                                              │
-        │         └─────────────────────────────────────────────┤
-        │                                                        │
-        ├─── move-stage → [Hold]                                 │
-        │                                                        │
-        └─── move-stage → [Selected] ───────────────────────────┘
-                    │
-                    ▼
-           profile_status = 'onboarding_sent'
-           (HR sends token via onboarding-bridge)
-                    │
-                    ▼
-           Candidate submits profile at /onboard?token=...
-           profile_status = 'profile_submitted'
-                    │
-                    ├──► BGV (parallel)
-                    │         candidate_bgv_check[] → bgv_status
-                    │
-                    ▼
-           HR creates offer (ats_employment_offer status='draft')
-                    │
-                    ▼
-           HR submits offer (status='submitted')
-                    │
-                    ▼
-           Branch Head approves → TRANSACTION:
-               - auth_user created
-               - employees record created
-               - employee_salary_snapshot inserted
-               - ats_offer_approval (action='approved')
-               - ats_onboarding_bridge.status = 'joined'
-               - ats_candidate.current_stage = 'converted'
-               - ats_candidate.profile_status = 'onboarded'
-               - user_roles (role_key='employee')
-                    │
-                    ▼
-           Joined employee → LMS learner mapping (🔴 not yet built)
-```
-
----
-
-## Candidate Unique Key & Field Reference
-
-### ats_candidate — Key Fields
-
-| Field | Type | Stage Set | Description |
-|-------|------|-----------|-------------|
-| `id` | CHAR(36) PK | Registration | UUID |
-| `candidate_code` | VARCHAR UNIQUE | Registration | `ATS-YYYYNNN` |
-| `mobile` | VARCHAR UNIQUE | Registration | Duplicate check key |
-| `email` | VARCHAR | Registration | Not unique |
-| `current_stage` | VARCHAR | Every stage move | `Applied`, `Screening`, `Screened`, `Selected`, `Rejected`, `Hold`, `Interview 1/2`, `Client Round`, `converted` |
-| `profile_status` | ENUM | Multiple stages | `registered`, `selected`, `onboarding_sent`, `profile_submitted`, `onboarded` |
-| `active_status` | TINYINT(1) | — | 1=active, 0=archived |
-| `applied_for_branch` | VARCHAR | Registration | Branch scope key |
-| `applied_for_process` | VARCHAR | Registration | Process scope key |
-| `sourcing_channel` | VARCHAR | Registration | Walk-In, LinkedIn, Referral, etc. |
-| `bgv_status` | VARCHAR(50) | BGV stage | `pending`, `clear`, `hold`, `conditional` |
-| `offer_status` | VARCHAR(50) | Offer stage | Mirrors `ats_employment_offer.status` |
-| `duplicate_of` | CHAR(36) | Duplicate detect | FK to original candidate |
-| `aadhar_number` | VARCHAR | Profile submit | Plain text — ⚠ PII stored unmasked on ats_candidate |
-| `pan_number` | VARCHAR | Profile submit | Plain text — ⚠ PII stored unmasked on ats_candidate |
-| `uan_number` | VARCHAR | Profile submit | — |
-| `bank_account_no` | VARCHAR | Profile submit | Plain text — ⚠ PII |
-| `bank_ifsc` | VARCHAR | Profile submit | — |
-| `bank_name` | VARCHAR | Profile submit | — |
-| `walk_in_date` | DATETIME | Registration | Walk-in timestamp |
-| `resume_url` | VARCHAR | File upload | Supabase/local path |
-| `selfie_url` | VARCHAR | File upload | Supabase/local path |
-
-### Recruiter Ownership
-
-| Field | Location | Description |
-|-------|----------|-------------|
-| `recruiter_name` (via `referred_by`) | `ats_candidate` | Recruiter who registered the candidate |
-| `created_by` | `ats_candidate` | User ID of creator (null for public registration) |
-| `ats_recruiter` table | `ats_form_config.routes.ts` | Named recruiters for dropdown (HR/admin managed) |
-
----
-
-## First Confirmed Critical Issue
-
-**CI-001 — PII Stored Unmasked on ats_candidate**
-
-| Attribute | Detail |
-|-----------|--------|
-| **Severity** | P0 — Critical |
-| **Type** | Data Security / PII Exposure |
-| **Location** | `backend/src/modules/ats/ats.onboarding.service.ts:submitProfile()` |
-| **DB Columns** | `ats_candidate.aadhar_number`, `ats_candidate.pan_number`, `ats_candidate.bank_account_no` |
-| **What happens** | `submitProfile` writes Aadhaar, PAN, and bank account numbers **as plain text** directly to `ats_candidate` |
-| **Contrast** | `onboarding-full.service.ts` correctly stores `pan_number_hash`, `pan_number_masked`, `aadhaar_number_hash`, `aadhaar_number_masked` in `candidate_onboarding_profile` — but the basic onboarding path does NOT |
-| **Risk** | Any authenticated user with `GET /api/ats/candidates/:id` (`admin`, `hr`, `recruiter`, `manager`) can read raw Aadhaar, PAN and bank account numbers from the API response |
-| **Current scope enforcement** | `hasScopedAccess` now gates the read (fixed S2) — but within scope, PII is fully exposed |
-| **DPDP/regulatory exposure** | Violates DPDP Act 2023 data minimisation and storage limitation principles; also violates PCI-DSS if bank data is in scope |
-| **Fix required** | `ats.onboarding.service.ts submitProfile`: hash/mask Aadhaar + PAN + bank account before writing to `ats_candidate`; OR stop writing these to `ats_candidate` entirely and route only through `candidate_onboarding_profile` (already has masked columns) |
-| **Files** | `backend/src/modules/ats/ats.onboarding.service.ts` (lines ~60–100) |
-| **Do not fix yet** | As per session rules — record only, no code change |
-
----
-
-## Route Coverage Summary
-
-| Route | Component | Audited | Status |
-|-------|-----------|---------|--------|
-| `/interview-registration` | `NativeATSCandidateRegistration` | ✅ | Public self-reg |
-| `/onboard` | `CandidateOnboardingPage` | ✅ | Token-driven |
-| `/onboard-full` | `CandidateOnboardingFullPage` | ✅ | Extended profile |
-| `/ats/dashboard` | `NativeATSDashboardReplica` | ✅ | Stats aggregate |
-| `/ats/dashboard-v2` | `NativeATSDashboardV2` | ✅ | Same data, alternate view |
-| `/ats/candidate-registration` | `NativeATSCandidateRegistration` | ✅ | Protected alias |
-| `/ats/recruiter/my-candidates` | `NativeATSRecruiterDashboard` | 🟡 | Placeholder/stub component |
-| `/ats/recruiter/workspace` | `NativeATSRecruiterWorkspace` | ✅ | Stage management |
-| `/ats/onboarding-bridge` | `NativeATSOnboardingBridge` | ✅ | Token send + convert |
-| `/ats/waiting-queue` | `NativeATSWaitingQueue` | ✅ | Stage=Applied queue |
-| `/ats/walkin-queue` | `NativeWalkinQueue` | ✅ | Walk-in channel queue |
-| `/ats/candidate-master` | `NativeATSCandidateMaster` | ✅ | Full candidate DB |
-| `/ats/onboarding-requests` | `NativeHROnboardingRequests` | ✅ | Offer creation |
-| `/ats/offer-approvals` | `NativeBranchHeadApproval` | ✅ | Branch head approval |
-| `/ats/bgv` | `NativeBGVVerificationCenter` | ✅ | BGV tracking |
-| `/ats/sourcing-analysis` | `NativeATSSourcingAnalysis` | ✅ | Channel stats |
-| `/ats/extensions` | `NativeATSExtensions` | ✅ | Requisition mgmt |
-| `/ats/form-config` | `NativeATSFormConfig` | ✅ | Field + recruiter config |
-| `/ats/command-center` | `NativeATSFullParityCommandCenter` | ✅ | Full-parity diagnostics |
+| # | Priority | Endpoint | Gap | Status |
+|---|----------|----------|-----|--------|
+| CI-BGV-01 | P0 | `POST /api/ats/bgv/provider/callback` | No provider signature validation | 🔴 Open |
+| CI-FP-01 | P0 | `POST /api/ats-full-parity/intake` | Public endpoint accepts PII, no auth | 🔴 Open |
+| CI-FP-02 | P0 | `POST /api/ats-full-parity/bgv` | Public BGV submission, no token | 🔴 Open |
+| CI-FP-03 | P0 | `POST /api/ats-full-parity/doc-upload-response` | Public doc upload, no validation | 🔴 Open |
+| CI-FP-04 | P0 | `POST /api/ats-full-parity/recruiter-devices` | Public device registration | 🔴 Open |
+| SG-006 | P1 | `GET /api/ats/candidates/:id/stage-logs` | No row-scope | 🔴 Open |
+| SG-007 | P1 | `GET/POST/PATCH /api/ats/onboarding-bridge` | No row-scope | 🔴 Open |
+| SG-008 | P1 | `POST /api/ats/onboarding/send-token/:id` | No row-scope | 🔴 Open |
+| SG-009 | P1 | `POST/PATCH /api/ats/onboarding/requests/:id/offer` | No row-scope | 🔴 Open |
+| SG-010 | P1 | All 6 BGV HR endpoints | No row-scope | 🔴 Open |
+| SG-011 | P1 | `GET/PATCH /api/ats/onboarding-full/candidate/:id` | No row-scope | 🔴 Open |
+| SG-012 | P1 | `/api/ats-full-parity/web-data`, `/queue`, `/journey` | No row-scope | 🔴 Open |
+| SG-013 | P2 | `GET /api/ats/stats` | No scope filtering for non-admin | 🔴 Open |
+| SG-014 | P2 | `POST /api/ats/onboarding-full/family` | Family member names unmasked | 🔴 Open |
 
 ---
 
@@ -455,7 +304,10 @@ Public Registration
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
-| 1.0.0 | 2026-06-10 | Audit Agent | Initial complete journey map from live code |
+| 1.0.0 | 2026-06-10 | Audit Agent | Initial journey map from code |
+| 2.0.0 | 2026-06-10 | Audit Agent | Session 2: scope fixes noted |
+| 3.0.0 | 2026-06-10 | Audit Agent | Session 3: CI-001 recorded; full journey documented |
+| 4.0.0 | 2026-06-10 | Audit Agent | Session 4: approve/reject scope fixed; full API audit complete; 14 open gaps recorded |
 
 ---
 

@@ -17,22 +17,43 @@
 
 ---
 
-## 2. Session 4 — CI-001 PII Fix Applied
+## 2. Session 4 — Fixes Applied
 
-### Fix: Aadhaar / PAN / bank account masked + hashed before writing to `ats_candidate`
+### Fix 1: CI-001 — Aadhaar / PAN / bank account masked + hashed before writing to `ats_candidate`
 
 **File modified**: `backend/src/modules/ats/ats.onboarding.service.ts`
+- Import `createHash` added; four pure helpers: `hashPii`, `maskAadhaar`, `maskPan`, `maskBankAccount`.
+- `submitProfile()` now writes masked display + SHA-256 hash for each PII field.
+- Migration `backend/sql/126_ats_candidate_pii_hash_columns.sql`: adds `*_hash CHAR(64)` columns (additive).
 
-**Changes**:
-1. Import `createHash` from `'crypto'` (alongside existing `randomUUID`).
-2. Added four pure helpers: `hashPii`, `maskAadhaar`, `maskPan`, `maskBankAccount`.
-3. In `submitProfile()`: compute masked display string and SHA-256 hash for each PII field before SQL.
-4. SQL now writes `aadhar_number` (masked), `aadhar_number_hash`, `pan_number` (masked), `pan_number_hash`, `bank_account_no` (masked), `bank_account_no_hash`.
+### Fix 2: `listOnboardingRequests` + `listPendingApprovals` — branch scope enforced
 
-**Migration created**: `backend/sql/126_ats_candidate_pii_hash_columns.sql`
-- Adds `aadhar_number_hash CHAR(64)`, `pan_number_hash CHAR(64)`, `bank_account_no_hash CHAR(64)` to `ats_candidate` (additive, `IF NOT EXISTS`).
+**Files modified**: `ats.onboarding.service.ts`, `ats.onboarding.routes.ts`
+- Both service functions now accept `{ sql, params }` scope filter.
+- Route handlers call `buildScopeWhereClause()` on `r.branch_id` before every list query.
 
-**Result**: `tests/ats.routes.test.ts` — 19/19 passing (unchanged). Typecheck: same pre-existing `leave.routes.ts:134` error only.
+### Fix 3: Offer `approveOffer` + `rejectOffer` — branch_head row-scope enforced
+
+**File modified**: `backend/src/modules/ats/ats.onboarding.service.ts`
+- `hasScopedAccess()` imported and called after fetching the offer row in both functions.
+- `rejectOffer` SELECT expanded to include `c.applied_for_branch`, `c.applied_for_process`.
+- Throws 403 if approver's scope does not cover candidate's branch/process.
+
+### Fix 4: S2 scope enforcement committed (previously uncommitted working tree)
+
+- `GET/PUT /api/ats/candidates/:id`, `POST move-stage`, `POST /convert/:id` — `hasScopedAccess` wrappers.
+- `GET /walkin-queue`, `GET /waiting-queue` — `buildScopeWhereClause` injected.
+
+**All results**: `tests/ats.routes.test.ts` — 19/19 passing. Typecheck: same pre-existing `leave.routes.ts:134` error only.
+
+### Journey Map Audit (S4)
+
+Full parallel API audit completed. 89 endpoints mapped. New P0 issues found:
+- CI-BGV-01: `POST /api/ats/bgv/provider/callback` — no provider signature validation
+- CI-FP-01: `POST /api/ats-full-parity/intake` — public endpoint accepts PII
+- CI-FP-02: `POST /api/ats-full-parity/bgv` — public BGV submission without token
+- CI-FP-03: `POST /api/ats-full-parity/doc-upload-response` — public without validation
+- CI-FP-04: `POST /api/ats-full-parity/recruiter-devices` — public device registration
 
 ---
 
@@ -187,7 +208,12 @@
 | **CI-001** | **P0** | **PII (Aadhaar/PAN/bank) stored unmasked on ats_candidate** | `ats.onboarding.service.ts:submitProfile` | **✅ Fixed S4** |
 | 11 | P2 | BGV endpoints — no row-scope (`hasScopedAccess`) | `bgv-verification.routes.ts` | 🔴 Open |
 | 12 | P2 | onboarding/send-token — no row-scope | `ats.onboarding.routes.ts` | 🔴 Open |
-| 13 | P2 | offer approve/reject — no row-scope on branch_head | `ats.onboarding.routes.ts` | 🔴 Open |
+| 13 | P2 | offer approve/reject — no row-scope on branch_head | `ats.onboarding.service.ts` | ✅ Fixed S4 |
+| CI-BGV-01 | P0 | `POST /api/ats/bgv/provider/callback` — no signature validation | `bgv-verification.routes.ts` | 🔴 Open — CRITICAL |
+| CI-FP-01 | P0 | `POST /api/ats-full-parity/intake` — public PII intake | `ats-full-parity.routes.ts` | 🔴 Open — CRITICAL |
+| CI-FP-02 | P0 | `POST /api/ats-full-parity/bgv` — public BGV submission | `ats-full-parity.routes.ts` | 🔴 Open — CRITICAL |
+| CI-FP-03 | P0 | `POST /api/ats-full-parity/doc-upload-response` — no validation | `ats-full-parity.routes.ts` | 🔴 Open — CRITICAL |
+| CI-FP-04 | P0 | `POST /api/ats-full-parity/recruiter-devices` — public | `ats-full-parity.routes.ts` | 🔴 Open |
 | 14 | P3 | `/ats/recruiter/my-candidates` — placeholder stub component | `NativeATSRecruiterDashboard.tsx` | 🔴 Open |
 | 15 | P3 | Multiple dashboard pages fetch same 1500-candidate list | `NativeATSDashboardReplica`, `DashboardV2`, `CommandCenter` | 🔴 Open (performance) |
 
@@ -195,16 +221,17 @@
 
 ## 7. Exact Next Task
 
-**Next open P2 issue: offer approve/reject — no row-scope on branch_head**
+**Next open P0 issue: CI-BGV-01 — BGV provider callback has no signature validation**
 
-**Task**: `POST /api/ats/onboarding/offers/:id/approve` and `.../reject` must verify the acting `branch_head`'s assigned branch matches `r.branch_id` on the offer's request record before approving/rejecting.
+**Task**: `POST /api/ats/bgv/provider/callback` accepts external BGV provider results with no HMAC or PKI signature check. A forged callback can mark a candidate's BGV as clear.
 
 **Approach**:
-1. In `approveOffer` / `rejectOffer` in `ats.onboarding.service.ts`, after fetching the offer row (which already joins `ats_onboarding_request r`), call `hasScopedAccess(approverId, ['branch_head'], { branchId: offer.applied_for_branch }, { allowAdminBypass: true })`.
-2. Throw 403 if not allowed.
-3. The offer row already contains `applied_for_branch` from the JOIN so no extra DB call is needed.
+1. Find the route handler in the BGV routes file.
+2. Add a `x-bgv-signature` header check using `crypto.createHmac('sha256', BGV_WEBHOOK_SECRET).update(rawBody).digest('hex')` and compare with `timingSafeEqual`.
+3. Return 401 if signature missing or invalid.
+4. If `BGV_WEBHOOK_SECRET` env var is not set, log a warning and accept (dev fallback) — or reject in production (`NODE_ENV=production`).
 
-**Files to Modify**: `backend/src/modules/ats/ats.onboarding.service.ts` (approveOffer + rejectOffer)
+**Files to Modify**: BGV verification routes file (find with `grep -r "provider/callback" backend/src/`)
 
 **Exact Next Command**:
 ```bash
@@ -230,9 +257,9 @@ npx vitest run tests/ats.routes.test.ts
 | 1.0.0 | 2026-06-10 | Audit Agent | Initial ATS E2E baseline |
 | 2.0.0 | 2026-06-10 | Audit Agent | Session 2: scope enforcement, new test failure documented |
 | 3.0.0 | 2026-06-10 | Audit Agent | Session 3: test fix applied, full journey map completed, CI-001 identified |
-| 4.0.0 | 2026-06-10 | Audit Agent | Session 4: CI-001 fixed; requests+pending-approval scope fixed via buildScopeWhereClause |
+| 4.0.0 | 2026-06-10 | Audit Agent | Session 4: CI-001 + 3 scope fixes; full 89-endpoint API audit; 5 new P0 issues identified |
 
 ---
 
-**AUDIT STATUS**: 🟡 CI-001 + requests/pending-approval scope fixed — offer approve/reject row-scope remains
-**NEXT ACTION**: Add hasScopedAccess check to approveOffer + rejectOffer for branch_head row-scope
+**AUDIT STATUS**: 🟡 All S4 fixes done — 5 new P0 issues (CI-BGV-01, CI-FP-01/02/03/04) identified from full API audit
+**NEXT ACTION**: Fix CI-BGV-01 — Add HMAC signature validation to POST /api/ats/bgv/provider/callback

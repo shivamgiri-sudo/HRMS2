@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { RowDataPacket, PoolConnection } from 'mysql2/promise';
 import { db } from '../../db/mysql.js';
 import { env } from '../../config/env.js';
+import { hasScopedAccess } from '../../shared/scopeAccess.js';
 import { calculateSalary, SalaryComponents } from './salary.calculator.js';
 import {
   sendOnboardingTokenEmail,
@@ -352,6 +353,14 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
   const offer = offerRows[0];
   const candidateId: string = offer.req_candidate_id;
 
+  const allowed = await hasScopedAccess(
+    approverId,
+    ['branch_head'],
+    { branchId: offer.applied_for_branch, processId: offer.applied_for_process },
+    { allowAdminBypass: true },
+  );
+  if (!allowed) throw Object.assign(new Error('Access denied'), { status: 403 });
+
   // Pre-compute values that don't need a DB connection
   const mobile: string = offer.mobile ?? '0000';
   const tempPassword = `${mobile.slice(-4)}@MAS`;
@@ -485,13 +494,24 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
 
 export async function rejectOffer(offerId: string, approverId: string, remarks: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT o.onboarding_request_id, r.candidate_id
+    `SELECT o.onboarding_request_id, r.candidate_id,
+            c.applied_for_branch, c.applied_for_process
      FROM ats_employment_offer o
      JOIN ats_onboarding_request r ON r.id = o.onboarding_request_id
+     JOIN ats_candidate c ON c.id = r.candidate_id
      WHERE o.id = ?`,
     [offerId],
   );
   if (!rows.length) throw Object.assign(new Error('Offer not found'), { status: 404 });
+  const row = (rows as RowDataPacket[])[0];
+
+  const allowed = await hasScopedAccess(
+    approverId,
+    ['branch_head'],
+    { branchId: row.applied_for_branch, processId: row.applied_for_process },
+    { allowAdminBypass: true },
+  );
+  if (!allowed) throw Object.assign(new Error('Access denied'), { status: 403 });
 
   await db.execute(
     `INSERT INTO ats_offer_approval (id, offer_id, approver_id, action, remarks)
@@ -501,7 +521,7 @@ export async function rejectOffer(offerId: string, approverId: string, remarks: 
 
   await db.execute(
     `UPDATE ats_onboarding_request SET status = 'rejected', updated_at = NOW() WHERE id = ?`,
-    [(rows as RowDataPacket[])[0].onboarding_request_id],
+    [row.onboarding_request_id],
   );
 
   // Remove the offer from the pending list by updating its status

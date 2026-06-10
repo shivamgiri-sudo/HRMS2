@@ -138,6 +138,12 @@
 | **CI-001** | `POST /api/ats/onboarding/submit-profile` | ⚠ Aadhaar/PAN/bank written as plain text to `ats_candidate` | **✅ Fixed S4 — masked display + SHA-256 hash stored; migration 126 adds hash columns** |
 | Safe | `POST /api/ats/onboarding-full/employee-details` | ✅ hashed/masked via `candidate_onboarding_profile` | ✅ |
 | Medium | `POST /api/ats/candidates/:id/upload` | Column name interpolated but hard-coded to `resume_url`/`selfie_url` | 🟡 Monitor |
+| **CI-BGV-01** | `POST /api/ats/bgv/provider/callback` | ⚠ No provider signature validation — BGV results can be forged | **🔴 CRITICAL** |
+| **CI-FP-01** | `POST /api/ats-full-parity/intake` | ⚠ Public endpoint accepts PII without auth | **🔴 CRITICAL** |
+| **CI-FP-02** | `POST /api/ats-full-parity/bgv` | ⚠ Public BGV submission without token | **🔴 CRITICAL** |
+| **CI-FP-03** | `POST /api/ats-full-parity/doc-upload-response` | ⚠ Public doc upload without validation | **🔴 CRITICAL** |
+| **CI-FP-04** | `POST /api/ats-full-parity/recruiter-devices` | ⚠ Public device registration without auth | **🔴 HIGH** |
+| P2 | `POST /api/ats/onboarding-full/family` | Family member names stored unmasked | 🟡 Open |
 
 ---
 
@@ -161,7 +167,7 @@
 | 1.0.0 | 2026-06-10 | Audit Agent | Initial matrix |
 | 2.0.0 | 2026-06-10 | Audit Agent | Session 2: scope enforcement applied to 6 endpoints; matrix statuses updated |
 | 3.0.0 | 2026-06-10 | Audit Agent | Session 3: BGV, onboarding-full, extensions, full-parity routes added; CI-001 PII issue recorded |
-| 4.0.0 | 2026-06-10 | Audit Agent | Session 4: CI-001 fixed; migration 126 created for hash columns |
+| 4.0.0 | 2026-06-10 | Audit Agent | Session 4: CI-001 fixed; migration 126; approve/reject scope fixed; 5 new P0/P1 issues from full-parity audit |
 
 ---
 

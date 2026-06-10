@@ -167,7 +167,10 @@
 | 3.9 | Path traversal via `upload` filename | — | 🔴 | `randomUUID()` filename; low risk |
 | 3.10 | CI-001: `POST /onboarding/submit-profile` — Aadhaar/PAN/bank masked before write | — | 🟡 | Fix applied S4; unit test for masking helpers pending |
 | 3.11 | BGV `GET /candidates/:id` cross-branch scope denied → 403 | — | 🔴 | No row-scope on BGV routes |
-| 3.12 | Offer approve by branch_head of wrong branch → 403 | — | 🔴 | branchId param unused |
+| 3.12 | Offer approve by branch_head of wrong branch → 403 | — | 🔴 | hasScopedAccess added S4; test not yet written |
+| 3.13 | `POST /api/ats/bgv/provider/callback` with forged payload → rejected | — | 🔴 **CRITICAL** | No signature validation (CI-BGV-01) |
+| 3.14 | `POST /api/ats-full-parity/intake` with PII from unauthenticated client → rejected | — | 🔴 **CRITICAL** | Public endpoint accepts PII (CI-FP-01) |
+| 3.15 | `POST /api/ats/onboarding/offers/:id/approve` by branch_head of wrong branch → 403 | — | 🔴 | Unit test needed; logic added S4 |
 
 ---
 
@@ -190,7 +193,7 @@
 | 1.0.0 | 2026-06-10 | Audit Agent | Initial test matrix |
 | 2.0.0 | 2026-06-10 | Audit Agent | Session 2: scope enforcement tests reflected; convert mock gap flagged |
 | 3.0.0 | 2026-06-10 | Audit Agent | Session 3: convert mock fix applied (19/19 green); CI-001, BGV, offer scope tests added as gaps |
-| 4.0.0 | 2026-06-10 | Audit Agent | Session 4: CI-001 fixed; 3.10 updated to reflect fix applied |
+| 4.0.0 | 2026-06-10 | Audit Agent | Session 4: CI-001 fixed; approve/reject scope fixed; 3 new security test gaps added from full-parity audit |
 
 ---
 
