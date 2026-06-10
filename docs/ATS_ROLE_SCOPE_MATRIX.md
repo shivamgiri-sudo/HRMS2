@@ -1,9 +1,9 @@
 # ATS Role ↔ Scope Matrix
 
-> Version: 5.0.0  
+> Version: 6.0.0  
 > Date: 2026-06-10  
-> Commit: post-S5 (see git log)
-> Session: 5 — Scope column bug fixed; queue token endpoints added; registration validation extended
+> Commit: post-S6 (see git log)
+> Session: 6 — Recruiter auth endpoint (biometric), scoped pending list, interview submission (validate+upsert+audit)
 
 ---
 
@@ -184,6 +184,7 @@ export async function requireCandidateScope(
 | 3.0.0 | 2026-06-10 | Audit Agent | Session 3: BGV, onboarding, offer scope gaps added; CI-001 PII issue added to priority table |
 | 4.0.0 | 2026-06-10 | Audit Agent | Session 4: CI-001 fixed; requests/pending-approval scoped; offer approve/reject scoped; 4 new P0 CI issues from full-parity audit |
 | 5.0.0 | 2026-06-10 | Audit Agent | Session 5: GET /candidates scope column bug fixed (c.branch_id→c.applied_for_branch); queue token endpoints added with branch/process scope |
+| 6.0.0 | 2026-06-10 | Audit Agent | Session 6: recruiter verify endpoint (bcrypt+biometric); my-candidates scoped to recruiter's assigned Waiting candidates; submission via ats_interview_submission with ownership check |
 
 ---
 

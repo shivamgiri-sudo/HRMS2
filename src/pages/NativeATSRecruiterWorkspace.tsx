@@ -17,21 +17,32 @@ type CandidateRow = {
 
 type HistoryRow = {
   id: string;
-  candidate_code: string;
+  candidate_id: string;
+  candidate_code?: string;
   q_token?: string;
-  recruiter_name?: string;
+  recruiter_code?: string;
   submitted_at?: string;
   walkin_end_stage?: string;
   final_decision?: string;
   interviewed_for_process?: string;
   round1_result?: string;
-  skill_result?: string;
+  skilltest_result?: string;
   round2_result?: string;
   round3_result?: string;
   offer_salary?: string;
   offer_doj?: string;
   previous_submitted_time?: string;
-  candidate?: CandidateRow;
+  full_name?: string;
+  mobile?: string;
+};
+
+type RecruiterProfile = {
+  id: string;
+  name: string;
+  recruiterCode: string;
+  branch: string;
+  email: string | null;
+  employeeId: string | null;
 };
 
 type Config = {
@@ -133,77 +144,89 @@ function Badge({ value }: { value?: string }) {
   return <span className={`rw-badge ${cls}`}>{text}</span>;
 }
 
+// Client-side validation mirrors backend rules
+function validateForm(form: Form): string | null {
+  if (!form.processName) return "Interviewed for Process is required.";
+  if (!form.finalDecision) return "Final Decision is required.";
+  if (!form.stageName) return "Walk-in End Stage is required.";
+  const rank = STAGE_RANK[form.stageName] ?? -1;
+  if (rank < 0) return `Invalid Walk-in End Stage: "${form.stageName}"`;
+  if (rank >= 1) {
+    if (!form.round1Result) return "Round1 Result is required from Round 1 stage onwards.";
+    if (form.round1Result === "Rejected" && !form.round1Voc) return "Round1 VOC is required when Round1 Result is Rejected.";
+  }
+  if (form.skillResult === "Rejected" && !form.skillVoc) return "SkillTest VOC is required when SkillTest Result is Rejected.";
+  if (rank >= 3) {
+    if (!form.round2Result) return "Round2 Result is required from Round 2 stage onwards.";
+    if (form.round2Result === "Rejected" && !form.round2Voc) return "Round2 VOC is required when Round2 Result is Rejected.";
+  }
+  if (rank >= 4) {
+    if (!form.round3Result) return "Round3 Result is required from Round 3 stage onwards.";
+    if (form.round3Result === "Rejected" && !form.round3Voc) return "Round3 VOC is required when Round3 Result is Rejected.";
+  }
+  if (form.finalDecision === "Selected") {
+    if (!form.offerSalary) return "Offer Salary is required when Final Decision is Selected.";
+    if (!form.offerDoj) return "Date of Joining is required when Final Decision is Selected.";
+    if (!form.reportingTiming) return "Reporting Timing is required when Final Decision is Selected.";
+  }
+  return null;
+}
+
+// Auto-cascade round results when finalDecision = Selected
+function cascadeSelected(form: Form): Form {
+  const rank = STAGE_RANK[form.stageName] ?? 0;
+  const updated = { ...form };
+  if (form.finalDecision === "Selected") {
+    if (rank >= 1) updated.round1Result = "Selected";
+    if (rank >= 3) updated.round2Result = "Selected";
+    if (rank >= 4) updated.round3Result = "Selected";
+  }
+  return updated;
+}
+
 export default function NativeATSRecruiterWorkspace() {
   const [screen, setScreen] = useState<"login" | "workspace" | "form">("login");
   const [tab, setTab] = useState<"pending" | "history">("pending");
   const [code, setCode] = useState("");
   const [pin, setPin] = useState("");
-  const [recruiterName, setRecruiterName] = useState("");
+  const [recruiterProfile, setRecruiterProfile] = useState<RecruiterProfile | null>(null);
   const [pending, setPending] = useState<CandidateRow[]>([]);
   const [history, setHistory] = useState<HistoryRow[]>([]);
-  const [candidateLookup, setCandidateLookup] = useState<Record<string, CandidateRow>>({});
-  const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
+  const [config] = useState<Config>(DEFAULT_CONFIG);
   const [selected, setSelected] = useState<CandidateRow | null>(null);
   const [form, setForm] = useState<Form>(EMPTY_FORM);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
   const [query, setQuery] = useState("");
   const [decision, setDecision] = useState("All");
-  const [fromDate, setFromDate] = useState(monthStartIso());
-  const [toDate, setToDate] = useState(todayIso());
+  const [fromDate] = useState(monthStartIso());
+  const [toDate] = useState(todayIso());
 
   const rank = STAGE_RANK[form.stageName] ?? 0;
 
-  const loadConfig = async () => {
-    // Config served from static defaults until recruiter profile API is built
-    setConfig(DEFAULT_CONFIG);
-  };
-
-  const loadHistory = async (_name: string) => {
-    // Stage log history via MySQL backend
+  const loadPending = async (profile: RecruiterProfile) => {
     const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
-      `/api/ats/candidates?limit=200&page=1&fromDate=${fromDate || "2000-01-01"}&toDate=${toDate || todayIso()}`
+      `/api/ats/recruiter/my-candidates?recruiterName=${encodeURIComponent(profile.name)}`
     );
-    const lookup: Record<string, CandidateRow> = {};
-    (res.data ?? []).forEach((c: any) => {
-      lookup[c.candidate_code] = {
-        candidateId: c.id,
-        qToken: c.candidate_code,
-        fullName: c.full_name,
-        mobile: c.mobile,
-        email: c.email,
-        branch: c.applied_for_branch,
-        roleApplied: c.applied_for_process,
-        status: c.current_stage,
-        stage: c.current_stage,
-        recruiterName: _name,
-      };
-    });
-    setCandidateLookup(lookup);
-    setHistory([]);
-  };
-
-  const loadPending = async () => {
-    // Fetch Applied candidates as the "pending" queue
-    const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
-      "/api/ats/candidates?limit=200&page=1&stage=Applied"
-    );
-    const recruiter = code.trim();
-    setRecruiterName(recruiter);
     setPending((res.data ?? []).map((c: any) => ({
-      candidateId: c.id,
-      qToken: c.candidate_code,
-      fullName: c.full_name,
+      candidateId: c.candidateId,
+      qToken: c.qToken ?? null,
+      fullName: c.fullName,
       mobile: c.mobile,
-      email: c.email,
-      branch: c.applied_for_branch,
-      roleApplied: c.applied_for_process,
-      status: c.current_stage,
-      stage: c.current_stage,
-      recruiterName: recruiter,
-      pendingMinutes: Math.max(0, Math.floor((Date.now() - new Date(c.created_at).getTime()) / 60000)),
+      branch: c.branch,
+      roleApplied: c.process,
+      status: c.status,
+      stage: c.status,
+      recruiterName: profile.name,
+      pendingMinutes: c.pendingMinutes ?? 0,
     })));
-    await loadHistory(recruiter);
+  };
+
+  const loadHistory = async (profile: RecruiterProfile) => {
+    const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+      `/api/ats/recruiter/submission-history?recruiterCode=${encodeURIComponent(profile.recruiterCode)}`
+    );
+    setHistory(res.data ?? []);
   };
 
   const login = async () => {
@@ -212,24 +235,32 @@ export default function NativeATSRecruiterWorkspace() {
       return;
     }
     setLoading(true);
-    setMsg("Loading recruiter workspace...");
+    setMsg("Verifying recruiter identity...");
     try {
-      await loadConfig();
-      await loadPending();
+      const verifyRes = await hrmsApi.post<{ success: boolean; data: RecruiterProfile; message?: string }>(
+        "/api/ats/recruiter/verify",
+        { recruiterCode: code.trim(), pin: pin.trim() }
+      );
+      const profile = verifyRes.data;
+      setRecruiterProfile(profile);
+      setMsg("Loading workspace...");
+      await Promise.all([loadPending(profile), loadHistory(profile)]);
       setMsg("");
       setScreen("workspace");
     } catch (err: any) {
-      setMsg(err.message || "Unable to login");
+      const detail = err?.response?.data?.message || err.message || "Unable to login";
+      setMsg(detail);
     } finally {
       setLoading(false);
     }
   };
 
   const refresh = async () => {
+    if (!recruiterProfile) return;
     setLoading(true);
     setMsg("");
     try {
-      await loadPending();
+      await Promise.all([loadPending(recruiterProfile), loadHistory(recruiterProfile)]);
     } catch (err: any) {
       setMsg(err.message || "Unable to refresh");
     } finally {
@@ -245,7 +276,7 @@ export default function NativeATSRecruiterWorkspace() {
       stageName: h?.walkin_end_stage || c.stage || "Arrival",
       finalDecision: resubmit ? "" : h?.final_decision || "",
       round1Result: h?.round1_result || "",
-      skillResult: h?.skill_result || "",
+      skillResult: h?.skilltest_result || "",
       round2Result: h?.round2_result || "",
       round3Result: h?.round3_result || "",
       offerSalary: h?.offer_salary || "",
@@ -255,26 +286,59 @@ export default function NativeATSRecruiterWorkspace() {
     setScreen("form");
   };
 
+  const updateForm = (patch: Partial<Form>) => {
+    setForm((prev) => {
+      const updated = { ...prev, ...patch };
+      if ("finalDecision" in patch || "stageName" in patch) {
+        return cascadeSelected(updated);
+      }
+      return updated;
+    });
+  };
+
   const submit = async () => {
-    if (!selected) return;
+    if (!selected || !recruiterProfile) return;
+    const validationError = validateForm(form);
+    if (validationError) {
+      setMsg(validationError);
+      return;
+    }
     setLoading(true);
     setMsg("Submitting update...");
     try {
-      await hrmsApi.post(`/api/ats/candidates/${selected.candidateId}/move-stage`, {
-        toStage: form.stageName || "Screened",
-        remarks: [
-          form.processName && `Process: ${form.processName}`,
-          form.finalDecision && `Decision: ${form.finalDecision}`,
-          form.round1Result && `R1: ${form.round1Result}`,
-          form.round2Result && `R2: ${form.round2Result}`,
-          form.offerSalary && `Offer: ${form.offerSalary}`,
-        ].filter(Boolean).join(" | ") || null,
+      await hrmsApi.post("/api/ats-full-parity/recruiter-submission", {
+        recruiterCode: recruiterProfile.recruiterCode,
+        candidateId: selected.candidateId,
+        qToken: selected.qToken,
+        interviewedForProcess: form.processName,
+        walkinEndStage: form.stageName,
+        finalDecision: form.finalDecision,
+        round1Result: form.round1Result || null,
+        round1Voc: form.round1Voc || null,
+        round1Remarks: form.round1Remarks || null,
+        skillTestTyping: form.skillTypingScore ? Number(form.skillTypingScore) : null,
+        skillTestAi: form.skillAiScore ? Number(form.skillAiScore) : null,
+        skillTestResult: form.skillResult || null,
+        skillTestVoc: form.skillVoc || null,
+        skillTestRemarks: form.skillRemarks || null,
+        round2Result: form.round2Result || null,
+        round2Voc: form.round2Voc || null,
+        round2Remarks: form.round2Remarks || null,
+        round3Result: form.round3Result || null,
+        round3Voc: form.round3Voc || null,
+        round3Remarks: form.round3Remarks || null,
+        offerSalary: form.offerSalary ? Number(form.offerSalary) : null,
+        offerDoj: form.offerDoj || null,
+        reportingTiming: form.reportingTiming || null,
+        otDetails: form.otDetails || null,
+        performanceIncentives: form.performanceIncentives || null,
       });
       setMsg("Update submitted successfully.");
       setScreen("workspace");
       await refresh();
     } catch (err: any) {
-      setMsg(err.message || "Unable to submit update");
+      const detail = err?.response?.data?.message || err.message || "Unable to submit update";
+      setMsg(detail);
     } finally {
       setLoading(false);
     }
@@ -282,12 +346,14 @@ export default function NativeATSRecruiterWorkspace() {
 
   const filteredHistory = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const from = fromDate ? new Date(fromDate).getTime() : 0;
+    const to = toDate ? new Date(toDate + "T23:59:59").getTime() : Infinity;
     return history.filter((h) => {
-      const c = candidateLookup[h.candidate_code] || {};
-      const text = [h.candidate_code, c.fullName, c.mobile, c.email, c.branch, c.roleApplied, h.final_decision, h.walkin_end_stage, h.interviewed_for_process].join(" ").toLowerCase();
-      return (!q || text.includes(q)) && (decision === "All" || h.final_decision === decision);
+      const text = [h.candidate_id, h.full_name, h.mobile, h.final_decision, h.walkin_end_stage, h.interviewed_for_process].join(" ").toLowerCase();
+      const ts = h.submitted_at ? new Date(h.submitted_at).getTime() : 0;
+      return (!q || text.includes(q)) && (decision === "All" || h.final_decision === decision) && ts >= from && ts <= to;
     });
-  }, [history, candidateLookup, query, decision]);
+  }, [history, query, decision, fromDate, toDate]);
 
   const kpiSelected = history.filter((h) => h.final_decision === "Selected").length;
   const kpiPending = history.filter((h) => h.final_decision === "Client Round - Pending").length;
@@ -295,7 +361,11 @@ export default function NativeATSRecruiterWorkspace() {
   const field = (label: string, key: keyof Form, type: "input" | "select" | "textarea", options: string[] = []) => (
     <div>
       <label>{label}</label>
-      {type === "textarea" ? <textarea value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} /> : type === "select" ? <select value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })}><option value="">Select</option><Opts values={options} /></select> : <input value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} type={key === "offerDoj" ? "date" : key === "reportingTiming" ? "time" : "text"} />}
+      {type === "textarea"
+        ? <textarea value={form[key]} onChange={(e) => updateForm({ [key]: e.target.value })} />
+        : type === "select"
+        ? <select value={form[key]} onChange={(e) => updateForm({ [key]: e.target.value })}><option value="">Select</option><Opts values={options} /></select>
+        : <input value={form[key]} onChange={(e) => updateForm({ [key]: e.target.value })} type={key === "offerDoj" ? "date" : key === "reportingTiming" ? "time" : "text"} />}
     </div>
   );
 
@@ -308,17 +378,47 @@ export default function NativeATSRecruiterWorkspace() {
       <div className="rw-wrap">
         {screen === "login" && <div className="rw-card"><div className="rw-grid rw-2"><div><label>Recruiter Code</label><input value={code} onChange={(e)=>setCode(e.target.value)} /></div><div><label>PIN</label><input type="password" value={pin} onChange={(e)=>setPin(e.target.value)} /></div></div><button disabled={loading} onClick={login} style={{marginTop:12}}>{loading?"Loading...":"Open Workspace"}</button>{msg && <p className="rw-msg">{msg}</p>}</div>}
 
-        {screen === "workspace" && <>
-          <div className="rw-card"><div className="rw-row"><div><h2 style={{margin:0}}>{recruiterName}</h2><p className="rw-muted">Recruiter performance and submission workspace.</p></div><button onClick={refresh} disabled={loading} style={{width:"auto"}}>Refresh</button></div>{msg && <p className="rw-msg">{msg}</p>}</div>
-          <div className="rw-grid rw-3"><div className="rw-kpi"><span className="rw-muted">Pending Queue</span><br/><b>{pending.length}</b></div><div className="rw-kpi"><span className="rw-muted">Selected in Filter</span><br/><b>{kpiSelected}</b></div><div className="rw-kpi"><span className="rw-muted">Client Pending</span><br/><b>{kpiPending}</b></div></div>
+        {screen === "workspace" && recruiterProfile && <>
+          <div className="rw-card"><div className="rw-row"><div><h2 style={{margin:0}}>{recruiterProfile.name}</h2><p className="rw-muted">{recruiterProfile.recruiterCode} • {recruiterProfile.branch}</p></div><button onClick={refresh} disabled={loading} style={{width:"auto"}}>Refresh</button></div>{msg && <p className="rw-msg">{msg}</p>}</div>
+          <div className="rw-grid rw-3"><div className="rw-kpi"><span className="rw-muted">Pending Queue</span><br/><b>{pending.length}</b></div><div className="rw-kpi"><span className="rw-muted">Selected Today</span><br/><b>{kpiSelected}</b></div><div className="rw-kpi"><span className="rw-muted">Client Pending</span><br/><b>{kpiPending}</b></div></div>
           <div className="rw-card"><div className="rw-tabs"><button className={`rw-tab ${tab==='pending'?'on':''}`} onClick={()=>setTab('pending')}>Pending Queue</button><button className={`rw-tab ${tab==='history'?'on':''}`} onClick={()=>setTab('history')}>Submission History</button></div></div>
 
-          {tab === "pending" && <div className="rw-card"><h3>Assigned Waiting Candidates</h3>{pending.length===0?<p className="rw-muted">No pending candidates.</p>:pending.map((c)=><div className="rw-item" key={c.candidateId}><div className="rw-row"><div><b>{c.fullName}</b><p className="rw-muted">{c.candidateId} • {c.mobile} • {c.branch} • Pending {c.pendingMinutes||0} mins</p><Badge value={c.status}/></div><button style={{width:"auto"}} onClick={()=>openForm(c)}>Open</button></div></div>)}</div>}
+          {tab === "pending" && <div className="rw-card"><h3>Assigned Waiting Candidates</h3>{pending.length===0?<p className="rw-muted">No pending candidates.</p>:pending.map((c)=><div className="rw-item" key={c.candidateId}><div className="rw-row"><div><b>{c.fullName}</b><p className="rw-muted">{c.candidateId} • {c.mobile} • {c.branch} • Waiting {c.pendingMinutes||0} mins</p><Badge value={c.status}/></div><button style={{width:"auto"}} onClick={()=>openForm(c)}>Open</button></div></div>)}</div>}
 
-          {tab === "history" && <div className="rw-card"><h3>Past Submissions</h3><div className="rw-grid rw-2"><input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search name, number, candidate ID, process..."/><select value={decision} onChange={(e)=>setDecision(e.target.value)}><option>All</option><Opts values={config.decisionOptions}/></select><input type="date" value={fromDate} onChange={(e)=>setFromDate(e.target.value)}/><input type="date" value={toDate} onChange={(e)=>setToDate(e.target.value)}/></div><button onClick={refresh} disabled={loading} style={{marginTop:10,width:"auto"}}>Apply Filters</button><div className="rw-scroll" style={{marginTop:12}}><table className="rw-table"><thead><tr><th>Candidate</th><th>Contact</th><th>Decision</th><th>Stage</th><th>Process</th><th>Submitted</th><th>Action</th></tr></thead><tbody>{filteredHistory.map((h)=>{const c=candidateLookup[h.candidate_code]||{};const canResubmit=h.final_decision==='Client Round - Pending';return <tr key={h.id}><td><b>{c.fullName||'-'}</b><br/><span className="rw-muted">{h.candidate_code}</span></td><td>{c.mobile||'-'}<br/><span className="rw-muted">{c.email||''}</span></td><td><Badge value={h.final_decision}/></td><td>{h.walkin_end_stage||'-'}</td><td>{h.interviewed_for_process||'-'}</td><td>{fmt(h.submitted_at)}</td><td><button disabled={!canResubmit} onClick={()=>openForm(c, true, h)}>{canResubmit?'Resubmit':'View Only'}</button></td></tr>})}</tbody></table></div></div>}
+          {tab === "history" && <div className="rw-card"><h3>Past Submissions</h3><div className="rw-grid rw-2"><input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search name, number, candidate ID, process..."/><select value={decision} onChange={(e)=>setDecision(e.target.value)}><option>All</option><Opts values={config.decisionOptions}/></select><input type="date" value={fromDate} readOnly /><input type="date" value={toDate} readOnly /></div><button onClick={refresh} disabled={loading} style={{marginTop:10,width:"auto"}}>Refresh</button><div className="rw-scroll" style={{marginTop:12}}><table className="rw-table"><thead><tr><th>Candidate</th><th>Contact</th><th>Decision</th><th>Stage</th><th>Process</th><th>Submitted</th><th>Action</th></tr></thead><tbody>{filteredHistory.map((h)=>{const canResubmit=h.final_decision==='Client Round - Pending';return <tr key={h.id}><td><b>{h.full_name||'-'}</b><br/><span className="rw-muted">{h.candidate_id}</span></td><td>{h.mobile||'-'}</td><td><Badge value={h.final_decision}/></td><td>{h.walkin_end_stage||'-'}</td><td>{h.interviewed_for_process||'-'}</td><td>{fmt(h.submitted_at)}</td><td><button disabled={!canResubmit} onClick={()=>openForm({candidateId:h.candidate_id,qToken:h.q_token??undefined,fullName:h.full_name??undefined,mobile:h.mobile??undefined},true,h)}>{canResubmit?'Resubmit':'View Only'}</button></td></tr>})}</tbody></table></div></div>}
         </>}
 
-        {screen === "form" && selected && <div className="rw-card"><button onClick={()=>setScreen('workspace')} style={{width:"auto",background:'#e2e8f0',color:'#0f172a'}}>Back</button><h2>Update Candidate</h2><p className="rw-muted"><b>{selected.fullName}</b> • {selected.candidateId} • {selected.mobile}</p><div className="rw-grid rw-2">{field('Interviewed for Process','processName','select',config.processOptions)}{field('Final Decision','finalDecision','select',config.decisionOptions)}{field('Walk-in End Stage','stageName','select',config.stageOptions)}{rank>=1&&field('Round1 Result','round1Result','select',config.decisionOptions)}{rank>=1&&form.round1Result==='Rejected'&&field('Round1 VOC','round1Voc','select',config.vocOptions)}{rank>=1&&field('Round1 Remarks','round1Remarks','textarea')}{rank>=2&&field('SkillTest AI Score','skillAiScore','input')}{rank>=2&&field('SkillTest Result','skillResult','select',config.decisionOptions)}{rank>=2&&form.skillResult==='Rejected'&&field('SkillTest VOC','skillVoc','select',config.skillVocOptions)}{rank>=2&&field('SkillTest Remarks','skillRemarks','textarea')}{rank>=3&&field('Round2 Result','round2Result','select',config.decisionOptions)}{rank>=3&&form.round2Result==='Rejected'&&field('Round2 VOC','round2Voc','select',config.vocOptions)}{rank>=3&&field('Round2 Remarks','round2Remarks','textarea')}{rank>=4&&field('Round3 Result','round3Result','select',config.decisionOptions)}{rank>=4&&form.round3Result==='Rejected'&&field('Round3 VOC','round3Voc','select',config.vocOptions)}{rank>=4&&field('Round3 Remarks','round3Remarks','textarea')}{form.finalDecision==='Selected'&&field('Offer Salary','offerSalary','input')}{form.finalDecision==='Selected'&&field('Date of Joining','offerDoj','input')}{form.finalDecision==='Selected'&&field('Reporting Timing','reportingTiming','input')}{form.finalDecision==='Selected'&&field('OT Details','otDetails','input')}{form.finalDecision==='Selected'&&field('Performance Incentives','performanceIncentives','input')}</div><button disabled={loading} onClick={submit} style={{marginTop:12}}>{loading?'Submitting...':'Submit Update'}</button>{msg && <p className="rw-msg">{msg}</p>}</div>}
+        {screen === "form" && selected && <div className="rw-card">
+          <button onClick={()=>setScreen('workspace')} style={{width:"auto",background:'#e2e8f0',color:'#0f172a'}}>Back</button>
+          <h2>Update Candidate</h2>
+          <p className="rw-muted"><b>{selected.fullName}</b> • {selected.candidateId} • {selected.mobile}</p>
+          <div className="rw-grid rw-2">
+            {field('Interviewed for Process','processName','select',config.processOptions)}
+            {field('Final Decision','finalDecision','select',config.decisionOptions)}
+            {field('Walk-in End Stage','stageName','select',config.stageOptions)}
+            {rank>=1&&field('Round1 Result','round1Result','select',config.decisionOptions)}
+            {rank>=1&&form.round1Result==='Rejected'&&field('Round1 VOC','round1Voc','select',config.vocOptions)}
+            {rank>=1&&field('Round1 Remarks','round1Remarks','textarea')}
+            {rank>=2&&field('SkillTest Typing Score','skillTypingScore','input')}
+            {rank>=2&&field('SkillTest AI Score','skillAiScore','input')}
+            {rank>=2&&field('SkillTest Result (optional)','skillResult','select',config.decisionOptions)}
+            {rank>=2&&form.skillResult==='Rejected'&&field('SkillTest VOC','skillVoc','select',config.skillVocOptions)}
+            {rank>=2&&field('SkillTest Remarks','skillRemarks','textarea')}
+            {rank>=3&&field('Round2 Result','round2Result','select',config.decisionOptions)}
+            {rank>=3&&form.round2Result==='Rejected'&&field('Round2 VOC','round2Voc','select',config.vocOptions)}
+            {rank>=3&&field('Round2 Remarks','round2Remarks','textarea')}
+            {rank>=4&&field('Round3 Result','round3Result','select',config.decisionOptions)}
+            {rank>=4&&form.round3Result==='Rejected'&&field('Round3 VOC','round3Voc','select',config.vocOptions)}
+            {rank>=4&&field('Round3 Remarks','round3Remarks','textarea')}
+            {form.finalDecision==='Selected'&&field('Offer Salary','offerSalary','input')}
+            {form.finalDecision==='Selected'&&field('Date of Joining','offerDoj','input')}
+            {form.finalDecision==='Selected'&&field('Reporting Timing','reportingTiming','input')}
+            {form.finalDecision==='Selected'&&field('OT Details','otDetails','input')}
+            {form.finalDecision==='Selected'&&field('Performance Incentives','performanceIncentives','input')}
+          </div>
+          <button disabled={loading} onClick={submit} style={{marginTop:12}}>{loading?'Submitting...':'Submit Update'}</button>
+          {msg && <p className="rw-msg">{msg}</p>}
+        </div>}
       </div>
     </div>
   );

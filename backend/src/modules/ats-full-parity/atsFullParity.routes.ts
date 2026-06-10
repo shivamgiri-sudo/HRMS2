@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { atsFullParityService as svc } from "./atsFullParity.service.js";
+import { submitInterviewUpdate } from "./recruiterInterview.service.js";
 
 export const atsFullParityRouter = Router();
 
@@ -56,8 +57,28 @@ atsFullParityRouter.get("/journey", requireRole("admin", "hr", "recruiter", "man
 }));
 
 atsFullParityRouter.post("/recruiter-submission", requireRole("admin", "hr", "recruiter", "manager"), h(async (req: any, res) => {
-  const data = await svc.submitRecruiterUpdate(req.body, req.authUser?.id);
-  res.json({ success: true, data, message: "Recruiter submission consolidated" });
+  // recruiterCode must be supplied in the body (obtained from POST /api/ats/recruiter/verify)
+  const recruiterCode = String(req.body?.recruiterCode ?? "").trim();
+  if (!recruiterCode) {
+    return res.status(400).json({ success: false, message: "recruiterCode is required in the request body" });
+  }
+  // Resolve recruiter profile from DB (no PIN re-check here — JWT already validates user)
+  const { db: _db } = await import("../../db/mysql.js");
+  const [recRows] = await _db.execute(
+    `SELECT id, name, recruiter_code, email, branch, employee_id FROM ats_recruiter_roster WHERE recruiter_code = ? AND active_status = 1 LIMIT 1`,
+    [recruiterCode]
+  ) as any;
+  if (!recRows[0]) return res.status(403).json({ success: false, message: "Recruiter not found or inactive" });
+  const recruiterProfile = {
+    id: recRows[0].id,
+    name: recRows[0].name,
+    recruiterCode: recRows[0].recruiter_code,
+    branch: recRows[0].branch ?? "",
+    email: recRows[0].email ?? null,
+    employeeId: recRows[0].employee_id ?? null,
+  };
+  const result = await submitInterviewUpdate(req.body, req.authUser?.id, recruiterProfile);
+  res.json({ success: true, data: result.submission, action: result.action, message: `Submission ${result.action} successfully` });
 }));
 
 atsFullParityRouter.post("/jobs/sla-check", requireRole("admin", "hr"), h(async (_req, res) => {

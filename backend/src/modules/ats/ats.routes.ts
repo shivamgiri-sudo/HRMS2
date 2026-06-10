@@ -12,6 +12,7 @@ import onboardingRouter from "./ats.onboarding.routes.js";
 import onboardingFullRouter from "./onboarding-full.routes.js";
 import bgvVerificationRouter from "./bgv-verification.routes.js";
 import { atsQueueService } from "./ats.queue.service.js";
+import { verifyRecruiter, getMyPendingCandidates, getSubmissionHistory } from "../ats-full-parity/recruiterInterview.service.js";
 import multer from "multer";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -317,6 +318,34 @@ atsRouter.get("/queue-tokens/active", requireRole("admin", "hr", "recruiter", "m
     new Date()
   );
   return res.json({ success: true, data, alert_count: data.filter((r) => r.over_threshold).length });
+}));
+
+// ── Recruiter identity + scoped candidate list ───────────────────────────────
+
+// POST /api/ats/recruiter/verify — validates recruiter code + PIN and biometric availability
+// Requires HRMS JWT (requireAuth already applied above)
+atsRouter.post("/recruiter/verify", requireRole("admin", "hr", "recruiter", "manager"), h(async (req: any, res: any) => {
+  const { recruiterCode, pin } = req.body;
+  if (!recruiterCode || !pin) return res.status(400).json({ success: false, message: "recruiterCode and pin are required" });
+  const profile = await verifyRecruiter(recruiterCode, pin);
+  return res.json({ success: true, data: profile });
+}));
+
+// GET /api/ats/recruiter/my-candidates — returns only candidates assigned to this recruiter with status=Waiting
+// Requires valid JWT + query param recruiterName (verified against backend)
+atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "recruiter", "manager"), h(async (req: any, res: any) => {
+  const recruiterName = String(req.query.recruiterName ?? "").trim();
+  if (!recruiterName) return res.status(400).json({ success: false, message: "recruiterName query param required" });
+  const data = await getMyPendingCandidates(recruiterName);
+  return res.json({ success: true, data });
+}));
+
+// GET /api/ats/recruiter/submission-history — submission history for a recruiter code
+atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "recruiter", "manager"), h(async (req: any, res: any) => {
+  const recruiterCode = String(req.query.recruiterCode ?? "").trim();
+  if (!recruiterCode) return res.status(400).json({ success: false, message: "recruiterCode query param required" });
+  const data = await getSubmissionHistory(recruiterCode);
+  return res.json({ success: true, data });
 }));
 
 // Onboarding flow — token generation, profile submission, offer mgmt, approve/reject

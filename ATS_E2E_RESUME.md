@@ -1,8 +1,8 @@
 # ATS E2E Audit — Session Resume
 
-> Session: HRMS1 ATS End-to-End Audit (Session 5)
+> Session: HRMS1 ATS End-to-End Audit (Session 6)
 > Date: 2026-06-10
-> Commit: see git log (post-S5)
+> Commit: see git log (post-S6)
 > Scope: ATS module + directly dependent onboarding / BGV / offer / training flows
 
 ---
@@ -17,7 +17,71 @@
 
 ---
 
-## 2. Session 5 — Fixes Applied
+## 2. Session 6 — Fixes Applied
+
+### Fix 1 (S6): SQL Migrations for Recruiter Roster and Interview Submission
+
+**New migration**: `backend/sql/129_ats_recruiter_roster.sql`
+- Creates `ats_recruiter_roster`: id, name, recruiter_code (UNIQUE), pin_hash (bcrypt), email, mobile, branch, employee_id (FK→employees), available_today ENUM('Y','N'), assigned_today, daily_capacity, role_coverage, reporting_manager, branch_head_email, active_status, last_assigned_at, created_at.
+
+**New migration**: `backend/sql/130_ats_interview_submission.sql`
+- Creates `ats_interview_submission`: all interview fields (round1/2/3 results, VOC, remarks, skill test, offer details); plus `previous_submitted_time`, `last_walkin_end_stage`, `last_final_decision` tracking columns; UNIQUE KEY `uq_submission (candidate_id, q_token)`.
+- Creates `ats_interview_submission_audit`: id, submission_id (FK), action ENUM('INSERT','UPDATE'), actor_user_id, snapshot JSON, created_at.
+
+**New migration**: `backend/sql/131_ats_command_audit_log.sql`
+- Creates `ats_command_audit_log` to support existing `audit()` helper in `atsFullParity.service.ts`.
+
+### Fix 2 (S6): Recruiter Auth Service + Submission Validation
+
+**New file**: `backend/src/modules/ats-full-parity/recruiterInterview.service.ts`
+- `verifyRecruiter(recruiterCode, pin)`: bcrypt PIN check + biometric availability check via `biometric_attendance_log WHERE employee_id = ? AND punch_date = CURDATE() AND first_punch_in IS NOT NULL`; falls back to `available_today = 'Y'` when no employee_id.
+- `getMyPendingCandidates(recruiterName)`: returns only candidates with `recruiter_assigned_name = ?` AND `status = 'Waiting'`; calculates `pending_minutes` via `TIMESTAMPDIFF(MINUTE, CONCAT(created_date, ' ', created_time), NOW())` server-side.
+- `getSubmissionHistory(recruiterCode)`: returns past submissions for a recruiter from `ats_interview_submission`.
+- `submitInterviewUpdate(raw, actorUserId, recruiterProfile)`: full validation (process enum, stage enum, decision enum, stage-conditional round mandatory, VOC-on-rejected mandatory, Selected cascade + offer mandatory); transaction with SELECT FOR UPDATE on both candidate and submission; upserts to `ats_interview_submission` (INSERT vs UPDATE); preserves `previous_submitted_time`, `last_walkin_end_stage`, `last_final_decision` on UPDATE; inserts audit row with action INSERT/UPDATE; updates only `ats_candidate.current_stage` and `status` — never modifies `created_date` or `created_time`.
+
+**Modified**: `backend/src/modules/ats/ats.routes.ts`
+- `POST /api/ats/recruiter/verify` — recruiter code + PIN → biometric check → returns recruiter profile.
+- `GET /api/ats/recruiter/my-candidates?recruiterName=` — scoped server-calculated pending queue.
+- `GET /api/ats/recruiter/submission-history?recruiterCode=` — recruiter submission history.
+
+**Modified**: `backend/src/modules/ats-full-parity/atsFullParity.routes.ts`
+- `POST /api/ats-full-parity/recruiter-submission` now calls `submitInterviewUpdate` (with full validation/transaction) instead of the old unvalidated `submitRecruiterUpdate`; requires `recruiterCode` in request body.
+
+### Fix 3 (S6): Frontend NativeATSRecruiterWorkspace.tsx
+
+**File rewritten**: `src/pages/NativeATSRecruiterWorkspace.tsx`
+- `login()`: calls `POST /api/ats/recruiter/verify` with `{ recruiterCode, pin }`; stores `RecruiterProfile`; shows backend error message on biometric/auth failure.
+- `loadPending()`: calls `GET /api/ats/recruiter/my-candidates?recruiterName=...`; uses server-calculated `pendingMinutes`.
+- `loadHistory()`: calls `GET /api/ats/recruiter/submission-history?recruiterCode=...`; wired to real `ats_interview_submission` rows.
+- `submit()`: calls `POST /api/ats-full-parity/recruiter-submission` with full form payload; runs client-side `validateForm()` before API call (mirrors backend rules exactly).
+- `updateForm()`: applies `cascadeSelected()` to auto-set round results to 'Selected' when `finalDecision === 'Selected'`.
+- Added missing `skillTypingScore` input field at rank≥2 alongside `skillAiScore`.
+- History table wired to real `HistoryRow` fields from `ats_interview_submission`.
+
+### Tests (S6)
+
+**New file**: `backend/tests/ats.recruiter.test.ts` — 28 tests covering all 15 mandatory test cases:
+- TC-01: Assigned Waiting candidates; unassigned denied
+- TC-02: Wrong PIN, unknown code, no biometric punch → denied; valid punch → allowed (4 tests)
+- TC-03: Blank Skill Test accepted at Round 2 / Selection Discussion (2 tests)
+- TC-04: SkillTest Rejected without VOC denied; with VOC accepted (2 tests)
+- TC-05: Each round Rejected without VOC denied (3 tests)
+- TC-06: Selected without salary / DOJ / reporting time denied (3 tests)
+- TC-07: Selected cascades round results to Selected
+- TC-08: Invalid process / decision / stage denied (3 tests)
+- TC-09: First submission inserts one row
+- TC-10: Resubmission updates same row, preserves previous tracking fields
+- TC-11: QToken mismatch rejected with 409
+- TC-12: created_date / created_time never modified in UPDATE ats_candidate
+- TC-13: SELECT FOR UPDATE + transaction prevents duplicate rows
+- TC-14: Audit row action=INSERT on first submission; action=UPDATE on resubmission (2 tests)
+- TC-15: Frontend validation messages match backend errors
+
+**All 28 new + 60 existing ATS tests pass (88 total ATS, 1129 total).**
+
+---
+
+## 3 (archived). Session 5 — Fixes Applied
 
 ### Fix 1: Scope Column Bug — `GET /api/ats/candidates`
 
@@ -102,9 +166,9 @@
 | Command | Exit | Result | Notes |
 |---------|------|--------|-------|
 | `npx tsc --noEmit` | 1 | **1 error** | `leave.routes.ts:134` — pre-existing non-ATS |
-| `npx vitest run` | 1 | **25 failed / 1182 total** | Same 25 pre-existing non-ATS failures; 27 new ATS tests added |
+| `npx vitest run` | 1 | **25 failed / 1210 total** | Same 25 pre-existing non-ATS failures; 28 new S6 recruiter tests added |
 
-**ATS suite**: 60/60 passing.
+**ATS suite**: 88/88 passing (60 prior + 28 new S6 recruiter tests).
 
 **Failing test files (all non-ATS, pre-existing)**:
 
@@ -171,6 +235,15 @@
 | 20 | PATCH | `/api/ats/queue-tokens/:id/assign-recruiter` | JWT | admin,hr,recruiter | N/A | S5 |
 | 21 | PATCH | `/api/ats/queue-tokens/:id/assign-interviewer` | JWT | admin,hr,recruiter | N/A | S5 |
 | 22 | PATCH | `/api/ats/queue-tokens/:id/stage` | JWT | admin,hr,recruiter | N/A | S5 |
+| 23 | POST | `/api/ats/recruiter/verify` | JWT | admin,hr,recruiter,manager | N/A | S6: recruiter code+PIN+biometric |
+| 24 | GET | `/api/ats/recruiter/my-candidates` | JWT | admin,hr,recruiter,manager | N/A | S6: server-side pendingMinutes, Waiting only |
+| 25 | GET | `/api/ats/recruiter/submission-history` | JWT | admin,hr,recruiter,manager | N/A | S6: submission history by recruiterCode |
+
+**ATS Full Parity Router** (`/api/ats-full-parity`)
+
+| # | Method | Route | Auth | Roles | Notes |
+|---|--------|-------|------|-------|-------|
+| FP1 | POST | `/api/ats-full-parity/recruiter-submission` | JWT | admin,hr,recruiter,manager | S6: full validation + transaction + upsert to ats_interview_submission |
 
 **Onboarding Sub-Router** (`/api/ats/onboarding`)
 
@@ -222,7 +295,7 @@
 
 ---
 
-## 6. Exact Next Task
+## 6. Exact Next Task (Session 7)
 
 **Next open P0 issue: CI-BGV-01 — BGV provider callback has no signature validation**
 
@@ -262,8 +335,9 @@ npx vitest run tests/ats.routes.test.ts tests/ats.registration.test.ts tests/ats
 | 3.0.0 | 2026-06-10 | Audit Agent | Session 3: test fix applied, full journey map completed, CI-001 identified |
 | 4.0.0 | 2026-06-10 | Audit Agent | Session 4: CI-001 + 3 scope fixes; full 89-endpoint API audit; 5 new P0 issues identified |
 | 5.0.0 | 2026-06-10 | Audit Agent | Session 5: 6 fixes (scope column, required fields, email dup, DB UNIQUE, reprocess, queue token); 60 ATS tests; both builds clean |
+| 6.0.0 | 2026-06-10 | Audit Agent | Session 6: recruiter identity (bcrypt+biometric), scoped pending list, interview submission service (validate+transaction+upsert+audit), 3 SQL migrations, frontend workspace rewrite, 28 new tests (88 ATS total) |
 
 ---
 
-**AUDIT STATUS**: 🟡 Stages 1–6 fixed — 4 open P0 critical issues remain (CI-BGV-01, CI-FP-01/02/03)
+**AUDIT STATUS**: 🟡 Recruiter workflow (S6) fixed — 4 open P0 critical issues remain (CI-BGV-01, CI-FP-01/02/03)
 **NEXT ACTION**: Fix CI-BGV-01 — Add HMAC signature validation to POST /api/ats/bgv/provider/callback
