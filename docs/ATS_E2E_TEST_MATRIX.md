@@ -1,9 +1,9 @@
 # ATS E2E Test Matrix
 
-> Version: 3.0.0  
+> Version: 5.0.0  
 > Date: 2026-06-10  
-> Commit: post-S3 (see git log)
-> Session: 3 — Convert mock fix applied; 19/19 ATS tests passing; CI-001 gap added
+> Commit: post-S5 (see git log)
+> Session: 5 — Registration/queue fixes; 60 ATS tests passing; 1182 total (25 pre-existing non-ATS failures)
 
 ---
 
@@ -26,10 +26,15 @@
 |---|-----------|------|--------|-------|
 | 1.1.1 | `GET /api/ats/candidates` returns paginated list | `ats.routes.test.ts` | 🟢 | Mocked service |
 | 1.1.2 | `GET /api/ats/candidates` returns 401 without auth | `ats.routes.test.ts` | 🟢 | |
-| 1.1.3 | `POST /api/ats/candidates` creates candidate and returns 201 | `ats.routes.test.ts` | 🟢 | |
+| 1.1.3 | `POST /api/ats/candidates` creates candidate and returns 201 | `ats.routes.test.ts` | 🟢 | S5: updated for required fields |
 | 1.1.4 | `POST /api/ats/candidates` returns 400 when fullName missing | `ats.routes.test.ts` | 🟢 | |
 | 1.1.5 | `POST /api/ats/candidates` returns 400 when mobile too short | `ats.routes.test.ts` | 🟢 | |
-| 1.1.6 | `POST /api/ats/candidates` rejects duplicate mobile | `ats.service.test.ts` | 🟢 | |
+| 1.1.5b | `POST /api/ats/candidates` returns 400 when email missing | `ats.routes.test.ts` | 🟢 | S5: added |
+| 1.1.5c | `POST /api/ats/candidates` returns 400 when education missing | `ats.routes.test.ts` | 🟢 | S5: added |
+| 1.1.5d | `POST /api/ats/candidates` returns 400 when appliedForBranch missing | `ats.routes.test.ts` | 🟢 | S5: added |
+| 1.1.5e | `POST /api/ats/candidates` returns 400 when appliedForProcess missing | `ats.routes.test.ts` | 🟢 | S5: added |
+| 1.1.5f | `POST /api/ats/candidates` returns 400 when sourcingChannel missing | `ats.routes.test.ts` | 🟢 | S5: added |
+| 1.1.6 | `POST /api/ats/candidates` rejects duplicate mobile (409 DUPLICATE_MOBILE) | `ats.service.test.ts`, `ats.registration.test.ts` | 🟢 | S5: statusCode+code added |
 | 1.1.7 | `GET /api/ats/candidates/:id` returns candidate when scope allows | `ats.routes.test.ts` | 🟢 | S2: scope-allow path tested |
 | 1.1.7b | `GET /api/ats/candidates/:id` returns 403 when scope denied | `ats.routes.test.ts` | 🟢 | S2: added |
 | 1.1.8 | `GET /api/ats/candidates/:id` returns 404 for missing | — | 🔴 | |
@@ -120,6 +125,38 @@
 | 1.6.7 | `updateRecruiter` modifies recruiter | — | 🔴 | |
 | 1.6.8 | `deleteRecruiter` soft-deletes | — | 🔴 | |
 
+### 1.7 Registration — Duplicate / Reprocess Detection
+
+| # | Test Case | File | Status | Notes |
+|---|-----------|------|--------|-------|
+| 1.7.1 | `createCandidate` inserts and returns when all mandatory fields provided | `ats.registration.test.ts` | 🟢 | S5 |
+| 1.7.2 | `createCandidate` normalises sourcing channel before inserting | `ats.registration.test.ts` | 🟢 | S5 |
+| 1.7.3 | `createCandidate` throws 409 DUPLICATE_MOBILE for active candidate | `ats.registration.test.ts` | 🟢 | S5 |
+| 1.7.4 | `createCandidate` throws 409 DUPLICATE_REJECTED with reprocess message | `ats.registration.test.ts` | 🟢 | S5 |
+| 1.7.5 | `createCandidate` throws 409 DUPLICATE_SELECTED for selected candidate | `ats.registration.test.ts` | 🟢 | S5 |
+| 1.7.6 | `createCandidate` throws 409 DUPLICATE_SELECTED for converted candidate | `ats.registration.test.ts` | 🟢 | S5 |
+| 1.7.7 | `createCandidate` throws 409 DUPLICATE_EMAIL for existing email | `ats.registration.test.ts` | 🟢 | S5 |
+| 1.7.8 | `createCandidate` throws 409 DUPLICATE_EMAIL_REJECTED for rejected email | `ats.registration.test.ts` | 🟢 | S5 |
+| 1.7.9 | `listCandidates` uses `applied_for_branch` column (not `c.branch_id`) | `ats.registration.test.ts` | 🟢 | S5: scope column fix |
+| 1.7.10 | `listCandidates` uses `applied_for_process` column (not `c.process_id`) | `ats.registration.test.ts` | 🟢 | S5: scope column fix |
+
+### 1.8 Queue Token Management
+
+| # | Test Case | File | Status | Notes |
+|---|-----------|------|--------|-------|
+| 1.8.1 | `createToken` creates active queue token for valid candidate | `ats.queue.test.ts` | 🟢 | S5 |
+| 1.8.2 | `createToken` throws 404 when candidate does not exist | `ats.queue.test.ts` | 🟢 | S5 |
+| 1.8.3 | `createToken` throws 409 DUPLICATE_QUEUE_TOKEN when active token exists | `ats.queue.test.ts` | 🟢 | S5 |
+| 1.8.4 | `walkOut` marks token walked_out and records walk_out_at | `ats.queue.test.ts` | 🟢 | S5 |
+| 1.8.5 | `walkOut` throws 400 when token is not active | `ats.queue.test.ts` | 🟢 | S5 |
+| 1.8.6 | `walkOut` throws 404 for non-existent token (direct ID tampering) | `ats.queue.test.ts` | 🟢 | S5 |
+| 1.8.7 | `reEntry` creates new token after walk-out | `ats.queue.test.ts` | 🟢 | S5 |
+| 1.8.8 | `reEntry` throws 409 when candidate still has active token | `ats.queue.test.ts` | 🟢 | S5 |
+| 1.8.9 | `listActiveQueue` returns wait_minutes and over_threshold=false for <20min | `ats.queue.test.ts` | 🟢 | S5 |
+| 1.8.10 | `listActiveQueue` sets over_threshold=true for >=20 minutes | `ats.queue.test.ts` | 🟢 | S5 |
+| 1.8.11 | `listActiveQueue` returns empty array when no active candidates | `ats.queue.test.ts` | 🟢 | S5 |
+| 1.8.12 | `getTokenById` throws 404 for non-existent id (direct ID tampering) | `ats.queue.test.ts` | 🟢 | S5 |
+
 ---
 
 ## 2. Frontend E2E / Smoke Tests (Playwright)
@@ -194,6 +231,7 @@
 | 2.0.0 | 2026-06-10 | Audit Agent | Session 2: scope enforcement tests reflected; convert mock gap flagged |
 | 3.0.0 | 2026-06-10 | Audit Agent | Session 3: convert mock fix applied (19/19 green); CI-001, BGV, offer scope tests added as gaps |
 | 4.0.0 | 2026-06-10 | Audit Agent | Session 4: CI-001 fixed; approve/reject scope fixed; 3 new security test gaps added from full-parity audit |
+| 5.0.0 | 2026-06-10 | Audit Agent | Session 5: 60 ATS tests (was 19); registration validation tests; duplicate/reprocess detection; queue token system; scope column fix verified |
 
 ---
 

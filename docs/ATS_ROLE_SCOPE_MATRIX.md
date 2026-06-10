@@ -1,9 +1,9 @@
 # ATS Role ↔ Scope Matrix
 
-> Version: 3.0.0  
+> Version: 5.0.0  
 > Date: 2026-06-10  
-> Commit: post-S3 (see git log)
-> Session: 3 — BGV, onboarding, offer routes added to scope gap table
+> Commit: post-S5 (see git log)
+> Session: 5 — Scope column bug fixed; queue token endpoints added; registration validation extended
 
 ---
 
@@ -87,7 +87,7 @@
 
 | Endpoint | Role Check | Branch Scope | Process Scope | Row-Level | Status | Session |
 |----------|------------|--------------|---------------|-----------|--------|---------|
-| `GET /api/ats/candidates` | ✅ | ✅ `buildScopeWhereClause` | ✅ `buildScopeWhereClause` | — | **Partial** | S1 |
+| `GET /api/ats/candidates` | ✅ | ✅ `buildScopeWhereClause` on `c.applied_for_branch` | ✅ `buildScopeWhereClause` on `c.applied_for_process` | — | **✅ Fixed S5** (was using wrong column aliases) | S5 |
 | `GET /api/ats/candidates/:id` | ✅ | ✅ `hasScopedAccess` | ✅ `hasScopedAccess` | ✅ | **✅ Fixed** | S2 |
 | `PUT /api/ats/candidates/:id` | ✅ | ✅ `hasScopedAccess` | ✅ `hasScopedAccess` | ✅ | **✅ Fixed** | S2 |
 | `POST /api/ats/candidates/:id/move-stage` | ✅ | ✅ `hasScopedAccess` | ✅ `hasScopedAccess` | ✅ | **✅ Fixed** | S2 |
@@ -183,6 +183,7 @@ export async function requireCandidateScope(
 | 2.0.0 | 2026-06-10 | Audit Agent | Session 2: 6 P0/P1 endpoints fixed; priority table status updated |
 | 3.0.0 | 2026-06-10 | Audit Agent | Session 3: BGV, onboarding, offer scope gaps added; CI-001 PII issue added to priority table |
 | 4.0.0 | 2026-06-10 | Audit Agent | Session 4: CI-001 fixed; requests/pending-approval scoped; offer approve/reject scoped; 4 new P0 CI issues from full-parity audit |
+| 5.0.0 | 2026-06-10 | Audit Agent | Session 5: GET /candidates scope column bug fixed (c.branch_id→c.applied_for_branch); queue token endpoints added with branch/process scope |
 
 ---
 
