@@ -122,8 +122,7 @@ export async function getPointsHistory(
   const total = countRows[0]?.total || 0;
 
   // Paginate
-  sql += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`;
-  params.push(limit, (page - 1) * limit);
+  sql += ` ORDER BY created_at DESC LIMIT ${limit} OFFSET ${(page - 1) * limit}`;
 
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
 
