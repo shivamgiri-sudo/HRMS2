@@ -168,8 +168,8 @@ export const wfmService = {
     if (processName) { conds.push("process_name = ?");   params.push(processName); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM wfm_attendance_session ${where} ORDER BY session_date DESC LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      `SELECT * FROM wfm_attendance_session ${where} ORDER BY session_date DESC LIMIT ${limit} OFFSET ${offset}`,
+      params
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM wfm_attendance_session ${where}`, params

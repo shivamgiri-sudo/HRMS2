@@ -10,6 +10,9 @@ const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 // ── Public auth (no middleware) ───────────────────────────────────────────
+router.get("/health", h(async (_req, res) => {
+  return res.json({ success: true, status: "ok", service: "portal" });
+}));
 router.post("/auth/request-otp", h(c.requestOtp));
 router.post("/auth/verify-otp",  h(c.verifyOtp));
 

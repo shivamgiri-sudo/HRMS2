@@ -69,8 +69,8 @@ export const atsService = {
     const offset = (filters.page - 1) * filters.limit;
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM ats_candidate ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-      [...params, filters.limit, offset]
+      `SELECT * FROM ats_candidate ${where} ORDER BY created_at DESC LIMIT ${filters.limit} OFFSET ${offset}`,
+      params
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM ats_candidate ${where}`,
@@ -176,6 +176,13 @@ export const atsService = {
       [candidateId]
     );
     return rows as AtsCandidateStageLog[];
+  },
+
+  async listOnboardingBridges(): Promise<AtsOnboardingBridge[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM ats_onboarding_bridge ORDER BY created_at DESC"
+    );
+    return rows as AtsOnboardingBridge[];
   },
 
   async createOnboardingBridge(

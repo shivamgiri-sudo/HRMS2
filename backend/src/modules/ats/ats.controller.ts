@@ -56,6 +56,11 @@ export const atsController = {
     return res.json({ success: true, data });
   },
 
+  async listOnboardingBridges(_req: AuthenticatedRequest, res: Response) {
+    const data = await atsService.listOnboardingBridges();
+    return res.json({ success: true, data });
+  },
+
   async createOnboardingBridge(req: AuthenticatedRequest, res: Response) {
     const input = createOnboardingBridgeSchema.parse(req.body);
     const data  = await atsService.createOnboardingBridge(input, req.authUser!.id);

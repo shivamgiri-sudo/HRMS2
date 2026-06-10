@@ -238,8 +238,8 @@ export const payrollService = {
 
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM salary_prep_run ${where} ORDER BY run_month DESC LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      `SELECT * FROM salary_prep_run ${where} ORDER BY run_month DESC LIMIT ${limit} OFFSET ${offset}`,
+      params
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM salary_prep_run ${where}`, params

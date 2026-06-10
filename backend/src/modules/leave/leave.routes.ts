@@ -125,6 +125,16 @@ leaveRouter.get("/balance/:employeeId", h(async (req: AuthenticatedRequest, res:
   return leaveController.getBalance(req, res);
 }));
 
+leaveRouter.get("/balance", h(async (req: AuthenticatedRequest, res: Response) => {
+  const callerEmp = await getEmployeeForUser(req.authUser!.id);
+  if (!callerEmp) {
+    return res.status(403).json({ success: false, message: "No employee record linked to your login" });
+  }
+  const year = req.query.year ? Number(req.query.year) : new Date().getFullYear();
+  const data = await leaveService.getBalance(callerEmp.id, year);
+  return res.json({ success: true, data });
+}));
+
 leaveRouter.get("/holidays",                      h(leaveController.listHolidays.bind(leaveController)));  // All can view
 leaveRouter.post("/holidays",                     requireRole("admin", "hr"), h(leaveController.createHoliday.bind(leaveController)));
 

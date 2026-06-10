@@ -23,6 +23,20 @@ const DEMO_ACCOUNTS = [
   { id: 'demo-trainer-id',   email: 'trainer@mascallnet.com',   password: 'Trainer@1'   },
 ];
 
+const DEMO_ROLES: Record<string, string[]> = {
+  'demo-admin-id':     ['admin'],
+  'demo-hr-id':        ['hr'],
+  'demo-recruiter-id': ['recruiter'],
+  'demo-manager-id':   ['process_manager'],
+  'demo-tl-id':        ['team_leader'],
+  'demo-qa-id':        ['qa'],
+  'demo-wfm-id':       ['wfm'],
+  'demo-finance-id':   ['finance'],
+  'demo-employee-id':  ['employee'],
+  'demo-ceo-id':       ['ceo'],
+  'demo-trainer-id':   ['trainer'],
+};
+
 async function main() {
   console.log('Seeding demo auth accounts...');
   for (const account of DEMO_ACCOUNTS) {
@@ -33,7 +47,18 @@ async function main() {
        ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash)`,
       [account.id, account.email, hash]
     );
-    console.log(`  seeded: ${account.email}`);
+
+    const roles = DEMO_ROLES[account.id] ?? [];
+    for (const roleKey of roles) {
+      await db.execute(
+        `INSERT INTO user_roles (id, user_id, role_key, active_status)
+         VALUES (UUID(), ?, ?, 1)
+         ON DUPLICATE KEY UPDATE active_status = 1`,
+        [account.id, roleKey]
+      );
+    }
+
+    console.log(`  seeded: ${account.email} (${roles.join(', ')})`);
   }
   console.log('Done. Demo accounts ready.');
   await db.end();
