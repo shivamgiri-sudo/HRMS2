@@ -39,8 +39,8 @@ export const customizationService = {
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM customization_rule ${where} ORDER BY priority DESC, created_at DESC LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      `SELECT * FROM customization_rule ${where} ORDER BY priority DESC, created_at DESC LIMIT ${limit} OFFSET ${offset}`,
+      params
     );
 
     const [countRows] = await db.execute<RowDataPacket[]>(
