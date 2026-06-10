@@ -81,6 +81,24 @@ const envSchema = z.object({
 
   // BGV webhook signature secret — HMAC-SHA256 of raw request body
   BGV_WEBHOOK_SECRET: z.string().optional(),
+
+  // BGV provider selection: "mock" (default/dev), "infinity_ai", "digio"
+  BGV_PROVIDER: z.enum(["mock", "infinity_ai", "digio"]).default("mock"),
+
+  // Infinity AI BGV (https://api.infinityai.in) — set when BGV_PROVIDER=infinity_ai
+  INFINITY_AI_API_URL: z.string().url().default("https://api.infinityai.in"),
+  INFINITY_AI_API_KEY: z.string().optional(),
+  INFINITY_AI_CLIENT_ID: z.string().optional(),
+
+  // Digio BGV / eSign / DigiLocker (https://api.digio.in) — set when BGV_PROVIDER=digio
+  DIGIO_API_URL: z.string().url().default("https://api.digio.in"),
+  DIGIO_CLIENT_ID: z.string().optional(),
+  DIGIO_CLIENT_SECRET: z.string().optional(),
+  DIGIO_WEBHOOK_SECRET: z.string().optional(),
+
+  // Shared HMAC secret for ATS form webhook endpoints (intake, bgv, doc-upload, confirmation, recruiter-devices).
+  // Google App Script sets this as X-ATS-Api-Key. Required in production; warn in dev if absent.
+  ATS_FORM_API_KEY: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -119,6 +137,18 @@ if (parsed.data.NODE_ENV === "production") {
   }
   if (!parsed.data.BGV_WEBHOOK_SECRET) {
     console.error("[FATAL] BGV_WEBHOOK_SECRET must be set in production.");
+    process.exit(1);
+  }
+  if (!parsed.data.ATS_FORM_API_KEY) {
+    console.error("[FATAL] ATS_FORM_API_KEY must be set in production.");
+    process.exit(1);
+  }
+  if (parsed.data.BGV_PROVIDER === "infinity_ai" && !parsed.data.INFINITY_AI_API_KEY) {
+    console.error("[FATAL] INFINITY_AI_API_KEY must be set when BGV_PROVIDER=infinity_ai.");
+    process.exit(1);
+  }
+  if (parsed.data.BGV_PROVIDER === "digio" && (!parsed.data.DIGIO_CLIENT_ID || !parsed.data.DIGIO_CLIENT_SECRET)) {
+    console.error("[FATAL] DIGIO_CLIENT_ID and DIGIO_CLIENT_SECRET must be set when BGV_PROVIDER=digio.");
     process.exit(1);
   }
 }

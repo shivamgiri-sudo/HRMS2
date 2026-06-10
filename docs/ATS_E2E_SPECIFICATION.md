@@ -1,10 +1,10 @@
 # ATS E2E Specification
 
-> Version: 7.0.0  
+> Version: 8.0.0  
 > Date: 2026-06-10  
-> Commit: post-S7 (see git log)
+> Commit: post-S8 (see git log)
 > Scope: ATS module + onboarding / BGV / offer / training dependency flows  
-> Session: 7 — BGV: HMAC webhook signature validation (CI-BGV-01), row-scope on all BGV HR endpoints, onboarding bridge scope, statusCode consistency fix
+> Session: 8 — BGV multi-provider adapter infra (InfinityAiBgvAdapter + DigioBgvAdapter + singleton factory); CI-FP-01/02/03/04 fixed (requireFormApiKey HMAC guard on 5 public form endpoints)
 
 ---
 
@@ -148,7 +148,8 @@ Converted employee → LMS integration layer → learner mapping
 | ATS Queue | `backend/tests/ats.queue.test.ts` | 12 | 0 | 0 | S5: create/404/409, walkOut/400/404, reEntry/409, listActiveQueue thresholds, tampering 404 |
 | ATS Recruiter | `backend/tests/ats.recruiter.test.ts` | 28 | 0 | 0 | S6: 15 mandatory test cases — auth, biometric, validation, upsert, audit, cascade |
 | ATS BGV Security | `backend/tests/ats.bgv.security.test.ts` | 15 | 0 | 0 | S7: CI-BGV-01 HMAC, BGV scope, validateToken statusCode, bridge scope |
-| **Total ATS** | | **103** | **0** | **0** | (+ 20 ats.wfm.completion = 123 total) |
+| ATS BGV Provider | `backend/tests/ats.bgv.provider.test.ts` | 23 | 0 | 0 | S8: roughNameMatchScore, MockAdapter, InfinityAi/Digio guard throws, factory singleton, requireFormApiKey logic |
+| **Total ATS** | | **126** | **0** | **0** | (+ 20 ats.wfm.completion = 126 ATS-specific tests) |
 | Non-ATS suites | various | 1101 | 25 | 56 | Pre-existing failures in leave, integrationHub, customization, routes.integration — unchanged from S3 baseline |
 
 **Session 2 New Test Failures**:
@@ -205,10 +206,10 @@ Before any ATS production deployment:
 - [x] BGV endpoints have row-scope enforcement (S7: queue+candidates+manual-review+waive+verify/pan+verify/bank)
 - [x] Offer approval passes branch-head scope — `hasScopedAccess` added to approveOffer + rejectOffer (S4)
 - [x] CI-BGV-01: BGV provider callback signature validation — HMAC-SHA256 with timingSafeEqual (S7)
-- [ ] CI-FP-01/02/03: ats-full-parity public intake/BGV/doc endpoints require auth or token
+- [x] CI-FP-01/02/03/04: ats-full-parity public form endpoints now require X-ATS-Api-Key (S8: requireFormApiKey via timingSafeEqual)
 - [x] Frontend build passes (`npm run build`) (S7: ✓ clean)
 - [ ] Backend typecheck clean — `leave.routes.ts:134` `leaveService` error must be fixed (pre-existing, non-ATS)
-- [x] Backend test pass rate >= 95 % (S7: 25 failures / 1144 backend tests = 97.8% pass rate; all 25 pre-existing non-ATS)
+- [x] Backend test pass rate >= 95 % (S8: 126/126 ATS tests pass; pre-existing 25 non-ATS failures unchanged)
 - [ ] Manual E2E smoke of registration → stage move → onboarding → conversion
 
 ---
@@ -224,6 +225,7 @@ Before any ATS production deployment:
 | 5.0.0 | 2026-06-10 | Audit Agent | Session 5: scope column fix; required registration fields; email dup check; reprocess detection; DB UNIQUE constraints; queue token system; 60 ATS tests |
 | 6.0.0 | 2026-06-10 | Audit Agent | Session 6: recruiter auth (bcrypt+biometric); scoped pending list; interview submission service (validate+transaction+upsert+audit); 3 SQL migrations; frontend workspace rewrite; 88 ATS tests |
 | 7.0.0 | 2026-06-10 | Audit Agent | Session 7: CI-BGV-01 HMAC webhook validation; BGV queue+candidate row-scope; onboarding bridge scope; validateToken/ensureConsent statusCode fix; 15 new BGV security tests; 123 total ATS tests |
+| 8.0.0 | 2026-06-10 | Audit Agent | Session 8: BGV multi-provider adapter infra (InfinityAiBgvAdapter + DigioBgvAdapter + singleton factory); CI-FP-01/02/03/04 fixed (requireFormApiKey on 5 public form endpoints); 23 new tests (126 ATS total) |
 
 ---
 

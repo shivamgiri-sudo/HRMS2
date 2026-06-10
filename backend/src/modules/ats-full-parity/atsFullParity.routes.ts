@@ -1,6 +1,8 @@
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
+import { timingSafeEqual } from "crypto";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { env } from "../../config/env.js";
 import { atsFullParityService as svc } from "./atsFullParity.service.js";
 import { submitInterviewUpdate } from "./recruiterInterview.service.js";
 
@@ -9,28 +11,63 @@ export const atsFullParityRouter = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
-// Public parity endpoints: equivalent to App Script candidate-facing forms.
-atsFullParityRouter.post("/intake", h(async (req, res) => {
+/**
+ * requireFormApiKey — guards the Google App Script / webhook form endpoints.
+ * Caller must supply X-ATS-Api-Key header matching ATS_FORM_API_KEY env var.
+ * In non-production, if the secret is not configured, the check is skipped with a warning.
+ */
+function requireFormApiKey(req: Request, res: Response, next: NextFunction): void {
+  const secret = env.ATS_FORM_API_KEY;
+  if (!secret) {
+    if (env.NODE_ENV === "production") {
+      res.status(503).json({ success: false, message: "Form endpoint not configured" });
+      return;
+    }
+    console.warn("[ATS-FORM] ATS_FORM_API_KEY not set — skipping key check in non-production");
+    next();
+    return;
+  }
+  const provided = String(req.headers["x-ats-api-key"] ?? "");
+  if (!provided) {
+    res.status(401).json({ success: false, message: "Missing X-ATS-Api-Key header" });
+    return;
+  }
+  let match = false;
+  try {
+    match = provided.length === secret.length &&
+      timingSafeEqual(Buffer.from(provided), Buffer.from(secret));
+  } catch {
+    match = false;
+  }
+  if (!match) {
+    res.status(401).json({ success: false, message: "Invalid API key" });
+    return;
+  }
+  next();
+}
+
+// Form webhook endpoints — require X-ATS-Api-Key (set on Google App Script trigger).
+atsFullParityRouter.post("/intake", requireFormApiKey, h(async (req, res) => {
   const data = await svc.createIntake(req.body, "PUBLIC_FORM");
   res.status(201).json({ success: true, data, message: "Candidate intake captured" });
 }));
 
-atsFullParityRouter.post("/candidate-confirmation", h(async (req, res) => {
+atsFullParityRouter.post("/candidate-confirmation", requireFormApiKey, h(async (req, res) => {
   const data = await svc.submitConfirmation(req.body);
   res.status(201).json({ success: true, data });
 }));
 
-atsFullParityRouter.post("/bgv", h(async (req, res) => {
+atsFullParityRouter.post("/bgv", requireFormApiKey, h(async (req, res) => {
   const data = await svc.submitBgv(req.body);
   res.status(201).json({ success: true, data });
 }));
 
-atsFullParityRouter.post("/doc-upload-response", h(async (req, res) => {
+atsFullParityRouter.post("/doc-upload-response", requireFormApiKey, h(async (req, res) => {
   const data = await svc.submitDocUpload(req.body);
   res.status(201).json({ success: true, data });
 }));
 
-atsFullParityRouter.post("/recruiter-devices", h(async (req, res) => {
+atsFullParityRouter.post("/recruiter-devices", requireFormApiKey, h(async (req, res) => {
   const data = await svc.registerDevice(req.body);
   res.status(201).json({ success: true, data });
 }));

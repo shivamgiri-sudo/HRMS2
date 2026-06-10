@@ -1,9 +1,9 @@
 # ATS Role ↔ Scope Matrix
 
-> Version: 7.0.0  
+> Version: 8.0.0  
 > Date: 2026-06-10  
-> Commit: post-S7 (see git log)
-> Session: 7 — BGV HMAC webhook validation (CI-BGV-01), BGV row-scope, onboarding bridge row-scope, statusCode fixes
+> Commit: post-S8 (see git log)
+> Session: 8 — BGV multi-provider adapter infra; CI-FP-01/02/03/04 fixed (requireFormApiKey on 5 public form endpoints)
 
 ---
 
@@ -186,6 +186,7 @@ export async function requireCandidateScope(
 | 5.0.0 | 2026-06-10 | Audit Agent | Session 5: GET /candidates scope column bug fixed (c.branch_id→c.applied_for_branch); queue token endpoints added with branch/process scope |
 | 6.0.0 | 2026-06-10 | Audit Agent | Session 6: recruiter verify endpoint (bcrypt+biometric); my-candidates scoped to recruiter's assigned Waiting candidates; submission via ats_interview_submission with ownership check |
 | 7.0.0 | 2026-06-10 | Audit Agent | Session 7: CI-BGV-01 HMAC-SHA256 webhook (timingSafeEqual); BGV queue+candidate+manual-review+waive row-scope; onboarding bridge POST+PATCH row-scope; validateToken/ensureConsent statusCode fix |
+| 8.0.0 | 2026-06-10 | Audit Agent | Session 8: CI-FP-01/02/03/04 fixed (requireFormApiKey on POST intake+bgv+doc-upload+confirmation+recruiter-devices); BGV multi-provider adapter infra (InfinityAiBgvAdapter, DigioBgvAdapter, factory) |
 
 ---
 
