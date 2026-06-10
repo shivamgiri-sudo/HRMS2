@@ -1,9 +1,9 @@
 # ATS Role ↔ Scope Matrix
 
-> Version: 10.0.0  
+> Version: 11.0.0  
 > Date: 2026-06-10  
-> Commit: post-S10 (see git log)
-> Session: 10 — All issues resolved; stage-logs scope; all P3 issues closed
+> Commit: post-S11 (see git log)
+> Session: 11 — S11-A/B/C: web-data + queue + daily-report actor-scope enforcement via buildScopeWhereClause
 
 ---
 
@@ -112,6 +112,9 @@
 | `GET /api/ats/onboarding/pending-approval` | ✅ | ✅ `buildScopeWhereClause` | ❌ | — | **✅ Fixed S4** | — |
 | `POST /api/ats/onboarding/offers/:id/approve` | ✅ | ✅ `hasScopedAccess` | ✅ `hasScopedAccess` | ✅ | **✅ Fixed S4** | S4 |
 | `POST /api/ats/onboarding/offers/:id/reject` | ✅ | ✅ `hasScopedAccess` | ✅ `hasScopedAccess` | ✅ | **✅ Fixed S4** | S4 |
+| `GET /api/ats-full-parity/web-data` | ✅ | ✅ `buildScopeWhereClause` in SQL | ✅ `buildScopeWhereClause` in SQL | — | **✅ Fixed S11** | S11 |
+| `GET /api/ats-full-parity/queue` | ✅ | ✅ `buildScopeWhereClause` in SQL | ✅ `buildScopeWhereClause` in SQL | — | **✅ Fixed S11** | S11 |
+| `GET /api/ats-full-parity/daily-report/snapshot` | ✅ | ✅ actorId forwarded to webData() | ✅ actorId forwarded to webData() | — | **✅ Fixed S11** | S11 |
 
 ---
 
@@ -189,6 +192,7 @@ export async function requireCandidateScope(
 | 8.0.0 | 2026-06-10 | Audit Agent | Session 8: CI-FP-01/02/03/04 fixed (requireFormApiKey on POST intake+bgv+doc-upload+confirmation+recruiter-devices); BGV multi-provider adapter infra (InfinityAiBgvAdapter, DigioBgvAdapter, factory) |
 | 9.0.0 | 2026-06-10 | Audit Agent | Session 9: Issue 4 upload ownership (mobile field required + DB match); Issue 17 send-token row-scope (hasScopedAccess on candidate branch/process); Issue 3 validateToken expiry UTC-safe |
 | 10.0.0 | 2026-06-10 | Audit Agent | Session 10: stage-logs row-scope added (GET /candidates/:id/stage-logs); all remaining P3 issues closed; 139 tests; frontend + backend typechecks clean |
+| 11.0.0 | 2026-06-10 | Audit Agent | Session 11: S11-A web-data + S11-B queue + S11-C daily-report-snapshot actor-scope enforcement; buildScopeWhereClause injected into SQL; admin/hr/ceo bypass; 8 new tests |
 
 ---
 

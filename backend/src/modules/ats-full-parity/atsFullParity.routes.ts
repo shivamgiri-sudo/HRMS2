@@ -75,13 +75,17 @@ atsFullParityRouter.post("/recruiter-devices", requireFormApiKey, h(async (req, 
 // Protected command center endpoints.
 atsFullParityRouter.use(requireAuth);
 
-atsFullParityRouter.get("/web-data", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req, res) => {
-  const data = await svc.webData(req.query as any);
+atsFullParityRouter.get("/web-data", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: any, res) => {
+  const role = req.authUser?.role as string | undefined;
+  const bypassScope = role === "admin" || role === "hr" || role === "ceo";
+  const data = await svc.webData({ ...(req.query as any), actorId: req.authUser?.id, bypassScope });
   res.json(data);
 }));
 
-atsFullParityRouter.get("/queue", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (_req, res) => {
-  const data = await svc.webData({ period: "ALL" });
+atsFullParityRouter.get("/queue", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: any, res) => {
+  const role = req.authUser?.role as string | undefined;
+  const bypassScope = role === "admin" || role === "hr" || role === "ceo";
+  const data = await svc.webData({ period: "ALL", actorId: req.authUser?.id, bypassScope });
   res.json({ success: true, data: data.queueRows });
 }));
 
@@ -134,13 +138,16 @@ atsFullParityRouter.post("/jobs/repair", requireRole("admin", "hr"), h(async (re
   res.json({ success: true, data });
 }));
 
-atsFullParityRouter.get("/daily-report/snapshot", requireRole("admin", "hr", "branch_head", "process_manager", "ceo"), h(async (req, res) => {
+atsFullParityRouter.get("/daily-report/snapshot", requireRole("admin", "hr", "branch_head", "process_manager", "ceo"), h(async (req: any, res) => {
   const mode = req.query.mode === "send" ? "send" : "preview";
-  const data = await svc.dailyReportSnapshot(mode);
+  const role = req.authUser?.role as string | undefined;
+  const actorId = (role === "admin" || role === "hr" || role === "ceo") ? undefined : req.authUser?.id;
+  const data = await svc.dailyReportSnapshot(mode, actorId);
   res.json({ success: true, data });
 }));
 
-atsFullParityRouter.post("/daily-report/send", requireRole("admin", "hr"), h(async (_req, res) => {
+atsFullParityRouter.post("/daily-report/send", requireRole("admin", "hr"), h(async (_req: any, res) => {
+  // admin/hr always bypass scope — full cross-branch report
   const data = await svc.dailyReportSnapshot("send");
   res.json({ success: true, data });
 }));

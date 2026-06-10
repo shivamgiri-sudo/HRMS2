@@ -3,6 +3,7 @@ import nodemailer from "nodemailer";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
+import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 
 type CandidateRow = Record<string, any>;
 
@@ -407,7 +408,7 @@ async function candidateSelect(where = "1=1", params: unknown[] = []): Promise<C
 }
 
 export const atsFullParityService = {
-  async webData(filters: { fromDate?: string; toDate?: string; branch?: string; process?: string; recruiter?: string; period?: Period } = {}) {
+  async webData(filters: { fromDate?: string; toDate?: string; branch?: string; process?: string; recruiter?: string; period?: Period; actorId?: string; bypassScope?: boolean } = {}) {
     const conds = ["c.active_status = 1"];
     const params: unknown[] = [];
     if (filters.fromDate) { conds.push("COALESCE(c.created_date, DATE(c.created_at)) >= ?"); params.push(filters.fromDate); }
@@ -415,6 +416,16 @@ export const atsFullParityService = {
     if (filters.branch) { conds.push("COALESCE(c.branch_text, c.applied_for_branch) = ?"); params.push(filters.branch); }
     if (filters.process) { conds.push("COALESCE(c.process_text, c.applied_for_process) = ?"); params.push(filters.process); }
     if (filters.recruiter) { conds.push("COALESCE(c.recruiter_assigned_name, c.recruiter_name) = ?"); params.push(filters.recruiter); }
+    if (filters.actorId && !filters.bypassScope) {
+      const scope = await buildScopeWhereClause(
+        filters.actorId,
+        ["branch_head", "process_manager", "recruiter", "manager", "hr"],
+        { branchId: "c.applied_for_branch", processId: "c.applied_for_process" },
+        { allowAdminBypass: true, allowCeoAllRead: true },
+      );
+      conds.push(scope.sql);
+      params.push(...scope.params);
+    }
     const allRows = await candidateSelect(conds.join(" AND "), params);
     const period = filters.period || "ALL";
     const candidateRows = allRows.filter((r) => inPeriod(r, period));
@@ -698,8 +709,8 @@ export const atsFullParityService = {
     return { success: true, result };
   },
 
-  async dailyReportSnapshot(mode: "preview" | "send" = "preview") {
-    const web = await this.webData({ period: "FTD" });
+  async dailyReportSnapshot(mode: "preview" | "send" = "preview", actorId?: string) {
+    const web = await this.webData({ period: "FTD", actorId });
     const cfg = await getConfigMap();
     const branches = dimensionTable(web.candidateRows, "_branch");
     const out: any[] = [];
