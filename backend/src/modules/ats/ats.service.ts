@@ -69,8 +69,8 @@ export const atsService = {
     const offset = (filters.page - 1) * filters.limit;
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM ats_candidate ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-      [...params, filters.limit, offset]
+      `SELECT * FROM ats_candidate ${where} ORDER BY created_at DESC LIMIT ${filters.limit} OFFSET ${offset}`,
+      params
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM ats_candidate ${where}`,
