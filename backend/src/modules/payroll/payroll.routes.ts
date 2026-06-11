@@ -183,7 +183,15 @@ router.post("/payslip/:payslipId/acknowledge", h(async (req: AuthenticatedReques
 
 // GET /api/payroll/tax-declaration/:employeeId/:year — admin/hr/finance/payroll or employee own
 router.get("/tax-declaration/:employeeId/:year", h(async (req: AuthenticatedRequest, res: Response) => {
-  const { employeeId, year } = req.params;
+  let { employeeId } = req.params;
+  const { year } = req.params;
+
+  // Resolve "me" alias to the caller's employee ID
+  if (employeeId === 'me') {
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (!callerEmp) return res.status(403).json({ success: false, message: 'No employee record for authenticated user' });
+    employeeId = callerEmp.id;
+  }
 
   const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
   if (!isPayrollRole) {
@@ -199,19 +207,27 @@ router.get("/tax-declaration/:employeeId/:year", h(async (req: AuthenticatedRequ
 
 // POST /api/payroll/tax-declaration/:employeeId/:year — admin/hr/finance/payroll or employee own
 router.post("/tax-declaration/:employeeId/:year", h(async (req: AuthenticatedRequest, res: Response) => {
+  let { employeeId } = req.params;
   const { year } = req.params;
+
+  // Resolve "me" alias to the caller's employee ID
+  if (employeeId === 'me') {
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (!callerEmp) return res.status(403).json({ success: false, message: 'No employee record' });
+    employeeId = callerEmp.id;
+  }
 
   const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
   if (!isPayrollRole) {
     const callerEmp = await getEmployeeForUser(req.authUser!.id);
-    if (!callerEmp || callerEmp.id !== req.params.employeeId) {
+    if (!callerEmp || callerEmp.id !== employeeId) {
       return res.status(403).json({ success: false, message: "Forbidden: you may only submit your own tax declaration" });
     }
     const data = await taxDeclarationService.upsert(callerEmp.id, year, req.body, req.authUser!.id);
     return res.json({ success: true, data, message: "Tax declaration saved" });
   }
 
-  const data = await taxDeclarationService.upsert(req.params.employeeId, year, req.body, req.authUser!.id);
+  const data = await taxDeclarationService.upsert(employeeId, year, req.body, req.authUser!.id);
   return res.json({ success: true, data, message: "Tax declaration saved" });
 }));
 

@@ -97,8 +97,18 @@ router.post("/tickets/:id/comments", h(async (req: AuthenticatedRequest, res: Re
 
 // ── Grievances ────────────────────────────────────────────────────────────────
 
-router.get("/grievances", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
-  res.json({ data: await helpdeskService.listGrievances(req.query as any) });
+router.get("/grievances", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  if (await hasRole(userId, "admin", "hr")) {
+    // Admin/HR see all grievances
+    return res.json({ data: await helpdeskService.listGrievances(req.query as any) });
+  }
+  // Regular employees see only their own (anonymous ones are privacy-protected — employee_id hidden)
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+  return res.json({
+    data: await helpdeskService.listGrievances({ employee_id: emp.id })
+  });
 }));
 
 // Grievance creation: employee_id always derived server-side; body employee_id ignored

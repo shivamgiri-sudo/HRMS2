@@ -80,11 +80,12 @@ export const helpdeskService = {
 
   // ── Grievances ───────────────────────────────────────────────────────────
 
-  async listGrievances(filters: { status?: string; assigned_to?: string }) {
+  async listGrievances(filters: { status?: string; assigned_to?: string; employee_id?: string }) {
     const conds: string[] = [];
     const params: unknown[] = [];
     if (filters.status)      { conds.push("status = ?");      params.push(filters.status); }
     if (filters.assigned_to) { conds.push("assigned_to = ?"); params.push(filters.assigned_to); }
+    if (filters.employee_id) { conds.push("employee_id = ?"); params.push(filters.employee_id); }
     const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, grievance_code, category, status, is_anonymous, assigned_to, created_at, updated_at,
