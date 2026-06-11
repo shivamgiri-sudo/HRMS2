@@ -61,6 +61,13 @@ export const clockInSchema = z.object({
   punchSource: z.enum(["MANUAL", "BIOMETRIC", "DIALER"]).default("MANUAL"),
   branchName: z.string().trim().max(255).nullable().optional(),
   processName: z.string().trim().max(255).nullable().optional(),
+}).refine(d => {
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+  return new Date(d.sessionDate) <= today;
+}, {
+  message: "Cannot clock in for a future date",
+  path: ["sessionDate"],
 });
 
 export const clockOutSchema = z.object({
@@ -77,6 +84,13 @@ export const regularizationSchema = z.object({
   sessionDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
   reason: z.string().trim().min(1).max(500),
   supportingNote: z.string().trim().nullable().optional(),
+}).refine(d => {
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+  return new Date(d.sessionDate) <= today;
+}, {
+  message: "Cannot regularize a future date",
+  path: ["sessionDate"],
 });
 
 export const reviewRegularizationSchema = z.object({

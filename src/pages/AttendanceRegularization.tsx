@@ -154,6 +154,14 @@ export default function AttendanceRegularization() {
       setIsSubmitting(false);
       return;
     }
+    const selectedDate = new Date(form.attendanceDate + 'T00:00:00');
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    if (selectedDate > today) {
+      setActionError("Cannot regularize a future date.");
+      setIsSubmitting(false);
+      return;
+    }
     if (!form.requestedLoginTime && !form.requestedLogoutTime) {
       setActionError("Requested login or logout time is required.");
       setIsSubmitting(false);
