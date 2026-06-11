@@ -197,7 +197,7 @@ export default function NativeMyRoster() {
     queryKey: ["my-roster-cycles"],
     queryFn: async () => {
       const res = await hrmsApi.get<{ data: RosterCycle[] }>(
-        "/api/roster-gov/cycles?status=published,acknowledged,active",
+        "/api/roster-gov/my-cycles?status=published,acknowledged,active",
       );
       return res.data ?? [];
     },

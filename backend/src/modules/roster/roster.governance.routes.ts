@@ -4,6 +4,8 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser, hasProcessScope, hasRole } from "../../shared/accessGuard.js";
 import { rosterGovernanceService, type RosterCycle } from "./roster.governance.service.js";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -72,6 +74,26 @@ router.post("/shifts/templates", h(async (req: AuthenticatedRequest, res: Respon
 }));
 
 // ── Roster Cycles ─────────────────────────────────────────────────────────────
+
+// GET /my-cycles — employee-scoped: returns cycles for the employee's own process only
+router.get("/my-cycles", h(async (req: AuthenticatedRequest, res: Response) => {
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    'SELECT process_id FROM employees WHERE id = ? LIMIT 1',
+    [emp.id]
+  );
+  const processId = (rows as RowDataPacket[])[0]?.process_id as string | undefined;
+  if (!processId) return res.json({ data: [] });
+
+  const statusFilter = req.query.status as string | undefined;
+  const queryParams: Record<string, unknown> = { process_id: processId };
+  if (statusFilter) queryParams.status = statusFilter;
+  const data = await rosterGovernanceService.listCycles(queryParams as any);
+  return res.json({ data });
+}));
+
 router.get("/cycles", h(async (req: AuthenticatedRequest, res: Response) => {
   const processId = req.query.process_id as string | undefined;
   if (await hasRole(req.authUser!.id, "admin", "hr")) {

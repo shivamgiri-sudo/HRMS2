@@ -100,18 +100,24 @@ export const communicationController = {
   // Preferences
   async getPreferences(req: Request, res: Response) {
     try {
-      const empId = (req as any).authUser?.id;
-      if (!empId) return res.status(401).json({ error: 'Unauthorized' });
-      res.json(await notificationPreferencesService.getPreferences(empId));
+      const userId = (req as any).authUser?.id;
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+      const { getEmployeeForUser } = await import('../../shared/accessGuard.js');
+      const emp = await getEmployeeForUser(userId);
+      if (!emp) return res.status(404).json({ error: 'No employee record for this user' });
+      res.json(await notificationPreferencesService.getPreferences(emp.id));
     } catch (e) { res.status(500).json({ error: String(e) }); }
   },
 
   async updatePreference(req: Request, res: Response) {
     try {
-      const empId = (req as any).authUser?.id;
-      if (!empId) return res.status(401).json({ error: 'Unauthorized' });
+      const userId = (req as any).authUser?.id;
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+      const { getEmployeeForUser } = await import('../../shared/accessGuard.js');
+      const emp = await getEmployeeForUser(userId);
+      if (!emp) return res.status(404).json({ error: 'No employee record for this user' });
       const dto = UpdatePreferencesSchema.parse(req.body);
-      res.json(await notificationPreferencesService.updatePreference(empId, dto));
+      res.json(await notificationPreferencesService.updatePreference(emp.id, dto));
     } catch (e) { res.status(400).json({ error: String(e) }); }
   },
 };
