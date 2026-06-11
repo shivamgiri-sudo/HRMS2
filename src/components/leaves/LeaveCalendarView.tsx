@@ -67,10 +67,8 @@ export function LeaveCalendarView() {
   const { data: leaves = [], isLoading } = useQuery({
     queryKey: ["leave-calendar-view", format(monthStart, "yyyy-MM-dd")],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/leave/requests"); return { data: res.data ?? [], error: null }; })();
-
-      if (error) throw error;
-      return (data || []) as LeaveData[];
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/leave/requests");
+      return (res.data ?? []) as LeaveData[];
     },
   });
 

@@ -74,8 +74,8 @@ const ReviewsManagement = () => {
     queryKey: ["my-employee-id", user?.id],
     queryFn: async () => {
       if (!user?.id) return null;
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      return res.data ?? null;
     },
     enabled: !!user?.id,
   });

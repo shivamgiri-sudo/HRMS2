@@ -21,17 +21,13 @@ const Performance = () => {
     queryFn: async () => {
       if (!user?.id) return null;
 
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
-
-      if (error) throw error;
+      const empRes = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      const employee = empRes.data;
       if (!employee) return null;
-
-      // Check if they manage anyone
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
 
       return {
         ...employee,
-        isManager: managedEmployees && managedEmployees.length > 0,
+        isManager: false,
       };
     },
     enabled: !!user?.id,

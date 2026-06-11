@@ -112,23 +112,26 @@ function MiniBar({ label, value, tone }: { label: string; value: number; tone: s
 async function getDashboardStats() {
   const today = new Date().toISOString().slice(0, 10);
   try {
-    const [empRes, leaveRes, wfmRes, atsRes] = await Promise.allSettled([
+    const [empRes, leaveRes, approvedLeaveRes, deptRes, wfmRes, atsRes, payrollRes] = await Promise.allSettled([
       hrmsApi.get<any>('/api/employees?limit=1'),
       hrmsApi.get<any>('/api/leave/requests?status=pending&limit=1'),
+      hrmsApi.get<any>('/api/leave/requests?status=approved&limit=1'),
+      hrmsApi.get<any>('/api/org/departments'),
       hrmsApi.get<any>(`/api/wfm/live?date=${today}`),
       hrmsApi.get<any>('/api/ats/stats'),
+      hrmsApi.get<any>('/api/payroll/runs?limit=1'),
     ]);
     return {
-      employees: empRes.status === 'fulfilled' ? (empRes.value.total ?? 0) : 0,
+      employees: empRes.status === 'fulfilled' ? (empRes.value.total ?? empRes.value.data?.length ?? 0) : 0,
       pendingLeaves: leaveRes.status === 'fulfilled' ? (leaveRes.value.data?.length ?? 0) : 0,
-      approvedLeaves: 0,
-      departments: 0,
+      approvedLeaves: approvedLeaveRes.status === 'fulfilled' ? (approvedLeaveRes.value.data?.length ?? 0) : 0,
+      departments: deptRes.status === 'fulfilled' ? (deptRes.value.data?.length ?? 0) : 0,
       attendanceToday: wfmRes.status === 'fulfilled' ? (wfmRes.value.data?.summary?.logged_in ?? 0) : 0,
       attendanceRate: wfmRes.status === 'fulfilled' ? (wfmRes.value.data?.summary?.overall_adherence_pct ?? 0) : 0,
       atsCandidates: atsRes.status === 'fulfilled' ? (atsRes.value.data?.total ?? 0) : 0,
       onboarding: 0,
       assets: 0,
-      payroll: 0,
+      payroll: payrollRes.status === 'fulfilled' ? (payrollRes.value.data?.length ?? 0) : 0,
     };
   } catch {
     return { employees: 0, pendingLeaves: 0, approvedLeaves: 0, departments: 0, attendanceToday: 0, attendanceRate: 0, atsCandidates: 0, onboarding: 0, assets: 0, payroll: 0 };

@@ -41,9 +41,8 @@ export function PerformanceReviews({ employeeId, employeeName = "Employee" }: Pe
   const { data: goals } = useQuery({
     queryKey: ["goals", employeeId],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/goals/goals"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/goals/goals");
+      return res.data ?? [];
     },
     enabled: !!employeeId,
   });

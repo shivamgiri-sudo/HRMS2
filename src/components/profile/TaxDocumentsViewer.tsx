@@ -36,10 +36,8 @@ export function TaxDocumentsViewer({ employeeId }: TaxDocumentsViewerProps) {
   const { data: documents, isLoading } = useQuery({
     queryKey: ["my-tax-documents", employeeId],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employee-docs"); return { data: res.data ?? [], error: null }; })();
-
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employee-docs");
+      return res.data ?? [];
     },
     enabled: !!employeeId,
   });
@@ -50,9 +48,10 @@ export function TaxDocumentsViewer({ employeeId }: TaxDocumentsViewerProps) {
       const pathMatch = fileUrl.match(/employee-documents\/(.+)/);
       const filePath = pathMatch ? pathMatch[1] : fileUrl;
 
-      const { data, error } = (async () => { const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055"; const url = filePath?.startsWith("https://") ? filePath : `${HRMS_API}/api/files/documents/${filePath}`; const resp = await fetch(url); const blob = await resp.blob(); return { data: blob, error: null }; })();
-
-      if (error) throw error;
+      const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
+      const url = filePath?.startsWith("https://") ? filePath : `${HRMS_API}/api/files/documents/${filePath}`;
+      const resp = await fetch(url);
+      const data = await resp.blob();
 
       // Create download link
       const url = URL.createObjectURL(data);

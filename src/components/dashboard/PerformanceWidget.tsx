@@ -15,9 +15,8 @@ export function PerformanceWidget() {
     queryKey: ["employee-for-performance", user?.id],
     queryFn: async () => {
       if (!user?.id) return null;
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      return res.data ?? null;
     },
     enabled: !!user?.id,
   });
@@ -26,9 +25,8 @@ export function PerformanceWidget() {
     queryKey: ["dashboard-goals", employeeData?.id],
     queryFn: async () => {
       if (!employeeData?.id) return [];
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/goals/goals"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/goals/goals");
+      return res.data ?? [];
     },
     enabled: !!employeeData?.id,
   });
@@ -37,9 +35,8 @@ export function PerformanceWidget() {
     queryKey: ["dashboard-reviews", employeeData?.id],
     queryFn: async () => {
       if (!employeeData?.id) return [];
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/performance-feedback/reports"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/performance-feedback/reports");
+      return res.data ?? [];
     },
     enabled: !!employeeData?.id,
   });

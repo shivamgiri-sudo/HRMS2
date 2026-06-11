@@ -61,17 +61,12 @@ export function TeamAnalytics({ isManager, managerId }: TeamAnalyticsProps) {
   const { data: employees, isLoading: employeesLoading } = useQuery({
     queryKey: ["team-employees", isManager, managerId],
     queryFn: async () => {
-      let query = ({ select: () => ({ eq: () => ({ order: () => ({ data: [], error: null }), maybeSingle: async () => ({ data: null, error: null }), limit: () => ({ maybeSingle: async () => ({ data: null, error: null }) }), data: [], error: null }), in: () => ({ order: () => ({ data: [], error: null }), data: [], error: null }), is: () => ({ data: [], error: null }), neq: () => ({ data: [], error: null }), gte: () => ({ lte: () => ({ order: () => ({ limit: () => ({ data: [], error: null }), data: [], error: null }), data: [], error: null }), data: [], error: null }), ilike: () => ({ data: [], error: null }), order: () => ({ data: [], error: null }), data: [], error: null }), update: () => ({ eq: () => ({ data: null, error: null }), in: () => ({ data: null, error: null }) }), insert: () => ({ select: () => ({ single: async () => ({ data: { id: 'stub' }, error: null }) }), data: null, error: null }), upsert: () => ({ data: null, error: null }), delete: () => ({ eq: () => ({ data: null, error: null }) }) })
-        .select("id, first_name, last_name, designation, department_id, departments!employees_department_id_fkey(name)")
-        .eq("status", "active");
-
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      const all = res.data ?? [];
       if (isManager && managerId) {
-        query = query.eq("manager_id", managerId);
+        return all.filter((e: any) => e.reporting_manager_id === managerId);
       }
-
-      const { data, error } = await query;
-      if (error) throw error;
-      return data;
+      return all;
     },
   });
 
@@ -79,9 +74,8 @@ export function TeamAnalytics({ isManager, managerId }: TeamAnalyticsProps) {
   const { data: departments } = useQuery({
     queryKey: ["departments"],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/org/departments"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/org/departments");
+      return res.data ?? [];
     },
   });
 
@@ -92,9 +86,8 @@ export function TeamAnalytics({ isManager, managerId }: TeamAnalyticsProps) {
     queryKey: ["team-goals", employeeIds],
     queryFn: async () => {
       if (employeeIds.length === 0) return [];
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/goals/goals"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/goals/goals");
+      return res.data ?? [];
     },
     enabled: employeeIds.length > 0,
   });
@@ -104,9 +97,8 @@ export function TeamAnalytics({ isManager, managerId }: TeamAnalyticsProps) {
     queryKey: ["team-reviews", employeeIds],
     queryFn: async () => {
       if (employeeIds.length === 0) return [];
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/performance-feedback/reports"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/performance-feedback/reports");
+      return res.data ?? [];
     },
     enabled: employeeIds.length > 0,
   });

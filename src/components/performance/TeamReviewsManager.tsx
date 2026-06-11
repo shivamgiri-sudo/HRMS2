@@ -90,9 +90,8 @@ export function TeamReviewsManager({ managerId, managerName }: TeamReviewsManage
   const { data: teamMembers, isLoading: teamLoading } = useQuery({
     queryKey: ["team-members-for-review", managerId],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data as TeamMember[];
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      return (res.data ?? []) as TeamMember[];
     },
     enabled: !!managerId,
   });
@@ -101,9 +100,8 @@ export function TeamReviewsManager({ managerId, managerName }: TeamReviewsManage
     queryKey: ["team-reviews-by-manager", managerId],
     queryFn: async () => {
       if (!teamMembers || teamMembers.length === 0) return [];
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/performance-feedback/reports"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data as TeamReview[];
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/performance-feedback/reports");
+      return (res.data ?? []) as TeamReview[];
     },
     enabled: !!managerId && !!teamMembers,
   });
@@ -113,9 +111,8 @@ export function TeamReviewsManager({ managerId, managerName }: TeamReviewsManage
     queryKey: ["team-goals-for-reviews", managerId],
     queryFn: async () => {
       if (!teamMembers || teamMembers.length === 0) return [];
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/goals/goals"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data as GoalInfo[];
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/goals/goals");
+      return (res.data ?? []) as GoalInfo[];
     },
     enabled: !!teamMembers,
   });
@@ -125,9 +122,8 @@ export function TeamReviewsManager({ managerId, managerName }: TeamReviewsManage
     queryKey: ["review-kpi-ratings-manager", editingReview?.id],
     queryFn: async () => {
       if (!editingReview) return [];
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/performance-feedback/reports"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data as KpiRating[];
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/performance-feedback/reports");
+      return (res.data ?? []) as KpiRating[];
     },
     enabled: !!editingReview?.id,
   });

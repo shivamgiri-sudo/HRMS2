@@ -67,7 +67,8 @@ export default function UnifiedPerformanceCommandCenter() {
     setMessage("");
     try {
       // Employees fetched via hrmsApi
-      const empResult = await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
+      const empRes = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      const empResult = { data: empRes.data ?? [] };
 
       // Tables below are from extended modules (ATS, LMS, WFM, Quality, Ops) not yet in base schema
       // Use extendedDb and return empty arrays if the table doesn't exist (error.code === '42P01')

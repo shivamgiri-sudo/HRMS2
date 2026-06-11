@@ -28,10 +28,8 @@ export function MyAssets({ employeeId }: MyAssetsProps) {
   const { data: assignments, isLoading } = useQuery({
     queryKey: ["my-assets", employeeId],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/assets-mgmt"); return { data: res.data ?? [], error: null }; })();
-
-      if (error) throw error;
-      return data as AssetAssignment[];
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/assets-mgmt");
+      return (res.data ?? []) as AssetAssignment[];
     },
     enabled: !!employeeId,
   });

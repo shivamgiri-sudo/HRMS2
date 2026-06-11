@@ -160,7 +160,7 @@ export function PayrollTable({
     
     try {
       // Fetch salary structure for detailed breakdown
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/payroll/structures"); return { data: res.data ?? [], error: null }; })();
+      await hrmsApi.get<{success:boolean;data:any}>("/api/payroll/structures");
 
       const monthName = MONTH_NAMES[record.monthNum - 1] || "";
 

@@ -78,9 +78,8 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
   const { data: approvedRequests } = useQuery({
     queryKey: ["leave-used-days", employeeId, currentYear],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/leave/requests"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/leave/requests");
+      return res.data ?? [];
     },
     enabled: !!employeeId,
   });

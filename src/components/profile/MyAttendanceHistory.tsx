@@ -36,10 +36,8 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
   const { data: records, isLoading } = useQuery({
     queryKey: ["my-attendance-history", employeeId],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/wfm/attendance/daily"); return { data: res.data ?? [], error: null }; })();
-
-      if (error) throw error;
-      return data as AttendanceRecord[];
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/wfm/attendance/daily");
+      return (res.data ?? []) as AttendanceRecord[];
     },
     enabled: !!employeeId,
   });
@@ -50,9 +48,8 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
     queryKey: ["my-attendance-breaks", recordIds],
     queryFn: async () => {
       if (recordIds.length === 0) return [];
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/wfm/attendance/daily"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return (data || []) as unknown as AttendanceBreak[];
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/wfm/attendance/daily");
+      return (res.data ?? []) as unknown as AttendanceBreak[];
     },
     enabled: recordIds.length > 0,
   });

@@ -32,10 +32,8 @@ export function LeaveRequestHistory({ employeeId }: LeaveRequestHistoryProps) {
   const { data: requests, isLoading } = useQuery({
     queryKey: ["leave-requests", employeeId],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/leave/requests"); return { data: res.data ?? [], error: null }; })();
-
-      if (error) throw error;
-      return data as LeaveRequest[];
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/leave/requests");
+      return (res.data ?? []) as LeaveRequest[];
     },
     enabled: !!employeeId,
   });

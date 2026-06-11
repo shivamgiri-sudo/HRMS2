@@ -69,18 +69,16 @@ export function TeamGoalsView({ managerId }: TeamGoalsViewProps) {
   const { data: teamData, isLoading } = useQuery({
     queryKey: ["team-goals", managerId],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
-
-      if (empError) throw empError;
+      const empRes = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      const employees = empRes.data ?? [];
       if (!employees || employees.length === 0) return [];
 
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/goals/goals"); return { data: res.data ?? [], error: null }; })();
+      const goalsRes = await hrmsApi.get<{success:boolean;data:any}>("/api/goals/goals");
+      const goals = goalsRes.data ?? [];
 
-      if (goalsError) throw goalsError;
-
-      return employees.map(emp => ({
+      return employees.map((emp: any) => ({
         ...emp,
-        goals: (goals || []).filter(g => g.employee_id === emp.id),
+        goals: (goals || []).filter((g: any) => g.employee_id === emp.id),
       })) as TeamMemberWithGoals[];
     },
     enabled: !!managerId,

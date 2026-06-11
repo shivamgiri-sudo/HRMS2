@@ -131,10 +131,8 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     queryKey: ["employee-salary-structure", employee?.id],
     queryFn: async () => {
       if (!employee?.id) return null;
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/payroll/structures"); return { data: res.data ?? [], error: null }; })();
-
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/payroll/structures");
+      return res.data ?? null;
     },
     enabled: open && !!employee?.id,
   });
@@ -144,10 +142,8 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     queryKey: ["employee-salary-history", employee?.id],
     queryFn: async () => {
       if (!employee?.id) return [];
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/payroll/structures"); return { data: res.data ?? [], error: null }; })();
-
-      if (error) throw error;
-      return data || [];
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/payroll/structures");
+      return res.data ?? [];
     },
     enabled: open && !!employee?.id,
   });
@@ -188,10 +184,8 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     queryKey: ["employee-details", employee?.id],
     queryFn: async () => {
       if (!employee?.id) return null;
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
-
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      return res.data ?? null;
     },
     enabled: open && !!employee?.id,
   });
@@ -200,9 +194,8 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
   const { data: managers = [] } = useQuery({
     queryKey: ["managers"],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data || [];
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      return res.data ?? [];
     },
   });
 
@@ -210,9 +203,8 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
   const { data: departments = [] } = useQuery({
     queryKey: ["departments"],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/org/departments"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data || [];
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/org/departments");
+      return res.data ?? [];
     },
   });
 

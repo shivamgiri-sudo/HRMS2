@@ -61,10 +61,8 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
     queryKey: ["salary-structure-view", record?.employeeId],
     queryFn: async () => {
       if (!record?.employeeId) return null;
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/payroll/structures"); return { data: res.data ?? [], error: null }; })();
-
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/payroll/structures");
+      return res.data ?? null;
     },
     enabled: !!record?.employeeId && open,
   });

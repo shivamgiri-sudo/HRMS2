@@ -49,10 +49,8 @@ export function PerformanceAnalytics({ employeeId }: PerformanceAnalyticsProps) 
   const { data: goals, isLoading: goalsLoading } = useQuery({
     queryKey: ["goals-analytics", employeeId],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/goals/goals"); return { data: res.data ?? [], error: null }; })();
-
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/goals/goals");
+      return res.data ?? [];
     },
   });
 
@@ -60,10 +58,8 @@ export function PerformanceAnalytics({ employeeId }: PerformanceAnalyticsProps) 
   const { data: reviews, isLoading: reviewsLoading } = useQuery({
     queryKey: ["reviews-analytics", employeeId],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/performance-feedback/reports"); return { data: res.data ?? [], error: null }; })();
-
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/performance-feedback/reports");
+      return res.data ?? [];
     },
   });
 

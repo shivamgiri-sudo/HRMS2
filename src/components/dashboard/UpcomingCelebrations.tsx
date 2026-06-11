@@ -23,9 +23,8 @@ export function UpcomingCelebrations() {
   const { data: celebrations = [], isLoading } = useQuery({
     queryKey: ["upcoming-celebrations"],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
-
-      if (error) throw error;
+      const empRes = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      const employees = empRes.data ?? [];
       if (!employees) return [];
 
       const upcomingCelebrations: Celebration[] = [];

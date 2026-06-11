@@ -30,10 +30,8 @@ export function EmployeeViewDialog({ employee, open, onOpenChange }: EmployeeVie
     queryKey: ["employee-extended-details", employee?.id],
     queryFn: async () => {
       if (!employee?.id) return null;
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
-
-      if (error) throw error;
-      return data;
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      return res.data ?? null;
     },
     enabled: open && !!employee?.id,
   });

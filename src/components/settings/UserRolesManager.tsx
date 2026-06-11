@@ -111,25 +111,19 @@ export function UserRolesManager() {
   const { data: users = [], isLoading } = useQuery({
     queryKey: ['users-with-roles'],
     queryFn: async () => {
-      // Fetch profiles with their roles
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
-
-      if (profilesError) throw profilesError;
-
-      // Fetch all user roles
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/access/roles/catalog"); return { data: res.data ?? [], error: null }; })();
-
-      if (rolesError) throw rolesError;
-
-      // Fetch employees to get status and id
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
-
-      if (employeesError) throw employeesError;
+      // Fetch employees and roles in parallel
+      const [empRes, rolesRes] = await Promise.all([
+        hrmsApi.get<{success:boolean;data:any}>("/api/employees"),
+        hrmsApi.get<{success:boolean;data:any}>("/api/access/roles/catalog"),
+      ]);
+      const profiles = empRes.data ?? [];
+      const roles = rolesRes.data ?? [];
+      const employees = profiles;
 
       // Map roles and status to users
-      const usersWithRoles: UserWithRole[] = (profiles || []).map(profile => {
-        const userRole = roles?.find(r => r.user_id === profile.id);
-        const employee = employees?.find(e => e.user_id === profile.id);
+      const usersWithRoles: UserWithRole[] = (profiles || []).map((profile: any) => {
+        const userRole = roles?.find((r: any) => r.user_id === profile.id);
+        const employee = employees?.find((e: any) => e.user_id === profile.id);
         return {
           ...profile,
           role: userRole?.role as AppRole | null,
@@ -148,9 +142,8 @@ export function UserRolesManager() {
   const { data: unlinkedEmployees = [] } = useQuery({
     queryKey: ['unlinked-employees'],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data as UnlinkedEmployee[];
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      return (res.data ?? []) as UnlinkedEmployee[];
     },
   });
 

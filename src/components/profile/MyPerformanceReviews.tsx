@@ -44,10 +44,8 @@ export function MyPerformanceReviews({ employeeId }: MyPerformanceReviewsProps) 
   const { data: reviews, isLoading } = useQuery({
     queryKey: ["my-performance-reviews", employeeId],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/performance-feedback/reports"); return { data: res.data ?? [], error: null }; })();
-
-      if (error) throw error;
-      return data as PerformanceReview[];
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/performance-feedback/reports");
+      return (res.data ?? []) as PerformanceReview[];
     },
     enabled: !!employeeId,
   });

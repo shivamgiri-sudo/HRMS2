@@ -74,9 +74,8 @@ export function EmployeeReport() {
   const { data: employees, isLoading: loadingEmployees } = useQuery({
     queryKey: ["employees-for-report"],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return (data || []).map((e: any): EmployeeOption => ({
+      const empRes = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      return (empRes.data ?? []).map((e: any): EmployeeOption => ({
         id: e.id,
         name: `${e.first_name} ${e.last_name}`,
         employee_code: e.employee_code,
@@ -163,10 +162,8 @@ export function EmployeeReport() {
   const { data: attendanceData, isLoading: loadingAttendance } = useQuery({
     queryKey: ["employee-report-attendance", selectedEmployeeId, year],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/wfm/attendance/daily"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-
-      const records = data || [];
+      const attRes = await hrmsApi.get<{success:boolean;data:any}>("/api/wfm/attendance/daily");
+      const records = attRes.data ?? [];
       const totalDays = records.length;
       const totalHours = records.reduce((sum, r) => sum + (r.total_hours || 0), 0);
       const presentDays = records.filter((r) => r.status === "present").length;
@@ -183,9 +180,8 @@ export function EmployeeReport() {
   const { data: payrollData, isLoading: loadingPayroll } = useQuery({
     queryKey: ["employee-report-payroll", selectedEmployeeId, year],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/payroll/structures"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      const records = data || [];
+      const payRes = await hrmsApi.get<{success:boolean;data:any}>("/api/payroll/structures");
+      const records = payRes.data ?? [];
       const totalNet = records.reduce((sum, r) => sum + Number(r.net_salary || 0), 0);
       const totalPaid = records
         .filter((r) => r.status === "paid")
@@ -199,9 +195,8 @@ export function EmployeeReport() {
   const { data: assetData, isLoading: loadingAssets } = useQuery({
     queryKey: ["employee-report-assets", selectedEmployeeId],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/assets-mgmt"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      const all = data || [];
+      const assetRes = await hrmsApi.get<{success:boolean;data:any}>("/api/assets-mgmt");
+      const all = assetRes.data ?? [];
       const active = all.filter((a) => !a.returned_date);
       const returned = all.filter((a) => !!a.returned_date);
       return { all, active, returned };

@@ -42,9 +42,8 @@ export function BulkAssignManagerDialog({
   const { data: managers = [], isLoading: isLoadingManagers } = useQuery({
     queryKey: ["managers"],
     queryFn: async () => {
-      await (async () => { const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees"); return { data: res.data ?? [], error: null }; })();
-      if (error) throw error;
-      return data || [];
+      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      return res.data ?? [];
     },
     enabled: open,
   });
