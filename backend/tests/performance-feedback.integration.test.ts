@@ -20,6 +20,38 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
+
+// Mock requireRole so privileged test tokens (hr.token, manager.token) pass
+// and the employee token is blocked. All test tokens map to user-1 via
+// setup.ts, so we inspect the Authorization header token prefix instead.
+// NOTE: vi.mock factories are hoisted above variable declarations, so all
+// data must be inlined inside the factory function.
+vi.mock("../src/middleware/requireRole.js", () => ({
+  requireRole: (...allowedRoles: string[]) =>
+    (req: any, _res: any, next: any) => {
+      // Derive a synthetic role from the test token name:
+      //   hr.token     → ["hr", "admin"]
+      //   manager.token → ["manager"]
+      //   employee.token → [] (no privileged roles)
+      // Any other .token suffix is treated as hr/admin (e.g. for edge-case tests)
+      const authHeader: string = req.headers?.authorization ?? "";
+      const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
+      let userRoles: string[];
+      if (token === "employee.token") {
+        userRoles = [];
+      } else if (token === "manager.token") {
+        userRoles = ["manager"];
+      } else {
+        // hr.token, admin.token, or any other test token → full HR/admin access
+        userRoles = ["hr", "admin"];
+      }
+      const allowed = allowedRoles.some((r) => userRoles.includes(r));
+      if (!allowed) {
+        return _res.status(403).json({ success: false, message: "Forbidden" });
+      }
+      return next();
+    },
+}));
 const mockConnection = {
   execute: vi.fn().mockResolvedValue([[], []]),
   beginTransaction: vi.fn().mockResolvedValue(undefined),
