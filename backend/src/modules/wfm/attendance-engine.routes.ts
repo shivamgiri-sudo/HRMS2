@@ -8,6 +8,7 @@ import type { RowDataPacket } from 'mysql2';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import type { Response } from 'express';
 import { z } from 'zod';
+import { getEmployeeForUser, hasRole } from '../../shared/accessGuard.js';
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -92,23 +93,40 @@ router.post('/process', requireRole('admin', 'hr', 'wfm'), h(async (req, res) =>
 }));
 
 // GET /daily — list records with filters
-router.get('/daily', h(async (req, res) => {
-  const filters = {
-    employeeId:        req.query.employeeId as string | undefined,
-    processId:         req.query.processId as string | undefined,
-    fromDate:          req.query.fromDate as string | undefined,
-    toDate:            req.query.toDate as string | undefined,
-    attendanceStatus:  req.query.attendanceStatus as string | undefined,
-    page:              req.query.page ? Number(req.query.page) : undefined,
-    limit:             req.query.limit ? Number(req.query.limit) : undefined,
+router.get('/daily', h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const isPrivileged = await hasRole(userId, 'admin', 'hr', 'wfm', 'manager');
+  const filters: any = {
+    processId:        req.query.processId as string | undefined,
+    fromDate:         req.query.fromDate as string | undefined,
+    toDate:           req.query.toDate as string | undefined,
+    attendanceStatus: req.query.attendanceStatus as string | undefined,
+    page:             req.query.page ? Number(req.query.page) : undefined,
+    limit:            req.query.limit ? Number(req.query.limit) : undefined,
   };
+  if (isPrivileged) {
+    filters.employeeId = req.query.employeeId as string | undefined;
+  } else {
+    const emp = await getEmployeeForUser(userId);
+    if (!emp) return res.status(403).json({ success: false, error: 'No employee record' });
+    filters.employeeId = emp.id;
+  }
   const data = await attendanceEngineService.listRecords(filters);
   return res.json({ success: true, ...data });
 }));
 
 // GET /daily/:employeeId/:date — single record
-router.get('/daily/:employeeId/:date', h(async (req, res) => {
-  const record = await attendanceEngineService.getRecord(req.params.employeeId, req.params.date);
+router.get('/daily/:employeeId/:date', h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const targetId = req.params.employeeId;
+  const isPrivileged = await hasRole(userId, 'admin', 'hr', 'wfm', 'manager');
+  if (!isPrivileged) {
+    const emp = await getEmployeeForUser(userId);
+    if (!emp || emp.id !== targetId) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
+  }
+  const record = await attendanceEngineService.getRecord(targetId, req.params.date);
   if (!record) return res.status(404).json({ success: false, error: 'Record not found' });
   return res.json({ success: true, data: record });
 }));
@@ -151,19 +169,32 @@ router.patch('/daily/:employeeId/:date', requireRole('admin', 'hr', 'wfm'), h(as
 }));
 
 // GET /summary/:employeeId/:month — monthly summary
-router.get('/summary/:employeeId/:month', h(async (req, res) => {
-  const data = await attendanceEngineService.getMonthlySummary(req.params.employeeId, req.params.month);
+router.get('/summary/:employeeId/:month', h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const targetId = req.params.employeeId;
+  const isPrivileged = await hasRole(userId, 'admin', 'hr', 'wfm', 'manager');
+  if (!isPrivileged) {
+    const emp = await getEmployeeForUser(userId);
+    if (!emp || emp.id !== targetId) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
+  }
+  const data = await attendanceEngineService.getMonthlySummary(targetId, req.params.month);
   return res.json({ success: true, data });
 }));
 
 // POST /clock-in
 router.post('/clock-in', h(async (req: AuthenticatedRequest, res: Response) => {
-  const { employee_id, work_mode, latitude, longitude, location_name } = req.body;
-  if (!employee_id) return res.status(400).json({ error: 'employee_id required' });
+  const userId = req.authUser!.id;
+  // Security: always derive employee_id from auth token — never trust body
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, error: 'No employee record for authenticated user' });
+  const employee_id = emp.id;
+
+  const { work_mode, latitude, longitude, location_name } = req.body;
   const today = new Date().toISOString().slice(0, 10);
   const now = new Date().toISOString();
   const id = randomUUID();
-  // Check if record already exists for today
   const [existing] = await db.execute<RowDataPacket[]>(
     'SELECT id FROM attendance_daily_record WHERE employee_id = ? AND record_date = ? LIMIT 1',
     [employee_id, today]
@@ -185,8 +216,22 @@ router.post('/clock-in', h(async (req: AuthenticatedRequest, res: Response) => {
 
 // POST /clock-out
 router.post('/clock-out', h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
   const { record_id, latitude, longitude, location_name } = req.body;
   if (!record_id) return res.status(400).json({ error: 'record_id required' });
+
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, error: 'No employee record' });
+
+  // Ownership check: verify this record belongs to the caller
+  const [check] = await db.execute<RowDataPacket[]>(
+    'SELECT id FROM attendance_daily_record WHERE id = ? AND employee_id = ? LIMIT 1',
+    [record_id, emp.id]
+  );
+  if ((check as RowDataPacket[]).length === 0) {
+    return res.status(403).json({ success: false, error: 'Forbidden: record does not belong to you' });
+  }
+
   const now = new Date().toISOString();
   await db.execute(
     `UPDATE attendance_daily_record
