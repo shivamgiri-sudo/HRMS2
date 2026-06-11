@@ -145,6 +145,7 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
 
   const year = req.query.year ? String(req.query.year) : String(new Date().getFullYear());
 
+  // Fetch main payroll lines with employee profile data
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT spl.id, spl.run_id, spl.employee_id, spl.employee_code,
             spl.gross_salary, spl.total_deductions, spl.net_salary,
@@ -153,16 +154,62 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
             spl.working_days, spl.present_days, spl.leave_days, spl.lwp_days,
             spl.status, spl.remarks,
             spr.run_month, spr.disbursed_at AS paid_at, spr.status AS run_status,
-            sp.acknowledged_at, sp.file_url, sp.payslip_ref
+            sp.acknowledged_at, sp.file_url, sp.payslip_ref,
+            e.first_name, e.last_name,
+            des.designation_name,
+            dept.dept_name,
+            br.branch_name,
+            loc.location_name
        FROM salary_prep_line spl
        JOIN salary_prep_run spr ON spr.id = spl.run_id
        LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
+       LEFT JOIN employees e ON CAST(e.id AS CHAR) = CAST(spl.employee_id AS CHAR)
+       LEFT JOIN designation_master des ON CAST(des.id AS CHAR) = CAST(e.designation_id AS CHAR)
+       LEFT JOIN department_master dept ON CAST(dept.id AS CHAR) = CAST(e.department_id AS CHAR)
+       LEFT JOIN branch_master br ON CAST(br.id AS CHAR) = CAST(e.branch_id AS CHAR)
+       LEFT JOIN location_master loc ON CAST(loc.id AS CHAR) = CAST(e.location_id AS CHAR)
       WHERE spl.employee_id = ?
         AND spr.run_month LIKE ?
         AND spl.status NOT IN ('draft')
       ORDER BY spr.run_month DESC`,
     [callerEmp.id, `${year}-%`]
   );
+
+  // For each line, fetch detailed component breakdown
+  for (const line of rows as any[]) {
+    const [components] = await db.execute<RowDataPacket[]>(
+      `SELECT component_code, component_name, component_type, amount, taxable
+       FROM salary_prep_line_component
+       WHERE line_id = ?
+       ORDER BY
+         CASE component_type
+           WHEN 'earning' THEN 1
+           WHEN 'deduction' THEN 2
+           ELSE 3
+         END,
+         component_code`,
+      [line.id]
+    );
+
+    // Split components by type
+    line.earnings = (components as any[]).filter(c => c.component_type === 'earning');
+    line.deductions = (components as any[]).filter(c => c.component_type === 'deduction');
+    line.employer_costs = (components as any[]).filter(c => c.component_type === 'employer_cost');
+
+    // If basic/hra/special_allowance columns are NULL, populate from components
+    if (!line.basic) {
+      const basicComp = line.earnings.find((e: any) => e.component_code === 'BASIC');
+      line.basic = basicComp ? Number(basicComp.amount) : 0;
+    }
+    if (!line.hra) {
+      const hraComp = line.earnings.find((e: any) => e.component_code === 'HRA');
+      line.hra = hraComp ? Number(hraComp.amount) : 0;
+    }
+    if (!line.special_allowance) {
+      const specialComp = line.earnings.find((e: any) => e.component_code === 'SPECIAL');
+      line.special_allowance = specialComp ? Number(specialComp.amount) : 0;
+    }
+  }
 
   return res.json({ success: true, data: rows });
 }));
