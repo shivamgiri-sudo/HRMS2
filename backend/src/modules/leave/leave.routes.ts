@@ -7,6 +7,7 @@ import type { RowDataPacket } from "mysql2";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response } from "express";
 import { leaveController } from "./leave.controller.js";
+import { leaveService } from "./leave.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 
 export const leaveRouter = Router();

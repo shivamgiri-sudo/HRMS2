@@ -82,9 +82,9 @@ export class NotificationService {
     if (this.emailTransporter) return this.emailTransporter;
 
     try {
-      const [rows] = await db.execute<RowDataPacket[]>(
+      const [rows] = await (db.execute(
         "SELECT * FROM smtp_config WHERE active_status = 1 ORDER BY id DESC LIMIT 1"
-      );
+      ) as Promise<[RowDataPacket[], unknown]>);
 
       if (!rows || rows.length === 0) {
         console.warn("[NotificationService] No active SMTP config found");
@@ -94,7 +94,7 @@ export class NotificationService {
       const config = rows[0] as SmtpConfig;
       this.smtpConfig = config;
 
-      this.emailTransporter = nodemailer.createTransporter({
+      this.emailTransporter = nodemailer.createTransport({
         host: config.smtp_host,
         port: config.smtp_port,
         secure: config.smtp_secure === 1,
@@ -105,7 +105,7 @@ export class NotificationService {
       });
 
       // Verify connection
-      await this.emailTransporter.verify();
+      await this.emailTransporter!.verify();
       console.log("[NotificationService] Email transporter initialized successfully");
       return this.emailTransporter;
     } catch (error: any) {
@@ -121,9 +121,9 @@ export class NotificationService {
     if (this.twilioClient) return this.twilioClient;
 
     try {
-      const [rows] = await db.execute<RowDataPacket[]>(
+      const [rows] = await (db.execute(
         "SELECT * FROM sms_config WHERE active_status = 1 AND provider = 'twilio' ORDER BY id DESC LIMIT 1"
-      );
+      ) as Promise<[RowDataPacket[], unknown]>);
 
       if (!rows || rows.length === 0) {
         console.warn("[NotificationService] No active Twilio config found");
@@ -152,10 +152,10 @@ export class NotificationService {
    */
   private async getTemplate(templateCode: string): Promise<NotificationTemplate | null> {
     try {
-      const [rows] = await db.execute<RowDataPacket[]>(
+      const [rows] = await (db.execute(
         "SELECT * FROM notification_template WHERE template_code = ? AND active_status = 1 LIMIT 1",
         [templateCode]
-      );
+      ) as Promise<[RowDataPacket[], unknown]>);
 
       if (!rows || rows.length === 0) {
         console.warn(`[NotificationService] Template not found: ${templateCode}`);

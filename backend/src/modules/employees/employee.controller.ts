@@ -46,8 +46,8 @@ export const employeeController = {
     const empId = rows[0].id;
 
     // Whitelist: only these fields may be self-edited
-    const allowed = ['phone', 'address', 'city', 'country', 'date_of_birth', 'gender',
-                     'working_hours_start', 'working_hours_end', 'working_days'];
+    const allowed = ['mobile', 'address1', 'address2', 'city', 'state', 'pincode',
+                     'date_of_birth', 'gender', 'blood_group', 'nominee_name', 'nominee_relation'];
     const updates: Record<string, unknown> = {};
     for (const key of allowed) {
       if (key in req.body) updates[key] = req.body[key];
