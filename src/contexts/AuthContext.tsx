@@ -20,6 +20,13 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const DEMO_LOGIN_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_LOGIN === 'true';
 
+// Known demo user IDs from DEMO_TOKEN_MAP in authMiddleware
+const KNOWN_DEMO_IDS = new Set([
+  'demo-admin-id', 'demo-hr-id', 'demo-recruiter-id', 'demo-manager-id',
+  'demo-tl-id', 'demo-qa-id', 'demo-wfm-id', 'demo-finance-id',
+  'demo-employee-id', 'demo-ceo-id', 'demo-trainer-id', 'demo-user-id',
+]);
+
 function apiBaseUrl(): string {
   const configured = import.meta.env.VITE_HRMS_API_URL;
   if (configured !== undefined) return String(configured).replace(/\/$/, '');
@@ -89,14 +96,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (demoRaw) {
           try {
             const demo = JSON.parse(demoRaw);
-            if (demo?.user?.id) {
+            if (demo?.user?.id && KNOWN_DEMO_IDS.has(demo.user.id)) {
               setUser({ id: demo.user.id, email: demo.user.email ?? '' });
               setIsLoading(false);
               return;
             }
-          } catch {
-            localStorage.removeItem('hrms_demo_session');
-          }
+          } catch { /* fall through */ }
+          localStorage.removeItem('hrms_demo_session');
         }
       } else {
         localStorage.removeItem('hrms_demo_session');
