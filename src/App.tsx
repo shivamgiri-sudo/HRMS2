@@ -76,6 +76,7 @@ const NativeLMSIntegration          = lazy(() => import("./pages/NativeLMSIntegr
 // WFM
 const NativeWFMRoster               = lazy(() => import("./pages/NativeWFMRoster"));
 const NativeWFMExtensions           = lazy(() => import("./pages/NativeWFMExtensions"));
+const NativeWFMManagerApproval      = lazy(() => import("./pages/NativeWFMManagerApproval"));
 
 // Performance & Management
 const UnifiedPerformanceCommandCenter = lazy(() => import("./pages/UnifiedPerformanceCommandCenter"));
@@ -269,6 +270,7 @@ const App = () => (
               <Route path="/wfm/roster" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMRoster /></Gate></ProtectedRoute>} />
               <Route path="/wfm/live-tracker" element={<ProtectedRoute><Gate pageCode="WFM_LIVE_TRACKER"><NativePlaceholderPage title="WFM Live Tracker" module="WFM" /></Gate></ProtectedRoute>} />
               <Route path="/wfm/extensions" element={<ProtectedRoute><Gate pageCode="WFM_EXTENSIONS"><NativeWFMExtensions /></Gate></ProtectedRoute>} />
+              <Route path="/wfm-manager-approvals" element={<ProtectedRoute><NativeWFMManagerApproval /></ProtectedRoute>} />
               <Route path="/roster-preference" element={<ProtectedRoute><NativeRosterPreference /></ProtectedRoute>} />
 
               {/* Quality / Ops */}
