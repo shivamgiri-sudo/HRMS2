@@ -71,6 +71,7 @@ import { engagementIntelligenceRouter } from "./modules/engagement/engagement-in
 import legacyRouter from "./modules/legacy/legacy.routes.js";
 import dialerRouter from "./modules/dialer/dialer.routes.js";
 import { externalDbRouter } from "./modules/external-db/external-db.routes.js";
+import { aprRouter } from "./modules/apr/apr.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
 
 export const app = express();
@@ -183,6 +184,7 @@ app.use("/api/engagement", engagementRouter);
 app.use("/api/engagement-intelligence", engagementIntelligenceRouter); // Health scoring + command center
 app.use("/api/communication", communicationRouter);
 app.use("/api/external-db", externalDbRouter);
+app.use("/api/apr", aprRouter);
 app.use('/api/wfm/attendance', attendanceEngineRouter);
 app.use("/api/dialer", dialerRouter);
 app.use("/api/tasks", taskRouter);
