@@ -227,6 +227,24 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   );
   const employees = empRows as EmployeeRow[];
 
+  // 3b. Load approved incentives for this pay month (graceful — table may not exist yet)
+  const incentivesByEmployee = new Map<string, number>();
+  try {
+    const [incentiveRows] = await db.execute<RowDataPacket[]>(
+      `SELECT iul.employee_id, SUM(iul.amount) AS incentive_total
+         FROM incentive_upload_line iul
+         JOIN incentive_upload_batch iub ON iub.id = iul.batch_id
+        WHERE iub.pay_month = ? AND iub.status = 'approved' AND iul.validation_status = 'ok'
+        GROUP BY iul.employee_id`,
+      [run.run_month]
+    );
+    for (const row of incentiveRows as Array<{ employee_id: string; incentive_total: number }>) {
+      incentivesByEmployee.set(row.employee_id, Number(row.incentive_total));
+    }
+  } catch {
+    // incentive tables not yet migrated — proceed without incentives
+  }
+
   // 4. Derive working days from run_month (Mon–Sat = 26 assumed; real impl queries holidays)
   const [year, month] = run.run_month.split("-").map(Number);
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -368,8 +386,9 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       hraPct: emp.hra_pct ?? 20,
     });
 
-    // Net pay = payrollService net + advance recovery deducted on top
-    const netPayFinal = Math.max(0, calc.net_salary - advanceRecovery);
+    // Net pay = payrollService net + advance recovery deducted on top + approved incentives added
+    const empIncentive = incentivesByEmployee.get(emp.employee_id) ?? 0;
+    const netPayFinal = Math.max(0, calc.net_salary - advanceRecovery + empIncentive);
     const totalDedFinal = calc.total_deductions + advanceRecovery + lwpDeduction;
 
     // 6. Upsert prep line
@@ -379,8 +398,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
           working_days, present_days, leave_days, lwp_days, late_marks, dialer_hours,
           gross_salary, total_deductions, net_salary,
           pf_employee, pf_employer, esic_employee, esic_employer,
-          professional_tax, tds, tds_amount, lwp_deduction, advance_recovery, status)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
+          professional_tax, tds, tds_amount, lwp_deduction, advance_recovery, incentive_total, status)
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
        ON DUPLICATE KEY UPDATE
          working_days = VALUES(working_days), present_days = VALUES(present_days),
          lwp_days = VALUES(lwp_days), gross_salary = VALUES(gross_salary),
@@ -390,13 +409,14 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
          professional_tax = VALUES(professional_tax),
          tds = VALUES(tds), tds_amount = VALUES(tds_amount),
          lwp_deduction = VALUES(lwp_deduction), advance_recovery = VALUES(advance_recovery),
+         incentive_total = VALUES(incentive_total),
          status = 'calculated'`,
       [
         runId, emp.employee_id, emp.employee_code,
         att.working_days, att.present_days, att.leave_days, att.lwp_days, att.late_marks, att.dialer_hours,
         calc.gross_salary, totalDedFinal, netPayFinal,
         calc.pf_employee, calc.pf_employer, calc.esic_employee, calc.esic_employer,
-        calc.professional_tax, tdsMonthly, tdsMonthly, lwpDeduction, advanceRecovery,
+        calc.professional_tax, tdsMonthly, tdsMonthly, lwpDeduction, advanceRecovery, empIncentive,
       ]
     );
 

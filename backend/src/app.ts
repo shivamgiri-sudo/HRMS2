@@ -73,6 +73,8 @@ import dialerRouter from "./modules/dialer/dialer.routes.js";
 import { externalDbRouter } from "./modules/external-db/external-db.routes.js";
 import { aprRouter } from "./modules/apr/apr.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
+import { payrollMastersRouter } from "./modules/payroll-masters/payrollMasters.routes.js";
+import { incentivesRouter } from "./modules/incentives/incentives.routes.js";
 
 export const app = express();
 
@@ -185,6 +187,8 @@ app.use("/api/engagement-intelligence", engagementIntelligenceRouter); // Health
 app.use("/api/communication", communicationRouter);
 app.use("/api/external-db", externalDbRouter);
 app.use("/api/apr", aprRouter);
+app.use("/api/payroll-masters", payrollMastersRouter);
+app.use("/api/incentives", incentivesRouter);
 app.use('/api/wfm/attendance', attendanceEngineRouter);
 app.use("/api/dialer", dialerRouter);
 app.use("/api/tasks", taskRouter);
