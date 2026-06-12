@@ -11,6 +11,7 @@ import { PerformanceAnalytics } from "@/components/performance/PerformanceAnalyt
 import { TeamGoalsView } from "@/components/performance/TeamGoalsView";
 import { TeamReviewsManager } from "@/components/performance/TeamReviewsManager";
 import { TeamAnalytics } from "@/components/performance/TeamAnalytics";
+import { AprSection } from "@/components/performance/AprSection";
 
 const Performance = () => {
   const { user } = useAuth();
@@ -115,6 +116,10 @@ const Performance = () => {
                 Team Analytics
               </TabsTrigger>
             )}
+            <TabsTrigger value="apr" className="gap-2">
+              <BarChart3 className="h-4 w-4" />
+              APR
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="kpis">
@@ -150,6 +155,10 @@ const Performance = () => {
               />
             </TabsContent>
           )}
+
+          <TabsContent value="apr">
+            <AprSection isManager={employeeData.isManager} employeeId={employeeData.id} />
+          </TabsContent>
         </Tabs>
       </div>
     </DashboardLayout>
