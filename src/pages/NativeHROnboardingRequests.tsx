@@ -34,6 +34,13 @@ interface SalaryPreview {
   conveyance: number;
 }
 
+interface CostCentre {
+  id: string;
+  cost_centre_code: string;
+  cost_centre_name: string;
+  branch_id: string | null;
+}
+
 const BANDS = ['D', 'C', 'B', 'A', 'M'];
 
 export default function NativeHROnboardingRequests() {
@@ -43,6 +50,9 @@ export default function NativeHROnboardingRequests() {
   const [salaryPreview, setSalaryPreview] = useState<SalaryPreview | null>(null);
   const [calcLoading, setCalcLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [costCentres, setCostCentres] = useState<CostCentre[]>([]);
+  const [ccLoading, setCcLoading] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const [offer, setOffer] = useState({
     emp_type: 'OnRoll',
@@ -72,6 +82,16 @@ export default function NativeHROnboardingRequests() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Load branch-scoped cost centres when HR opens a candidate's offer form
+  useEffect(() => {
+    if (!selected) return;
+    setCcLoading(true);
+    hrmsApi.get('/org/cost-centres/by-branch')
+      .then(r => setCostCentres(r.data.data ?? []))
+      .catch(() => setCostCentres([]))
+      .finally(() => setCcLoading(false));
+  }, [selected]);
+
   const calcSalary = async () => {
     if (!offer.offered_ctc || !offer.salary_band) return;
     setCalcLoading(true);
@@ -90,6 +110,15 @@ export default function NativeHROnboardingRequests() {
 
   const submitOffer = async (submit: boolean) => {
     if (!selected) return;
+
+    // Validate required fields before submitting
+    if (submit) {
+      if (!offer.date_of_joining) { setFormError('Date of Joining is required.'); return; }
+      if (!offer.offered_ctc)     { setFormError('Monthly CTC is required.'); return; }
+      if (!offer.cost_centre)     { setFormError('Cost Centre is required. Please select one from the dropdown.'); return; }
+    }
+    setFormError(null);
+
     setSaving(true);
     try {
       await hrmsApi.post(`/ats/onboarding/requests/${selected.id}/offer`, {
@@ -115,42 +144,108 @@ export default function NativeHROnboardingRequests() {
 
   if (selected) return (
     <div className="p-6 max-w-2xl mx-auto space-y-4">
-      <Button variant="outline" onClick={() => { setSelected(null); setSalaryPreview(null); }}>← Back to Requests</Button>
+      <Button variant="outline" onClick={() => { setSelected(null); setSalaryPreview(null); setFormError(null); }}>← Back to Requests</Button>
       <Card>
         <CardHeader>
           <CardTitle>Employment Offer — {selected.full_name}</CardTitle>
           <p className="text-sm text-muted-foreground">{selected.candidate_code} | {selected.mobile} | {selected.email}</p>
         </CardHeader>
         <CardContent className="space-y-3">
-          {[
-            { label: 'Employment Type', key: 'emp_type', type: 'select', options: ['OnRoll', 'OffRoll'] },
-            { label: 'Date of Joining *', key: 'date_of_joining', type: 'date' },
-            { label: 'Date of Salary Start', key: 'date_of_salary', type: 'date' },
-            { label: 'Profile / Designation Title', key: 'profile', type: 'text' },
-            { label: 'Cost Centre', key: 'cost_centre', type: 'text' },
-            { label: 'Role Type', key: 'role_type', type: 'select', options: ['Analyst', 'SupportStaff'] },
-            { label: 'Salary Band', key: 'salary_band', type: 'select', options: BANDS },
-            { label: 'Monthly CTC (₹) *', key: 'offered_ctc', type: 'number' },
-          ].map(f => (
-            <div key={f.key}>
-              <Label>{f.label}</Label>
-              {f.type === 'select' ? (
-                <select
-                  className="w-full border rounded px-2 py-1.5 text-sm mt-1 bg-background"
-                  value={(offer as any)[f.key]}
-                  onChange={e => setOffer(p => ({ ...p, [f.key]: e.target.value }))}
-                >
-                  {f.options!.map(o => <option key={o} value={o}>{o}</option>)}
-                </select>
-              ) : (
-                <Input
-                  type={f.type}
-                  value={(offer as any)[f.key]}
-                  onChange={e => setOffer(p => ({ ...p, [f.key]: e.target.value }))}
-                />
-              )}
-            </div>
-          ))}
+
+          {/* Employment Type */}
+          <div>
+            <Label>Employment Type</Label>
+            <select
+              className="w-full border rounded px-2 py-1.5 text-sm mt-1 bg-background"
+              value={offer.emp_type}
+              onChange={e => setOffer(p => ({ ...p, emp_type: e.target.value }))}
+            >
+              {['OnRoll', 'OffRoll'].map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+
+          {/* Date of Joining */}
+          <div>
+            <Label>Date of Joining <span className="text-red-500">*</span></Label>
+            <Input type="date" value={offer.date_of_joining}
+              onChange={e => setOffer(p => ({ ...p, date_of_joining: e.target.value }))} />
+          </div>
+
+          {/* Date of Salary Start */}
+          <div>
+            <Label>Date of Salary Start</Label>
+            <Input type="date" value={offer.date_of_salary}
+              onChange={e => setOffer(p => ({ ...p, date_of_salary: e.target.value }))} />
+          </div>
+
+          {/* Profile / Designation Title */}
+          <div>
+            <Label>Profile / Designation Title</Label>
+            <Input type="text" value={offer.profile}
+              onChange={e => setOffer(p => ({ ...p, profile: e.target.value }))} />
+          </div>
+
+          {/* Cost Centre — branch-scoped dropdown, required */}
+          <div>
+            <Label>
+              Cost Centre <span className="text-red-500">*</span>
+              {ccLoading && <Loader2 className="inline animate-spin w-3 h-3 ml-1" />}
+            </Label>
+            <select
+              className="w-full border rounded px-2 py-1.5 text-sm mt-1 bg-background"
+              value={offer.cost_centre}
+              onChange={e => setOffer(p => ({ ...p, cost_centre: e.target.value }))}
+              disabled={ccLoading}
+            >
+              <option value="">— Select Cost Centre —</option>
+              {costCentres.map(cc => (
+                <option key={cc.id} value={cc.cost_centre_code}>
+                  {cc.cost_centre_code} — {cc.cost_centre_name}
+                </option>
+              ))}
+            </select>
+            {costCentres.length === 0 && !ccLoading && (
+              <p className="text-xs text-amber-600 mt-1">
+                No active cost centres found for your branch. Contact admin to configure cost centres.
+              </p>
+            )}
+          </div>
+
+          {/* Role Type */}
+          <div>
+            <Label>Role Type</Label>
+            <select
+              className="w-full border rounded px-2 py-1.5 text-sm mt-1 bg-background"
+              value={offer.role_type}
+              onChange={e => setOffer(p => ({ ...p, role_type: e.target.value }))}
+            >
+              {['Analyst', 'SupportStaff'].map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+
+          {/* Salary Band */}
+          <div>
+            <Label>Salary Band</Label>
+            <select
+              className="w-full border rounded px-2 py-1.5 text-sm mt-1 bg-background"
+              value={offer.salary_band}
+              onChange={e => setOffer(p => ({ ...p, salary_band: e.target.value }))}
+            >
+              {BANDS.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+
+          {/* Monthly CTC */}
+          <div>
+            <Label>Monthly CTC (₹) <span className="text-red-500">*</span></Label>
+            <Input type="number" value={offer.offered_ctc}
+              onChange={e => setOffer(p => ({ ...p, offered_ctc: e.target.value }))} />
+          </div>
+
+          {/* Validation error */}
+          {formError && (
+            <p className="text-sm text-red-600 font-medium">{formError}</p>
+          )}
 
           <Button variant="outline" onClick={calcSalary} disabled={calcLoading || !offer.offered_ctc}>
             {calcLoading ? <Loader2 className="animate-spin w-4 h-4 mr-1" /> : null}
@@ -172,7 +267,10 @@ export default function NativeHROnboardingRequests() {
             <Button variant="outline" onClick={() => submitOffer(false)} disabled={saving}>
               Save Draft
             </Button>
-            <Button onClick={() => submitOffer(true)} disabled={saving || !offer.date_of_joining || !offer.offered_ctc}>
+            <Button
+              onClick={() => submitOffer(true)}
+              disabled={saving || !offer.date_of_joining || !offer.offered_ctc || !offer.cost_centre}
+            >
               {saving ? <Loader2 className="animate-spin w-4 h-4 mr-1" /> : null}
               Submit to Branch Head
             </Button>
@@ -184,42 +282,47 @@ export default function NativeHROnboardingRequests() {
 
   return (
     <div className="p-6 space-y-4">
-      <h1 className="text-xl font-semibold">Onboarding Requests</h1>
-      <div className="overflow-x-auto rounded border">
-        <table className="w-full text-sm border-collapse">
-          <thead>
-            <tr className="bg-gray-50 border-b">
-              {['Code', 'Name', 'Mobile', 'Profile Status', 'Request Status', 'Offer', 'Action'].map(h => (
-                <th key={h} className="text-left px-3 py-2 font-medium text-muted-foreground">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(r => (
-              <tr key={r.id} className="border-b hover:bg-gray-50">
-                <td className="px-3 py-2 font-mono text-xs">{r.candidate_code}</td>
-                <td className="px-3 py-2">{r.full_name}</td>
-                <td className="px-3 py-2">{r.mobile}</td>
-                <td className="px-3 py-2"><Badge variant="outline">{r.profile_status}</Badge></td>
-                <td className="px-3 py-2"><Badge>{r.status}</Badge></td>
-                <td className="px-3 py-2">
-                  {r.offer_status
-                    ? <Badge variant="secondary">{r.offer_status}</Badge>
-                    : <span className="text-muted-foreground text-xs">—</span>}
-                </td>
-                <td className="px-3 py-2">
-                  {r.profile_status === 'profile_submitted' && (
-                    <Button size="sm" onClick={() => setSelected(r)}>Create Offer</Button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {!rows.length && (
-          <p className="text-center text-muted-foreground py-8">No onboarding requests yet.</p>
-        )}
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-semibold">HR Onboarding Requests</h2>
+        <Badge variant="outline">{rows.length} request{rows.length !== 1 ? 's' : ''}</Badge>
       </div>
+      {rows.length === 0 ? (
+        <Card>
+          <CardContent className="py-12 text-center text-muted-foreground">
+            No onboarding requests pending.
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-2">
+          {rows.map(row => (
+            <Card key={row.id} className="cursor-pointer hover:bg-muted/30 transition-colors"
+              onClick={() => {
+                setSelected(row);
+                setSalaryPreview(null);
+                setFormError(null);
+                setOffer({
+                  emp_type: 'OnRoll', date_of_joining: '', date_of_salary: '',
+                  profile: '', cost_centre: '', role_type: 'Analyst',
+                  salary_band: 'D', offered_ctc: '',
+                  department_id: '', designation_id: '', reporting_manager_id: '',
+                });
+              }}>
+              <CardContent className="py-3 flex items-center justify-between">
+                <div>
+                  <p className="font-medium">{row.full_name}</p>
+                  <p className="text-sm text-muted-foreground">{row.candidate_code} · {row.branch_name}</p>
+                </div>
+                <Badge variant={
+                  row.status === 'offer_submitted' ? 'default' :
+                  row.status === 'offer_approved' ? 'secondary' : 'outline'
+                }>
+                  {row.status?.replace(/_/g, ' ')}
+                </Badge>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

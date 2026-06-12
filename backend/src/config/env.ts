@@ -72,6 +72,13 @@ const envSchema = z.object({
   LEGACY_SYNC_RETRY_DELAY_MS: z.coerce.number().default(5000),
   LEGACY_CT_RETENTION_DAYS: z.coerce.number().default(2),
 
+  // Billing DB (db_bill) — READ-ONLY, source of truth for cost centres
+  BILL_DB_HOST:     z.string().default(""),
+  BILL_DB_PORT:     z.coerce.number().default(3306),
+  BILL_DB_USER:     z.string().default(""),
+  BILL_DB_PASSWORD: z.string().default(""),
+  BILL_DB_NAME:     z.string().default("db_bill"),
+
   // Dialer DB (READ-ONLY for call data integration)
   DIALER_DB_HOST: z.string().default(""),
   DIALER_DB_PORT: z.coerce.number().default(3306),
