@@ -1,6 +1,6 @@
 import { type FormEvent, type ReactNode, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Activity, BarChart3, Bell, Briefcase, Building2, Calendar, CalendarDays, ChevronDown, ChevronRight, ClipboardList, Clock, CreditCard, FileCheck, FileText, GraduationCap, Heart, Home, Landmark, LogOut, Menu, Network, Package, Search, Settings, Settings2, ShieldCheck, Sparkles, Target, User, UserMinus, UserPlus, Users, X, Zap } from "lucide-react";
+import { Activity, BarChart3, Bell, Briefcase, Building2, Calendar, CalendarDays, ChevronDown, ChevronRight, ClipboardList, Clock, CreditCard, FileCheck, FileText, GraduationCap, Heart, Home, Landmark, LogOut, Menu, Network, Package, Search, Settings, Settings2, ShieldCheck, Sparkles, Target, TrendingUp, User, UserMinus, UserPlus, Users, Wallet, X, Zap } from "lucide-react";
 import { PWAInstallBanner } from "@/components/layout/PWAInstallBanner";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -61,6 +61,9 @@ const navGroups: NavGroup[] = [
     { label: "Goals & Appraisal", href: "/goals", icon: <Target className="h-4 w-4" />, description: "Goals" },
     { label: "Payroll", href: "/payroll", icon: <CreditCard className="h-4 w-4" />, roles: ["admin", "hr", "finance", "payroll"], description: "Payroll" },
     { label: "Full & Final", href: "/payroll/full-final", icon: <Zap className="h-4 w-4" />, roles: ["admin", "hr", "finance", "payroll"], description: "F&F" },
+    { label: "Payroll Masters", href: "/payroll/masters", icon: <Settings2 className="h-4 w-4" />, roles: ["admin", "hr", "finance", "payroll"], description: "Slabs, matrix, min wages" },
+    { label: "Salary Packages", href: "/payroll/salary-packages", icon: <Wallet className="h-4 w-4" />, roles: ["admin", "finance"], description: "Band+slab pay matrix" },
+    { label: "Incentives", href: "/payroll/incentives", icon: <TrendingUp className="h-4 w-4" />, roles: ["admin", "hr", "finance", "payroll"], description: "Upload & approve incentives" },
     { label: "KPI Config", href: "/kpi-config", icon: <Target className="h-4 w-4" />, pageCode: "KPI_CONFIG", roles: ["admin", "hr", "manager", "process_manager"], description: "KPI" },
     { label: "Operations KPI", href: "/operations-kpi", icon: <Target className="h-4 w-4" />, pageCode: "OPERATIONS_KPI", description: "Ops KPI" },
     { label: "Management", href: "/management/dashboard", icon: <BarChart3 className="h-4 w-4" />, pageCode: "MANAGEMENT_DASHBOARD", description: "Management" },

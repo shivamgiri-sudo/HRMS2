@@ -141,6 +141,9 @@ const NativePayslipCenter           = lazy(() => import("./pages/NativePayslipCe
 const NativeTaxDeclaration          = lazy(() => import("./pages/NativeTaxDeclaration"));
 const NativeFullFinal               = lazy(() => import("./pages/NativeFullFinal"));
 const NativeStatutoryConfig         = lazy(() => import("./pages/NativeStatutoryConfig"));
+const NativePayrollMasters          = lazy(() => import("./pages/NativePayrollMasters"));
+const NativeSalaryPackages          = lazy(() => import("./pages/NativeSalaryPackages"));
+const NativeIncentives              = lazy(() => import("./pages/NativeIncentives"));
 
 // Communication
 const NativeTemplateManager         = lazy(() => import("./pages/NativeTemplateManager"));
@@ -347,6 +350,9 @@ const App = () => (
               <Route path="/payroll/tax-declaration" element={<ProtectedRoute><Gate pageCode="TAX_DECLARATION"><NativeTaxDeclaration /></Gate></ProtectedRoute>} />
               <Route path="/payroll/full-final" element={<ProtectedRoute><Gate pageCode="FULL_FINAL"><NativeFullFinal /></Gate></ProtectedRoute>} />
               <Route path="/payroll/statutory-config" element={<ProtectedRoute><Gate pageCode="STATUTORY_CONFIG"><NativeStatutoryConfig /></Gate></ProtectedRoute>} />
+              <Route path="/payroll/masters" element={<ProtectedRoute><Gate pageCode="PAYROLL_MASTERS"><NativePayrollMasters /></Gate></ProtectedRoute>} />
+              <Route path="/payroll/salary-packages" element={<ProtectedRoute><Gate pageCode="SALARY_PACKAGES"><NativeSalaryPackages /></Gate></ProtectedRoute>} />
+              <Route path="/payroll/incentives" element={<ProtectedRoute><Gate pageCode="PAYROLL_INCENTIVES"><NativeIncentives /></Gate></ProtectedRoute>} />
 
               {/* Communication */}
               <Route path="/communication/templates" element={<ProtectedRoute><NativeTemplateManager /></ProtectedRoute>} />
