@@ -11,6 +11,7 @@ import { convertCandidateToEmployee } from "./ats.convert.service.js";
 import onboardingRouter from "./ats.onboarding.routes.js";
 import onboardingFullRouter from "./onboarding-full.routes.js";
 import bgvVerificationRouter from "./bgv-verification.routes.js";
+import { registrationEnhancedRouter } from "./registration.enhanced.routes.js";
 import { atsQueueService } from "./ats.queue.service.js";
 import { verifyRecruiter, getMyPendingCandidates, getSubmissionHistory, resolveRecruiterForActor } from "../ats-full-parity/recruiterInterview.service.js";
 import multer from "multer";
@@ -25,6 +26,9 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 
 // ── PUBLIC — candidate self-registration (no auth required) ──────────────────
 atsRouter.post("/candidates",                    h(c.createCandidate.bind(c)));
+
+// ── PUBLIC — enhanced registration routes (branch aliases, recruiters, tokens)
+atsRouter.use("/registration", registrationEnhancedRouter);
 
 // ── PUBLIC — candidate onboarding with token (no auth required) ──────────────
 atsRouter.use("/onboarding-full", onboardingFullRouter);

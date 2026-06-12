@@ -79,6 +79,6 @@ export async function getAprData(params: {
     ORDER BY \`${config.employee_code_column}\`
   `;
 
-  const [rows] = await pool.execute(finalSql, queryParams);
+  const [rows] = await pool.execute(finalSql, queryParams as any);
   return { configured: true, rows: rows as any[] };
 }

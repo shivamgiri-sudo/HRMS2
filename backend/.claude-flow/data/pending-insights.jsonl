@@ -184,3 +184,9 @@
 {"type":"edit","file":"/home/shuvam/hrms-audit/src/pages/Index.tsx","timestamp":1781196012495,"sessionId":null}
 {"type":"edit","file":"/home/shuvam/hrms-audit/FIXES_NEEDED.md","timestamp":1781196237045,"sessionId":null}
 {"type":"edit","file":"/home/shuvam/hrms-audit/FIX_SUMMARY_PAYSLIP_COMPONENT_BREAKDOWN.md","timestamp":1781199494503,"sessionId":null}
+{"type":"edit","file":"/home/shuvam/hrms-audit/backend/sql/138_ats_complete_journey.sql","timestamp":1781293875623,"sessionId":null}
+{"type":"edit","file":"/home/shuvam/hrms-audit/backend/src/modules/ats/registration.enhanced.routes.ts","timestamp":1781293910539,"sessionId":null}
+{"type":"edit","file":"/home/shuvam/hrms-audit/backend/src/modules/ats/ats.routes.ts","timestamp":1781293921348,"sessionId":null}
+{"type":"edit","file":"/home/shuvam/hrms-audit/backend/src/modules/ats/ats.routes.ts","timestamp":1781293929125,"sessionId":null}
+{"type":"edit","file":"/home/shuvam/hrms-audit/backend/src/modules/ats/ats-form-config.service.ts","timestamp":1781293967726,"sessionId":null}
+{"type":"edit","file":"/home/shuvam/hrms-audit/backend/src/modules/apr/apr.service.ts","timestamp":1781293990337,"sessionId":null}

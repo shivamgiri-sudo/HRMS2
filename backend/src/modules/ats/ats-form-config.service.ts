@@ -47,6 +47,19 @@ export const atsFormConfigService = {
     );
     const branchOptions = (branchRows as RowDataPacket[]).map((r: any) => r.branch_name as string);
 
+    // Get branch aliases (display names like Trapezoid, Okaya, etc.)
+    const [aliasRows] = await db.execute<RowDataPacket[]>(
+      `SELECT canonical_key, display_name, alias_text
+       FROM ats_branch_alias_master
+       WHERE active_status = 1
+       ORDER BY display_name ASC`
+    );
+    const branchAliases = (aliasRows as RowDataPacket[]).map((r: any) => ({
+      canonical: r.canonical_key,
+      display: r.display_name,
+      alias: r.alias_text
+    }));
+
     const [recruiterRows] = await db.execute<RowDataPacket[]>(
       'SELECT name FROM ats_recruiter WHERE active_status = 1 ORDER BY sort_order ASC, name ASC'
     );
@@ -56,6 +69,7 @@ export const atsFormConfigService = {
       fields:                   configMap['formFields']             ?? DEFAULT_FIELDS,
       recruiterOptions,
       branchOptions:            branchOptions.length > 0 ? branchOptions : ['Mumbai','Delhi','Bangalore'],
+      branchAliases,            // NEW: Branch display names
       roleOptions:              configMap['roleOptions']             ?? DEFAULT_OPTIONS.roleOptions,
       educationOptions:         configMap['educationOptions']        ?? DEFAULT_OPTIONS.educationOptions,
       experienceOptions:        configMap['experienceOptions']       ?? DEFAULT_OPTIONS.experienceOptions,
@@ -63,6 +77,7 @@ export const atsFormConfigService = {
       nightShiftComfortOptions: configMap['nightShiftComfortOptions'] ?? DEFAULT_OPTIONS.nightShiftComfortOptions,
       genderOptions:            configMap['genderOptions']           ?? DEFAULT_OPTIONS.genderOptions,
       yesNoOptions:             ['Yes','No'],
+      companyName:              'Mas Callnet India Pvt. Ltd.', // NEW: Company name
     };
   },
 
