@@ -74,7 +74,7 @@ router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*) AS total_employees,
-       COUNT(CASE WHEN employment_status = 'active' THEN 1 END) AS active_employees,
+       COUNT(CASE WHEN LOWER(employment_status) = 'active' THEN 1 END) AS active_employees,
        COUNT(CASE WHEN DATEDIFF(NOW(), date_of_joining) <= 90 THEN 1 END) AS new_joiners_90d
      FROM employees WHERE active_status = 1`
   );

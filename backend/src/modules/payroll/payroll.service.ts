@@ -70,7 +70,7 @@ export const payrollService = {
   async bulkAssignSalary(input: BulkAssignInput, _userId: string): Promise<BulkAssignResult> {
     await this.getStructure(input.structureId);
 
-    const conds = ["e.active_status = 1", "e.employment_status = 'Active'"];
+    const conds = ["e.active_status = 1", "e.LOWER(employment_status) = 'active'"];
     const params: unknown[] = [];
     if (input.processId) { conds.push("e.process_id = ?"); params.push(input.processId); }
     if (input.branchId)  { conds.push("e.branch_id = ?");  params.push(input.branchId); }

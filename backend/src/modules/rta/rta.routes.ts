@@ -264,7 +264,7 @@ rtaRouter.get("/live-stream", (req, res) => {
          FROM employees e
          LEFT JOIN wfm_attendance_session s
            ON s.employee_id = e.id AND s.session_date = ?
-         WHERE e.employment_status = 'Active'
+         WHERE e.LOWER(employment_status) = 'active'
            AND e.active_status = 1
            ${processId ? "AND e.process_id = ?" : ""}
            ${branchId  ? "AND e.branch_id = ?"  : ""}`,

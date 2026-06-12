@@ -216,13 +216,13 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id, e.employee_code,
             esa.ctc_annual, ss.basic_pct, ss.hra_pct,
-            bm.state_code
+            bm.state AS state_code
        FROM employees e
        JOIN employee_salary_assignment esa ON esa.employee_id = e.id
        JOIN salary_structure_master ss      ON ss.id = esa.structure_id
        LEFT JOIN process_master pm          ON pm.id = e.process_id
        LEFT JOIN branch_master bm           ON bm.id = e.branch_id
-      WHERE e.employment_status = 'active' AND ${empConds.join(" AND ")}`,
+      WHERE LOWER(e.employment_status) = 'active' AND ${empConds.join(" AND ")}`,
     empParams
   );
   const employees = empRows as EmployeeRow[];

@@ -48,7 +48,7 @@ const QUERIES: Record<string, (filters: Record<string, string>) => { sql: string
   cc_headcount: (f) => ({
     sql: `SELECT COALESCE(e.call_centre_code, b.call_centre_code) AS cc_code,
                  b.branch_name, COUNT(e.id) AS headcount,
-                 COUNT(CASE WHEN e.employment_status = 'active' THEN 1 END) AS active_count
+                 COUNT(CASE WHEN LOWER(e.employment_status) = 'active' THEN 1 END) AS active_count
             FROM employees e
             LEFT JOIN branch_master b ON b.id = e.branch_id
            WHERE 1=1 ${f.ccCode ? 'AND COALESCE(e.call_centre_code, b.call_centre_code) = ?' : ''}

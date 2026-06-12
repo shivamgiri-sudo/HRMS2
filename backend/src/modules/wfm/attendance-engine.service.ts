@@ -396,7 +396,7 @@ export const attendanceEngineService = {
     // Fetch all active employees
     const [employees] = await db.execute<RowDataPacket[]>(
       `SELECT id AS employee_id FROM employees
-       WHERE employment_status = 'Active' AND active_status = 1
+       WHERE LOWER(employment_status) = 'active' AND active_status = 1
          AND (date_of_exit IS NULL OR date_of_exit >= ?)
        ORDER BY id`,
       [date]

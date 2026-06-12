@@ -100,7 +100,7 @@ export const complianceService = {
               esa.ctc_annual
          FROM employees e
          JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
-         WHERE e.active_status = 1 AND e.employment_status = 'Active'`
+         WHERE e.active_status = 1 AND e.LOWER(employment_status) = 'active'`
     );
 
     const employees = empRows as { employee_id: string; ctc_annual: number }[];

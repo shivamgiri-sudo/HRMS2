@@ -33,7 +33,7 @@ export const portalAttritionService = {
     const [hcRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS headcount,
               AVG(TIMESTAMPDIFF(MONTH, date_of_joining, CURDATE())) AS avg_tenure
-       FROM employees WHERE process_id = ? AND employment_status = 'Active'`,
+       FROM employees WHERE process_id = ? AND LOWER(employment_status) = 'active'`,
       [processId]
     );
     const hc = (hcRows as RowDataPacket[])[0];

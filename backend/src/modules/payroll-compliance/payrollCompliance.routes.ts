@@ -141,11 +141,11 @@ router.get("/runs/:runId/register/:registerType", requireRole("admin", "hr", "fi
             WHERE spl.run_id = ? AND (spl.esic_employee > 0 OR spl.esic_employer > 0)
             ORDER BY spl.employee_code`;
   } else if (registerType === "pt") {
-    sql = `SELECT spl.employee_code, e.full_name, b.state_code, spl.gross_salary, spl.professional_tax
+    sql = `SELECT spl.employee_code, e.full_name, b.state AS state_code, spl.gross_salary, spl.professional_tax
              FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
              LEFT JOIN branch_master b ON b.id = e.branch_id
             WHERE spl.run_id = ? AND spl.professional_tax > 0
-            ORDER BY b.state_code, spl.employee_code`;
+            ORDER BY b.state, spl.employee_code`;
   } else if (registerType === "tds") {
     sql = `SELECT spl.employee_code, e.full_name, spl.gross_before_lwp, spl.tds_amount, spl.calculation_notes
              FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
