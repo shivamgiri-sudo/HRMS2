@@ -1,43 +1,54 @@
 import sql from 'mssql';
 import { env } from '../config/env.js';
+import { getPoolForKey, testPoolForKey } from '../modules/external-db/external-db.service.js';
 
-const config: sql.config = {
-  server:   env.NCOSEC_DB_HOST,
-  port:     env.NCOSEC_DB_PORT,
-  user:     env.NCOSEC_DB_USER,
+const legacyConfig: sql.config = {
+  server: env.NCOSEC_DB_HOST,
+  port: env.NCOSEC_DB_PORT,
+  user: env.NCOSEC_DB_USER,
   password: env.NCOSEC_DB_PASSWORD,
   database: env.NCOSEC_DB_NAME,
   options: {
-    encrypt:                env.NCOSEC_DB_ENCRYPT === 'true',
+    encrypt: env.NCOSEC_DB_ENCRYPT === 'true',
     trustServerCertificate: true,
-    enableArithAbort:       true,
+    enableArithAbort: true,
   },
   connectionTimeout: 15000,
-  requestTimeout:    60000,
+  requestTimeout: 60000,
 };
 
-let pool: sql.ConnectionPool | null = null;
+let legacyPool: sql.ConnectionPool | null = null;
+
+async function getLegacyPool(): Promise<sql.ConnectionPool> {
+  if (legacyPool && legacyPool.connected) return legacyPool;
+  legacyPool = await new sql.ConnectionPool(legacyConfig).connect();
+  return legacyPool;
+}
 
 export async function getNcosecPool(): Promise<sql.ConnectionPool> {
-  if (pool && pool.connected) return pool;
-  pool = await new sql.ConnectionPool(config).connect();
-  console.log(`[NCOSEC] Connected to ${env.NCOSEC_DB_HOST}:${env.NCOSEC_DB_PORT}/${env.NCOSEC_DB_NAME}`);
-  return pool;
+  try {
+    return (await getPoolForKey('cosec_biometric')) as sql.ConnectionPool;
+  } catch {
+    if (!env.NCOSEC_DB_HOST) throw new Error('COSEC not configured: set credentials via Integration Hub or env vars');
+    return getLegacyPool();
+  }
 }
 
 export async function closeNcosecPool(): Promise<void> {
-  if (pool) {
-    await pool.close();
-    pool = null;
-  }
+  if (legacyPool) { await legacyPool.close(); legacyPool = null; }
 }
 
 export async function testNcosecConnection(): Promise<{ ok: boolean; error?: string }> {
   try {
-    const p = await getNcosecPool();
+    const result = await testPoolForKey('cosec_biometric');
+    if (result.ok) return result;
+  } catch {}
+  // fallback to env-var pool
+  try {
+    const p = await getLegacyPool();
     await p.request().query('SELECT 1 AS ok');
     return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e.message };
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
