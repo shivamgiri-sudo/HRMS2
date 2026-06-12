@@ -214,13 +214,15 @@ export async function applyToRun(runId: string, payMonth: string, actorId: strin
       const prepLineId = (prepLines[0] as any).id;
       const compId = randomUUID();
 
-      // Insert component line
+      // Insert component line (all columns required by salary_prep_line_component schema)
       await db.execute(
         `INSERT INTO salary_prep_line_component
-           (id, line_id, component_code, component_name, component_type, amount)
-         VALUES (?, ?, ?, ?, 'earning', ?)
+           (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
+         VALUES (?, ?, ?, ?, ?, ?, 'earning', ?, 'incentive', ?)
          ON DUPLICATE KEY UPDATE amount=VALUES(amount)`,
-        [compId, prepLineId, `INCEN_${batch.incentive_code}`, batch.incentive_name, line.amount]
+        [compId, runId, prepLineId, line.employee_id,
+         `INCEN_${batch.incentive_code}`, batch.incentive_name,
+         line.amount, batch.taxable ?? 1]
       );
 
       // Accumulate incentive_total

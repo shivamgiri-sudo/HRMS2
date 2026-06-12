@@ -269,16 +269,16 @@ export async function createMinWage(data: {
 }) {
   const id = randomUUID();
   await db.execute(
-    `INSERT INTO minimum_wage_master (id, state_code, category, daily_rate, monthly_rate, effective_from, is_active)
-     VALUES (?, ?, ?, ?, ?, ?, 1)`,
-    [id, data.state_code, data.category, data.daily_rate, data.monthly_rate, data.effective_from]
+    `INSERT INTO minimum_wage_master (id, state_code, state_name, category, daily_rate, monthly_rate, effective_from, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+    [id, data.state_code, data.state_name, data.category, data.daily_rate, data.monthly_rate, data.effective_from]
   );
   const [rows] = await db.execute<RowDataPacket[]>('SELECT * FROM minimum_wage_master WHERE id=?', [id]);
   return rows[0];
 }
 
 export async function updateMinWage(id: string, data: Partial<{
-  state_code: string; category: string; daily_rate: number;
+  state_code: string; state_name: string; category: string; daily_rate: number;
   monthly_rate: number; effective_from: string;
 }>) {
   const fields = Object.keys(data).map(k => `${k} = ?`).join(', ');
