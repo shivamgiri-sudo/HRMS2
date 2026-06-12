@@ -7,8 +7,10 @@ import { queueAutoAwards } from "../engagement/badge.service.js";
 
 export interface PayslipData {
   id: string;
-  run_id: string;
+  prep_line_id: string;
   employee_id: string;
+  run_id: string;
+  run_month: string;
   payslip_ref: string;
   generated_at: string;
   generated_by: string | null;
@@ -16,7 +18,6 @@ export interface PayslipData {
   acknowledged_at: string | null;
   // Computed from prep_line
   employee_code?: string;
-  run_month?: string;
   gross_salary?: number;
   total_deductions?: number;
   net_salary?: number;
@@ -57,20 +58,20 @@ export const payslipService = {
       throw new Error("Prep line not found for this run and employee");
     }
 
-    const payslipRef = `PS-${line.run_month}-${line.employee_code}`;
+    const payslipRef = `PS-${line.run_month ?? "UNKNOWN"}-${line.employee_code ?? employeeId}`;
     const id = randomUUID();
 
-    // Upsert: if payslip already exists for this run+employee, overwrite it
+    // Upsert: if payslip already exists for this prep_line, overwrite it
     await db.execute(
       `INSERT INTO salary_payslip
-         (id, run_id, employee_id, payslip_ref, generated_by, acknowledged_at)
-       VALUES (?, ?, ?, ?, ?, NULL)
+         (id, prep_line_id, employee_id, run_month, payslip_ref, generated_by, acknowledged_at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL)
        ON DUPLICATE KEY UPDATE
          payslip_ref  = VALUES(payslip_ref),
          generated_at = CURRENT_TIMESTAMP,
          generated_by = VALUES(generated_by),
          acknowledged_at = NULL`,
-      [id, runId, employeeId, payslipRef, generatedBy]
+      [id, line.id, employeeId, line.run_month, payslipRef, generatedBy]
     );
 
     void logSensitiveAction({
@@ -93,8 +94,8 @@ export const payslipService = {
   async getPayslip(employeeId: string, runId: string): Promise<PayslipData> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT sp.*,
+              spl.run_id,
               spl.employee_code,
-              spr.run_month,
               spl.gross_salary,
               spl.total_deductions,
               spl.net_salary,
@@ -106,9 +107,9 @@ export const payslipService = {
               spl.present_days,
               spl.lwp_days
          FROM salary_payslip sp
-         JOIN salary_prep_line spl ON spl.run_id = sp.run_id AND spl.employee_id = sp.employee_id
-         JOIN salary_prep_run  spr ON spr.id = sp.run_id
-        WHERE sp.employee_id = ? AND sp.run_id = ?
+         JOIN salary_prep_line spl ON spl.id = sp.prep_line_id
+         JOIN salary_prep_run  spr ON spr.id = spl.run_id
+        WHERE sp.employee_id = ? AND spl.run_id = ?
         LIMIT 1`,
       [employeeId, runId]
     );
@@ -126,7 +127,11 @@ export const payslipService = {
     requestingEmployeeId: string
   ): Promise<PayslipData> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM salary_payslip WHERE id = ? LIMIT 1",
+      `SELECT sp.*, spl.run_id
+         FROM salary_payslip sp
+         JOIN salary_prep_line spl ON spl.id = sp.prep_line_id
+        WHERE sp.id = ?
+        LIMIT 1`,
       [payslipId]
     );
     const rec = (rows as any[])[0];
