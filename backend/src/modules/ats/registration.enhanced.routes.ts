@@ -9,6 +9,10 @@ import {
   assignRecruiterToCandidate,
   generateTokenNumber,
 } from "./ats.enhanced.service.js";
+import {
+  sendCandidateSuccessEmail,
+  sendRecruiterNotificationEmail,
+} from "./ats.email.service.js";
 
 export const registrationEnhancedRouter = Router();
 
@@ -165,7 +169,39 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       }
     }
 
-    // 7. Send success response
+    // 7. Send emails (async, don't wait)
+    if (input.email && recruiterDetails) {
+      const registrationDate = new Date().toLocaleString('en-US', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      });
+
+      // Send candidate success email
+      sendCandidateSuccessEmail({
+        candidateId,
+        to: input.email,
+        candidateName: input.name,
+        tokenNumber: tokenNumber || 'Pending',
+        branchDisplayName: input.branchDisplayName,
+        recruiterName: recruiterDetails.name,
+        recruiterMobile: recruiterDetails.mobile,
+        registrationDate,
+      }).catch((err) => console.error('Failed to send candidate email:', err));
+
+      // Send recruiter notification
+      sendRecruiterNotificationEmail({
+        candidateId,
+        to: recruiterDetails.email,
+        recruiterName: recruiterDetails.name,
+        candidateName: input.name,
+        candidateMobile: input.mobile,
+        tokenNumber: tokenNumber || 'Pending',
+        branchDisplayName: input.branchDisplayName,
+        roleApplied: input.roleApplied || 'Not specified',
+      }).catch((err) => console.error('Failed to send recruiter email:', err));
+    }
+
+    // 8. Send success response
     return res.status(201).json({
       success: true,
       message: "Registration successful",

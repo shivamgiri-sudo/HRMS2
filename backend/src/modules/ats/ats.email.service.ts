@@ -2,8 +2,17 @@ import nodemailer from 'nodemailer';
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
 import { env } from '../../config/env.js';
+import {
+  candidateSuccessEmail,
+  recruiterNotificationEmail,
+  selectionCongratulationsEmail,
+  bgvCompletionEmail,
+  payrollHRNotificationEmail,
+  branchHeadApprovalEmail,
+} from './email.templates.js';
 
-type EmailType = 'registration' | 'selected' | 'rejected' | 'token_sent' | 'offer_review' | 'approved' | 'welcome';
+type EmailType = 'registration' | 'selected' | 'rejected' | 'token_sent' | 'offer_review' | 'approved' | 'welcome' |
+                 'recruiter_notification' | 'selection_congratulations' | 'bgv_completion' | 'payroll_hr_notification' | 'branch_head_approval';
 
 interface SendResult { ok: boolean; error?: string }
 
@@ -148,5 +157,170 @@ export async function sendWelcomeEmail(params: {
      <p>You will be prompted to change your password on first login.</p>`,
     params.candidateId,
     'welcome',
+  );
+}
+
+// ── Enhanced Email Functions (using professional templates) ───────────────────
+
+export async function sendCandidateSuccessEmail(params: {
+  candidateId: string;
+  to: string;
+  candidateName: string;
+  tokenNumber: string;
+  branchDisplayName: string;
+  recruiterName: string;
+  recruiterMobile: string;
+  registrationDate: string;
+}): Promise<SendResult> {
+  const html = candidateSuccessEmail({
+    candidateName: params.candidateName,
+    candidateId: params.candidateId,
+    tokenNumber: params.tokenNumber,
+    branchDisplayName: params.branchDisplayName,
+    recruiterName: params.recruiterName,
+    recruiterMobile: params.recruiterMobile,
+    registrationDate: params.registrationDate,
+  });
+
+  return send(
+    params.to,
+    '🎉 Registration Successful - MAS Callnet',
+    html,
+    params.candidateId,
+    'registration',
+  );
+}
+
+export async function sendRecruiterNotificationEmail(params: {
+  candidateId: string;
+  to: string;
+  recruiterName: string;
+  candidateName: string;
+  candidateMobile: string;
+  tokenNumber: string;
+  branchDisplayName: string;
+  roleApplied: string;
+}): Promise<SendResult> {
+  const html = recruiterNotificationEmail({
+    recruiterName: params.recruiterName,
+    candidateName: params.candidateName,
+    candidateMobile: params.candidateMobile,
+    tokenNumber: params.tokenNumber,
+    branchDisplayName: params.branchDisplayName,
+    roleApplied: params.roleApplied,
+  });
+
+  return send(
+    params.to,
+    '👤 New Candidate Assigned - MAS Callnet',
+    html,
+    params.candidateId,
+    'recruiter_notification',
+  );
+}
+
+export async function sendSelectionCongratulationsEmail(params: {
+  candidateId: string;
+  to: string;
+  candidateName: string;
+  branchDisplayName: string;
+  roleOffered: string;
+  onboardingPortalUrl: string;
+  tempPassword: string;
+}): Promise<SendResult> {
+  const html = selectionCongratulationsEmail({
+    candidateName: params.candidateName,
+    candidateEmail: params.to,
+    branchDisplayName: params.branchDisplayName,
+    roleOffered: params.roleOffered,
+    onboardingPortalUrl: params.onboardingPortalUrl,
+    tempPassword: params.tempPassword,
+  });
+
+  return send(
+    params.to,
+    '🎉 Congratulations! You\'re Selected - MAS Callnet',
+    html,
+    params.candidateId,
+    'selection_congratulations',
+  );
+}
+
+export async function sendBGVCompletionEmail(params: {
+  candidateId: string;
+  to: string;
+  candidateName: string;
+  bgvStatus: 'verified' | 'negative' | 'insufficient';
+  bgvRemarks: string;
+  nextSteps: string;
+}): Promise<SendResult> {
+  const html = bgvCompletionEmail({
+    candidateName: params.candidateName,
+    bgvStatus: params.bgvStatus,
+    bgvRemarks: params.bgvRemarks,
+    nextSteps: params.nextSteps,
+  });
+
+  const statusText = params.bgvStatus === 'verified' ? 'Completed' : 'Action Required';
+  return send(
+    params.to,
+    `🔍 BGV ${statusText} - MAS Callnet`,
+    html,
+    params.candidateId,
+    'bgv_completion',
+  );
+}
+
+export async function sendPayrollHRNotificationEmail(params: {
+  candidateId: string;
+  to: string;
+  hrName: string;
+  candidateName: string;
+  branchDisplayName: string;
+  roleOffered: string;
+}): Promise<SendResult> {
+  const html = payrollHRNotificationEmail({
+    hrName: params.hrName,
+    candidateName: params.candidateName,
+    candidateId: params.candidateId,
+    branchDisplayName: params.branchDisplayName,
+    roleOffered: params.roleOffered,
+  });
+
+  return send(
+    params.to,
+    '📋 New Candidate for Validation - MAS Callnet',
+    html,
+    params.candidateId,
+    'payroll_hr_notification',
+  );
+}
+
+export async function sendBranchHeadApprovalEmail(params: {
+  candidateId: string;
+  to: string;
+  branchHeadName: string;
+  candidateName: string;
+  branchDisplayName: string;
+  roleOffered: string;
+  proposedSalary: string;
+  joiningDate: string;
+}): Promise<SendResult> {
+  const html = branchHeadApprovalEmail({
+    branchHeadName: params.branchHeadName,
+    candidateName: params.candidateName,
+    candidateId: params.candidateId,
+    branchDisplayName: params.branchDisplayName,
+    roleOffered: params.roleOffered,
+    proposedSalary: params.proposedSalary,
+    joiningDate: params.joiningDate,
+  });
+
+  return send(
+    params.to,
+    '✅ Approval Request - MAS Callnet',
+    html,
+    params.candidateId,
+    'branch_head_approval',
   );
 }
