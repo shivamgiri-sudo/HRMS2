@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -82,8 +83,21 @@ function PriorityBadge({ priority }: { priority: string }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const cls = STATUS_STYLES[status] ?? "bg-slate-100 text-slate-600";
-  return <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize ${cls}`}>{status.replace(/_/g, " ")}</span>;
+  const statusMap: Record<string, string> = {
+    open: "in_progress",
+    in_progress: "in_progress",
+    resolved: "success",
+    closed: "cancelled",
+    pending: "pending",
+    under_review: "warning",
+  };
+
+  return (
+    <SmartHRStatusBadge
+      status={normalizeStatus(statusMap[status] || status)}
+      label={status.replace(/_/g, " ")}
+    />
+  );
 }
 
 const inputCls = "w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors";
