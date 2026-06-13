@@ -13,7 +13,7 @@ import ScrollToTop from "@/components/layout/ScrollToTop";
 import { PortalRoute } from "./components/portal/PortalRoute";
 
 // ── Core (eager — needed before auth resolves) ────────────────────────────────
-import Auth from "./pages/Auth";
+import Auth from "./pages/AuthClean";
 import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
 
@@ -56,7 +56,6 @@ const NativeBGVVerificationCenter   = lazy(() => import("./pages/NativeBGVVerifi
 const NativeATSDashboardReplica     = lazy(() => import("./pages/NativeATSDashboardReplica"));
 const NativeATSCandidateRegistration = lazy(() => import("./pages/NativeATSCandidateRegistration"));
 const NativeATSRegistrationEnhanced = lazy(() => import("./pages/NativeATSRegistrationEnhanced"));
-const NativeATSRecruiterDashboard   = lazy(() => import("./pages/NativeATSRecruiterDashboard"));
 const NativeATSOnboardingBridge     = lazy(() => import("./pages/NativeATSOnboardingBridge"));
 const NativeATSWaitingQueue         = lazy(() => import("./pages/NativeATSWaitingQueue"));
 const NativeATSCandidateMaster      = lazy(() => import("./pages/NativeATSCandidateMaster"));
@@ -141,7 +140,6 @@ const NativeLabourCompliance        = lazy(() => import("./pages/NativeLabourCom
 const NativeDPDPCompliance          = lazy(() => import("./pages/NativeDPDPCompliance"));
 const NativeMaternityLeave          = lazy(() => import("./pages/NativeMaternityLeave"));
 const NativeIntegrationHub          = lazy(() => import("./pages/NativeIntegrationHub"));
-const NativeClientMaster            = lazy(() => import("./pages/NativeClientMaster"));
 const EnhancedClientMaster          = lazy(() => import("./pages/EnhancedClientMaster"));
 const NativeLocationPolicyMasters   = lazy(() => import("./pages/NativeLocationPolicyMasters"));
 
@@ -174,6 +172,8 @@ const NativeExitManagement          = lazy(() => import("./pages/NativeExitManag
 const NativeKPIConfiguration        = lazy(() => import("./pages/NativeKPIConfiguration"));
 const NativeProcessConfig           = lazy(() => import("./pages/NativeProcessConfig"));
 const NativeOperationsKPI           = lazy(() => import("./pages/NativeOperationsKPI"));
+const KpiMasterConfig               = lazy(() => import("./pages/KpiMasterConfig"));
+const MyKpiDashboard                = lazy(() => import("./pages/MyKpiDashboard"));
 const NativePortalDataManager       = lazy(() => import("./pages/NativePortalDataManager"));
 const NativeLeaveTypeConfig         = lazy(() => import("./pages/NativeLeaveTypeConfig"));
 const NativeMyRoster                = lazy(() => import("./pages/NativeMyRoster"));
@@ -232,22 +232,22 @@ const App = () => (
               <Route path="/walkin-registration" element={<Navigate to="/interview-registration" replace />} />
 
               <Route path="/dashboard" element={<ProtectedRoute><Index /></ProtectedRoute>} />
-              <Route path="/employees" element={<ProtectedRoute><Employees /></ProtectedRoute>} />
-              <Route path="/onboarding" element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
+              <Route path="/employees" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><Employees /></Gate></ProtectedRoute>} />
+              <Route path="/onboarding" element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><Onboarding /></Gate></ProtectedRoute>} />
               <Route path="/onboarding-requests" element={<Navigate to="/onboarding?tab=requests" replace />} />
               <Route path="/leaves" element={<ProtectedRoute><Leaves /></ProtectedRoute>} />
               <Route path="/leave-approvals" element={<Navigate to="/leaves" replace />} />
               <Route path="/assets" element={<ProtectedRoute><Assets /></ProtectedRoute>} />
-              <Route path="/payroll" element={<ProtectedRoute><Payroll /></ProtectedRoute>} />
+              <Route path="/payroll" element={<ProtectedRoute><Gate pageCode="PAYROLL"><Payroll /></Gate></ProtectedRoute>} />
               <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
               <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
               <Route path="/performance" element={<ProtectedRoute><Performance /></ProtectedRoute>} />
-              <Route path="/reviews-management" element={<ProtectedRoute><ReviewsManagement /></ProtectedRoute>} />
+              <Route path="/reviews-management" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><ReviewsManagement /></Gate></ProtectedRoute>} />
               <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />
-              <Route path="/attendance-regularization" element={<ProtectedRoute><AttendanceRegularization /></ProtectedRoute>} />
-              <Route path="/bulk-upload" element={<ProtectedRoute><BulkUploadHub /></ProtectedRoute>} />
-              <Route path="/departments" element={<ProtectedRoute><Departments /></ProtectedRoute>} />
+              <Route path="/attendance-regularization" element={<ProtectedRoute><Gate pageCode="ATTENDANCE_REGULARIZATION"><AttendanceRegularization /></Gate></ProtectedRoute>} />
+              <Route path="/bulk-upload" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><BulkUploadHub /></Gate></ProtectedRoute>} />
+              <Route path="/departments" element={<ProtectedRoute><Gate pageCode="ORG_MASTERS"><Departments /></Gate></ProtectedRoute>} />
               <Route path="/calendar" element={<ProtectedRoute><CompanyCalendar /></ProtectedRoute>} />
               <Route path="/notification-preferences" element={<ProtectedRoute><NotificationPreferences /></ProtectedRoute>} />
 
@@ -257,7 +257,7 @@ const App = () => (
               <Route path="/ats/dashboard" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSDashboardReplica /></Gate></ProtectedRoute>} />
               <Route path="/ats/candidate-registration" element={<ProtectedRoute><NativeATSCandidateRegistration /></ProtectedRoute>} />
               <Route path="/ats/registration-enhanced" element={<ProtectedRoute><NativeATSRegistrationEnhanced /></ProtectedRoute>} />
-              <Route path="/ats/recruiter/my-candidates" element={<ProtectedRoute><Gate pageCode="ATS_RECRUITER_QUEUE"><NativeATSRecruiterDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/ats/recruiter/my-candidates" element={<ProtectedRoute><Gate pageCode="ATS_RECRUITER_QUEUE"><NativeATSRecruiterWorkspace /></Gate></ProtectedRoute>} />
               <Route path="/ats/onboarding-bridge" element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><NativeATSOnboardingBridge /></Gate></ProtectedRoute>} />
               <Route path="/ats/waiting-queue" element={<ProtectedRoute><Gate pageCode="ATS_WAITING_QUEUE"><NativeATSWaitingQueue /></Gate></ProtectedRoute>} />
               <Route path="/ats/candidate-master" element={<ProtectedRoute><Gate pageCode="ATS_CANDIDATE_MASTER"><NativeATSCandidateMaster /></Gate></ProtectedRoute>} />
@@ -265,10 +265,10 @@ const App = () => (
               <Route path="/ats/dashboard-v2" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSDashboardV2 /></Gate></ProtectedRoute>} />
               <Route path="/ats/sourcing-analysis" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSSourcingAnalysis /></Gate></ProtectedRoute>} />
               <Route path="/ats/extensions" element={<ProtectedRoute><Gate pageCode="ATS_EXTENSIONS"><NativeATSExtensions /></Gate></ProtectedRoute>} />
-              <Route path="/ats/form-config" element={<ProtectedRoute><NativeATSFormConfig /></ProtectedRoute>} />
+              <Route path="/ats/form-config" element={<ProtectedRoute roles={['admin', 'hr']}><NativeATSFormConfig /></ProtectedRoute>} />
               <Route path="/ats/command-center" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSFullParityCommandCenter /></Gate></ProtectedRoute>} />
-              <Route path="/ats/onboarding-requests" element={<ProtectedRoute><NativeHROnboardingRequests /></ProtectedRoute>} />
-              <Route path="/ats/offer-approvals" element={<ProtectedRoute><NativeBranchHeadApproval /></ProtectedRoute>} />
+              <Route path="/ats/onboarding-requests" element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><NativeHROnboardingRequests /></Gate></ProtectedRoute>} />
+              <Route path="/ats/offer-approvals" element={<ProtectedRoute><Gate pageCode="ATS_OFFER"><NativeBranchHeadApproval /></Gate></ProtectedRoute>} />
               <Route path="/onboard-full" element={<CandidateOnboardingFullPage />} />
               <Route path="/ats/bgv" element={<ProtectedRoute><Gate pageCode="ATS_BGV"><NativeBGVVerificationCenter /></Gate></ProtectedRoute>} />
               <Route path="/ats/recruiter-portal" element={<ProtectedRoute><Gate pageCode="ATS_RECRUITER_PORTAL"><NativeRecruiterPortal /></Gate></ProtectedRoute>} />
@@ -298,8 +298,8 @@ const App = () => (
               <Route path="/wfm/roster" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMRoster /></Gate></ProtectedRoute>} />
               <Route path="/wfm/live-tracker" element={<ProtectedRoute><Gate pageCode="WFM_LIVE_TRACKER"><NativePlaceholderPage title="WFM Live Tracker" module="WFM" /></Gate></ProtectedRoute>} />
               <Route path="/wfm/extensions" element={<ProtectedRoute><Gate pageCode="WFM_EXTENSIONS"><NativeWFMExtensions /></Gate></ProtectedRoute>} />
-              <Route path="/wfm-manager-approvals" element={<ProtectedRoute><NativeWFMManagerApproval /></ProtectedRoute>} />
-              <Route path="/roster-preference" element={<ProtectedRoute><NativeRosterPreference /></ProtectedRoute>} />
+              <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />
+              <Route path="/roster-preference" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeRosterPreference /></Gate></ProtectedRoute>} />
 
               {/* Quality / Ops */}
               <Route path="/quality/dashboard" element={<ProtectedRoute><Gate pageCode="QUALITY_DASHBOARD"><NativePlaceholderPage title="Quality Dashboard" module="Quality" /></Gate></ProtectedRoute>} />
@@ -309,7 +309,7 @@ const App = () => (
               <Route path="/performance/command-center" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><UnifiedPerformanceCommandCenter /></Gate></ProtectedRoute>} />
               <Route path="/settings/access-control" element={<ProtectedRoute><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />
               <Route path="/super-admin/page-access" element={<ProtectedRoute roles={['admin']}><SuperAdminAccessControl /></ProtectedRoute>} />
-              <Route path="/settings/call-centre-config" element={<ProtectedRoute><NativeCallCentreConfig /></ProtectedRoute>} />
+              <Route path="/settings/call-centre-config" element={<ProtectedRoute roles={['admin']}><NativeCallCentreConfig /></ProtectedRoute>} />
 
               {/* Performance Feedback */}
               <Route path="/performance-feedback/my-reports" element={<ProtectedRoute><NativePerformanceFeedbackMyReports /></ProtectedRoute>} />
@@ -337,15 +337,15 @@ const App = () => (
               <Route path="/portal/processes/:id" element={<PortalRoute><PortalProcessDashboard /></PortalRoute>} />
 
               {/* Offer Letters & Master Reports */}
-              <Route path="/offer-letter" element={<ProtectedRoute><NativeOfferLetterGeneration /></ProtectedRoute>} />
-              <Route path="/master-reports" element={<ProtectedRoute><NativeMasterReports /></ProtectedRoute>} />
+              <Route path="/offer-letter" element={<ProtectedRoute><Gate pageCode="ATS_OFFER"><NativeOfferLetterGeneration /></Gate></ProtectedRoute>} />
+              <Route path="/master-reports" element={<ProtectedRoute><Gate pageCode="ADVANCED_REPORTS"><NativeMasterReports /></Gate></ProtectedRoute>} />
 
               {/* HR Ops */}
-              <Route path="/document-verification" element={<ProtectedRoute><NativeDocumentVerification /></ProtectedRoute>} />
+              <Route path="/document-verification" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeDocumentVerification /></Gate></ProtectedRoute>} />
               <Route path="/assets-manager" element={<ProtectedRoute><Gate pageCode="ASSETS_MANAGER"><NativeAssetsManager /></Gate></ProtectedRoute>} />
               <Route path="/helpdesk" element={<ProtectedRoute><Gate pageCode="HELPDESK"><NativeHelpdesk /></Gate></ProtectedRoute>} />
               <Route path="/letters" element={<ProtectedRoute><Gate pageCode="LETTERS"><NativeLetters /></Gate></ProtectedRoute>} />
-              <Route path="/maternity-leave" element={<ProtectedRoute><NativeMaternityLeave /></ProtectedRoute>} />
+              <Route path="/maternity-leave" element={<ProtectedRoute roles={['admin', 'hr']}><NativeMaternityLeave /></ProtectedRoute>} />
               <Route path="/employee-lifecycle" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_LIFECYCLE"><NativeLifecycle /></Gate></ProtectedRoute>} />
               <Route path="/employee-lifecycle-v2" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_LIFECYCLE"><NativeEmployeeLifecycle /></Gate></ProtectedRoute>} />
               <Route path="/org-masters" element={<ProtectedRoute><Gate pageCode="ORG_MASTERS"><NativeOrgMasters /></Gate></ProtectedRoute>} />
@@ -380,14 +380,14 @@ const App = () => (
               <Route path="/payroll/incentives" element={<ProtectedRoute><Gate pageCode="PAYROLL_INCENTIVES"><NativeIncentives /></Gate></ProtectedRoute>} />
 
               {/* Communication */}
-              <Route path="/communication/templates" element={<ProtectedRoute><NativeTemplateManager /></ProtectedRoute>} />
+              <Route path="/communication/templates" element={<ProtectedRoute roles={['admin', 'hr']}><NativeTemplateManager /></ProtectedRoute>} />
               <Route path="/communication/dispatch"  element={<ProtectedRoute roles={['admin', 'hr']}><NativeDispatchCenter /></ProtectedRoute>} />
-              <Route path="/communication/history"   element={<ProtectedRoute><NativeDispatchHistory /></ProtectedRoute>} />
+              <Route path="/communication/history"   element={<ProtectedRoute roles={['admin', 'hr']}><NativeDispatchHistory /></ProtectedRoute>} />
               <Route path="/communication/preferences" element={<ProtectedRoute><NativeNotificationPreferences /></ProtectedRoute>} />
               <Route
                 path="/settings/communication-config"
                 element={
-                  <ProtectedRoute>
+                  <ProtectedRoute roles={['admin']}>
                     <Suspense fallback={<PageLoader />}>
                       <NativeCommunicationConfig />
                     </Suspense>
@@ -397,22 +397,23 @@ const App = () => (
 
               {/* System */}
               <Route path="/migration-console" element={<ProtectedRoute roles={['admin']}><NativeMigrationConsole /></ProtectedRoute>} />
-              <Route path="/exit-management" element={<ProtectedRoute><NativeExitManagement /></ProtectedRoute>} />
+              <Route path="/exit-management" element={<ProtectedRoute><Gate pageCode="EXIT_COMMAND_CENTER"><NativeExitManagement /></Gate></ProtectedRoute>} />
               <Route path="/exit/command-center" element={<ProtectedRoute><Gate pageCode="EXIT_COMMAND_CENTER"><NativeExitCommandCenter /></Gate></ProtectedRoute>} />
               <Route path="/kpi-config" element={<ProtectedRoute><Gate pageCode="KPI_CONFIG"><NativeKPIConfiguration /></Gate></ProtectedRoute>} />
               <Route path="/operations-kpi" element={<ProtectedRoute><Gate pageCode="OPERATIONS_KPI"><NativeOperationsKPI /></Gate></ProtectedRoute>} />
+              <Route path="/kpi-master" element={<ProtectedRoute><Gate pageCode="KPI_MASTER"><KpiMasterConfig /></Gate></ProtectedRoute>} />
+              <Route path="/my-kpi" element={<ProtectedRoute><Gate pageCode="MY_KPI"><MyKpiDashboard /></Gate></ProtectedRoute>} />
               <Route path="/portal-data-manager" element={<ProtectedRoute><Gate pageCode="PORTAL_DATA_MANAGER"><NativePortalDataManager /></Gate></ProtectedRoute>} />
               <Route path="/process-config" element={<ProtectedRoute><Gate pageCode="PROCESS_CONFIG"><NativeProcessConfig /></Gate></ProtectedRoute>} />
               <Route path="/leave-types" element={<ProtectedRoute><Gate pageCode="LEAVE_TYPES"><NativeLeaveTypeConfig /></Gate></ProtectedRoute>} />
               <Route path="/my-roster" element={<ProtectedRoute><NativeMyRoster /></ProtectedRoute>} />
               <Route path="/roster-master-builder" element={<ProtectedRoute><Gate pageCode="ROSTER_MASTER"><NativeRosterMasterBuilder /></Gate></ProtectedRoute>} />
-              <Route path="/week-off-preferences" element={<ProtectedRoute><NativeWeekOffPreferences /></ProtectedRoute>} />
+              <Route path="/week-off-preferences" element={<ProtectedRoute roles={['admin', 'hr']}><NativeWeekOffPreferences /></ProtectedRoute>} />
               <Route path="/roster-capacity-config" element={<ProtectedRoute><Gate pageCode="ROSTER_MASTER"><NativeRosterCapacityConfig /></Gate></ProtectedRoute>} />
               <Route path="/wfm/auto-roster" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWFMAutoRoster /></Gate></ProtectedRoute>} />
               <Route path="/control-tower" element={<ProtectedRoute><Gate pageCode="CONTROL_TOWER"><NativeControlTower /></Gate></ProtectedRoute>} />
               <Route path="/rta-board" element={<ProtectedRoute><Gate pageCode="RTA_BOARD"><NativeRTABoard /></Gate></ProtectedRoute>} />
-              <Route path="/ats/walkin-queue" element={<ProtectedRoute><Gate pageCode="ATS_WAITING_QUEUE"><NativeWalkinQueue /></Gate></ProtectedRoute>} />
-              <Route path="/attendance-rules-master" element={<ProtectedRoute><NativeAttendanceRulesMaster /></ProtectedRoute>} />
+              <Route path="/attendance-rules-master" element={<ProtectedRoute roles={['admin', 'hr']}><NativeAttendanceRulesMaster /></ProtectedRoute>} />
               <Route path="/changelog" element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
