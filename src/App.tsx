@@ -70,6 +70,7 @@ const NativePayrollHRValidation     = lazy(() => import("./pages/NativePayrollHR
 const CandidatePortalLogin          = lazy(() => import("./pages/CandidatePortalLogin"));
 const CandidatePortalDashboard      = lazy(() => import("./pages/CandidatePortalDashboard"));
 const BranchHeadApproval            = lazy(() => import("./pages/BranchHeadApproval"));
+const SuperAdminModuleAccess        = lazy(() => import("./pages/SuperAdminModuleAccess"));
 
 // LMS
 const NativeLMSMyLearning           = lazy(() => import("./pages/NativeLMSMyLearning"));
@@ -276,6 +277,9 @@ const App = () => (
 
               {/* Branch Head Approval (Protected - HRMS Auth) */}
               <Route path="/ats/branch-head-approval" element={<ProtectedRoute><Gate pageCode="ATS_BRANCH_HEAD_APPROVAL"><BranchHeadApproval /></Gate></ProtectedRoute>} />
+
+              {/* Super Admin Module Access (Protected - Admin Only) */}
+              <Route path="/super-admin/module-access" element={<ProtectedRoute roles={['admin']}><SuperAdminModuleAccess /></ProtectedRoute>} />
 
               {/* LMS */}
               <Route path="/lms/my-learning" element={<ProtectedRoute><Gate pageCode="LMS_MY_LEARNING"><NativeLMSMyLearning /></Gate></ProtectedRoute>} />
