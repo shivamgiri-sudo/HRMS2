@@ -70,6 +70,10 @@ export const leaveService = {
     );
     const leaveCode: string | undefined = (ltRows as RowDataPacket[])[0]?.leave_code;
 
+    if (!leaveCode) {
+      throw new Error(`Leave type not found: ${input.leaveTypeId}`);
+    }
+
     let initialStatus = "pending";
 
     if (leaveCode === "CL" || leaveCode === "ML") {
@@ -81,7 +85,7 @@ export const leaveService = {
       );
       if (elConflict.hasConflict) {
         throw new Error(
-          `EL cannot be taken in a month where CL/ML is already applied. Conflict in month: ${elConflict.conflictMonth}`
+          `CL/ML cannot be taken in a month where EL is already applied. Conflict in month: ${elConflict.conflictMonth}`
         );
       }
 
@@ -234,47 +238,7 @@ export const leaveService = {
 
     // Handle approval - deduct leave balance
     if (input.status === 'approved') {
-      // Validate leave_type_id exists
-      if (!request.leave_type_id) {
-        throw new Error("Leave type is required for approval");
-      }
-
-      const duration = request.total_days;
-      const employeeId = request.employee_id;
-      const leaveTypeId = request.leave_type_id;
-      const year = new Date(request.from_date).getFullYear();
-
-      // Check current balance
-      const [balanceRows] = await db.execute<RowDataPacket[]>(
-        `SELECT * FROM leave_balance_ledger
-         WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-        [employeeId, leaveTypeId, year]
-      );
-
-      if (balanceRows.length === 0) {
-        // No ledger row exists - create one with used_days = duration and allocated_days = 0
-        await db.execute(
-          `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
-           VALUES (UUID(), ?, ?, ?, 0, ?, 0)`,
-          [employeeId, leaveTypeId, year, duration]
-        );
-      } else {
-        const balance = balanceRows[0];
-        const availableBalance = (balance.allocated_days || 0) + (balance.adjusted_days || 0) - (balance.used_days || 0);
-
-        // Validate sufficient balance
-        if (duration > availableBalance) {
-          throw new Error(`Insufficient leave balance. Available: ${availableBalance}, Requested: ${duration}`);
-        }
-
-        // Update used_days
-        await db.execute(
-          `UPDATE leave_balance_ledger
-           SET used_days = used_days + ?
-           WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-          [duration, employeeId, leaveTypeId, year]
-        );
-      }
+      await deductLeaveBalance();
     }
 
     // Restore leave balance when an approved request is rejected
