@@ -156,7 +156,6 @@ wfmRouter.post("/week-off-preference", requireAuth, h(async (req: any, res: any)
     try {
       const { inboxService } = await import('../inbox/inbox.service.js');
       const empName = `${(emp as any).first_name} ${(emp as any).last_name ?? ''}`.trim();
-      const { RowDataPacket } = await import('mysql2');
       const [wfmRows] = await dbConn.execute(
         `SELECT e.user_id FROM user_assignment_scope uas
          JOIN employees e ON e.id = uas.manager_employee_id
