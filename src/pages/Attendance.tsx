@@ -8,14 +8,7 @@ import {
   Calendar,
   CheckCircle2,
   Clock,
-  Coffee,
-  Home,
-  Loader2,
-  LogIn,
-  LogOut,
   MapPin,
-  Pause,
-  Play,
   RefreshCcw,
   Timer,
 } from "lucide-react";
@@ -27,44 +20,22 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import {
   AttendanceRecord,
-  LocationData,
-  WorkMode,
   useAttendance,
   useAttendanceReport,
-  useClockIn,
-  useClockOut,
   useTodayAttendance,
 } from "@/hooks/useAttendance";
 import {
   calculateTotalBreakHours,
   useActiveBreak,
   useBreaksForRecord,
-  usePause,
-  useResume,
 } from "@/hooks/useAttendanceBreaks";
-import {
-  getDistanceMeters,
-  useOfficeLocation,
-} from "@/components/settings/OfficeLocationSettings";
-import { getExpectedHours, getShiftEndTime } from "@/lib/shiftUtils";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { usePagination } from "@/hooks/usePagination";
 import { useSorting } from "@/hooks/useSorting";
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import {
   Pagination,
   PaginationContent,
@@ -234,24 +205,6 @@ const Attendance = () => {
   const [selectedYear, setSelectedYear] = useState(
     new Date().getFullYear().toString()
   );
-  const [workMode, setWorkMode] = useState<WorkMode>("wfo");
-
-  const [showEarlyClockOutWarning, setShowEarlyClockOutWarning] =
-    useState(false);
-  const [earlyClockOutReasons, setEarlyClockOutReasons] = useState<{
-    beforeEndTime: boolean;
-    insufficientHours: boolean;
-  }>({
-    beforeEndTime: false,
-    insufficientHours: false,
-  });
-
-  const [showLateClockOutDialog, setShowLateClockOutDialog] = useState(false);
-  const [lateClockOutMode, setLateClockOutMode] = useState<
-    "overtime" | "missed" | null
-  >(null);
-  const [missedClockOutTime, setMissedClockOutTime] = useState("");
-
   const targetDate = new Date(
     parseInt(selectedYear),
     parseInt(selectedMonth),
@@ -319,12 +272,6 @@ const Attendance = () => {
 
   const { data: activeBreak } = useActiveBreak(todayRecord?.id);
   const { data: todayBreaks } = useBreaksForRecord(todayRecord?.id);
-  const { data: officeLocation } = useOfficeLocation();
-
-  const clockIn = useClockIn();
-  const clockOut = useClockOut();
-  const pauseMutation = usePause();
-  const resumeMutation = useResume();
 
   const attendanceList = (attendanceRecords || []) as AttendanceRecord[];
   const historySorting = useSorting<AttendanceRecord>(attendanceList);
@@ -333,8 +280,6 @@ const Attendance = () => {
   });
 
   const currentTime = new Date();
-  const isPaused = !!activeBreak;
-  const isClockedIn = !!todayRecord?.clock_in && !todayRecord?.clock_out;
   const totalBreakHours = todayBreaks ? calculateTotalBreakHours(todayBreaks) : 0;
 
   const formatTimeDisplay = (time: string | null): string => {
@@ -428,327 +373,6 @@ const Attendance = () => {
     return attendanceRecords.filter(
       (record) => calculateLateArrival(record.clock_in, record.employee) > 0
     ).length;
-  };
-
-  const getCurrentLocation = (): Promise<LocationData | undefined> => {
-    return new Promise((resolve) => {
-      if (!navigator.geolocation) {
-        toast.error("Geolocation is not supported by your browser");
-        resolve(undefined);
-        return;
-      }
-
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const { latitude, longitude } = position.coords;
-
-          let locationName: string | undefined;
-
-          try {
-            const response = await fetch(
-              `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`
-            );
-            const data = await response.json();
-
-            if (data.address) {
-              const addr = data.address;
-              const parts: string[] = [];
-
-              if (addr.road) parts.push(addr.road);
-              else if (addr.neighbourhood) parts.push(addr.neighbourhood);
-              else if (addr.suburb) parts.push(addr.suburb);
-
-              if (addr.suburb && !parts.includes(addr.suburb)) {
-                parts.push(addr.suburb);
-              } else if (
-                addr.neighbourhood &&
-                !parts.includes(addr.neighbourhood)
-              ) {
-                parts.push(addr.neighbourhood);
-              }
-
-              const city =
-                addr.city ||
-                addr.town ||
-                addr.village ||
-                addr.municipality ||
-                addr.county;
-
-              if (city) parts.push(city);
-              if (addr.state && addr.state !== city) parts.push(addr.state);
-
-              locationName = parts.slice(0, 4).join(", ");
-            } else if (data.display_name) {
-              const parts = data.display_name.split(", ");
-              locationName = parts.slice(0, 4).join(", ");
-            }
-          } catch (error) {
-            console.error("Failed to get location name:", error);
-          }
-
-          resolve({ latitude, longitude, locationName });
-        },
-        (error) => {
-          console.error("Geolocation error:", error);
-
-          switch (error.code) {
-            case error.PERMISSION_DENIED:
-              toast.error(
-                "Location access is required to clock in. Please enable location permissions and try again."
-              );
-              break;
-            case error.POSITION_UNAVAILABLE:
-              toast.error(
-                "Location information is unavailable. Clock-in requires location access."
-              );
-              break;
-            case error.TIMEOUT:
-              toast.error("Location request timed out. Please try again.");
-              break;
-            default:
-              toast.error("Failed to get location. Clock-in requires location access.");
-          }
-
-          resolve(undefined);
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0,
-        }
-      );
-    });
-  };
-
-  const handleClockIn = async (mode: WorkMode) => {
-    if (!currentEmployee) {
-      toast.error("Employee profile not found");
-      return;
-    }
-
-    try {
-      toast.info("Getting your location...");
-
-      const location = await getCurrentLocation();
-
-      if (mode === "wfo" && !location) {
-        toast.error("Location is required to clock in from office");
-        return;
-      }
-
-      let detectedMode = mode;
-
-      if (location && officeLocation?.latitude && officeLocation?.longitude) {
-        const distance = getDistanceMeters(
-          location.latitude,
-          location.longitude,
-          officeLocation.latitude,
-          officeLocation.longitude
-        );
-        const radius = officeLocation.radius_meters || 500;
-
-        detectedMode = distance <= radius ? "wfo" : "wfh";
-
-        if (mode === "wfo" && detectedMode === "wfh") {
-          toast.error(
-            `You are not at the office location (${Math.round(
-              distance
-            )}m away). Please choose Work From Home instead.`
-          );
-          return;
-        }
-      }
-
-      await clockIn.mutateAsync({
-        employeeId: currentEmployee.id,
-        location,
-        workMode: detectedMode,
-      });
-
-      const modeLabel =
-        detectedMode === "wfh" ? "Work From Home" : "Work From Office";
-
-      toast.success(
-        location
-          ? `Clocked in (${modeLabel}) with location`
-          : `Clocked in (${modeLabel})`
-      );
-    } catch (error) {
-      toast.error("Failed to clock in");
-    }
-  };
-
-  const calculateCurrentHoursWorked = (): number => {
-    if (!todayRecord?.clock_in) return 0;
-
-    const clockInTime = new Date(todayRecord.clock_in);
-    const now = new Date();
-
-    return (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
-  };
-
-  const isBeforeEndTime = (): boolean => {
-    if (
-      !currentEmployee?.working_hours_end ||
-      !currentEmployee?.working_hours_start ||
-      !todayRecord?.clock_in
-    ) {
-      return false;
-    }
-
-    const clockInTime = new Date(todayRecord.clock_in);
-    const endTime = getShiftEndTime(
-      clockInTime,
-      currentEmployee.working_hours_start,
-      currentEmployee.working_hours_end
-    );
-
-    return new Date() < endTime;
-  };
-
-  const handleClockOutAttempt = () => {
-    if (!todayRecord || !todayRecord.clock_in) {
-      toast.error("No active clock-in found");
-      return;
-    }
-
-    const hoursWorked = calculateCurrentHoursWorked();
-    const workStart = currentEmployee?.working_hours_start || "09:00:00";
-    const workEnd = currentEmployee?.working_hours_end || "18:00:00";
-    const requiredHours = getExpectedHours(workStart, workEnd);
-
-    const beforeEndTime = isBeforeEndTime();
-    const insufficientHours = hoursWorked < requiredHours;
-
-    if (beforeEndTime || insufficientHours) {
-      setEarlyClockOutReasons({ beforeEndTime, insufficientHours });
-      setShowEarlyClockOutWarning(true);
-    } else {
-      const isAfterEndTime = !isBeforeEndTime();
-
-      if (isAfterEndTime && hoursWorked > requiredHours) {
-        setLateClockOutMode(null);
-        setMissedClockOutTime(workEnd.substring(0, 5));
-        setShowLateClockOutDialog(true);
-      } else {
-        handleClockOut();
-      }
-    }
-  };
-
-  const handleLateClockOutConfirm = async () => {
-    if (!todayRecord || !todayRecord.clock_in) return;
-
-    setShowLateClockOutDialog(false);
-
-    if (lateClockOutMode === "overtime") {
-      handleClockOut();
-      return;
-    }
-
-    if (lateClockOutMode === "missed" && missedClockOutTime) {
-      try {
-        toast.info("Getting your location...");
-
-        const location = await getCurrentLocation();
-
-        const [hours, minutes] = missedClockOutTime.split(":").map(Number);
-        const customTime = new Date(todayRecord.clock_in);
-
-        customTime.setHours(hours, minutes, 0, 0);
-
-        if (customTime <= new Date(todayRecord.clock_in)) {
-          customTime.setDate(customTime.getDate() + 1);
-        }
-
-        await clockOut.mutateAsync({
-          recordId: todayRecord.id,
-          clockIn: todayRecord.clock_in,
-          location,
-          customClockOut: customTime,
-        });
-
-        toast.success("Clocked out with corrected time");
-      } catch (error) {
-        toast.error("Failed to clock out");
-      }
-    }
-  };
-
-  const handleClockOut = async () => {
-    if (!todayRecord || !todayRecord.clock_in) {
-      toast.error("No active clock-in found");
-      return;
-    }
-
-    setShowEarlyClockOutWarning(false);
-
-    try {
-      toast.info("Getting your location...");
-
-      const location = await getCurrentLocation();
-
-      await clockOut.mutateAsync({
-        recordId: todayRecord.id,
-        clockIn: todayRecord.clock_in,
-        location,
-      });
-
-      toast.success(
-        location ? "Clocked out with location" : "Clocked out successfully"
-      );
-    } catch (error) {
-      toast.error("Failed to clock out");
-    }
-  };
-
-  const formatHoursWorked = (hours: number): string => {
-    const h = Math.floor(hours);
-    const m = Math.round((hours - h) * 60);
-
-    return m > 0 ? `${h}h ${m}m` : `${h}h`;
-  };
-
-  const handlePause = async () => {
-    if (!todayRecord) return;
-
-    try {
-      toast.info("Getting your location...");
-
-      const location = await getCurrentLocation();
-
-      if (!location) return;
-
-      await pauseMutation.mutateAsync({
-        attendanceRecordId: todayRecord.id,
-        location,
-      });
-
-      toast.success("Work paused — break started");
-    } catch (error) {
-      toast.error("Failed to pause");
-    }
-  };
-
-  const handleResume = async () => {
-    if (!activeBreak) return;
-
-    try {
-      toast.info("Getting your location...");
-
-      const location = await getCurrentLocation();
-
-      if (!location) return;
-
-      await resumeMutation.mutateAsync({
-        breakId: activeBreak.id,
-        location,
-      });
-
-      toast.success("Work resumed");
-    } catch (error) {
-      toast.error("Failed to resume");
-    }
   };
 
   const selectedMonthLabel = MONTHS[parseInt(selectedMonth)].label;
@@ -882,8 +506,7 @@ const Attendance = () => {
                   </h1>
 
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                    Track clock-in, work mode, breaks, monthly summary and
-                    attendance history.
+                    View work mode, breaks, monthly summary and attendance history.
                   </p>
                 </div>
               </div>
@@ -1020,122 +643,6 @@ const Attendance = () => {
                       )}
                     </div>
                   </div>
-
-                  {!isClockedIn && !todayRecord?.clock_out && (
-                    <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <p className="mb-3 text-xs font-semibold text-slate-950">
-                        Select work mode
-                      </p>
-
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <Button
-                          type="button"
-                          variant={workMode === "wfo" ? "default" : "outline"}
-                          className="h-11 rounded-xl text-xs font-semibold"
-                          onClick={() => setWorkMode("wfo")}
-                        >
-                          <Building2 className="mr-2 h-4 w-4" />
-                          Work From Office
-                        </Button>
-
-                        <Button
-                          type="button"
-                          variant={workMode === "wfh" ? "default" : "outline"}
-                          className="h-11 rounded-xl text-xs font-semibold"
-                          onClick={() => setWorkMode("wfh")}
-                        >
-                          <Home className="mr-2 h-4 w-4" />
-                          Work From Home
-                        </Button>
-                      </div>
-
-                      <Button
-                        className="mt-3 h-11 w-full rounded-xl bg-slate-950 text-xs font-semibold text-white hover:bg-slate-800"
-                        disabled={clockIn.isPending}
-                        onClick={() => handleClockIn(workMode)}
-                      >
-                        {clockIn.isPending ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : (
-                          <LogIn className="mr-2 h-4 w-4" />
-                        )}
-                        Clock In
-                      </Button>
-                    </div>
-                  )}
-
-                  {isClockedIn && (
-                    <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="mb-3 flex flex-wrap items-center gap-2">
-                        {todayRecord?.work_mode && (
-                          <Badge className="bg-white text-slate-700 hover:bg-white">
-                            {todayRecord.work_mode === "wfo" ? (
-                              <>
-                                <Building2 className="mr-1 h-3.5 w-3.5" />
-                                Office
-                              </>
-                            ) : (
-                              <>
-                                <Home className="mr-1 h-3.5 w-3.5" />
-                                Home
-                              </>
-                            )}
-                          </Badge>
-                        )}
-
-                        {isPaused && (
-                          <Badge className="bg-amber-50 text-amber-700 hover:bg-amber-50">
-                            <Coffee className="mr-1 h-3.5 w-3.5" />
-                            On Break
-                          </Badge>
-                        )}
-                      </div>
-
-                      {isPaused ? (
-                        <Button
-                          className="h-11 w-full rounded-xl bg-emerald-600 text-xs font-semibold text-white hover:bg-emerald-700"
-                          disabled={resumeMutation.isPending}
-                          onClick={handleResume}
-                        >
-                          {resumeMutation.isPending ? (
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          ) : (
-                            <Play className="mr-2 h-4 w-4" />
-                          )}
-                          Resume Work
-                        </Button>
-                      ) : (
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <Button
-                            variant="outline"
-                            className="h-11 rounded-xl border-slate-200 bg-white text-xs font-semibold"
-                            disabled={pauseMutation.isPending}
-                            onClick={handlePause}
-                          >
-                            {pauseMutation.isPending ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                              <Pause className="mr-2 h-4 w-4" />
-                            )}
-                            Pause
-                          </Button>
-
-                          <Button
-                            className="h-11 rounded-xl bg-slate-950 text-xs font-semibold text-white hover:bg-slate-800"
-                            disabled={clockOut.isPending}
-                            onClick={handleClockOutAttempt}
-                          >
-                            {clockOut.isPending ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                              <LogOut className="mr-2 h-4 w-4" />
-                            )}
-                            Clock Out
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  )}
 
                   {todayRecord?.clock_out && (
                     <div className="mt-5 flex items-center gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-700">
@@ -1686,131 +1193,6 @@ const Attendance = () => {
             )}
           </section>
 
-          {/* Early Clock-Out Warning */}
-          <AlertDialog
-            open={showEarlyClockOutWarning}
-            onOpenChange={setShowEarlyClockOutWarning}
-          >
-            <AlertDialogContent className="rounded-2xl">
-              <AlertDialogHeader>
-                <AlertDialogTitle>Early Clock-Out Warning</AlertDialogTitle>
-
-                <AlertDialogDescription className="space-y-3">
-                  {earlyClockOutReasons.insufficientHours && (
-                    <span className="block">
-                      You have only worked{" "}
-                      {formatHoursWorked(calculateCurrentHoursWorked())} today.
-                      Your configured shift requires more working time.
-                    </span>
-                  )}
-
-                  {earlyClockOutReasons.beforeEndTime &&
-                    currentEmployee?.working_hours_end && (
-                      <span className="block">
-                        Your scheduled end time is{" "}
-                        {formatTimeDisplay(currentEmployee.working_hours_end)}.
-                      </span>
-                    )}
-
-                  <span className="block">
-                    Are you sure you want to clock out early?
-                  </span>
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-
-              <AlertDialogFooter>
-                <AlertDialogCancel className="rounded-xl">
-                  Continue Working
-                </AlertDialogCancel>
-
-                <AlertDialogAction
-                  className="rounded-xl bg-amber-600 text-white hover:bg-amber-700"
-                  onClick={handleClockOut}
-                >
-                  Clock Out Anyway
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-
-          {/* Late Clock-Out Dialog */}
-          <AlertDialog
-            open={showLateClockOutDialog}
-            onOpenChange={setShowLateClockOutDialog}
-          >
-            <AlertDialogContent className="rounded-2xl">
-              <AlertDialogHeader>
-                <AlertDialogTitle>Clock Out After End Time</AlertDialogTitle>
-
-                <AlertDialogDescription>
-                  Your scheduled end time was{" "}
-                  {formatTimeDisplay(
-                    currentEmployee?.working_hours_end || "18:00:00"
-                  )}{" "}
-                  and you&apos;ve worked{" "}
-                  {formatHoursWorked(calculateCurrentHoursWorked())}. Was this
-                  overtime or did you forget to clock out?
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-
-              <div className="space-y-3">
-                <Button
-                  type="button"
-                  variant={lateClockOutMode === "overtime" ? "default" : "outline"}
-                  className="h-11 w-full rounded-xl text-xs font-semibold"
-                  onClick={() => setLateClockOutMode("overtime")}
-                >
-                  It was overtime — use current time
-                </Button>
-
-                <Button
-                  type="button"
-                  variant={lateClockOutMode === "missed" ? "default" : "outline"}
-                  className="h-11 w-full rounded-xl text-xs font-semibold"
-                  onClick={() => setLateClockOutMode("missed")}
-                >
-                  I forgot to clock out — enter actual time
-                </Button>
-
-                {lateClockOutMode === "missed" && (
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold text-slate-700">
-                      Actual clock-out time
-                    </label>
-
-                    <Input
-                      type="time"
-                      value={missedClockOutTime}
-                      onChange={(event) =>
-                        setMissedClockOutTime(event.target.value)
-                      }
-                      className="h-11 rounded-xl"
-                    />
-                  </div>
-                )}
-              </div>
-
-              <AlertDialogFooter>
-                <AlertDialogCancel
-                  className="rounded-xl"
-                  onClick={() => setLateClockOutMode(null)}
-                >
-                  Cancel
-                </AlertDialogCancel>
-
-                <AlertDialogAction
-                  className="rounded-xl bg-slate-950 text-white hover:bg-slate-800"
-                  onClick={handleLateClockOutConfirm}
-                  disabled={
-                    !lateClockOutMode ||
-                    (lateClockOutMode === "missed" && !missedClockOutTime)
-                  }
-                >
-                  Confirm Clock Out
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
         </div>
       </TooltipProvider>
     </DashboardLayout>
