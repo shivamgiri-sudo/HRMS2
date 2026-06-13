@@ -1,5 +1,9 @@
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
@@ -8,6 +12,31 @@ import { db } from "../../db/mysql.js";
 import { employeeController as c } from "./employee.controller.js";
 import { appendJourneyEvent, listJourneyEvents } from "./journeyLog.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PHOTOS_DIR = path.resolve(__dirname, "../../../uploads/employee-photos");
+fs.mkdirSync(PHOTOS_DIR, { recursive: true });
+
+const photoStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, PHOTOS_DIR),
+  filename: (req: any, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
+    // filename = employeeId so it naturally overwrites the old photo
+    const empId = req.params.id ?? req.authEmployee?.id ?? "unknown";
+    cb(null, `${empId}${ext}`);
+  },
+});
+
+const photoUpload = multer({
+  storage: photoStorage,
+  limits: { fileSize: 3 * 1024 * 1024 }, // 3 MB max
+  fileFilter: (_req, file, cb) => {
+    const allowed = new Set([".jpg", ".jpeg", ".png", ".webp"]);
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.has(ext)) cb(null, true);
+    else cb(new Error("Only JPG, PNG, or WebP images are allowed"));
+  },
+});
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -61,6 +90,77 @@ router.get("/me", h(async (req: any, res: any) => {
 // PATCH /api/employees/me — update own profile (employee self-service)
 router.patch("/me", h(c.updateMyProfile));
 
+// POST /api/employees/me/photo — employee uploads their own photo
+router.post("/me/photo", (req: any, res: any, next: any) => {
+  photoUpload.single("photo")(req, res, (err: any) => {
+    if (err instanceof multer.MulterError) return res.status(400).json({ success: false, error: err.message });
+    if (err) return res.status(400).json({ success: false, error: err.message });
+    next();
+  });
+}, h(async (req: any, res: any) => {
+  if (!req.file) return res.status(400).json({ success: false, error: "No image uploaded" });
+  const emp = await getEmployeeForUser(req.authUser.id);
+  if (!emp) return res.status(403).json({ success: false, error: "No employee record" });
+
+  // Rename file to use employeeId (multer may have used 'unknown' if :id wasn't in path)
+  const ext = path.extname(req.file.filename);
+  const finalName = `${emp.id}${ext}`;
+  const finalPath = path.join(PHOTOS_DIR, finalName);
+  if (req.file.path !== finalPath) {
+    fs.renameSync(req.file.path, finalPath);
+  }
+
+  const avatarUrl = `/api/files/employee-photos/${finalName}`;
+  await db.execute(`UPDATE employees SET avatar_url = ? WHERE id = ?`, [avatarUrl, emp.id]);
+  return res.json({ success: true, avatarUrl });
+}));
+
+// POST /api/employees/:id/photo — admin/HR uploads photo for any employee
+router.post("/:id/photo", requireRole("admin", "hr"), (req: any, res: any, next: any) => {
+  photoUpload.single("photo")(req, res, (err: any) => {
+    if (err instanceof multer.MulterError) return res.status(400).json({ success: false, error: err.message });
+    if (err) return res.status(400).json({ success: false, error: err.message });
+    next();
+  });
+}, h(async (req: any, res: any) => {
+  if (!req.file) return res.status(400).json({ success: false, error: "No image uploaded" });
+  const empId = req.params.id;
+
+  // Ensure the employee exists
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM employees WHERE id = ? LIMIT 1`, [empId]
+  );
+  if (!(rows as any[]).length) return res.status(404).json({ success: false, error: "Employee not found" });
+
+  // Rename to final empId-based name (multer already used req.params.id for filename)
+  const ext = path.extname(req.file.filename);
+  const finalName = `${empId}${ext}`;
+  const finalPath = path.join(PHOTOS_DIR, finalName);
+  if (req.file.path !== finalPath) {
+    try { fs.renameSync(req.file.path, finalPath); } catch { /* already correct name */ }
+  }
+
+  const avatarUrl = `/api/files/employee-photos/${finalName}`;
+  await db.execute(`UPDATE employees SET avatar_url = ? WHERE id = ?`, [avatarUrl, empId]);
+  return res.json({ success: true, avatarUrl });
+}));
+
+// DELETE /api/employees/:id/photo — admin/HR removes photo
+router.delete("/:id/photo", requireRole("admin", "hr"), h(async (req: any, res: any) => {
+  const empId = req.params.id;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT avatar_url FROM employees WHERE id = ? LIMIT 1`, [empId]
+  );
+  const url: string = (rows as any[])[0]?.avatar_url ?? "";
+  if (url) {
+    const filename = path.basename(url);
+    const filePath = path.join(PHOTOS_DIR, filename);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    await db.execute(`UPDATE employees SET avatar_url = NULL WHERE id = ?`, [empId]);
+  }
+  return res.json({ success: true });
+}));
+
 // GET /api/employees/stats — aggregate counts (must be before /:id to avoid route collision)
 router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req: any, res: any) => {
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -71,6 +171,34 @@ router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req
      FROM employees WHERE active_status = 1`
   );
   res.json({ data: rows[0] });
+}));
+
+// GET /api/employees/my-team — returns active direct reports of the logged-in user's employee record
+router.get("/my-team", h(async (req: any, res: any) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+    [userId]
+  );
+  const managerEmpId = (empRows as any[])[0]?.id;
+  if (!managerEmpId) return res.json({ success: true, data: [] });
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code,
+            CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS full_name,
+            e.department_id, e.designation_id, e.process_id, e.cost_centre_id,
+            dm.dept_name, desm.designation_name, pm.process_name
+     FROM employees e
+     LEFT JOIN department_master  dm   ON dm.id   = e.department_id
+     LEFT JOIN designation_master desm ON desm.id  = e.designation_id
+     LEFT JOIN process_master     pm   ON pm.id    = e.process_id
+     WHERE e.reporting_manager_id = ? AND e.active_status = 1
+     ORDER BY full_name`,
+    [managerEmpId]
+  );
+  return res.json({ success: true, data: rows });
 }));
 
 router.get("/", requireRole("admin", "hr", "manager"), h(async (req, res) => {

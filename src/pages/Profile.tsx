@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, User, Mail, Phone, MapPin, Building2, Calendar, Briefcase, Save, Shield, FileText, Clock, Wallet, Files, Package, Star } from "lucide-react";
+import { PhotoUpload } from "@/components/employee/PhotoUpload";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -82,6 +83,7 @@ const Profile = () => {
   const [activeTab, setActiveTab] = useState<string>(initialTab);
   const [isEditing, setIsEditing] = useState(false);
   const [rmChangeOpen, setRmChangeOpen] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [formData, setFormData] = useState<ProfileForm>({
     phone: '',
     address: '',
@@ -127,6 +129,9 @@ const Profile = () => {
 
   useEffect(() => {
     if (employee) {
+      // Sync avatar from DB when employee data loads (only if not locally overridden)
+      if (!avatarUrl) setAvatarUrl(employee.avatar_url ?? null);
+
       // Format time from "HH:MM:SS" to "HH:MM" for input
       const formatTimeForInput = (time: string | null) => {
         if (!time) return '';
@@ -250,10 +255,12 @@ const Profile = () => {
                 <Card className="md:col-span-1">
                   <CardContent className="pt-6">
                     <div className="flex flex-col items-center text-center">
-                      <Avatar className="h-24 w-24">
-                        <AvatarImage src={userProfile?.avatar_url || undefined} />
-                        <AvatarFallback className="text-2xl">{getUserInitials()}</AvatarFallback>
-                      </Avatar>
+                      <PhotoUpload
+                        currentUrl={avatarUrl}
+                        displayName={`${employee.first_name} ${employee.last_name}`}
+                        onSuccess={(url) => setAvatarUrl(url || null)}
+                        size="xl"
+                      />
                       <h3 className="mt-4 text-xl font-semibold">
                         {employee.first_name} {employee.last_name}
                       </h3>

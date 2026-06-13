@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { useAuth } from "@/contexts/AuthContext";
+import { useEmployeeProfile } from "@/hooks/useEmployeeProfile";
 import { cn } from "@/lib/utils";
 
 interface TopBarProps {
@@ -64,6 +65,7 @@ export function TopBar({
 }: TopBarProps) {
   const navigate = useNavigate();
   const { user, signOut, isSigningOut } = useAuth();
+  const { data: myProfile } = useEmployeeProfile();
   const breadcrumbs = useBreadcrumbs();
   const userInitials = (user?.email ?? "MC").slice(0, 2).toUpperCase();
 
@@ -167,7 +169,7 @@ export function TopBar({
                 aria-label="Account menu"
               >
                 <Avatar className="h-9 w-9 ring-2 ring-slate-200">
-                  <AvatarImage src="" />
+                  <AvatarImage src={myProfile?.avatar_url ?? undefined} alt="My photo" />
                   <AvatarFallback className="bg-blue-600 text-sm font-bold text-white">
                     {userInitials}
                   </AvatarFallback>

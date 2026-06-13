@@ -92,6 +92,7 @@ const MIGRATION_MANIFEST: string[] = [
   "160_kpi_master_config.sql",
   "170_access_improvements.sql",
   "171_attendance_regularization_v2.sql",
+  "172_employee_photo.sql",
 ];
 
 export type MigrationHealth = {

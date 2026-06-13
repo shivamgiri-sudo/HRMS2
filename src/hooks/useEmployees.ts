@@ -40,6 +40,7 @@ export function useEmployees() {
         name: `${emp.first_name} ${emp.last_name ?? ""}`.trim(),
         email: emp.email,
         phone: emp.mobile ?? null,
+        avatar: emp.avatar_url ?? undefined,
         department: emp.department_name || "Unassigned",
         designation: emp.designation_name || emp.designation || "",
         joinDate: emp.date_of_joining ? format(new Date(emp.date_of_joining), "MMM d, yyyy") : "",

@@ -37,6 +37,7 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsAdminOrHR, useWorkforceAccess } from "@/hooks/useUserRole";
 import { useVersionCheck } from "@/hooks/useVersionCheck";
+import { useEmployeeProfile } from "@/hooks/useEmployeeProfile";
 import { cn } from "@/lib/utils";
 import { APP_VERSION, isAutoUpdatingEnvironment } from "@/lib/version";
 
@@ -157,6 +158,7 @@ export function DashboardLayout({ children }: Props) {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { isAdminOrHR } = useIsAdminOrHR();
+  const { data: myProfile } = useEmployeeProfile();
   const { canViewPage, visiblePageCodes, hasAnyRole } = useWorkforceAccess();
   const { data: versionData } = useVersionCheck();
 
@@ -301,7 +303,7 @@ export function DashboardLayout({ children }: Props) {
           style={{ background: "var(--sidebar-surface-1)" }}
         >
           <Avatar className="h-7 w-7 flex-shrink-0">
-            <AvatarImage src="" />
+            <AvatarImage src={myProfile?.avatar_url ?? undefined} alt="My photo" />
             <AvatarFallback
               className="text-xs font-bold"
               style={{ background: "var(--brand-600)", color: "#fff" }}
