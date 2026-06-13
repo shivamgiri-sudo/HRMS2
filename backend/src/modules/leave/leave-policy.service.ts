@@ -34,6 +34,13 @@ function getMonthsInRange(
 // ---------------------------------------------------------------------------
 // checkMonthlyCapExceeded
 // ---------------------------------------------------------------------------
+
+// Helper: count calendar days in [start..end] inclusive.
+function daysInRange(start: Date, end: Date): number {
+  const diff = end.getTime() - start.getTime();
+  return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)) + 1);
+}
+
 async function checkMonthlyCapExceeded(
   employeeId: string,
   fromDate: string,
@@ -45,6 +52,15 @@ async function checkMonthlyCapExceeded(
   const months = getMonthsInRange(fromDate, toDate);
 
   for (const { year, month } of months) {
+    // Compute how many of the requested days fall within this specific month
+    const monthStart = new Date(year, month - 1, 1);
+    const monthEnd = new Date(year, month, 0); // last day of month
+    const requestStart = new Date(fromDate);
+    const requestEnd = new Date(toDate);
+    const overlapStart = requestStart > monthStart ? requestStart : monthStart;
+    const overlapEnd = requestEnd < monthEnd ? requestEnd : monthEnd;
+    const daysInThisMonth = daysInRange(overlapStart, overlapEnd);
+
     const excludeClause = excludeRequestId ? "AND lr.id != ?" : "";
     const params: unknown[] = [employeeId, year, month, year, month, year, month];
     if (excludeRequestId) params.push(excludeRequestId);
@@ -67,7 +83,7 @@ async function checkMonthlyCapExceeded(
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     const usedDays = Number(rows[0]?.used_days ?? 0);
 
-    if (usedDays + requestedDays > CAP) {
+    if (usedDays + daysInThisMonth > CAP) {
       const monthBreached = `${year}-${String(month).padStart(2, "0")}`;
       return { exceeded: true, monthBreached, usedDays, cap: CAP };
     }

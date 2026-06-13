@@ -117,8 +117,8 @@ export async function creditELAnnual(creditYear: number): Promise<void> {
       // e. Upsert leave_balance_ledger — SET (not add) allocated_days for annual entitlement
       await db.execute(
         `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
-         VALUES (UUID(), ?, ?, ?, ?, 0, 0)
-         ON DUPLICATE KEY UPDATE allocated_days = VALUES(allocated_days)`,
+         VALUES (UUID(), ?, ?, ?, ?, 0, 0) AS new_row
+         ON DUPLICATE KEY UPDATE allocated_days = new_row.allocated_days`,
         [emp.id, elLeaveTypeId, creditYear, daysToCredit]
       );
 

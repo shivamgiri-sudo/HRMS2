@@ -156,8 +156,8 @@ export const leaveService = {
 
     // --- Step 4: Branch head approval path ---
 
-    // Helper: deduct leave balance (shared by 'approved' and 'branch_head_approved')
-    const deductLeaveBalance = async () => {
+    // Helper: deduct leave balance within a connection (for transaction safety)
+    const deductLeaveBalance = async (conn: any) => {
       if (!request.leave_type_id) {
         throw new Error("Leave type is required for approval");
       }
@@ -166,14 +166,14 @@ export const leaveService = {
       const leaveTypeId = request.leave_type_id;
       const year = new Date(request.from_date).getFullYear();
 
-      const [balanceRows] = await db.execute<RowDataPacket[]>(
+      const [balanceRows] = await conn.execute(
         `SELECT * FROM leave_balance_ledger
          WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
         [employeeId, leaveTypeId, year]
       );
 
       if (balanceRows.length === 0) {
-        await db.execute(
+        await conn.execute(
           `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
            VALUES (UUID(), ?, ?, ?, 0, ?, 0)`,
           [employeeId, leaveTypeId, year, duration]
@@ -187,7 +187,7 @@ export const leaveService = {
             `Insufficient leave balance. Available: ${availableBalance}, Requested: ${duration}`
           );
         }
-        await db.execute(
+        await conn.execute(
           `UPDATE leave_balance_ledger
            SET used_days = used_days + ?
            WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
@@ -200,16 +200,26 @@ export const leaveService = {
       if (request.status !== "pending_branch_head") {
         throw new Error("Only pending_branch_head requests can be branch-head approved");
       }
-      await deductLeaveBalance();
-      await db.execute(
-        "UPDATE leave_request SET status = ? WHERE id = ?",
-        ["approved", id]
-      );
-      await db.execute(
-        `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
-         VALUES (UUID(), ?, ?, ?, ?)`,
-        [id, "branch_head_approved", reviewerId, input.remarks ?? null]
-      );
+      const conn = await db.getConnection();
+      try {
+        await conn.beginTransaction();
+        await deductLeaveBalance(conn);
+        await conn.execute(
+          "UPDATE leave_request SET status = ? WHERE id = ?",
+          ["approved", id]
+        );
+        await conn.execute(
+          `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
+           VALUES (UUID(), ?, ?, ?, ?)`,
+          [id, "branch_head_approved", reviewerId, input.remarks ?? null]
+        );
+        await conn.commit();
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        conn.release();
+      }
       return this.getRequest(id);
     }
 
@@ -236,27 +246,67 @@ export const leaveService = {
       );
     }
 
-    // Handle approval - deduct leave balance
+    // Handle approval - deduct leave balance inside a transaction
     if (input.status === 'approved') {
-      await deductLeaveBalance();
+      const conn = await db.getConnection();
+      try {
+        await conn.beginTransaction();
+        await deductLeaveBalance(conn);
+        await conn.execute(
+          "UPDATE leave_request SET status = ? WHERE id = ?",
+          [input.status, id]
+        );
+        await conn.execute(
+          `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
+           VALUES (UUID(), ?, ?, ?, ?)`,
+          [id, input.status, reviewerId, input.remarks ?? null]
+        );
+        await conn.commit();
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        conn.release();
+      }
+      return this.getRequest(id);
     }
 
-    // Restore leave balance when an approved request is rejected
+    // Restore leave balance when an approved request is rejected — also transactional
     if (input.status === 'rejected' && request.status === 'approved') {
       const duration = request.total_days;
       const employeeId = request.employee_id;
       const leaveTypeId = request.leave_type_id;
       if (leaveTypeId && duration > 0) {
         const year = new Date(request.from_date).getFullYear();
-        await db.execute(
-          `UPDATE leave_balance_ledger
-           SET used_days = GREATEST(0, used_days - ?)
-           WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-          [duration, employeeId, leaveTypeId, year]
-        );
+        const conn = await db.getConnection();
+        try {
+          await conn.beginTransaction();
+          await conn.execute(
+            `UPDATE leave_balance_ledger
+             SET used_days = GREATEST(0, used_days - ?)
+             WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+            [duration, employeeId, leaveTypeId, year]
+          );
+          await conn.execute(
+            "UPDATE leave_request SET status = ? WHERE id = ?",
+            [input.status, id]
+          );
+          await conn.execute(
+            `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
+             VALUES (UUID(), ?, ?, ?, ?)`,
+            [id, input.status, reviewerId, input.remarks ?? null]
+          );
+          await conn.commit();
+        } catch (err) {
+          await conn.rollback();
+          throw err;
+        } finally {
+          conn.release();
+        }
+        return this.getRequest(id);
       }
     }
-    
+
     await db.execute(
       "UPDATE leave_request SET status = ? WHERE id = ?",
       [input.status, id]
