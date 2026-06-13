@@ -52,10 +52,12 @@ router.get("/me", h(async (req: any, res: any) => {
   const [rows] = await db.execute(
     `SELECT e.*,
             COALESCE(CONCAT(m.first_name, ' ', COALESCE(m.last_name, '')), '') AS reporting_manager_name,
-            dept.dept_name AS department_name
+            dept.dept_name AS department_name,
+            desig.designation_name AS designation
      FROM employees e
      LEFT JOIN employees m ON m.id = e.reporting_manager_id
      LEFT JOIN department_master dept ON dept.id = e.department_id
+     LEFT JOIN designation_master desig ON desig.id = e.designation_id
      WHERE e.user_id = ? AND e.active_status = 1
      LIMIT 1`,
     [userId]
@@ -89,6 +91,20 @@ router.get("/me", h(async (req: any, res: any) => {
 
 // PATCH /api/employees/me — update own profile (employee self-service)
 router.patch("/me", h(c.updateMyProfile));
+
+// GET /api/employees/me/journey — employee views their own journey timeline
+router.get("/me/journey", h(async (req: any, res: any) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+  const { db } = await import("../../db/mysql.js");
+  const [empRows] = await db.execute(
+    "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    [userId]
+  ) as any[];
+  if (!empRows.length) return res.status(404).json({ success: false, error: "No employee record" });
+  const data = await listJourneyEvents(empRows[0].id);
+  return res.json({ success: true, data });
+}));
 
 // POST /api/employees/me/photo — employee uploads their own photo
 router.post("/me/photo", (req: any, res: any, next: any) => {
