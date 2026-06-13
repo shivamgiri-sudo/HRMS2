@@ -65,6 +65,8 @@ const NativeATSSourcingAnalysis     = lazy(() => import("./pages/NativeATSSourci
 const NativeATSExtensions           = lazy(() => import("./pages/NativeATSExtensions"));
 const NativeATSFormConfig           = lazy(() => import("./pages/NativeATSFormConfig"));
 const NativeATSFullParityCommandCenter = lazy(() => import("./pages/NativeATSFullParityCommandCenter"));
+const NativeRecruiterPortal         = lazy(() => import("./pages/NativeRecruiterPortal"));
+const NativePayrollHRValidation     = lazy(() => import("./pages/NativePayrollHRValidation"));
 
 // LMS
 const NativeLMSMyLearning           = lazy(() => import("./pages/NativeLMSMyLearning"));
@@ -261,6 +263,9 @@ const App = () => (
               <Route path="/ats/offer-approvals" element={<ProtectedRoute><NativeBranchHeadApproval /></ProtectedRoute>} />
               <Route path="/onboard-full" element={<CandidateOnboardingFullPage />} />
               <Route path="/ats/bgv" element={<ProtectedRoute><Gate pageCode="ATS_BGV"><NativeBGVVerificationCenter /></Gate></ProtectedRoute>} />
+              <Route path="/ats/recruiter-portal" element={<ProtectedRoute><Gate pageCode="ATS_RECRUITER_PORTAL"><NativeRecruiterPortal /></Gate></ProtectedRoute>} />
+              <Route path="/ats/payroll-hr-validation" element={<ProtectedRoute><Gate pageCode="ATS_PAYROLL_HR"><NativePayrollHRValidation /></Gate></ProtectedRoute>} />
+              <Route path="/ats/walkin-queue" element={<ProtectedRoute><Gate pageCode="ATS_WALKIN_QUEUE"><NativeWalkinQueue /></Gate></ProtectedRoute>} />
 
               {/* LMS */}
               <Route path="/lms/my-learning" element={<ProtectedRoute><Gate pageCode="LMS_MY_LEARNING"><NativeLMSMyLearning /></Gate></ProtectedRoute>} />
