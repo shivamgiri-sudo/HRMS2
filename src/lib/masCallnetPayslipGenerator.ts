@@ -58,9 +58,6 @@ const formatINR = (amount: number): string => {
   return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(amount);
 };
 
-// Mas Callnet Logo as base64 (simplified version - you should replace with actual logo)
-const MAS_LOGO_BASE64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADwAAAA8CAYAAAA6/NlyAAAACXBIWXMAAAsTAAALEwEAmpwYAAADJklEQVR4nO2ay2sTURTGf5OkadI0aZq0SdM0TZqmSdOkadI0TZs0aZq0SdOkSZo0TdOkadI0TdOkTdM0TdOkadM0TZqmSZs0TZo2TdM0bdO0bZo2bds0TdO0TdOmbdM0TdOkTdOk/QP8A/wD/AP8A/wD/AP8A/wD/APiVmJRM3BSiUXNwEklFjUDJ5VY1AycVGJRM3BSiUXNwEklFjUDJ5VY1AycVGJRM3BSiUXNwEklFjX/B/wD/AP8A/wD/AP8A/wD/AP8A+JW";
-
 export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
   const doc = new jsPDF({
     orientation: "portrait",
@@ -69,37 +66,17 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
   });
 
   const pageWidth = doc.internal.pageSize.getWidth();
-  let currentY = 15;
+  let currentY = 20;
 
-  // === LOGO & HEADER ===
-  // Add logo on the left
-  try {
-    // Using a simple colored circle as placeholder logo - replace with actual Mas logo
-    doc.setFillColor(231, 76, 60); // Red
-    doc.circle(25, currentY + 5, 5, 'F');
-    doc.setFillColor(52, 152, 219); // Blue
-    doc.circle(32, currentY + 5, 5, 'F');
-    doc.setFillColor(46, 204, 113); // Green
-    doc.circle(39, currentY + 5, 5, 'F');
-
-    doc.setFontSize(14);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(100, 100, 100);
-    doc.text("Mas", 47, currentY + 7);
-  } catch (e) {
-    console.log("Logo rendering skipped:", e);
-  }
-
-  // Company name centered
-  doc.setFontSize(18);
+  // === HEADER - Company Name (Centered) ===
+  doc.setFontSize(16);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(0, 0, 0);
-  doc.text(data.companyName, pageWidth / 2, currentY + 6, { align: "center" });
+  doc.text(data.companyName, pageWidth / 2, currentY, { align: "center" });
 
-  currentY += 14;
+  currentY += 6;
   doc.setFontSize(10);
   doc.setFont("helvetica", "normal");
-  doc.setTextColor(100, 100, 100);
   doc.text(`Month For : ${data.monthYear}`, pageWidth / 2, currentY, { align: "center" });
 
   currentY += 8;
@@ -141,9 +118,9 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
     body: detailsData,
     theme: "grid",
     styles: {
-      fontSize: 9,
-      cellPadding: 2,
-      lineColor: [200, 200, 200],
+      fontSize: 8,
+      cellPadding: 1.5,
+      lineColor: [0, 0, 0],
       lineWidth: 0.1,
       textColor: [0, 0, 0]
     },
@@ -158,7 +135,7 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
     },
   });
 
-  currentY = (doc as any).lastAutoTable.finalY + 3;
+  currentY = (doc as any).lastAutoTable.finalY + 2;
 
   // === EARNINGS TABLE ===
   const totalEarnings = data.basic + data.hra + data.bonus + data.conv + data.pa + data.ma + data.sa + data.oa + data.arrear + data.incentive;
@@ -205,7 +182,7 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
     styles: {
       fontSize: 8,
       cellPadding: 1.5,
-      lineColor: [200, 200, 200],
+      lineColor: [0, 0, 0],
       lineWidth: 0.1,
       halign: "right",
       textColor: [0, 0, 0]
@@ -213,10 +190,10 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
     headStyles: {
       fillColor: [255, 255, 255],
       textColor: [0, 0, 0],
-      fontSize: 7,
+      fontSize: 8,
     },
     columnStyles: {
-      0: { cellWidth: 20, halign: "center", fillColor: [245, 245, 245] },
+      0: { cellWidth: 18, halign: "center", fillColor: [245, 245, 245] },
       1: { cellWidth: 14 },
       2: { cellWidth: 14 },
       3: { cellWidth: 12 },
@@ -227,11 +204,11 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
       8: { cellWidth: 12 },
       9: { cellWidth: 14 },
       10: { cellWidth: 16 },
-      11: { cellWidth: 20, fontStyle: "bold" },
+      11: { cellWidth: 18, fontStyle: "bold" },
     },
   });
 
-  currentY = (doc as any).lastAutoTable.finalY + 0.5;
+  currentY = (doc as any).lastAutoTable.finalY;
 
   // === DEDUCTIONS TABLE ===
   const totalDeductions = data.pf + data.esic + data.loan + data.adDed + data.otherDed;
@@ -270,7 +247,7 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
     styles: {
       fontSize: 8,
       cellPadding: 1.5,
-      lineColor: [200, 200, 200],
+      lineColor: [0, 0, 0],
       lineWidth: 0.1,
       halign: "right",
       textColor: [0, 0, 0]
@@ -278,20 +255,20 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
     headStyles: {
       fillColor: [255, 255, 255],
       textColor: [0, 0, 0],
-      fontSize: 7,
+      fontSize: 8,
     },
     columnStyles: {
-      0: { cellWidth: 20, halign: "center", fillColor: [245, 245, 245] },
+      0: { cellWidth: 18, halign: "center", fillColor: [245, 245, 245] },
       1: { cellWidth: 14 },
       2: { cellWidth: 14 },
       3: { cellWidth: 12 },
       4: { cellWidth: 12 },
       5: { cellWidth: 12 },
-      11: { cellWidth: 20, fontStyle: "bold" },
+      11: { cellWidth: 18, fontStyle: "bold" },
     },
   });
 
-  currentY = (doc as any).lastAutoTable.finalY + 3;
+  currentY = (doc as any).lastAutoTable.finalY + 2;
 
   // === FORM 16 SUMMARY TABLE ===
   const form16Header = [
@@ -334,7 +311,7 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
     styles: {
       fontSize: 7,
       cellPadding: 1.5,
-      lineColor: [200, 200, 200],
+      lineColor: [0, 0, 0],
       lineWidth: 0.1,
       halign: "center",
       textColor: [0, 0, 0]
@@ -342,10 +319,10 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
     headStyles: {
       fillColor: [255, 255, 255],
       textColor: [0, 0, 0],
-      fontSize: 6.5,
+      fontSize: 7,
     },
     columnStyles: {
-      0: { cellWidth: 20 },
+      0: { cellWidth: 18 },
       1: { cellWidth: 15 },
       2: { cellWidth: 15 },
       3: { cellWidth: 14 },
@@ -359,7 +336,7 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
     },
   });
 
-  currentY = (doc as any).lastAutoTable.finalY + 8;
+  currentY = (doc as any).lastAutoTable.finalY + 6;
 
   // === NET SALARY ===
   doc.setFontSize(10);
@@ -368,12 +345,12 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
   doc.text(`Cheque No : ${data.chequeNo || ""}`, 15, currentY);
   doc.text(`Net Salary : ${formatINR(data.netSalary)}`, pageWidth - 15, currentY, { align: "right" });
 
-  currentY += 6;
+  currentY += 5;
   doc.setFontSize(9);
   doc.setFont("helvetica", "bold");
   doc.text(data.netSalaryWords, pageWidth / 2, currentY, { align: "center" });
 
-  currentY += 10;
+  currentY += 8;
 
   // === FOOTER ===
   doc.setFontSize(8);
@@ -383,7 +360,7 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
 
   // Dotted separator line
   currentY += 3;
-  doc.setDrawColor(150, 150, 150);
+  doc.setDrawColor(0, 0, 0);
   doc.setLineDash([1, 1], 0);
   doc.line(15, currentY, pageWidth - 15, currentY);
 
