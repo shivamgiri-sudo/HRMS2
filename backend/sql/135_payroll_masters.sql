@@ -1,5 +1,4 @@
 -- backend/sql/135_payroll_masters.sql
-USE mas_hrms;
 
 -- ── 1. salary_slab_master ─────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS salary_slab_master (
@@ -60,11 +59,7 @@ CREATE TABLE IF NOT EXISTS salary_package_master (
   updated_at            DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uq_pkg (grade_id, slab_id, location_id, cost_centre_id, effective_from),
   INDEX idx_pkg_grade (grade_id),
-  INDEX idx_pkg_slab  (slab_id),
-  FOREIGN KEY (grade_id)       REFERENCES grade_band_master(id)  ON DELETE RESTRICT,
-  FOREIGN KEY (slab_id)        REFERENCES salary_slab_master(id) ON DELETE RESTRICT,
-  FOREIGN KEY (location_id)    REFERENCES location_master(id)    ON DELETE SET NULL,
-  FOREIGN KEY (cost_centre_id) REFERENCES cost_centre_master(id) ON DELETE SET NULL
+  INDEX idx_pkg_slab  (slab_id)
 );
 
 -- ── 3. designation_band_matrix ────────────────────────────────────────────────
@@ -79,9 +74,5 @@ CREATE TABLE IF NOT EXISTS designation_band_matrix (
   created_at     DATETIME   NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at     DATETIME   NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uq_dbm (department_id, designation_id),
-  INDEX idx_dbm_grade (grade_id),
-  FOREIGN KEY (department_id)  REFERENCES department_master(id)  ON DELETE CASCADE,
-  FOREIGN KEY (designation_id) REFERENCES designation_master(id) ON DELETE CASCADE,
-  FOREIGN KEY (grade_id)       REFERENCES grade_band_master(id)  ON DELETE RESTRICT,
-  FOREIGN KEY (min_slab_id)    REFERENCES salary_slab_master(id) ON DELETE SET NULL
+  INDEX idx_dbm_grade (grade_id)
 );
