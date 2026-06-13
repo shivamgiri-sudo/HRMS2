@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { appendJourneyEvent } from "../employees/journeyLog.service.js";
+import { atsService } from "./ats.service.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -27,12 +28,8 @@ export async function convertCandidateToEmployee(
   actorId: string
 ): Promise<ConvertResult> {
   // 1. Load candidate
-  const [candRows] = await db.execute<RowDataPacket[]>(
-    "SELECT * FROM ats_candidate WHERE id = ? AND active_status = 1 LIMIT 1",
-    [candidateId]
-  );
-  const candidate = (candRows as RowDataPacket[])[0];
-  if (!candidate) throw new Error("Candidate not found");
+  const candidate = await atsService.getCandidate(candidateId);
+  if (!candidate.active_status) throw new Error("Candidate is not active");
 
   if (candidate.current_stage === "converted") {
     throw new Error("Candidate has already been converted to an employee");

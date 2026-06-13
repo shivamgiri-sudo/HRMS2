@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { db } from "../../db/mysql.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
@@ -90,17 +91,12 @@ atsRouter.post(
       return res.status(400).json({ success: false, message: "mobile is required to verify upload ownership" });
     }
 
-    const { db } = await import("../../db/mysql.js");
-    const [rows] = await db.execute(
-      `SELECT id, mobile, created_at FROM ats_candidate WHERE id = ?`,
-      [id]
-    ) as any[];
-
-    if (!rows.length) {
+    let candidate: Awaited<ReturnType<typeof atsService.getCandidate>>;
+    try {
+      candidate = await atsService.getCandidate(id);
+    } catch {
       return res.status(404).json({ success: false, message: "Candidate not found" });
     }
-
-    const candidate = rows[0];
 
     if (String(candidate.mobile).trim() !== String(mobile).trim()) {
       return res.status(403).json({ success: false, message: "Mobile number does not match" });

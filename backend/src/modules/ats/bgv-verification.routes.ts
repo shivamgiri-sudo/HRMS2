@@ -22,6 +22,7 @@ import {
 } from "./bgv-verification.service.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { atsService } from "./ats.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,13 +30,8 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: Request, res: 
 const meta = (req: Request) => ({ ip: req.ip, userAgent: req.get("user-agent") ?? undefined });
 
 async function requireBgvCandidateScope(req: AuthenticatedRequest, candidateId: string): Promise<void> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT applied_for_branch AS branchId, applied_for_process AS processId FROM ats_candidate WHERE id = ? LIMIT 1",
-    [candidateId]
-  );
-  const row = (rows as RowDataPacket[])[0];
-  if (!row) throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
-  const allowed = await hasScopedAccess(req.authUser!.id, ["admin", "hr", "recruiter"], { branchId: row.branchId ?? undefined, processId: row.processId ?? undefined }, { allowAdminBypass: true });
+  const candidate = await atsService.getCandidate(candidateId);
+  const allowed = await hasScopedAccess(req.authUser!.id, ["admin", "hr", "recruiter"], { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined }, { allowAdminBypass: true });
   if (!allowed) throw Object.assign(new Error("Access denied"), { statusCode: 403 });
 }
 
