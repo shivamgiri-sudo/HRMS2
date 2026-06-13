@@ -226,7 +226,10 @@ router.get("/payslip/:runId/:employeeId", h(async (req: AuthenticatedRequest, re
     }
   }
 
-  const data = await payslipService.getPayslip(employeeId, runId);
+  const raw = await payslipService.getPayslip(employeeId, runId);
+  // Parse run_month (YYYY-MM) into numeric month/year for frontend
+  const [runYear, runMon] = (raw.run_month ?? '').split('-').map(Number);
+  const data = { ...raw, month: runMon || 0, year: runYear || 0 };
   return res.json({ success: true, data });
 }));
 

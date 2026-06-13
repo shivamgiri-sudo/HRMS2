@@ -324,20 +324,34 @@ export const leaveService = {
     const offset = (page - 1) * limit;
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (employeeId)  { conds.push("employee_id = ?");    params.push(employeeId); }
-    if (leaveTypeId) { conds.push("leave_type_id = ?");  params.push(leaveTypeId); }
-    if (status)      { conds.push("status = ?");         params.push(status); }
-    if (fromDate)    { conds.push("from_date >= ?");     params.push(fromDate); }
-    if (toDate)      { conds.push("to_date <= ?");       params.push(toDate); }
-    if (activeOn)    { conds.push("from_date <= ?");     params.push(activeOn);
-                       conds.push("to_date >= ?");       params.push(activeOn); }
+    if (employeeId)  { conds.push("lr.employee_id = ?");   params.push(employeeId); }
+    if (leaveTypeId) { conds.push("lr.leave_type_id = ?"); params.push(leaveTypeId); }
+    if (status)      { conds.push("lr.status = ?");        params.push(status); }
+    if (fromDate)    { conds.push("lr.from_date >= ?");    params.push(fromDate); }
+    if (toDate)      { conds.push("lr.to_date <= ?");      params.push(toDate); }
+    if (activeOn)    { conds.push("lr.from_date <= ?");    params.push(activeOn);
+                       conds.push("lr.to_date >= ?");      params.push(activeOn); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM leave_request ${where} ORDER BY applied_at DESC LIMIT ${limit} OFFSET ${offset}`,
+      `SELECT lr.*,
+         CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+         e.first_name, e.last_name,
+         e.avatar_url,
+         dept.dept_name AS department_name,
+         lt.leave_name  AS leave_type_name,
+         CONCAT(rev.first_name, ' ', COALESCE(rev.last_name, '')) AS reviewer_name
+       FROM leave_request lr
+       LEFT JOIN employees e    ON e.id = lr.employee_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
+       LEFT JOIN leave_type_master lt   ON lt.id = lr.leave_type_id
+       LEFT JOIN employees rev  ON rev.id = lr.reviewed_by
+       ${where}
+       ORDER BY lr.applied_at DESC
+       LIMIT ${limit} OFFSET ${offset}`,
       params
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM leave_request ${where}`, params
+      `SELECT COUNT(*) AS total FROM leave_request lr ${where}`, params
     );
     return { data: rows as LeaveRequest[], total: (countRows as any)[0]?.total ?? 0, page, limit };
   },

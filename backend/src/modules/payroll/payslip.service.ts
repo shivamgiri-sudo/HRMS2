@@ -14,21 +14,33 @@ export interface PayslipData {
   generated_by: string | null;
   file_url: string | null;
   acknowledged_at: string | null;
-  // Computed from prep_line
+  // From salary_prep_line + employees join
   employee_code?: string;
+  employee_name?: string;
+  designation?: string;
+  department?: string;
   run_month?: string;
   gross_salary?: number;
+  gross_pay?: number;
   total_deductions?: number;
   net_salary?: number;
+  net_pay?: number;
   pf_employee?: number;
   esic_employee?: number;
   professional_tax?: number;
+  pt_amount?: number;
   tds?: number;
+  tds_amount?: number;
   basic?: number;
   hra?: number;
+  other_allowances?: number;
+  lwp_deduction?: number;
+  advance_recovery?: number;
   working_days?: number;
   present_days?: number;
   lwp_days?: number;
+  ctc?: number;
+  ctc_annual?: number;
 }
 
 export const payslipService = {
@@ -95,19 +107,38 @@ export const payslipService = {
       `SELECT sp.*,
               spl.employee_code,
               spr.run_month,
+              spl.gross_salary   AS gross_pay,
               spl.gross_salary,
               spl.total_deductions,
+              spl.net_salary     AS net_pay,
               spl.net_salary,
               spl.pf_employee,
               spl.esic_employee,
+              spl.professional_tax AS pt_amount,
               spl.professional_tax,
+              spl.tds            AS tds_amount,
               spl.tds,
+              spl.basic,
+              spl.hra,
+              spl.special_allowance AS other_allowances,
+              spl.lwp_deduction,
+              spl.advance_recovery,
               spl.working_days,
               spl.present_days,
-              spl.lwp_days
+              spl.lwp_days,
+              e.first_name, e.last_name,
+              e.ctc              AS ctc_annual,
+              e.ctc,
+              CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+              d.designation_name  AS designation,
+              dept.dept_name      AS department,
+              spr.run_month
          FROM salary_payslip sp
          JOIN salary_prep_line spl ON spl.run_id = sp.run_id AND spl.employee_id = sp.employee_id
          JOIN salary_prep_run  spr ON spr.id = sp.run_id
+         LEFT JOIN employees e    ON e.id = sp.employee_id
+         LEFT JOIN designation_master d    ON d.id = e.designation_id
+         LEFT JOIN department_master dept  ON dept.id = e.department_id
         WHERE sp.employee_id = ? AND sp.run_id = ?
         LIMIT 1`,
       [employeeId, runId]

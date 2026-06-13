@@ -211,7 +211,11 @@ router.post('/clock-in', h(async (req: AuthenticatedRequest, res: Response) => {
     [id, employee_id, today, now, work_mode ?? 'office', latitude ?? null, longitude ?? null, location_name ?? null]
   );
   const [rows] = await db.execute<RowDataPacket[]>(
-    'SELECT * FROM attendance_daily_record WHERE id = ? LIMIT 1', [id]
+    `SELECT adr.*,
+       adr.record_date AS date, adr.clock_in_time AS clock_in, adr.clock_out_time AS clock_out,
+       ROUND(adr.raw_minutes / 60, 2) AS total_hours, adr.attendance_status AS status,
+       adr.clock_in_location AS clock_in_location_name, adr.clock_out_location AS clock_out_location_name
+     FROM attendance_daily_record adr WHERE adr.id = ? LIMIT 1`, [id]
   );
   res.status(201).json({ success: true, data: (rows as RowDataPacket[])[0] });
 }));
@@ -242,7 +246,11 @@ router.post('/clock-out', h(async (req: AuthenticatedRequest, res: Response) => 
     [now, latitude ?? null, longitude ?? null, location_name ?? null, record_id]
   );
   const [rows] = await db.execute<RowDataPacket[]>(
-    'SELECT * FROM attendance_daily_record WHERE id = ? LIMIT 1', [record_id]
+    `SELECT adr.*,
+       adr.record_date AS date, adr.clock_in_time AS clock_in, adr.clock_out_time AS clock_out,
+       ROUND(adr.raw_minutes / 60, 2) AS total_hours, adr.attendance_status AS status,
+       adr.clock_in_location AS clock_in_location_name, adr.clock_out_location AS clock_out_location_name
+     FROM attendance_daily_record adr WHERE adr.id = ? LIMIT 1`, [record_id]
   );
   res.json({ success: true, data: (rows as RowDataPacket[])[0] });
 }));

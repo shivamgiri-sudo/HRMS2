@@ -45,6 +45,8 @@ type Payslip = {
   hra: number;
   other_allowances: number;
   gross_pay: number;
+  ctc?: number;
+  ctc_annual?: number;
   pf_employee: number;
   esic_employee: number;
   pt_amount: number;
@@ -224,13 +226,16 @@ function PayslipModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
       <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl bg-white shadow-2xl">
-        {/* Header */}
+        {/* Header with logo */}
         <div className="flex items-center justify-between border-b p-6">
-          <div>
-            <h2 className="text-lg font-black text-slate-950">Payslip</h2>
-            <p className="text-sm text-slate-500">
-              {MONTH_NAMES[payslip.month]} {payslip.year}
-            </p>
+          <div className="flex items-center gap-4">
+            <img src="/mcn-logo.png" alt="MAS Callnet" className="h-10 w-auto object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+            <div>
+              <h2 className="text-lg font-black text-slate-950">Payslip</h2>
+              <p className="text-sm text-slate-500">
+                {MONTH_NAMES[payslip.month]} {payslip.year}
+              </p>
+            </div>
           </div>
           <button onClick={onClose} className="cursor-pointer text-slate-400 hover:text-slate-700 transition-colors">
             <X className="h-5 w-5" />
@@ -273,6 +278,20 @@ function PayslipModal({
               </p>
             </div>
           </div>
+
+          {/* CTC Summary */}
+          {(payslip.ctc_annual || payslip.ctc) && (
+            <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Annual CTC</p>
+                <p className="text-xl font-black font-mono text-blue-800 mt-1">{INR(payslip.ctc_annual ?? payslip.ctc ?? 0)}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Monthly CTC</p>
+                <p className="text-lg font-black font-mono text-blue-700 mt-1">{INR(Math.round((payslip.ctc_annual ?? payslip.ctc ?? 0) / 12))}</p>
+              </div>
+            </div>
+          )}
 
           {/* Earnings Table */}
           <div>

@@ -77,7 +77,11 @@ export interface AttendanceRegularization {
   id: string;
   employee_id: string;
   session_date: string;
+  requested_status: 'present' | 'half_day' | 'absent' | null;
   reason: string;
+  reason_code: string | null;
+  requested_by_type: 'employee' | 'manager';
+  branch_id: string | null;
   supporting_note: string | null;
   status: string;
   reviewed_by: string | null;
@@ -86,6 +90,10 @@ export interface AttendanceRegularization {
   applied_to_session_id: string | null;
   created_at: string;
   updated_at: string;
+  // JOINed fields (present in list queries)
+  employee_name?: string;
+  employee_code?: string;
+  reason_label?: string;
 }
 
 export interface PaginatedResult<T> {
