@@ -62,7 +62,7 @@ const navGroups: NavGroup[] = [
       { label: "Attendance",       href: "/attendance",           icon: <Clock className="h-[15px] w-[15px]" />,         description: "Attendance" },
       { label: "Leaves",           href: "/leaves",               icon: <CalendarDays className="h-[15px] w-[15px]" />,  description: "Leave" },
       { label: "My Roster",        href: "/my-roster",            icon: <Calendar className="h-[15px] w-[15px]" />,      description: "Roster" },
-      { label: "Payslips",         href: "/payroll/payslips",     icon: <CreditCard className="h-[15px] w-[15px]" />,    description: "Payslips" },
+      { label: "Payslips",         href: "/profile?tab=payslips", icon: <CreditCard className="h-[15px] w-[15px]" />,    description: "Payslips" },
       { label: "Tax Declaration",  href: "/payroll/tax-declaration", icon: <Landmark className="h-[15px] w-[15px]" />,  description: "Tax" },
       { label: "Engagement",       href: "/engagement",           icon: <Sparkles className="h-[15px] w-[15px]" />,      description: "Engagement" },
     ],
@@ -247,44 +247,27 @@ export function DashboardLayout({ children }: Props) {
           onClick={() => setSidebarOpen(false)}
           className="block"
         >
-          <div
-            className="flex items-center gap-3 rounded-xl px-3 py-2.5"
-            style={{ background: "var(--sidebar-surface-1)" }}
-          >
+          <div className="rounded-2xl bg-white px-3 py-3 shadow-sm">
             {logoError ? (
               <div
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-xs font-black text-white"
+                className="flex h-16 items-center justify-center rounded-xl text-xl font-black text-white"
                 style={{ background: "var(--brand-500)" }}
               >
                 MCN
               </div>
             ) : (
-              <div
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl p-1"
-                style={{ background: "rgba(255,255,255,0.96)" }}
-              >
+              <div className="flex h-16 items-center justify-center">
                 <img
                   src={companyLogo}
-                  alt="MAS Callnet"
+                  alt="Mas Callnet India Pvt Ltd"
                   className="h-full w-full object-contain"
                   onError={() => setLogoError(true)}
                 />
               </div>
             )}
-            <div className="min-w-0">
-              <p
-                className="truncate text-[13px] font-bold leading-tight"
-                style={{ color: "var(--sidebar-ink)" }}
-              >
-                MAS Callnet
-              </p>
-              <p
-                className="text-[11px] font-medium"
-                style={{ color: "var(--sidebar-accent)" }}
-              >
-                HRMS Portal
-              </p>
-            </div>
+            <p className="mt-1 text-center text-[11px] font-extrabold uppercase tracking-[0.12em] text-[#073f78]">
+              Mas Callnet India Pvt Ltd
+            </p>
           </div>
         </Link>
       </div>
@@ -304,24 +287,30 @@ export function DashboardLayout({ children }: Props) {
         <Link
           to="/profile"
           onClick={() => setSidebarOpen(false)}
-          className="mb-2 flex items-center gap-2.5 rounded-xl px-3 py-2 transition"
+          className="mb-2 flex items-center gap-3 rounded-2xl px-3 py-3 transition hover:bg-white/15"
           style={{ background: "var(--sidebar-surface-1)" }}
         >
-          <Avatar className="h-7 w-7 flex-shrink-0">
+          <Avatar className="h-14 w-14 flex-shrink-0 ring-2 ring-white/70">
             <AvatarImage src={myProfile?.avatar_url ?? undefined} alt="My photo" />
             <AvatarFallback
-              className="text-xs font-bold"
-              style={{ background: "var(--brand-600)", color: "#fff" }}
+              className="text-base font-bold"
+              style={{ background: "#3BAD49", color: "#fff" }}
             >
               {userInitials}
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
             <p
-              className="truncate text-[12px] font-medium"
+              className="truncate text-sm font-bold"
               style={{ color: "var(--sidebar-ink)" }}
             >
-              {user?.email ?? "My Account"}
+              {myProfile?.full_name || myProfile?.first_name || "My Profile"}
+            </p>
+            <p className="mt-0.5 truncate text-xs text-blue-100">
+              {myProfile?.designation || myProfile?.employee_code || user?.email}
+            </p>
+            <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-green-200">
+              View profile
             </p>
           </div>
         </Link>
@@ -339,7 +328,7 @@ export function DashboardLayout({ children }: Props) {
   );
 
   return (
-    <div className="min-h-screen" style={{ background: "var(--surface-page)" }}>
+    <div className="min-h-dvh" style={{ background: "var(--surface-page)" }}>
       <PWAInstallBanner />
 
       {/* Mobile overlay */}
@@ -390,12 +379,8 @@ export function DashboardLayout({ children }: Props) {
 
       {/* Main content area */}
       <div
-        className="flex min-h-screen flex-col pb-16 lg:pb-0"
-        style={{ paddingLeft: "var(--sidebar-width)" }}
+        className="flex min-h-dvh min-w-0 flex-col pb-16 lg:pb-0 lg:pl-[var(--sidebar-width)]"
       >
-        {/* Only applies on desktop (mobile has no pl) */}
-        <div className="lg:hidden" style={{ paddingLeft: 0 }} />
-
         {/* Topbar */}
         <TopBar
           onMenuClick={() => setSidebarOpen(true)}
