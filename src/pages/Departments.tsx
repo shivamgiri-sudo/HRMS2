@@ -131,19 +131,40 @@ const Departments = () => {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-foreground">Departments</h2>
-            <p className="text-muted-foreground">Manage company departments and teams</p>
-          </div>
-          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger asChild>
-              <Button onClick={() => resetForm()}>
-                <Plus className="mr-2 h-4 w-4" />
-                Add Department
-              </Button>
-            </DialogTrigger>
+        {/* Hero Header */}
+        <section className="relative overflow-hidden rounded-2xl bg-slate-950 text-white shadow-lg">
+          <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-[#1B6AB5]/25 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-8 left-1/3 h-48 w-48 rounded-full bg-[#3BAD49]/10 blur-3xl" />
+          <div className="relative flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between sm:p-8">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#5aa0dd]">
+                Organization Structure
+              </p>
+              <h1 className="mt-2 text-2xl font-black tracking-tight text-white">Departments</h1>
+              <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">
+                Manage company departments, assign heads and track team size.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Departments</p>
+                  <p className="text-lg font-black text-[#5aa0dd]">{departments?.length ?? 0}</p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Employees</p>
+                  <p className="text-lg font-black text-[#3BAD49]">{departments?.reduce((s, d) => s + d.employee_count, 0) ?? 0}</p>
+                </div>
+              </div>
+            </div>
+            <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  onClick={() => resetForm()}
+                  className="shrink-0 rounded-xl bg-[#1B6AB5] px-5 font-bold text-white shadow-lg shadow-[#1B6AB5]/25 hover:bg-[#155e9f]"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Department
+                </Button>
+              </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Create Department</DialogTitle>
@@ -198,45 +219,21 @@ const Departments = () => {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-        </div>
-
-        {/* Stats */}
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-4">
-                <div className="rounded-xl bg-primary/10 p-3">
-                  <Building2 className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Total Departments</p>
-                  <p className="text-2xl font-bold">{departments?.length || 0}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-4">
-                <div className="rounded-xl bg-secondary/50 p-3">
-                  <Users className="h-6 w-6 text-secondary-foreground" />
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Total Employees</p>
-                  <p className="text-2xl font-bold">
-                    {departments?.reduce((sum, d) => sum + d.employee_count, 0) || 0}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+          </div>
+        </section>
 
         {/* Departments Table */}
-        <Card>
-          <CardHeader>
-            <CardTitle>All Departments</CardTitle>
-            <CardDescription>View and manage all departments in your organization</CardDescription>
+        <Card className="overflow-hidden rounded-2xl border-slate-100 shadow-sm">
+          <CardHeader className="border-b border-slate-100 bg-slate-50/50 pb-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-lg font-black text-slate-950">All Departments</CardTitle>
+                <CardDescription className="mt-0.5">View and manage all departments in your organization</CardDescription>
+              </div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#e8f2fc]">
+                <Building2 className="h-5 w-5 text-[#1B6AB5]" />
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             {isLoading ? (
@@ -246,8 +243,8 @@ const Departments = () => {
                 ))}
               </div>
             ) : departments && departments.length > 0 ? (
-              <div className="rounded-xl border border-gray-200 overflow-hidden">
-                <Table className="smarthr-table">
+              <div className="overflow-hidden rounded-xl border border-slate-200">
+                <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Name</TableHead>
@@ -269,7 +266,7 @@ const Departments = () => {
                           {department.manager_name || <span className="text-muted-foreground">-</span>}
                         </TableCell>
                         <TableCell>
-                          <Badge variant="secondary">{department.employee_count}</Badge>
+                          <Badge className="rounded-full bg-[#e8f2fc] px-2.5 text-xs font-bold text-[#1B6AB5] hover:bg-[#e8f2fc]">{department.employee_count}</Badge>
                         </TableCell>
                         <TableCell>
                           {department.created_at && !isNaN(new Date(department.created_at).getTime())
