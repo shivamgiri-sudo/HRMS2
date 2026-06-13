@@ -5,6 +5,7 @@ import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
 import { startAttendanceEngineScheduler } from "./modules/wfm/attendance-engine.cron.js";
 import { legacySyncWorker } from "./workers/legacy-sync-worker.js";
+import { startAccessExpiryScheduler } from "./workers/access-expiry.worker.js";
 
 function startServer() {
   app.listen(env.PORT, () => {
@@ -13,7 +14,8 @@ function startServer() {
       startCommunicationCleanup();
       startAttendanceEngineScheduler();
       legacySyncWorker.start();
-      console.log(`[schedulers] tenure, communication, attendance, legacy-sync started`);
+      startAccessExpiryScheduler();
+      console.log(`[schedulers] tenure, communication, attendance, legacy-sync, access-expiry started`);
     } else {
       console.log(`[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)`);
     }

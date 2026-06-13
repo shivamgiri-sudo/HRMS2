@@ -275,10 +275,9 @@ export const authService = {
   async createPasswordResetTokenByUserId(userId: string, hours = RESET_EXPIRES_HOURS): Promise<string> {
     const rawToken = crypto.randomBytes(32).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-    const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
     await db.execute(
-      'INSERT INTO auth_password_reset (user_id, token_hash, expires_at) VALUES (?, ?, ?)',
-      [userId, tokenHash, mysqlDateTime(expiresAt)]
+      'INSERT INTO auth_password_reset (user_id, token_hash, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR))',
+      [userId, tokenHash, hours]
     );
     return rawToken;
   },
@@ -317,10 +316,23 @@ export const authService = {
   async resetPassword(rawToken: string, newPassword: string): Promise<void> {
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT user_id FROM auth_password_reset WHERE token_hash = ? AND used = 0 AND expires_at > NOW() LIMIT 1',
+      `SELECT apr.user_id, au.password_hash AS current_hash
+         FROM auth_password_reset apr
+         JOIN auth_user au ON au.id = apr.user_id
+        WHERE apr.token_hash = ? AND apr.used = 0 AND apr.expires_at > NOW()
+        LIMIT 1`,
       [tokenHash]
     );
     if (!rows[0]) throw new Error('Invalid or expired reset token');
+
+    const isSameAsCurrentPassword = await bcrypt.compare(newPassword, rows[0].current_hash as string);
+    if (isSameAsCurrentPassword) {
+      throw Object.assign(
+        new Error('New password must be different from your current password'),
+        { statusCode: 400 }
+      );
+    }
+
     const hash = await bcrypt.hash(newPassword, 10);
     await db.execute('UPDATE auth_user SET password_hash = ?, must_change_password = 0 WHERE id = ?', [hash, rows[0].user_id]);
     await db.execute('UPDATE auth_password_reset SET used = 1 WHERE token_hash = ?', [tokenHash]);

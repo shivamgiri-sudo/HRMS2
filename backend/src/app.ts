@@ -73,6 +73,7 @@ import legacyRouter from "./modules/legacy/legacy.routes.js";
 import dialerRouter from "./modules/dialer/dialer.routes.js";
 import { externalDbRouter } from "./modules/external-db/external-db.routes.js";
 import { aprRouter } from "./modules/apr/apr.routes.js";
+import { kpiMasterRouter } from "./modules/kpi/kpi-master.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
 import { payrollMastersRouter } from "./modules/payroll-masters/payrollMasters.routes.js";
 import { incentivesRouter } from "./modules/incentives/incentives.routes.js";
@@ -146,6 +147,7 @@ app.use("/api/payroll-compliance", payrollComplianceRouter); // India statutory 
 app.use("/api/employees", employeeRouter);
 app.use("/api/rm-change", rmChangeRouter);
 app.use("/api/kpi/process-role", kpiProcessRoleRouter);
+app.use("/api/kpi-master", kpiMasterRouter);
 app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
 app.use("/api/ats", atsFormConfigRouter); // form-config/bootstrap is public — must be before clientRouter's requireAuth catch-all

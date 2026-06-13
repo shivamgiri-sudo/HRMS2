@@ -44,15 +44,20 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { useAuth } from "@/contexts/AuthContext";
 
-type AppRole = "admin" | "hr" | "manager" | "employee";
 type EmployeeStatus = "active" | "inactive" | "onboarding" | "offboarded";
+
+interface CatalogRole {
+  role_key: string;
+  role_name: string;
+  description?: string;
+}
 
 interface UserWithRole {
   id: string;
   email: string;
   full_name: string | null;
   avatar_url: string | null;
-  role: AppRole | null;
+  role: string | null;
   role_id: string | null;
   employee_status: EmployeeStatus | null;
   blocked: boolean;
@@ -68,18 +73,25 @@ interface UnlinkedEmployee {
   designation: string;
 }
 
-const roleLabels: Record<AppRole, string> = {
-  admin: "Administrator",
-  hr: "HR Manager",
-  manager: "Manager",
-  employee: "Employee",
-};
-
-const roleBadgeVariant: Record<AppRole, "default" | "secondary" | "outline"> = {
-  admin: "default",
-  hr: "default",
-  manager: "secondary",
-  employee: "outline",
+// Stable color chips for known roles; unknown roles fall back to "outline"
+const roleBadgeVariant: Record<string, "default" | "secondary" | "outline"> = {
+  admin:           "default",
+  hr:              "default",
+  ceo:             "default",
+  branch_head:     "default",
+  process_manager: "secondary",
+  manager:         "secondary",
+  assistant_manager:"secondary",
+  wfm:             "secondary",
+  finance:         "secondary",
+  payroll:         "secondary",
+  qa:              "secondary",
+  recruiter:       "outline",
+  trainer:         "outline",
+  team_leader:     "outline",
+  tl:              "outline",
+  employee:        "outline",
+  client_user:     "outline",
 };
 
 const statusLabels: Record<EmployeeStatus, string> = {
@@ -105,13 +117,21 @@ export function UserRolesManager() {
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [unlinkDialogOpen, setUnlinkDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserWithRole | null>(null);
-  const [selectedRole, setSelectedRole] = useState<AppRole>("employee");
+  const [selectedRole, setSelectedRole] = useState<string>("employee");
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>("");
+
+  // All roles from catalog — used to populate the role picker
+  const { data: catalogRoles = [] } = useQuery<CatalogRole[]>({
+    queryKey: ['role-catalog'],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ data: CatalogRole[] }>("/api/access/roles/catalog");
+      return res.data ?? [];
+    },
+  });
 
   const { data: users = [], isLoading } = useQuery({
     queryKey: ['users-with-roles'],
     queryFn: async () => {
-      // Fetch employees and roles in parallel
       const [empRes, rolesRes] = await Promise.all([
         hrmsApi.get<{success:boolean;data:any}>("/api/employees"),
         hrmsApi.get<{success:boolean;data:any}>("/api/access/roles/catalog"),
@@ -120,13 +140,12 @@ export function UserRolesManager() {
       const roles = rolesRes.data ?? [];
       const employees = profiles;
 
-      // Map roles and status to users
       const usersWithRoles: UserWithRole[] = (profiles || []).map((profile: any) => {
         const userRole = roles?.find((r: any) => r.user_id === profile.id);
         const employee = employees?.find((e: any) => e.user_id === profile.id);
         return {
           ...profile,
-          role: userRole?.role as AppRole | null,
+          role: userRole?.role as string | null,
           role_id: userRole?.id || null,
           employee_status: employee?.status as EmployeeStatus | null,
           blocked: profile.blocked ?? false,
@@ -148,7 +167,7 @@ export function UserRolesManager() {
   });
 
   const updateRoleMutation = useMutation({
-    mutationFn: async ({ userId, role, existingRoleId }: { userId: string; role: AppRole; existingRoleId: string | null }) => {
+    mutationFn: async ({ userId, role, existingRoleId }: { userId: string; role: string; existingRoleId: string | null }) => {
       if (existingRoleId) {
         // Update existing role
         await hrmsApi.post(`/api/admin/users/${userId}/roles`, { roleKey: role });
@@ -230,7 +249,7 @@ export function UserRolesManager() {
 
   const handleEditRole = (user: UserWithRole) => {
     setSelectedUser(user);
-    setSelectedRole(user.role || "employee");
+    setSelectedRole(user.role ?? "employee");
     setDialogOpen(true);
   };
 
@@ -261,7 +280,7 @@ export function UserRolesManager() {
   };
 
   const handleSaveRole = () => {
-    if (!selectedUser) return;
+    if (!selectedUser || !selectedRole) return;
     updateRoleMutation.mutate({
       userId: selectedUser.id,
       role: selectedRole,
@@ -348,8 +367,8 @@ export function UserRolesManager() {
                   </TableCell>
                   <TableCell>
                     {user.role ? (
-                      <Badge variant={roleBadgeVariant[user.role]}>
-                        {roleLabels[user.role]}
+                      <Badge variant={roleBadgeVariant[user.role] ?? "outline"}>
+                        {catalogRoles.find(r => r.role_key === user.role)?.role_name ?? user.role}
                       </Badge>
                     ) : (
                       <Badge variant="outline">No Role</Badge>
@@ -414,35 +433,25 @@ export function UserRolesManager() {
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label>Role</Label>
-                <Select value={selectedRole} onValueChange={(value) => setSelectedRole(value as AppRole)}>
+                <Select value={selectedRole} onValueChange={setSelectedRole}>
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue placeholder="Select a role…" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="admin">
-                      <div className="flex flex-col">
-                        <span>Administrator</span>
-                        <span className="text-xs text-muted-foreground">Full system access</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="hr">
-                      <div className="flex flex-col">
-                        <span>HR Manager</span>
-                        <span className="text-xs text-muted-foreground">Manage employees, leaves, payroll</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="manager">
-                      <div className="flex flex-col">
-                        <span>Manager</span>
-                        <span className="text-xs text-muted-foreground">Manage team members</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="employee">
-                      <div className="flex flex-col">
-                        <span>Employee</span>
-                        <span className="text-xs text-muted-foreground">Basic access</span>
-                      </div>
-                    </SelectItem>
+                    {catalogRoles.length === 0 ? (
+                      <SelectItem value="" disabled>Loading roles…</SelectItem>
+                    ) : (
+                      catalogRoles.map((r) => (
+                        <SelectItem key={r.role_key} value={r.role_key}>
+                          <div className="flex flex-col">
+                            <span>{r.role_name}</span>
+                            {r.description && (
+                              <span className="text-xs text-muted-foreground">{r.description}</span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>

@@ -5,6 +5,7 @@ import { format, startOfMonth, endOfMonth } from "date-fns";
 export interface AttendanceRecord {
   id: string;
   employee_id: string;
+  // Native DB columns
   record_date: string;
   clock_in_time: string | null;
   clock_out_time: string | null;
@@ -20,6 +21,14 @@ export interface AttendanceRecord {
   late_mark: number | null;
   late_by_minutes: number | null;
   is_locked: number | null;
+  // Aliased columns returned by backend (match frontend usage)
+  date: string;
+  clock_in: string | null;
+  clock_out: string | null;
+  total_hours: number | null;
+  status: string;
+  clock_in_location_name: string | null;
+  clock_out_location_name: string | null;
   employee?: {
     first_name: string;
     last_name: string;
@@ -45,36 +54,23 @@ export function useAttendance(month?: Date, employeeId?: string) {
   return useQuery({
     queryKey: ["attendance", start, end, employeeId ?? "all"],
     queryFn: async () => {
-      console.log('[useAttendance] Fetching:', { start, end, employeeId });
-
       const params = new URLSearchParams({ fromDate: start, toDate: end, limit: "200" });
       if (employeeId) {
         params.set("employeeId", employeeId);
       }
 
-      console.log('[useAttendance] API URL:', `/api/wfm/attendance/daily?${params.toString()}`);
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(`/api/wfm/attendance/daily?${params}`);
 
-      try {
-        const res = await hrmsApi.get<{ success: boolean; data: any[] }>(`/api/wfm/attendance/daily?${params}`);
-        console.log('[useAttendance] Response:', res);
-
-        if (!res.success) {
-          throw new Error(res.message || 'Failed to fetch attendance records');
-        }
-
-        const records = (res.data || []) as unknown as AttendanceRecord[];
-        console.log('[useAttendance] Records count:', records.length);
-
-        return records;
-      } catch (error: any) {
-        console.error('[useAttendance] Error:', error);
-        throw new Error(error.message || 'Failed to load attendance history. Please check your connection and try again.');
+      if (!res.success) {
+        throw new Error((res as any).message || 'Failed to fetch attendance records');
       }
+
+      return (res.data || []) as AttendanceRecord[];
     },
-    enabled: true, // Always enabled - let API handle authorization
+    enabled: true,
     retry: 2,
     retryDelay: 1000,
-    staleTime: 30000, // 30 seconds
+    staleTime: 30000,
   });
 }
 
@@ -87,26 +83,23 @@ export function useTodayAttendance(employeeId?: string) {
     queryFn: async () => {
       if (!employeeId) return null;
 
-      // First check today's record
       try {
         const res = await hrmsApi.get<{ success: boolean; data: any }>(
           `/api/wfm/attendance/daily/${employeeId}/${today}`
         );
-        if (res.data) return res.data as unknown as AttendanceRecord;
+        if (res.data) return res.data as AttendanceRecord;
       } catch {
-        // 404 means no record yet — fall through
+        // 404 means no record yet
       }
 
-      // If no today record, check for yesterday's unclosed record (cross-midnight shifts)
       try {
         const res = await hrmsApi.get<{ success: boolean; data: any }>(
           `/api/wfm/attendance/daily/${employeeId}/${yesterday}`
         );
         const record = res.data as any;
-        // Only return if clock_out is null (still open shift)
-        if (record && !record.clock_out_time) return record as unknown as AttendanceRecord;
+        if (record && !record.clock_out_time && !record.clock_out) return record as AttendanceRecord;
       } catch {
-        // No record for yesterday either
+        // No record for yesterday
       }
 
       return null;
@@ -167,7 +160,6 @@ export function useAttendanceReport(month: Date) {
       const res = await hrmsApi.get<{ success: boolean; data: any[] }>(`/api/wfm/attendance/daily?${params}`);
       const records = res.data || [];
 
-      // Group by employee
       const employeeMap = new Map<string, {
         employeeId: string;
         employeeName: string;
@@ -201,12 +193,11 @@ export function useAttendanceReport(month: Date) {
         }
 
         const empData = employeeMap.get(key)!;
-        empData.records.push(record as unknown as AttendanceRecord);
+        empData.records.push(record as AttendanceRecord);
         empData.totalDays++;
-        // raw_minutes is the authoritative column; fall back to legacy total_hours if present
         empData.totalHours += record.raw_minutes != null ? record.raw_minutes / 60 : (record.total_hours || 0);
-        if (record.attendance_status === "present") empData.presentDays++;
-        if (record.attendance_status === "late" || record.late_mark === 1) empData.lateDays++;
+        if (record.attendance_status === "present" || record.status === "present") empData.presentDays++;
+        if (record.attendance_status === "late" || record.status === "late" || record.late_mark === 1) empData.lateDays++;
         if (record.work_mode === "wfo" || record.work_mode === "office") empData.wfoDays++;
       });
 

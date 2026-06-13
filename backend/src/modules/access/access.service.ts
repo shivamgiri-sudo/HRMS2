@@ -208,11 +208,12 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
     }));
   }
 
-  // 5. User page overrides — take precedence over role-based access
+  // 5. User page overrides — take precedence over role-based access (skip expired entries)
   const [userPageRows] = await db.execute<RowDataPacket[]>(
     `SELECT page_code, can_view, can_create, can_edit, can_delete, can_export
      FROM user_page_access
-     WHERE user_id = ? AND active_status = 1`,
+     WHERE user_id = ? AND active_status = 1
+       AND (expires_at IS NULL OR expires_at > NOW())`,
     [userId]
   );
 

@@ -102,14 +102,16 @@ export async function getUserEffectivePageAccess(userId: string): Promise<Array<
 }
 
 /**
- * Assign page access to a user (admin only)
+ * Assign page access to a user (admin only).
+ * Pass expires_at (ISO string) for time-bounded access; omit or pass null for permanent.
  */
 export async function assignUserPageAccess(
   userId: string,
   pageCode: string,
   permissions: PageAccessPermissions,
   assignedBy: string,
-  notes?: string
+  notes?: string,
+  expiresAt?: string | null
 ): Promise<void> {
   const conn = await db.getConnection();
   try {
@@ -129,7 +131,8 @@ export async function assignUserPageAccess(
       await conn.execute(
         `UPDATE user_page_access
          SET can_view = ?, can_create = ?, can_edit = ?, can_delete = ?, can_export = ?,
-             active_status = 1, assigned_by = ?, assigned_at = NOW(), notes = ?
+             active_status = 1, assigned_by = ?, assigned_at = NOW(), notes = ?,
+             expires_at = ?
          WHERE user_id = ? AND page_code = ?`,
         [
           permissions.can_view ? 1 : 0,
@@ -139,6 +142,7 @@ export async function assignUserPageAccess(
           permissions.can_export ? 1 : 0,
           assignedBy,
           notes || null,
+          expiresAt ?? null,
           userId,
           pageCode
         ]
@@ -160,8 +164,8 @@ export async function assignUserPageAccess(
     } else {
       // Insert new assignment
       await conn.execute(
-        `INSERT INTO user_page_access (user_id, page_code, can_view, can_create, can_edit, can_delete, can_export, assigned_by, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO user_page_access (user_id, page_code, can_view, can_create, can_edit, can_delete, can_export, assigned_by, notes, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           userId,
           pageCode,
@@ -171,7 +175,8 @@ export async function assignUserPageAccess(
           permissions.can_delete ? 1 : 0,
           permissions.can_export ? 1 : 0,
           assignedBy,
-          notes || null
+          notes || null,
+          expiresAt ?? null
         ]
       );
 
@@ -242,28 +247,24 @@ export async function revokeUserPageAccess(
 }
 
 /**
- * Bulk assign multiple pages to a user (admin only)
+ * Bulk assign multiple pages to a user (admin only).
+ * Each assignment may optionally specify expires_at for time-bounded access.
  */
 export async function bulkAssignUserPageAccess(
   userId: string,
-  assignments: Array<{ page_code: string; permissions: PageAccessPermissions }>,
+  assignments: Array<{ page_code: string; permissions: PageAccessPermissions; expires_at?: string | null }>,
   assignedBy: string,
   notes?: string
 ): Promise<void> {
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
-
-    for (const assignment of assignments) {
-      await assignUserPageAccess(userId, assignment.page_code, assignment.permissions, assignedBy, notes);
-    }
-
-    await conn.commit();
-  } catch (error) {
-    await conn.rollback();
-    throw error;
-  } finally {
-    conn.release();
+  for (const assignment of assignments) {
+    await assignUserPageAccess(
+      userId,
+      assignment.page_code,
+      assignment.permissions,
+      assignedBy,
+      notes,
+      assignment.expires_at ?? null
+    );
   }
 }
 
