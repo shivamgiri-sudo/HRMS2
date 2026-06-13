@@ -89,6 +89,9 @@ const MIGRATION_MANIFEST: string[] = [
   "125_kpi_process_role_engine.sql",
   "143_report_builder.sql",
   "150_leave_policy_engine.sql",
+  "160_kpi_master_config.sql",
+  "170_access_improvements.sql",
+  "171_attendance_regularization_v2.sql",
 ];
 
 export type MigrationHealth = {

@@ -81,23 +81,44 @@ router.post(
 
     const attendanceStatus = rawMinutes >= 360 ? 'present' : 'half_day';
     const [empInfo] = await db.execute<RowDataPacket[]>(
-      `SELECT branch_id, process_id FROM employees WHERE id = ? LIMIT 1`, [employeeId]
+      `SELECT branch_id, process_id, branch_name, process_name FROM employees e
+       LEFT JOIN branch_master b ON b.id = e.branch_id
+       LEFT JOIN process_master p ON p.id = e.process_id
+       WHERE e.id = ? LIMIT 1`, [employeeId]
     );
     const emp = (empInfo[0] as any) ?? {};
 
+    // 1. Upsert attendance_daily_record (clock_in/out are biometric first_in/last_out)
     await db.execute(`
       INSERT INTO attendance_daily_record
         (id, employee_id, record_date, clock_in_time, clock_out_time, raw_minutes,
-         attendance_status, attendance_source, branch_id, process_id, created_by)
-      VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'biometric', ?, ?, 'ncosec_live')
+         biometric_minutes, attendance_status, attendance_source, branch_id, process_id, created_by)
+      VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, 'biometric', ?, ?, 'ncosec_live')
       ON DUPLICATE KEY UPDATE
-        clock_in_time     = LEAST(COALESCE(clock_in_time, VALUES(clock_in_time)), VALUES(clock_in_time)),
-        clock_out_time    = GREATEST(COALESCE(clock_out_time, VALUES(clock_out_time)), VALUES(clock_out_time)),
-        raw_minutes       = VALUES(raw_minutes),
-        attendance_status = VALUES(attendance_status),
-        attendance_source = 'biometric'
+        clock_in_time      = IF(is_locked = 0, LEAST(COALESCE(clock_in_time, VALUES(clock_in_time)), VALUES(clock_in_time)), clock_in_time),
+        clock_out_time     = IF(is_locked = 0, GREATEST(COALESCE(clock_out_time, VALUES(clock_out_time)), VALUES(clock_out_time)), clock_out_time),
+        biometric_minutes  = IF(is_locked = 0, VALUES(biometric_minutes), biometric_minutes),
+        raw_minutes        = IF(is_locked = 0, VALUES(raw_minutes), raw_minutes),
+        attendance_status  = IF(is_locked = 0, VALUES(attendance_status), attendance_status),
+        attendance_source  = IF(is_locked = 0, 'biometric', attendance_source)
     `, [employeeId, punchDate, log.first_punch_in, log.last_punch_out, rawMinutes,
-        attendanceStatus, emp.branch_id ?? null, emp.process_id ?? null]);
+        rawMinutes, attendanceStatus, emp.branch_id ?? null, emp.process_id ?? null]);
+
+    // 2. Sync wfm_attendance_session so legacy queries stay consistent with biometric data
+    await db.execute(`
+      INSERT INTO wfm_attendance_session
+        (id, employee_id, session_date, login_time, logout_time, total_login_minutes,
+         current_status, punch_source, branch_name, process_name)
+      VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'BIOMETRIC', ?, ?)
+      ON DUPLICATE KEY UPDATE
+        login_time          = LEAST(COALESCE(login_time, VALUES(login_time)), VALUES(login_time)),
+        logout_time         = GREATEST(COALESCE(logout_time, VALUES(logout_time)), VALUES(logout_time)),
+        total_login_minutes = VALUES(total_login_minutes),
+        current_status      = VALUES(current_status),
+        punch_source        = 'BIOMETRIC'
+    `, [employeeId, punchDate, log.first_punch_in, log.last_punch_out, rawMinutes,
+        rawMinutes >= 360 ? 'Logged Out' : 'Partial',
+        emp.branch_name ?? null, emp.process_name ?? null]);
 
     res.json({ success: true, employee_id: employeeId, punch_date: punchDate, raw_minutes: rawMinutes });
   })

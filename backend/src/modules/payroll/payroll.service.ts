@@ -251,7 +251,22 @@ export const payrollService = {
 
   async listLines(runId: string): Promise<SalaryPrepLine[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM salary_prep_line WHERE run_id = ? ORDER BY employee_code ASC",
+      `SELECT spl.*,
+         CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+         spl.gross_salary  AS gross_pay,
+         spl.net_salary    AS net_pay,
+         spl.professional_tax AS pt_amount,
+         spl.tds           AS tds_amount,
+         sp.id             AS payslip_id,
+         sp.acknowledged_at,
+         CASE WHEN sp.acknowledged_at IS NOT NULL THEN 'acknowledged'
+              WHEN sp.id IS NOT NULL THEN 'generated'
+              ELSE NULL END AS payslip_status
+       FROM salary_prep_line spl
+       LEFT JOIN employees e ON e.id = spl.employee_id
+       LEFT JOIN salary_payslip sp ON sp.run_id = spl.run_id AND sp.employee_id = spl.employee_id
+       WHERE spl.run_id = ?
+       ORDER BY spl.employee_code ASC`,
       [runId]
     );
     return rows as SalaryPrepLine[];

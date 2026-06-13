@@ -67,10 +67,14 @@ export const payrollController = {
   async listRuns(req: Request, res: Response) {
     const parsed = runFiltersSchema.safeParse(req.query);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    // Pass scopeFilter from middleware
     const filtersWithScope = { ...parsed.data, scopeFilter: (req as any).scopeFilter };
     const result = await payrollService.listRuns(filtersWithScope);
-    res.json({ data: result.data, total: result.total, page: result.page, limit: result.limit });
+    // Parse run_month (YYYY-MM) into numeric month/year for frontend consumption
+    const enriched = result.data.map((r: any) => {
+      const [yr, mo] = (r.run_month ?? '').split('-').map(Number);
+      return { ...r, month: mo || 0, year: yr || 0 };
+    });
+    res.json({ success: true, data: enriched, total: result.total, page: result.page, limit: result.limit });
   },
 
   async getRun(req: Request, res: Response) {

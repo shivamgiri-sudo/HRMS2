@@ -15,6 +15,10 @@ const LEGACY_DOUBLE_DATA_PATHS = [
 ];
 
 function getAuthHeader(): Record<string, string> {
+  // Real JWT token always takes priority over demo session
+  const mysqlToken = localStorage.getItem("hrms_access_token");
+  if (mysqlToken) return { Authorization: `Bearer ${mysqlToken}` };
+
   const demoRaw = localStorage.getItem("hrms_demo_session");
   if (demoRaw) {
     try {
@@ -22,12 +26,9 @@ function getAuthHeader(): Record<string, string> {
       const token = demo?.access_token;
       if (token) return { Authorization: `Bearer ${token}` };
     } catch {
-      // Fall through to the normal MySQL JWT session.
+      // Fall through
     }
   }
-
-  const mysqlToken = localStorage.getItem("hrms_access_token");
-  if (mysqlToken) return { Authorization: `Bearer ${mysqlToken}` };
 
   return {};
 }
@@ -103,6 +104,10 @@ async function requestRaw(method: string, path: string): Promise<string> {
 }
 
 export function getAuthToken(): string | null {
+  // Real JWT token always takes priority
+  const mysqlToken = localStorage.getItem("hrms_access_token");
+  if (mysqlToken) return mysqlToken;
+
   const demoRaw = localStorage.getItem("hrms_demo_session");
   if (demoRaw) {
     try {
@@ -110,11 +115,11 @@ export function getAuthToken(): string | null {
       const token = demo?.access_token;
       if (token) return token;
     } catch {
-      // Fall through to the normal MySQL JWT token.
+      // Fall through
     }
   }
 
-  return localStorage.getItem("hrms_access_token");
+  return null;
 }
 
 export const hrmsApi = {

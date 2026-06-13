@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
 import type { AppRole } from "@/types/roles";
-import { DEMO_CREDENTIALS } from "@/lib/demoCreds";
 
 export type WorkforcePageAccess = {
   page_code: string;
@@ -85,54 +84,30 @@ export const useUserRole = () => {
     queryFn: async (): Promise<UserRoleData | null> => {
       if (!user?.id) return null;
 
-      const demoCred = DEMO_CREDENTIALS.find((credential) => credential.userId === user.id);
-      if (demoCred) {
-        const demoRole = demoCred.role as AppRole;
+      const response = await hrmsApi.get<{ success: boolean; data: any }>("/api/access/me");
+      const data = response.data;
+
+      if (data) {
+        const roles = unique((data.roles ?? []).map(String)) as AppRole[];
+        const scopeRoleKeys = (data.scopes ?? [])
+          .map((scope: WorkforceScope) => scope.role_key)
+          .filter(Boolean);
+        const roleKeys = expandRoleKeys([...roles, ...scopeRoleKeys, "employee"]);
+
         return {
-          roles: [demoRole],
-          roleKeys: expandRoleKeys([demoRole, "employee"]),
-          primaryRole: getPrimaryRole([demoRole]),
-          employeeId: demoCred.employeeId,
-          employeeCode: demoCred.employeeCode,
-          employeeName: demoCred.fullName,
-          scopes: [],
-          pages: demoCred.pages.map((code) => ({
-            page_code: code,
-            can_view: true,
-            can_create: true,
-            can_edit: true,
-            can_delete: true,
-            can_export: true,
-          })),
+          roles,
+          roleKeys,
+          primaryRole: getPrimaryRole(roles),
+          employeeId: data.employeeId ?? data.employee?.id ?? null,
+          employeeCode: data.employeeCode ?? data.employee?.employee_code ?? null,
+          employeeName:
+            data.employeeName ??
+            (data.employee
+              ? `${data.employee.first_name ?? ""} ${data.employee.last_name ?? ""}`.trim()
+              : null),
+          scopes: data.scopes ?? [],
+          pages: data.pages ?? data.pagePerms ?? [],
         };
-      }
-
-      if (localStorage.getItem("hrms_access_token")) {
-        const response = await hrmsApi.get<{ success: boolean; data: any }>("/api/access/me");
-        const data = response.data;
-
-        if (data) {
-          const roles = unique((data.roles ?? []).map(String)) as AppRole[];
-          const scopeRoleKeys = (data.scopes ?? [])
-            .map((scope: WorkforceScope) => scope.role_key)
-            .filter(Boolean);
-          const roleKeys = expandRoleKeys([...roles, ...scopeRoleKeys, "employee"]);
-
-          return {
-            roles,
-            roleKeys,
-            primaryRole: getPrimaryRole(roles),
-            employeeId: data.employeeId ?? data.employee?.id ?? null,
-            employeeCode: data.employeeCode ?? data.employee?.employee_code ?? null,
-            employeeName:
-              data.employeeName ??
-              (data.employee
-                ? `${data.employee.first_name ?? ""} ${data.employee.last_name ?? ""}`.trim()
-                : null),
-            scopes: data.scopes ?? [],
-            pages: data.pages ?? data.pagePerms ?? [],
-          };
-        }
       }
 
       return {

@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { Employee, PaginatedResult } from "./employee.types.js";
 import type { CreateEmployeeInput, EmployeeFilters, UpdateEmployeeInput } from "./employee.validation.js";
+import { assignRole } from "../access/access.service.js";
 
 const assignSalary = async (employeeId: string, structureId: string, ctcAnnual: number, effectiveFrom: string) => {
   await db.execute(
@@ -75,13 +76,16 @@ export const employeeService = {
   async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } | string }): Promise<PaginatedResult<Employee>> {
     const { page, limit, status, processId, branchId, search, scopeFilter } = filters;
     const offset = (page - 1) * limit;
-    const conds: string[] = ["active_status = 1"];
+    const conds: string[] = ["e.active_status = 1"];
     const params: unknown[] = [];
 
-    if (status)    { conds.push("employment_status = ?"); params.push(status); }
-    if (processId) { conds.push("process_id = ?");        params.push(processId); }
-    if (branchId)  { conds.push("branch_id = ?");         params.push(branchId); }
-    if (search)    { conds.push("(full_name LIKE ? OR employee_code LIKE ?)"); params.push(`%${search}%`, `%${search}%`); }
+    if (status)    { conds.push("e.employment_status = ?"); params.push(status); }
+    if (processId) { conds.push("e.process_id = ?");        params.push(processId); }
+    if (branchId)  { conds.push("e.branch_id = ?");         params.push(branchId); }
+    if (search)    {
+      conds.push("(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) LIKE ? OR e.employee_code LIKE ?)");
+      params.push(`%${search}%`, `%${search}%`);
+    }
 
     // Apply scope filter from middleware (object {sql, params} or legacy string)
     if (scopeFilter) {
@@ -100,11 +104,23 @@ export const employeeService = {
     const where = `WHERE ${conds.join(" AND ")}`;
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM employees ${where} ORDER BY employee_code ASC LIMIT ${limit} OFFSET ${offset}`,
+      `SELECT e.*,
+         dept.dept_name         AS department_name,
+         desig.designation_name AS designation_name,
+         b.branch_name,
+         p.process_name
+       FROM employees e
+       LEFT JOIN department_master  dept  ON dept.id  = e.department_id
+       LEFT JOIN designation_master desig ON desig.id = e.designation_id
+       LEFT JOIN branch_master      b     ON b.id     = e.branch_id
+       LEFT JOIN process_master     p     ON p.id     = e.process_id
+       ${where}
+       ORDER BY e.employee_code ASC
+       LIMIT ${limit} OFFSET ${offset}`,
       params
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM employees ${where}`, params
+      `SELECT COUNT(*) AS total FROM employees e ${where}`, params
     );
     return { data: rows as Employee[], total: (countRows as any)[0]?.total ?? 0, page, limit };
   },
@@ -137,6 +153,27 @@ export const employeeService = {
       params.push(id);
       await db.execute(`UPDATE employees SET ${sets.join(", ")} WHERE id = ?`, params);
     }
+
+    // Auto-assign roles mapped to the new designation (additive only, never removes)
+    if (input.designationId) {
+      try {
+        const updated = await this.getEmployee(id);
+        if (updated.user_id) {
+          const [mapRows] = await db.execute<RowDataPacket[]>(
+            `SELECT role_key FROM designation_role_map
+             WHERE designation_id = ? AND active_status = 1`,
+            [input.designationId]
+          );
+          for (const { role_key } of mapRows as any[]) {
+            await assignRole(updated.user_id, role_key as string, _userId, undefined);
+          }
+        }
+      } catch (err) {
+        // Non-fatal — log but don't fail the update
+        console.error("[employee.service] designation role auto-assign failed:", err);
+      }
+    }
+
     return this.getEmployee(id);
   },
 

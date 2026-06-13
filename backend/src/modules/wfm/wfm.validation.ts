@@ -81,9 +81,11 @@ export const breakSchema = z.object({
 
 export const regularizationSchema = z.object({
   // employeeId removed - derived from auth token for security
-  sessionDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
-  reason: z.string().trim().min(1).max(500),
-  supportingNote: z.string().trim().nullable().optional(),
+  sessionDate:     z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
+  reason:          z.string().trim().min(1).max(500),
+  reasonCode:      z.string().min(1).max(50).optional(),
+  requestedStatus: z.enum(['present', 'half_day', 'absent']).optional(),
+  supportingNote:  z.string().trim().nullable().optional(),
 }).refine(d => {
   const today = new Date();
   today.setHours(23, 59, 59, 999);
