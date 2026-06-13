@@ -1,27 +1,39 @@
 /**
- * HRMS Design System v2.0
- * Inspired by: Linear (dark sidebar + surface ladder), Stripe (clean data cards + tabular figures),
- * Notion (semantic card tints), Raycast (command palette search)
+ * HRMS Design System v2.0 — MAS Callnet Brand
+ * Colors sourced from company logo:
+ *   Primary Blue  #1B6AB5
+ *   Accent Red    #E8231A
+ *   Success Green #3BAD49
  *
  * Rules:
  * - Use semantic tokens in components, never raw hex
- * - Primary blue (#4361ee) appears only on CTAs, active states, and focus rings
+ * - Primary blue (#1B6AB5) appears only on CTAs, active states, and focus rings
  * - Surface ladder (surface-1 → surface-4) carries hierarchy; no arbitrary shadows
  */
 
 @layer base {
   :root {
-    /* ── Brand ─────────────────────────────────────────── */
-    --brand-50:   #eef2ff;
-    --brand-100:  #e0e7ff;
-    --brand-200:  #c7d2fe;
-    --brand-300:  #a5b4fc;
-    --brand-400:  #818cf8;
-    --brand-500:  #4361ee;   /* Primary */
-    --brand-600:  #3651d4;   /* Hover */
-    --brand-700:  #2940b0;   /* Pressed */
-    --brand-800:  #1e3088;
-    --brand-900:  #162268;
+    /* ── Brand (MAS Blue) ──────────────────────────────── */
+    --brand-50:   #e8f2fc;
+    --brand-100:  #c4dcf5;
+    --brand-200:  #8bbde9;
+    --brand-300:  #5aa0dd;
+    --brand-400:  #3585ce;
+    --brand-500:  #1B6AB5;   /* MAS Primary Blue */
+    --brand-600:  #155e9f;   /* Hover */
+    --brand-700:  #0f4f89;   /* Pressed */
+    --brand-800:  #0a3d6e;
+    --brand-900:  #062b52;
+
+    /* ── Brand Accent (MAS Red) ────────────────────────── */
+    --accent-500: #E8231A;
+    --accent-600: #d01f17;
+    --accent-100: #fde8e7;
+
+    /* ── Brand Success (MAS Green) ─────────────────────── */
+    --success-500: #3BAD49;
+    --success-600: #32993f;
+    --success-100: #e8f7ea;
 
     /* ── Semantic surface tokens (Light mode) ──────────── */
     --surface-page:      #f3f6fb;    /* page background */
@@ -45,8 +57,8 @@
     --border-hairline:   #e2e8f0;
     --border-default:    #cbd5e1;
     --border-strong:     #94a3b8;
-    --border-brand:      #4361ee;
-    --border-focus:      #4361ee;
+    --border-brand:      #1B6AB5;
+    --border-focus:      #1B6AB5;
 
     /* ── Semantic status (attendance, leave, approvals) ── */
     --status-present:        #10b981;
@@ -107,21 +119,21 @@
     --shadow-lg:  0 8px 16px rgba(15,23,42,0.08), 0 4px 6px rgba(15,23,42,0.04);
     --shadow-xl:  0 16px 32px rgba(15,23,42,0.09), 0 8px 12px rgba(15,23,42,0.04);
     --shadow-2xl: 0 24px 48px rgba(15,23,42,0.10), 0 12px 18px rgba(15,23,42,0.05);
-    --shadow-brand: 0 4px 14px rgba(67,97,238,0.28);
-    --shadow-brand-lg: 0 8px 24px rgba(67,97,238,0.32);
+    --shadow-brand: 0 4px 14px rgba(27,106,181,0.32);
+    --shadow-brand-lg: 0 8px 24px rgba(27,106,181,0.36);
 
-    /* ── Sidebar (Linear-inspired dark surface ladder) ─── */
-    --sidebar-canvas:     #0a0f1e;   /* deepest — slightly bluer than #0f172a */
-    --sidebar-surface-1:  #0f172a;   /* default cards/groups */
-    --sidebar-surface-2:  #1a2540;   /* hover on items */
-    --sidebar-surface-3:  #1e2d4a;   /* active item bg */
+    /* ── Sidebar (MAS brand dark sidebar) ─────────────── */
+    --sidebar-canvas:     #071428;   /* deep MAS navy */
+    --sidebar-surface-1:  #0c1d3a;   /* default cards/groups */
+    --sidebar-surface-2:  #122447;   /* hover on items */
+    --sidebar-surface-3:  #183055;   /* active item bg */
     --sidebar-hairline:   rgba(255,255,255,0.07);
     --sidebar-hairline-strong: rgba(255,255,255,0.12);
     --sidebar-ink:        #f1f5f9;
     --sidebar-ink-muted:  #94a3b8;
     --sidebar-ink-subtle: #64748b;
-    --sidebar-accent:     #4361ee;
-    --sidebar-accent-glow: rgba(67,97,238,0.20);
+    --sidebar-accent:     #1B6AB5;
+    --sidebar-accent-glow: rgba(27,106,181,0.25);
     --sidebar-width:      248px;
 
     /* ── Topbar ──────────────────────────────────────────── */
@@ -337,7 +349,7 @@
   }
   .nav-item.active .nav-icon {
     background: var(--sidebar-accent-glow);
-    color: #818cf8;
+    color: #5aa0dd;
   }
   .nav-group-label {
     font-size: 10px;

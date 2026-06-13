@@ -67,8 +67,8 @@ export function SidebarNav({ groups, onNavigate }: SidebarNavProps) {
                       <span
                         className="flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[10px] font-bold"
                         style={{
-                          background: "rgba(67,97,238,0.20)",
-                          color: "#818cf8",
+                          background: "rgba(27,106,181,0.25)",
+                          color: "#5aa0dd",
                         }}
                       >
                         {item.badge}

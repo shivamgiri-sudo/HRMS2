@@ -95,7 +95,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 const EVENT_META: Record<string, { icon: React.ElementType; color: string; bg: string }> = {
   hire:          { icon: UserCheck,   color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200" },
-  promotion:     { icon: TrendingUp,  color: "text-blue-700",    bg: "bg-blue-50 border-blue-200" },
+  promotion:     { icon: TrendingUp,  color: "text-[#1B6AB5]",   bg: "bg-[#e8f2fc] border-[#c4dcf5]" },
   transfer:      { icon: RefreshCcw,  color: "text-violet-700",  bg: "bg-violet-50 border-violet-200" },
   award:         { icon: Award,       color: "text-amber-700",   bg: "bg-amber-50 border-amber-200" },
   warning:       { icon: AlertCircle, color: "text-rose-700",    bg: "bg-rose-50 border-rose-200" },
@@ -134,7 +134,7 @@ function JourneyTimeline({
     <div className="space-y-6">
       {/* header */}
       <div className="rounded-3xl bg-slate-950 px-6 py-7 text-white">
-        <p className="text-xs font-black uppercase tracking-[0.22em] text-blue-400">Timeline</p>
+        <p className="text-xs font-black uppercase tracking-[0.22em] text-[#5aa0dd]">Timeline</p>
         <h2 className="mt-1 text-2xl font-black">Employee Journey</h2>
         <p className="mt-1 text-sm text-slate-400">
           Every milestone, move, and recognition since you joined.
@@ -351,8 +351,8 @@ const Profile = () => {
             {/* ── Hero Banner ─────────────────────────────────────────── */}
             <div className="relative overflow-hidden rounded-3xl bg-slate-950 px-6 py-8 text-white">
               {/* decorative blobs */}
-              <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-blue-600/20 blur-3xl" />
-              <div className="pointer-events-none absolute -bottom-10 left-1/3 h-48 w-48 rounded-full bg-indigo-500/20 blur-3xl" />
+              <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-[#1B6AB5]/20 blur-3xl" />
+              <div className="pointer-events-none absolute -bottom-10 left-1/3 h-48 w-48 rounded-full bg-[#3BAD49]/15 blur-3xl" />
 
               <div className="relative flex flex-col gap-6 sm:flex-row sm:items-center">
                 {/* Avatar */}
@@ -367,7 +367,7 @@ const Profile = () => {
 
                 {/* Identity */}
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-black uppercase tracking-[0.22em] text-blue-400">
+                  <p className="text-xs font-black uppercase tracking-[0.22em] text-[#5aa0dd]">
                     Employee Profile
                   </p>
                   <h1 className="mt-1 text-3xl font-black tracking-tight">
@@ -388,7 +388,7 @@ const Profile = () => {
                       {employee.employee_code}
                     </Badge>
                     {employee.department?.name && (
-                      <Badge className="rounded-full bg-blue-500/20 px-3 py-0.5 text-xs font-bold text-blue-300 border-blue-500/30">
+                      <Badge className="rounded-full px-3 py-0.5 text-xs font-bold border" style={{ background: "rgba(27,106,181,0.25)", color: "#8bbde9", borderColor: "rgba(27,106,181,0.35)" }}>
                         {employee.department.name}
                       </Badge>
                     )}

@@ -253,31 +253,36 @@ export function DashboardLayout({ children }: Props) {
           >
             {logoError ? (
               <div
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-sm font-bold text-white"
-                style={{ background: "var(--brand-600)" }}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-xs font-black text-white"
+                style={{ background: "var(--brand-500)" }}
               >
                 MCN
               </div>
             ) : (
-              <img
-                src={companyLogo}
-                alt="MAS Callnet"
-                className="h-8 w-8 rounded-lg object-contain"
-                onError={() => setLogoError(true)}
-              />
+              <div
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl p-1"
+                style={{ background: "rgba(255,255,255,0.96)" }}
+              >
+                <img
+                  src={companyLogo}
+                  alt="MAS Callnet"
+                  className="h-full w-full object-contain"
+                  onError={() => setLogoError(true)}
+                />
+              </div>
             )}
             <div className="min-w-0">
               <p
-                className="truncate text-[13px] font-semibold leading-tight"
+                className="truncate text-[13px] font-bold leading-tight"
                 style={{ color: "var(--sidebar-ink)" }}
               >
-                MAS Callnet HRMS
+                MAS Callnet
               </p>
               <p
-                className="text-[11px]"
-                style={{ color: "var(--sidebar-ink-subtle)" }}
+                className="text-[11px] font-medium"
+                style={{ color: "var(--sidebar-accent)" }}
               >
-                Employee Portal
+                HRMS Portal
               </p>
             </div>
           </div>
@@ -425,7 +430,7 @@ export function DashboardLayout({ children }: Props) {
               className={cn(
                 "flex flex-col items-center gap-0.5 rounded-xl px-3 py-1.5 text-[10px] font-semibold transition",
                 active
-                  ? "text-blue-600"
+                  ? "text-[#1B6AB5]"
                   : "text-slate-400"
               )}
               aria-current={active ? "page" : undefined}
@@ -433,7 +438,7 @@ export function DashboardLayout({ children }: Props) {
               <span
                 className={cn(
                   "flex h-7 w-7 items-center justify-center rounded-xl transition",
-                  active ? "bg-blue-50" : ""
+                  active ? "bg-[#e8f2fc]" : ""
                 )}
               >
                 {tab.icon}

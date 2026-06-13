@@ -168,7 +168,7 @@ export function PhotoUpload({
       <div className="group relative cursor-pointer" onClick={() => inputRef.current?.click()}>
         <Avatar className={cn(sizeMap[size], "ring-2 ring-offset-2 ring-slate-200")}>
           <AvatarImage src={displayUrl} alt={displayName ?? "Employee photo"} />
-          <AvatarFallback className="bg-blue-600 font-bold text-white">
+          <AvatarFallback className="font-bold text-white" style={{ background: "#1B6AB5" }}>
             {getInitials(displayName)}
           </AvatarFallback>
         </Avatar>

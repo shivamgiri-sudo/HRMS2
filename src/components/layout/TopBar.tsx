@@ -96,7 +96,7 @@ export function TopBar({
           className="hrms-breadcrumb hidden lg:flex"
           aria-label="Breadcrumb"
         >
-          <Link to="/dashboard" className="hover:text-blue-600">
+          <Link to="/dashboard" className="hover:text-[#1B6AB5]">
             Home
           </Link>
           {breadcrumbs.map((crumb, i) => (
@@ -170,7 +170,7 @@ export function TopBar({
               >
                 <Avatar className="h-9 w-9 ring-2 ring-slate-200">
                   <AvatarImage src={myProfile?.avatar_url ?? undefined} alt="My photo" />
-                  <AvatarFallback className="bg-blue-600 text-sm font-bold text-white">
+                  <AvatarFallback className="text-sm font-bold text-white" style={{ background: "#1B6AB5" }}>
                     {userInitials}
                   </AvatarFallback>
                 </Avatar>
