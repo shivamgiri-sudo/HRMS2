@@ -49,11 +49,11 @@ export const employeeController = {
     const fieldMapping: Record<string, string> = {
       phone: 'mobile',
       address: 'address1',
-      country: 'state', // Temporarily map country to state until country column is added
+      country: 'country', // Now using the actual country column
     };
 
     // Whitelist: only these DB fields may be self-edited
-    const allowed = ['mobile', 'address1', 'address2', 'city', 'state', 'pincode',
+    const allowed = ['mobile', 'address1', 'address2', 'city', 'state', 'country', 'pincode',
                      'date_of_birth', 'gender', 'blood_group', 'nominee_name', 'nominee_relation',
                      'working_hours_start', 'working_hours_end', 'working_days'];
     const updates: Record<string, unknown> = {};

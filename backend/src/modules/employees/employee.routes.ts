@@ -41,8 +41,8 @@ router.get("/me", h(async (req: any, res: any) => {
     phone: employee.mobile || null,
     // Map address1 to address
     address: employee.address1 || null,
-    // Map state to country (temporary until country field is added to DB)
-    country: employee.state || null,
+    // country column now exists in DB
+    country: employee.country || null,
     // Add department object structure
     department: employee.department_name ? { name: employee.department_name } : null,
     // Keep date_of_joining as hire_date for compatibility

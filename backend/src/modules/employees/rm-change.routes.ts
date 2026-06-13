@@ -81,8 +81,15 @@ router.get("/pending", requireRole("admin", "hr", "wfm"), h(async (req: any, res
 
 // POST /api/rm-change - submit a reporting manager change request
 router.post("/", h(async (req: any, res: any) => {
-  const emp = await getEmployeeForUser(req.authUser!.id);
-  if (!emp) return res.status(403).json({ ok: false, message: "No employee record" });
+  const basicEmp = await getEmployeeForUser(req.authUser!.id);
+  if (!basicEmp) return res.status(403).json({ ok: false, message: "No employee record" });
+
+  // Fetch full employee details
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, branch_id, reporting_manager_id FROM employees WHERE id = ? LIMIT 1`,
+    [basicEmp.id]
+  );
+  const emp = empRows[0];
 
   const { requested_manager_id, reason } = req.body;
   if (!requested_manager_id) {

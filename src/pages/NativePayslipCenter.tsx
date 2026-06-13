@@ -82,8 +82,14 @@ type Form16Data = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const INR = (v: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(v ?? 0);
+const INR = (v: number | null | undefined) => {
+  const value = typeof v === 'number' && !isNaN(v) ? v : 0;
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0
+  }).format(value);
+};
 
 const MONTH_NAMES = [
   "", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -581,9 +587,27 @@ export default function NativePayslipCenter() {
         </div>
 
         {message && (
-          <div className="flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-bold text-blue-800">
-            <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-            {message}
+          <div className={`flex items-center justify-between gap-3 rounded-2xl border p-4 text-sm font-bold ${
+            message.includes('Failed') || message.includes('Error')
+              ? 'border-red-200 bg-red-50 text-red-800'
+              : 'border-blue-200 bg-blue-50 text-blue-800'
+          }`}>
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+              {message}
+            </div>
+            {(message.includes('Failed') || message.includes('Error')) && (
+              <button
+                onClick={() => {
+                  setMessage('');
+                  void loadRuns();
+                  if (selectedRunId) void loadLines(selectedRunId);
+                }}
+                className="px-3 py-1 bg-white rounded-lg text-xs font-semibold hover:bg-gray-100 transition-colors"
+              >
+                Retry
+              </button>
+            )}
           </div>
         )}
 

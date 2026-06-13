@@ -16,6 +16,7 @@ import {
   MapPin,
   Pause,
   Play,
+  RefreshCcw,
   Timer,
 } from "lucide-react";
 import { format } from "date-fns";
@@ -1344,7 +1345,25 @@ const Attendance = () => {
               )}
             </div>
 
-            {recordsLoading ? (
+            {recordsError ? (
+              <div className="rounded-xl border-2 border-red-200 bg-red-50 p-8 text-center">
+                <AlertTriangle className="mx-auto mb-3 h-12 w-12 text-red-500" />
+                <h3 className="mb-2 text-lg font-semibold text-red-900">
+                  Failed to Load Attendance History
+                </h3>
+                <p className="mb-4 text-sm text-red-700">
+                  {recordsError?.message || 'An error occurred while fetching your attendance records.'}
+                </p>
+                <Button
+                  onClick={() => window.location.reload()}
+                  variant="outline"
+                  className="border-red-300 text-red-700 hover:bg-red-100"
+                >
+                  <RefreshCcw className="mr-2 h-4 w-4" />
+                  Retry
+                </Button>
+              </div>
+            ) : recordsLoading ? (
               <div className="space-y-3">
                 {[1, 2, 3, 4, 5].map((item) => (
                   <Skeleton key={item} className="h-16 rounded-xl" />

@@ -13,6 +13,7 @@ import { rosterRouter } from "./modules/wfm/roster.routes.js";
 import { leaveRouter } from "./modules/leave/leave.routes.js";
 import { payrollRouter } from "./modules/payroll/payroll.routes.js";
 import { employeeRouter } from "./modules/employees/employee.routes.js";
+import { rmChangeRouter } from "./modules/employees/rm-change.routes.js";
 import { kpiRouter } from "./modules/kpi/kpi.routes.js";
 import { kpiProcessRoleRouter } from "./modules/kpi/kpi.process-role.routes.js";
 import { portalRouter } from "./modules/portal/portal.routes.js";
@@ -143,6 +144,7 @@ app.use("/api/leave", leaveRouter);
 app.use("/api/payroll", payrollRouter);
 app.use("/api/payroll-compliance", payrollComplianceRouter); // India statutory compliance & registers
 app.use("/api/employees", employeeRouter);
+app.use("/api/rm-change", rmChangeRouter);
 app.use("/api/kpi/process-role", kpiProcessRoleRouter);
 app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
