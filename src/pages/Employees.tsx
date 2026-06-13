@@ -78,8 +78,8 @@ const metricToneMap = {
     icon: "bg-emerald-50 text-emerald-700 ring-emerald-100",
   },
   indigo: {
-    card: "border-indigo-100 bg-gradient-to-br from-white via-white to-indigo-50",
-    icon: "bg-indigo-50 text-indigo-700 ring-indigo-100",
+    card: "border-[#c4dcf5] bg-gradient-to-br from-white via-white to-[#e8f2fc]",
+    icon: "bg-[#e8f2fc] text-[#1B6AB5] ring-[#c4dcf5]",
   },
   amber: {
     card: "border-amber-100 bg-gradient-to-br from-white via-white to-amber-50",
@@ -434,47 +434,51 @@ const Employees = () => {
   return (
     <DashboardLayout>
       <div className="space-y-5">
-        {/* Header */}
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="grid gap-0 lg:grid-cols-[1fr_auto]">
-            <div className="relative p-5 sm:p-6">
-              <div className="absolute inset-y-0 left-0 w-1 bg-slate-950" />
-
-              <div className="pl-2">
-                <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">
-                  People Management
-                </p>
-
-                <h1 className="mt-2 text-3xl font-black text-slate-950">
-                  {isAdminOrHR ? "Employee Directory" : "Team Directory"}
-                </h1>
-
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                  {isAdminOrHR
-                    ? "Manage employees, documents, status, departments, exports and bulk actions."
-                    : "View your team members and employee information."}
-                </p>
+        {/* Hero Header */}
+        <section className="relative overflow-hidden rounded-2xl bg-slate-950 text-white shadow-lg">
+          <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-[#1B6AB5]/25 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-10 left-1/4 h-48 w-48 rounded-full bg-[#3BAD49]/10 blur-3xl" />
+          <div className="relative flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between sm:p-8">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#5aa0dd]">
+                People & Workforce
+              </p>
+              <h1 className="mt-2 text-2xl font-black tracking-tight text-white">
+                Employee Directory
+              </h1>
+              <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">
+                Manage employee profiles, departments, roles and employment records.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total</p>
+                  <p className="text-lg font-black text-white">{employees.length}</p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Active</p>
+                  <p className="text-lg font-black text-[#3BAD49]">{activeEmployees}</p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Departments</p>
+                  <p className="text-lg font-black text-[#5aa0dd]">{departments.length}</p>
+                </div>
               </div>
             </div>
-
             {isAdminOrHR && (
-              <div className="flex flex-col justify-center gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:flex-row sm:items-center lg:border-l lg:border-t-0">
-                <DateRangeExportDialog
-                  title="Export Employee Directory"
-                  description="Export employee directory with optional date range filter based on join date."
-                  onExportCSV={exportToCSV}
-                  onExportPDF={exportToPDF}
-                />
-
+              <div className="flex shrink-0 flex-wrap gap-2">
                 <Button
                   asChild
-                  className="bg-slate-950 text-white hover:bg-slate-800 rounded-2xl px-5 py-2.5 font-semibold cursor-pointer transition-colors"
+                  className="rounded-xl bg-[#1B6AB5] px-5 font-bold text-white shadow-lg shadow-[#1B6AB5]/25 hover:bg-[#155e9f]"
                 >
                   <Link to="/onboarding">
                     <UserPlus className="mr-2 h-4 w-4" />
                     Add Employee
                   </Link>
                 </Button>
+                <DateRangeExportDialog
+                  onExportCSV={exportToCSV}
+                  onExportPDF={exportToPDF}
+                />
               </div>
             )}
           </div>
@@ -534,26 +538,8 @@ const Employees = () => {
         </section>
 
         {/* Filters */}
-        <section className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm">
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-sm font-semibold tracking-tight text-slate-950">
-                Directory Controls
-              </h2>
-              <p className="mt-1 text-xs leading-5 text-slate-500">
-                Search, filter and manage employee directory records.
-              </p>
-            </div>
-
-            {isAdminOrHR && (
-              <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs font-medium text-slate-500">
-                <Download className="h-3.5 w-3.5 text-sky-700" />
-                Export available
-              </div>
-            )}
-          </div>
-
-          <div className="grid gap-3 lg:grid-cols-[1fr_240px]">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="grid flex-1 gap-3 lg:grid-cols-[1fr_240px]">
             <div className="relative">
               <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
@@ -582,39 +568,40 @@ const Employees = () => {
             </Select>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-            <span className="rounded-full bg-slate-100 px-3 py-1 font-medium">
-              Showing {filteredEmployees.length} result
-              {filteredEmployees.length === 1 ? "" : "s"}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+          <span className="rounded-full bg-slate-100 px-3 py-1 font-medium">
+            Showing {filteredEmployees.length} result
+            {filteredEmployees.length === 1 ? "" : "s"}
+          </span>
+
+          {departmentFilter !== "all" && (
+            <span className="rounded-full bg-sky-50 px-3 py-1 font-medium text-sky-700">
+              Department: {departmentFilter}
             </span>
+          )}
 
-            {departmentFilter !== "all" && (
-              <span className="rounded-full bg-sky-50 px-3 py-1 font-medium text-sky-700">
-                Department: {departmentFilter}
-              </span>
-            )}
+          {searchQuery.trim() && (
+            <span className="rounded-full bg-[#e8f2fc] px-3 py-1 font-medium text-[#1B6AB5]">
+              Search: {searchQuery}
+            </span>
+          )}
 
-            {searchQuery.trim() && (
-              <span className="rounded-full bg-indigo-50 px-3 py-1 font-medium text-indigo-700">
-                Search: {searchQuery}
-              </span>
-            )}
-
-            {hasActiveFilters && (
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
-                onClick={() => {
-                  setSearchQuery("");
-                  setDepartmentFilter("all");
-                }}
-              >
-                <X className="h-3 w-3" />
-                Clear Filters
-              </button>
-            )}
-          </div>
-        </section>
+          {hasActiveFilters && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+              onClick={() => {
+                setSearchQuery("");
+                setDepartmentFilter("all");
+              }}
+            >
+              <X className="h-3 w-3" />
+              Clear Filters
+            </button>
+          )}
+        </div>
 
         {/* Table */}
         <section className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm">
