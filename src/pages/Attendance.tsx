@@ -110,8 +110,8 @@ const metricToneMap = {
     icon: "bg-emerald-50 text-emerald-700 ring-emerald-100",
   },
   indigo: {
-    card: "border-indigo-100 bg-gradient-to-br from-white via-white to-indigo-50",
-    icon: "bg-indigo-50 text-indigo-700 ring-indigo-100",
+    card: "border-[#c4dcf5] bg-gradient-to-br from-white via-white to-[#e8f2fc]",
+    icon: "bg-[#e8f2fc] text-[#1B6AB5] ring-[#c4dcf5]",
   },
   amber: {
     card: "border-amber-100 bg-gradient-to-br from-white via-white to-amber-50",
@@ -490,30 +490,41 @@ const Attendance = () => {
     <DashboardLayout>
       <TooltipProvider>
         <div className="space-y-5">
-          {/* Header */}
-          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="grid gap-0 lg:grid-cols-[1fr_auto]">
-              <div className="relative p-5 sm:p-6">
-                <div className="absolute inset-y-0 left-0 w-1 bg-slate-950" />
+          {/* Hero Header */}
+          <section className="relative overflow-hidden rounded-2xl bg-slate-950 text-white shadow-lg">
+            <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-[#1B6AB5]/20 blur-3xl" />
+            <div className="pointer-events-none absolute -bottom-10 left-1/4 h-48 w-48 rounded-full bg-[#3BAD49]/10 blur-3xl" />
+            <div className="relative grid gap-0 lg:grid-cols-[1fr_auto]">
+              <div className="p-6 sm:p-7">
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#5aa0dd]">
+                  Attendance Management
+                </p>
 
-                <div className="pl-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-400">
-                    Attendance Management
-                  </p>
+                <h1 className="mt-2 text-2xl font-black tracking-tight text-white">
+                  Attendance
+                </h1>
 
-                  <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
-                    Attendance
-                  </h1>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+                  View work mode, breaks, monthly summary and attendance history.
+                </p>
 
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                    View work mode, breaks, monthly summary and attendance history.
-                  </p>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <div className="rounded-xl border border-white/10 bg-white/[0.08] px-4 py-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Month</p>
+                    <p className="text-sm font-bold text-white">{selectedMonthLabel} {selectedYear}</p>
+                  </div>
+                  {myReportData && (
+                    <div className="rounded-xl border border-white/10 bg-white/[0.08] px-4 py-2">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Present Days</p>
+                      <p className="text-sm font-bold text-[#3BAD49]">{myReportData.presentDays ?? 0}</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 lg:min-w-[360px] lg:border-l lg:border-t-0">
+              <div className="grid gap-3 border-t border-white/10 p-5 sm:grid-cols-2 lg:min-w-[360px] lg:border-l lg:border-t-0 lg:bg-white/5">
                 <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                  <SelectTrigger className="h-10 rounded-xl bg-white text-xs shadow-sm">
+                  <SelectTrigger className="h-10 rounded-xl border-white/20 bg-white/10 text-xs text-white shadow-sm">
                     <SelectValue />
                   </SelectTrigger>
 
@@ -527,7 +538,7 @@ const Attendance = () => {
                 </Select>
 
                 <Select value={selectedYear} onValueChange={setSelectedYear}>
-                  <SelectTrigger className="h-10 rounded-xl bg-white text-xs shadow-sm">
+                  <SelectTrigger className="h-10 rounded-xl border-white/20 bg-white/10 text-xs text-white shadow-sm">
                     <SelectValue />
                   </SelectTrigger>
 
