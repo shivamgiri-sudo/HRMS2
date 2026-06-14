@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Heart, Send } from "lucide-react";
+import { Heart, Send, Check, ChevronsUpDown } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { KudosCard } from "@/components/engagement/KudosCard";
@@ -8,12 +8,22 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useQuery } from "@tanstack/react-query";
 
 interface KudosLimit {
   given: number;
   limit: number;
   remaining: number;
+}
+
+interface EmployeeOption {
+  id: string;
+  name: string;
+  employee_code: string;
 }
 
 export default function NativeKudos() {
@@ -26,6 +36,20 @@ export default function NativeKudos() {
   const [anonymous, setAnonymous] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [employeeSearchOpen, setEmployeeSearchOpen] = useState(false);
+
+  // Fetch employees for search
+  const { data: employees = [] } = useQuery<EmployeeOption[]>({
+    queryKey: ["employees-for-kudos"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/employees?limit=500");
+      return (res.data ?? []).map((emp: any) => ({
+        id: emp.id,
+        name: `${emp.first_name} ${emp.last_name}`,
+        employee_code: emp.employee_code,
+      }));
+    },
+  });
 
   const load = async () => {
     const [wallResponse, templatesResponse, limitResponse] = await Promise.all([
@@ -83,8 +107,53 @@ export default function NativeKudos() {
             <CardContent>
               <form className="space-y-4" onSubmit={submit}>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Recipient employee ID</label>
-                  <Input value={receiverId} onChange={(event) => setReceiverId(event.target.value)} required placeholder="Employee UUID" />
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Recipient Employee</label>
+                  <Popover open={employeeSearchOpen} onOpenChange={setEmployeeSearchOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={employeeSearchOpen}
+                        className="w-full justify-between"
+                      >
+                        {receiverId
+                          ? employees.find((emp) => emp.id === receiverId)?.name || "Select employee..."
+                          : "Search by name or employee code..."}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-full p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Search employee..." />
+                        <CommandList>
+                          <CommandEmpty>No employee found.</CommandEmpty>
+                          <CommandGroup>
+                            {employees.map((emp) => (
+                              <CommandItem
+                                key={emp.id}
+                                value={`${emp.name} ${emp.employee_code}`}
+                                onSelect={() => {
+                                  setReceiverId(emp.id);
+                                  setEmployeeSearchOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4",
+                                    receiverId === emp.id ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                <div className="flex flex-col">
+                                  <span className="font-medium">{emp.name}</span>
+                                  <span className="text-xs text-muted-foreground">{emp.employee_code}</span>
+                                </div>
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Recognition</label>
