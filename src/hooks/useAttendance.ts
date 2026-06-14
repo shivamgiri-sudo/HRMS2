@@ -83,23 +83,29 @@ export function useTodayAttendance(employeeId?: string) {
     queryFn: async () => {
       if (!employeeId) return null;
 
-      try {
-        const res = await hrmsApi.get<{ success: boolean; data: any }>(
-          `/api/wfm/attendance/daily/${employeeId}/${today}`
+      const getRecordForDate = async (date: string) => {
+        const params = new URLSearchParams({
+          employeeId,
+          fromDate: date,
+          toDate: date,
+          limit: "1",
+        });
+        const res = await hrmsApi.get<{ success: boolean; data: AttendanceRecord[] }>(
+          `/api/wfm/attendance/daily?${params}`
         );
-        if (res.data) return res.data as AttendanceRecord;
-      } catch {
-        // 404 means no record yet
-      }
+        return res.data?.[0] ?? null;
+      };
 
-      try {
-        const res = await hrmsApi.get<{ success: boolean; data: any }>(
-          `/api/wfm/attendance/daily/${employeeId}/${yesterday}`
-        );
-        const record = res.data as any;
-        if (record && !record.clock_out_time && !record.clock_out) return record as AttendanceRecord;
-      } catch {
-        // No record for yesterday
+      const todayRecord = await getRecordForDate(today);
+      if (todayRecord) return todayRecord;
+
+      const yesterdayRecord = await getRecordForDate(yesterday);
+      if (
+        yesterdayRecord &&
+        !yesterdayRecord.clock_out_time &&
+        !yesterdayRecord.clock_out
+      ) {
+        return yesterdayRecord;
       }
 
       return null;

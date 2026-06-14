@@ -12,6 +12,7 @@ import { getEmployeeForUser, hasRole } from '../../shared/accessGuard.js';
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const DB_ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,35}$/;
 
 router.use(requireAuth);
 
@@ -106,7 +107,10 @@ router.get('/daily', h(async (req: AuthenticatedRequest, res: Response) => {
   };
   if (isPrivileged) {
     const qEmpId = req.query.employeeId as string | undefined;
-    filters.employeeId = qEmpId && /^[0-9a-f-]{36}$/i.test(qEmpId) ? qEmpId : undefined;
+    if (qEmpId && !DB_ID_REGEX.test(qEmpId)) {
+      return res.status(400).json({ success: false, error: 'Invalid employeeId' });
+    }
+    filters.employeeId = qEmpId;
   } else {
     const emp = await getEmployeeForUser(userId);
     if (!emp) return res.status(403).json({ success: false, error: 'No employee record' });
