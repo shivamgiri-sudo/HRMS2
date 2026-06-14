@@ -189,6 +189,7 @@ const NativeWalkinQueue             = lazy(() => import("./pages/NativeWalkinQue
 const NativeAttendanceRulesMaster   = lazy(() => import("./pages/NativeAttendanceRulesMaster"));
 const NativeCustomizationManager    = lazy(() => import("./pages/customization/NativeCustomizationManager"));
 const NativeCustomizationRuleEditor = lazy(() => import("./pages/customization/NativeCustomizationRuleEditor"));
+const EmployeeJourney               = lazy(() => import("./pages/EmployeeJourney"));
 
 // Portal
 const PortalLogin                   = lazy(() => import("./pages/portal/PortalLogin"));
@@ -244,6 +245,7 @@ const App = () => (
               <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
               <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+              <Route path="/employee-journey" element={<ProtectedRoute><EmployeeJourney /></ProtectedRoute>} />
               <Route path="/performance" element={<ProtectedRoute><Performance /></ProtectedRoute>} />
               <Route path="/reviews-management" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><ReviewsManagement /></Gate></ProtectedRoute>} />
               <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />

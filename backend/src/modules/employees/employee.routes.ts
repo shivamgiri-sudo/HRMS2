@@ -175,6 +175,40 @@ router.get("/me/journey", h(async (req: any, res: any) => {
   return res.json({ success: true, data });
 }));
 
+// GET /api/employees/me/promotions — employee views their promotion history
+router.get("/me/promotions", h(async (req: any, res: any) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+  const [empRows] = await db.execute(
+    "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    [userId]
+  ) as any[];
+  if (!empRows.length) return res.status(404).json({ success: false, error: "No employee record" });
+
+  const [promotions] = await db.execute(
+    "SELECT * FROM promotion_record WHERE employee_id = ? ORDER BY promotion_date DESC",
+    [empRows[0].id]
+  ) as any[];
+  return res.json({ success: true, data: promotions });
+}));
+
+// GET /api/employees/me/transfers — employee views their transfer history
+router.get("/me/transfers", h(async (req: any, res: any) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+  const [empRows] = await db.execute(
+    "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    [userId]
+  ) as any[];
+  if (!empRows.length) return res.status(404).json({ success: false, error: "No employee record" });
+
+  const [transfers] = await db.execute(
+    "SELECT * FROM transfer_record WHERE employee_id = ? ORDER BY transfer_date DESC",
+    [empRows[0].id]
+  ) as any[];
+  return res.json({ success: true, data: transfers });
+}));
+
 // POST /api/employees/me/photo — employee uploads their own photo
 router.post("/me/photo", (req: any, res: any, next: any) => {
   photoUpload.single("photo")(req, res, (err: any) => {
