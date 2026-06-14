@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -149,7 +149,21 @@ export default function NativeEmployeeStatCard() {
   const { isAdminOrHR } = useIsAdminOrHR();
 
   const [searchInput, setSearchInput] = useState("");
+  const [searchResults, setSearchResults] = useState<Array<{id: string; name: string; code: string}>>([]);
+  const [showResults, setShowResults] = useState(false);
   const [targetId, setTargetId] = useState<string | null>(urlId ?? null);
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setShowResults(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   // If not admin/HR, always load own record via /me first
   const { data: meData } = useQuery({
@@ -168,11 +182,36 @@ export default function NativeEmployeeStatCard() {
 
   const card = data?.data;
 
-  function handleSearch() {
-    const trimmed = searchInput.trim();
-    if (!trimmed) return;
-    setTargetId(trimmed);
-    navigate(`/employee-stat-card/${trimmed}`, { replace: true });
+  // Search employees by name or code
+  async function handleSearchInput(value: string) {
+    setSearchInput(value);
+    if (value.trim().length < 2) {
+      setSearchResults([]);
+      setShowResults(false);
+      return;
+    }
+
+    try {
+      const res = await hrmsApi.get<{ data: Array<{id: string; first_name: string; last_name: string | null; employee_code: string}> }>(
+        `/api/employees?search=${encodeURIComponent(value.trim())}&limit=10`
+      );
+      setSearchResults(res.data.map(emp => ({
+        id: emp.id,
+        name: `${emp.first_name} ${emp.last_name || ''}`.trim(),
+        code: emp.employee_code
+      })));
+      setShowResults(true);
+    } catch (err) {
+      console.error("Search error:", err);
+      setSearchResults([]);
+    }
+  }
+
+  function selectEmployee(id: string) {
+    setTargetId(id);
+    setShowResults(false);
+    setSearchInput("");
+    navigate(`/employee-stat-card/${id}`, { replace: true });
   }
 
   return (
@@ -186,17 +225,35 @@ export default function NativeEmployeeStatCard() {
             <p className="text-sm text-slate-500 mt-0.5">Full profile, stats and timeline for any employee</p>
           </div>
           {isAdminOrHR && (
-            <div className="flex gap-2 items-center">
-              <Input
-                placeholder="Employee ID..."
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                className="w-52"
-              />
-              <Button onClick={handleSearch} size="sm" className="shrink-0">
-                <Search className="h-4 w-4 mr-1.5" /> Load
-              </Button>
+            <div className="relative flex gap-2 items-center">
+              <div ref={searchRef} className="relative w-64">
+                <Input
+                  placeholder="Search by name or employee code..."
+                  value={searchInput}
+                  onChange={(e) => handleSearchInput(e.target.value)}
+                  onFocus={() => searchResults.length > 0 && setShowResults(true)}
+                  className="pr-9"
+                />
+                <Search className="absolute right-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
+
+                {/* Dropdown results */}
+                {showResults && searchResults.length > 0 && (
+                  <Card className="absolute top-full left-0 right-0 mt-1 z-50 max-h-72 overflow-y-auto shadow-lg">
+                    <CardContent className="p-0">
+                      {searchResults.map((emp) => (
+                        <button
+                          key={emp.id}
+                          onClick={() => selectEmployee(emp.id)}
+                          className="w-full text-left px-4 py-3 hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0"
+                        >
+                          <div className="font-medium text-sm text-slate-900">{emp.name}</div>
+                          <div className="text-xs text-slate-500">{emp.code}</div>
+                        </button>
+                      ))}
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
             </div>
           )}
         </div>
