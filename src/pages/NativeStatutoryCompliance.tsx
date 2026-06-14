@@ -89,12 +89,30 @@ type MinWage = {
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const PT_STATES = [
-  { code: "MH", name: "Maharashtra" },
-  { code: "KA", name: "Karnataka" },
-  { code: "TN", name: "Tamil Nadu" },
-  { code: "WB", name: "West Bengal" },
-  { code: "TS", name: "Telangana" },
   { code: "AP", name: "Andhra Pradesh" },
+  { code: "AS", name: "Assam" },
+  { code: "BR", name: "Bihar" },
+  { code: "CG", name: "Chhattisgarh" },
+  { code: "DL", name: "Delhi" },
+  { code: "GA", name: "Goa" },
+  { code: "GJ", name: "Gujarat" },
+  { code: "JH", name: "Jharkhand" },
+  { code: "KA", name: "Karnataka" },
+  { code: "KL", name: "Kerala" },
+  { code: "MH", name: "Maharashtra" },
+  { code: "MP", name: "Madhya Pradesh" },
+  { code: "MN", name: "Manipur" },
+  { code: "ML", name: "Meghalaya" },
+  { code: "MZ", name: "Mizoram" },
+  { code: "OR", name: "Odisha" },
+  { code: "PB", name: "Punjab" },
+  { code: "RJ", name: "Rajasthan" },
+  { code: "SK", name: "Sikkim" },
+  { code: "TN", name: "Tamil Nadu" },
+  { code: "TS", name: "Telangana" },
+  { code: "TR", name: "Tripura" },
+  { code: "UP", name: "Uttar Pradesh" },
+  { code: "WB", name: "West Bengal" },
 ];
 
 const TABS = ["PF / UAN", "PT Slabs", "ECR / ESIC", "Min Wages"] as const;
