@@ -144,6 +144,10 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
   if (!callerEmp) return res.status(403).json({ success: false, message: "No employee record for authenticated user" });
 
   const year = req.query.year ? String(req.query.year) : String(new Date().getFullYear());
+  const numericYear = Number(year);
+  if (!/^\d{4}$/.test(year) || numericYear < 2000 || numericYear > new Date().getFullYear() + 1) {
+    return res.status(400).json({ success: false, message: "Invalid payslip year" });
+  }
 
   // Fetch main payroll lines with employee profile data
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -156,6 +160,8 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
             spr.run_month, spr.disbursed_at AS paid_at, spr.status AS run_status,
             sp.acknowledged_at, sp.file_url, sp.payslip_ref,
             e.first_name, e.last_name,
+            COALESCE(eu.member_id, e.epf_number) AS epf_number,
+            e.esic_number AS esi_number,
             des.designation_name,
             dept.dept_name,
             br.branch_name,
@@ -164,6 +170,7 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
        JOIN salary_prep_run spr ON spr.id = spl.run_id
        LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
        LEFT JOIN employees e ON CAST(e.id AS CHAR) = CAST(spl.employee_id AS CHAR)
+       LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
        LEFT JOIN designation_master des ON CAST(des.id AS CHAR) = CAST(e.designation_id AS CHAR)
        LEFT JOIN department_master dept ON CAST(dept.id AS CHAR) = CAST(e.department_id AS CHAR)
        LEFT JOIN branch_master br ON CAST(br.id AS CHAR) = CAST(e.branch_id AS CHAR)
@@ -210,6 +217,16 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
       line.special_allowance = specialComp ? Number(specialComp.amount) : 0;
     }
   }
+
+  await logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "PAYSLIP_HISTORY_VIEWED",
+    module_key: "payroll",
+    entity_type: "employee",
+    entity_id: callerEmp.id,
+    change_summary: { year, statement_count: rows.length },
+    req,
+  });
 
   return res.json({ success: true, data: rows });
 }));
