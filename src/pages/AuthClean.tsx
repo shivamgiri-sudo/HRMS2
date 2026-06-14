@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 const companyLogo = "/mcn-logo.png?v=999";
+const currentYear = new Date().getFullYear();
 
 const FEATURES = [
   { icon: Users, label: "Employee Management", desc: "Manage your entire workforce in one place" },
@@ -86,12 +87,12 @@ export default function AuthClean() {
 
         {/* Logo */}
         <div className="relative z-10">
-          <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/95 p-1.5 shadow-lg">
-              <img src={companyLogo} alt="MAS Callnet" className="h-full w-full object-contain" />
+          <div className="flex items-center gap-5">
+            <div className="flex h-24 w-52 items-center justify-center rounded-2xl bg-white/95 px-3 shadow-xl">
+              <img src={companyLogo} alt="Mas Callnet India Pvt Ltd" className="h-auto w-48 object-contain" />
             </div>
             <div>
-              <p className="text-lg font-black text-white">MAS Callnet</p>
+              <p className="text-xl font-black text-white">Mas Callnet India Pvt Ltd</p>
               <p className="text-xs font-bold" style={{ color: "#5aa0dd" }}>HRMS Platform</p>
             </div>
           </div>
@@ -144,7 +145,7 @@ export default function AuthClean() {
         {/* Bottom tagline */}
         <div className="relative z-10">
           <p className="text-xs text-slate-500">
-            © 2025 MAS Callnet · Secure · Reliable · Enterprise-Grade
+            © {currentYear} Mas Callnet India Pvt Ltd · Secure · Reliable · Enterprise-Grade
           </p>
         </div>
       </div>
@@ -152,12 +153,12 @@ export default function AuthClean() {
       {/* ── Right Panel — Login Form ────────────────────────────────── */}
       <div className="flex flex-1 flex-col items-center justify-center bg-[#f3f6fb] px-6 py-10">
         {/* Mobile logo */}
-        <div className="mb-8 flex items-center gap-3 lg:hidden">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white p-1.5 shadow-md">
-            <img src={companyLogo} alt="MAS Callnet" className="h-full w-full object-contain" />
+        <div className="mb-8 flex flex-col items-center gap-3 text-center lg:hidden">
+          <div className="flex h-24 w-52 items-center justify-center rounded-2xl bg-white px-3 shadow-md">
+            <img src={companyLogo} alt="Mas Callnet India Pvt Ltd" className="h-auto w-48 object-contain" />
           </div>
           <div>
-            <p className="font-black text-slate-950">MAS Callnet HRMS</p>
+            <p className="font-black text-slate-950">Mas Callnet India Pvt Ltd</p>
             <p className="text-xs font-semibold text-slate-400">Employee Portal</p>
           </div>
         </div>
@@ -166,7 +167,7 @@ export default function AuthClean() {
           {/* Card */}
           <div className="overflow-hidden rounded-3xl border border-white bg-white shadow-2xl shadow-slate-200/80">
             {/* Top accent strip — 3 MAS colors */}
-            <div className="flex h-1.5">
+            <div className="flex h-3">
               <div className="flex-1" style={{ background: "#1B6AB5" }} />
               <div className="flex-1" style={{ background: "#3BAD49" }} />
               <div className="flex-1" style={{ background: "#E8231A" }} />
@@ -307,7 +308,7 @@ export default function AuthClean() {
           </div>
 
           <p className="mt-6 text-center text-xs text-slate-400">
-            MAS Callnet HRMS · All rights reserved
+            © {currentYear} Mas Callnet India Pvt Ltd · All rights reserved
           </p>
         </div>
       </div>

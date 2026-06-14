@@ -165,10 +165,10 @@ export function TopBar({
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
-                className="relative h-9 w-9 rounded-full p-0"
+                className="relative h-11 w-11 rounded-full p-0"
                 aria-label="Account menu"
               >
-                <Avatar className="h-9 w-9 ring-2 ring-slate-200">
+                <Avatar className="h-11 w-11 ring-2 ring-[#1B6AB5]/25">
                   <AvatarImage src={myProfile?.avatar_url ?? undefined} alt="My photo" />
                   <AvatarFallback className="text-sm font-bold text-white" style={{ background: "#1B6AB5" }}>
                     {userInitials}
