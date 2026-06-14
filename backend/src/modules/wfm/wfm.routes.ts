@@ -30,6 +30,35 @@ wfmRouter.post("/shifts",         requireRole("admin", "wfm"), h(wfmController.c
 wfmRouter.get("/shifts/:id",      requireRole("admin", "wfm", "manager"), h(wfmController.getShift.bind(wfmController)));
 wfmRouter.put("/shifts/:id",      requireRole("admin", "wfm"), h(wfmController.updateShift.bind(wfmController)));
 
+// Attendance calendar - monthly attendance data for employee
+wfmRouter.get("/attendance", h(async (req: any, res: any) => {
+  const { employee_id, month, year } = req.query;
+  if (!employee_id || !month || !year) {
+    return res.status(400).json({ success: false, error: "employee_id, month, and year are required" });
+  }
+
+  const { db } = await import("../../db/mysql.js");
+  const [rows] = await db.execute(
+    `SELECT attendance_date,
+            status,
+            punch_in AS first_punch,
+            punch_out AS last_punch,
+            TIMESTAMPDIFF(HOUR, punch_in, punch_out) AS working_hours,
+            break_minutes,
+            location AS punch_location,
+            ip_address,
+            remarks
+     FROM attendance_daily_record
+     WHERE employee_id = ?
+       AND YEAR(attendance_date) = ?
+       AND MONTH(attendance_date) = ?
+     ORDER BY attendance_date ASC`,
+    [employee_id, year, month]
+  );
+
+  return res.json({ success: true, data: rows });
+}));
+
 // Attendance sessions
 wfmRouter.post("/sessions/clock-in",  h(wfmController.clockIn.bind(wfmController)));  // Employee self-service
 wfmRouter.post("/sessions/clock-out", h(wfmController.clockOut.bind(wfmController))); // Employee self-service
