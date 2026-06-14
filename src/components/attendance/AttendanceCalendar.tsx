@@ -1,8 +1,7 @@
 import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useQuery } from "@tanstack/react-query";
+import { ChevronLeft, ChevronRight, Clock, MapPin, Calendar as CalendarIcon } from "lucide-react";
+import { hrmsApi } from "@/lib/hrmsApi";
 import {
   Dialog,
   DialogContent,
@@ -10,285 +9,307 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Clock, MapPin } from "lucide-react";
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths } from "date-fns";
-import { useQuery } from "@tanstack/react-query";
-import { hrmsApi } from "@/lib/hrmsApi";
-import { attendanceStatusColors } from "@/lib/statusStyles";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 
-interface AttendanceRecord {
-  id: string;
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface AttendanceDay {
   date: string;
-  clock_in: string | null;
-  clock_out: string | null;
-  total_hours: number | null;
-  status: string;
-  work_mode: string | null;
-  clock_in_location_name: string | null;
-  clock_out_location_name: string | null;
+  status: "present" | "absent" | "leave" | "holiday" | "weekend" | "half-day";
+  punchIn?: string;
+  punchOut?: string;
+  totalHours?: number;
+  breakDuration?: number;
+  location?: string;
+  ipAddress?: string;
+  remarks?: string;
+  leaveType?: string;
 }
 
 interface AttendanceCalendarProps {
   employeeId: string;
+  initialMonth?: number;
+  initialYear?: number;
 }
 
-const statusColors = attendanceStatusColors;
+// ─── Utilities ───────────────────────────────────────────────────────────────
 
-export function AttendanceCalendar({ employeeId }: AttendanceCalendarProps) {
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(null);
+const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
+];
 
-  const monthStart = startOfMonth(currentDate);
-  const monthEnd = endOfMonth(currentDate);
+function getDaysInMonth(year: number, month: number): number {
+  return new Date(year, month + 1, 0).getDate();
+}
 
-  // Fetch attendance records for the current month
-  const { data: records, isLoading } = useQuery({
-    queryKey: ["attendance-calendar", employeeId, format(currentDate, "yyyy-MM")],
+function getFirstDayOfMonth(year: number, month: number): number {
+  return new Date(year, month, 1).getDay();
+}
+
+function formatDate(year: number, month: number, day: number): string {
+  const m = String(month + 1).padStart(2, "0");
+  const d = String(day).padStart(2, "0");
+  return `${year}-${m}-${d}`;
+}
+
+function formatTime(time?: string): string {
+  if (!time) return "N/A";
+  try {
+    return new Date(time).toLocaleTimeString("en-IN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return time;
+  }
+}
+
+function getStatusColor(status: AttendanceDay["status"]): string {
+  const colors = {
+    present: "bg-emerald-100 border-emerald-300 text-emerald-800 hover:bg-emerald-200",
+    absent: "bg-red-100 border-red-300 text-red-800 hover:bg-red-200",
+    leave: "bg-blue-100 border-blue-300 text-blue-800 hover:bg-blue-200",
+    holiday: "bg-purple-100 border-purple-300 text-purple-800 hover:bg-purple-200",
+    weekend: "bg-slate-100 border-slate-300 text-slate-600 hover:bg-slate-200",
+    "half-day": "bg-amber-100 border-amber-300 text-amber-800 hover:bg-amber-200",
+  };
+  return colors[status] || "bg-slate-50 border-slate-200 text-slate-500";
+}
+
+function getStatusBadgeColor(status: AttendanceDay["status"]): string {
+  const colors = {
+    present: "bg-emerald-500",
+    absent: "bg-red-500",
+    leave: "bg-blue-500",
+    holiday: "bg-purple-500",
+    weekend: "bg-slate-400",
+    "half-day": "bg-amber-500",
+  };
+  return colors[status] || "bg-slate-300";
+}
+
+// ─── Main Component ──────────────────────────────────────────────────────────
+
+export function AttendanceCalendar({
+  employeeId,
+  initialMonth,
+  initialYear,
+}: AttendanceCalendarProps) {
+  const today = new Date();
+  const [currentMonth, setCurrentMonth] = useState(initialMonth ?? today.getMonth());
+  const [currentYear, setCurrentYear] = useState(initialYear ?? today.getFullYear());
+  const [selectedDate, setSelectedDate] = useState<AttendanceDay | null>(null);
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+
+  // Fetch attendance data
+  const { data: attendanceData = [], isLoading } = useQuery<AttendanceDay[]>({
+    queryKey: ["attendance-calendar", employeeId, currentYear, currentMonth],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: AttendanceRecord[] }>(
-        `/api/wfm/attendance/daily?employeeId=${employeeId}&fromDate=${format(monthStart, "yyyy-MM-dd")}&toDate=${format(monthEnd, "yyyy-MM-dd")}`
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+        `/api/wfm/attendance?employee_id=${employeeId}&month=${currentMonth + 1}&year=${currentYear}`
       );
-      return res.data ?? [];
+      return (res.data || []).map((record: any) => ({
+        date: record.attendance_date || record.punch_date,
+        status: record.status || "present",
+        punchIn: record.punch_in || record.first_punch,
+        punchOut: record.punch_out || record.last_punch,
+        totalHours: record.total_hours || record.working_hours,
+        breakDuration: record.break_minutes,
+        location: record.location || record.punch_location,
+        ipAddress: record.ip_address,
+        remarks: record.remarks,
+        leaveType: record.leave_type,
+      }));
     },
     enabled: !!employeeId,
   });
 
-  // Create a map of date -> record for quick lookup
-  const recordsByDate = new Map<string, AttendanceRecord>();
-  records?.forEach((record) => {
-    recordsByDate.set(record.date, record);
+  const attendanceMap = new Map<string, AttendanceDay>();
+  attendanceData.forEach((day) => {
+    attendanceMap.set(day.date, day);
   });
 
-  // Generate all days in the month
-  const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
-
-  // Get the starting day of week (0 = Sunday, 1 = Monday, etc.)
-  const startingDayOfWeek = monthStart.getDay();
-
-  // Add empty cells for days before the month starts
-  const emptyCells = Array(startingDayOfWeek).fill(null);
-
-  const handlePreviousMonth = () => {
-    setCurrentDate(subMonths(currentDate, 1));
-  };
-
-  const handleNextMonth = () => {
-    setCurrentDate(addMonths(currentDate, 1));
-  };
-
-  const handleDateClick = (date: Date) => {
-    const dateStr = format(date, "yyyy-MM-dd");
-    const record = recordsByDate.get(dateStr);
-    if (record) {
-      setSelectedDate(date);
-      setSelectedRecord(record);
+  const goToPreviousMonth = () => {
+    if (currentMonth === 0) {
+      setCurrentMonth(11);
+      setCurrentYear(currentYear - 1);
+    } else {
+      setCurrentMonth(currentMonth - 1);
     }
   };
 
-  const getStatusForDate = (date: Date): string => {
-    const dateStr = format(date, "yyyy-MM-dd");
-    const record = recordsByDate.get(dateStr);
-
-    if (record) {
-      return record.status;
+  const goToNextMonth = () => {
+    if (currentMonth === 11) {
+      setCurrentMonth(0);
+      setCurrentYear(currentYear + 1);
+    } else {
+      setCurrentMonth(currentMonth + 1);
     }
-
-    // Check if it's a weekend (Saturday or Sunday)
-    const dayOfWeek = date.getDay();
-    if (dayOfWeek === 0 || dayOfWeek === 6) {
-      return "weekend";
-    }
-
-    // Future dates
-    if (date > new Date()) {
-      return "";
-    }
-
-    // Past dates with no record are likely absent
-    return "absent";
   };
 
-  const formatTime = (timestamp: string | null) => {
-    if (!timestamp) return "-";
-    return format(new Date(timestamp), "h:mm a");
+  const goToToday = () => {
+    setCurrentMonth(today.getMonth());
+    setCurrentYear(today.getFullYear());
   };
+
+  const daysInMonth = getDaysInMonth(currentYear, currentMonth);
+  const firstDayOfMonth = getFirstDayOfMonth(currentYear, currentMonth);
+  const calendarDays: (number | null)[] = [];
+
+  for (let i = 0; i < firstDayOfMonth; i++) {
+    calendarDays.push(null);
+  }
+  for (let day = 1; day <= daysInMonth; day++) {
+    calendarDays.push(day);
+  }
+
+  const handleDayClick = (day: number) => {
+    const dateStr = formatDate(currentYear, currentMonth, day);
+    const attendance = attendanceMap.get(dateStr);
+    if (attendance) {
+      setSelectedDate(attendance);
+      setDetailModalOpen(true);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <Skeleton className="h-8 w-48" />
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-7 gap-2">
+            {Array.from({ length: 35 }).map((_, i) => (
+              <Skeleton key={i} className="h-20" />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <>
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <CalendarIcon className="h-5 w-5" />
-                Attendance Calendar
-              </CardTitle>
-              <CardDescription>
-                View your attendance records day by day
-              </CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handlePreviousMonth}
-              >
+            <CardTitle>{MONTHS[currentMonth]} {currentYear}</CardTitle>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={goToToday}>
+                <CalendarIcon className="mr-2 h-4 w-4" />
+                Today
+              </Button>
+              <Button variant="outline" size="icon" onClick={goToPreviousMonth}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <div className="min-w-[140px] text-center font-semibold">
-                {format(currentDate, "MMMM yyyy")}
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleNextMonth}
-                disabled={currentDate >= new Date()}
-              >
+              <Button variant="outline" size="icon" onClick={goToNextMonth}>
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
-            <div className="space-y-3">
-              <Skeleton className="h-64 w-full" />
-            </div>
-          ) : (
-            <>
-              {/* Legend */}
-              <div className="mb-4 flex flex-wrap gap-2 text-xs">
-                <Badge className={statusColors.present}>Present</Badge>
-                <Badge className={statusColors.late}>Late</Badge>
-                <Badge className={statusColors.absent}>Absent</Badge>
-                <Badge className={statusColors["half-day"]}>Half Day</Badge>
-                <Badge className={statusColors.leave}>Leave</Badge>
-                <Badge className={statusColors.weekend}>Weekend</Badge>
+          <div className="mb-4 flex gap-3 text-xs">
+            {[
+              { status: "present", label: "Present" },
+              { status: "absent", label: "Absent" },
+              { status: "leave", label: "Leave" },
+              { status: "holiday", label: "Holiday" },
+            ].map(({ status, label }) => (
+              <div key={status} className="flex items-center gap-1.5">
+                <div className={`h-3 w-3 rounded-full ${getStatusBadgeColor(status as AttendanceDay["status"])}`} />
+                <span>{label}</span>
               </div>
-
-              {/* Calendar Grid */}
-              <div className="grid grid-cols-7 gap-2">
-                {/* Weekday headers */}
-                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-                  <div
-                    key={day}
-                    className="text-center text-sm font-semibold text-muted-foreground p-2"
-                  >
-                    {day}
-                  </div>
-                ))}
-
-                {/* Empty cells before month starts */}
-                {emptyCells.map((_, index) => (
-                  <div key={`empty-${index}`} className="aspect-square" />
-                ))}
-
-                {/* Days of the month */}
-                {daysInMonth.map((date) => {
-                  const status = getStatusForDate(date);
-                  const isToday = isSameDay(date, new Date());
-                  const hasRecord = recordsByDate.has(format(date, "yyyy-MM-dd"));
-                  const isFuture = date > new Date();
-
-                  return (
-                    <button
-                      key={date.toString()}
-                      onClick={() => handleDateClick(date)}
-                      disabled={!hasRecord}
-                      className={`
-                        aspect-square p-1 rounded-lg border-2 transition-all
-                        ${isToday ? "border-primary" : "border-transparent"}
-                        ${status && statusColors[status] ? statusColors[status] : "bg-gray-100 hover:bg-gray-200"}
-                        ${!hasRecord ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
-                        ${isFuture ? "opacity-30" : ""}
-                        flex flex-col items-center justify-center
-                      `}
-                    >
-                      <div className={`text-sm font-semibold ${status === "weekend" ? "text-gray-700" : ""}`}>
-                        {format(date, "d")}
-                      </div>
-                      {hasRecord && (
-                        <div className="text-[10px] opacity-90">
-                          {status}
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-2">
+            {DAYS_SHORT.map((day) => (
+              <div key={day} className="p-2 text-center text-xs font-bold uppercase text-slate-600">
+                {day}
               </div>
-            </>
-          )}
+            ))}
+            {calendarDays.map((day, index) => {
+              if (day === null) return <div key={`empty-${index}`} className="p-2" />;
+              const dateStr = formatDate(currentYear, currentMonth, day);
+              const attendance = attendanceMap.get(dateStr);
+              const dayOfWeek = new Date(currentYear, currentMonth, day).getDay();
+              const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+              const status = attendance?.status || (isWeekend ? "weekend" : "absent");
+              const colorClass = getStatusColor(status);
+              return (
+                <button
+                  key={day}
+                  onClick={() => handleDayClick(day)}
+                  className={`min-h-[80px] rounded-lg border-2 p-2 text-left transition-all cursor-pointer ${colorClass}`}
+                >
+                  <div className="font-bold text-sm">{day}</div>
+                  {attendance?.punchIn && (
+                    <div className="mt-1 text-xs">
+                      <Clock className="inline h-3 w-3 mr-1" />
+                      {formatTime(attendance.punchIn).slice(0, 5)}
+                    </div>
+                  )}
+                  {attendance?.totalHours && (
+                    <div className="text-xs font-semibold">{attendance.totalHours.toFixed(1)}h</div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </CardContent>
       </Card>
 
-      {/* Details Dialog */}
-      <Dialog open={!!selectedDate} onOpenChange={(open) => !open && setSelectedDate(null)}>
+      <Dialog open={detailModalOpen} onOpenChange={setDetailModalOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              Attendance Details - {selectedDate && format(selectedDate, "MMMM d, yyyy")}
-            </DialogTitle>
+            <DialogTitle>Attendance Details</DialogTitle>
             <DialogDescription>
-              Your attendance record for this day
+              {selectedDate && new Date(selectedDate.date).toLocaleDateString("en-IN", {
+                weekday: "long", year: "numeric", month: "long", day: "numeric"
+              })}
             </DialogDescription>
           </DialogHeader>
-          {selectedRecord && (
+          {selectedDate && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="font-medium">Status:</span>
-                <Badge className={statusColors[selectedRecord.status] || ""}>
-                  {selectedRecord.status}
-                </Badge>
+              <div className="flex items-center gap-2">
+                <div className={`h-4 w-4 rounded-full ${getStatusBadgeColor(selectedDate.status)}`} />
+                <Badge variant="secondary" className="capitalize">{selectedDate.status}</Badge>
               </div>
-
-              {selectedRecord.work_mode && (
-                <div className="flex items-center justify-between">
-                  <span className="font-medium">Work Mode:</span>
-                  <Badge variant="outline">
-                    {selectedRecord.work_mode === "wfh" ? "Work From Home" : "Office"}
-                  </Badge>
+              {selectedDate.punchIn && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs font-medium text-slate-500">Punch In</p>
+                    <p className="text-lg font-semibold">{formatTime(selectedDate.punchIn)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500">Punch Out</p>
+                    <p className="text-lg font-semibold">{formatTime(selectedDate.punchOut)}</p>
+                  </div>
                 </div>
               )}
-
-              <div className="space-y-2 rounded-lg border p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Clock className="h-4 w-4" />
-                    <span>Clock In:</span>
-                  </div>
-                  <div className="font-medium">{formatTime(selectedRecord.clock_in)}</div>
+              {selectedDate.totalHours !== undefined && (
+                <div>
+                  <p className="text-xs font-medium text-slate-500">Total Hours</p>
+                  <p className="text-lg font-semibold">{selectedDate.totalHours.toFixed(2)} hrs</p>
                 </div>
-                {selectedRecord.clock_in_location_name && (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground ml-6">
-                    <MapPin className="h-3 w-3" />
-                    {selectedRecord.clock_in_location_name}
+              )}
+              {selectedDate.location && (
+                <div>
+                  <p className="text-xs font-medium text-slate-500">Location</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <MapPin className="h-4 w-4" />
+                    <p className="text-sm">{selectedDate.location}</p>
                   </div>
-                )}
-              </div>
-
-              <div className="space-y-2 rounded-lg border p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Clock className="h-4 w-4" />
-                    <span>Clock Out:</span>
-                  </div>
-                  <div className="font-medium">{formatTime(selectedRecord.clock_out)}</div>
-                </div>
-                {selectedRecord.clock_out_location_name && (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground ml-6">
-                    <MapPin className="h-3 w-3" />
-                    {selectedRecord.clock_out_location_name}
-                  </div>
-                )}
-              </div>
-
-              {selectedRecord.total_hours !== null && (
-                <div className="flex items-center justify-between rounded-lg border-2 border-primary/20 bg-primary/5 p-4">
-                  <span className="font-semibold">Total Hours:</span>
-                  <span className="text-lg font-bold text-primary">
-                    {selectedRecord.total_hours.toFixed(1)}h
-                  </span>
+                  {selectedDate.ipAddress && (
+                    <p className="text-xs text-slate-500 mt-1">IP: {selectedDate.ipAddress}</p>
+                  )}
                 </div>
               )}
             </div>
