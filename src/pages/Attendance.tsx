@@ -558,141 +558,48 @@ const Attendance = () => {
             </div>
           </section>
 
-          {/* Today + Schedule */}
+          {/* Today's Status */}
           <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
             <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-5 shadow-sm">
-              <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <h2 className="text-sm font-semibold tracking-tight text-slate-950">
-                    Today&apos;s Attendance
-                  </h2>
-                  <p className="mt-1 text-xs leading-5 text-slate-500">
-                    {format(currentTime, "EEEE, MMMM d, yyyy")}
-                  </p>
-                </div>
-
-                {todayRecord?.work_mode && (
-                  <Badge className="w-fit bg-slate-100 text-slate-700 hover:bg-slate-100">
-                    {todayRecord.work_mode === "wfo" ? (
-                      <>
-                        <Building2 className="mr-1 h-3.5 w-3.5" />
-                        Office
-                      </>
-                    ) : (
-                      <>
-                        <Home className="mr-1 h-3.5 w-3.5" />
-                        Home
-                      </>
-                    )}
-                  </Badge>
-                )}
+              <div className="mb-5">
+                <h2 className="text-sm font-semibold tracking-tight text-slate-950">
+                  Today&apos;s Status
+                </h2>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  {format(currentTime, "EEEE, MMMM d, yyyy")}
+                </p>
               </div>
 
               {todayLoading ? (
-                <div className="grid gap-4 sm:grid-cols-3">
-                  {[1, 2, 3].map((item) => (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {[1, 2].map((item) => (
                     <Skeleton key={item} className="h-24 rounded-2xl" />
                   ))}
                 </div>
               ) : (
-                <>
-                  <div className="grid gap-4 sm:grid-cols-3">
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-                        <LogIn className="h-4 w-4 text-emerald-700" />
-                        Clock In
-                      </div>
-
-                      <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
-                        {todayRecord?.clock_in
-                          ? format(new Date(todayRecord.clock_in), "hh:mm a")
-                          : "--:--"}
-                      </p>
-
-                      {isAdminOrHR &&
-                        todayRecord?.clock_in &&
-                        calculateLateArrival(todayRecord.clock_in) > 0 && (
-                          <p className="mt-2 text-xs font-semibold text-amber-700">
-                            {formatLateDuration(
-                              calculateLateArrival(todayRecord.clock_in)
-                            )}{" "}
-                            late
-                          </p>
-                        )}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+                      Attendance Status
                     </div>
-
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-                        <LogOut className="h-4 w-4 text-sky-700" />
-                        Clock Out
-                      </div>
-
-                      <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
-                        {todayRecord?.clock_out
-                          ? format(new Date(todayRecord.clock_out), "hh:mm a")
-                          : "--:--"}
-                      </p>
-                    </div>
-
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-                        <Timer className="h-4 w-4 text-indigo-700" />
-                        Total Hours
-                      </div>
-
-                      <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
-                        {todayRecord?.total_hours
-                          ? `${todayRecord.total_hours.toFixed(2)} hrs`
-                          : "--"}
-                      </p>
-
-                      {todayBreaks && todayBreaks.length > 0 && (
-                        <p className="mt-2 text-xs text-slate-500">
-                          {todayBreaks.length} break
-                          {todayBreaks.length > 1 ? "s" : ""} ·{" "}
-                          {totalBreakHours.toFixed(1)}h total
-                        </p>
-                      )}
-                    </div>
+                    <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
+                      {todayRecord?.attendance_status
+                        ? todayRecord.attendance_status.charAt(0).toUpperCase() + todayRecord.attendance_status.slice(1).replace('_', ' ')
+                        : "Not Marked"}
+                    </p>
                   </div>
 
-                  {todayRecord?.clock_out && (
-                    <div className="mt-5 flex items-center gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-700">
-                      <CheckCircle2 className="h-4 w-4" />
-                      Completed for today
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+                      <Briefcase className="h-4 w-4 text-indigo-700" />
+                      Work Mode
                     </div>
-                  )}
-
-                  {(todayRecord?.clock_in_location_name ||
-                    todayRecord?.clock_out_location_name) && (
-                    <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
-                      <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-slate-950">
-                        <MapPin className="h-4 w-4 text-sky-700" />
-                        Location Log
-                      </div>
-
-                      <div className="space-y-2 text-xs leading-5 text-slate-500">
-                        {todayRecord?.clock_in_location_name && (
-                          <p>
-                            <span className="font-semibold text-slate-700">
-                              Clock In:
-                            </span>{" "}
-                            {todayRecord.clock_in_location_name}
-                          </p>
-                        )}
-
-                        {todayRecord?.clock_out_location_name && (
-                          <p>
-                            <span className="font-semibold text-slate-700">
-                              Clock Out:
-                            </span>{" "}
-                            {todayRecord.clock_out_location_name}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </>
+                    <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
+                      {todayRecord?.work_mode === "wfo" ? "Office" : todayRecord?.work_mode === "wfh" ? "Home" : "--"}
+                    </p>
+                  </div>
+                </div>
               )}
             </div>
 
