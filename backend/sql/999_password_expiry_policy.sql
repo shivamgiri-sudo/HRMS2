@@ -11,10 +11,20 @@
 USE mas_hrms;
 
 -- Add password_changed_at column if it doesn't exist
-ALTER TABLE auth_user
-  ADD COLUMN IF NOT EXISTS password_changed_at DATETIME NULL
-  COMMENT 'Timestamp of last password change for expiry policy'
-  AFTER must_change_password;
+-- Check if column exists first, then add
+SET @col_exists = (SELECT COUNT(*)
+                   FROM INFORMATION_SCHEMA.COLUMNS
+                   WHERE TABLE_SCHEMA = 'mas_hrms'
+                   AND TABLE_NAME = 'auth_user'
+                   AND COLUMN_NAME = 'password_changed_at');
+
+SET @sql = IF(@col_exists = 0,
+  'ALTER TABLE auth_user ADD COLUMN password_changed_at DATETIME NULL COMMENT "Timestamp of last password change for expiry policy" AFTER must_change_password',
+  'SELECT "Column password_changed_at already exists" AS message');
+
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- For existing users without a password_changed_at value,
 -- set it to the created_at timestamp (assume password was set at account creation)
@@ -23,8 +33,19 @@ UPDATE auth_user
  WHERE password_changed_at IS NULL;
 
 -- Add index for efficient password expiry queries
-CREATE INDEX IF NOT EXISTS idx_password_changed_at
-  ON auth_user(password_changed_at);
+SET @idx_exists = (SELECT COUNT(*)
+                   FROM INFORMATION_SCHEMA.STATISTICS
+                   WHERE TABLE_SCHEMA = 'mas_hrms'
+                   AND TABLE_NAME = 'auth_user'
+                   AND INDEX_NAME = 'idx_password_changed_at');
+
+SET @sql = IF(@idx_exists = 0,
+  'CREATE INDEX idx_password_changed_at ON auth_user(password_changed_at)',
+  'SELECT "Index idx_password_changed_at already exists" AS message');
+
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- ================================================================
 -- Password History Table (for preventing password reuse)
