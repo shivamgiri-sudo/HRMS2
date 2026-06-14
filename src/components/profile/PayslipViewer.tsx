@@ -638,7 +638,8 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                                 e.stopPropagation();
                                 handleDownloadPayslip(record);
                               }}
-                              disabled={record.run_status === "draft"}
+                              disabled={!record.net_salary || Number(record.net_salary) === 0}
+                              title={!record.net_salary || Number(record.net_salary) === 0 ? "Payslip not yet processed" : "Download PDF"}
                             >
                               <Download className="h-4 w-4 mr-1" />
                               PDF
@@ -762,7 +763,10 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
             <FileText className="mb-4 h-12 w-12 text-slate-300" />
             <p className="text-lg font-bold text-slate-800">No payslips found</p>
             <p className="text-sm text-muted-foreground">
-              There are no payroll records for {selectedYear}
+              There are no processed payroll records for {selectedYear}.
+            </p>
+            <p className="text-xs text-muted-foreground mt-2">
+              Note: Payslips in draft status are not available for download until they are finalized by HR/Payroll team.
             </p>
           </div>
         )}
