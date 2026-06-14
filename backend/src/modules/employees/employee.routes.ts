@@ -292,6 +292,29 @@ router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req
   res.json({ data: rows[0] });
 }));
 
+router.get("/options/search", requireAuth, h(async (req: any, res: any) => {
+  const search = String(req.query.q ?? "").trim();
+  if (search.length < 2) return res.json({ success: true, data: [] });
+
+  const limit = Math.min(Math.max(Number(req.query.limit ?? 30), 1), 50);
+  const like = `%${search}%`;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id,
+            e.employee_code,
+            CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS name
+       FROM employees e
+      WHERE e.active_status = 1
+        AND (
+          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) LIKE ?
+          OR e.employee_code LIKE ?
+        )
+      ORDER BY CASE WHEN e.employee_code = ? THEN 0 ELSE 1 END, name
+      LIMIT ${limit}`,
+    [like, like, search]
+  );
+  return res.json({ success: true, data: rows });
+}));
+
 // GET /api/employees/my-team — returns active direct reports of the logged-in user's employee record
 router.get("/my-team", h(async (req: any, res: any) => {
   const userId = req.authUser?.id;

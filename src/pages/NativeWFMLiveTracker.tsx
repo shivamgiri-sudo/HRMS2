@@ -89,12 +89,20 @@ export default function NativeWFMLiveTracker() {
     setLoading(true);
     setMessage("");
     try {
-      const [liveRes, empsRes] = await Promise.all([
+      const [liveRes, firstPage] = await Promise.all([
         hrmsApi.get<{ success: boolean; data: any }>(`/api/wfm/live?date=${date}`),
-        hrmsApi.get<{ success: boolean; data: AnyRow[] }>("/api/employees?limit=500"),
+        hrmsApi.get<{ success: boolean; data: AnyRow[]; total?: number }>("/api/employees?limit=200&page=1"),
       ]);
+      const allEmployees = [...(firstPage.data ?? [])];
+      const pages = Math.ceil(Number(firstPage.total ?? allEmployees.length) / 200);
+      for (let page = 2; page <= pages; page += 1) {
+        const next = await hrmsApi.get<{ success: boolean; data: AnyRow[] }>(
+          `/api/employees?limit=200&page=${page}`
+        );
+        allEmployees.push(...(next.data ?? []));
+      }
       setLiveData(liveRes.data);
-      setEmployees(empsRes.data ?? []);
+      setEmployees(allEmployees);
     } catch (err: any) {
       setMessage(err.message || "Unable to load WFM live tracker.");
     } finally {

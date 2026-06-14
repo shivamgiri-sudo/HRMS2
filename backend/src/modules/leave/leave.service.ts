@@ -23,7 +23,13 @@ export const leaveService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM leave_type_master WHERE active_status = 1 ORDER BY leave_name ASC"
     );
-    const types = rows as LeaveType[];
+    const seen = new Set<string>();
+    const types = (rows as LeaveType[]).filter((type) => {
+      const normalized = String(type.leave_name ?? "").trim().toLocaleLowerCase();
+      if (!normalized || seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    });
 
     // Apply customizations if employeeId provided
     if (employeeId) {

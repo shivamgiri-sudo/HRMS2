@@ -340,9 +340,14 @@ export default function NativeIntegrationHub() {
   const triggerRun = async (key: string) => {
     setRunningKey(key);
     try {
-      await hrmsApi.post(`/api/integration-hub/${key}/run`, {});
-      setMessage(`Run triggered for "${key}".`);
+      const response = await hrmsApi.post<{
+        success: boolean;
+        data: { rows_fetched: number; rows_promoted: number; rows_failed: number };
+        message: string;
+      }>(`/api/integration-hub/${key}/run`, {});
+      setMessage(response.message);
       await loadConnectors();
+      await loadRuns();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Run trigger failed";
       setMessage(msg);

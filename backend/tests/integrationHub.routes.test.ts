@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 
-vi.mock("../src/db/supabaseAdmin.js", () => ({
-  supabaseAdmin: {},
-  supabaseAuthClient: { auth: { getUser: vi.fn() } },
+vi.mock("../src/modules/auth/auth.service.js", () => ({
+  authService: {
+    verifyAccessToken: vi.fn(() => ({ id: "user-1", email: "admin@mcn.com" })),
+  },
 }));
 
 vi.mock("../src/db/mysql.js", () => ({
@@ -23,6 +24,9 @@ vi.mock("../src/modules/integration-hub/integration.service.js", () => ({
     confirmFieldMap: vi.fn(),
     listSuggestions: vi.fn(),
   },
+}));
+vi.mock("../src/modules/integration-hub/connectorRunner.js", () => ({
+  executeConnector: vi.fn(),
 }));
 vi.mock("../src/middleware/requireRole.js", () => ({
   requireRole: (..._roles: string[]) => (_req: any, _res: any, next: any) => next(),
@@ -49,12 +53,12 @@ vi.mock("../src/middleware/scopeMiddleware.js", () => ({
   getTargetFromBodyOrQuery: () => ({}),
 }));
 
-import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
 import { integrationService } from "../src/modules/integration-hub/integration.service.js";
+import { executeConnector } from "../src/modules/integration-hub/connectorRunner.js";
 import { app } from "../src/app.js";
 
-const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 const svc = integrationService as { [K in keyof typeof integrationService]: ReturnType<typeof vi.fn> };
+const mockExecuteConnector = executeConnector as ReturnType<typeof vi.fn>;
 
 const AUTH = { Authorization: "Bearer valid.token" };
 
@@ -76,10 +80,6 @@ const fakeConfig = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetUser.mockResolvedValue({
-    data: { user: { id: "user-1", email: "admin@mcn.com" } },
-    error: null,
-  });
 });
 
 // ─── GET /api/integration-hub ──────────────────────────────────────────────────
@@ -173,18 +173,21 @@ describe("GET /api/integration-hub/runs", () => {
 // ─── POST /api/integration-hub/:key/run ───────────────────────────────────────
 
 describe("POST /api/integration-hub/:key/run", () => {
-  it("creates a new run and returns 201", async () => {
-    svc.createRun.mockResolvedValueOnce({
-      id: "run-1",
-      integration_key: "dialer_1",
-      triggered_by: "manual",
-      status: "running",
+  it("executes the connector and returns a completed run", async () => {
+    svc.getByKey.mockResolvedValueOnce(fakeConfig);
+    mockExecuteConnector.mockResolvedValueOnce({
+      run_id: "run-1",
+      rows_fetched: 12,
+      rows_promoted: 10,
+      rows_failed: 2,
+      status: "complete",
     });
     const res = await request(app)
       .post("/api/integration-hub/dialer_1/run")
       .set(AUTH);
-    expect(res.status).toBe(201);
-    expect(res.body.data.status).toBe("running");
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe("complete");
+    expect(res.body.data.rows_fetched).toBe(12);
   });
 });
 

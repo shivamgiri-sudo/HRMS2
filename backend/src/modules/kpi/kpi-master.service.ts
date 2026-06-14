@@ -401,7 +401,7 @@ export async function getOrgUnitOptions(type: OrgUnitType) {
 
   const { table, id, name } = tableMap[type];
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT MIN(\`${id}\`) AS id, TRIM(\`${name}\`) AS name
+    `SELECT MIN(\`${id}\`) AS id, MIN(TRIM(\`${name}\`)) AS name
        FROM \`${table}\`
       WHERE active_status = 1 AND TRIM(COALESCE(\`${name}\`, '')) <> ''
       GROUP BY LOWER(TRIM(\`${name}\`))

@@ -4,6 +4,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { integrationController } from "./integration.controller.js";
 import { integrationService } from "./integration.service.js";
 import { syncDatabaseConnector } from "./adapters/dbSyncService.js";
+import { executeConnector } from "./connectorRunner.js";
 
 export const integrationRouter = Router();
 
@@ -46,8 +47,20 @@ integrationRouter.put("/:key", (req, res, next) => {
   integrationController.update(req as any, res).catch(next);
 });
 
-integrationRouter.post("/:key/run", (req, res, next) => {
-  integrationController.createRun(req as any, res).catch(next);
+integrationRouter.post("/:key/run", async (req: any, res: any, next: any) => {
+  try {
+    const connector = await integrationService.getByKey(req.params.key);
+    const result = await executeConnector(connector, req.authUser!.id, req.body ?? {});
+    return res.status(result.status === "failed" ? 502 : 200).json({
+      success: result.status === "complete",
+      data: result,
+      message: result.status === "complete"
+        ? `Fetched ${result.rows_fetched} row(s); promoted ${result.rows_promoted}`
+        : "Connector run failed",
+    });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 integrationRouter.get("/:key/field-maps", (req, res, next) => {

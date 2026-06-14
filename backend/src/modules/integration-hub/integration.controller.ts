@@ -134,7 +134,14 @@ export const integrationController = {
       connector_key: run.integration_key,
       connector_name: run.integration_name ?? run.integration_key,
       type: integrationTypeToUi(run.integration_type),
-      records_synced: Number(run.rows_promoted ?? run.rows_staged ?? run.rows_fetched ?? 0),
+      status: run.status === "complete"
+        ? (Number(run.rows_failed ?? 0) > 0 ? "partial" : "success")
+        : run.status,
+      records_synced: Math.max(
+        Number(run.rows_promoted ?? 0),
+        Number(run.rows_staged ?? 0),
+        Number(run.rows_fetched ?? 0),
+      ),
       errors: Number(run.rows_failed ?? 0),
       created_at: run.started_at,
     }));
