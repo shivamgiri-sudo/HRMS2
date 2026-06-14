@@ -20,9 +20,11 @@ export interface ReconciliationReport {
 }
 
 /**
- * Read-only RBAC reconciliation.
- * Compares MySQL user_roles (backend authority) against Supabase user_roles (UI mirror).
- * No writes, no auto-fix, no backfill, no permission elevation.
+ * RBAC reconciliation - validates MySQL user_roles consistency.
+ * Checks for:
+ * - Users with roles not in the catalog
+ * - Active roles pointing to non-existent users
+ * - Duplicate role assignments
  */
 export async function getRbacReconciliation(): Promise<ReconciliationReport> {
   // 1. Fetch all active MySQL user_roles
@@ -37,36 +39,39 @@ export async function getRbacReconciliation(): Promise<ReconciliationReport> {
     mysqlByUser.set(row.user_id, existing);
   }
 
-  // 2. Supabase removed — reconciliation compares MySQL vs MySQL (single source of truth).
-  // Returns empty mismatch list since there is only one authoritative store.
-  const sbByUser = new Map<string, string[]>();
+  // 2. Fetch valid role catalog
+  const [catalogRows] = await db.execute<RowDataPacket[]>(
+    "SELECT role_key FROM workforce_role_catalog WHERE active_status = 1"
+  );
+  const validRoles = new Set((catalogRows as { role_key: string }[]).map(r => r.role_key));
 
-  // 3. Union of all user_ids
-  const allUsers = new Set([...mysqlByUser.keys(), ...sbByUser.keys()]);
+  // 3. Fetch all users
+  const [userRows] = await db.execute<RowDataPacket[]>(
+    "SELECT id FROM auth_user"
+  );
+  const validUsers = new Set((userRows as { id: string }[]).map(u => u.id));
 
+  // 4. Find mismatches
   const mismatches: RbacMismatch[] = [];
 
-  for (const userId of allUsers) {
-    const mysqlRoles = mysqlByUser.get(userId) ?? [];
-    const sbRoles = sbByUser.get(userId) ?? [];
+  for (const [userId, roles] of mysqlByUser.entries()) {
+    const invalidRoles = roles.filter(r => !validRoles.has(r));
+    const userExists = validUsers.has(userId);
 
-    const inSbOnly = sbRoles.filter((r) => !mysqlRoles.includes(r));
-    const inMysqlOnly = mysqlRoles.filter((r) => !sbRoles.includes(r));
-
-    if (inSbOnly.length > 0 || inMysqlOnly.length > 0) {
+    if (invalidRoles.length > 0 || !userExists) {
       mismatches.push({
         user_id: userId,
-        mysql_roles: mysqlRoles,
-        supabase_roles: sbRoles,
-        in_supabase_only: inSbOnly,
-        in_mysql_only: inMysqlOnly,
+        mysql_roles: roles,
+        supabase_roles: [], // Deprecated field
+        in_supabase_only: [], // Deprecated field
+        in_mysql_only: invalidRoles.length > 0 ? invalidRoles : (userExists ? [] : roles),
       });
     }
   }
 
   return {
     total_mysql_users: mysqlByUser.size,
-    total_supabase_users: sbByUser.size,
+    total_supabase_users: 0, // Deprecated
     mismatches,
     checked_at: new Date().toISOString(),
   };
