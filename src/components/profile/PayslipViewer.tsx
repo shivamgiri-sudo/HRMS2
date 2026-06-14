@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -32,6 +32,8 @@ import {
   ChevronDown,
   ChevronUp,
   Download,
+  Eye,
+  EyeOff,
   FileText,
   Minus,
   Plus,
@@ -139,6 +141,27 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
   const [selectedYear, setSelectedYear] = useState(String(currentDate.getFullYear()));
   const [expandedRecord, setExpandedRecord] = useState<string | null>(null);
   const [showNewPayslipAlert, setShowNewPayslipAlert] = useState(false);
+  const [salaryVisible, setSalaryVisible] = useState(false);
+
+  const renderSensitive = (value: ReactNode, className = "") => (
+    <>
+      <span
+        aria-hidden={!salaryVisible}
+        className={`${className} inline-block ${
+          salaryVisible ? "" : "select-none blur-[6px]"
+        }`}
+      >
+        {salaryVisible ? value : "₹ 00,000.00"}
+      </span>
+      {!salaryVisible && <span className="sr-only">Salary amount hidden</span>}
+    </>
+  );
+
+  const handleYearChange = (year: string) => {
+    setSelectedYear(year);
+    setSalaryVisible(false);
+    setExpandedRecord(null);
+  };
 
   // Fetch payroll records for the employee
   const { data: payrollRecords, isLoading, isError } = useQuery<PayslipRecord[]>({
@@ -327,18 +350,30 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
               </CardDescription>
             </div>
           </div>
-          <Select value={selectedYear} onValueChange={setSelectedYear}>
-            <SelectTrigger className="w-[140px] rounded-xl border-white/20 bg-white text-slate-900">
-              <SelectValue placeholder="Year" />
-            </SelectTrigger>
-            <SelectContent>
-              {YEARS.map((year) => (
-                <SelectItem key={year.value} value={year.value}>
-                  {year.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className="rounded-xl border border-white/20 bg-white/15 font-bold text-white hover:bg-white/25 hover:text-white"
+              onClick={() => setSalaryVisible((visible) => !visible)}
+              aria-pressed={salaryVisible}
+            >
+              {salaryVisible ? <EyeOff className="mr-2 size-4" /> : <Eye className="mr-2 size-4" />}
+              {salaryVisible ? "Hide salary" : "View salary"}
+            </Button>
+            <Select value={selectedYear} onValueChange={handleYearChange}>
+              <SelectTrigger className="w-[140px] rounded-xl border-white/20 bg-white text-slate-900">
+                <SelectValue placeholder="Year" />
+              </SelectTrigger>
+              <SelectContent>
+                {YEARS.map((year) => (
+                  <SelectItem key={year.value} value={year.value}>
+                    {year.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-6 px-0 pt-6">
@@ -368,7 +403,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                 <Icon className="size-4" />
                 {label}
               </div>
-              <p className="mt-3 text-xl font-black tabular-nums">{value}</p>
+              <p className="mt-3 text-xl font-black tabular-nums">{renderSensitive(value)}</p>
             </div>
           ))}
         </section>
@@ -377,7 +412,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
           <div className="flex items-center gap-3">
             <ShieldCheck className="size-5 shrink-0 text-[#1B6AB5]" />
             <p className="text-pretty">
-              Payslip values are private and visible only to you and authorized payroll teams.
+              Salary values are hidden by default for shoulder-surfing protection. Use View salary only in a private setting.
             </p>
           </div>
           <div className="flex items-center gap-2 font-bold text-slate-700">
@@ -450,28 +485,31 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                   <div className="space-y-2 rounded-2xl border border-emerald-100 bg-emerald-50/50 p-4">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Basic Salary</span>
-                      <span className="font-medium">{formatCurrency(salaryStructure.basic_salary)}</span>
+                      <span className="font-medium">{renderSensitive(formatCurrency(salaryStructure.basic_salary))}</span>
                     </div>
                     {allowanceBreakdown.map((item) => (
                       <div key={item.label} className="flex justify-between">
                         <span className="text-muted-foreground">{item.label}</span>
-                        <span className="font-medium text-green-600">+{formatCurrency(item.amount)}</span>
+                        <span className="font-medium text-green-600">
+                          {renderSensitive(`+${formatCurrency(item.amount)}`)}
+                        </span>
                       </div>
                     ))}
                     <Separator />
                     <div className="flex justify-between font-semibold">
                       <span>Gross Salary</span>
                       <span>
-                        {payrollRecords && payrollRecords.length > 0
-                          ? formatCurrency(Number(payrollRecords[0].gross_salary ?? 0))
-                          : formatCurrency(
-                              salaryStructure.basic_salary +
-                                (salaryStructure.hra || 0) +
-                                (salaryStructure.transport_allowance || 0) +
-                                (salaryStructure.medical_allowance || 0) +
-                                (salaryStructure.other_allowances || 0)
-                            )
-                        }
+                        {renderSensitive(
+                          payrollRecords && payrollRecords.length > 0
+                            ? formatCurrency(Number(payrollRecords[0].gross_salary ?? 0))
+                            : formatCurrency(
+                                salaryStructure.basic_salary +
+                                  (salaryStructure.hra || 0) +
+                                  (salaryStructure.transport_allowance || 0) +
+                                  (salaryStructure.medical_allowance || 0) +
+                                  (salaryStructure.other_allowances || 0)
+                              )
+                        )}
                       </span>
                     </div>
                   </div>
@@ -489,15 +527,17 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                         {deductionBreakdown.map((item) => (
                           <div key={item.label} className="flex justify-between">
                             <span className="text-muted-foreground">{item.label}</span>
-                            <span className="font-medium text-red-600">-{formatCurrency(item.amount)}</span>
+                            <span className="font-medium text-red-600">
+                              {renderSensitive(`-${formatCurrency(item.amount)}`)}
+                            </span>
                           </div>
                         ))}
                         <Separator />
                         <div className="flex justify-between font-semibold">
                           <span>Total Deductions</span>
                           <span className="text-red-600">
-                            -{formatCurrency(
-                              Number(payrollRecords?.[0]?.total_deductions ?? 0)
+                            {renderSensitive(
+                              `-${formatCurrency(Number(payrollRecords?.[0]?.total_deductions ?? 0))}`
                             )}
                           </span>
                         </div>
@@ -514,18 +554,19 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                 <div className="flex justify-between items-center">
                   <span className="font-semibold text-lg">Net Salary (Monthly)</span>
                   <span className="text-2xl font-black tabular-nums text-[#073f78]">
-                    {payrollRecords && payrollRecords.length > 0
-                      ? formatCurrency(Number(payrollRecords[0].net_salary ?? 0))
-                      : formatCurrency(
-                          salaryStructure.basic_salary +
-                            (salaryStructure.hra || 0) +
-                            (salaryStructure.transport_allowance || 0) +
-                            (salaryStructure.medical_allowance || 0) +
-                            (salaryStructure.other_allowances || 0) -
-                            (salaryStructure.tax_deduction || 0) -
-                            (salaryStructure.other_deductions || 0)
-                        )
-                    }
+                    {renderSensitive(
+                      payrollRecords && payrollRecords.length > 0
+                        ? formatCurrency(Number(payrollRecords[0].net_salary ?? 0))
+                        : formatCurrency(
+                            salaryStructure.basic_salary +
+                              (salaryStructure.hra || 0) +
+                              (salaryStructure.transport_allowance || 0) +
+                              (salaryStructure.medical_allowance || 0) +
+                              (salaryStructure.other_allowances || 0) -
+                              (salaryStructure.tax_deduction || 0) -
+                              (salaryStructure.other_deductions || 0)
+                          )
+                    )}
                   </span>
                 </div>
               </div>
@@ -576,14 +617,18 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                             {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                           </TableCell>
                           <TableCell className="font-medium">{monthName}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(basicSal)}</TableCell>
+                          <TableCell className="text-right">
+                            {renderSensitive(formatCurrency(basicSal))}
+                          </TableCell>
                           <TableCell className="text-right text-green-600">
-                            +{formatCurrency(totalAllowances > 0 ? totalAllowances : 0)}
+                            {renderSensitive(`+${formatCurrency(totalAllowances > 0 ? totalAllowances : 0)}`)}
                           </TableCell>
                           <TableCell className="text-right text-red-600">
-                            -{formatCurrency(Number(record.total_deductions) || 0)}
+                            {renderSensitive(`-${formatCurrency(Number(record.total_deductions) || 0)}`)}
                           </TableCell>
-                          <TableCell className="text-right font-semibold">{formatCurrency(Number(record.net_salary) || 0)}</TableCell>
+                          <TableCell className="text-right font-semibold">
+                            {renderSensitive(formatCurrency(Number(record.net_salary) || 0))}
+                          </TableCell>
                           <TableCell>{getStatusBadge(record.run_status || record.status || "processed")}</TableCell>
                           <TableCell className="text-right">
                             <Button
@@ -613,25 +658,33 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                                       record.earnings.map((earning) => (
                                         <div key={earning.component_code} className="flex justify-between">
                                           <span className="text-muted-foreground">{earning.component_name}</span>
-                                          <span className="text-green-600">+{formatCurrency(Number(earning.amount))}</span>
+                                          <span className="text-green-600">
+                                            {renderSensitive(`+${formatCurrency(Number(earning.amount))}`)}
+                                          </span>
                                         </div>
                                       ))
                                     ) : (
                                       <>
                                         <div className="flex justify-between">
                                           <span className="text-muted-foreground">Basic Salary</span>
-                                          <span>{formatCurrency(Number(record.basic ?? record.basic_salary ?? 0))}</span>
+                                          <span>
+                                            {renderSensitive(formatCurrency(Number(record.basic ?? record.basic_salary ?? 0)))}
+                                          </span>
                                         </div>
                                         {Number(record.hra ?? 0) > 0 && (
                                           <div className="flex justify-between">
                                             <span className="text-muted-foreground">HRA</span>
-                                            <span className="text-green-600">+{formatCurrency(Number(record.hra))}</span>
+                                            <span className="text-green-600">
+                                              {renderSensitive(`+${formatCurrency(Number(record.hra))}`)}
+                                            </span>
                                           </div>
                                         )}
                                         {Number(record.special_allowance ?? 0) > 0 && (
                                           <div className="flex justify-between">
                                             <span className="text-muted-foreground">Special Allowance</span>
-                                            <span className="text-green-600">+{formatCurrency(Number(record.special_allowance))}</span>
+                                            <span className="text-green-600">
+                                              {renderSensitive(`+${formatCurrency(Number(record.special_allowance))}`)}
+                                            </span>
                                           </div>
                                         )}
                                       </>
@@ -647,7 +700,9 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                                       record.deductions.map((deduction) => (
                                         <div key={deduction.component_code} className="flex justify-between">
                                           <span className="text-muted-foreground">{deduction.component_name}</span>
-                                          <span className="text-red-600">-{formatCurrency(Number(deduction.amount))}</span>
+                                          <span className="text-red-600">
+                                            {renderSensitive(`-${formatCurrency(Number(deduction.amount))}`)}
+                                          </span>
                                         </div>
                                       ))
                                     ) : (
@@ -655,25 +710,33 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                                         {Number(record.pf_employee ?? 0) > 0 && (
                                           <div className="flex justify-between">
                                             <span className="text-muted-foreground">PF (Employee)</span>
-                                            <span className="text-red-600">-{formatCurrency(Number(record.pf_employee))}</span>
+                                            <span className="text-red-600">
+                                              {renderSensitive(`-${formatCurrency(Number(record.pf_employee))}`)}
+                                            </span>
                                           </div>
                                         )}
                                         {Number(record.esic_employee ?? 0) > 0 && (
                                           <div className="flex justify-between">
                                             <span className="text-muted-foreground">ESIC</span>
-                                            <span className="text-red-600">-{formatCurrency(Number(record.esic_employee))}</span>
+                                            <span className="text-red-600">
+                                              {renderSensitive(`-${formatCurrency(Number(record.esic_employee))}`)}
+                                            </span>
                                           </div>
                                         )}
                                         {Number(record.professional_tax ?? 0) > 0 && (
                                           <div className="flex justify-between">
                                             <span className="text-muted-foreground">Professional Tax</span>
-                                            <span className="text-red-600">-{formatCurrency(Number(record.professional_tax))}</span>
+                                            <span className="text-red-600">
+                                              {renderSensitive(`-${formatCurrency(Number(record.professional_tax))}`)}
+                                            </span>
                                           </div>
                                         )}
                                         {Number(record.tds ?? 0) > 0 && (
                                           <div className="flex justify-between">
                                             <span className="text-muted-foreground">TDS</span>
-                                            <span className="text-red-600">-{formatCurrency(Number(record.tds))}</span>
+                                            <span className="text-red-600">
+                                              {renderSensitive(`-${formatCurrency(Number(record.tds))}`)}
+                                            </span>
                                           </div>
                                         )}
                                         {Number(record.total_deductions) === 0 && (

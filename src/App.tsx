@@ -42,6 +42,7 @@ const BulkUploadHub                 = lazy(() => import("./pages/BulkUploadHub")
 const Departments                   = lazy(() => import("./pages/Departments"));
 const CompanyCalendar               = lazy(() => import("./pages/CompanyCalendar"));
 const NotificationPreferences       = lazy(() => import("./pages/NotificationPreferences"));
+const Notifications                 = lazy(() => import("./pages/Notifications"));
 const Changelog                     = lazy(() => import("./pages/Changelog"));
 const ModuleLauncher                = lazy(() => import("./pages/ModuleLauncher"));
 
@@ -250,6 +251,7 @@ const App = () => (
               <Route path="/departments" element={<ProtectedRoute><Gate pageCode="ORG_MASTERS"><Departments /></Gate></ProtectedRoute>} />
               <Route path="/calendar" element={<ProtectedRoute><CompanyCalendar /></ProtectedRoute>} />
               <Route path="/notification-preferences" element={<ProtectedRoute><NotificationPreferences /></ProtectedRoute>} />
+              <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
 
               <Route path="/modules" element={<ProtectedRoute><ModuleLauncher /></ProtectedRoute>} />
 

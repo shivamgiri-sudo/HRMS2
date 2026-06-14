@@ -51,6 +51,7 @@ const navGroups: NavGroup[] = [
     items: [
       { label: "Dashboard",  href: "/dashboard",  icon: <Home className="h-[15px] w-[15px]" />,         description: "Workspace" },
       { label: "My Modules", href: "/modules",    icon: <Package className="h-[15px] w-[15px]" />,      description: "All allowed pages" },
+      { label: "Notifications", href: "/notifications", icon: <Bell className="h-[15px] w-[15px]" />,   description: "Personal updates" },
       { label: "Work Inbox", href: "/work-inbox", icon: <ClipboardList className="h-[15px] w-[15px]" />, pageCode: "WORK_INBOX", description: "Pending actions" },
       { label: "Reports",    href: "/reports",    icon: <BarChart3 className="h-[15px] w-[15px]" />,    roles: ["admin","hr","manager","ceo","branch_head"], description: "Reports" },
     ],
@@ -145,7 +146,7 @@ const navGroups: NavGroup[] = [
 const BOTTOM_NAV = [
   { label: "Home",    href: "/dashboard",  icon: <Home className="h-5 w-5" /> },
   { label: "People",  href: "/employees",  icon: <Users className="h-5 w-5" /> },
-  { label: "Inbox",   href: "/work-inbox", icon: <Bell className="h-5 w-5" /> },
+  { label: "Alerts",  href: "/notifications", icon: <Bell className="h-5 w-5" /> },
   { label: "Attend",  href: "/attendance", icon: <Clock className="h-5 w-5" /> },
   { label: "Me",      href: "/profile",    icon: <User className="h-5 w-5" /> },
 ];

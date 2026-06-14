@@ -104,6 +104,8 @@ const MIGRATION_MANIFEST: string[] = [
   "178_tax_declaration_form12bb.sql",
   "179_super_admin_access.sql",
   "180_ats_registration_onboarding_repair.sql",
+  "181_careers_super_admin.sql",
+  "182_user_notification_preferences.sql",
 ];
 
 export type MigrationHealth = {

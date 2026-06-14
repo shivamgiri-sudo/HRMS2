@@ -146,7 +146,8 @@ export default function NativeDispatchCenter() {
     try {
       const res = await hrmsApi.post<{ success: boolean; data: SendResult }>("/api/communication/dispatch/send", {
         template_id: templateId,
-        employee_ids: ids,
+        recipient_employee_ids: ids,
+        data: {},
         channel,
       });
       const data = res.data;

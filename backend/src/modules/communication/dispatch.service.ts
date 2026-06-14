@@ -5,6 +5,7 @@ import { providerFactory } from './providers/provider.factory.js';
 import { providerConfigService } from './provider-config.service.js';
 import { templateService } from './template.service.js';
 import { notificationPreferencesService } from './notification-preferences.service.js';
+import { inboxService } from '../inbox/inbox.service.js';
 import type {
   SendMessageDTO,
   BulkSendDTO,
@@ -17,15 +18,33 @@ import type {
 } from './communication.types.js';
 
 class DispatchService {
+  private humanizeTemplateName(name: string): string {
+    return name
+      .split('/').pop()!
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b\w/g, char => char.toUpperCase());
+  }
+
+  private plainText(value: string): string {
+    return value
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   async send(dto: SendMessageDTO): Promise<DispatchResult> {
     const placeholders = dto.recipient_employee_ids.map(() => '?').join(',');
     const [employees] = await db.execute<RowDataPacket[]>(
-      `SELECT id, full_name, email, mobile AS phone FROM employees WHERE id IN (${placeholders})`,
+      `SELECT id, user_id, full_name, email, mobile AS phone FROM employees WHERE id IN (${placeholders})`,
       dto.recipient_employee_ids
     );
 
     const queued: string[] = [];
     const failed: string[] = [];
+    let portalCreated = 0;
 
     for (const emp of employees as any[]) {
       try {
@@ -37,57 +56,87 @@ class DispatchService {
           if (t) { category = t.category; resolvedTemplateName = t.name; }
         }
 
-        const channel: Channel = dto.channel
-          ?? await notificationPreferencesService.getPreferredChannel(emp.id, category);
-
-        const contact: string | null = channel === 'email' ? emp.email : emp.phone;
-        if (!contact) { failed.push(emp.id); continue; }
-
-        const rendered = await templateService.renderTemplate({
+        const context = {
+          ...dto.data,
+          employee: { ...(dto.data.employee ?? {}), name: emp.full_name, id: emp.id },
+          company: { name: 'Mas Callnet India Pvt Ltd', ...(dto.data.company ?? {}) },
+        };
+        const portalRendered = await templateService.renderTemplate({
           template_id:   dto.template_id,
           template_name: dto.template_name,
-          data: { ...dto.data, employee: { name: emp.full_name, id: emp.id } },
+          data: context,
         });
 
-        const dispatchId = randomUUID();
-        await db.execute(
-          `INSERT INTO dispatch_log
-           (id, template_id, template_name, recipient_employee_id, recipient_contact,
-            channel, status, body_preview, is_critical, retention_category, sent_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, NOW())`,
-          [
-            dispatchId,
-            dto.template_id ?? null,
-            resolvedTemplateName,
-            emp.id,
-            contact,
+        if (dto.portal !== false && emp.user_id) {
+          const portal = dto.portal ?? {};
+          await inboxService.createItem({
+            user_id: emp.user_id,
+            type: portal.type ?? category,
+            title: portal.title ?? portalRendered.subject ?? this.humanizeTemplateName(resolvedTemplateName),
+            description: portal.message ?? this.plainText(portalRendered.text ?? portalRendered.html).slice(0, 1200),
+            entity_type: portal.entity_type ?? category,
+            entity_id: portal.entity_id,
+            action_url: portal.action_url ?? '/notifications',
+            priority: portal.priority ?? (dto.is_critical ? 'urgent' : 'normal'),
+          });
+          portalCreated += 1;
+        }
+
+        const preference = await notificationPreferencesService.getDeliveryPreference(emp.id, category);
+        const preferredChannel = dto.channel ?? preference.channel;
+        const channels = !preference.enabled && !dto.is_critical
+          ? []
+          : Array.from(new Set(dto.channels?.length ? dto.channels : [preferredChannel]));
+
+        for (const channel of channels) {
+          const contact: string | null = channel === 'email' ? emp.email : emp.phone;
+          if (!contact) { failed.push(`${emp.id}:${channel}`); continue; }
+
+          const rendered = await templateService.renderTemplate({
+            template_id: dto.template_id,
+            template_name: dto.template_name,
+            data: context,
             channel,
-            rendered.html.slice(0, 500),
-            dto.is_critical ? 1 : 0,
-            dto.is_critical ? 'critical' : 'standard',
-          ]
-        );
+          });
+          const dispatchId = randomUUID();
+          await db.execute(
+            `INSERT INTO dispatch_log
+             (id, template_id, template_name, recipient_employee_id, recipient_contact,
+              channel, status, subject, body_preview, is_critical, retention_category)
+             VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+            [
+              dispatchId,
+              dto.template_id ?? null,
+              resolvedTemplateName,
+              emp.id,
+              contact,
+              channel,
+              rendered.subject ?? portalRendered.subject ?? this.humanizeTemplateName(resolvedTemplateName),
+              (channel === 'email' ? rendered.html : rendered.text ?? rendered.html).slice(0, 500),
+              dto.is_critical ? 1 : 0,
+              dto.is_critical ? 'critical' : 'standard',
+            ]
+          );
 
-        // Fire and forget — don't block the response
-        this._deliver(dispatchId, channel, contact, rendered).catch(err =>
-          console.error(`[dispatch] delivery failed for ${dispatchId}:`, err)
-        );
-
-        queued.push(dispatchId);
+          this._deliver(dispatchId, channel, contact, rendered).catch(err =>
+            console.error(`[dispatch] delivery failed for ${dispatchId}:`, err)
+          );
+          queued.push(dispatchId);
+        }
       } catch (err) {
         console.error(`[dispatch] queue failed for employee ${emp.id}:`, err);
         failed.push(emp.id);
       }
     }
 
-    return { queued: queued.length, failed: failed.length, dispatch_ids: queued };
+    return { queued: queued.length, failed: failed.length, dispatch_ids: queued, portal_created: portalCreated };
   }
 
   private async _deliver(
     dispatchId: string,
     channel: Channel,
     contact: string,
-    rendered: { html: string; text?: string }
+    rendered: { html: string; text?: string; subject?: string }
   ): Promise<void> {
     // Load DB config so admin panel changes take effect immediately
     const dbConfig = await providerConfigService.loadActiveConfig(channel);
@@ -129,6 +178,8 @@ class DispatchService {
       recipient_employee_ids: (rows as any[]).map(r => r.id),
       data:                   dto.data,
       channel:                dto.channel,
+      channels:               dto.channels,
+      portal:                 dto.portal,
     });
   }
 

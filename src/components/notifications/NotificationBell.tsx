@@ -117,6 +117,15 @@ export const NotificationBell = () => {
             </div>
           )}
         </ScrollArea>
+        <div className="border-t p-2">
+          <Button
+            variant="ghost"
+            className="w-full justify-center text-sm font-semibold"
+            onClick={() => navigate("/notifications")}
+          >
+            View all notifications
+          </Button>
+        </div>
       </PopoverContent>
     </Popover>
   );

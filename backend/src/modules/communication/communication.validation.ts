@@ -5,6 +5,15 @@ export const NotificationCategorySchema = z.enum(['onboarding','payroll','attend
 export const ChannelSchema = z.enum(['email','sms','whatsapp']);
 export const MultiChannelSchema = z.enum(['email','sms','whatsapp','multi']);
 export const DispatchStatusSchema = z.enum(['queued','sent','delivered','opened','clicked','bounced','failed']);
+const PortalNotificationSchema = z.object({
+  type: z.string().max(64).optional(),
+  title: z.string().max(255).optional(),
+  message: z.string().max(4000).optional(),
+  action_url: z.string().max(512).optional(),
+  entity_type: z.string().max(64).optional(),
+  entity_id: z.string().uuid().optional(),
+  priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
+});
 
 export const CreateTemplateSchema = z.object({
   name: z.string().min(1).max(100),
@@ -39,7 +48,9 @@ export const SendMessageSchema = z.object({
   recipient_employee_ids: z.array(z.string().uuid()).min(1),
   data: z.record(z.any()),
   channel: ChannelSchema.optional(),
+  channels: z.array(ChannelSchema).min(1).max(3).optional(),
   is_critical: z.boolean().optional(),
+  portal: z.union([z.literal(false), PortalNotificationSchema]).optional(),
 }).refine(d => d.template_id || d.template_name, { message: 'Either template_id or template_name required' });
 
 export const BulkSendSchema = z.object({
@@ -53,6 +64,8 @@ export const BulkSendSchema = z.object({
   }),
   data: z.record(z.any()),
   channel: ChannelSchema.optional(),
+  channels: z.array(ChannelSchema).min(1).max(3).optional(),
+  portal: z.union([z.literal(false), PortalNotificationSchema]).optional(),
 }).refine(d => d.template_id || d.template_name, { message: 'Either template_id or template_name required' });
 
 export const DispatchLogFiltersSchema = z.object({

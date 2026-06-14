@@ -56,8 +56,15 @@ router.use(requireAuth);
 router.get("/me", h(async (req: any, res: any) => {
   const userId = req.authUser?.id;
   if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
-  const data = await employeeProfileService.getMyProfile(userId);
-  return res.json({ success: true, data });
+  try {
+    const data = await employeeProfileService.getMyProfile(userId);
+    return res.json({ success: true, data });
+  } catch (error: any) {
+    if (error?.statusCode === 404) {
+      return res.json({ success: true, data: null, account_type: "system" });
+    }
+    throw error;
+  }
 }));
 
 // PATCH /api/employees/me — update own profile (employee self-service)
