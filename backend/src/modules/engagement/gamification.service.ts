@@ -141,6 +141,7 @@ export async function getLeaderboard(
   period: 'all-time' | 'month' | 'quarter' = 'all-time',
   limit: number = 10
 ): Promise<LeaderboardEntry[]> {
+  const safeLimit = Math.min(Math.max(Math.trunc(Number(limit) || 10), 1), 100);
   let dateFilter = '';
   if (period === 'month') {
     dateFilter = `AND gpl.created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)`;
@@ -171,10 +172,10 @@ export async function getLeaderboard(
       GROUP BY employee_id
     ) badges ON gpl.employee_id = badges.employee_id
     ORDER BY total_points DESC
-    LIMIT ?
+    LIMIT ${safeLimit}
   `;
 
-  const [rows] = await db.execute<RowDataPacket[]>(sql, [limit]);
+  const [rows] = await db.execute<RowDataPacket[]>(sql);
   return rows as LeaderboardEntry[];
 }
 

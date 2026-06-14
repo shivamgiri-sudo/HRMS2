@@ -333,7 +333,7 @@ export default function NativeWorkInbox() {
             ))
           )}
         </div>
-      </div>
+      </main>
     </DashboardLayout>
   );
 }

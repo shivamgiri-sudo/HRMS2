@@ -15,7 +15,7 @@ export async function getEmployeeEngagementSummary(employeeId: string) {
       [employeeId]
     ),
     db.execute<RowDataPacket[]>(
-      "SELECT COUNT(*) as total FROM pulse_check WHERE employee_id = ?",
+      "SELECT COUNT(*) as total FROM pulse_response WHERE employee_id = ?",
       [employeeId]
     ),
   ]);
@@ -33,4 +33,3 @@ export async function getEmployeeEngagementSummary(employeeId: string) {
     recent_transactions: points.data,
   };
 }
-
