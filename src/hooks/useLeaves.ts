@@ -65,6 +65,8 @@ export function useLeaveRequests() {
       const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/leave/requests");
       return (res.data || []).map(mapRawToLeaveRequest);
     },
+    staleTime: 0, // Always fetch fresh data
+    gcTime: 0, // Don't cache (was cacheTime in v4)
   });
 }
 
@@ -80,6 +82,8 @@ export function useLeaveStats() {
         rejected: data.filter((r) => r.status === "rejected").length,
       };
     },
+    staleTime: 0, // Always fetch fresh data
+    gcTime: 0, // Don't cache
   });
 }
 
