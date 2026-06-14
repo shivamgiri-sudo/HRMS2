@@ -5,7 +5,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import {
   branchService, departmentService, lobService, designationService,
   campaignService, costCentreService, gradeBandService,
-  locationService, policyService,
+  locationService, policyService, processService,
 } from "./org.service.js";
 
 const router = Router();
@@ -62,6 +62,7 @@ buildCrud("/cost-centres",  costCentreService);
 buildCrud("/grade-bands",   gradeBandService);
 buildCrud("/locations",     locationService);
 buildCrud("/policies",      policyService);
+buildCrud("/processes",     processService);
 
 // Call Centre Code: PATCH can safely follow buildCrud (different HTTP method, no collision)
 router.patch("/branches/:id/call-centre-code",

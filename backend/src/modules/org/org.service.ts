@@ -14,6 +14,7 @@ const MASTER_TABLE_WHITELIST = new Set([
   "grade_band_master",
   "location_master",
   "policy_master",
+  "process_master", // Added for consistency
 ]);
 
 // ── Generic list/get helpers ──────────────────────────────────────────────────
@@ -299,4 +300,27 @@ export const policyService = {
     return getById("policy_master", id);
   },
   delete: (id: string) => softDelete("policy_master", id),
+};
+
+// ── Process ───────────────────────────────────────────────────────────────────
+
+export const processService = {
+  list: (employeeId?: string) => listActive("process_master", "process_name", "process", employeeId),
+  getById: (id: string) => getById("process_master", id),
+  async create(data: { process_code: string; process_name: string; branch_id?: string; department_id?: string; business_lob?: string }) {
+    const id = randomUUID();
+    await db.execute(
+      "INSERT INTO process_master (id, process_code, process_name, branch_id, department_id, business_lob) VALUES (?, ?, ?, ?, ?, ?)",
+      [id, data.process_code, data.process_name, data.branch_id ?? null, data.department_id ?? null, data.business_lob ?? null]
+    );
+    return getById("process_master", id);
+  },
+  async update(id: string, data: { process_name?: string; branch_id?: string; department_id?: string; business_lob?: string }) {
+    await db.execute(
+      "UPDATE process_master SET process_name = COALESCE(?, process_name), branch_id = COALESCE(?, branch_id), department_id = COALESCE(?, department_id), business_lob = COALESCE(?, business_lob), updated_at = NOW() WHERE id = ?",
+      [data.process_name ?? null, data.branch_id ?? null, data.department_id ?? null, data.business_lob ?? null, id]
+    );
+    return getById("process_master", id);
+  },
+  delete: (id: string) => softDelete("process_master", id),
 };
