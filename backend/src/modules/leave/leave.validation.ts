@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const DB_ID = z.string().trim().min(1).max(36);
 
 export const createLeaveTypeSchema = z.object({
   leaveCode: z.string().trim().min(1).max(20),
@@ -13,8 +14,8 @@ export const createLeaveTypeSchema = z.object({
 
 export const leaveRequestSchema = z
   .object({
-    employeeId: z.string().uuid(),
-    leaveTypeId: z.string().uuid(),
+    employeeId: DB_ID,
+    leaveTypeId: DB_ID,
     fromDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
     toDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
     totalDays: z.number().min(0.5).max(182),
@@ -37,12 +38,13 @@ export const reviewLeaveSchema = z.object({
 });
 
 export const leaveRequestFiltersSchema = z.object({
-  employeeId: z.string().uuid().optional(),
-  leaveTypeId: z.string().uuid().optional(),
+  employeeId: DB_ID.optional(),
+  leaveTypeId: DB_ID.optional(),
   status: z.string().optional(),
   fromDate: z.string().regex(DATE_REGEX).optional(),
   toDate: z.string().regex(DATE_REGEX).optional(),
   activeOn: z.string().regex(DATE_REGEX).optional(),
+  year: z.coerce.number().int().min(2000).max(2100).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });

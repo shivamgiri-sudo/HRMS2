@@ -9,6 +9,7 @@ import {
   assignRecruiterToCandidate,
   generateTokenNumber,
 } from "./ats.enhanced.service.js";
+import { atsService } from "./ats.service.js";
 import {
   sendCandidateSuccessEmail,
   sendRecruiterNotificationEmail,
@@ -42,9 +43,9 @@ registrationEnhancedRouter.get("/recruiters/:branchName", async (req, res) => {
         id: r.id,
         employee_code: r.employee_code,
         name: `${r.first_name} ${r.last_name}`.trim(),
-        mobile: r.mobile_number,
+        mobile: r.mobile,
         email: r.email,
-        present_today: !!r.clock_in_time,
+        present_today: Boolean(r.present_today),
       })),
     });
   } catch (error: any) {
@@ -55,17 +56,18 @@ registrationEnhancedRouter.get("/recruiters/:branchName", async (req, res) => {
 // ── 3. Enhanced registration submission ───────────────────────────────────────
 const enhancedRegistrationSchema = z.object({
   name: z.string().min(1),
-  mobile: z.string().min(10),
-  email: z.string().email().optional(),
+  mobile: z.string().regex(/^[6-9]\d{9}$/, "Valid 10-digit Indian mobile number required"),
+  email: z.string().email().nullable().optional(),
   branchDisplayName: z.string().min(1),
   preferredRecruiterId: z.string().uuid().optional(),
-  roleApplied: z.string().optional(),
+  roleApplied: z.string().min(1),
   address: z.string().optional(),
-  education: z.string().optional(),
-  experience: z.string().optional(),
-  gender: z.string().optional(),
-  photoUrl: z.string().optional(),
-  resumeUrl: z.string().optional(),
+  education: z.string().min(1),
+  experience: z.string().min(1),
+  gender: z.enum(["Male", "Female", "Other"]).nullable().optional(),
+  dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  preferredShift: z.string().nullable().optional(),
+  sourcingChannel: z.string().default("Walk-In"),
 });
 
 registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
@@ -83,50 +85,32 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
 
     const branchName = branchData.canonical_key;
 
-    // 2. Get branch_id from branch_master
-    const [branchRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM branch_master WHERE branch_name = ? LIMIT 1`,
-      [branchName]
-    );
-
-    if (branchRows.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Branch "${branchName}" not found in branch_master`,
-      });
-    }
-
-    const branchId = branchRows[0].id;
-
-    // 3. Create candidate record
-    const candidateId = crypto.randomUUID();
+    // 2. Create through the canonical service so duplicate checks, candidate
+    // codes, normalized source values, and the first journey event stay aligned.
+    const candidate = await atsService.createCandidate({
+      fullName: input.name,
+      mobile: input.mobile,
+      email: input.email ?? null,
+      gender: input.gender ?? null,
+      dateOfBirth: input.dateOfBirth ?? null,
+      education: input.education,
+      experience: input.experience,
+      appliedForProcess: input.roleApplied,
+      appliedForRole: input.roleApplied,
+      appliedForBranch: branchName,
+      sourcingChannel: input.sourcingChannel,
+      walkInDate: new Date().toISOString().slice(0, 10),
+      address: input.address ?? null,
+      preferredShift: input.preferredShift ?? null,
+      profileStatus: "registered",
+    }, null);
+    const candidateId = candidate.id;
 
     await db.execute(
-      `INSERT INTO ats_candidate (
-        id, full_name, mobile, email, address,
-        education, years_of_experience, gender,
-        applied_for_role, applied_for_branch, branch_id,
-        branch_display_name, preferred_recruiter_id,
-        photo_url, resume_url,
-        candidate_status, sourcing_channel
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'registered', 'Walk-in')`,
-      [
-        candidateId,
-        input.name,
-        input.mobile,
-        input.email || null,
-        input.address || null,
-        input.education || null,
-        input.experience || null,
-        input.gender || null,
-        input.roleApplied || null,
-        branchName,
-        branchId,
-        input.branchDisplayName,
-        input.preferredRecruiterId || null,
-        input.photoUrl || null,
-        input.resumeUrl || null,
-      ]
+      `UPDATE ats_candidate
+       SET branch_display_name = ?, preferred_recruiter_id = ?
+       WHERE id = ?`,
+      [input.branchDisplayName, input.preferredRecruiterId ?? null, candidateId]
     );
 
     // 4. Assign recruiter (smart assignment with fallback)
@@ -142,9 +126,9 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
 
       await db.execute(
         `INSERT INTO ats_queue_token (
-          id, candidate_id, branch_name, token_number,
-          recruiter_id, queue_status
-        ) VALUES (UUID(), ?, ?, ?, ?, 'waiting')`,
+          id, candidate_id, token, arrival_time, current_stage, status,
+          branch_name, token_number, recruiter_id, queue_status
+        ) VALUES (UUID(), ?, UUID(), NOW(), 'Arrived', 'active', ?, ?, ?, 'waiting')`,
         [candidateId, branchName, tokenNumber, assignmentResult.assignedRecruiterId]
       );
     }
@@ -153,7 +137,7 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
     let recruiterDetails = null;
     if (assignmentResult.assignedRecruiterId) {
       const [recRows] = await db.execute<RowDataPacket[]>(
-        `SELECT employee_code, first_name, last_name, mobile_number, email
+        `SELECT employee_code, first_name, last_name, mobile, email
          FROM employees WHERE id = ?`,
         [assignmentResult.assignedRecruiterId]
       );
@@ -162,7 +146,7 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
         const rec = recRows[0];
         recruiterDetails = {
           name: `${rec.first_name} ${rec.last_name}`.trim(),
-          mobile: rec.mobile_number,
+          mobile: rec.mobile,
           email: rec.email,
           employee_code: rec.employee_code,
         };
@@ -214,7 +198,8 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
     });
   } catch (error: any) {
     console.error("Enhanced registration error:", error);
-    return res.status(500).json({
+    const status = error?.statusCode ?? (error?.name === "ZodError" ? 400 : 500);
+    return res.status(status).json({
       success: false,
       message: error.message || "Registration failed",
     });

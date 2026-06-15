@@ -119,7 +119,7 @@ export default function NativeExitManagement() {
   const updateStatus = async (id: string, status: string) => {
     setUpdating(id);
     try {
-      await hrmsApi.post(`/api/exit/${id}/status`, { status, remarks: `Status changed to ${status}` });
+      await hrmsApi.patch(`/api/exit/${id}/status`, { status, remarks: `Status changed to ${status}` });
       setMessage(`Updated to ${status.replace(/_/g, " ")}.`);
       await load();
     } catch (err: any) { setMessage(err?.message || "Update failed."); }

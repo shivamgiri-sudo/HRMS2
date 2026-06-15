@@ -14,6 +14,8 @@ export interface DbConnectorConfig {
   employee_code_column: string;
   tables: string[];
   db_type: 'mssql' | 'mysql';
+  encrypt?: boolean;
+  trust_server_certificate?: boolean;
 }
 
 export interface DatabaseConnectorCardProps {

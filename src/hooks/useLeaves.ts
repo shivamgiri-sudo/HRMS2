@@ -14,13 +14,44 @@ export interface LeaveRequest {
   endDate: string;
   days: number;
   reason: string;
-  status: "pending" | "approved" | "rejected" | "cancelled";
+  status: "pending" | "pending_branch_head" | "approved" | "rejected" | "cancelled";
   submittedAt: string;
   reviewedBy?: {
     name: string;
   };
   reviewedAt?: string;
   reviewNotes?: string;
+}
+
+async function fetchAllLeaveRows(): Promise<any[]> {
+  const limit = 100;
+  const first = await hrmsApi.get<{ success: boolean; data: any[]; total?: number; page?: number; limit?: number }>(
+    `/api/leave/requests?page=1&limit=${limit}`
+  );
+  const rows = first.data ?? [];
+  const total = Number(first.total ?? rows.length);
+  const totalPages = Math.ceil(total / limit);
+
+  const dedupeRows = (items: any[]) => {
+    const byId = new Map<string, any>();
+    for (const item of items) {
+      const key = String(item?.id ?? "");
+      if (!key || byId.has(key)) continue;
+      byId.set(key, item);
+    }
+    return Array.from(byId.values());
+  };
+
+  if (totalPages <= 1) return dedupeRows(rows);
+
+  const remaining = await Promise.all(
+    Array.from({ length: totalPages - 1 }, (_, index) =>
+      hrmsApi.get<{ success: boolean; data: any[] }>(
+        `/api/leave/requests?page=${index + 2}&limit=${limit}`
+      )
+    )
+  );
+  return dedupeRows(rows.concat(...remaining.map((page) => page.data ?? [])));
 }
 
 function mapRawToLeaveRequest(req: any): LeaveRequest {
@@ -62,9 +93,11 @@ export function useLeaveRequests() {
   return useQuery({
     queryKey: ["leave-requests"],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/leave/requests");
-      return (res.data || []).map(mapRawToLeaveRequest);
+      const rows = await fetchAllLeaveRows();
+      return rows.map(mapRawToLeaveRequest);
     },
+    staleTime: 0, // Always fetch fresh data
+    gcTime: 0, // Don't cache (was cacheTime in v4)
   });
 }
 
@@ -72,14 +105,15 @@ export function useLeaveStats() {
   return useQuery({
     queryKey: ["leave-stats"],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/leave/requests");
-      const data = res.data || [];
+      const data = await fetchAllLeaveRows();
       return {
-        pending: data.filter((r) => r.status === "pending").length,
+        pending: data.filter((r) => String(r.status ?? "").startsWith("pending")).length,
         approved: data.filter((r) => r.status === "approved").length,
         rejected: data.filter((r) => r.status === "rejected").length,
       };
     },
+    staleTime: 0, // Always fetch fresh data
+    gcTime: 0, // Don't cache
   });
 }
 

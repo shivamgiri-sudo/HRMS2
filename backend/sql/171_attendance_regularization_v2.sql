@@ -23,34 +23,78 @@ INSERT IGNORE INTO attendance_reason_master (code, label, allowed_for) VALUES
   ('LATE_ARRIVAL_VALID',     'Late arrival for valid personal reason',            'employee'),
   ('OTHER_MANAGER_APPROVED', 'Other — requires manager justification',            'manager');
 
--- Add columns using procedure to guard against duplicates
-DROP PROCEDURE IF EXISTS _add_reg_columns;
-DELIMITER $$
-CREATE PROCEDURE _add_reg_columns()
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_regularization' AND COLUMN_NAME = 'requested_status') THEN
-    ALTER TABLE attendance_regularization ADD COLUMN requested_status ENUM('present','half_day','absent') NULL AFTER session_date;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_regularization' AND COLUMN_NAME = 'reason_code') THEN
-    ALTER TABLE attendance_regularization ADD COLUMN reason_code VARCHAR(50) NULL AFTER reason;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_regularization' AND COLUMN_NAME = 'requested_by_type') THEN
-    ALTER TABLE attendance_regularization ADD COLUMN requested_by_type ENUM('employee','manager') NOT NULL DEFAULT 'employee' AFTER reason_code;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_regularization' AND COLUMN_NAME = 'branch_id') THEN
-    ALTER TABLE attendance_regularization ADD COLUMN branch_id CHAR(36) NULL AFTER requested_by_type;
-  END IF;
-  -- Add FK only if not exists
-  IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
-    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_regularization' AND CONSTRAINT_NAME = 'fk_reg_reason_code') THEN
-    ALTER TABLE attendance_regularization
-      ADD CONSTRAINT fk_reg_reason_code FOREIGN KEY (reason_code) REFERENCES attendance_reason_master(code);
-  END IF;
-END$$
-DELIMITER ;
-CALL _add_reg_columns();
-DROP PROCEDURE IF EXISTS _add_reg_columns;
+-- Add columns with runner-compatible INFORMATION_SCHEMA guards.
+SET @col = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'attendance_regularization'
+    AND COLUMN_NAME = 'requested_status'
+);
+SET @sql = IF(
+  @col = 0,
+  'ALTER TABLE attendance_regularization ADD COLUMN requested_status ENUM(''present'',''half_day'',''absent'') NULL AFTER session_date',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'attendance_regularization'
+    AND COLUMN_NAME = 'reason_code'
+);
+SET @sql = IF(
+  @col = 0,
+  'ALTER TABLE attendance_regularization ADD COLUMN reason_code VARCHAR(50) NULL AFTER reason',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'attendance_regularization'
+    AND COLUMN_NAME = 'requested_by_type'
+);
+SET @sql = IF(
+  @col = 0,
+  'ALTER TABLE attendance_regularization ADD COLUMN requested_by_type ENUM(''employee'',''manager'') NOT NULL DEFAULT ''employee'' AFTER reason_code',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'attendance_regularization'
+    AND COLUMN_NAME = 'branch_id'
+);
+SET @sql = IF(
+  @col = 0,
+  'ALTER TABLE attendance_regularization ADD COLUMN branch_id CHAR(36) NULL AFTER requested_by_type',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @constraint_exists = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'attendance_regularization'
+    AND CONSTRAINT_NAME = 'fk_reg_reason_code'
+);
+SET @sql = IF(
+  @constraint_exists = 0,
+  'ALTER TABLE attendance_regularization ADD CONSTRAINT fk_reg_reason_code FOREIGN KEY (reason_code) REFERENCES attendance_reason_master(code)',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;

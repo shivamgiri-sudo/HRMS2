@@ -13,6 +13,18 @@ router.get('/', requireAuth, h(async (req, res) => {
   res.json({ data: reports });
 }));
 
+router.get('/analytics-overview', requireAuth, h(async (req, res) => {
+  const year = Number(req.query.year ?? new Date().getFullYear());
+  const data = await reportingService.analyticsOverview(year, req.authUser!.id);
+  res.json({ success: true, data });
+}));
+
+router.get('/leave-balances', requireAuth, h(async (req, res) => {
+  const year = Number(req.query.year ?? new Date().getFullYear());
+  const data = await reportingService.leaveBalanceOverview(year, req.authUser!.id);
+  res.json({ success: true, data });
+}));
+
 router.post('/:code/run', requireAuth, h(async (req, res) => {
   const filters = req.body.filters || {};
   const result = await reportingService.runReport(req.params.code, filters, req.authUser!.id);

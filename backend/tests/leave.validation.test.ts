@@ -44,8 +44,9 @@ describe("leaveRequestSchema", () => {
     expect(() => leaveRequestSchema.parse(valid)).not.toThrow();
   });
 
-  it("requires employeeId as UUID", () => {
-    expect(() => leaveRequestSchema.parse({ ...valid, employeeId: "bad" })).toThrow();
+  it("accepts non-empty legacy database identifiers", () => {
+    const parsed = leaveRequestSchema.parse({ ...valid, employeeId: "legacy-employee-1" });
+    expect(parsed.employeeId).toBe("legacy-employee-1");
   });
 
   it("rejects toDate before fromDate", () => {

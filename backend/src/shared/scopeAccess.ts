@@ -51,6 +51,7 @@ export async function getUserRoleKeys(userId: string): Promise<string[]> {
 export async function hasAnyRole(userId: string, ...roles: string[]): Promise<boolean> {
   if (roles.length === 0) return false;
   const userRoles = await getUserRoleKeys(userId);
+  if (userRoles.includes("super_admin")) return true;
   return roles.some((role) => userRoles.includes(role));
 }
 

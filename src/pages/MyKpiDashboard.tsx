@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { TrendingUp, TrendingDown, Minus, Loader, RefreshCcw, Activity } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, Loader, RefreshCcw, Activity, CalendarDays } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 
@@ -39,6 +39,20 @@ interface LivePerformanceData {
   overall_rating: string | null;
   overall_rating_color: string | null;
   metrics: KpiMetricResult[];
+  daily_performance: Array<{
+    date: string;
+    overall_score: number;
+    overall_rating: string | null;
+    metrics: Array<{
+      metric_id: string;
+      metric_code: string;
+      metric_name: string;
+      unit: string;
+      actual_value: number;
+      score_pct: number;
+      source: string;
+    }>;
+  }>;
 }
 
 const PERIOD_LABELS: Record<Period, string> = {
@@ -71,6 +85,18 @@ const RATING_BG: Record<string, string> = {
   C: "bg-orange-500",
   D: "bg-red-500",
 };
+
+function today() {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function formatMetricValue(value: number, unit: string) {
+  if (unit === "seconds") return `${Math.round(value)} sec`;
+  if (unit === "percent") return `${Math.round(value * 10) / 10}%`;
+  if (unit === "currency") return `₹${value.toLocaleString()}`;
+  return String(Math.round(value * 10) / 10);
+}
 
 // ─── Sparkline ────────────────────────────────────────────────────────────────
 
@@ -198,6 +224,7 @@ function KpiCard({ metric }: { metric: KpiMetricResult }) {
 
 export default function MyKpiDashboard() {
   const [period, setPeriod] = useState<Period>("day");
+  const [selectedDate, setSelectedDate] = useState(today());
   const [data, setData] = useState<LivePerformanceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -208,7 +235,8 @@ export default function MyKpiDashboard() {
     setError(null);
     setNoKpis(false);
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: LivePerformanceData }>(`/kpi-master/live?period=${p}`);
+      const dateQuery = p === "day" ? `&date=${selectedDate}` : "";
+      const res = await hrmsApi.get<{ success: boolean; data: LivePerformanceData }>(`/api/kpi-master/live?period=${p}${dateQuery}`);
       if (!res.data?.metrics?.length) {
         setNoKpis(true);
         setData(null);
@@ -224,7 +252,7 @@ export default function MyKpiDashboard() {
 
   useEffect(() => {
     loadData(period);
-  }, [period]);
+  }, [period, selectedDate]);
 
   const overallRatingBg = data?.overall_rating ? RATING_BG[data.overall_rating] ?? "bg-gray-400" : "bg-gray-300";
 
@@ -273,6 +301,18 @@ export default function MyKpiDashboard() {
               {label}
             </button>
           ))}
+          {period === "day" && (
+            <label className="flex items-center gap-2 rounded-lg border bg-white px-3 text-sm text-gray-600">
+              <CalendarDays size={16} />
+              <input
+                type="date"
+                value={selectedDate}
+                max={today()}
+                onChange={(event) => setSelectedDate(event.target.value)}
+                className="bg-transparent py-2 outline-none"
+              />
+            </label>
+          )}
         </div>
 
         {/* Loading */}
@@ -357,6 +397,43 @@ export default function MyKpiDashboard() {
                 </div>
               </div>
             ))}
+
+            <div className="overflow-auto rounded-2xl border border-gray-200 bg-white">
+              <div className="border-b px-4 py-3">
+                <h2 className="font-semibold text-gray-900">Day-wise performance details</h2>
+              </div>
+              <table className="w-full min-w-[720px] text-sm">
+                <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
+                  <tr>
+                    <th className="px-4 py-3">Date</th>
+                    <th className="px-4 py-3">Overall score</th>
+                    <th className="px-4 py-3">Rating</th>
+                    <th className="px-4 py-3">Metrics and source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.daily_performance.length === 0 && (
+                    <tr><td colSpan={4} className="px-4 py-10 text-center text-gray-400">No source data is available for this date or period.</td></tr>
+                  )}
+                  {data.daily_performance.map((day) => (
+                    <tr key={day.date} className="border-t align-top">
+                      <td className="px-4 py-3 font-medium text-gray-900">{day.date}</td>
+                      <td className="px-4 py-3 font-bold">{Math.round(day.overall_score)}%</td>
+                      <td className="px-4 py-3">{day.overall_rating ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-2">
+                          {day.metrics.map((metric) => (
+                            <span key={metric.metric_id} className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-700">
+                              {metric.metric_code}: {formatMetricValue(metric.actual_value, metric.unit)} · {metric.source}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </>
         )}
       </div>

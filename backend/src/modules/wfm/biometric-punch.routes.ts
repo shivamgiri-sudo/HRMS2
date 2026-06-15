@@ -34,7 +34,12 @@ router.post(
       return res.status(400).json({ error: 'Invalid event_datetime — use ISO 8601 format' });
     }
 
-    const punchDate = punchTime.toISOString().slice(0, 10);
+    const punchDate = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(punchTime);
 
     // Resolve employee from enrollment table
     const [enrollRows] = await db.execute<RowDataPacket[]>(
@@ -47,64 +52,46 @@ router.post(
       return res.status(404).json({ error: `No HRMS employee mapped to Cosec UserID: ${user_id}` });
     }
 
-    // Upsert biometric log — keep MIN as first_punch_in, MAX as last_punch_out
-    await db.execute(`
-      INSERT INTO biometric_attendance_log
-        (id, employee_id, cosec_user_id, punch_date, first_punch_in, last_punch_out, raw_minutes, source_system)
-      VALUES (UUID(), ?, ?, ?, ?, ?, 0, 'ncosec_live')
-      ON DUPLICATE KEY UPDATE
-        first_punch_in = CASE WHEN first_punch_in IS NULL OR VALUES(first_punch_in) < first_punch_in
-                              THEN VALUES(first_punch_in) ELSE first_punch_in END,
-        last_punch_out = CASE WHEN last_punch_out IS NULL OR VALUES(last_punch_out) > last_punch_out
-                              THEN VALUES(last_punch_out) ELSE last_punch_out END
-    `, [employeeId, user_id, punchDate, punchTime, punchTime]);
-
-    // Recalculate raw_minutes and update
-    const [logRow] = await db.execute<RowDataPacket[]>(
-      `SELECT first_punch_in, last_punch_out FROM biometric_attendance_log
-       WHERE employee_id = ? AND punch_date = ? LIMIT 1`,
-      [employeeId, punchDate]
-    );
-    const log = logRow[0] as any;
-    if (!log?.first_punch_in || !log?.last_punch_out) {
-      return res.json({ success: true, message: 'Punch logged, waiting for paired event' });
-    }
-
-    const rawMinutes = Math.max(0, Math.floor(
-      (new Date(log.last_punch_out).getTime() - new Date(log.first_punch_in).getTime()) / 60000
-    ));
-
-    await db.execute(
-      `UPDATE biometric_attendance_log SET raw_minutes = ? WHERE employee_id = ? AND punch_date = ?`,
-      [rawMinutes, employeeId, punchDate]
-    );
-
-    const attendanceStatus = rawMinutes >= 360 ? 'present' : 'half_day';
     const [empInfo] = await db.execute<RowDataPacket[]>(
-      `SELECT branch_id, process_id, branch_name, process_name FROM employees e
+      `SELECT employee_code, branch_id, process_id, branch_name, process_name FROM employees e
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN process_master p ON p.id = e.process_id
        WHERE e.id = ? LIMIT 1`, [employeeId]
     );
     const emp = (empInfo[0] as any) ?? {};
 
-    // 1. Upsert attendance_daily_record (clock_in/out are biometric first_in/last_out)
+    // Store one deduplicated biometric row per employee/date.
     await db.execute(`
-      INSERT INTO attendance_daily_record
-        (id, employee_id, record_date, clock_in_time, clock_out_time, raw_minutes,
-         biometric_minutes, attendance_status, attendance_source, branch_id, process_id, created_by)
-      VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, 'biometric', ?, ?, 'ncosec_live')
+      INSERT INTO integration_biometric_daily
+        (id, integration_key, source_table, employee_code, activity_date,
+         first_punch, last_punch, biometric_minutes)
+      VALUES (UUID(), 'cosec_live', 'webhook', ?, ?, ?, ?, 0)
       ON DUPLICATE KEY UPDATE
-        clock_in_time      = IF(is_locked = 0, LEAST(COALESCE(clock_in_time, VALUES(clock_in_time)), VALUES(clock_in_time)), clock_in_time),
-        clock_out_time     = IF(is_locked = 0, GREATEST(COALESCE(clock_out_time, VALUES(clock_out_time)), VALUES(clock_out_time)), clock_out_time),
-        biometric_minutes  = IF(is_locked = 0, VALUES(biometric_minutes), biometric_minutes),
-        raw_minutes        = IF(is_locked = 0, VALUES(raw_minutes), raw_minutes),
-        attendance_status  = IF(is_locked = 0, VALUES(attendance_status), attendance_status),
-        attendance_source  = IF(is_locked = 0, 'biometric', attendance_source)
-    `, [employeeId, punchDate, log.first_punch_in, log.last_punch_out, rawMinutes,
-        rawMinutes, attendanceStatus, emp.branch_id ?? null, emp.process_id ?? null]);
+        first_punch = LEAST(COALESCE(first_punch, VALUES(first_punch)), VALUES(first_punch)),
+        last_punch = GREATEST(COALESCE(last_punch, VALUES(last_punch)), VALUES(last_punch)),
+        biometric_minutes = GREATEST(
+          0,
+          TIMESTAMPDIFF(
+            MINUTE,
+            LEAST(COALESCE(first_punch, VALUES(first_punch)), VALUES(first_punch)),
+            GREATEST(COALESCE(last_punch, VALUES(last_punch)), VALUES(last_punch))
+          )
+        ),
+        updated_at = NOW()
+    `, [emp.employee_code, punchDate, punchTime, punchTime]);
 
-    // 2. Sync wfm_attendance_session so legacy queries stay consistent with biometric data
+    const [logRow] = await db.execute<RowDataPacket[]>(
+      `SELECT first_punch, last_punch, biometric_minutes
+       FROM integration_biometric_daily
+       WHERE integration_key = 'cosec_live' AND source_table = 'webhook'
+         AND employee_code = ? AND activity_date = ?
+       LIMIT 1`,
+      [emp.employee_code, punchDate]
+    );
+    const log = logRow[0] as any;
+    const rawMinutes = Number(log?.biometric_minutes ?? 0);
+
+    // Keep the legacy session table consistent with the imported COSEC evidence.
     await db.execute(`
       INSERT INTO wfm_attendance_session
         (id, employee_id, session_date, login_time, logout_time, total_login_minutes,
@@ -116,11 +103,29 @@ router.post(
         total_login_minutes = VALUES(total_login_minutes),
         current_status      = VALUES(current_status),
         punch_source        = 'BIOMETRIC'
-    `, [employeeId, punchDate, log.first_punch_in, log.last_punch_out, rawMinutes,
-        rawMinutes >= 360 ? 'Logged Out' : 'Partial',
+    `, [employeeId, punchDate, log.first_punch, log.last_punch, rawMinutes,
+        rawMinutes >= 540 ? 'Logged Out' : 'Partial',
         emp.branch_name ?? null, emp.process_name ?? null]);
 
-    res.json({ success: true, employee_id: employeeId, punch_date: punchDate, raw_minutes: rawMinutes });
+    // Apply the same Operations/COSEC policy used by batch and calendar processing.
+    const { attendanceEngineService } = await import('./attendance-engine.service.js');
+    const attendance = await attendanceEngineService.processEmployee(employeeId, punchDate);
+    await attendanceEngineService.upsertDailyRecord(attendance, 'ncosec_live');
+    await db.execute(
+      `UPDATE attendance_daily_record
+       SET clock_in_time = ?, clock_out_time = ?
+       WHERE employee_id = ? AND record_date = ? AND is_locked = 0`,
+      [log.first_punch, log.last_punch, employeeId, punchDate]
+    );
+    await attendanceEngineService.checkAndNotifyBiometricMismatch(employeeId, punchDate, attendance);
+
+    res.json({
+      success: true,
+      employee_id: employeeId,
+      punch_date: punchDate,
+      raw_minutes: rawMinutes,
+      attendance_status: attendance.status,
+    });
   })
 );
 

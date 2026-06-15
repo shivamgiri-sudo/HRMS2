@@ -52,6 +52,7 @@ router.post("/salary-assignments",
 );
 router.post("/salary-assignments/bulk", requireRole("admin", "hr", "finance", "payroll"), h(c.bulkAssignSalary));
 router.get("/salary-assignments/:employeeId", requireRole("admin", "hr", "finance", "payroll"), h(c.getEmployeeSalary));
+router.get("/salary-assignments/:employeeId/history", requireRole("admin", "hr", "finance", "payroll"), h(c.getEmployeeSalaryHistory));
 
 // ─── Payroll Runs — static paths before :id ───────────────────────────────────
 
@@ -69,6 +70,20 @@ router.get("/runs", requireRole("admin", "hr", "finance", "payroll"), h(async (r
   (req as any).scopeFilter = scoped;
   return c.listRuns(req, res);
 }));
+router.get("/records", requireRole("admin", "hr", "finance", "payroll"), h(async (req, res) => {
+  const scoped = await buildScopeWhereClause(
+    req.authUser!.id,
+    ["finance", "payroll"],
+    {
+      branchId: "e.branch_id",
+      processId: "e.process_id"
+    },
+    { allowCeoAllRead: true }
+  );
+  (req as any).scopeFilter = scoped;
+  return c.listPayrollRecords(req, res);
+}));
+router.get("/overview", requireRole("admin", "hr", "finance", "payroll"), h(c.getPayrollOverview));
 router.post("/runs",
   requireRole("admin", "finance", "payroll"),
   requireScopedRole(["finance", "payroll"], async (req) => ({
@@ -144,6 +159,10 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
   if (!callerEmp) return res.status(403).json({ success: false, message: "No employee record for authenticated user" });
 
   const year = req.query.year ? String(req.query.year) : String(new Date().getFullYear());
+  const numericYear = Number(year);
+  if (!/^\d{4}$/.test(year) || numericYear < 2000 || numericYear > new Date().getFullYear() + 1) {
+    return res.status(400).json({ success: false, message: "Invalid payslip year" });
+  }
 
   // Fetch main payroll lines with employee profile data
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -156,6 +175,8 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
             spr.run_month, spr.disbursed_at AS paid_at, spr.status AS run_status,
             sp.acknowledged_at, sp.file_url, sp.payslip_ref,
             e.first_name, e.last_name,
+            COALESCE(eu.member_id, e.epf_number) AS epf_number,
+            e.esic_number AS esi_number,
             des.designation_name,
             dept.dept_name,
             br.branch_name,
@@ -164,6 +185,7 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
        JOIN salary_prep_run spr ON spr.id = spl.run_id
        LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
        LEFT JOIN employees e ON CAST(e.id AS CHAR) = CAST(spl.employee_id AS CHAR)
+       LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
        LEFT JOIN designation_master des ON CAST(des.id AS CHAR) = CAST(e.designation_id AS CHAR)
        LEFT JOIN department_master dept ON CAST(dept.id AS CHAR) = CAST(e.department_id AS CHAR)
        LEFT JOIN branch_master br ON CAST(br.id AS CHAR) = CAST(e.branch_id AS CHAR)
@@ -210,6 +232,16 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
       line.special_allowance = specialComp ? Number(specialComp.amount) : 0;
     }
   }
+
+  await logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "PAYSLIP_HISTORY_VIEWED",
+    module_key: "payroll",
+    entity_type: "employee",
+    entity_id: callerEmp.id,
+    change_summary: { year, statement_count: rows.length },
+    req,
+  });
 
   return res.json({ success: true, data: rows });
 }));
@@ -280,8 +312,11 @@ router.get("/tax-declaration/:employeeId/:year", h(async (req: AuthenticatedRequ
     }
   }
 
-  const data = await taxDeclarationService.get(employeeId, year);
-  return res.json({ success: true, data });
+  const [data, history] = await Promise.all([
+    taxDeclarationService.find(employeeId, year),
+    taxDeclarationService.listHistory(employeeId),
+  ]);
+  return res.json({ success: true, data, history });
 }));
 
 // POST /api/payroll/tax-declaration/:employeeId/:year — admin/hr/finance/payroll or employee own
@@ -505,12 +540,17 @@ router.get(
     // Derive financial year for declaration lookup
     const [yr, mo] = run.run_month.split("-").map(Number);
     const fyStart = mo >= 4 ? yr : yr - 1;
-    const financialYear = `${fyStart}-${String(fyStart + 1).slice(2)}`;
+    const financialYear = `${fyStart}-${fyStart + 1}`;
+    const legacyFinancialYear = `${fyStart}-${String(fyStart + 1).slice(2)}`;
 
     // Load tax declaration
     const [declRows] = await db.execute<RowDataPacket[]>(
-      "SELECT declared_hra, declared_80c, declared_80d, regime FROM tax_declaration WHERE employee_id = ? AND financial_year = ? LIMIT 1",
-      [employeeId, financialYear]
+      `SELECT declared_hra, declared_80c, declared_80d, regime
+         FROM tax_declaration
+        WHERE employee_id = ? AND financial_year IN (?, ?)
+        ORDER BY financial_year = ? DESC
+        LIMIT 1`,
+      [employeeId, financialYear, legacyFinancialYear, financialYear]
     );
     const decl = (declRows as Array<{
       declared_hra: number; declared_80c: number; declared_80d: number; regime: string;

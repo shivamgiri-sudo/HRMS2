@@ -41,6 +41,11 @@ export function requireRole(...allowedRoles: string[]) {
       );
 
       const userRoles = (rows as { role_key: string }[]).map((r) => r.role_key);
+      if (userRoles.includes("super_admin")) {
+        (req as AuthenticatedRequest & { userRoles: string[] }).userRoles = userRoles;
+        return next();
+      }
+
       // Expand both sides with aliases so manager↔process_manager are interchangeable
       const expandedUserRoles = expandRoles(userRoles);
       const expandedAllowed   = expandRoles(allowedRoles);

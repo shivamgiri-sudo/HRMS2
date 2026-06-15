@@ -43,7 +43,7 @@ export async function listPageCatalog(): Promise<PageCatalogEntry[]> {
  */
 export async function listUsersForAccess(): Promise<Array<{ id: string; email: string }>> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, email FROM users WHERE active_status = 1 ORDER BY email`
+    `SELECT id, email FROM auth_user WHERE is_blocked = 0 ORDER BY email`
   );
   return rows as Array<{ id: string; email: string }>;
 }
@@ -279,8 +279,8 @@ export async function getUserPageAccessAuditLog(userId?: string, pageCode?: stri
       upa.action, upa.actor_user_id, actor.email AS actor_email,
       upa.old_permissions, upa.new_permissions, upa.notes, upa.created_at
     FROM user_page_access_audit upa
-    LEFT JOIN users u ON u.id = upa.user_id
-    LEFT JOIN users actor ON actor.id = upa.actor_user_id
+    LEFT JOIN auth_user u ON u.id = upa.user_id
+    LEFT JOIN auth_user actor ON actor.id = upa.actor_user_id
     LEFT JOIN page_catalog pc ON pc.page_code = upa.page_code
     WHERE 1=1
   `;
@@ -315,8 +315,8 @@ export async function listAllUserPageAccess(): Promise<any[]> {
       upa.assigned_by, admin.email AS assigned_by_email,
       upa.assigned_at, upa.notes
      FROM user_page_access upa
-     LEFT JOIN users u ON u.id = upa.user_id
-     LEFT JOIN users admin ON admin.id = upa.assigned_by
+     LEFT JOIN auth_user u ON u.id = upa.user_id
+     LEFT JOIN auth_user admin ON admin.id = upa.assigned_by
      LEFT JOIN page_catalog pc ON pc.page_code = upa.page_code
      WHERE upa.active_status = 1
      ORDER BY u.email, pc.module, pc.page_name`

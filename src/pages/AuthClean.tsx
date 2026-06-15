@@ -6,8 +6,10 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LoginSmartGreeting } from "@/components/integrations/LoginSmartGreeting";
 
 const companyLogo = "/mcn-logo.png?v=999";
+const currentYear = new Date().getFullYear();
 
 const FEATURES = [
   { icon: Users, label: "Employee Management", desc: "Manage your entire workforce in one place" },
@@ -23,13 +25,13 @@ export default function AuthClean() {
   const [showPassword, setShowPassword] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
   const [loading, setLoading] = useState(false);
-  const { signIn, forgotPassword, user } = useAuth();
+  const { signIn, forgotPassword, user, mustChangePassword } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (user) navigate("/dashboard", { replace: true });
-  }, [user, navigate]);
+    if (user) navigate(mustChangePassword ? "/change-password" : "/dashboard", { replace: true });
+  }, [user, mustChangePassword, navigate]);
 
   const handleLogin = async (event: FormEvent) => {
     event.preventDefault();
@@ -87,12 +89,12 @@ export default function AuthClean() {
         {/* Logo */}
         <div className="relative z-10">
           <div className="flex items-center gap-5">
-            <div className="flex h-60 w-60 shrink-0 items-center justify-center rounded-2xl bg-white/95 p-3 shadow-2xl shadow-[#1B6AB5]/30 ring-4 ring-[#1B6AB5]/40">
-              <img src={companyLogo} alt="Mas Call Net" className="h-full w-full object-contain drop-shadow-lg" />
+            <div className="flex h-24 w-52 items-center justify-center rounded-2xl bg-white/95 px-3 shadow-xl">
+              <img src={companyLogo} alt="Mas Callnet India Pvt Ltd" className="h-auto w-48 object-contain" />
             </div>
             <div>
-              <p className="text-2xl font-black text-white leading-tight">Mas Call Net</p>
-              <p className="text-sm font-bold mt-1" style={{ color: "#5aa0dd" }}>HRMS Platform</p>
+              <p className="text-xl font-black text-white">Mas Callnet India Pvt Ltd</p>
+              <p className="text-xs font-bold" style={{ color: "#5aa0dd" }}>HRMS Platform</p>
             </div>
           </div>
         </div>
@@ -144,7 +146,7 @@ export default function AuthClean() {
         {/* Bottom tagline */}
         <div className="relative z-10">
           <p className="text-xs text-slate-500">
-            © 2025 Mas Call Net · Secure · Reliable · Enterprise-Grade
+            © {currentYear} Mas Callnet India Pvt Ltd · Secure · Reliable · Enterprise-Grade
           </p>
         </div>
       </div>
@@ -152,12 +154,12 @@ export default function AuthClean() {
       {/* ── Right Panel — Login Form ────────────────────────────────── */}
       <div className="flex flex-1 flex-col items-center justify-center bg-[#f3f6fb] px-6 py-10">
         {/* Mobile logo */}
-        <div className="mb-8 flex items-center gap-3 lg:hidden">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white p-1.5 shadow-md">
-            <img src={companyLogo} alt="MAS Callnet" className="h-full w-full object-contain" />
+        <div className="mb-8 flex flex-col items-center gap-3 text-center lg:hidden">
+          <div className="flex h-24 w-52 items-center justify-center rounded-2xl bg-white px-3 shadow-md">
+            <img src={companyLogo} alt="Mas Callnet India Pvt Ltd" className="h-auto w-48 object-contain" />
           </div>
           <div>
-            <p className="font-black text-slate-950">Mas Call Net HRMS</p>
+            <p className="font-black text-slate-950">Mas Callnet India Pvt Ltd</p>
             <p className="text-xs font-semibold text-slate-400">Employee Portal</p>
           </div>
         </div>
@@ -175,10 +177,12 @@ export default function AuthClean() {
             <div className="px-7 pb-8 pt-7">
               {!showForgot ? (
                 <>
-                  <div className="mb-7">
+                  <div className="mb-5">
                     <h2 className="text-2xl font-black tracking-tight text-slate-950">Welcome Back</h2>
                     <p className="mt-1.5 text-sm text-slate-500">Sign in with your official email or employee code</p>
                   </div>
+
+                  <LoginSmartGreeting employeeName={identifier} />
 
                   <form onSubmit={handleLogin} className="space-y-5">
                     {/* Email / Employee code */}
@@ -307,7 +311,7 @@ export default function AuthClean() {
           </div>
 
           <p className="mt-6 text-center text-xs text-slate-400">
-            Mas Call Net HRMS · All rights reserved
+            © {currentYear} Mas Callnet India Pvt Ltd · All rights reserved
           </p>
         </div>
       </div>

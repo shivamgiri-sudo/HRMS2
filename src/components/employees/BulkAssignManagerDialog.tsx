@@ -21,6 +21,7 @@ import {
 import { toast } from "sonner";
 import { Loader2, Users } from "lucide-react";
 import { Employee } from "./EmployeeTable";
+import { fetchAllEmployeeRows } from "@/hooks/useEmployees";
 
 interface BulkAssignManagerDialogProps {
   open: boolean;
@@ -41,10 +42,7 @@ export function BulkAssignManagerDialog({
   // Fetch managers (active employees who can be managers)
   const { data: managers = [], isLoading: isLoadingManagers } = useQuery({
     queryKey: ["managers"],
-    queryFn: async () => {
-      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
-      return res.data ?? [];
-    },
+    queryFn: () => fetchAllEmployeeRows("active"),
     enabled: open,
   });
 
@@ -63,6 +61,7 @@ export function BulkAssignManagerDialog({
     },
     onSuccess: ({ updatedCount }) => {
       queryClient.invalidateQueries({ queryKey: ["employees"] });
+      queryClient.invalidateQueries({ queryKey: ["employee-directory"] });
       toast.success(`Reporting manager assigned to ${updatedCount} employee${updatedCount > 1 ? "s" : ""}`);
       setSelectedManagerId("");
       onOpenChange(false);
@@ -167,6 +166,7 @@ export function BulkAssignManagerDialog({
             Cancel
           </Button>
           <Button
+            type="button"
             onClick={handleAssign}
             disabled={!selectedManagerId || assignManagerMutation.isPending}
           >

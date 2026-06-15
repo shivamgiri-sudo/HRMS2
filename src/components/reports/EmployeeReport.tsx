@@ -74,7 +74,7 @@ export function EmployeeReport() {
   const { data: employees, isLoading: loadingEmployees } = useQuery({
     queryKey: ["employees-for-report"],
     queryFn: async () => {
-      const empRes = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      const empRes = await hrmsApi.get<{success:boolean;data:any}>("/api/employees?limit=200");
       return (empRes.data ?? []).map((e: any): EmployeeOption => ({
         id: e.id,
         name: `${e.first_name} ${e.last_name}`,
@@ -95,83 +95,86 @@ export function EmployeeReport() {
   );
 
   // Leave balances + requests for the selected employee/year
-  const { data: leaveData, isLoading: loadingLeave } = useQuery({
+  const { data: leaveData, isLoading: loadingLeave, error: leaveError } = useQuery({
     queryKey: ["employee-report-leaves", selectedEmployeeId, year],
     queryFn: async () => {
-      const [balancesRes, requestsRes, typesRes, eligibilityRes] = await Promise.all([
-        ({ select: () => ({ eq: () => ({ order: () => ({ data: [], error: null }), maybeSingle: async () => ({ data: null, error: null }), limit: () => ({ maybeSingle: async () => ({ data: null, error: null }) }), data: [], error: null }), in: () => ({ order: () => ({ data: [], error: null }), data: [], error: null }), is: () => ({ data: [], error: null }), neq: () => ({ data: [], error: null }), gte: () => ({ lte: () => ({ order: () => ({ limit: () => ({ data: [], error: null }), data: [], error: null }), data: [], error: null }), data: [], error: null }), ilike: () => ({ data: [], error: null }), order: () => ({ data: [], error: null }), data: [], error: null }), update: () => ({ eq: () => ({ data: null, error: null }), in: () => ({ data: null, error: null }) }), insert: () => ({ select: () => ({ single: async () => ({ data: { id: 'stub' }, error: null }) }), data: null, error: null }), upsert: () => ({ data: null, error: null }), delete: () => ({ eq: () => ({ data: null, error: null }) }) })
-          .select("leave_type_id, total_days, used_days")
-          .eq("employee_id", selectedEmployeeId)
-          .eq("year", year),
-        ({ select: () => ({ eq: () => ({ order: () => ({ data: [], error: null }), maybeSingle: async () => ({ data: null, error: null }), limit: () => ({ maybeSingle: async () => ({ data: null, error: null }) }), data: [], error: null }), in: () => ({ order: () => ({ data: [], error: null }), data: [], error: null }), is: () => ({ data: [], error: null }), neq: () => ({ data: [], error: null }), gte: () => ({ lte: () => ({ order: () => ({ limit: () => ({ data: [], error: null }), data: [], error: null }), data: [], error: null }), data: [], error: null }), ilike: () => ({ data: [], error: null }), order: () => ({ data: [], error: null }), data: [], error: null }), update: () => ({ eq: () => ({ data: null, error: null }), in: () => ({ data: null, error: null }) }), insert: () => ({ select: () => ({ single: async () => ({ data: { id: 'stub' }, error: null }) }), data: null, error: null }), upsert: () => ({ data: null, error: null }), delete: () => ({ eq: () => ({ data: null, error: null }) }) })
-          .select("id, start_date, end_date, days_count, status, reason, leave_type_id")
-          .eq("employee_id", selectedEmployeeId)
-          .gte("start_date", `${year}-01-01`)
-          .lte("start_date", `${year}-12-31`)
-          .order("start_date", { ascending: false }),
-        ({ select: () => ({ eq: () => ({ order: () => ({ data: [], error: null }), maybeSingle: async () => ({ data: null, error: null }), limit: () => ({ maybeSingle: async () => ({ data: null, error: null }) }), data: [], error: null }), in: () => ({ order: () => ({ data: [], error: null }), data: [], error: null }), is: () => ({ data: [], error: null }), neq: () => ({ data: [], error: null }), gte: () => ({ lte: () => ({ order: () => ({ limit: () => ({ data: [], error: null }), data: [], error: null }), data: [], error: null }), data: [], error: null }), ilike: () => ({ data: [], error: null }), order: () => ({ data: [], error: null }), data: [], error: null }), update: () => ({ eq: () => ({ data: null, error: null }), in: () => ({ data: null, error: null }) }), insert: () => ({ select: () => ({ single: async () => ({ data: { id: 'stub' }, error: null }) }), data: null, error: null }), upsert: () => ({ data: null, error: null }), delete: () => ({ eq: () => ({ data: null, error: null }) }) }).select("id, name, days_per_year"),
-        ({ select: () => ({ eq: () => ({ order: () => ({ data: [], error: null }), maybeSingle: async () => ({ data: null, error: null }), limit: () => ({ maybeSingle: async () => ({ data: null, error: null }) }), data: [], error: null }), in: () => ({ order: () => ({ data: [], error: null }), data: [], error: null }), is: () => ({ data: [], error: null }), neq: () => ({ data: [], error: null }), gte: () => ({ lte: () => ({ order: () => ({ limit: () => ({ data: [], error: null }), data: [], error: null }), data: [], error: null }), data: [], error: null }), ilike: () => ({ data: [], error: null }), order: () => ({ data: [], error: null }), data: [], error: null }), update: () => ({ eq: () => ({ data: null, error: null }), in: () => ({ data: null, error: null }) }), insert: () => ({ select: () => ({ single: async () => ({ data: { id: 'stub' }, error: null }) }), data: null, error: null }), upsert: () => ({ data: null, error: null }), delete: () => ({ eq: () => ({ data: null, error: null }) }) })
-          .select("leave_type_id")
-          .eq("employee_id", selectedEmployeeId),
-      ]);
+      try {
+        const [balanceRes, requestsRes, typesRes, eligibilityRes] = await Promise.all([
+          hrmsApi.get<{success:boolean;data:any}>(`/api/leave/balance/${selectedEmployeeId}?year=${year}`),
+          hrmsApi.get<{success:boolean;data:any}>(`/api/leave/requests?employeeId=${selectedEmployeeId}&year=${year}&limit=200`),
+          hrmsApi.get<{success:boolean;data:any}>("/api/leave/types"),
+          hrmsApi.get<{success:boolean;data:any}>(`/api/leave/eligibility/${selectedEmployeeId}`),
+        ]);
+        console.log('[EmployeeReport] Leave API responses:', { balanceRes, requestsRes, typesRes, eligibilityRes });
 
-      if (balancesRes.error) throw balancesRes.error;
-      if (requestsRes.error) throw requestsRes.error;
-      if (typesRes.error) throw typesRes.error;
-      if (eligibilityRes.error) throw eligibilityRes.error;
-
-      const eligibleTypeIds = new Set((eligibilityRes.data || []).map((row) => row.leave_type_id));
-      const types = (typesRes.data || []).filter((type) => eligibleTypeIds.has(type.id));
-      const allRequests = (requestsRes.data || []).filter((request) => eligibleTypeIds.has(request.leave_type_id));
+      const eligibleTypeIds = new Set((eligibilityRes.data || []).map((row: any) => row.id));
+      const types = (typesRes.data || []).filter((type: any) => eligibleTypeIds.has(type.id));
+      const allRequests = (requestsRes.data || []).filter((request: any) =>
+        eligibleTypeIds.has(request.leave_type_id) &&
+        new Date(request.start_date) >= new Date(`${year}-01-01`) &&
+        new Date(request.start_date) <= new Date(`${year}-12-31`)
+      );
 
       // Dynamically calculate used days from approved requests for the year
       const usedByType = new Map<string, number>();
       allRequests
-        .filter((r) => r.status === "approved")
-        .forEach((r) => {
+        .filter((r: any) => r.status === "approved")
+        .forEach((r: any) => {
           usedByType.set(
             r.leave_type_id,
             (usedByType.get(r.leave_type_id) ?? 0) + Number(r.days_count ?? 0)
           );
         });
 
-      const balances = (types).map((t) => {
-        const b = balancesRes.data?.find((b) => b.leave_type_id === t.id);
-        const total = b?.total_days ?? t.days_per_year;
+      const balances = (types).map((t: any) => {
+        const b = balanceRes.data?.find((bal: any) => bal.leave_type_id === t.id);
+        const total = b?.allocated_days ?? t.max_days_per_year;
         const used = usedByType.get(t.id) ?? 0;
         return {
           type_id: t.id,
-          type_name: t.name,
+          type_name: t.leave_name,
           total,
           used,
           remaining: total - used,
         };
       });
 
-      const requests = (requestsRes.data || []).map((r) => ({
+      const requests = (allRequests || []).map((r: any) => ({
         ...r,
-        type_name: types.find((t) => t.id === r.leave_type_id)?.name || "Leave",
+        type_name: types.find((t: any) => t.id === r.leave_type_id)?.leave_name || "Leave",
       }));
 
-      return { balances, requests };
+        return { balances, requests };
+      } catch (err) {
+        console.error('[EmployeeReport] Leave data error:', err);
+        throw err;
+      }
     },
     enabled: !!selectedEmployeeId,
   });
 
   // Attendance summary for the year
-  const { data: attendanceData, isLoading: loadingAttendance } = useQuery({
+  const { data: attendanceData, isLoading: loadingAttendance, error: attendanceError } = useQuery({
     queryKey: ["employee-report-attendance", selectedEmployeeId, year],
     queryFn: async () => {
-      const attRes = await hrmsApi.get<{success:boolean;data:any}>("/api/wfm/attendance/daily");
-      const records = attRes.data ?? [];
-      const totalDays = records.length;
-      const totalHours = records.reduce((sum, r) => sum + (r.total_hours || 0), 0);
-      const presentDays = records.filter((r) => r.status === "present").length;
-      const lateDays = records.filter((r) => r.status === "late").length;
-      const wfoDays = records.filter((r) => r.work_mode === "wfo").length;
-      const wfhDays = records.filter((r) => r.work_mode === "wfh").length;
+      try {
+        const attRes = await hrmsApi.get<{success:boolean;data:any}>(
+          `/api/wfm/attendance/daily?employeeId=${selectedEmployeeId}&fromDate=${year}-01-01&toDate=${year}-12-31&limit=200`
+        );
+        console.log('[EmployeeReport] Attendance API response:', attRes);
+        const records = attRes.data ?? [];
+        const totalDays = records.length;
+        const totalHours = records.reduce((sum: number, r: any) => sum + (r.total_hours || 0), 0);
+        const presentDays = records.filter((r: any) => r.attendance_status === "present").length;
+        const lateDays = records.filter((r: any) => r.attendance_status === "late").length;
+        const wfoDays = records.filter((r: any) => r.work_mode === "wfo").length;
+        const wfhDays = records.filter((r: any) => r.work_mode === "wfh").length;
 
-      return { records, totalDays, totalHours, presentDays, lateDays, wfoDays, wfhDays };
+        return { records, totalDays, totalHours, presentDays, lateDays, wfoDays, wfhDays };
+      } catch (err) {
+        console.error('[EmployeeReport] Attendance data error:', err);
+        throw err;
+      }
     },
     enabled: !!selectedEmployeeId,
   });
@@ -180,12 +183,26 @@ export function EmployeeReport() {
   const { data: payrollData, isLoading: loadingPayroll } = useQuery({
     queryKey: ["employee-report-payroll", selectedEmployeeId, year],
     queryFn: async () => {
-      const payRes = await hrmsApi.get<{success:boolean;data:any}>("/api/payroll/structures");
-      const records = payRes.data ?? [];
-      const totalNet = records.reduce((sum, r) => sum + Number(r.net_salary || 0), 0);
-      const totalPaid = records
-        .filter((r) => r.status === "paid")
-        .reduce((sum, r) => sum + Number(r.net_salary || 0), 0);
+      // Get salary assignment for the employee
+      const salaryRes = await hrmsApi.get<{success:boolean;data:any}>(`/api/payroll/salary-assignments/${selectedEmployeeId}`);
+      const salary = salaryRes.data;
+
+      // Generate monthly records for the year (placeholder until we have actual payslip history)
+      const records = Array.from({ length: 12 }, (_, i) => ({
+        month: i + 1,
+        year,
+        basic_salary: salary?.basic_amount || 0,
+        total_allowances: salary?.allowances?.reduce((sum: number, a: any) => sum + (a.amount || 0), 0) || 0,
+        total_deductions: salary?.deductions?.reduce((sum: number, d: any) => sum + (d.amount || 0), 0) || 0,
+        net_salary: (salary?.basic_amount || 0) +
+                    (salary?.allowances?.reduce((sum: number, a: any) => sum + (a.amount || 0), 0) || 0) -
+                    (salary?.deductions?.reduce((sum: number, d: any) => sum + (d.amount || 0), 0) || 0),
+        status: "projected",
+      }));
+
+      const totalNet = records.reduce((sum: number, r: any) => sum + Number(r.net_salary || 0), 0);
+      const totalPaid = 0; // Will be calculated from actual payslips when available
+
       return { records, totalNet, totalPaid };
     },
     enabled: !!selectedEmployeeId,
@@ -195,7 +212,7 @@ export function EmployeeReport() {
   const { data: assetData, isLoading: loadingAssets } = useQuery({
     queryKey: ["employee-report-assets", selectedEmployeeId],
     queryFn: async () => {
-      const assetRes = await hrmsApi.get<{success:boolean;data:any}>("/api/assets-mgmt");
+      const assetRes = await hrmsApi.get<{success:boolean;data:any}>(`/api/assets-mgmt/employee/${selectedEmployeeId}`);
       const all = assetRes.data ?? [];
       const active = all.filter((a) => !a.returned_date);
       const returned = all.filter((a) => !!a.returned_date);
@@ -452,10 +469,12 @@ export function EmployeeReport() {
                       <Mail className="h-3.5 w-3.5" />
                       {selectedEmployee.email}
                     </span>
-                    <span className="flex items-center gap-1.5">
-                      <Calendar className="h-3.5 w-3.5" />
-                      Joined {format(new Date(selectedEmployee.hire_date), "MMM yyyy")}
-                    </span>
+                    {selectedEmployee.hire_date && (
+                      <span className="flex items-center gap-1.5">
+                        <Calendar className="h-3.5 w-3.5" />
+                        Joined {format(new Date(selectedEmployee.hire_date), "MMM yyyy")}
+                      </span>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -472,6 +491,11 @@ export function EmployeeReport() {
               <CardDescription>Balance and request history</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {leaveError && (
+                <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                  Error loading leave data: {leaveError instanceof Error ? leaveError.message : 'Unknown error'}
+                </div>
+              )}
               {loadingLeave ? (
                 <Skeleton className="h-32 w-full" />
               ) : (
@@ -561,6 +585,11 @@ export function EmployeeReport() {
               <CardDescription>Summary and recent records</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {attendanceError && (
+                <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                  Error loading attendance data: {attendanceError instanceof Error ? attendanceError.message : 'Unknown error'}
+                </div>
+              )}
               {loadingAttendance ? (
                 <Skeleton className="h-32 w-full" />
               ) : attendanceData ? (
@@ -590,16 +619,16 @@ export function EmployeeReport() {
                     </TableHeader>
                     <TableBody>
                       {attendanceData.records.length > 0 ? (
-                        attendanceData.records.slice(0, 15).map((r) => (
-                          <TableRow key={r.date}>
+                        attendanceData.records.slice(0, 15).map((r: any) => (
+                          <TableRow key={r.attendance_date || r.id}>
                             <TableCell>
-                              {format(new Date(r.date), "dd MMM yyyy")}
+                              {r.attendance_date ? format(new Date(r.attendance_date), "dd MMM yyyy") : "-"}
                             </TableCell>
                             <TableCell>
-                              {r.clock_in ? format(new Date(r.clock_in), "HH:mm") : "-"}
+                              {r.first_login ? format(new Date(r.first_login), "HH:mm") : "-"}
                             </TableCell>
                             <TableCell>
-                              {r.clock_out ? format(new Date(r.clock_out), "HH:mm") : "-"}
+                              {r.last_logout ? format(new Date(r.last_logout), "HH:mm") : "-"}
                             </TableCell>
                             <TableCell>
                               {r.total_hours ? `${Number(r.total_hours).toFixed(2)}h` : "-"}
@@ -608,7 +637,7 @@ export function EmployeeReport() {
                               {r.work_mode || "-"}
                             </TableCell>
                             <TableCell>
-                              <Badge variant="outline">{r.status}</Badge>
+                              <Badge variant="outline">{r.attendance_status || "-"}</Badge>
                             </TableCell>
                           </TableRow>
                         ))

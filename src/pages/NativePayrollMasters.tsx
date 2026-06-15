@@ -57,29 +57,32 @@ interface ApiList<T> {
 }
 
 interface SalarySlab {
-  id: number;
+  id: string;
   slab_code: string;
   range_from: number;
   range_to: number;
   label: string;
   seq_order: number;
-  status: string;
+  active_status: number;
 }
 
 interface DesigMatrix {
-  id: number;
-  department_id: number;
-  designation_id: number;
-  grade_id: number;
-  min_slab_id: number;
+  id: string;
+  department_id: string;
+  designation_id: string;
+  grade_id: string;
+  min_slab_id: string;
   department_name?: string;
   designation_name?: string;
   band_name?: string;
   slab_label?: string;
+  grade_name?: string;
+  band?: string;
+  min_slab_label?: string;
 }
 
 interface MinWage {
-  id: number;
+  id: string;
   state_code: string;
   state_name: string;
   category: string;
@@ -90,16 +93,19 @@ interface MinWage {
 }
 
 interface Department {
-  id: number;
+  id: string;
   dept_code?: string;
   code?: string;
   dept_name?: string;
   name?: string;
   status?: string;
+  active_status?: number;
 }
 
 interface Designation {
-  id: number;
+  id: string;
+  designation_code?: string;
+  designation_name?: string;
   desig_code?: string;
   code?: string;
   desig_name?: string;
@@ -109,10 +115,12 @@ interface Designation {
 }
 
 interface GradeBand {
-  id: number;
+  id: string;
   band_code?: string;
   code?: string;
   band_name?: string;
+  grade_name?: string;
+  band?: string;
   name?: string;
 }
 
@@ -145,13 +153,13 @@ function deptCode(d: Department): string {
   return d.dept_code ?? d.code ?? "";
 }
 function desigLabel(d: Designation): string {
-  return d.desig_name ?? d.name ?? String(d.id);
+  return d.designation_name ?? d.desig_name ?? d.name ?? String(d.id);
 }
 function desigCode(d: Designation): string {
-  return d.desig_code ?? d.code ?? "";
+  return d.designation_code ?? d.desig_code ?? d.code ?? "";
 }
 function bandLabel(g: GradeBand): string {
-  return g.band_name ?? g.name ?? String(g.id);
+  return g.band_name ?? g.grade_name ?? g.band ?? g.name ?? String(g.id);
 }
 
 // ─── Tab 1: Salary Slabs ──────────────────────────────────────────────────────
@@ -442,13 +450,13 @@ function DesigMatrixTab() {
   });
 
   const deleteMut = useMutation({
-    mutationFn: (id: number) => hrmsApi.delete(`/api/payroll-masters/matrix/${id}`),
+    mutationFn: (id: string) => hrmsApi.delete(`/api/payroll-masters/matrix/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["payroll-masters", "matrix"] }),
   });
 
   const bulkMut = useMutation({
-    mutationFn: (rows: Record<string, number>[]) =>
-      hrmsApi.post("/api/payroll-masters/matrix/bulk-upsert", { rows }),
+    mutationFn: (rows: Record<string, string>[]) =>
+      hrmsApi.post("/api/payroll-masters/matrix/bulk-upsert", rows),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["payroll-masters", "matrix"] });
       setBulkOpen(false);
@@ -460,46 +468,47 @@ function DesigMatrixTab() {
   function handleSave() {
     setMutErr("");
     saveMut.mutate({
-      department_id: Number(form.department_id),
-      designation_id: Number(form.designation_id),
-      grade_id: Number(form.grade_id),
-      min_slab_id: Number(form.min_slab_id),
+      department_id: form.department_id,
+      designation_id: form.designation_id,
+      grade_id: form.grade_id,
+      min_slab_id: form.min_slab_id || null,
     });
   }
 
   function handleBulkImport() {
     setBulkErr("");
     const lines = bulkCsv.trim().split("\n").filter(Boolean);
-    const parsed: Record<string, number>[] = [];
+    const parsed: Record<string, string>[] = [];
     for (const line of lines) {
       const parts = line.split(",").map((p) => p.trim());
       if (parts.length < 4) {
         setBulkErr(`Invalid line: "${line}" — expected dept_id,desig_id,grade_id,min_slab_id`);
         return;
       }
-      const [dept_id, desig_id, grade_id, min_slab_id] = parts.map(Number);
-      if ([dept_id, desig_id, grade_id, min_slab_id].some(isNaN)) {
-        setBulkErr(`Non-numeric value in line: "${line}"`);
+      const [department_id, designation_id, grade_id, min_slab_id] = parts;
+      if (![department_id, designation_id, grade_id].every(Boolean)) {
+        setBulkErr(`Missing ID in line: "${line}"`);
         return;
       }
-      parsed.push({ department_id: dept_id, designation_id: desig_id, grade_id, min_slab_id });
+      parsed.push({ department_id, designation_id, grade_id, min_slab_id });
     }
     bulkMut.mutate(parsed);
   }
 
-  const deptName = (id: number) =>
+  const deptName = (id: string) =>
     departments.find((d) => d.id === id)?.dept_name ??
     departments.find((d) => d.id === id)?.name ??
     String(id);
-  const desigName = (id: number) =>
+  const desigName = (id: string) =>
+    designations.find((d) => d.id === id)?.designation_name ??
     designations.find((d) => d.id === id)?.desig_name ??
     designations.find((d) => d.id === id)?.name ??
     String(id);
-  const bandName = (id: number) =>
+  const bandName = (id: string) =>
     bands.find((b) => b.id === id)?.band_name ??
     bands.find((b) => b.id === id)?.name ??
     String(id);
-  const slabLbl = (id: number) =>
+  const slabLbl = (id: string) =>
     slabs.find((s) => s.id === id)?.label ?? String(id);
 
   return (
@@ -562,8 +571,8 @@ function DesigMatrixTab() {
                 <TableRow key={r.id}>
                   <TableCell>{r.department_name ?? deptName(r.department_id)}</TableCell>
                   <TableCell>{r.designation_name ?? desigName(r.designation_id)}</TableCell>
-                  <TableCell>{r.band_name ?? bandName(r.grade_id)}</TableCell>
-                  <TableCell>{r.slab_label ?? slabLbl(r.min_slab_id)}</TableCell>
+                  <TableCell>{r.grade_name ?? r.band ?? r.band_name ?? bandName(r.grade_id)}</TableCell>
+                  <TableCell>{r.min_slab_label ?? r.slab_label ?? slabLbl(r.min_slab_id)}</TableCell>
                   <TableCell className="text-right">
                     <Button variant="ghost" size="icon" onClick={() => openEdit(r)}>
                       <Pencil className="h-3.5 w-3.5" />
@@ -783,7 +792,7 @@ function MinWagesTab() {
   });
 
   const deleteMut = useMutation({
-    mutationFn: (id: number) => hrmsApi.delete(`/api/payroll-masters/minimum-wages/${id}`),
+    mutationFn: (id: string) => hrmsApi.delete(`/api/payroll-masters/minimum-wages/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["payroll-masters", "minimum-wages"] }),
   });
 
@@ -1050,8 +1059,8 @@ function OrgMastersTab() {
   function openEditDesig(d: Designation) {
     setEditingDesig(d);
     setDesigForm({
-      desig_code: d.desig_code ?? d.code ?? "",
-      desig_name: d.desig_name ?? d.name ?? "",
+      desig_code: d.designation_code ?? d.desig_code ?? d.code ?? "",
+      desig_name: d.designation_name ?? d.desig_name ?? d.name ?? "",
       grade: d.grade ?? "",
     });
     setDesigErr("");
@@ -1060,8 +1069,8 @@ function OrgMastersTab() {
   function handleSaveDesig() {
     setDesigErr("");
     saveDesigMut.mutate({
-      desig_code: desigForm.desig_code,
-      desig_name: desigForm.desig_name,
+      designation_code: desigForm.desig_code,
+      designation_name: desigForm.desig_name,
       grade: desigForm.grade,
     });
   }
@@ -1110,8 +1119,8 @@ function OrgMastersTab() {
                     <TableCell className="font-mono text-xs">{deptCode(d)}</TableCell>
                     <TableCell>{deptLabel(d)}</TableCell>
                     <TableCell>
-                      <Badge variant={d.status === "active" ? "default" : "secondary"}>
-                        {d.status ?? "—"}
+                      <Badge variant={d.active_status === 1 ? "default" : "secondary"}>
+                        {d.active_status === 1 ? "Active" : "Inactive"}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
@@ -1171,8 +1180,8 @@ function OrgMastersTab() {
                     <TableCell>{desigLabel(d)}</TableCell>
                     <TableCell>{d.grade ?? "—"}</TableCell>
                     <TableCell>
-                      <Badge variant={d.status === "active" ? "default" : "secondary"}>
-                        {d.status ?? "—"}
+                      <Badge variant={d.active_status === 1 ? "default" : "secondary"}>
+                        {d.active_status === 1 ? "Active" : "Inactive"}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">

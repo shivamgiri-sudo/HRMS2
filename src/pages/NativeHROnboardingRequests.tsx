@@ -36,6 +36,15 @@ interface SalaryPreview {
 
 const BANDS = ['D', 'C', 'B', 'A', 'M'];
 
+function rowsFrom(payload: unknown): OnboardingRequest[] {
+  if (Array.isArray(payload)) return payload as OnboardingRequest[];
+  if (payload && typeof payload === 'object') {
+    const data = (payload as { data?: unknown }).data;
+    if (Array.isArray(data)) return data as OnboardingRequest[];
+  }
+  return [];
+}
+
 export default function NativeHROnboardingRequests() {
   const [rows, setRows] = useState<OnboardingRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,10 +70,10 @@ export default function NativeHROnboardingRequests() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await hrmsApi.get('/api/ats/onboarding/requests');
-      setRows(r.data.data ?? []);
-    } catch {
-      // silent — show empty state
+      const r = await hrmsApi.get<unknown>('/api/ats/onboarding/requests');
+      setRows(rowsFrom(r));
+    } catch (error: any) {
+      alert(error?.message ?? 'Failed to load onboarding requests');
     } finally {
       setLoading(false);
     }
@@ -76,13 +85,13 @@ export default function NativeHROnboardingRequests() {
     if (!offer.offered_ctc || !offer.salary_band) return;
     setCalcLoading(true);
     try {
-      const r = await hrmsApi.post('/api/ats/onboarding/calculate-salary', {
+      const r = await hrmsApi.post<{ components?: SalaryPreview }>('/api/ats/onboarding/calculate-salary', {
         ctc: Number(offer.offered_ctc) * 12, // input as monthly CTC, API takes annual
         bandCode: offer.salary_band,
       });
-      setSalaryPreview(r.data.components);
-    } catch {
-      // ignore
+      setSalaryPreview(r.components ?? null);
+    } catch (error: any) {
+      alert(error?.message ?? 'Failed to calculate salary');
     } finally {
       setCalcLoading(false);
     }
@@ -101,7 +110,7 @@ export default function NativeHROnboardingRequests() {
       setSelected(null);
       setSalaryPreview(null);
     } catch (e: any) {
-      alert(e?.response?.data?.error ?? 'Failed to save offer');
+      alert(e?.message ?? 'Failed to save offer');
     } finally {
       setSaving(false);
     }

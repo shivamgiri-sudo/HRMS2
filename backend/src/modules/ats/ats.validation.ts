@@ -5,7 +5,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export const createCandidateSchema = z.object({
   fullName:          z.string().trim().min(2).max(255),
   mobile:            z.string().trim().min(10).max(20),
-  email:             z.string().email({ message: "Valid email required" }),
+  email:             z.string().email({ message: "Valid email required" }).nullable().optional(),
   gender:            z.enum(["Male", "Female", "Other"]).nullable().optional(),
   dateOfBirth:       z.string().regex(DATE_RE).nullable().optional(),
   education:         z.string().trim().min(1).max(255),
@@ -18,6 +18,16 @@ export const createCandidateSchema = z.object({
   walkInDate:        z.string().regex(DATE_RE).nullable().optional(),
   arrivalTime:       z.string().trim().max(10).nullable().optional(),
   remarks:           z.string().trim().nullable().optional(),
+  address:           z.string().trim().max(2000).nullable().optional(),
+  rotationalShift:   z.string().trim().max(50).nullable().optional(),
+  preferredShift:    z.string().trim().max(100).nullable().optional(),
+  nightShiftOk:      z.string().trim().max(50).nullable().optional(),
+  leavesIn3months:   z.string().trim().max(50).nullable().optional(),
+  ownsTwoWheeler:    z.string().trim().max(50).nullable().optional(),
+  idProofAvailable:  z.string().trim().max(50).nullable().optional(),
+  educationProofAvailable: z.string().trim().max(50).nullable().optional(),
+  recruiterName:     z.string().trim().max(255).nullable().optional(),
+  profileStatus:     z.string().trim().max(50).nullable().optional(),
 });
 
 export const updateCandidateSchema = createCandidateSchema

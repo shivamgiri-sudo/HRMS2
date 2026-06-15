@@ -3,7 +3,8 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 type Row = {
-  id: string;
+  id?: string;
+  candidate_id: string;
   candidate_code: string;
   full_name: string;
   mobile: string;
@@ -16,15 +17,14 @@ type Row = {
   latest_decision?: string;
   latest_stage?: string;
   latest_process?: string;
+  profile_status?: string;
+  request_status?: string;
+  onboarding_profile_status?: string;
+  offer_status?: string;
   offer_doj?: string;
   offer_salary?: string;
   employee_id?: string;
   employee_code?: string;
-};
-
-type ConvertResult = {
-  employee_id: string;
-  employee_code: string;
 };
 
 const badgeTone = (value: string) => {
@@ -38,11 +38,9 @@ const badgeTone = (value: string) => {
 export default function NativeATSOnboardingBridge() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
-  const [converting, setConverting] = useState("");
   const [message, setMessage] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
-  const [convertedMap, setConvertedMap] = useState<Record<string, ConvertResult>>({});
   const [sendingToken, setSendingToken] = useState<string | null>(null);
   const [tokenSent, setTokenSent] = useState<Set<string>>(new Set());
 
@@ -51,29 +49,9 @@ export default function NativeATSOnboardingBridge() {
     setMessage("");
     try {
       const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
-        "/api/ats/candidates?limit=500&page=1"
+        "/api/ats/onboarding-bridge"
       );
-      setRows(
-        (res.data ?? []).map((c: any) => ({
-          id: c.id,
-          candidate_code: c.candidate_code,
-          full_name: c.full_name,
-          mobile: c.mobile,
-          email: c.email ?? undefined,
-          branch_name: c.applied_for_branch ?? undefined,
-          role_applied: c.applied_for_process ?? undefined,
-          recruiter_name: c.sourcing_channel ?? undefined,
-          status: c.current_stage ?? "Applied",
-          created_at: c.created_at,
-          latest_decision: c.current_stage ?? "Applied",
-          latest_stage: c.current_stage ?? "Applied",
-          latest_process: c.applied_for_process ?? "-",
-          offer_salary: "",
-          offer_doj: "",
-          employee_id: "",
-          employee_code: "",
-        }))
-      );
+      setRows(res.data ?? []);
     } catch (err: any) {
       setMessage(err.message || "Unable to load candidates");
     } finally {
@@ -84,33 +62,14 @@ export default function NativeATSOnboardingBridge() {
   const handleSendToken = async (candidateId: string) => {
     setSendingToken(candidateId);
     try {
-      await hrmsApi.post(`/ats/onboarding/send-token/${candidateId}`, {});
+      await hrmsApi.post(`/api/ats/onboarding/send-token/${candidateId}`, {});
       setTokenSent(prev => new Set([...prev, candidateId]));
+      setMessage("Secure onboarding link sent successfully.");
+      await load();
     } catch (err: any) {
-      alert(err?.response?.data?.error ?? 'Failed to send onboarding link');
+      setMessage(err?.message ?? "Failed to send onboarding link");
     } finally {
       setSendingToken(null);
-    }
-  };
-
-  const convert = async (id: string) => {
-    setConverting(id);
-    setMessage("");
-    try {
-      const res = await hrmsApi.post<{ success: boolean; data: ConvertResult }>(
-        `/api/ats/convert/${id}`,
-        {}
-      );
-      const result = res.data;
-      setConvertedMap((prev) => ({ ...prev, [id]: result }));
-      setMessage(
-        `Converted successfully! Employee code: ${result.employee_code}. You can now view the employee profile.`
-      );
-      await load();
-    } catch (err: unknown) {
-      setMessage(err instanceof Error ? err.message : "Unable to convert candidate");
-    } finally {
-      setConverting("");
     }
   };
 
@@ -121,15 +80,17 @@ export default function NativeATSOnboardingBridge() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
-      const decision = r.latest_decision || r.status || "Waiting";
+      const decision = r.latest_stage || r.status || "Waiting";
       const text = [r.candidate_code, r.full_name, r.mobile, r.email, r.branch_name, r.role_applied, r.recruiter_name, decision].join(" ").toLowerCase();
       return (!q || text.includes(q)) && (statusFilter === "All" || decision === statusFilter);
     });
   }, [rows, search, statusFilter]);
 
-  const statusOptions = useMemo(() => ["All", ...Array.from(new Set(rows.map((r) => r.latest_decision || r.status || "Waiting")))], [rows]);
-  const selectedCount = rows.filter((r) => r.latest_decision === "Selected" || r.latest_decision === "offer_accepted").length;
-  const convertedCount = rows.filter((r) => !!r.employee_id || r.status === "converted" || r.latest_decision === "converted").length;
+  const statusOptions = useMemo(() => ["All", ...Array.from(new Set(rows.map((r) => r.latest_stage || r.status || "Waiting")))], [rows]);
+  const selectedCount = rows.filter((r) => ["Selected", "selected"].includes(r.latest_stage || "")).length;
+  const convertedCount = rows.filter((r) =>
+    Boolean(r.employee_id) || ["converted", "onboarded"].includes((r.latest_stage || "").toLowerCase())
+  ).length;
 
   return (
     <DashboardLayout>
@@ -138,7 +99,7 @@ export default function NativeATSOnboardingBridge() {
           <div>
             <p className="text-sm font-bold uppercase tracking-[0.2em] text-blue-600">Native ATS</p>
             <h1 className="mt-2 text-3xl font-black text-slate-950">ATS Candidate Journey + HRMS Onboarding Bridge</h1>
-            <p className="mt-2 text-slate-600">Convert selected ATS candidates into HRMS onboarding employees. Decision comes from latest recruiter submission.</p>
+            <p className="mt-2 text-slate-600">Track every selected candidate from secure profile collection through offer approval and employee creation.</p>
           </div>
           <button onClick={load} className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white">Refresh</button>
         </div>
@@ -163,7 +124,7 @@ export default function NativeATSOnboardingBridge() {
         <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
           <div className="border-b p-5">
             <h2 className="font-bold text-slate-950">Candidates</h2>
-            <p className="text-sm text-slate-500">Selected candidates become HRMS onboarding employees from here.</p>
+            <p className="text-sm text-slate-500">Employee records are created only after the approved offer workflow completes.</p>
           </div>
 
           {loading ? <div className="p-8 text-center text-slate-500">Loading...</div> : (
@@ -174,16 +135,19 @@ export default function NativeATSOnboardingBridge() {
                 </thead>
                 <tbody>
                   {filtered.map((r) => {
-                    const decision = r.latest_decision || r.status || "Waiting";
-                    const newConvert = convertedMap[r.id];
-                    const empCode = newConvert?.employee_code ?? r.employee_code ?? "";
-                    const empId = newConvert?.employee_id ?? r.employee_id ?? "";
-                    const converted = !!empId || decision === "converted";
-                    const canConvert =
-                      !converted &&
-                      (decision === "offer_accepted" || decision === "Selected" || decision === "Offer Accepted");
+                    const decision = r.latest_stage || r.status || "Waiting";
+                    const empCode = r.employee_code ?? "";
+                    const empId = r.employee_id ?? "";
+                    const converted = !!empId || decision.toLowerCase() === "converted";
+                    const legacyOnboarded = !empId && decision.toLowerCase() === "onboarded";
+                    const lifecycleComplete = converted || legacyOnboarded;
+                    const linkSent = ["onboarding_sent", "profile_in_progress", "profile_submitted", "onboarded"].includes(r.profile_status || "");
+                    const profileSubmitted = ["submitted", "approved", "hr_review"].includes(r.onboarding_profile_status || "")
+                      || r.profile_status === "profile_submitted";
+                    const offerSubmitted = r.offer_status === "submitted" || r.request_status === "offer_submitted";
+                    const canSendToken = ["Selected", "selected"].includes(decision) && !converted;
                     return (
-                      <tr key={r.id} className="border-t">
+                      <tr key={r.candidate_id} className="border-t">
                         <td className="p-4">
                           <div className="font-bold text-slate-900">{r.full_name || "-"}</div>
                           <div className="text-xs text-slate-500">{r.candidate_code || "-"}</div>
@@ -206,15 +170,15 @@ export default function NativeATSOnboardingBridge() {
                           <div className="text-xs">DOJ: {r.offer_doj || "-"}</div>
                         </td>
                         <td className="p-4">
-                          {converted ? (
+                          {lifecycleComplete ? (
                             <div className="space-y-1">
                               <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
-                                Converted {empCode && `• ${empCode}`}
+                                {converted ? "Converted" : "Legacy onboarded"} {empCode && `• ${empCode}`}
                               </span>
                               {empId && (
                                 <div>
                                   <a
-                                    href={`/employees/${empId}`}
+                                    href={`/employees?search=${encodeURIComponent(empCode)}`}
                                     className="text-xs font-semibold text-blue-600 underline hover:text-blue-800"
                                   >
                                     View Employee Profile
@@ -223,38 +187,40 @@ export default function NativeATSOnboardingBridge() {
                               )}
                             </div>
                           ) : (
-                            <span className="rounded-full border bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
-                              Candidate Journey
-                            </span>
+                            <div className="min-w-[210px] space-y-2 text-xs">
+                              <div className="flex items-center justify-between"><span>Selected</span><span className="font-bold text-emerald-600">Done</span></div>
+                              <div className="flex items-center justify-between"><span>Link sent</span><span className={linkSent ? "font-bold text-emerald-600" : "text-slate-400"}>{linkSent ? "Done" : "Pending"}</span></div>
+                              <div className="flex items-center justify-between"><span>Profile submitted</span><span className={profileSubmitted ? "font-bold text-emerald-600" : "text-slate-400"}>{profileSubmitted ? "Done" : "Pending"}</span></div>
+                              <div className="flex items-center justify-between"><span>Offer approval</span><span className={offerSubmitted ? "font-bold text-amber-600" : "text-slate-400"}>{offerSubmitted ? "In review" : "Pending"}</span></div>
+                            </div>
                           )}
                         </td>
                         <td className="p-4 space-y-2">
-                          {decision === "Selected" && (
+                          {canSendToken && (
                             <button
-                              onClick={() => handleSendToken(r.id)}
-                              disabled={sendingToken === r.id || tokenSent.has(r.id)}
+                              onClick={() => handleSendToken(r.candidate_id)}
+                              disabled={sendingToken === r.candidate_id || tokenSent.has(r.candidate_id)}
                               className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                             >
-                              {sendingToken === r.id
+                              {sendingToken === r.candidate_id
                                 ? 'Sending...'
-                                : tokenSent.has(r.id)
-                                ? 'Link Sent ✓'
+                                : tokenSent.has(r.candidate_id)
+                                ? 'Link Sent'
+                                : linkSent
+                                ? 'Resend Link'
                                 : 'Send Onboarding Link'}
                             </button>
                           )}
-                          <button
-                            disabled={!canConvert || converting === r.id}
-                            onClick={() => void convert(r.id)}
-                            className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-bold text-white disabled:bg-slate-300"
-                          >
-                            {converting === r.id
-                              ? "Converting..."
-                              : converted
-                              ? "Converted"
-                              : canConvert
-                              ? "Convert to Employee"
-                              : "Not Eligible"}
-                          </button>
+                          {!lifecycleComplete && (
+                            <span className="block max-w-[170px] text-xs leading-5 text-slate-500">
+                              {offerSubmitted ? "Awaiting branch-head approval" : profileSubmitted ? "Prepare and submit offer" : linkSent ? "Awaiting candidate profile" : "Start secure onboarding"}
+                            </span>
+                          )}
+                          {legacyOnboarded && (
+                            <span className="block max-w-[170px] text-xs leading-5 text-slate-500">
+                              Imported before employee-link tracking
+                            </span>
+                          )}
                         </td>
                       </tr>
                     );

@@ -39,17 +39,24 @@ vi.mock("../src/modules/ats/ats.onboarding.service.js", async (importOriginal) =
 });
 
 vi.mock("../src/modules/ats/ats.service.js", () => ({
-  getCandidate: vi.fn(),
-  createCandidate: vi.fn(),
-  updateCandidate: vi.fn(),
-  moveStage: vi.fn(),
-  getStageLogs: vi.fn(),
-  listCandidates: vi.fn(),
-  getOnboardingBridge: vi.fn(),
-  createOnboardingBridge: vi.fn(),
-  updateOnboardingBridge: vi.fn(),
-  listSourcingChannels: vi.fn().mockResolvedValue([]),
-  getStats: vi.fn().mockResolvedValue({}),
+  atsService: {
+    getCandidate: vi.fn().mockImplementation(async (id: string) => {
+      const [rows] = await mockExecute("SELECT * FROM ats_candidate WHERE id = ? LIMIT 1", [id]);
+      const candidate = rows?.[0];
+      if (!candidate) throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+      return candidate;
+    }),
+    createCandidate: vi.fn(),
+    updateCandidate: vi.fn(),
+    moveStage: vi.fn(),
+    listStageLogs: vi.fn(),
+    listCandidates: vi.fn(),
+    listOnboardingBridges: vi.fn(),
+    createOnboardingBridge: vi.fn(),
+    updateOnboardingBridge: vi.fn(),
+    listSourcingChannels: vi.fn().mockResolvedValue([]),
+    getDashboardStats: vi.fn().mockResolvedValue({}),
+  },
 }));
 
 vi.mock("../src/modules/ats/ats.queue.service.js", () => ({

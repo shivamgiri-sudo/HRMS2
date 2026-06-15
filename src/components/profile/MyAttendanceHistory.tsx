@@ -16,14 +16,14 @@ interface MyAttendanceHistoryProps {
 
 interface AttendanceRecord {
   id: string;
-  date: string;
-  clock_in: string | null;
-  clock_out: string | null;
-  total_hours: number | null;
-  status: string;
+  record_date: string;
+  clock_in_time: string | null;
+  clock_out_time: string | null;
+  raw_minutes: number | null;
+  attendance_status: string;
   work_mode: string | null;
-  clock_in_location_name: string | null;
-  clock_out_location_name: string | null;
+  clock_in_location: string | null;
+  clock_out_location: string | null;
 }
 
 const statusStyles: Record<string, string> = {
@@ -148,14 +148,14 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
                         <CalendarDays className="h-4 w-4 text-muted-foreground" />
-                        {format(new Date(record.date), "MMM d, yyyy")}
+                        {format(new Date(record.record_date), "MMM d, yyyy")}
                       </div>
                     </TableCell>
                     <TableCell>
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger className="flex items-center gap-1">
-                            {formatTime(record.clock_in)}
+                            {formatTime(record.clock_in_time)}
                             {record.clock_in_location_name && (
                               <MapPin className="h-3 w-3 text-muted-foreground" />
                             )}
@@ -172,7 +172,7 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger className="flex items-center gap-1">
-                            {formatTime(record.clock_out)}
+                            {formatTime(record.clock_out_time)}
                             {record.clock_out_location_name && (
                               <MapPin className="h-3 w-3 text-muted-foreground" />
                             )}
@@ -207,7 +207,7 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                         );
                       })()}
                     </TableCell>
-                    <TableCell>{formatHours(record.total_hours)}</TableCell>
+                    <TableCell>{formatHours(record.raw_minutes ? record.raw_minutes / 60 : null)}</TableCell>
                     <TableCell>
                       {record.work_mode ? (
                         <Badge variant="outline" className="text-xs">
@@ -218,8 +218,8 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={statusStyles[record.status] || ""}>
-                        {record.status}
+                      <Badge variant="outline" className={statusStyles[record.attendance_status] || ""}>
+                        {record.attendance_status}
                       </Badge>
                     </TableCell>
                   </TableRow>

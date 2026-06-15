@@ -54,9 +54,10 @@ const TABS: TabConfig[] = [
     icon: <Building2 className="h-4 w-4" />,
     apiPath: "/api/org/branches",
     fields: [
-      { key: "name", label: "Name", type: "text", required: true },
-      { key: "code", label: "Code", type: "text" },
-      { key: "description", label: "Description", type: "textarea" },
+      { key: "branch_name", label: "Name", type: "text", required: true },
+      { key: "branch_code", label: "Code", type: "text", required: true },
+      { key: "city", label: "City", type: "text" },
+      { key: "state", label: "State", type: "text" },
     ],
   },
   {
@@ -65,8 +66,8 @@ const TABS: TabConfig[] = [
     icon: <Layers className="h-4 w-4" />,
     apiPath: "/api/org/departments",
     fields: [
-      { key: "name", label: "Name", type: "text", required: true },
-      { key: "code", label: "Code", type: "text" },
+      { key: "dept_name", label: "Name", type: "text", required: true },
+      { key: "dept_code", label: "Code", type: "text", required: true },
       { key: "description", label: "Description", type: "textarea" },
     ],
   },
@@ -76,9 +77,8 @@ const TABS: TabConfig[] = [
     icon: <Briefcase className="h-4 w-4" />,
     apiPath: "/api/org/lobs",
     fields: [
-      { key: "name", label: "Name", type: "text", required: true },
-      { key: "code", label: "Code", type: "text" },
-      { key: "description", label: "Description", type: "textarea" },
+      { key: "lob_name", label: "Name", type: "text", required: true },
+      { key: "lob_code", label: "Code", type: "text", required: true },
     ],
   },
   {
@@ -87,9 +87,9 @@ const TABS: TabConfig[] = [
     icon: <Tag className="h-4 w-4" />,
     apiPath: "/api/org/designations",
     fields: [
-      { key: "name", label: "Name", type: "text", required: true },
-      { key: "code", label: "Code", type: "text" },
-      { key: "description", label: "Description", type: "textarea" },
+      { key: "designation_name", label: "Name", type: "text", required: true },
+      { key: "designation_code", label: "Code", type: "text", required: true },
+      { key: "grade", label: "Grade", type: "text" },
     ],
   },
   {
@@ -98,9 +98,8 @@ const TABS: TabConfig[] = [
     icon: <Megaphone className="h-4 w-4" />,
     apiPath: "/api/org/campaigns",
     fields: [
-      { key: "name", label: "Name", type: "text", required: true },
-      { key: "code", label: "Code", type: "text" },
-      { key: "description", label: "Description", type: "textarea" },
+      { key: "campaign_name", label: "Name", type: "text", required: true },
+      { key: "campaign_code", label: "Code", type: "text", required: true },
     ],
   },
   {
@@ -109,9 +108,8 @@ const TABS: TabConfig[] = [
     icon: <DollarSign className="h-4 w-4" />,
     apiPath: "/api/org/cost-centres",
     fields: [
-      { key: "name", label: "Name", type: "text", required: true },
-      { key: "code", label: "Code", type: "text" },
-      { key: "description", label: "Description", type: "textarea" },
+      { key: "cost_centre_name", label: "Name", type: "text", required: true },
+      { key: "cost_centre_code", label: "Code", type: "text", required: true },
     ],
   },
   {
@@ -120,9 +118,9 @@ const TABS: TabConfig[] = [
     icon: <Award className="h-4 w-4" />,
     apiPath: "/api/org/grade-bands",
     fields: [
-      { key: "name", label: "Name", type: "text", required: true },
-      { key: "code", label: "Code", type: "text" },
-      { key: "description", label: "Description", type: "textarea" },
+      { key: "grade_name", label: "Name", type: "text", required: true },
+      { key: "grade_code", label: "Code", type: "text", required: true },
+      { key: "band", label: "Band", type: "text" },
     ],
   },
 ];
@@ -130,10 +128,21 @@ const TABS: TabConfig[] = [
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function isActive(record: OrgRecord): boolean {
+  if (record.active_status !== undefined) return Number(record.active_status) === 1;
   if (typeof record.is_active === "boolean") return record.is_active;
   if (typeof record.active === "boolean") return record.active;
   if (record.status) return record.status === "active" || record.status === "1";
   return true;
+}
+
+function getRecordName(record: OrgRecord, tab: TabConfig): string {
+  const nameField = tab.fields.find(f => f.label === "Name");
+  return nameField ? String(record[nameField.key] ?? "–") : "–";
+}
+
+function getRecordCode(record: OrgRecord, tab: TabConfig): string {
+  const codeField = tab.fields.find(f => f.label === "Code");
+  return codeField ? String(record[codeField.key] ?? "–") : "–";
 }
 
 // ── Sub-components ───────────────────────────────────────────────────────────
@@ -376,8 +385,8 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
               <tbody>
                 {records.map((rec) => (
                   <tr key={rec.id} className="border-t hover:bg-slate-50/80 transition-colors">
-                    <td className="p-4 font-semibold text-slate-900">{rec.name}</td>
-                    <td className="p-4 font-mono text-xs text-slate-500">{rec.code ?? "–"}</td>
+                    <td className="p-4 font-semibold text-slate-900">{getRecordName(rec, tab)}</td>
+                    <td className="p-4 font-mono text-xs text-slate-500">{getRecordCode(rec, tab)}</td>
                     <td className="p-4">
                       {isActive(rec) ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">

@@ -52,6 +52,16 @@ rosterRouter.patch("/plans/:id/publish",
 );
 
 // Assignments
+rosterRouter.get("/actual-process",
+  requireRole("admin", "wfm", "process_manager", "branch_head", "hr", "ceo"),
+  h(c.getActualProcess.bind(c))
+);
+
+rosterRouter.get("/actual-assignments",
+  requireRole("admin", "wfm", "process_manager", "branch_head", "hr", "ceo"),
+  h(c.listActualAssignments.bind(c))
+);
+
 rosterRouter.post("/assignments",
   requireRole("admin", "wfm", "process_manager"),
   requireRosterPlanScope({

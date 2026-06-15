@@ -99,7 +99,7 @@ describe("processService.create", () => {
 
     await expect(
       processService.create({ processCode: "ib", processName: "Inbound 2" }, "user-1")
-    ).rejects.toThrow("Process code already exists");
+    ).rejects.toThrow("Process code or process name already exists");
 
     expect(mockRepo.create).not.toHaveBeenCalled();
   });

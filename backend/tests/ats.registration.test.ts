@@ -15,6 +15,11 @@ import { atsService } from "../src/modules/ats/ats.service.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 
+function resetDbMock() {
+  vi.clearAllMocks();
+  mockExecute.mockReset().mockResolvedValue([[], []]);
+}
+
 const validInput = {
   fullName: "Priya Singh",
   mobile: "9876543210",
@@ -45,13 +50,14 @@ const fakeCandidate = {
 };
 
 describe("atsService.createCandidate — valid registration", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("inserts and returns new candidate when all mandatory fields provided", async () => {
     mockExecute
       .mockResolvedValueOnce([[]])           // mobile dup check — no match
       .mockResolvedValueOnce([[]])           // email dup check — no match
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // INSERT
+      .mockResolvedValueOnce([{ affectedRows: 1 }]) // stage log
       .mockResolvedValueOnce([[fakeCandidate]]);    // re-fetch
     const result = await atsService.createCandidate(validInput, "user-1");
     expect(result.full_name).toBe("Priya Singh");
@@ -63,6 +69,7 @@ describe("atsService.createCandidate — valid registration", () => {
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([[{ ...fakeCandidate, sourcing_channel: "Walk-In" }]]);
     const result = await atsService.createCandidate({ ...validInput, sourcingChannel: "walk-in" }, "user-1");
     const insertSql: string = mockExecute.mock.calls[2][0];
@@ -72,7 +79,7 @@ describe("atsService.createCandidate — valid registration", () => {
 });
 
 describe("atsService.createCandidate — duplicate mobile", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("throws 409 DUPLICATE_MOBILE for active candidate", async () => {
     mockExecute.mockResolvedValueOnce([[{ id: "c1", current_stage: "Applied", active_status: 1 }]]);
@@ -106,7 +113,7 @@ describe("atsService.createCandidate — duplicate mobile", () => {
 });
 
 describe("atsService.createCandidate — duplicate email", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("throws 409 DUPLICATE_EMAIL when email already registered", async () => {
     mockExecute
@@ -129,7 +136,7 @@ describe("atsService.createCandidate — duplicate email", () => {
 });
 
 describe("atsService.createCandidate — scope column SQL", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("listCandidates builds WHERE using applied_for_branch column (not branch_id)", async () => {
     mockExecute

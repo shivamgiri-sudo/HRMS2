@@ -92,10 +92,38 @@ INSERT INTO ats_offer_letter_templates (
 -- ── Performance Indexes ─────────────────────────────────────────────────────────
 
 -- Composite index for pending offers query
-CREATE INDEX IF NOT EXISTS idx_offer_status_expiry ON ats_offer_letters(status, expires_at);
+SET @idx = (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'ats_offer_letters'
+    AND INDEX_NAME = 'idx_offer_status_expiry'
+);
+SET @sql = IF(
+  @idx = 0,
+  'CREATE INDEX idx_offer_status_expiry ON ats_offer_letters(status, expires_at)',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- Index for candidate offer history
-CREATE INDEX IF NOT EXISTS idx_candidate_offer_date ON ats_offer_letters(candidate_id, offer_date DESC);
+SET @idx = (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'ats_offer_letters'
+    AND INDEX_NAME = 'idx_candidate_offer_date'
+);
+SET @sql = IF(
+  @idx = 0,
+  'CREATE INDEX idx_candidate_offer_date ON ats_offer_letters(candidate_id, offer_date DESC)',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- ── Verification ────────────────────────────────────────────────────────────────
 

@@ -173,23 +173,27 @@ describe("POST /api/management/alerts/:id/acknowledge", () => {
 // ── 6. GET /api/management/dashboard ─────────────────────────────────────────
 
 describe("GET /api/management/dashboard", () => {
-  it("returns 200 for admin with 3 db calls for summary", async () => {
+  it("returns a live operational summary for admin", async () => {
     mockAdmin();
-    // getDashboardSummary: 3 db.execute calls
-    mockExecute.mockResolvedValueOnce([[{ employees_with_kpi: 10, avg_score: 85.2 }], []]);   // kpiRows
-    mockExecute.mockResolvedValueOnce([[{ pending_sessions: 3 }], []]);                        // coachRows
-    mockExecute.mockResolvedValueOnce([[{ unacked_critical: 2 }], []]);                        // alertRows
+    mockExecute.mockResolvedValueOnce([[{ headcount: 100, exits_30d: 5 }], []]);
+    mockExecute.mockResolvedValueOnce([[{ pending_leaves: 3 }], []]);
+    mockExecute.mockResolvedValueOnce([[{ open_tickets: 2 }], []]);
+    mockExecute.mockResolvedValueOnce([[{ total: 100, present: 90, half_day: 4 }], []]);
+    mockExecute.mockResolvedValueOnce([[
+      { employee_id: "e1", overall_score: 85.2 },
+      { employee_id: "e2", overall_score: 74.8 },
+    ], []]);
     const r = await request(app).get("/api/management/dashboard").set(ADMIN);
     expect(r.status).toBe(200);
-    expect(r.body.data).toHaveProperty("kpi");
-    expect(r.body.data).toHaveProperty("coaching");
-    expect(r.body.data).toHaveProperty("alerts");
-    // No payroll fields in response
-    const flatKeys = Object.keys(r.body.data ?? {}).concat(
-      Object.keys(r.body.data?.kpi ?? {}),
-      Object.keys(r.body.data?.coaching ?? {}),
-      Object.keys(r.body.data?.alerts ?? {})
-    );
+    expect(r.body.data).toMatchObject({
+      headcount: 100,
+      avg_kpi_score: 80,
+      open_tickets: 2,
+      pending_leaves: 3,
+      attendance_rate: 92,
+    });
+    expect(r.body.data.attrition_rate).toBeGreaterThan(0);
+    const flatKeys = Object.keys(r.body.data ?? {});
     const payrollFields = flatKeys.filter(k => /salary|payroll|gross|net_pay|tds|pf|esi|ctc|bank/i.test(k));
     expect(payrollFields).toHaveLength(0);
   });
@@ -244,12 +248,14 @@ describe("SECURITY — Manager scope (deferred pending user_assignment_scope)", 
   it("dashboard response contains no payroll fields", async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: "u-admin" } }, error: null });
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
-    mockExecute.mockResolvedValueOnce([[{ employees_with_kpi: 5, avg_score: 80 }], []]);
-    mockExecute.mockResolvedValueOnce([[{ pending_sessions: 2 }], []]);
-    mockExecute.mockResolvedValueOnce([[{ unacked_critical: 1 }], []]);
+    mockExecute.mockResolvedValueOnce([[{ headcount: 5, exits_30d: 0 }], []]);
+    mockExecute.mockResolvedValueOnce([[{ pending_leaves: 2 }], []]);
+    mockExecute.mockResolvedValueOnce([[{ open_tickets: 1 }], []]);
+    mockExecute.mockResolvedValueOnce([[{ total: 5, present: 4, half_day: 1 }], []]);
+    mockExecute.mockResolvedValueOnce([[{ employee_id: "e1", overall_score: 80 }], []]);
     const r = await request(app).get("/api/management/dashboard").set({ Authorization: "Bearer admin.token" });
     expect(r.status).toBe(200);
-    const keys = Object.keys(r.body.data?.kpi ?? {});
+    const keys = Object.keys(r.body.data ?? {});
     expect(keys).not.toContain("salary");
     expect(keys).not.toContain("ctc");
   });

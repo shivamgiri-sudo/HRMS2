@@ -260,10 +260,10 @@ const Departments = () => {
                       <TableRow key={department.id} className="cursor-pointer hover:bg-gray-50 transition-colors">
                         <TableCell className="font-medium">{department.name}</TableCell>
                         <TableCell className="text-muted-foreground">
-                          {department.description || "-"}
+                          {department.description || <span className="text-muted-foreground">Not configured</span>}
                         </TableCell>
                         <TableCell>
-                          {department.manager_name || <span className="text-muted-foreground">-</span>}
+                          {department.manager_name || <span className="text-muted-foreground">Not assigned</span>}
                         </TableCell>
                         <TableCell>
                           <Badge className="rounded-full bg-[#e8f2fc] px-2.5 text-xs font-bold text-[#1B6AB5] hover:bg-[#e8f2fc]">{department.employee_count}</Badge>

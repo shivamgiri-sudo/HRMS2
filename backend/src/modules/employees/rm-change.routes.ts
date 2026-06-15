@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
@@ -19,6 +20,7 @@ router.get("/search-managers", h(async (req: any, res: any) => {
   }
 
   const searchPattern = `%${query}%`;
+  const currentEmployee = await getEmployeeForUser(req.authUser!.id);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.employee_code,
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS full_name,
@@ -26,11 +28,12 @@ router.get("/search-managers", h(async (req: any, res: any) => {
      FROM employees e
      LEFT JOIN designation_master d ON d.id = e.designation_id
      WHERE e.active_status = 1
-       AND e.employment_status = 'Active'
-       AND (e.full_name LIKE ? OR e.employee_code LIKE ?)
+       AND LOWER(e.employment_status) = 'active'
+       AND e.id <> ?
+       AND (CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) LIKE ? OR e.employee_code LIKE ?)
      ORDER BY e.first_name ASC
      LIMIT 20`,
-    [searchPattern, searchPattern]
+    [currentEmployee?.id ?? "", searchPattern, searchPattern]
   );
 
   return res.json({ ok: true, data: rows });
@@ -95,6 +98,9 @@ router.post("/", h(async (req: any, res: any) => {
   if (!requested_manager_id) {
     return res.status(400).json({ ok: false, message: "requested_manager_id required" });
   }
+  if (requested_manager_id === emp.id) {
+    return res.status(400).json({ ok: false, message: "You cannot assign yourself as reporting manager" });
+  }
 
   // Check if there's already a pending request
   const [existing] = await db.execute<RowDataPacket[]>(
@@ -113,7 +119,7 @@ router.post("/", h(async (req: any, res: any) => {
   // Verify the requested manager exists and is active
   const [managerCheck] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM employees
-     WHERE id = ? AND active_status = 1 AND employment_status = 'Active' LIMIT 1`,
+     WHERE id = ? AND active_status = 1 AND LOWER(employment_status) = 'active' LIMIT 1`,
     [requested_manager_id]
   );
 
@@ -122,7 +128,7 @@ router.post("/", h(async (req: any, res: any) => {
   }
 
   // Create the request
-  const requestId = crypto.randomUUID();
+  const requestId = randomUUID();
   await db.execute(
     `INSERT INTO rm_change_requests
      (id, employee_id, branch_id, current_manager_id, requested_manager_id, reason, status, created_at)
@@ -130,7 +136,7 @@ router.post("/", h(async (req: any, res: any) => {
     [requestId, emp.id, emp.branch_id, emp.reporting_manager_id, requested_manager_id, reason || null]
   );
 
-  return res.status(201).json({ ok: true, data: { id: requestId } });
+  return res.status(201).json({ success: true, ok: true, data: { id: requestId } });
 }));
 
 // POST /api/rm-change/:id/action - approve or reject a request

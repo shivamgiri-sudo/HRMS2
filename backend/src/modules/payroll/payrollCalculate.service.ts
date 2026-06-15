@@ -250,9 +250,11 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   const daysInMonth = new Date(year, month, 0).getDate();
   const defaultWorkingDays = 26; // BPO standard; can be refined later
 
-  // Derive financial year string e.g. "2025-26" for months April–March
+  // Canonical financial year format is YYYY-YYYY. The lookup still accepts
+  // legacy YYYY-YY rows so older payroll data remains usable.
   const fyStartYear = month >= 4 ? year : year - 1;
-  const financialYear = `${fyStartYear}-${String(fyStartYear + 1).slice(2)}`;
+  const financialYear = `${fyStartYear}-${fyStartYear + 1}`;
+  const legacyFinancialYear = `${fyStartYear}-${String(fyStartYear + 1).slice(2)}`;
 
   let totalGross = 0;
   let totalDed = 0;
@@ -334,8 +336,12 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
 
     // 5a. Fetch tax declaration for this employee / financial year
     const [declRows] = await db.execute<RowDataPacket[]>(
-      "SELECT declared_hra, declared_80c, declared_80d, regime FROM tax_declaration WHERE employee_id = ? AND financial_year = ? LIMIT 1",
-      [emp.employee_id, financialYear]
+      `SELECT declared_hra, declared_80c, declared_80d, regime
+         FROM tax_declaration
+        WHERE employee_id = ? AND financial_year IN (?, ?)
+        ORDER BY financial_year = ? DESC
+        LIMIT 1`,
+      [emp.employee_id, financialYear, legacyFinancialYear, financialYear]
     );
     const decl = (declRows as TaxDeclarationRow[])[0] ?? null;
 

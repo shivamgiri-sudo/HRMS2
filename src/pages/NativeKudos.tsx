@@ -1,19 +1,28 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Heart, Send } from "lucide-react";
+import { Heart, Send, Check, ChevronsUpDown } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { KudosCard } from "@/components/engagement/KudosCard";
 import type { ApiResponse, Kudos, KudosTemplate } from "@/components/engagement/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useQuery } from "@tanstack/react-query";
 
 interface KudosLimit {
   given: number;
   limit: number;
   remaining: number;
+}
+
+interface EmployeeOption {
+  id: string;
+  name: string;
+  employee_code: string;
 }
 
 export default function NativeKudos() {
@@ -26,6 +35,20 @@ export default function NativeKudos() {
   const [anonymous, setAnonymous] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [employeeSearchOpen, setEmployeeSearchOpen] = useState(false);
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeOption | null>(null);
+
+  const { data: employees = [] } = useQuery<EmployeeOption[]>({
+    queryKey: ["employees-for-kudos", employeeSearch],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: EmployeeOption[] }>(
+        `/api/employees/options/search?q=${encodeURIComponent(employeeSearch)}&limit=30`
+      );
+      return res.data ?? [];
+    },
+    enabled: employeeSearchOpen && employeeSearch.trim().length >= 2,
+  });
 
   const load = async () => {
     const [wallResponse, templatesResponse, limitResponse] = await Promise.all([
@@ -53,6 +76,8 @@ export default function NativeKudos() {
         isAnonymous: anonymous,
       });
       setReceiverId("");
+      setSelectedEmployee(null);
+      setEmployeeSearch("");
       setTemplateId("");
       setMessage("");
       setAnonymous(false);
@@ -83,8 +108,62 @@ export default function NativeKudos() {
             <CardContent>
               <form className="space-y-4" onSubmit={submit}>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Recipient employee ID</label>
-                  <Input value={receiverId} onChange={(event) => setReceiverId(event.target.value)} required placeholder="Employee UUID" />
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Recipient Employee</label>
+                  <Popover open={employeeSearchOpen} onOpenChange={setEmployeeSearchOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={employeeSearchOpen}
+                        className="w-full justify-between"
+                      >
+                        {selectedEmployee
+                          ? selectedEmployee.name
+                          : "Search by name or employee code..."}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-full p-0" align="start">
+                      <Command shouldFilter={false}>
+                        <CommandInput
+                          placeholder="Type at least 2 characters..."
+                          value={employeeSearch}
+                          onValueChange={setEmployeeSearch}
+                        />
+                        <CommandList>
+                          <CommandEmpty>
+                            {employeeSearch.trim().length < 2
+                              ? "Type at least 2 characters."
+                              : "No active employee found."}
+                          </CommandEmpty>
+                          <CommandGroup>
+                            {employees.map((emp) => (
+                              <CommandItem
+                                key={emp.id}
+                                value={`${emp.name} ${emp.employee_code}`}
+                                onSelect={() => {
+                                  setReceiverId(emp.id);
+                                  setSelectedEmployee(emp);
+                                  setEmployeeSearchOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4",
+                                    receiverId === emp.id ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                <div className="flex flex-col">
+                                  <span className="font-medium">{emp.name}</span>
+                                  <span className="text-xs text-muted-foreground">{emp.employee_code}</span>
+                                </div>
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Recognition</label>

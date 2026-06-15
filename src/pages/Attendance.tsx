@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -8,14 +8,17 @@ import {
   Calendar,
   CheckCircle2,
   Clock,
+  Home,
+  LogIn,
+  LogOut,
   MapPin,
   RefreshCcw,
   Timer,
 } from "lucide-react";
 import { format } from "date-fns";
-import { toast } from "sonner";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { AttendanceCalendar } from "@/components/attendance/AttendanceCalendar";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import {
@@ -82,6 +85,9 @@ const MONTHS = [
   { value: "10", label: "November" },
   { value: "11", label: "December" },
 ];
+
+const isOfficeMode = (mode?: string | null) =>
+  mode === "wfo" || mode === "office";
 
 interface EmployeeSchedule {
   id: string;
@@ -214,19 +220,8 @@ const Attendance = () => {
   const { data: currentEmployee, error: employeeError, isLoading: employeeLoading } = useQuery<EmployeeSchedule | null>({
     queryKey: ["current-employee-schedule", user?.id],
     queryFn: async () => {
-      console.log('[Attendance] Fetching employee for user:', user?.id);
-      try {
-        const empData = await hrmsApi.get<{ data: { id: string; first_name?: string | null; last_name?: string | null; working_hours_start?: string | null; working_hours_end?: string | null; working_days?: number[] | null } }>(`/api/employees/me`);
-        console.log('[Attendance] Employee data:', empData);
-        if (!empData.data) {
-          console.error('[Attendance] No employee data returned');
-          return null;
-        }
-        return empData.data as EmployeeSchedule;
-      } catch (error) {
-        console.error('[Attendance] Failed to fetch employee:', error);
-        throw error;
-      }
+      const empData = await hrmsApi.get<{ data: { id: string; first_name?: string | null; last_name?: string | null; working_hours_start?: string | null; working_hours_end?: string | null; working_days?: number[] | null } }>(`/api/employees/me`);
+      return empData.data ? empData.data as EmployeeSchedule : null;
     },
     enabled: !!user?.id,
     retry: 2,
@@ -239,34 +234,6 @@ const Attendance = () => {
     currentEmployee?.id
   );
 
-  // Debug logging
-  useEffect(() => {
-    console.log("=== Attendance Debug ===", {
-      user: { id: user?.id, email: user?.email },
-      employee: {
-        loading: employeeLoading,
-        error: employeeError?.message,
-        id: currentEmployee?.id,
-        data: currentEmployee,
-      },
-      records: {
-        loading: recordsLoading,
-        error: recordsError?.message,
-        count: attendanceRecords?.length || 0,
-        data: attendanceRecords,
-      },
-      targetDate: targetDate.toISOString(),
-    });
-
-    // Show user-friendly errors
-    if (employeeError) {
-      console.error('[Attendance] Employee Error:', employeeError);
-      toast.error('Failed to load employee information. Please refresh the page.');
-    }
-    if (recordsError) {
-      console.error('[Attendance] Records Error:', recordsError);
-    }
-  }, [user, employeeLoading, employeeError, currentEmployee, recordsLoading, recordsError, attendanceRecords, targetDate]);
   const { data: reportData, isLoading: reportLoading } =
     useAttendanceReport(targetDate);
 
@@ -491,12 +458,12 @@ const Attendance = () => {
       <TooltipProvider>
         <div className="space-y-5">
           {/* Hero Header */}
-          <section className="relative overflow-hidden rounded-2xl bg-slate-950 text-white shadow-lg">
+          <section className="relative overflow-hidden rounded-3xl bg-[#073f78] text-white shadow-lg">
             <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-[#1B6AB5]/20 blur-3xl" />
             <div className="pointer-events-none absolute -bottom-10 left-1/4 h-48 w-48 rounded-full bg-[#3BAD49]/10 blur-3xl" />
             <div className="relative grid gap-0 lg:grid-cols-[1fr_auto]">
               <div className="p-6 sm:p-7">
-                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#5aa0dd]">
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-green-200">
                   Attendance Management
                 </p>
 
@@ -572,7 +539,7 @@ const Attendance = () => {
 
                 {todayRecord?.work_mode && (
                   <Badge className="w-fit bg-slate-100 text-slate-700 hover:bg-slate-100">
-                    {todayRecord.work_mode === "wfo" ? (
+                    {isOfficeMode(todayRecord.work_mode) ? (
                       <>
                         <Building2 className="mr-1 h-3.5 w-3.5" />
                         Office
@@ -779,6 +746,26 @@ const Attendance = () => {
             )}
           </section>
 
+          {/* Calendar View */}
+          {user?.id && (
+            <section className="space-y-4">
+              <div>
+                <h2 className="text-base font-semibold tracking-tight text-slate-950">
+                  Attendance Calendar
+                </h2>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  View your monthly attendance with color-coded status. Click any date for details.
+                </p>
+              </div>
+
+              <AttendanceCalendar
+                employeeId={user.id}
+                initialMonth={Number(selectedMonth)}
+                initialYear={Number(selectedYear)}
+              />
+            </section>
+          )}
+
           {/* Monthly Summary */}
           <section className="space-y-4">
             <div>
@@ -899,15 +886,8 @@ const Attendance = () => {
                   Failed to Load Employee Information
                 </h3>
                 <p className="mb-4 text-sm text-red-700">
-                  {employeeError?.message || 'Could not fetch your employee profile. Please check if you are linked to an employee record.'}
+                  We could not load your employee profile. Retry, or contact HR if the issue continues.
                 </p>
-                <div className="bg-white rounded-lg p-4 mb-4 text-left">
-                  <p className="text-xs font-mono text-gray-700">
-                    <strong>User ID:</strong> {user?.id}<br />
-                    <strong>Email:</strong> {user?.email}<br />
-                    <strong>Error:</strong> {employeeError?.message}
-                  </p>
-                </div>
                 <Button
                   onClick={() => window.location.reload()}
                   variant="outline"
@@ -926,13 +906,6 @@ const Attendance = () => {
                 <p className="mb-4 text-sm text-amber-700">
                   Your user account is not linked to an employee record. Please contact HR to link your account.
                 </p>
-                <div className="bg-white rounded-lg p-4 mb-4 text-left">
-                  <p className="text-xs font-mono text-gray-700">
-                    <strong>User ID:</strong> {user?.id}<br />
-                    <strong>Email:</strong> {user?.email}<br />
-                    <strong>Status:</strong> No employee record found
-                  </p>
-                </div>
               </div>
             ) : recordsError ? (
               <div className="rounded-xl border-2 border-red-200 bg-red-50 p-8 text-center">
@@ -941,15 +914,8 @@ const Attendance = () => {
                   Failed to Load Attendance History
                 </h3>
                 <p className="mb-4 text-sm text-red-700">
-                  {recordsError?.message || 'An error occurred while fetching your attendance records.'}
+                  We could not load attendance history for this month. Please retry.
                 </p>
-                <div className="bg-white rounded-lg p-4 mb-4 text-left">
-                  <p className="text-xs font-mono text-gray-700">
-                    <strong>Employee ID:</strong> {currentEmployee?.id}<br />
-                    <strong>Month:</strong> {format(targetDate, 'MMMM yyyy')}<br />
-                    <strong>Error:</strong> {recordsError?.message}
-                  </p>
-                </div>
                 <Button
                   onClick={() => window.location.reload()}
                   variant="outline"
@@ -1117,7 +1083,7 @@ const Attendance = () => {
                             <TableCell>
                               {record.work_mode ? (
                                 <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100">
-                                  {record.work_mode === "wfo" ? (
+                                  {isOfficeMode(record.work_mode) ? (
                                     <>
                                       <Building2 className="mr-1 h-3.5 w-3.5" />
                                       Office

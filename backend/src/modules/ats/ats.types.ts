@@ -73,7 +73,7 @@ export interface CandidateListFilters {
 export interface CreateCandidateInput {
   fullName: string;
   mobile: string;
-  email: string;
+  email?: string | null;
   education: string;
   experience: string;
   appliedForProcess: string;

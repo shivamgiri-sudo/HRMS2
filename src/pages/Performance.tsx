@@ -13,6 +13,7 @@ import { TeamReviewsManager } from "@/components/performance/TeamReviewsManager"
 import { TeamAnalytics } from "@/components/performance/TeamAnalytics";
 import { AprSection } from "@/components/performance/AprSection";
 import { TeamKpiView } from "@/components/performance/TeamKpiView";
+import { MyLiveKpiView } from "@/components/performance/MyLiveKpiView";
 
 export interface TeamMember {
   id: string;
@@ -115,11 +116,15 @@ const Performance = () => {
           </div>
         </section>
 
-        <Tabs defaultValue="kpis" className="space-y-4">
+        <Tabs defaultValue="live-performance" className="space-y-4">
           <TabsList className="flex-wrap h-auto gap-1">
+            <TabsTrigger value="live-performance" className="gap-2">
+              <Activity className="h-4 w-4" />
+              My Performance
+            </TabsTrigger>
             <TabsTrigger value="kpis" className="gap-2">
               <Target className="h-4 w-4" />
-              KPIs
+              Goals & KPIs
             </TabsTrigger>
             <TabsTrigger value="reviews" className="gap-2">
               <FileText className="h-4 w-4" />
@@ -132,7 +137,7 @@ const Performance = () => {
             {isManager && (
               <TabsTrigger value="team-kpis" className="gap-2">
                 <Activity className="h-4 w-4" />
-                Team KPIs
+                Team Performance
               </TabsTrigger>
             )}
             {isManager && (
@@ -152,6 +157,10 @@ const Performance = () => {
               APR
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="live-performance">
+            <MyLiveKpiView />
+          </TabsContent>
 
           <TabsContent value="kpis">
             <GoalsManager employeeId={employeeData.id} />

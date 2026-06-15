@@ -5,6 +5,7 @@ import { db } from '../../db/mysql.js';
 import { env } from '../../config/env.js';
 import { hasScopedAccess } from '../../shared/scopeAccess.js';
 import { calculateSalary, SalaryComponents } from './salary.calculator.js';
+import { appendJourneyEvent } from '../employees/journeyLog.service.js';
 import {
   sendOnboardingTokenEmail,
   sendOfferReviewEmail,
@@ -45,9 +46,12 @@ export async function sendOnboardingToken(
 ): Promise<{ token: string; expiresAt: Date }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id, c.full_name, c.email, c.mobile, c.applied_for_branch,
-            b.branch_name
+            b.id AS resolved_branch_id, b.branch_name
      FROM ats_candidate c
-     LEFT JOIN branch_master b ON b.id = c.applied_for_branch
+     LEFT JOIN branch_master b
+       ON b.id = c.applied_for_branch
+       OR b.branch_name = c.applied_for_branch
+       OR b.branch_code = c.applied_for_branch
      WHERE c.id = ? AND c.active_status = 1`,
     [candidateId],
   );
@@ -61,13 +65,13 @@ export async function sendOnboardingToken(
     `INSERT INTO ats_onboarding_request (id, candidate_id, branch_id, requested_by, status)
      VALUES (UUID(), ?, ?, ?, 'pending')
      ON DUPLICATE KEY UPDATE status = IF(status = 'rejected', 'pending', status), updated_at = NOW()`,
-    [candidateId, cand.applied_for_branch ?? null, requestedBy],
+    [candidateId, cand.resolved_branch_id ?? null, requestedBy],
   );
 
   await db.execute(
     `INSERT INTO ats_onboarding_bridge
-       (id, candidate_id, status, onboarding_token, onboarding_token_expires_at, created_by)
-     VALUES (UUID(), ?, 'pending', ?, ?, ?)
+       (id, candidate_id, bridge_date, status, onboarding_token, onboarding_token_expires_at, created_by)
+     VALUES (UUID(), ?, CURDATE(), 'pending', ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        onboarding_token = VALUES(onboarding_token),
        onboarding_token_expires_at = VALUES(onboarding_token_expires_at)`,
@@ -78,6 +82,12 @@ export async function sendOnboardingToken(
     `UPDATE ats_candidate SET profile_status = 'onboarding_sent' WHERE id = ?`,
     [candidateId],
   );
+  await db.execute(
+    `INSERT INTO ats_candidate_stage_log
+       (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+     VALUES (UUID(), ?, 'Selected', 'Onboarding Link Sent', 'Secure onboarding link issued', ?)`,
+    [candidateId, requestedBy],
+  );
 
   const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
   if (cand.email) {
@@ -85,7 +95,7 @@ export async function sendOnboardingToken(
       candidateId,
       to: cand.email,
       candidateName: cand.full_name,
-      onboardingLink: `${baseUrl}/onboard?token=${rawToken}`,
+      onboardingLink: `${baseUrl}/onboard-full?token=${rawToken}`,
     });
   }
 
@@ -102,7 +112,10 @@ export async function validateToken(token: string) {
             br.branch_name
      FROM ats_onboarding_bridge b
      JOIN ats_candidate c ON c.id = b.candidate_id
-     LEFT JOIN branch_master br ON br.id = c.applied_for_branch
+     LEFT JOIN branch_master br
+       ON br.id = c.applied_for_branch
+       OR br.branch_name = c.applied_for_branch
+       OR br.branch_code = c.applied_for_branch
      WHERE b.onboarding_token = ?`,
     [token],
   );
@@ -304,6 +317,12 @@ export async function saveOffer(
       `UPDATE ats_onboarding_request SET status = 'offer_submitted', updated_at = NOW() WHERE id = ?`,
       [requestId],
     );
+    await db.execute(
+      `INSERT INTO ats_candidate_stage_log
+         (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+       VALUES (UUID(), ?, 'Profile Submitted', 'Offer Submitted', 'Employment offer submitted for approval', ?)`,
+      [req.candidate_id, createdBy],
+    );
     if (bhEmail) {
       await sendOfferReviewEmail({
         candidateId: req.candidate_id,
@@ -346,21 +365,39 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
     `SELECT o.*, o.onboarding_request_id,
             c.full_name, c.email, c.mobile, c.applied_for_branch,
             c.applied_for_process,
+            br.id AS resolved_branch_id,
+            pm.id AS resolved_process_id,
             r.candidate_id AS req_candidate_id
      FROM ats_employment_offer o
      JOIN ats_onboarding_request r ON r.id = o.onboarding_request_id
      JOIN ats_candidate c ON c.id = r.candidate_id
-     WHERE o.id = ?`,
-    [offerId],
+     LEFT JOIN branch_master br
+       ON br.id = c.applied_for_branch
+       OR br.branch_name = c.applied_for_branch
+       OR br.branch_code = c.applied_for_branch
+     LEFT JOIN process_master pm
+       ON pm.id = c.applied_for_process
+       OR pm.process_name = c.applied_for_process
+       OR pm.process_code = c.applied_for_process
+     WHERE o.id = ? OR o.onboarding_request_id = ?
+     ORDER BY CASE WHEN o.id = ? THEN 0 ELSE 1 END
+     LIMIT 1`,
+    [offerId, offerId, offerId],
   );
   if (!offerRows.length) throw Object.assign(new Error('Offer not found'), { statusCode: 404 });
   const offer = offerRows[0];
   const candidateId: string = offer.req_candidate_id;
+  if (!offer.email) {
+    throw Object.assign(new Error('Candidate email is required before employee account creation'), { statusCode: 400 });
+  }
 
   const allowed = await hasScopedAccess(
     approverId,
     ['branch_head'],
-    { branchId: offer.applied_for_branch, processId: offer.applied_for_process },
+    {
+      branchId: offer.resolved_branch_id ?? offer.applied_for_branch,
+      processId: offer.resolved_process_id ?? offer.applied_for_process,
+    },
     { allowAdminBypass: true },
   );
   if (!allowed) throw Object.assign(new Error('Access denied'), { statusCode: 403 });
@@ -387,8 +424,11 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
 
     // Employee code — lock via FOR UPDATE to prevent concurrent duplicates
     const [codeRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT MAX(CAST(SUBSTRING(employee_code, 4) AS UNSIGNED)) AS last_seq
-       FROM employees WHERE employee_code LIKE 'MAS%' FOR UPDATE`,
+      `SELECT CAST(SUBSTRING(employee_code, 4) AS UNSIGNED) AS last_seq
+       FROM employees
+       WHERE employee_code REGEXP '^MAS[0-9]+$'
+       ORDER BY CAST(SUBSTRING(employee_code, 4) AS UNSIGNED) DESC
+       LIMIT 1 FOR UPDATE`,
     );
     const lastSeq: number = (codeRows as RowDataPacket[])[0]?.last_seq ?? 0;
     employeeCode = `MAS${String(lastSeq + 1).padStart(5, '0')}`;
@@ -414,7 +454,7 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
       [
         employeeId, employeeCode, firstName, lastName,
         offer.email, offer.mobile,
-        offer.applied_for_branch, offer.applied_for_process,
+        offer.resolved_branch_id ?? null, offer.resolved_process_id ?? null,
         offer.department_id ?? null, offer.designation_id ?? null,
         offer.date_of_joining, offer.emp_type,
         offer.reporting_manager_id ?? null,
@@ -464,6 +504,13 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
     );
 
     await conn.execute(
+      `INSERT INTO ats_candidate_stage_log
+         (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+       VALUES (UUID(), ?, 'Offer Submitted', 'Converted', 'Offer approved and employee account created', ?)`,
+      [candidateId, approverId],
+    );
+
+    await conn.execute(
       `INSERT IGNORE INTO user_roles (id, user_id, role_key, active_status)
        VALUES (UUID(), ?, 'employee', 1)`,
       [resolvedAuthUserId],
@@ -476,6 +523,18 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
   } finally {
     conn.release();
   }
+
+  appendJourneyEvent({
+    employeeId,
+    eventType: 'hiring',
+    eventDate: offer.date_of_joining,
+    description: `Joined through ATS as ${employeeCode}`,
+    module: 'ATS',
+    triggeredBy: approverId,
+    metadata: { candidate_id: candidateId, offer_id: offerId },
+  }).catch(() => {
+    // Employee creation is already committed; journey logging can be retried independently.
+  });
 
   // Send welcome email after transaction commits — email failure should not roll back employee creation
   const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
@@ -503,8 +562,10 @@ export async function rejectOffer(offerId: string, approverId: string, remarks: 
      FROM ats_employment_offer o
      JOIN ats_onboarding_request r ON r.id = o.onboarding_request_id
      JOIN ats_candidate c ON c.id = r.candidate_id
-     WHERE o.id = ?`,
-    [offerId],
+     WHERE o.id = ? OR o.onboarding_request_id = ?
+     ORDER BY CASE WHEN o.id = ? THEN 0 ELSE 1 END
+     LIMIT 1`,
+    [offerId, offerId, offerId],
   );
   if (!rows.length) throw Object.assign(new Error('Offer not found'), { statusCode: 404 });
   const row = (rows as RowDataPacket[])[0];
@@ -532,5 +593,11 @@ export async function rejectOffer(offerId: string, approverId: string, remarks: 
   await db.execute(
     `UPDATE ats_employment_offer SET status = 'draft', updated_at = NOW() WHERE id = ?`,
     [offerId],
+  );
+  await db.execute(
+    `INSERT INTO ats_candidate_stage_log
+       (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+     VALUES (UUID(), ?, 'Offer Submitted', 'Offer Rejected', ?, ?)`,
+    [row.candidate_id, remarks, approverId],
   );
 }

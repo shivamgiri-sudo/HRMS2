@@ -32,6 +32,16 @@ interface CatalogRole {
   role_name: string;
 }
 
+interface UserOption {
+  id: string;
+  email: string;
+}
+
+interface UserRole {
+  role_key: string;
+  role_name: string;
+}
+
 interface PageCatalogEntry {
   page_code: string;
   page_name: string;
@@ -76,7 +86,7 @@ interface AccessRequestRow {
   created_at: string;
 }
 
-type Tab = "module" | "page" | "rbac" | "desig" | "requests";
+type Tab = "module" | "page" | "roles" | "rbac" | "desig" | "requests";
 
 const PERMS = ["can_view", "can_create", "can_edit", "can_delete", "can_export"] as const;
 type PermKey = (typeof PERMS)[number];
@@ -106,6 +116,58 @@ export default function UnifiedAccessControl() {
       const res = await hrmsApi.get<{ success: boolean; data: PageCatalogEntry[] }>("/api/access/pages/catalog");
       return res.data ?? [];
     },
+  });
+
+  const { data: userOptions = [] } = useQuery<UserOption[]>({
+    queryKey: ["users-for-access"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: UserOption[] }>("/api/access/users-for-access");
+      return res.data ?? [];
+    },
+  });
+
+  // ── User role assignment tab ──────────────────────────────────────────────
+
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [roleToAssign, setRoleToAssign] = useState("");
+
+  const { data: selectedUserRoles = [], isLoading: userRolesLoading } = useQuery<UserRole[]>({
+    queryKey: ["user-roles", selectedUserId],
+    queryFn: async () => {
+      if (!selectedUserId) return [];
+      const res = await hrmsApi.get<{ data: UserRole[] }>(
+        `/api/access/roles/user/${encodeURIComponent(selectedUserId)}`
+      );
+      return res.data ?? [];
+    },
+    enabled: activeTab === "roles" && !!selectedUserId,
+  });
+
+  const assignUserRoleMutation = useMutation({
+    mutationFn: async () => hrmsApi.post("/api/access/roles/assign", {
+      user_id: selectedUserId,
+      role_key: roleToAssign,
+    }),
+    onSuccess: () => {
+      toast.success("Role assigned");
+      setRoleToAssign("");
+      queryClient.invalidateQueries({ queryKey: ["user-roles", selectedUserId] });
+      queryClient.invalidateQueries({ queryKey: ["rbac-reconciliation"] });
+    },
+    onError: (error: any) => toast.error(error?.message ?? "Failed to assign role"),
+  });
+
+  const revokeUserRoleMutation = useMutation({
+    mutationFn: async (roleKey: string) => hrmsApi.post("/api/access/roles/revoke", {
+      user_id: selectedUserId,
+      role_key: roleKey,
+    }),
+    onSuccess: () => {
+      toast.success("Role revoked");
+      queryClient.invalidateQueries({ queryKey: ["user-roles", selectedUserId] });
+      queryClient.invalidateQueries({ queryKey: ["rbac-reconciliation"] });
+    },
+    onError: (error: any) => toast.error(error?.message ?? "Failed to revoke role"),
   });
 
   // ── Page Access tab state ─────────────────────────────────────────────────
@@ -303,6 +365,7 @@ export default function UnifiedAccessControl() {
   const tabs: { key: Tab; label: string }[] = [
     { key: "module",   label: "Module Access" },
     { key: "page",     label: "Page Access" },
+    { key: "roles",    label: "User Roles" },
     { key: "rbac",     label: "RBAC Sync" },
     { key: "desig",    label: "Designation Roles" },
     { key: "requests", label: "Access Requests" },
@@ -437,6 +500,93 @@ export default function UnifiedAccessControl() {
                     })}
                   </tbody>
                 </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── User Roles ──────────────────────────────────────────────────── */}
+        {activeTab === "roles" && (
+          <div className="rounded-2xl border bg-white p-5 shadow-sm">
+            <div>
+              <h2 className="font-semibold">User Role Assignment</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Assign or revoke active MySQL roles. Every change is written to the security audit log.
+              </p>
+            </div>
+
+            <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(260px,1fr)_minmax(260px,1fr)_auto]">
+              <div>
+                <Label>User</Label>
+                <Select value={selectedUserId} onValueChange={(value) => {
+                  setSelectedUserId(value);
+                  setRoleToAssign("");
+                }}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="Select a user…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {userOptions.map((user) => (
+                      <SelectItem key={user.id} value={user.id}>{user.email}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Role to assign</Label>
+                <Select value={roleToAssign} onValueChange={setRoleToAssign} disabled={!selectedUserId}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="Select a role…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {catalogRoles
+                      .filter((role) => !selectedUserRoles.some((assigned) => assigned.role_key === role.role_key))
+                      .map((role) => (
+                        <SelectItem key={role.role_key} value={role.role_key}>{role.role_name}</SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-end">
+                <Button
+                  onClick={() => assignUserRoleMutation.mutate()}
+                  disabled={!selectedUserId || !roleToAssign || assignUserRoleMutation.isPending}
+                >
+                  {assignUserRoleMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+                  Assign Role
+                </Button>
+              </div>
+            </div>
+
+            {selectedUserId && (
+              <div className="mt-6">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current active roles</h3>
+                {userRolesLoading ? (
+                  <Loader2 className="mt-4 h-5 w-5 animate-spin text-slate-400" />
+                ) : selectedUserRoles.length === 0 ? (
+                  <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                    This user has no active role and will not receive role-based page access.
+                  </p>
+                ) : (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {selectedUserRoles.map((role) => (
+                      <div key={role.role_key} className="flex items-center gap-2 rounded-full border bg-slate-50 py-1 pl-3 pr-1">
+                        <span className="text-sm font-medium text-slate-700">{role.role_name}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 rounded-full text-rose-600"
+                          onClick={() => revokeUserRoleMutation.mutate(role.role_key)}
+                          disabled={revokeUserRoleMutation.isPending}
+                          aria-label={`Revoke ${role.role_name}`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

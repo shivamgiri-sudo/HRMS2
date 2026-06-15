@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   Building2,
@@ -20,6 +20,7 @@ import { EmployeeTable, type Employee } from "@/components/employees/EmployeeTab
 import { EmployeeDocuments } from "@/components/documents/EmployeeDocuments";
 import { EmployeeViewDialog } from "@/components/employees/EmployeeViewDialog";
 import { EmployeeEditDialog } from "@/components/employees/EmployeeEditDialog";
+import { AdminPasswordResetDialog } from "@/components/admin/AdminPasswordResetDialog";
 import { BulkDeleteDialog } from "@/components/employees/BulkDeleteDialog";
 import { BulkAssignManagerDialog } from "@/components/employees/BulkAssignManagerDialog";
 import { DateRangeExportDialog } from "@/components/export/DateRangeExportDialog";
@@ -28,10 +29,11 @@ import {
   useBulkDeleteEmployees,
   useBulkUpdateEmployeeStatus,
   useDepartments,
-  useEmployees,
+  useEmployeeDirectory,
+  useEmployeeDirectoryMasters,
+  useEmployeeStats,
 } from "@/hooks/useEmployees";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
-import { usePagination } from "@/hooks/usePagination";
 import { useSorting } from "@/hooks/useSorting";
 
 import { Button } from "@/components/ui/button";
@@ -122,10 +124,16 @@ const EmployeeMetricCard = ({
 const Employees = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("all");
+  const [processFilter, setProcessFilter] = useState("all");
+  const [branchFilter, setBranchFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("active");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const [documentsEmployee, setDocumentsEmployee] = useState<Employee | null>(null);
   const [viewEmployee, setViewEmployee] = useState<Employee | null>(null);
   const [editEmployee, setEditEmployee] = useState<Employee | null>(null);
+  const [resetPasswordEmployee, setResetPasswordEmployee] = useState<Employee | null>(null);
 
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -133,29 +141,44 @@ const Employees = () => {
   const [bulkAssignManagerOpen, setBulkAssignManagerOpen] = useState(false);
   const [employeesToAssignManager, setEmployeesToAssignManager] = useState<Employee[]>([]);
 
-  const { data: employees = [], isLoading: isLoadingEmployees } = useEmployees();
+  const deferredSearch = useDeferredValue(searchQuery.trim());
+  const recordStatus = statusFilter === "active" || statusFilter === "onboarding"
+    ? "active"
+    : statusFilter === "all"
+      ? "all"
+      : "inactive";
+  const employmentStatus = statusFilter === "onboarding"
+    ? "Onboarding"
+    : statusFilter === "inactive"
+      ? "Inactive"
+      : statusFilter === "offboarded"
+        ? "Terminated"
+        : undefined;
+  const { data: directoryData, isLoading: isLoadingEmployees } = useEmployeeDirectory({
+    page: currentPage,
+    limit: pageSize,
+    recordStatus,
+    status: employmentStatus,
+    search: deferredSearch || undefined,
+    departmentId: departmentFilter === "all" ? undefined : departmentFilter,
+    processId: processFilter === "all" ? undefined : processFilter,
+    branchId: branchFilter === "all" ? undefined : branchFilter,
+  });
+  const employees = directoryData?.employees ?? [];
+  const directoryTotal = directoryData?.total ?? 0;
   const { data: departments = [] } = useDepartments();
-  const { isAdminOrHR, isLoading: isLoadingRole } = useIsAdminOrHR();
+  const { data: directoryMasters } = useEmployeeDirectoryMasters();
+  const { data: employeeStats } = useEmployeeStats();
+  const { isAdminOrHR, isLoading: isLoadingRole, roleKeys } = useIsAdminOrHR();
+  const canResetEmployeePassword =
+    roleKeys.includes("super_admin") || roleKeys.includes("admin") || roleKeys.includes("wfm");
 
   const bulkDeleteMutation = useBulkDeleteEmployees();
   const bulkStatusMutation = useBulkUpdateEmployeeStatus();
 
-  const normalizedSearch = searchQuery.trim().toLowerCase();
-
-  const filteredEmployees = employees.filter((employee) => {
-    const matchesSearch =
-      !normalizedSearch ||
-      employee.name.toLowerCase().includes(normalizedSearch) ||
-      employee.email.toLowerCase().includes(normalizedSearch) ||
-      employee.employeeCode.toLowerCase().includes(normalizedSearch) ||
-      employee.designation.toLowerCase().includes(normalizedSearch) ||
-      employee.department.toLowerCase().includes(normalizedSearch);
-
-    const matchesDepartment =
-      departmentFilter === "all" || employee.department === departmentFilter;
-
-    return matchesSearch && matchesDepartment;
-  });
+  const filteredEmployees = employees;
+  const processes = directoryMasters?.processes ?? [];
+  const branches = directoryMasters?.branches ?? [];
 
   const {
     sortedItems: sortedEmployees,
@@ -163,25 +186,20 @@ const Employees = () => {
     requestSort,
   } = useSorting<Employee>(filteredEmployees);
 
-  const {
-    currentPage,
-    pageSize,
-    totalPages,
-    totalItems,
-    paginatedItems: paginatedEmployees,
-    setPage,
-    setPageSize,
-    goToNextPage,
-    goToPreviousPage,
-    canGoNext,
-    canGoPrevious,
-  } = usePagination(sortedEmployees, { initialPageSize: 10 });
+  const totalPages = Math.max(1, Math.ceil(directoryTotal / pageSize));
+  const totalItems = directoryTotal;
+  const paginatedEmployees = sortedEmployees;
+  const canGoNext = currentPage < totalPages;
+  const canGoPrevious = currentPage > 1;
 
   const isLoading = isLoadingEmployees || isLoadingRole;
 
-  const activeEmployees = employees.filter((employee) =>
-    String(employee.status || "").toLowerCase().includes("active")
-  ).length;
+  const activeEmployees = employeeStats?.active ?? 0;
+
+  useEffect(() => {
+    setCurrentPage(1);
+    setSelectedEmployeeIds([]);
+  }, [deferredSearch, departmentFilter, processFilter, branchFilter, statusFilter, pageSize]);
 
   const filterByDateRange = (
     items: Employee[],
@@ -429,7 +447,7 @@ const Employees = () => {
     }
   };
 
-  const hasActiveFilters = searchQuery.trim() || departmentFilter !== "all";
+  const hasActiveFilters = searchQuery.trim() || departmentFilter !== "all" || processFilter !== "all" || branchFilter !== "all" || statusFilter !== "active";
 
   return (
     <DashboardLayout>
@@ -452,7 +470,7 @@ const Employees = () => {
               <div className="mt-4 flex flex-wrap gap-2">
                 <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total</p>
-                  <p className="text-lg font-black text-white">{employees.length}</p>
+                  <p className="text-lg font-black text-white">{employeeStats?.total ?? directoryTotal}</p>
                 </div>
                 <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Active</p>
@@ -496,7 +514,7 @@ const Employees = () => {
             <>
               <EmployeeMetricCard
                 title={isAdminOrHR ? "Employees" : "Team Members"}
-                value={employees.length}
+                value={employeeStats?.total ?? directoryTotal}
                 description={
                   isAdminOrHR
                     ? "Total employee records available."
@@ -539,12 +557,12 @@ const Employees = () => {
 
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-3">
-          <div className="grid flex-1 gap-3 lg:grid-cols-[1fr_240px]">
+          <div className="grid flex-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_200px_200px_180px_160px]">
             <div className="relative">
               <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
               <Input
-                placeholder="Search by name, email, employee no., designation or department..."
+                placeholder="Search by name, official email or employee number..."
                 className="h-11 rounded-xl border-slate-200 bg-white pl-10 text-sm shadow-sm"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
@@ -552,18 +570,59 @@ const Employees = () => {
             </div>
 
             <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
-              <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+              <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm [&>span]:text-slate-900">
                 <SelectValue placeholder="Department" />
               </SelectTrigger>
 
-              <SelectContent>
-                <SelectItem value="all">All Departments</SelectItem>
+              <SelectContent className="bg-white text-slate-900">
+                <SelectItem value="all" className="text-slate-900">All Departments</SelectItem>
 
                 {departments.map((dept) => (
-                  <SelectItem key={dept.id} value={dept.name}>
+                  <SelectItem key={dept.id} value={dept.id} className="text-slate-900">
                     {dept.name}
                   </SelectItem>
                 ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={processFilter} onValueChange={setProcessFilter}>
+              <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm [&>span]:text-slate-900">
+                <SelectValue placeholder="Process" />
+              </SelectTrigger>
+              <SelectContent className="bg-white text-slate-900">
+                <SelectItem value="all" className="text-slate-900">All Processes</SelectItem>
+                {processes.map((process) => (
+                  <SelectItem key={process.id} value={process.id} className="text-slate-900">
+                    {process.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={branchFilter} onValueChange={setBranchFilter}>
+              <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm [&>span]:text-slate-900">
+                <SelectValue placeholder="Branch" />
+              </SelectTrigger>
+              <SelectContent className="bg-white text-slate-900">
+                <SelectItem value="all" className="text-slate-900">All Branches</SelectItem>
+                {branches.map((branch) => (
+                  <SelectItem key={branch.id} value={branch.id} className="text-slate-900">
+                    {branch.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm [&>span]:text-slate-900">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent className="bg-white text-slate-900">
+                <SelectItem value="all" className="text-slate-900">Active & Inactive</SelectItem>
+                <SelectItem value="active" className="text-slate-900">Active</SelectItem>
+                <SelectItem value="inactive" className="text-slate-900">Inactive</SelectItem>
+                <SelectItem value="onboarding" className="text-slate-900">Onboarding</SelectItem>
+                <SelectItem value="offboarded" className="text-slate-900">Offboarded</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -572,15 +631,18 @@ const Employees = () => {
 
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
           <span className="rounded-full bg-slate-100 px-3 py-1 font-medium">
-            Showing {filteredEmployees.length} result
-            {filteredEmployees.length === 1 ? "" : "s"}
+            {directoryTotal} matching employee
+            {directoryTotal === 1 ? "" : "s"}
           </span>
 
           {departmentFilter !== "all" && (
             <span className="rounded-full bg-sky-50 px-3 py-1 font-medium text-sky-700">
-              Department: {departmentFilter}
+              Department: {departments.find((department) => department.id === departmentFilter)?.name ?? departmentFilter}
             </span>
           )}
+          {processFilter !== "all" && <span className="rounded-full bg-indigo-50 px-3 py-1 font-medium text-indigo-700">Process: {processes.find((process) => process.id === processFilter)?.name ?? processFilter}</span>}
+          {branchFilter !== "all" && <span className="rounded-full bg-violet-50 px-3 py-1 font-medium text-violet-700">Branch: {branches.find((branch) => branch.id === branchFilter)?.name ?? branchFilter}</span>}
+          {statusFilter !== "active" && <span className="rounded-full bg-amber-50 px-3 py-1 font-medium capitalize text-amber-700">Status: {statusFilter}</span>}
 
           {searchQuery.trim() && (
             <span className="rounded-full bg-[#e8f2fc] px-3 py-1 font-medium text-[#1B6AB5]">
@@ -595,6 +657,9 @@ const Employees = () => {
               onClick={() => {
                 setSearchQuery("");
                 setDepartmentFilter("all");
+                setProcessFilter("all");
+                setBranchFilter("all");
+                setStatusFilter("active");
               }}
             >
               <X className="h-3 w-3" />
@@ -670,7 +735,9 @@ const Employees = () => {
                   onManageDocuments={
                     isAdminOrHR ? (employee) => setDocumentsEmployee(employee) : undefined
                   }
+                  onResetPassword={canResetEmployeePassword ? (employee) => setResetPasswordEmployee(employee) : undefined}
                   isAdminOrHR={isAdminOrHR}
+                  canResetPassword={canResetEmployeePassword}
                   sortKey={sortConfig.key}
                   sortDirection={sortConfig.direction}
                   onSort={requestSort}
@@ -711,7 +778,7 @@ const Employees = () => {
                     <PaginationContent>
                       <PaginationItem>
                         <PaginationPrevious
-                          onClick={() => canGoPrevious && goToPreviousPage()}
+                          onClick={() => canGoPrevious && setCurrentPage((page) => page - 1)}
                           className={
                             !canGoPrevious
                               ? "pointer-events-none opacity-50"
@@ -736,7 +803,7 @@ const Employees = () => {
                         return (
                           <PaginationItem key={pageNum}>
                             <PaginationLink
-                              onClick={() => setPage(pageNum)}
+                              onClick={() => setCurrentPage(pageNum)}
                               isActive={currentPage === pageNum}
                               className="cursor-pointer"
                             >
@@ -748,7 +815,7 @@ const Employees = () => {
 
                       <PaginationItem>
                         <PaginationNext
-                          onClick={() => canGoNext && goToNextPage()}
+                          onClick={() => canGoNext && setCurrentPage((page) => page + 1)}
                           className={
                             !canGoNext
                               ? "pointer-events-none opacity-50"
@@ -776,6 +843,13 @@ const Employees = () => {
           employee={editEmployee}
           open={!!editEmployee}
           onOpenChange={(open) => !open && setEditEmployee(null)}
+        />
+
+        {/* Admin Password Reset Dialog */}
+        <AdminPasswordResetDialog
+          employee={resetPasswordEmployee}
+          open={!!resetPasswordEmployee}
+          onOpenChange={(open) => !open && setResetPasswordEmployee(null)}
         />
 
         {/* Documents Dialog */}

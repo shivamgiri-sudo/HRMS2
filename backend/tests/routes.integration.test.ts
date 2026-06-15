@@ -21,12 +21,13 @@ vi.mock("../src/modules/process/process.repository.js", () => ({
 }));
 
 import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
-import { pingDb } from "../src/db/mysql.js";
+import { db, pingDb } from "../src/db/mysql.js";
 import { getProcessRepository } from "../src/modules/process/process.repository.js";
 import { app } from "../src/app.js";
 
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 const mockPingDb = pingDb as ReturnType<typeof vi.fn>;
+const mockDbExecute = db.execute as ReturnType<typeof vi.fn>;
 const mockGetRepo = getProcessRepository as ReturnType<typeof vi.fn>;
 
 const mockRepo = {
@@ -62,6 +63,7 @@ function authHeader() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockDbExecute.mockReset().mockResolvedValue([[{ role_key: "admin" }], []]);
   mockGetRepo.mockReturnValue(mockRepo);
 });
 

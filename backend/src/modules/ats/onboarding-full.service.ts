@@ -204,7 +204,9 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
        date_of_birth = ?, blood_group = ?, nominee_name = ?, nominee_relation = ?, nominee_date_of_birth = ?,
        permanent_address = ?, permanent_state = ?, permanent_city = ?, permanent_pincode = ?,
        current_address = ?, present_state = ?, present_city = ?, present_pincode = ?, alt_mobile_number = ?,
-       personal_email_id = ?, official_email_id = ?, pan_number = COALESCE(?, pan_number), aadhar_number = COALESCE(?, aadhar_number),
+       personal_email_id = ?, official_email_id = ?,
+       pan_number = COALESCE(?, pan_number), pan_number_hash = COALESCE(?, pan_number_hash),
+       aadhar_number = COALESCE(?, aadhar_number), aadhar_number_hash = COALESCE(?, aadhar_number_hash),
        source_type = ?, source = ?, profile_status = 'profile_in_progress', updated_at = NOW()
      WHERE id = ?`,
     [
@@ -230,8 +232,10 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       input.altMobileNumber ?? null,
       input.personalEmailId ?? tokenData.email ?? null,
       input.officialEmailId ?? null,
-      input.panNumber ?? input.pan_number ?? null,
-      input.aadhaarNumber ?? input.aadhar_number ?? null,
+      panMasked,
+      panHash,
+      aadhaarMasked,
+      aadhaarHash,
       input.sourceType ?? tokenData.source_type ?? null,
       input.source ?? tokenData.source ?? null,
       candidateId,
@@ -278,8 +282,20 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
     [candidateId]
   );
   await db.execute(
-    `UPDATE ats_candidate SET bank_name = ?, bank_ifsc = ?, bank_account_no = COALESCE(?, bank_account_no), updated_at = NOW() WHERE id = ?`,
-    [input.bankName ?? input.bank_name ?? null, input.ifscCode ?? input.bank_ifsc ?? null, accountNo ?? null, candidateId]
+    `UPDATE ats_candidate SET
+       bank_name = ?,
+       bank_ifsc = ?,
+       bank_account_no = COALESCE(?, bank_account_no),
+       bank_account_no_hash = COALESCE(?, bank_account_no_hash),
+       updated_at = NOW()
+     WHERE id = ?`,
+    [
+      input.bankName ?? input.bank_name ?? null,
+      input.ifscCode ?? input.bank_ifsc ?? null,
+      maskAccount(accountNo),
+      hashValue(accountNo),
+      candidateId,
+    ]
   );
 
   await logCandidateAction(candidateId, "SAVE_BANK_DETAILS", { bankName: input.bankName ?? input.bank_name, ifsc: input.ifscCode ?? input.bank_ifsc }, meta);
@@ -394,6 +410,12 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
   await db.execute(
     `UPDATE ats_onboarding_request SET status = 'profile_submitted', updated_at = NOW()
       WHERE candidate_id = ?`,
+    [candidateId]
+  );
+  await db.execute(
+    `INSERT INTO ats_candidate_stage_log
+       (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+     VALUES (UUID(), ?, 'Onboarding Link Sent', 'Profile Submitted', 'Candidate completed onboarding profile', NULL)`,
     [candidateId]
   );
   await logCandidateAction(candidateId, "SUBMIT_ONBOARDING", null, meta);

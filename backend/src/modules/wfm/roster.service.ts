@@ -58,7 +58,27 @@ export interface AssignmentListFilters {
   processName?: string;
 }
 
+export interface ActualAssignmentFilters {
+  processId?: string;
+  fromDate?: string;
+  toDate?: string;
+  limit?: number;
+}
+
 export const rosterService = {
+  async getFirstProcessWithAssignments(): Promise<RowDataPacket | null> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.process_id, p.process_name
+         FROM wfm_roster_assignment a
+         JOIN employees e ON e.id = a.employee_id
+         JOIN process_master p ON p.id = e.process_id
+        WHERE e.process_id IS NOT NULL
+          AND p.active_status = 1
+        LIMIT 1`
+    );
+    return rows[0] ?? null;
+  },
+
   async getPlan(id: string): Promise<WfmRosterPlan> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM wfm_roster_plan WHERE id = ? LIMIT 1", [id]
@@ -195,5 +215,42 @@ export const rosterService = {
       params
     );
     return rows as WfmRosterAssignment[];
+  },
+
+  async listActualAssignments(filters: ActualAssignmentFilters): Promise<RowDataPacket[]> {
+    const conds: string[] = [];
+    const params: unknown[] = [];
+    if (filters.processId) { conds.push("e.process_id = ?"); params.push(filters.processId); }
+    if (filters.fromDate)  { conds.push("a.roster_date >= ?"); params.push(filters.fromDate); }
+    if (filters.toDate)    { conds.push("a.roster_date <= ?"); params.push(filters.toDate); }
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+    const limit = Math.min(Math.max(filters.limit ?? 250, 1), 1000);
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT a.id,
+              a.employee_id,
+              e.process_id,
+              e.employee_code,
+              TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
+              DATE_FORMAT(a.roster_date, '%Y-%m-%d') AS roster_date,
+              a.roster_status,
+              a.publish_status,
+              a.shift_start_time,
+              a.shift_end_time,
+              COALESCE(sm.shift_code, '') AS shift_code,
+              COALESCE(sm.shift_name, '') AS shift_name,
+              COALESCE(a.branch_name, b.branch_name) AS branch_name,
+              COALESCE(a.process_name, p.process_name) AS process_name
+         FROM wfm_roster_assignment a
+         JOIN employees e ON e.id = a.employee_id
+         LEFT JOIN wfm_shift_master sm ON sm.id = a.shift_id
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN process_master p ON p.id = e.process_id
+         ${where}
+        ORDER BY a.roster_date DESC, e.employee_code ASC
+        LIMIT ${limit}`,
+      params
+    );
+    return rows;
   },
 };

@@ -107,6 +107,7 @@ export async function listKudos(
   filters: KudosFilters = {},
   limit = 50
 ): Promise<KudosWithDetailsResponse[]> {
+  const safeLimit = Math.min(Math.max(Math.trunc(Number(limit) || 50), 1), 100);
   const conditions: string[] = [];
   const params: unknown[] = [];
   if (filters.sender_id) {
@@ -141,9 +142,8 @@ export async function listKudos(
        LEFT JOIN kudos_master km ON km.kudos_template_id = kt.kudos_template_id
        ${where}
       ORDER BY kt.sent_at DESC
-      LIMIT ?`,
-    [...params, limit]
+      LIMIT ${safeLimit}`,
+    params
   );
   return rows as KudosWithDetailsResponse[];
 }
-

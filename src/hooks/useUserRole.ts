@@ -55,6 +55,7 @@ function expandRoleKeys(values: string[]): string[] {
 const getPrimaryRole = (roles: AppRole[]): AppRole | null => {
   const expanded = expandRoleKeys(roles);
   const priority: AppRole[] = [
+    "super_admin",
     "admin",
     "hr",
     "ceo",
@@ -132,7 +133,7 @@ export const useIsAdminOrHR = () => {
   const roleKeys = data?.roleKeys ?? [];
 
   return {
-    isAdminOrHR: roleKeys.includes("admin") || roleKeys.includes("hr"),
+    isAdminOrHR: roleKeys.includes("super_admin") || roleKeys.includes("admin") || roleKeys.includes("hr"),
     isLoading,
     error,
     role: data?.primaryRole ?? null,

@@ -140,9 +140,12 @@ describe("atsService.createCandidate", () => {
     mockExecute.mockResolvedValueOnce([[]]); // no duplicate mobile
     mockExecute.mockResolvedValueOnce([[]]); // no duplicate email
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // INSERT
+    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // initial stage log
     mockExecute.mockResolvedValueOnce([[fakeCandidate]]); // re-fetch by id
     const result = await atsService.createCandidate(fullCandidateInput, "user-1");
     expect(result.full_name).toBe("Rahul Sharma");
+    expect(String(mockExecute.mock.calls[2][0])).toContain("role_applied");
+    expect(String(mockExecute.mock.calls[3][0])).toContain("ats_candidate_stage_log");
   });
 });
 
@@ -203,6 +206,28 @@ describe("atsService.createOnboardingBridge", () => {
     await expect(
       atsService.createOnboardingBridge({ candidateId: "cand-1", bridgeDate: "2026-05-21" }, "user-1")
     ).rejects.toThrow("Onboarding bridge already exists");
+  });
+});
+
+describe("atsService.listOnboardingBridges", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns the joined candidate lifecycle view with scope parameters", async () => {
+    mockExecute.mockResolvedValueOnce([[{
+      candidate_id: "cand-1",
+      candidate_code: "ATS-20260001",
+      latest_stage: "Selected",
+      request_status: "profile_submitted",
+    }]]);
+
+    const result = await atsService.listOnboardingBridges({
+      sql: "COALESCE(br.id, c.applied_for_branch) = ?",
+      params: ["branch-1"],
+    });
+
+    expect(result).toHaveLength(1);
+    expect(String(mockExecute.mock.calls[0][0])).toContain("ats_employment_offer");
+    expect(mockExecute.mock.calls[0][1]).toEqual(["branch-1"]);
   });
 });
 

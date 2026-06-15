@@ -43,15 +43,16 @@ export const atsFormConfigService = {
     }
 
     const [branchRows] = await db.execute<RowDataPacket[]>(
-      'SELECT branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name ASC'
+      'SELECT DISTINCT branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name ASC'
     );
     const branchOptions = (branchRows as RowDataPacket[]).map((r: any) => r.branch_name as string);
 
     // Get branch aliases (display names like Trapezoid, Okaya, etc.)
     const [aliasRows] = await db.execute<RowDataPacket[]>(
-      `SELECT canonical_key, display_name, alias_text
+      `SELECT canonical_key, MAX(display_name) AS display_name, MIN(alias_text) AS alias_text
        FROM ats_branch_alias_master
        WHERE active_status = 1
+       GROUP BY canonical_key
        ORDER BY display_name ASC`
     );
     const branchAliases = (aliasRows as RowDataPacket[]).map((r: any) => ({
@@ -63,7 +64,24 @@ export const atsFormConfigService = {
     const [recruiterRows] = await db.execute<RowDataPacket[]>(
       'SELECT name FROM ats_recruiter WHERE active_status = 1 ORDER BY sort_order ASC, name ASC'
     );
-    const recruiterOptions = (recruiterRows as RowDataPacket[]).map((r: any) => r.name as string);
+    let recruiterOptions = (recruiterRows as RowDataPacket[]).map((r: any) => r.name as string);
+    if (recruiterOptions.length === 0) {
+      const [employeeRecruiters] = await db.execute<RowDataPacket[]>(
+        `SELECT DISTINCT TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name
+         FROM employees e
+         JOIN department_master d ON d.id = e.department_id
+         JOIN designation_master des ON des.id = e.designation_id
+         WHERE e.active_status = 1
+           AND LOWER(d.dept_name) LIKE '%human resource%'
+           AND (
+             LOWER(des.designation_name) LIKE '%executive%'
+             OR LOWER(des.designation_name) LIKE '%recruiter%'
+             OR LOWER(des.designation_name) LIKE '%hr manager%'
+           )
+         ORDER BY name`
+      );
+      recruiterOptions = (employeeRecruiters as RowDataPacket[]).map((r: any) => String(r.name));
+    }
 
     return {
       fields:                   configMap['formFields']             ?? DEFAULT_FIELDS,
@@ -77,7 +95,7 @@ export const atsFormConfigService = {
       nightShiftComfortOptions: configMap['nightShiftComfortOptions'] ?? DEFAULT_OPTIONS.nightShiftComfortOptions,
       genderOptions:            configMap['genderOptions']           ?? DEFAULT_OPTIONS.genderOptions,
       yesNoOptions:             ['Yes','No'],
-      companyName:              'Mas Callnet India Pvt. Ltd.', // NEW: Company name
+      companyName:              'Mas Callnet India Pvt Ltd',
     };
   },
 

@@ -83,7 +83,9 @@ export const atsService = {
   async getCandidate(id: string): Promise<AtsCandidate> {
     const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM ats_candidate WHERE id = ? LIMIT 1", [id]);
     const candidate = (rows as AtsCandidate[])[0];
-    if (!candidate) throw new Error("Candidate not found");
+    if (!candidate) {
+      throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+    }
     return candidate;
   },
 
@@ -115,23 +117,25 @@ export const atsService = {
     }
 
     // Check email duplicate
-    const [dupEmail] = await db.execute<RowDataPacket[]>(
-      "SELECT id, current_stage FROM ats_candidate WHERE email = ? LIMIT 1",
-      [input.email]
-    );
-    if ((dupEmail as RowDataPacket[]).length > 0) {
-      const existing = (dupEmail as RowDataPacket[])[0];
-      const stage: string = String(existing.current_stage ?? '');
-      if (stage === 'Rejected') {
-        const err = new Error("This email belongs to a previously rejected candidate. Please contact HR to reprocess.");
+    if (input.email) {
+      const [dupEmail] = await db.execute<RowDataPacket[]>(
+        "SELECT id, current_stage FROM ats_candidate WHERE email = ? LIMIT 1",
+        [input.email]
+      );
+      if ((dupEmail as RowDataPacket[]).length > 0) {
+        const existing = (dupEmail as RowDataPacket[])[0];
+        const stage: string = String(existing.current_stage ?? '');
+        if (stage === 'Rejected') {
+          const err = new Error("This email belongs to a previously rejected candidate. Please contact HR to reprocess.");
+          (err as any).statusCode = 409;
+          (err as any).code = 'DUPLICATE_EMAIL_REJECTED';
+          throw err;
+        }
+        const err = new Error("This email is already registered");
         (err as any).statusCode = 409;
-        (err as any).code = 'DUPLICATE_EMAIL_REJECTED';
+        (err as any).code = 'DUPLICATE_EMAIL';
         throw err;
       }
-      const err = new Error("This email is already registered");
-      (err as any).statusCode = 409;
-      (err as any).code = 'DUPLICATE_EMAIL';
-      throw err;
     }
 
     // Normalize sourcing channel before insert
@@ -141,19 +145,28 @@ export const atsService = {
     await db.execute(
       `INSERT INTO ats_candidate
          (id, candidate_code, full_name, mobile, email, gender, date_of_birth, applied_for_process,
-          applied_for_branch, sourcing_channel, referred_by, walk_in_date, remarks, created_by,
+          applied_for_branch, role_applied, sourcing_channel, referred_by, walk_in_date, remarks, created_by,
           address, education, experience, rotational_shift, preferred_shift, night_shift_ok,
           leaves_in_3months, owns_two_wheeler, id_proof_available, education_proof_available,
           recruiter_name, profile_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, candidateCode(), input.fullName, input.mobile, input.email, input.gender ?? null,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, candidateCode(), input.fullName, input.mobile, input.email ?? null, input.gender ?? null,
        input.dateOfBirth ?? null, input.appliedForProcess, input.appliedForBranch,
-       normalizedChannel, input.referredBy ?? null, input.walkInDate ?? null, input.remarks ?? null, userId,
+       input.appliedForRole ?? input.appliedForProcess, normalizedChannel, input.referredBy ?? null,
+       input.walkInDate ?? null, input.remarks ?? null, userId,
        input.address ?? null, input.education, input.experience,
        input.rotationalShift ?? null, input.preferredShift ?? null, input.nightShiftOk ?? null,
        input.leavesIn3months ?? null, input.ownsTwoWheeler ?? null, input.idProofAvailable ?? null,
        input.educationProofAvailable ?? null, input.recruiterName ?? null, input.profileStatus ?? 'registered']
     );
+
+    await db.execute(
+      `INSERT INTO ats_candidate_stage_log
+         (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+       VALUES (?, ?, NULL, 'Applied', 'Candidate registration completed', ?)`,
+      [randomUUID(), id, userId]
+    );
+
     return this.getCandidate(id);
   },
 
@@ -220,9 +233,55 @@ export const atsService = {
     return rows as AtsCandidateStageLog[];
   },
 
-  async listOnboardingBridges(): Promise<AtsOnboardingBridge[]> {
+  async listOnboardingBridges(
+    scopeFilter: { sql: string; params: unknown[] } = { sql: "1=1", params: [] }
+  ): Promise<AtsOnboardingBridge[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM ats_onboarding_bridge ORDER BY created_at DESC"
+      `SELECT
+         c.id AS candidate_id,
+         c.candidate_code,
+         c.full_name,
+         c.mobile,
+         c.email,
+         COALESCE(br.branch_name, c.branch_display_name, c.applied_for_branch) AS branch_name,
+         COALESCE(c.role_applied, c.applied_for_process) AS role_applied,
+         TRIM(CONCAT(COALESCE(rec.first_name, ''), ' ', COALESCE(rec.last_name, ''))) AS recruiter_name,
+         c.current_stage AS latest_stage,
+         c.applied_for_process AS latest_process,
+         c.profile_status,
+         c.created_at,
+         ob.id,
+         COALESCE(ob.status, 'not_started') AS status,
+         ob.onboarding_token_expires_at,
+         obr.status AS request_status,
+         cop.profile_status AS onboarding_profile_status,
+         eo.status AS offer_status,
+         eo.offered_ctc AS offer_salary,
+         eo.date_of_joining AS offer_doj,
+         COALESCE(ob.employee_id, emp.id) AS employee_id,
+         emp.employee_code
+       FROM ats_candidate c
+       LEFT JOIN branch_master br
+         ON br.id = c.applied_for_branch
+         OR br.branch_name = c.applied_for_branch
+         OR br.branch_code = c.applied_for_branch
+       LEFT JOIN employees rec
+         ON rec.id = COALESCE(c.assigned_recruiter_id, c.recruiter_assigned_id, c.recruiter_id)
+       LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
+       LEFT JOIN ats_onboarding_request obr ON obr.candidate_id = c.id
+       LEFT JOIN candidate_onboarding_profile cop ON cop.candidate_id = c.id
+       LEFT JOIN ats_employment_offer eo ON eo.candidate_id = c.id
+       LEFT JOIN employees emp ON emp.id = ob.employee_id
+       WHERE c.active_status = 1
+         AND (${scopeFilter.sql})
+         AND (
+           c.current_stage IN ('Selected', 'selected', 'converted', 'Onboarded')
+           OR c.profile_status IN ('selected', 'onboarding_sent', 'profile_in_progress', 'profile_submitted', 'onboarded')
+           OR ob.id IS NOT NULL
+           OR obr.id IS NOT NULL
+         )
+       ORDER BY COALESCE(obr.updated_at, ob.created_at, c.updated_at) DESC`,
+      scopeFilter.params
     );
     return rows as AtsOnboardingBridge[];
   },

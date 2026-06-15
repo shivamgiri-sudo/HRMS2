@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn().mockResolvedValue([[], []]) },
+  db: {
+    execute: vi.fn().mockResolvedValue([[], []]),
+    getConnection: vi.fn(),
+  },
   pingDb: vi.fn(),
 }));
 vi.mock("../src/db/supabaseAdmin.js", () => ({
@@ -13,13 +16,30 @@ import { db } from "../src/db/mysql.js";
 import { leaveService } from "../src/modules/leave/leave.service.js";
 
 const exec = db.execute as ReturnType<typeof vi.fn>;
+const getConnection = db.getConnection as ReturnType<typeof vi.fn>;
 
 const fakeType = { id: "lt-1", leave_code: "CL", leave_name: "Casual Leave", max_days_per_year: 12, carry_forward: 0, requires_approval: 1, paid_leave: 1, active_status: 1 };
 const fakeRequest = { id: "lr-1", employee_id: "emp-1", leave_type_id: "lt-1", from_date: "2026-06-01", to_date: "2026-06-03", total_days: 3, status: "pending" };
 const fakeBalance = { id: "bal-1", employee_id: "emp-1", leave_type_id: "lt-1", balance_year: 2026, allocated_days: 12, used_days: 0, adjusted_days: 0 };
 const fakeHoliday = { id: "hol-1", holiday_name: "Diwali", holiday_date: "2026-10-20", holiday_type: "national", active_status: 1 };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  exec.mockReset().mockResolvedValue([[], []]);
+  getConnection.mockReset();
+});
+
+function mockConnection() {
+  const connection = {
+    execute: vi.fn().mockResolvedValue([[], []]),
+    beginTransaction: vi.fn().mockResolvedValue(undefined),
+    commit: vi.fn().mockResolvedValue(undefined),
+    rollback: vi.fn().mockResolvedValue(undefined),
+    release: vi.fn(),
+  };
+  getConnection.mockResolvedValueOnce(connection);
+  return connection;
+}
 
 describe("leaveService.listLeaveTypes", () => {
   it("returns leave types", async () => {
@@ -49,6 +69,7 @@ describe("leaveService.createLeaveType", () => {
 
 describe("leaveService.submitRequest", () => {
   it("creates leave request and returns it", async () => {
+    exec.mockResolvedValueOnce([[{ leave_code: "OTHER" }], []]);
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     exec.mockResolvedValueOnce([[fakeRequest], []]);
     const r = await leaveService.submitRequest({
@@ -69,33 +90,39 @@ describe("leaveService.reviewRequest", () => {
 
   it("approves request with existing balance ledger", async () => {
     exec.mockResolvedValueOnce([[fakeRequest], []]); // get request
-    exec.mockResolvedValueOnce([[fakeBalance], []]); // check balance ledger exists
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // update used_days
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE request status
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT approval log
+    const connection = mockConnection();
+    connection.execute.mockResolvedValueOnce([[fakeBalance], []]); // check balance ledger exists
+    connection.execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // update used_days
+    connection.execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE request status
+    connection.execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT approval log
     exec.mockResolvedValueOnce([[{ ...fakeRequest, status: "approved" }], []]); // re-fetch
     const r = await leaveService.reviewRequest("lr-1", { status: "approved" }, "mgr-1");
     expect(r.status).toBe("approved");
+    expect(connection.commit).toHaveBeenCalledOnce();
   });
 
   it("approves request and creates balance ledger when none exists", async () => {
     exec.mockResolvedValueOnce([[fakeRequest], []]); // get request
-    exec.mockResolvedValueOnce([[], []]); // check balance ledger - none found
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT new ledger row
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE request status
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT approval log
+    const connection = mockConnection();
+    connection.execute.mockResolvedValueOnce([[], []]); // check balance ledger - none found
+    connection.execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT new ledger row
+    connection.execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE request status
+    connection.execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT approval log
     exec.mockResolvedValueOnce([[{ ...fakeRequest, status: "approved" }], []]); // re-fetch
     const r = await leaveService.reviewRequest("lr-1", { status: "approved" }, "mgr-1");
     expect(r.status).toBe("approved");
+    expect(connection.commit).toHaveBeenCalledOnce();
   });
 
   it("throws when insufficient balance", async () => {
     const lowBalance = { ...fakeBalance, allocated_days: 2, used_days: 0 };
     exec.mockResolvedValueOnce([[fakeRequest], []]); // get request
-    exec.mockResolvedValueOnce([[lowBalance], []]); // check balance ledger
+    const connection = mockConnection();
+    connection.execute.mockResolvedValueOnce([[lowBalance], []]); // check balance ledger
     await expect(
       leaveService.reviewRequest("lr-1", { status: "approved" }, "mgr-1")
     ).rejects.toThrow("Insufficient leave balance");
+    expect(connection.rollback).toHaveBeenCalledOnce();
   });
 
   it("rejects request without updating balance", async () => {
@@ -128,10 +155,12 @@ describe("leaveService.listRequests", () => {
 
 describe("leaveService.getBalance", () => {
   it("returns balance for employee and year", async () => {
+    exec.mockResolvedValueOnce([{ affectedRows: 0 }, []]);
     exec.mockResolvedValueOnce([[fakeBalance], []]);
     const r = await leaveService.getBalance("emp-1", 2026);
     expect(r).toHaveLength(1);
     expect(r[0].allocated_days).toBe(12);
+    expect(exec.mock.calls[0][0]).toMatch(/INSERT INTO leave_balance_ledger/i);
   });
 });
 

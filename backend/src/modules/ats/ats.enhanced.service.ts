@@ -5,9 +5,13 @@ import { randomUUID } from 'crypto';
 // ── Branch Alias Resolution ───────────────────────────────────────────────────
 export async function getBranchAliases() {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT canonical_key, display_name, alias_text, active_status
+    `SELECT canonical_key,
+            MAX(display_name) AS display_name,
+            MIN(alias_text) AS alias_text,
+            MAX(active_status) AS active_status
      FROM ats_branch_alias_master
      WHERE active_status = 1
+     GROUP BY canonical_key
      ORDER BY display_name`
   );
   return rows;
@@ -26,12 +30,6 @@ export async function resolveBranchFromAlias(displayName: string) {
 
 // ── Recruiter Assignment Logic ────────────────────────────────────────────────
 export async function getAvailableRecruiters(branchName: string) {
-  // Get recruiters who are:
-  // 1. Department = Human Resource
-  // 2. Designation = Executive
-  // 3. Same branch
-  // 4. Present today (from biometric/attendance)
-
   const today = new Date().toISOString().split('T')[0];
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -40,23 +38,32 @@ export async function getAvailableRecruiters(branchName: string) {
        e.employee_code,
        e.first_name,
        e.last_name,
-       e.mobile_number,
+       e.mobile,
        e.email,
-       e.branch_name,
-       d.department_name,
+       b.branch_name,
+       d.dept_name AS department_name,
        des.designation_name,
-       att.clock_in_time
+       att.clock_in_time,
+       CASE
+         WHEN att.clock_in_time IS NOT NULL
+           OR att.attendance_status IN ('present', 'half_day')
+         THEN 1 ELSE 0
+       END AS present_today
      FROM employees e
      INNER JOIN department_master d ON e.department_id = d.id
      INNER JOIN designation_master des ON e.designation_id = des.id
-     LEFT JOIN wfm_daily_attendance att ON att.employee_id = e.id AND att.record_date = ?
-     WHERE d.department_name = 'Human Resource'
-       AND des.designation_name = 'Executive'
-       AND e.branch_name = ?
-       AND att.clock_in_time IS NOT NULL
+     INNER JOIN branch_master b ON b.id = e.branch_id
+     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ?
+     WHERE LOWER(d.dept_name) LIKE '%human resource%'
+       AND (
+         LOWER(des.designation_name) LIKE '%executive%'
+         OR LOWER(des.designation_name) LIKE '%recruiter%'
+         OR LOWER(des.designation_name) LIKE '%hr manager%'
+       )
+       AND (b.branch_name = ? OR b.branch_code = ?)
        AND e.active_status = 1
-     ORDER BY e.first_name, e.last_name`,
-    [today, branchName]
+     ORDER BY present_today DESC, e.first_name, e.last_name`,
+    [today, branchName, branchName]
   );
 
   return rows;
@@ -66,8 +73,10 @@ export async function isRecruiterAvailableToday(recruiterId: string): Promise<bo
   const today = new Date().toISOString().split('T')[0];
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM wfm_daily_attendance
-     WHERE employee_id = ? AND record_date = ? AND clock_in_time IS NOT NULL
+    `SELECT id FROM attendance_daily_record
+     WHERE employee_id = ?
+       AND record_date = ?
+       AND (clock_in_time IS NOT NULL OR attendance_status IN ('present', 'half_day'))
      LIMIT 1`,
     [recruiterId, today]
   );
@@ -152,9 +161,22 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
   if (assignedRecruiterId) {
     await db.execute(
       `UPDATE ats_candidate
-       SET recruiter_id = ?, recruiter_assigned_id = ?, recruiter_selected = ?
+       SET recruiter_id = ?,
+           recruiter_assigned_id = ?,
+           assigned_recruiter_id = ?,
+           recruiter_selected = ?,
+           preferred_recruiter_id = ?,
+           assignment_reason = ?
        WHERE id = ?`,
-      [assignedRecruiterId, assignedRecruiterId, preferredRecruiterId || assignedRecruiterId, candidateId]
+      [
+        assignedRecruiterId,
+        assignedRecruiterId,
+        assignedRecruiterId,
+        preferredRecruiterId || assignedRecruiterId,
+        preferredRecruiterId,
+        assignmentReason,
+        candidateId,
+      ]
     );
 
     // Log assignment

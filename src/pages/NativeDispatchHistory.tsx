@@ -25,6 +25,13 @@ type DispatchLog = {
   error_message?: string;
 };
 
+type DispatchLogPage = {
+  logs: DispatchLog[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
 // ─── Badge helpers ────────────────────────────────────────────────────────────
 
 const STATUS_STYLES: Record<string, string> = {
@@ -65,8 +72,8 @@ export default function NativeDispatchHistory() {
     setLoading(true);
     setMessage("");
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: DispatchLog[] }>("/api/communication/dispatch/logs");
-      setLogs(res.data ?? []);
+      const res = await hrmsApi.get<{ success: boolean; data: DispatchLogPage }>("/api/communication/dispatch/logs");
+      setLogs(res.data?.logs ?? []);
     } catch (err: unknown) {
       setMessage(err instanceof Error ? err.message : "Failed to load dispatch logs");
       setMessageType("error");
@@ -80,8 +87,8 @@ export default function NativeDispatchHistory() {
     (async () => {
       setLoading(true);
       try {
-        const res = await hrmsApi.get<{ success: boolean; data: DispatchLog[] }>("/api/communication/dispatch/logs");
-        if (!cancelled) setLogs(res.data ?? []);
+        const res = await hrmsApi.get<{ success: boolean; data: DispatchLogPage }>("/api/communication/dispatch/logs");
+        if (!cancelled) setLogs(res.data?.logs ?? []);
       } catch (err: unknown) {
         if (!cancelled) {
           setMessage(err instanceof Error ? err.message : "Failed to load dispatch logs");

@@ -24,7 +24,12 @@ export const exitController = {
   },
 
   async createExitRequest(req: AuthenticatedRequest, res: Response) {
-    const input = createExitRequestSchema.parse(req.body);
+    const body = {
+      ...req.body,
+      exitDate: req.body?.exitDate ?? req.body?.lastWorkingDayProposed,
+      reason: req.body?.reason ?? req.body?.resignationReason,
+    };
+    const input = createExitRequestSchema.parse(body);
     const data = await exitService.createExitRequest(
       {
         employeeId: input.employeeId!,

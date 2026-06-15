@@ -209,54 +209,100 @@ export const mobilityService = {
   async updatePromotion(id: string, data: ApproveRejectData) {
     const finalStatus = data.action === "approved" ? "completed" : "rejected";
 
-    await db.execute(
-      `UPDATE promotion_record SET status = ?, approved_by = ?, updated_at = NOW() WHERE id = ?`,
-      [finalStatus, data.approved_by, id]
-    );
-
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM promotion_record WHERE id = ? LIMIT 1",
       [id]
     );
     const record = (rows as RowDataPacket[])[0] ?? null;
+    if (!record) return null;
+    if (String(record.status) !== "pending") {
+      throw new Error("Only pending promotion requests can be actioned");
+    }
+    if (String(record.initiated_by) === data.approved_by) {
+      throw new Error("Maker-checker control: the promotion initiator cannot approve or reject the same request");
+    }
 
     if (data.action === "approved" && record) {
-      const { employee_id, from_designation, to_designation, salary_revision } = record as {
+      const { employee_id, from_designation, to_designation, salary_revision, effective_date } = record as {
         employee_id: string;
         from_designation: string | null;
         to_designation: string;
         salary_revision: number | null;
+        effective_date: string;
       };
-
-      await db.execute(
-        `UPDATE employees
-         SET designation_id = (SELECT id FROM designation_master WHERE designation_name = ? LIMIT 1)
-         WHERE id = ?`,
-        [to_designation, employee_id]
-      );
-
+      let currentSalary: any = null;
       if (salary_revision != null && salary_revision > 0) {
-        await db.execute(
-          `INSERT INTO employee_salary_assignment
-             (id, employee_id, ctc, effective_date, created_by, created_at)
-           VALUES (?, ?, ?, CURDATE(), ?, NOW())
-           ON DUPLICATE KEY UPDATE ctc = VALUES(ctc), effective_date = VALUES(effective_date)`,
-          [randomUUID(), employee_id, salary_revision, data.approved_by]
+        const [salaryRows] = await db.execute<RowDataPacket[]>(
+          `SELECT structure_id, ctc_annual
+             FROM employee_salary_assignment
+            WHERE employee_id = ? AND active_status = 1
+            ORDER BY effective_from DESC LIMIT 1`,
+          [employee_id]
         );
+        currentSalary = salaryRows[0];
+        if (!currentSalary?.structure_id) {
+          throw new Error("Assign an approved salary structure before approving a promotion with salary revision");
+        }
       }
 
-      await db.execute(
-        `INSERT INTO employee_journey_log
-           (id, employee_id, event_type, event_date, description, module, triggered_by, metadata)
-         VALUES (?, ?, 'promotion', CURDATE(), ?, 'MOBILITY', ?, ?)`,
-        [
-          randomUUID(),
-          employee_id,
-          `Promotion: ${from_designation ?? "–"} → ${to_designation}`,
-          data.approved_by,
-          JSON.stringify({ promotion_id: id, from_designation, to_designation, salary_revision }),
-        ]
-      );
+      const connection = await db.getConnection();
+      try {
+        await connection.beginTransaction();
+        await connection.execute(
+          `UPDATE promotion_record SET status = ?, approved_by = ?, updated_at = NOW() WHERE id = ?`,
+          [finalStatus, data.approved_by, id]
+        );
+        await connection.execute(
+          `UPDATE employees
+              SET designation_id = (SELECT id FROM designation_master WHERE designation_name = ? LIMIT 1),
+                  ctc = COALESCE(?, ctc),
+                  updated_at = NOW()
+            WHERE id = ?`,
+          [to_designation, salary_revision ?? null, employee_id]
+        );
+
+        if (currentSalary && salary_revision != null && salary_revision > 0) {
+          await connection.execute(
+            `UPDATE employee_salary_assignment
+                SET active_status = 0,
+                    effective_to = COALESCE(effective_to, DATE_SUB(?, INTERVAL 1 DAY))
+              WHERE employee_id = ? AND active_status = 1`,
+            [effective_date, employee_id]
+          );
+          await connection.execute(
+            `INSERT INTO employee_salary_assignment
+               (id, employee_id, structure_id, ctc_annual, effective_from, active_status)
+             VALUES (?, ?, ?, ?, ?, 1)`,
+            [randomUUID(), employee_id, currentSalary.structure_id, salary_revision, effective_date]
+          );
+        }
+
+        await connection.execute(
+          `INSERT INTO employee_journey_log
+             (id, employee_id, event_type, event_date, description, module, triggered_by, metadata)
+           VALUES (?, ?, 'promotion', ?, ?, 'MOBILITY', ?, ?)`,
+          [
+            randomUUID(),
+            employee_id,
+            effective_date,
+            `Promotion: ${from_designation ?? "–"} → ${to_designation}`,
+            data.approved_by,
+            JSON.stringify({
+              promotion_id: id,
+              from_designation,
+              to_designation,
+              previous_ctc: currentSalary?.ctc_annual ?? null,
+              salary_revision,
+            }),
+          ]
+        );
+        await connection.commit();
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
+      }
 
       await logSensitiveAction({
         actor_user_id: data.approved_by,
@@ -266,6 +312,11 @@ export const mobilityService = {
         entity_id: employee_id,
         change_summary: { from_designation, to_designation, salary_revision },
       });
+    } else {
+      await db.execute(
+        `UPDATE promotion_record SET status = ?, approved_by = ?, updated_at = NOW() WHERE id = ?`,
+        [finalStatus, data.approved_by, id]
+      );
     }
 
     const [updated] = await db.execute<RowDataPacket[]>(

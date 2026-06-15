@@ -65,7 +65,7 @@ const Reports = () => {
   const { isAdminOrHR, isLoading: roleLoading } = useIsAdminOrHR();
 
   const { data: employeeGrowthData, isLoading: isLoadingGrowth } = useEmployeeGrowthData(year);
-  const { data: departmentData, isLoading: isLoadingDept } = useDepartmentDistribution();
+  const { data: departmentData, isLoading: isLoadingDept } = useDepartmentDistribution(year);
   const { data: leaveStats, isLoading: isLoadingLeave } = useLeaveStatistics(year);
   const { data: payrollTrendData, isLoading: isLoadingPayroll } = usePayrollTrend(year);
   const { data: headcountData, isLoading: isLoadingHeadcount } = useHeadcountSummary(year);

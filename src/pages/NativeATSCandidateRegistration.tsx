@@ -92,7 +92,7 @@ const EMPTY_FORM: CandidateFormData = {
 };
 
 const DEFAULT_BOOTSTRAP: Bootstrap = {
-  companyName: "Mas Callnet India Pvt. Ltd.",
+  companyName: "Mas Callnet India Pvt Ltd",
   educationOptions: [],
   experienceOptions: [],
   genderOptions: [],
@@ -373,10 +373,10 @@ export default function NativeATSCandidateRegistration() {
   const loadBootstrap = async () => {
   try {
     const res = await hrmsApi.get('/api/ats/form-config/bootstrap').catch(() => null);
-    const data = res?.data?.data;
+    const data = res?.data;
     if (data) {
       setBootstrap({
-        companyName:             "Mas Callnet India Pvt. Ltd.",
+        companyName:             "Mas Callnet India Pvt Ltd",
         fields:                  data.fields              ?? undefined,
         educationOptions:        data.educationOptions    ?? ["10th Pass","12th Pass","Graduate","Post Graduate","Diploma"],
         experienceOptions:       data.experienceOptions   ?? ["Fresher","0-1 Year","1-2 Years","2-3 Years","3+ Years"],
@@ -390,7 +390,7 @@ export default function NativeATSCandidateRegistration() {
       });
     } else {
       setBootstrap({
-        companyName:              "Mas Callnet India Pvt. Ltd.",
+        companyName:              "Mas Callnet India Pvt Ltd",
         educationOptions:         ["10th Pass","12th Pass","Graduate","Post Graduate","Diploma"],
         experienceOptions:        ["Fresher","0-1 Year","1-2 Years","2-3 Years","3+ Years"],
         genderOptions:            ["Male","Female","Other"],
@@ -575,6 +575,7 @@ export default function NativeATSCandidateRegistration() {
         email:                    coreData.email || null,
         gender:                   coreData.gender || null,
         appliedForProcess:        coreData.roleApplied || null,
+        appliedForRole:           coreData.roleApplied || null,
         appliedForBranch:         coreData.branch || null,
         sourcingChannel:          'Walk-In', // Canonical format - backend normalizes this
         walkInDate:               new Date().toISOString().slice(0, 10),

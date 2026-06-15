@@ -89,7 +89,7 @@ export default function SuperAdminAccessControl() {
     queryKey: ["page-catalog"],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: PageCatalogEntry[] }>("/api/access/pages/catalog");
-      return res.data.data ?? [];
+      return res.data ?? [];
     },
   });
 
@@ -98,7 +98,7 @@ export default function SuperAdminAccessControl() {
     queryKey: ["users-for-access"],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: UserForAccess[] }>("/api/access/users-for-access");
-      return res.data.data ?? [];
+      return res.data ?? [];
     },
   });
 
@@ -110,7 +110,7 @@ export default function SuperAdminAccessControl() {
       const res = await hrmsApi.get<{ success: boolean; data: UserPageAccess[] }>(
         `/api/access/user-page-access/${selectedUserId}`
       );
-      return res.data.data ?? [];
+      return res.data ?? [];
     },
     enabled: !!selectedUserId,
   });
@@ -122,7 +122,7 @@ export default function SuperAdminAccessControl() {
       const res = await hrmsApi.get<{ success: boolean; data: PageAccessAssignment[] }>(
         "/api/access/user-page-access-all"
       );
-      return res.data.data ?? [];
+      return res.data ?? [];
     },
   });
 

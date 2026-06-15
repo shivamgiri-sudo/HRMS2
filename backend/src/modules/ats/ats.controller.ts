@@ -1,6 +1,7 @@
 import type { Response } from "express";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { atsService } from "./ats.service.js";
+import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import {
   createCandidateSchema,
   updateCandidateSchema,
@@ -49,8 +50,17 @@ export const atsController = {
     return res.json({ success: true, data });
   },
 
-  async listOnboardingBridges(_req: AuthenticatedRequest, res: Response) {
-    const data = await atsService.listOnboardingBridges();
+  async listOnboardingBridges(req: AuthenticatedRequest, res: Response) {
+    const scopeFilter = await buildScopeWhereClause(
+      req.authUser!.id,
+      ["hr"],
+      {
+        branchId: "COALESCE(br.id, c.applied_for_branch)",
+        processId: "c.applied_for_process",
+      },
+      { allowAdminBypass: true }
+    );
+    const data = await atsService.listOnboardingBridges(scopeFilter);
     return res.json({ success: true, data });
   },
 

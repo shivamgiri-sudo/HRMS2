@@ -7,9 +7,9 @@ import {
 } from "../src/modules/process/process.validation.js";
 
 describe("processFiltersSchema", () => {
-  it("defaults activeStatus to 'all' when omitted", () => {
+  it("defaults activeStatus to 'active' when omitted", () => {
     const result = processFiltersSchema.parse({});
-    expect(result.activeStatus).toBe("all");
+    expect(result.activeStatus).toBe("active");
   });
 
   it("accepts valid activeStatus values", () => {

@@ -46,6 +46,13 @@ const assignFiltersSchema = z.object({
   processName: z.string().optional(),
 });
 
+const actualAssignmentFiltersSchema = z.object({
+  processId: z.string().uuid().optional(),
+  fromDate: z.string().regex(DATE_RE).optional(),
+  toDate: z.string().regex(DATE_RE).optional(),
+  limit: z.coerce.number().int().min(1).max(1000).default(250),
+});
+
 export const rosterController = {
   async createPlan(req: AuthenticatedRequest, res: Response) {
     const input = createPlanSchema.parse(req.body);
@@ -86,6 +93,17 @@ export const rosterController = {
   async listAssignments(req: AuthenticatedRequest, res: Response) {
     const filters = assignFiltersSchema.parse(req.query);
     const data = await rosterService.listAssignments(filters);
+    return res.json({ success: true, data });
+  },
+
+  async listActualAssignments(req: AuthenticatedRequest, res: Response) {
+    const filters = actualAssignmentFiltersSchema.parse(req.query);
+    const data = await rosterService.listActualAssignments(filters);
+    return res.json({ success: true, data });
+  },
+
+  async getActualProcess(_req: AuthenticatedRequest, res: Response) {
+    const data = await rosterService.getFirstProcessWithAssignments();
     return res.json({ success: true, data });
   },
 

@@ -79,7 +79,7 @@ export const runFiltersSchema = z.object({
   runMonth: z.string().regex(MONTH_REGEX).optional(),
   status: z.string().optional(),
   page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
+  limit: z.coerce.number().int().min(1).max(1000).default(50),
 });
 
 export const advanceSchema = z.object({

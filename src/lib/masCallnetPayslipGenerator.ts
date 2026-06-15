@@ -2,11 +2,8 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 interface MasCallnetPayslipData {
-  // Header
   companyName: string;
-  monthYear: string; // "Jun - 2025"
-
-  // Employee details
+  monthYear: string;
   empName: string;
   empCode: string;
   esiNo?: string;
@@ -16,8 +13,6 @@ interface MasCallnetPayslipData {
   location: string;
   wDays: number;
   earnedDays: number;
-
-  // Earnings
   basic: number;
   hra: number;
   bonus: number;
@@ -28,15 +23,11 @@ interface MasCallnetPayslipData {
   oa: number;
   arrear: number;
   incentive: number;
-
-  // Deductions
   pf: number;
   esic: number;
   loan: number;
   adDed: number;
   otherDed: number;
-
-  // Form 16 Summary (optional)
   grossSalary?: number;
   exemptionUs10?: number;
   balance?: number;
@@ -47,8 +38,6 @@ interface MasCallnetPayslipData {
   taxOnTotal?: number;
   taxPayableEduCess?: number;
   incomeTax?: number;
-
-  // Net
   chequeNo?: string;
   netSalary: number;
   netSalaryWords: string;
@@ -58,10 +47,24 @@ const formatINR = (amount: number): string => {
   return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(amount);
 };
 
-// Mas Callnet Logo as base64 (simplified version - you should replace with actual logo)
-const MAS_LOGO_BASE64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADwAAAA8CAYAAAA6/NlyAAAACXBIWXMAAAsTAAALEwEAmpwYAAADJklEQVR4nO2ay2sTURTGf5OkadI0aZq0SdM0TZqmSdOkadI0TZs0aZq0SdOkSZo0TdOkadI0TdOkTdM0TdOkadM0TZqmSZs0TZo2TdM0bdO0bZo2bds0TdO0TdOmbdM0TdOkTdOk/QP8A/wD/AP8A/wD/AP8A/wD/APiVmJRM3BSiUXNwEklFjUDJ5VY1AycVGJRM3BSiUXNwEklFjUDJ5VY1AycVGJRM3BSiUXNwEklFjX/B/wD/AP8A/wD/AP8A/wD/AP8A+JW";
+// Load logo as base64 from public folder
+async function loadLogoBase64(): Promise<string | null> {
+  try {
+    const response = await fetch('/mcn-logo.png');
+    const blob = await response.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch (error) {
+    console.error('Failed to load logo:', error);
+    return null;
+  }
+}
 
-export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
+export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Promise<jsPDF> {
   const doc = new jsPDF({
     orientation: "portrait",
     unit: "mm",
@@ -71,248 +74,160 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
   const pageWidth = doc.internal.pageSize.getWidth();
   let currentY = 15;
 
-  // === LOGO & HEADER ===
-  // Add logo on the left
-  try {
-    // Using a simple colored circle as placeholder logo - replace with actual Mas logo
-    doc.setFillColor(231, 76, 60); // Red
-    doc.circle(25, currentY + 5, 5, 'F');
-    doc.setFillColor(52, 152, 219); // Blue
-    doc.circle(32, currentY + 5, 5, 'F');
-    doc.setFillColor(46, 204, 113); // Green
-    doc.circle(39, currentY + 5, 5, 'F');
-
-    doc.setFontSize(14);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(100, 100, 100);
-    doc.text("Mas", 47, currentY + 7);
-  } catch (e) {
-    console.log("Logo rendering skipped:", e);
+  // === MAS LOGO (Top Left) ===
+  const logoBase64 = await loadLogoBase64();
+  if (logoBase64) {
+    try {
+      doc.addImage(logoBase64, 'PNG', 14, currentY, 30, 10);
+    } catch (e) {
+      console.error('Error adding logo:', e);
+    }
   }
 
-  // Company name centered
-  doc.setFontSize(18);
+  // === COMPANY NAME (Centered) ===
+  doc.setFontSize(16);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(0, 0, 0);
-  doc.text(data.companyName, pageWidth / 2, currentY + 6, { align: "center" });
-
-  currentY += 14;
-  doc.setFontSize(10);
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(100, 100, 100);
-  doc.text(`Month For : ${data.monthYear}`, pageWidth / 2, currentY, { align: "center" });
+  doc.text(data.companyName, pageWidth / 2, currentY + 3, { align: "center" });
 
   currentY += 8;
 
-  // === EMPLOYEE DETAILS TABLE ===
-  const detailsData = [
-    [
-      { content: "Emp Name", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-      { content: data.empName, styles: { colSpan: 2 } },
-      null,
-      { content: "Designation", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-      data.designation,
-      { content: "Department", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-      data.department,
-    ],
-    [
-      { content: "Emp Code", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-      data.empCode,
-      { content: "EPF No", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-      data.epfNo || "-",
-      { content: "Location", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-      { content: data.location, styles: { colSpan: 2 } },
-      null,
-    ],
-    [
-      { content: "ESI No", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-      data.esiNo || "-",
-      { content: "W Days", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-      String(data.wDays),
-      { content: "Earned Days", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-      { content: String(data.earnedDays), styles: { colSpan: 2 } },
-      null,
-    ],
-  ];
+  // === MONTH SUBTITLE (Centered) ===
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(80, 80, 80);
+  doc.text(`Month For : ${data.monthYear}`, pageWidth / 2, currentY, { align: "center" });
 
+  currentY += 6;
+
+  // === EMPLOYEE DETAILS TABLE ===
   autoTable(doc, {
     startY: currentY,
     head: [],
-    body: detailsData,
+    body: [
+      [
+        { content: "Emp Name", styles: { fontStyle: "bold" } },
+        { content: data.empName, styles: { colSpan: 2 } },
+        null,
+        { content: "Designation", styles: { fontStyle: "bold" } },
+        data.designation,
+        { content: "Department", styles: { fontStyle: "bold" } },
+        data.department,
+      ],
+      [
+        { content: "Emp Code", styles: { fontStyle: "bold" } },
+        data.empCode,
+        { content: "EPF No", styles: { fontStyle: "bold" } },
+        data.epfNo || "",
+        { content: "Location", styles: { fontStyle: "bold" } },
+        { content: data.location, styles: { colSpan: 2 } },
+        null,
+      ],
+      [
+        { content: "ESI No", styles: { fontStyle: "bold" } },
+        data.esiNo || "",
+        { content: "W Days", styles: { fontStyle: "bold" } },
+        String(data.wDays),
+        { content: "Earned Days", styles: { fontStyle: "bold" } },
+        { content: String(data.earnedDays), styles: { colSpan: 2 } },
+        null,
+      ],
+    ],
     theme: "grid",
     styles: {
       fontSize: 9,
-      cellPadding: 2,
-      lineColor: [200, 200, 200],
+      cellPadding: 2.5,
+      lineColor: [0, 0, 0],
       lineWidth: 0.1,
-      textColor: [0, 0, 0]
-    },
-    columnStyles: {
-      0: { cellWidth: 22 },
-      1: { cellWidth: 28 },
-      2: { cellWidth: 18 },
-      3: { cellWidth: 35 },
-      4: { cellWidth: 22 },
-      5: { cellWidth: 28 },
-      6: { cellWidth: 28 },
-    },
-  });
-
-  currentY = (doc as any).lastAutoTable.finalY + 3;
-
-  // === EARNINGS TABLE ===
-  const totalEarnings = data.basic + data.hra + data.bonus + data.conv + data.pa + data.ma + data.sa + data.oa + data.arrear + data.incentive;
-
-  const earningsHeader = [
-    [
-      "",
-      { content: "Basic", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "HRA", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Bonus", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Conv", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "PA", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "MA", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "SA", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "OA", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Arrear", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Incentive", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Total Earn", styles: { fontStyle: "bold", halign: "center" } },
-    ],
-  ];
-
-  const earningsData = [
-    [
-      { content: "Earnings", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-      data.basic,
-      data.hra,
-      data.bonus,
-      data.conv,
-      data.pa,
-      data.ma,
-      data.sa,
-      data.oa,
-      data.arrear,
-      data.incentive,
-      formatINR(totalEarnings),
-    ],
-  ];
-
-  autoTable(doc, {
-    startY: currentY,
-    head: earningsHeader,
-    body: earningsData,
-    theme: "grid",
-    styles: {
-      fontSize: 8,
-      cellPadding: 1.5,
-      lineColor: [200, 200, 200],
-      lineWidth: 0.1,
-      halign: "right",
-      textColor: [0, 0, 0]
-    },
-    headStyles: {
-      fillColor: [255, 255, 255],
       textColor: [0, 0, 0],
-      fontSize: 7,
+      halign: "left",
     },
     columnStyles: {
-      0: { cellWidth: 20, halign: "center", fillColor: [245, 245, 245] },
-      1: { cellWidth: 14 },
-      2: { cellWidth: 14 },
-      3: { cellWidth: 12 },
-      4: { cellWidth: 12 },
-      5: { cellWidth: 12 },
-      6: { cellWidth: 12 },
-      7: { cellWidth: 12 },
-      8: { cellWidth: 12 },
-      9: { cellWidth: 14 },
-      10: { cellWidth: 16 },
-      11: { cellWidth: 20, fontStyle: "bold" },
+      0: { cellWidth: 25, fillColor: [240, 240, 240], fontStyle: 'bold' },
+      1: { cellWidth: 40 },
+      2: { cellWidth: 20, fillColor: [240, 240, 240], fontStyle: 'bold' },
+      3: { cellWidth: 40 },
+      4: { cellWidth: 25, fillColor: [240, 240, 240], fontStyle: 'bold' },
+      5: { cellWidth: 30 },
+      6: { cellWidth: 20 },
     },
   });
 
-  currentY = (doc as any).lastAutoTable.finalY + 0.5;
+  currentY = (doc as any).lastAutoTable.finalY + 1;
 
-  // === DEDUCTIONS TABLE ===
+  // === EARNINGS & DEDUCTIONS TABLES (SIDE BY SIDE) ===
+  const totalEarnings = data.basic + data.hra + data.bonus + data.conv + data.pa + data.ma + data.sa + data.oa + data.arrear + data.incentive;
   const totalDeductions = data.pf + data.esic + data.loan + data.adDed + data.otherDed;
 
-  const deductionsHeader = [
-    [
-      "",
-      { content: "PF", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "ESIC", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Loan", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Ad.Ded", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Other Ded", styles: { fontStyle: "bold", halign: "center", colSpan: 6 } },
-      null, null, null, null, null,
-      { content: "Total Ded", styles: { fontStyle: "bold", halign: "center" } },
-    ],
-  ];
-
-  const deductionsData = [
-    [
-      { content: "Deductions", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-      data.pf,
-      data.esic,
-      data.loan,
-      data.adDed,
-      { content: data.otherDed, styles: { colSpan: 6 } },
-      null, null, null, null, null,
-      formatINR(totalDeductions),
-    ],
-  ];
-
+  // Combined Earnings and Deductions Table
   autoTable(doc, {
     startY: currentY,
-    head: deductionsHeader,
-    body: deductionsData,
+    head: [[
+      { content: 'EARNINGS', colSpan: 2, styles: { halign: 'center', fillColor: [27, 106, 181], textColor: [255, 255, 255], fontStyle: 'bold' } },
+      null,
+      { content: 'DEDUCTIONS', colSpan: 2, styles: { halign: 'center', fillColor: [220, 53, 69], textColor: [255, 255, 255], fontStyle: 'bold' } },
+      null,
+    ]],
+    body: [
+      [
+        { content: 'Particulars', styles: { fontStyle: 'bold', fillColor: [240, 240, 240] } },
+        { content: 'Amount (₹)', styles: { fontStyle: 'bold', fillColor: [240, 240, 240], halign: 'right' } },
+        { content: 'Particulars', styles: { fontStyle: 'bold', fillColor: [240, 240, 240] } },
+        { content: 'Amount (₹)', styles: { fontStyle: 'bold', fillColor: [240, 240, 240], halign: 'right' } },
+      ],
+      ['Basic Salary', formatINR(data.basic), 'PF', formatINR(data.pf)],
+      ['HRA', formatINR(data.hra), 'ESIC', formatINR(data.esic)],
+      ['Bonus', formatINR(data.bonus), 'Loan', formatINR(data.loan)],
+      ['Conveyance', formatINR(data.conv), 'Advance Deduction', formatINR(data.adDed)],
+      ['Performance Allowance', formatINR(data.pa), 'Other Deductions', formatINR(data.otherDed)],
+      ['Medical Allowance', formatINR(data.ma), '', ''],
+      ['Special Allowance', formatINR(data.sa), '', ''],
+      ['Other Allowance', formatINR(data.oa), '', ''],
+      ['Arrear', formatINR(data.arrear), '', ''],
+      ['Incentive', formatINR(data.incentive), '', ''],
+      [
+        { content: 'GROSS EARNINGS', styles: { fontStyle: 'bold', fillColor: [240, 240, 240] } },
+        { content: formatINR(totalEarnings), styles: { fontStyle: 'bold', fillColor: [240, 240, 240], halign: 'right' } },
+        { content: 'TOTAL DEDUCTIONS', styles: { fontStyle: 'bold', fillColor: [240, 240, 240] } },
+        { content: formatINR(totalDeductions), styles: { fontStyle: 'bold', fillColor: [240, 240, 240], halign: 'right' } },
+      ],
+    ],
     theme: "grid",
     styles: {
-      fontSize: 8,
-      cellPadding: 1.5,
-      lineColor: [200, 200, 200],
+      fontSize: 9,
+      cellPadding: 2.5,
+      lineColor: [0, 0, 0],
       lineWidth: 0.1,
-      halign: "right",
-      textColor: [0, 0, 0]
-    },
-    headStyles: {
-      fillColor: [255, 255, 255],
       textColor: [0, 0, 0],
-      fontSize: 7,
     },
     columnStyles: {
-      0: { cellWidth: 20, halign: "center", fillColor: [245, 245, 245] },
-      1: { cellWidth: 14 },
-      2: { cellWidth: 14 },
-      3: { cellWidth: 12 },
-      4: { cellWidth: 12 },
-      5: { cellWidth: 12 },
-      11: { cellWidth: 20, fontStyle: "bold" },
+      0: { cellWidth: 50 },
+      1: { cellWidth: 45, halign: 'right' },
+      2: { cellWidth: 50 },
+      3: { cellWidth: 45, halign: 'right' },
     },
   });
 
-  currentY = (doc as any).lastAutoTable.finalY + 3;
+  currentY = (doc as any).lastAutoTable.finalY + 1;
 
-  // === FORM 16 SUMMARY TABLE ===
-  const form16Header = [
-    [
+  // === FORM 16 SUMMARY ===
+  autoTable(doc, {
+    startY: currentY,
+    head: [[
       "",
-      { content: "Gross\nSalary", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Exemption\nU/S 10", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Balance", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Deduction\nU/S 24", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Gross\nTotal\nIncome", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Agg Off\nChap VI", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Total\nIncome", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Tax On\nTotal", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Tax\nPayable &\nEdu Cess", styles: { fontStyle: "bold", halign: "center" } },
-      { content: "Income\nTax", styles: { fontStyle: "bold", halign: "center" } },
-    ],
-  ];
-
-  const form16Data = [
-    [
-      { content: "Form 16\nSummary", styles: { fontStyle: "bold", halign: "center", fillColor: [245, 245, 245], valign: "middle" } },
+      { content: "Gross\nSalary", styles: { halign: "center" } },
+      { content: "Exemption\nU/S 10", styles: { halign: "center" } },
+      { content: "Balance", styles: { halign: "center" } },
+      { content: "Deduction\nU/S 24", styles: { halign: "center" } },
+      { content: "Gross\nTotal\nIncome", styles: { halign: "center" } },
+      { content: "Agg Off\nChap VI", styles: { halign: "center" } },
+      { content: "Total\nIncome", styles: { halign: "center" } },
+      { content: "Tax On\nTotal", styles: { halign: "center" } },
+      { content: "Tax\nPayable &\nEdu Cess", styles: { halign: "center" } },
+      { content: "Income\nTax", styles: { halign: "center" } },
+    ]],
+    body: [[
+      { content: "Form 16\nSummary", styles: { fontStyle: "bold", valign: "middle" } },
       data.grossSalary || "",
       data.exemptionUs10 || "",
       data.balance || "",
@@ -323,57 +238,58 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
       data.taxOnTotal || "",
       data.taxPayableEduCess || "",
       data.incomeTax || 0,
-    ],
-  ];
-
-  autoTable(doc, {
-    startY: currentY,
-    head: form16Header,
-    body: form16Data,
+    ]],
     theme: "grid",
     styles: {
-      fontSize: 7,
-      cellPadding: 1.5,
-      lineColor: [200, 200, 200],
+      fontSize: 8,
+      cellPadding: 2.5,
+      lineColor: [0, 0, 0],
       lineWidth: 0.1,
       halign: "center",
-      textColor: [0, 0, 0]
+      textColor: [0, 0, 0],
+      minCellHeight: 10,
     },
     headStyles: {
       fillColor: [255, 255, 255],
       textColor: [0, 0, 0],
-      fontSize: 6.5,
+      fontStyle: "bold",
+      fontSize: 7,
     },
     columnStyles: {
-      0: { cellWidth: 20 },
-      1: { cellWidth: 15 },
-      2: { cellWidth: 15 },
-      3: { cellWidth: 14 },
-      4: { cellWidth: 15 },
-      5: { cellWidth: 15 },
-      6: { cellWidth: 15 },
-      7: { cellWidth: 14 },
-      8: { cellWidth: 14 },
-      9: { cellWidth: 16 },
-      10: { cellWidth: 16 },
+      0: { cellWidth: 16, fillColor: [250, 250, 250] },
     },
   });
 
-  currentY = (doc as any).lastAutoTable.finalY + 8;
+  currentY = (doc as any).lastAutoTable.finalY + 6;
 
-  // === NET SALARY ===
-  doc.setFontSize(10);
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(0, 0, 0);
-  doc.text(`Cheque No : ${data.chequeNo || ""}`, 15, currentY);
-  doc.text(`Net Salary : ${formatINR(data.netSalary)}`, pageWidth - 15, currentY, { align: "right" });
+  // === NET SALARY (Prominent Box) ===
+  doc.setFillColor(27, 106, 181); // MAS Blue
+  doc.rect(15, currentY - 2, pageWidth - 30, 12, 'F');
 
-  currentY += 6;
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(255, 255, 255);
+  doc.text(`NET SALARY: ${formatINR(data.netSalary)}`, pageWidth / 2, currentY + 5, { align: "center" });
+
+  currentY += 14;
+
+  // Net Salary in Words
   doc.setFontSize(9);
   doc.setFont("helvetica", "bold");
-  doc.text(data.netSalaryWords, pageWidth / 2, currentY, { align: "center" });
+  doc.setTextColor(0, 0, 0);
+  doc.text(`In Words: ${data.netSalaryWords}`, pageWidth / 2, currentY, { align: "center" });
 
-  currentY += 10;
+  currentY += 8;
+
+  // Cheque Number (if provided)
+  if (data.chequeNo) {
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Cheque No: ${data.chequeNo}`, 15, currentY);
+    currentY += 5;
+  }
+
+  currentY += 8;
 
   // === FOOTER ===
   doc.setFontSize(8);
@@ -381,16 +297,15 @@ export function generateMasCallnetPayslip(data: MasCallnetPayslipData): jsPDF {
   doc.setTextColor(100, 100, 100);
   doc.text("This is a computer generated statement, hence not signature required", pageWidth / 2, currentY, { align: "center" });
 
-  // Dotted separator line
-  currentY += 3;
-  doc.setDrawColor(150, 150, 150);
+  currentY += 2;
+  doc.setDrawColor(0, 0, 0);
   doc.setLineDash([1, 1], 0);
   doc.line(15, currentY, pageWidth - 15, currentY);
 
   return doc;
 }
 
-export function downloadMasCallnetPayslip(data: MasCallnetPayslipData, filename: string) {
-  const doc = generateMasCallnetPayslip(data);
+export async function downloadMasCallnetPayslip(data: MasCallnetPayslipData, filename: string) {
+  const doc = await generateMasCallnetPayslip(data);
   doc.save(filename);
 }

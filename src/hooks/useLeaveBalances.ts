@@ -17,19 +17,10 @@ export function useLeaveBalances(employeeId: string | undefined) {
     queryFn: async () => {
       if (!employeeId) return [];
 
-      // Try current year first
-      let res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
         `/api/leave/balance/${employeeId}?year=${currentYear}`
       );
-      let rows = res.data ?? [];
-
-      // Fallback to previous year if no balances found for current year
-      if (rows.length === 0) {
-        res = await hrmsApi.get<{ success: boolean; data: any[] }>(
-          `/api/leave/balance/${employeeId}?year=${currentYear - 1}`
-        );
-        rows = res.data ?? [];
-      }
+      const rows = res.data ?? [];
 
       // Backend returns LeaveBalanceLedger rows:
       // { id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days, leave_name?, paid_leave?, ... }

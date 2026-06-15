@@ -90,7 +90,7 @@ export default function EnhancedClientMaster() {
       const res = await hrmsApi.get<{ success: boolean; data: Client[] }>(
         `/api/clients?${params.toString()}`
       );
-      return res.data.data || [];
+      return res.data ?? [];
     },
   });
 
@@ -99,7 +99,7 @@ export default function EnhancedClientMaster() {
     queryKey: ["client-stats"],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: any }>("/api/clients-stats");
-      return res.data.data;
+      return res.data;
     },
   });
 
@@ -112,7 +112,7 @@ export default function EnhancedClientMaster() {
       const res = await hrmsApi.get<{ success: boolean; data: PortalUser[] }>(
         `/api/portal-users?${params.toString()}`
       );
-      return res.data.data || [];
+      return res.data ?? [];
     },
   });
 
@@ -121,7 +121,7 @@ export default function EnhancedClientMaster() {
     queryKey: ["clients-usage"],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/clients-usage?days=30");
-      return res.data.data || [];
+      return res.data ?? [];
     },
   });
 

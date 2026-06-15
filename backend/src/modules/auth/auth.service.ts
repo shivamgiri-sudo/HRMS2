@@ -337,4 +337,23 @@ export const authService = {
     await db.execute('UPDATE auth_user SET password_hash = ?, must_change_password = 0 WHERE id = ?', [hash, rows[0].user_id]);
     await db.execute('UPDATE auth_password_reset SET used = 1 WHERE token_hash = ?', [tokenHash]);
   },
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      'SELECT password_hash FROM auth_user WHERE id = ? AND is_blocked = 0 LIMIT 1',
+      [userId]
+    );
+    if (!rows[0]) throw new Error('User account not found');
+    if (!(await bcrypt.compare(currentPassword, String(rows[0].password_hash)))) {
+      throw new Error('Current password is incorrect');
+    }
+    if (await bcrypt.compare(newPassword, String(rows[0].password_hash))) {
+      throw new Error('New password must be different from your current password');
+    }
+    const hash = await bcrypt.hash(newPassword, 10);
+    await db.execute(
+      'UPDATE auth_user SET password_hash = ?, must_change_password = 0, updated_at = NOW() WHERE id = ?',
+      [hash, userId]
+    );
+  },
 };

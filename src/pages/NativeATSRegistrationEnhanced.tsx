@@ -6,18 +6,19 @@ import { Users, Building2, UserCheck, FileText, Camera, Upload, CheckCircle, Ale
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface BranchAlias {
-  branch_name: string;
-  branch_display_name: string;
-  is_active: boolean;
+  canonical_key: string;
+  display_name: string;
+  alias_text?: string;
+  active_status: boolean | number;
 }
 
 interface Recruiter {
   id: string;
   employee_code: string;
-  first_name: string;
-  last_name: string;
+  name: string;
   email: string;
-  has_biometric: boolean;
+  mobile?: string;
+  present_today: boolean;
 }
 
 interface RegistrationForm {
@@ -147,11 +148,35 @@ export default function NativeATSRegistrationEnhanced() {
       setError("Role is required");
       return false;
     }
-    if (!form.recruiter_id) {
-      setError("Recruiter assignment is required");
+    if (!form.education_qualification) {
+      setError("Education is required");
+      return false;
+    }
+    if (!form.years_of_experience) {
+      setError("Experience is required");
       return false;
     }
     return true;
+  };
+
+  const uploadCandidateFile = async (
+    candidateId: string,
+    file: File,
+    type: "resume" | "selfie"
+  ) => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("type", type);
+    body.append("mobile", form.mobile);
+    const apiBase = import.meta.env.VITE_HRMS_API_URL || (import.meta.env.DEV ? "http://localhost:5055" : "");
+    const response = await fetch(`${apiBase}/api/ats/candidates/${candidateId}/upload`, {
+      method: "POST",
+      body,
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.message || `${type} upload failed`);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -163,42 +188,38 @@ export default function NativeATSRegistrationEnhanced() {
     setSubmitting(true);
 
     try {
-      // Submit registration
-      const formData = new FormData();
-
-      // Add all text fields
-      formData.append("full_name", form.full_name);
-      formData.append("mobile", form.mobile);
-      formData.append("email", form.email || "");
-      formData.append("address", form.address || "");
-      formData.append("date_of_birth", form.date_of_birth || "");
-      formData.append("gender", form.gender || "");
-      formData.append("applied_for_role", form.applied_for_role);
-      formData.append("applied_for_branch", form.applied_for_branch);
-      formData.append("years_of_experience", form.years_of_experience || "");
-      formData.append("education_qualification", form.education_qualification || "");
-      formData.append("preferred_shift", form.preferred_shift || "");
-      formData.append("recruiter_id", form.recruiter_id);
-      formData.append("sourcing_channel", form.sourcing_channel);
-
-      // Add files if present
-      if (form.resume_file) {
-        formData.append("resume", form.resume_file);
-      }
-      if (form.photo_file) {
-        formData.append("photo", form.photo_file);
-      }
+      const branch = branches.find((item) => item.canonical_key === form.applied_for_branch);
 
       const res = await hrmsApi.post<{
         success: boolean;
         message?: string;
-        token_number?: string;
-        candidate_id?: string;
-      }>('/api/ats/registration/submit-enhanced', formData);
+        tokenNumber?: string;
+        candidateId?: string;
+      }>('/api/ats/registration/submit-enhanced', {
+        name: form.full_name.trim(),
+        mobile: form.mobile,
+        email: form.email || null,
+        address: form.address || undefined,
+        dateOfBirth: form.date_of_birth || null,
+        gender: form.gender || null,
+        roleApplied: form.applied_for_role,
+        branchDisplayName: branch?.display_name || form.applied_for_branch,
+        education: form.education_qualification,
+        experience: form.years_of_experience,
+        preferredShift: form.preferred_shift || null,
+        preferredRecruiterId: form.recruiter_id || undefined,
+        sourcingChannel: form.sourcing_channel,
+      });
 
       if (res.success) {
+        if (res.candidateId && form.resume_file) {
+          await uploadCandidateFile(res.candidateId, form.resume_file, "resume");
+        }
+        if (res.candidateId && form.photo_file) {
+          await uploadCandidateFile(res.candidateId, form.photo_file, "selfie");
+        }
         setSuccess(true);
-        setTokenNumber(res.token_number || "");
+        setTokenNumber(res.tokenNumber || "Assignment pending");
         // Reset form
         setForm(EMPTY_FORM);
         setRecruiters([]);
@@ -369,9 +390,9 @@ export default function NativeATSRegistrationEnhanced() {
                     required
                   >
                     <option value="">Select Branch</option>
-                    {branches.filter(b => b.is_active).map(branch => (
-                      <option key={branch.branch_name} value={branch.branch_name}>
-                        {branch.branch_display_name}
+                    {branches.filter(b => Boolean(b.active_status)).map(branch => (
+                      <option key={branch.canonical_key} value={branch.canonical_key}>
+                        {branch.display_name}
                       </option>
                     ))}
                   </select>
@@ -393,14 +414,13 @@ export default function NativeATSRegistrationEnhanced() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Recruiter <span className="text-red-500">*</span>
+                    Preferred Recruiter
                   </label>
                   <select
                     value={form.recruiter_id}
                     onChange={(e) => handleChange("recruiter_id", e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
                     disabled={!form.applied_for_branch || recruiters.length === 0}
-                    required
                   >
                     <option value="">
                       {!form.applied_for_branch
@@ -409,22 +429,27 @@ export default function NativeATSRegistrationEnhanced() {
                           ? "No recruiters available"
                           : "Select Recruiter"}
                     </option>
-                    {recruiters.map(recruiter => (
+                    {recruiters.filter(recruiter => recruiter.present_today).map(recruiter => (
                       <option key={recruiter.id} value={recruiter.id}>
-                        {recruiter.first_name} {recruiter.last_name} ({recruiter.employee_code})
-                        {recruiter.has_biometric ? " ✓" : ""}
+                        {recruiter.name} ({recruiter.employee_code})
                       </option>
                     ))}
                   </select>
-                  {recruiters.length > 0 && (
+                  {recruiters.some(recruiter => recruiter.present_today) ? (
                     <p className="text-xs text-gray-500 mt-1">
-                      ✓ = Biometric verified recruiters
+                      Only recruiters marked present today can be selected.
                     </p>
-                  )}
+                  ) : form.applied_for_branch ? (
+                    <p className="text-xs text-amber-600 mt-1">
+                      No recruiter is marked present. Registration will continue for HR assignment.
+                    </p>
+                  ) : null}
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Experience</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Experience <span className="text-red-500">*</span>
+                  </label>
                   <select
                     value={form.years_of_experience}
                     onChange={(e) => handleChange("years_of_experience", e.target.value)}
@@ -441,7 +466,9 @@ export default function NativeATSRegistrationEnhanced() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Education</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Education <span className="text-red-500">*</span>
+                  </label>
                   <select
                     value={form.education_qualification}
                     onChange={(e) => handleChange("education_qualification", e.target.value)}
@@ -487,7 +514,7 @@ export default function NativeATSRegistrationEnhanced() {
                   </label>
                   <input
                     type="file"
-                    accept=".pdf,.doc,.docx"
+                    accept=".pdf"
                     onChange={(e) => handleFileChange("resume_file", e.target.files?.[0] || null)}
                     className="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100 cursor-pointer"
                   />

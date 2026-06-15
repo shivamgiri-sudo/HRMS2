@@ -12,6 +12,7 @@ import type {
   TemplateFilters,
   RenderTemplateDTO,
 } from './communication.types.js';
+import { builtInTemplates } from './builtin-templates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMPL_DIR = path.join(__dirname, 'templates');
@@ -37,14 +38,32 @@ async function getVariableSchemas(): Promise<Record<string, any>> {
   return _schemas!;
 }
 
-async function readFileTemplate(name: string): Promise<{ html: string; text?: string; category: string }> {
+type TemplateSource = {
+  html: string;
+  text?: string;
+  sms?: string;
+  whatsapp?: string;
+  subject?: string;
+  category: string;
+};
+
+async function readOptional(filePath: string): Promise<string | undefined> {
+  try {
+    return await fs.readFile(filePath, 'utf-8');
+  } catch {
+    return undefined;
+  }
+}
+
+async function readFileTemplate(name: string): Promise<TemplateSource> {
   const htmlPath = path.join(TMPL_DIR, `${name}.hbs`);
   const txtPath  = path.join(TMPL_DIR, `${name}.txt.hbs`);
   const html = await fs.readFile(htmlPath, 'utf-8');
-  let text: string | undefined;
-  try { text = await fs.readFile(txtPath, 'utf-8'); } catch { /* optional */ }
+  const text = await readOptional(txtPath);
+  const sms = await readOptional(path.join(TMPL_DIR, `${name}.sms.txt.hbs`));
+  const whatsapp = await readOptional(path.join(TMPL_DIR, `${name}.whatsapp.txt.hbs`));
   const category = name.split('/')[0]!;
-  return { html, text, category };
+  return { html, text, sms, whatsapp, category };
 }
 
 class TemplateService {
@@ -67,17 +86,28 @@ class TemplateService {
     return rows[0] as CommunicationTemplate ?? null;
   }
 
-  async getTemplateByName(name: string): Promise<{ html: string; text?: string; category: string } | null> {
+  async getTemplateByName(name: string): Promise<TemplateSource | null> {
     try {
       return await readFileTemplate(name);
     } catch {
       const [rows] = await db.execute<RowDataPacket[]>(
-        'SELECT body_html, body_text, category FROM communication_template WHERE name = ? AND is_active = 1',
+        'SELECT subject, body_html, body_text, category FROM communication_template WHERE name = ? AND is_active = 1',
         [name]
       );
-      if (!rows[0]) return null;
-      const r = rows[0] as any;
-      return { html: r.body_html, text: r.body_text ?? undefined, category: r.category };
+      if (rows[0]) {
+        const r = rows[0] as any;
+        return { html: r.body_html, text: r.body_text ?? undefined, subject: r.subject ?? undefined, category: r.category };
+      }
+      const builtIn = builtInTemplates[name];
+      if (!builtIn) return null;
+      return {
+        html: builtIn.body_html,
+        text: builtIn.body_text,
+        sms: builtIn.sms_text,
+        whatsapp: builtIn.whatsapp_text,
+        subject: builtIn.subject,
+        category: builtIn.category,
+      };
     }
   }
 
@@ -125,12 +155,17 @@ class TemplateService {
     await db.execute('UPDATE communication_template SET is_active = 0 WHERE id = ?', [id]);
   }
 
-  async renderTemplate(dto: RenderTemplateDTO): Promise<{ html: string; text?: string }> {
-    let source: { html: string; text?: string } | null = null;
+  async renderTemplate(dto: RenderTemplateDTO): Promise<{ html: string; text?: string; subject?: string }> {
+    let source: TemplateSource | null = null;
     if (dto.template_id) {
       const t = await this.getTemplateById(dto.template_id);
       if (!t) throw new Error('Template not found');
-      source = { html: t.body_html, text: t.body_text ?? undefined };
+      source = {
+        html: t.body_html,
+        text: t.body_text ?? undefined,
+        subject: t.subject ?? undefined,
+        category: t.category,
+      };
     } else if (dto.template_name) {
       source = await this.getTemplateByName(dto.template_name);
       if (!source) throw new Error('Template not found');
@@ -138,8 +173,14 @@ class TemplateService {
       throw new Error('template_id or template_name required');
     }
     const html = Handlebars.compile(source.html)(dto.data);
-    const text = source.text ? Handlebars.compile(source.text)(dto.data) : undefined;
-    return { html, text };
+    const channelText = dto.channel === 'sms'
+      ? source.sms ?? source.text
+      : dto.channel === 'whatsapp'
+        ? source.whatsapp ?? source.text
+        : source.text;
+    const text = channelText ? Handlebars.compile(channelText)(dto.data) : undefined;
+    const subject = source.subject ? Handlebars.compile(source.subject)(dto.data) : undefined;
+    return { html, text, subject };
   }
 
   async getVariableSchema(category: string): Promise<unknown> {

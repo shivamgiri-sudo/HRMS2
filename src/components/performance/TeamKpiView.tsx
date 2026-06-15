@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronRight, X, Loader, Search, Activity } from "lucide-react";
+import { ChevronRight, X, Loader, Search, Activity, CalendarDays } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import type { TeamMember } from "@/pages/Performance";
 
@@ -70,9 +70,24 @@ interface TeamSummary {
 
 interface DrillData {
   period: Period;
+  date_range: { start: string; end: string };
   overall_score: number;
   overall_rating: string | null;
   metrics: KpiMetricResult[];
+  daily_performance: Array<{
+    date: string;
+    overall_score: number;
+    overall_rating: string | null;
+    metrics: Array<{
+      metric_id: string;
+      metric_code: string;
+      metric_name: string;
+      unit: string;
+      actual_value: number;
+      score_pct: number;
+      source: string;
+    }>;
+  }>;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -107,6 +122,11 @@ const CATEGORY_COLORS: Record<string, string> = {
   sales: "bg-orange-100 text-orange-700",
   custom: "bg-gray-100 text-gray-700",
 };
+
+function today() {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
 
 // ─── Sparkline ────────────────────────────────────────────────────────────────
 
@@ -252,6 +272,7 @@ export function TeamKpiView({ teamMembers }: Props) {
   // Drill-down
   const [drillEmployee, setDrillEmployee] = useState<MemberPerf | null>(null);
   const [drillPeriod, setDrillPeriod] = useState<Period>("mtd");
+  const [drillDate, setDrillDate] = useState(today());
   const [drillData, setDrillData] = useState<DrillData | null>(null);
   const [drillLoading, setDrillLoading] = useState(false);
 
@@ -259,7 +280,7 @@ export function TeamKpiView({ teamMembers }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: TeamSummary }>(`/kpi-master/team-summary?period=${p}`);
+      const res = await hrmsApi.get<{ success: boolean; data: TeamSummary }>(`/api/kpi-master/team-summary?period=${p}`);
       setSummary(res.data ?? null);
     } catch (err: any) {
       setError(err?.message ?? "Failed to load team KPI data");
@@ -271,7 +292,8 @@ export function TeamKpiView({ teamMembers }: Props) {
   async function loadDrillDown(empId: string, p: Period) {
     setDrillLoading(true);
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: DrillData }>(`/kpi-master/live/${empId}?period=${p}`);
+      const dateQuery = p === "day" ? `&date=${drillDate}` : "";
+      const res = await hrmsApi.get<{ success: boolean; data: DrillData }>(`/api/kpi-master/live/${empId}?period=${p}${dateQuery}`);
       setDrillData(res.data ?? null);
     } catch {
       setDrillData(null);
@@ -292,6 +314,18 @@ export function TeamKpiView({ teamMembers }: Props) {
   function onDrillPeriodChange(p: Period) {
     setDrillPeriod(p);
     if (drillEmployee) loadDrillDown(drillEmployee.employee_id, p);
+  }
+
+  function onDrillDateChange(value: string) {
+    setDrillDate(value);
+    if (drillEmployee) {
+      setDrillLoading(true);
+      hrmsApi.get<{ success: boolean; data: DrillData }>(
+        `/api/kpi-master/live/${drillEmployee.employee_id}?period=day&date=${value}`
+      ).then((response) => setDrillData(response.data ?? null))
+        .catch(() => setDrillData(null))
+        .finally(() => setDrillLoading(false));
+    }
   }
 
   // Get unique processes from team
@@ -500,7 +534,13 @@ export function TeamKpiView({ teamMembers }: Props) {
                         }`}
                       >
                         <td className="px-4 py-3">
-                          <div className="font-medium text-gray-900">{member.full_name}</div>
+                          <button
+                            type="button"
+                            onClick={() => openDrill(member)}
+                            className="font-medium text-indigo-700 hover:text-indigo-900 hover:underline"
+                          >
+                            {member.full_name}
+                          </button>
                           <div className="text-xs text-gray-400">{member.employee_code}</div>
                           {isAtRisk && (
                             <span className="text-xs bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-medium mt-0.5 inline-block">At Risk</span>
@@ -584,6 +624,18 @@ export function TeamKpiView({ teamMembers }: Props) {
                   {label}
                 </button>
               ))}
+              {drillPeriod === "day" && (
+                <label className="flex flex-shrink-0 items-center gap-2 rounded-lg border bg-white px-2 text-xs text-gray-600">
+                  <CalendarDays size={14} />
+                  <input
+                    type="date"
+                    value={drillDate}
+                    max={today()}
+                    onChange={(event) => onDrillDateChange(event.target.value)}
+                    className="bg-transparent py-1.5 outline-none"
+                  />
+                </label>
+              )}
             </div>
 
             {/* Panel Score Banner */}
@@ -612,6 +664,30 @@ export function TeamKpiView({ teamMembers }: Props) {
               {!drillLoading && drillData && (drillData.metrics as KpiMetricResult[]).map(m => (
                 <KpiCard key={m.metric_id} metric={m} />
               ))}
+              {!drillLoading && drillData && (
+                <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+                  <div className="border-b bg-gray-50 px-3 py-2 text-xs font-semibold uppercase text-gray-500">
+                    Date-wise source details
+                  </div>
+                  {drillData.daily_performance.length === 0 ? (
+                    <p className="px-3 py-6 text-center text-sm text-gray-400">No source data for this period.</p>
+                  ) : drillData.daily_performance.map((day) => (
+                    <div key={day.date} className="border-b px-3 py-3 last:border-b-0">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold text-gray-900">{day.date}</span>
+                        <span className="text-sm font-bold text-indigo-700">{Math.round(day.overall_score)}% · {day.overall_rating ?? "—"}</span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {day.metrics.map((metric) => (
+                          <span key={metric.metric_id} className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-600">
+                            {metric.metric_code}: {fmtActual(metric.actual_value, metric.unit)} · {metric.source}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

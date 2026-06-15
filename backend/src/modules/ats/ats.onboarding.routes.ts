@@ -48,7 +48,7 @@ router.post(
 
     // Row-scope: load candidate's branch/process, then verify actor has access
     const cand = await atsService.getCandidate(candidateId);
-    if (!cand.active_status) {
+    if (cand.active_status === 0) {
       res.status(404).json({ ok: false, error: 'Candidate not found' });
       return;
     }

@@ -15,6 +15,7 @@ import { PortalRoute } from "./components/portal/PortalRoute";
 // ── Core (eager — needed before auth resolves) ────────────────────────────────
 import Auth from "./pages/AuthClean";
 import ResetPassword from "./pages/ResetPassword";
+import ChangePassword from "./pages/ChangePassword";
 import NotFound from "./pages/NotFound";
 
 // ── Lazy page chunks ──────────────────────────────────────────────────────────
@@ -42,6 +43,7 @@ const BulkUploadHub                 = lazy(() => import("./pages/BulkUploadHub")
 const Departments                   = lazy(() => import("./pages/Departments"));
 const CompanyCalendar               = lazy(() => import("./pages/CompanyCalendar"));
 const NotificationPreferences       = lazy(() => import("./pages/NotificationPreferences"));
+const Notifications                 = lazy(() => import("./pages/Notifications"));
 const Changelog                     = lazy(() => import("./pages/Changelog"));
 const ModuleLauncher                = lazy(() => import("./pages/ModuleLauncher"));
 
@@ -71,6 +73,7 @@ const CandidatePortalLogin          = lazy(() => import("./pages/CandidatePortal
 const CandidatePortalDashboard      = lazy(() => import("./pages/CandidatePortalDashboard"));
 const BranchHeadApproval            = lazy(() => import("./pages/BranchHeadApproval"));
 const SuperAdminModuleAccess        = lazy(() => import("./pages/SuperAdminModuleAccess"));
+const SuperAdminDashboardV2         = lazy(() => import("./pages/SuperAdminDashboardV2"));
 const ATSCommandCentre              = lazy(() => import("./pages/ATSCommandCentre"));
 const NativeBGVEnhanced             = lazy(() => import("./pages/NativeBGVEnhanced"));
 
@@ -187,6 +190,7 @@ const NativeWalkinQueue             = lazy(() => import("./pages/NativeWalkinQue
 const NativeAttendanceRulesMaster   = lazy(() => import("./pages/NativeAttendanceRulesMaster"));
 const NativeCustomizationManager    = lazy(() => import("./pages/customization/NativeCustomizationManager"));
 const NativeCustomizationRuleEditor = lazy(() => import("./pages/customization/NativeCustomizationRuleEditor"));
+const EmployeeJourney               = lazy(() => import("./pages/EmployeeJourney"));
 
 // Portal
 const PortalLogin                   = lazy(() => import("./pages/portal/PortalLogin"));
@@ -225,6 +229,7 @@ const App = () => (
               <Route path="/security" element={<Security />} />
               <Route path="/auth" element={<Auth />} />
               <Route path="/reset-password" element={<ResetPassword />} />
+              <Route path="/change-password" element={<ProtectedRoute><ChangePassword /></ProtectedRoute>} />
               <Route path="/onboard" element={<CandidateOnboardingPage />} />
 
               <Route path="/interview-registration" element={<NativeATSCandidateRegistration />} />
@@ -233,6 +238,7 @@ const App = () => (
 
               <Route path="/dashboard" element={<ProtectedRoute><Index /></ProtectedRoute>} />
               <Route path="/employees" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><Employees /></Gate></ProtectedRoute>} />
+              <Route path="/employees/:id" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployeeStatCard /></Gate></ProtectedRoute>} />
               <Route path="/onboarding" element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><Onboarding /></Gate></ProtectedRoute>} />
               <Route path="/onboarding-requests" element={<Navigate to="/onboarding?tab=requests" replace />} />
               <Route path="/leaves" element={<ProtectedRoute><Leaves /></ProtectedRoute>} />
@@ -242,6 +248,7 @@ const App = () => (
               <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
               <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+              <Route path="/employee-journey" element={<ProtectedRoute><EmployeeJourney /></ProtectedRoute>} />
               <Route path="/performance" element={<ProtectedRoute><Performance /></ProtectedRoute>} />
               <Route path="/reviews-management" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><ReviewsManagement /></Gate></ProtectedRoute>} />
               <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />
@@ -250,6 +257,7 @@ const App = () => (
               <Route path="/departments" element={<ProtectedRoute><Gate pageCode="ORG_MASTERS"><Departments /></Gate></ProtectedRoute>} />
               <Route path="/calendar" element={<ProtectedRoute><CompanyCalendar /></ProtectedRoute>} />
               <Route path="/notification-preferences" element={<ProtectedRoute><NotificationPreferences /></ProtectedRoute>} />
+              <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
 
               <Route path="/modules" element={<ProtectedRoute><ModuleLauncher /></ProtectedRoute>} />
 
@@ -284,6 +292,7 @@ const App = () => (
 
               {/* Super Admin Module Access (Protected - Admin Only) */}
               <Route path="/super-admin/module-access" element={<ProtectedRoute roles={['admin']}><SuperAdminModuleAccess /></ProtectedRoute>} />
+              <Route path="/super-admin/dashboard" element={<ProtectedRoute roles={['admin']}><SuperAdminDashboardV2 /></ProtectedRoute>} />
               <Route path="/ats/command-centre" element={<ProtectedRoute roles={['admin', 'manager', 'hr']}><ATSCommandCentre /></ProtectedRoute>} />
               <Route path="/ats/bgv-enhanced" element={<ProtectedRoute roles={['admin', 'hr']}><NativeBGVEnhanced /></ProtectedRoute>} />
 
@@ -296,6 +305,7 @@ const App = () => (
 
               {/* WFM */}
               <Route path="/wfm/roster" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMRoster /></Gate></ProtectedRoute>} />
+              <Route path="/wfm-roster" element={<Navigate to="/wfm/roster" replace />} />
               <Route path="/wfm/live-tracker" element={<ProtectedRoute><Gate pageCode="WFM_LIVE_TRACKER"><NativePlaceholderPage title="WFM Live Tracker" module="WFM" /></Gate></ProtectedRoute>} />
               <Route path="/wfm/extensions" element={<ProtectedRoute><Gate pageCode="WFM_EXTENSIONS"><NativeWFMExtensions /></Gate></ProtectedRoute>} />
               <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />

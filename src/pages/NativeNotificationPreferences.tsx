@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,6 +16,12 @@ interface Preference {
   category: NotificationCategory;
   preferred_channel: Channel;
   enabled: boolean;
+}
+
+interface PreferenceRow {
+  category: NotificationCategory;
+  preferred_channel: Channel;
+  enabled: boolean | number;
 }
 
 const categories: { key: NotificationCategory; label: string; description: string }[] = [
@@ -41,22 +47,18 @@ export default function NativeNotificationPreferences() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    fetchPreferences();
-  }, [user?.id]);
-
-  const fetchPreferences = async () => {
+  const fetchPreferences = useCallback(async () => {
     if (!user?.id) return;
     try {
       setLoading(true);
-      const response = await hrmsApi.get('/api/communication/preferences');
+      const response = await hrmsApi.get<{ success: boolean; data: PreferenceRow[] }>('/api/communication/preferences');
 
       // Initialize with defaults if empty
       const prefs = response.data.length > 0
-        ? response.data.map((p: any) => ({
+        ? response.data.map((p) => ({
             category: p.category,
             preferred_channel: p.preferred_channel,
-            enabled: p.enabled === 1
+            enabled: p.enabled === 1 || p.enabled === true
           }))
         : categories.map(cat => ({
             category: cat.key,
@@ -75,7 +77,11 @@ export default function NativeNotificationPreferences() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [toast, user?.id]);
+
+  useEffect(() => {
+    void fetchPreferences();
+  }, [fetchPreferences]);
 
   const handleChannelChange = (category: NotificationCategory, channel: Channel) => {
     setPreferences(prev => prev.map(p =>
