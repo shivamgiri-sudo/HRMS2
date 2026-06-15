@@ -70,7 +70,13 @@ async function parseResponse(res: Response): Promise<unknown> {
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers = getAuthHeader();
-  const res = await fetch(`${HRMS_API_URL}${path}`, {
+
+  const normalizedPath =
+    HRMS_API_URL === "/api" && path.startsWith("/api/")
+      ? path.replace(/^\/api/, "")
+      : path;
+
+  const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
     method,
     headers: { "Content-Type": "application/json", ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -90,7 +96,13 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 async function requestRaw(method: string, path: string): Promise<string> {
   const headers = getAuthHeader();
-  const res = await fetch(`${HRMS_API_URL}${path}`, {
+
+  const normalizedPath =
+    HRMS_API_URL === "/api" && path.startsWith("/api/")
+      ? path.replace(/^\/api/, "")
+      : path;
+
+  const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
     method,
     headers: { "Content-Type": "application/json", ...headers },
   });
