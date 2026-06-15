@@ -223,7 +223,18 @@ function TniModal({ employeeId, employeeName, metrics, onClose, onCreated }: Tni
 
 // ─── Main Page ──────────────────────────────────────────────────────────────
 
-const OPS_DISPLAY_CODES = ["AHT", "ADHERENCE", "SHRINKAGE", "FCR", "OCCUPANCY"];
+const OPS_DISPLAY_CODES = [
+  "TALK_TIME",      // Talk Time - Average talk duration per call
+  "NET_LOGIN",      // Net Login - Total logged-in time
+  "DIALS",          // HD (Handling/Dials) - Total calls handled
+  "TOTAL_CALLS",    // Total Calls - Total calls (inbound + outbound)
+  "QUALITY_SCORE",  // Overall Quality Score - Call quality assessment
+  "AHT",            // Average Handle Time
+  "ADHERENCE",      // Schedule Adherence
+  "SHRINKAGE",      // Workforce Shrinkage
+  "FCR",            // First Call Resolution
+  "OCCUPANCY"       // Agent Occupancy
+];
 
 const TNI_THRESHOLD = 75;
 
