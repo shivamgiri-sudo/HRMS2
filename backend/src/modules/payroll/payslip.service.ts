@@ -9,6 +9,7 @@ export interface PayslipData {
   id: string;
   run_id: string;
   employee_id: string;
+  prep_line_id?: string;
   payslip_ref: string;
   generated_at: string;
   generated_by: string | null;
@@ -19,6 +20,10 @@ export interface PayslipData {
   employee_name?: string;
   designation?: string;
   department?: string;
+  epf_number?: string;
+  esi_number?: string;
+  branch_name?: string;
+  location_name?: string;
   run_month?: string;
   gross_salary?: number;
   gross_pay?: number;
@@ -41,6 +46,20 @@ export interface PayslipData {
   lwp_days?: number;
   ctc?: number;
   ctc_annual?: number;
+  earnings?: Array<{
+    component_code: string;
+    component_name: string;
+    component_type: string;
+    amount: number;
+    taxable: number;
+  }>;
+  deductions?: Array<{
+    component_code: string;
+    component_name: string;
+    component_type: string;
+    amount: number;
+    taxable: number;
+  }>;
 }
 
 export const payslipService = {
@@ -75,14 +94,15 @@ export const payslipService = {
     // Upsert: if payslip already exists for this run+employee, overwrite it
     await db.execute(
       `INSERT INTO salary_payslip
-         (id, run_id, employee_id, payslip_ref, generated_by, acknowledged_at)
-       VALUES (?, ?, ?, ?, ?, NULL)
+         (id, prep_line_id, employee_id, run_month, payslip_ref, generated_by, acknowledged_at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL)
        ON DUPLICATE KEY UPDATE
          payslip_ref  = VALUES(payslip_ref),
+         run_month    = VALUES(run_month),
          generated_at = CURRENT_TIMESTAMP,
          generated_by = VALUES(generated_by),
          acknowledged_at = NULL`,
-      [id, runId, employeeId, payslipRef, generatedBy]
+      [id, line.id, employeeId, line.run_month, payslipRef, generatedBy]
     );
 
     void logSensitiveAction({
@@ -105,6 +125,8 @@ export const payslipService = {
   async getPayslip(employeeId: string, runId: string): Promise<PayslipData> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT sp.*,
+              spl.id            AS prep_line_id,
+              spl.run_id,
               spl.employee_code,
               spr.run_month,
               spl.gross_salary   AS gross_pay,
@@ -129,22 +151,60 @@ export const payslipService = {
               e.first_name, e.last_name,
               e.ctc              AS ctc_annual,
               e.ctc,
+              COALESCE(eu.member_id, e.epf_number) AS epf_number,
+              e.esic_number      AS esi_number,
               CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
               d.designation_name  AS designation,
               dept.dept_name      AS department,
+              br.branch_name,
+              loc.location_name,
               spr.run_month
          FROM salary_payslip sp
-         JOIN salary_prep_line spl ON spl.run_id = sp.run_id AND spl.employee_id = sp.employee_id
-         JOIN salary_prep_run  spr ON spr.id = sp.run_id
-         LEFT JOIN employees e    ON e.id = sp.employee_id
-         LEFT JOIN designation_master d    ON d.id = e.designation_id
-         LEFT JOIN department_master dept  ON dept.id = e.department_id
-        WHERE sp.employee_id = ? AND sp.run_id = ?
+         JOIN salary_prep_line spl
+           ON CONVERT(spl.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            = CONVERT(sp.prep_line_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+         JOIN salary_prep_run spr
+           ON CONVERT(spr.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            = CONVERT(spl.run_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+         LEFT JOIN employees e
+           ON CONVERT(e.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            = CONVERT(sp.employee_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+         LEFT JOIN employee_uan eu
+           ON CONVERT(eu.employee_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            = CONVERT(e.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+          AND eu.is_active = 1
+         LEFT JOIN designation_master d
+           ON CONVERT(d.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            = CONVERT(e.designation_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+         LEFT JOIN department_master dept
+           ON CONVERT(dept.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            = CONVERT(e.department_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+         LEFT JOIN branch_master br
+           ON CONVERT(br.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            = CONVERT(e.branch_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+         LEFT JOIN location_master loc
+           ON CONVERT(loc.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            = CONVERT(e.location_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+        WHERE sp.employee_id = ? AND spl.run_id = ?
         LIMIT 1`,
       [employeeId, runId]
     );
     const rec = (rows as PayslipData[])[0];
     if (!rec) throw new Error("Payslip not found");
+
+    const [components] = await db.execute<RowDataPacket[]>(
+      `SELECT component_code, component_name, component_type, amount, taxable
+         FROM salary_prep_line_component
+        WHERE line_id = ?
+        ORDER BY component_type, component_code`,
+      [rec.prep_line_id]
+    );
+    rec.earnings = (components as any[])
+      .filter((component) => component.component_type === "earning")
+      .map((component) => ({ ...component, amount: Number(component.amount ?? 0) }));
+    rec.deductions = (components as any[])
+      .filter((component) => component.component_type === "deduction")
+      .map((component) => ({ ...component, amount: Number(component.amount ?? 0) }));
     return rec;
   },
 
@@ -157,7 +217,13 @@ export const payslipService = {
     requestingEmployeeId: string
   ): Promise<PayslipData> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM salary_payslip WHERE id = ? LIMIT 1",
+      `SELECT sp.*, spl.run_id
+         FROM salary_payslip sp
+         JOIN salary_prep_line spl
+           ON CONVERT(spl.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            = CONVERT(sp.prep_line_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+        WHERE sp.id = ?
+        LIMIT 1`,
       [payslipId]
     );
     const rec = (rows as any[])[0];

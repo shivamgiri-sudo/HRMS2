@@ -4,6 +4,7 @@ import { toast } from "sonner";
 
 export interface OnboardingRequest {
   id: string;
+  offer_id?: string | null;
   user_id: string;
   email: string;
   full_name: string;
@@ -15,14 +16,23 @@ export interface OnboardingRequest {
   updated_at: string;
 }
 
+function unwrapRows(payload: unknown): any[] {
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === "object") {
+    const body = payload as { data?: unknown };
+    if (Array.isArray(body.data)) return body.data;
+  }
+  return [];
+}
+
 export function useOnboardingRequests() {
   const queryClient = useQueryClient();
 
   const requestsQuery = useQuery({
     queryKey: ["onboarding-requests"],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ data: any[] }>("/api/ats/onboarding/requests");
-      return (res.data ?? []) as OnboardingRequest[];
+      const res = await hrmsApi.get<unknown>("/api/ats/onboarding/requests");
+      return unwrapRows(res) as OnboardingRequest[];
     },
   });
 
@@ -32,7 +42,8 @@ export function useOnboardingRequests() {
       const requests = requestsQuery.data ?? [];
       const request = requests.find((r) => r.id === requestId);
 
-      await hrmsApi.post(`/api/ats/onboarding/offers/${requestId}/approve`, {});
+      const approvalId = request?.offer_id || requestId;
+      await hrmsApi.post(`/api/ats/onboarding/offers/${approvalId}/approve`, {});
 
       // Fire-and-forget notification
       if (request) {
@@ -73,7 +84,8 @@ export function useOnboardingRequests() {
       const requests = requestsQuery.data ?? [];
       const request = requests.find((r) => r.id === requestId);
 
-      await hrmsApi.post(`/api/ats/onboarding/offers/${requestId}/reject`, {
+      const approvalId = request?.offer_id || requestId;
+      await hrmsApi.post(`/api/ats/onboarding/offers/${approvalId}/reject`, {
         remarks: rejectionReason,
       });
 

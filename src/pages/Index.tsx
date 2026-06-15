@@ -9,9 +9,11 @@ import {
   ClipboardList,
   Clock3,
   FileText,
+  GitBranch,
   Package,
   Sparkles,
   Target,
+  UserCircle,
   UserPlus,
   Users,
   Wallet,
@@ -27,6 +29,7 @@ import { UpdateNotification } from "@/components/dashboard/UpdateNotification";
 import { WhosOut } from "@/components/dashboard/WhosOut";
 import { UpcomingCelebrations } from "@/components/dashboard/UpcomingCelebrations";
 import { UpcomingHolidays } from "@/components/dashboard/UpcomingHolidays";
+import { AdminWorkforceDashboard } from "@/components/dashboard/AdminWorkforceDashboard";
 import { useEmployeeProfile } from "@/hooks/useEmployeeProfile";
 
 import { useDashboardStats } from "@/hooks/useDashboardStats";
@@ -36,6 +39,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -207,7 +211,7 @@ const Index = () => {
   const { data: stats, isLoading } = useDashboardStats();
   const { data: employeeStatus, isLoading: isEmployeeStatusLoading } =
     useEmployeeStatus();
-  const { isAdminOrHR, isLoading: isRoleLoading } = useIsAdminOrHR();
+  const { isAdminOrHR, isLoading: isRoleLoading, roleKeys } = useIsAdminOrHR();
   const { user } = useAuth();
   const { data: employeeProfile } = useEmployeeProfile();
   const navigate = useNavigate();
@@ -251,12 +255,30 @@ const Index = () => {
           path: "/assets",
           icon: <Package className="h-4 w-4" />,
         },
-        {
-          title: "View Payroll",
-          description: "Open payroll workspace",
-          path: "/payroll",
-          icon: <FileText className="h-4 w-4" />,
-        },
+      {
+        title: "View Payroll",
+        description: "Open payroll workspace",
+        path: "/payroll",
+        icon: <FileText className="h-4 w-4" />,
+      },
+      {
+        title: "Employee Journey",
+        description: "Review lifecycle milestones",
+        path: "/employee-stat-card",
+        icon: <GitBranch className="h-4 w-4" />,
+      },
+      {
+        title: "Employee Directory",
+        description: "Open detailed employee profiles",
+        path: "/employees",
+        icon: <Users className="h-4 w-4" />,
+      },
+      {
+        title: "Work Inbox",
+        description: "Complete pending HR actions",
+        path: "/work-inbox",
+        icon: <ClipboardCheck className="h-4 w-4" />,
+      },
       ]
     : [
         {
@@ -276,6 +298,24 @@ const Index = () => {
           description: "Check attendance status",
           path: "/attendance",
           icon: <ClipboardList className="h-4 w-4" />,
+        },
+        {
+          title: "My Profile",
+          description: "Update details and photo",
+          path: "/profile",
+          icon: <UserCircle className="h-4 w-4" />,
+        },
+        {
+          title: "My Payslips",
+          description: "Review salary statements",
+          path: "/profile?tab=payslips",
+          icon: <Wallet className="h-4 w-4" />,
+        },
+        {
+          title: "My Journey",
+          description: "See milestones and recognition",
+          path: "/profile?tab=journey",
+          icon: <GitBranch className="h-4 w-4" />,
         },
       ];
 
@@ -311,6 +351,14 @@ const Index = () => {
     );
   }
 
+  if (roleKeys.includes("admin")) {
+    return (
+      <DashboardLayout>
+        <AdminWorkforceDashboard />
+      </DashboardLayout>
+    );
+  }
+
   return (
     <DashboardLayout>
       <div className="space-y-5">
@@ -318,23 +366,34 @@ const Index = () => {
 
         {/* Hero */}
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="grid gap-0 lg:grid-cols-[1fr_320px]">
+          <div className="grid gap-0 lg:grid-cols-[1fr_340px]">
             <div className="relative p-5 sm:p-6">
-              <div className="absolute inset-y-0 left-0 w-1 bg-slate-950" />
+              <div className="absolute inset-y-0 left-0 w-1.5 bg-[#1B6AB5]" />
 
-              <div className="pl-2">
+              <div className="flex flex-col gap-5 pl-2 sm:flex-row sm:items-center">
+                <Link to="/profile" aria-label="Open my profile" className="shrink-0">
+                  <Avatar className="h-24 w-24 border-4 border-white shadow-lg ring-2 ring-[#1B6AB5]/20">
+                    <AvatarImage src={employeeProfile?.avatar_url ?? undefined} alt="My profile photo" />
+                    <AvatarFallback className="bg-[#1B6AB5] text-2xl font-black text-white">
+                      {getUserFirstName().slice(0, 2).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                </Link>
+
+                <div className="min-w-0">
                 <div className="inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1.5 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-100">
                   <Sparkles className="h-3.5 w-3.5" />
-                  HRMS Workspace
+                  Employee Workspace
                 </div>
 
-                <h1 className="mt-4 text-2xl font-semibold tracking-tight text-slate-950">
+                <h1 className="mt-3 text-balance text-3xl font-bold tracking-tight text-slate-950">
                   {getGreeting()}, {getUserFirstName()}
                 </h1>
 
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                  Clean summary of your attendance, leaves, approvals, assets
-                  and team updates.
+                <p className="mt-2 max-w-2xl text-pretty text-sm leading-6 text-slate-500">
+                  {employeeProfile?.designation || "Employee"}
+                  {employeeProfile?.department_name ? ` · ${employeeProfile.department_name}` : ""}
+                  {employeeProfile?.employee_code ? ` · ${employeeProfile.employee_code}` : ""}
                 </p>
 
                 <div className="mt-5 flex flex-wrap gap-2">
@@ -360,6 +419,18 @@ const Index = () => {
                       Manage Leaves
                     </Link>
                   </Button>
+                  <Button
+                    asChild
+                    size="sm"
+                    variant="outline"
+                    className="h-9 rounded-xl border-slate-200 bg-white px-3 text-xs font-semibold"
+                  >
+                    <Link to="/profile?tab=payslips">
+                      <Wallet className="mr-2 h-3.5 w-3.5" />
+                      Open Payslips
+                    </Link>
+                  </Button>
+                </div>
                 </div>
               </div>
             </div>
@@ -499,7 +570,7 @@ const Index = () => {
           </DropdownMenu>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-3">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {quickActions.map((action) => (
             <QuickActionCard key={action.title} action={action} />
           ))}
@@ -507,7 +578,7 @@ const Index = () => {
 
         {/* Summary Strip */}
         <section className="grid gap-4 lg:grid-cols-3">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <Link to="/profile" className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:border-[#1B6AB5]/40 hover:shadow-md">
             <div className="flex items-center gap-3">
               <div className="rounded-xl bg-sky-50 p-2.5 text-sky-700 ring-1 ring-sky-100">
                 <Users className="h-4 w-4" />
@@ -522,9 +593,10 @@ const Index = () => {
                 </p>
               </div>
             </div>
-          </div>
+            <ArrowRight className="mt-4 h-4 w-4 text-slate-300 group-hover:text-[#1B6AB5]" />
+          </Link>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <Link to={isAdminOrHR ? "/payroll" : "/profile?tab=payslips"} className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:border-[#3BAD49]/40 hover:shadow-md">
             <div className="flex items-center gap-3">
               <div className="rounded-xl bg-emerald-50 p-2.5 text-emerald-700 ring-1 ring-emerald-100">
                 <Wallet className="h-4 w-4" />
@@ -539,9 +611,10 @@ const Index = () => {
                 </p>
               </div>
             </div>
-          </div>
+            <ArrowRight className="mt-4 h-4 w-4 text-slate-300 group-hover:text-[#3BAD49]" />
+          </Link>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <Link to="/work-inbox" className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:border-indigo-300 hover:shadow-md">
             <div className="flex items-center gap-3">
               <div className="rounded-xl bg-indigo-50 p-2.5 text-indigo-700 ring-1 ring-indigo-100">
                 <ClipboardCheck className="h-4 w-4" />
@@ -556,7 +629,8 @@ const Index = () => {
                 </p>
               </div>
             </div>
-          </div>
+            <ArrowRight className="mt-4 h-4 w-4 text-slate-300 group-hover:text-indigo-600" />
+          </Link>
         </section>
 
         {/* Team Availability */}

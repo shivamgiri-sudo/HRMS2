@@ -70,6 +70,25 @@ function formatTime(time?: string): string {
   }
 }
 
+function normalizeDate(value?: string): string {
+  if (!value) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(value)) return value.slice(0, 10);
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value.slice(0, 10);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function normalizeStatus(status?: string): AttendanceDay["status"] {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "half_day" || normalized === "half-day") return "half-day";
+  if (normalized === "leave_approved" || normalized === "leave") return "leave";
+  if (normalized === "week_off" || normalized === "weekend") return "weekend";
+  if (normalized === "holiday") return "holiday";
+  if (normalized === "absent" || normalized === "unreconciled") return "absent";
+  return "present";
+}
+
 function getStatusColor(status: AttendanceDay["status"]): string {
   const colors = {
     present: "bg-emerald-100 border-emerald-300 text-emerald-800 hover:bg-emerald-200",
@@ -111,19 +130,27 @@ export function AttendanceCalendar({
   const { data: attendanceData = [], isLoading } = useQuery<AttendanceDay[]>({
     queryKey: ["attendance-calendar", employeeId, currentYear, currentMonth],
     queryFn: async () => {
+      const startDate = formatDate(currentYear, currentMonth, 1);
+      const endDate = formatDate(currentYear, currentMonth, getDaysInMonth(currentYear, currentMonth));
+      const params = new URLSearchParams({
+        employeeId,
+        fromDate: startDate,
+        toDate: endDate,
+        limit: "200",
+      });
       const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
-        `/api/wfm/attendance?employee_id=${employeeId}&month=${currentMonth + 1}&year=${currentYear}`
+        `/api/wfm/attendance/daily?${params}`
       );
       return (res.data || []).map((record: any) => ({
-        date: record.attendance_date || record.punch_date,
-        status: record.status || "present",
-        punchIn: record.punch_in || record.first_punch,
-        punchOut: record.punch_out || record.last_punch,
-        totalHours: record.total_hours || record.working_hours,
-        breakDuration: record.break_minutes,
-        location: record.location || record.punch_location,
+        date: normalizeDate(record.date || record.record_date || record.attendance_date || record.punch_date),
+        status: normalizeStatus(record.status || record.attendance_status),
+        punchIn: record.clock_in || record.clock_in_time || record.punch_in || record.first_punch,
+        punchOut: record.clock_out || record.clock_out_time || record.punch_out || record.last_punch,
+        totalHours: Number(record.total_hours ?? record.working_hours ?? (record.raw_minutes != null ? Number(record.raw_minutes) / 60 : 0)),
+        breakDuration: record.break_minutes ?? undefined,
+        location: record.clock_in_location_name || record.clock_in_location || record.location || record.punch_location,
         ipAddress: record.ip_address,
-        remarks: record.remarks,
+        remarks: record.remarks || record.override_reason,
         leaveType: record.leave_type,
       }));
     },

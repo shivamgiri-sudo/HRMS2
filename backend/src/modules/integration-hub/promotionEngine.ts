@@ -11,6 +11,10 @@ function isValidIdentifier(name: string): boolean {
   return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
 }
 
+const INTEGRATION_TARGET_TABLES = new Set([
+  "dialer_session_log",
+]);
+
 export async function promoteRows(
   integrationKey: string,
   rows: Record<string, unknown>[],
@@ -25,6 +29,7 @@ export async function promoteRows(
     if (!isValidIdentifier(map.target_table) || !isValidIdentifier(map.target_column) || !isValidIdentifier(map.source_field)) {
       continue; // Skip invalid identifiers instead of failing entire batch
     }
+    if (!INTEGRATION_TARGET_TABLES.has(map.target_table)) continue;
     if (!byTable.has(map.target_table)) byTable.set(map.target_table, []);
     byTable.get(map.target_table)!.push(map);
   }

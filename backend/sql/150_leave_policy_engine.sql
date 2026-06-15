@@ -7,6 +7,64 @@ UPDATE leave_type_master SET max_days_per_year = 18 WHERE leave_code = 'EL' AND 
 -- 2. leave_request.status is VARCHAR(50), so 'pending_branch_head' value is already supported.
 --    No schema change required.
 
+-- Earlier deployments used these table names for a different key/value policy
+-- schema. Preserve those rows before creating the worker-compatible tables.
+SET @has_legacy_policy_shape = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'leave_policy_config'
+    AND COLUMN_NAME = 'policy_key'
+);
+SET @has_policy_target_shape = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'leave_policy_config'
+    AND COLUMN_NAME = 'leave_type_id'
+);
+SET @has_policy_legacy_table = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'leave_policy_config_legacy'
+);
+SET @sql = IF(
+  @has_legacy_policy_shape > 0
+    AND @has_policy_target_shape = 0
+    AND @has_policy_legacy_table = 0,
+  'RENAME TABLE leave_policy_config TO leave_policy_config_legacy',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @has_legacy_credit_shape = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'leave_el_credit_log'
+    AND COLUMN_NAME = 'completed_months'
+);
+SET @has_credit_target_shape = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'leave_el_credit_log'
+    AND COLUMN_NAME = 'leave_type_id'
+);
+SET @has_credit_legacy_table = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'leave_el_credit_log_legacy'
+);
+SET @sql = IF(
+  @has_legacy_credit_shape > 0
+    AND @has_credit_target_shape = 0
+    AND @has_credit_legacy_table = 0,
+  'RENAME TABLE leave_el_credit_log TO leave_el_credit_log_legacy',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 -- 3. leave_policy_config table
 CREATE TABLE IF NOT EXISTS leave_policy_config (
   id                        CHAR(36)      NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -61,8 +119,9 @@ CREATE TABLE IF NOT EXISTS leave_el_credit_log (
   days_credited DECIMAL(6,2)  NOT NULL,
   months_served DECIMAL(5,2)  NOT NULL DEFAULT 0,
   credit_type   ENUM('annual','monthly','manual') NOT NULL DEFAULT 'annual',
+  credit_month_key INT GENERATED ALWAYS AS (COALESCE(credit_month, 0)) STORED,
   created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_emp_leave_credit (employee_id, leave_type_id, credit_year, credit_month, credit_type),
+  UNIQUE KEY uq_emp_leave_credit (employee_id, leave_type_id, credit_year, credit_month_key, credit_type),
   INDEX idx_credit_employee (employee_id),
   INDEX idx_credit_year (credit_year),
   FOREIGN KEY (employee_id)   REFERENCES employees(id)        ON DELETE CASCADE,

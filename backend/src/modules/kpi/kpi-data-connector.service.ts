@@ -41,6 +41,67 @@ async function upsertDailyActual(
   );
 }
 
+// ─── Sync Integration Hub call aggregates ────────────────────────────────────
+
+export async function syncIntegrationCallMetrics(date: string): Promise<{ synced: number; skipped: number }> {
+  const metricIds = await getMetricIds(['TALK_TIME', 'DIALS']);
+  if (!metricIds.size) return { synced: 0, skipped: 0 };
+
+  await db.execute(
+    `UPDATE employees e
+     JOIN (
+       SELECT icd.employee_code, MIN(ipa.process_id) AS process_id
+       FROM integration_call_daily icd
+       JOIN integration_process_alias ipa
+         ON ipa.source_value = UPPER(TRIM(icd.process_name))
+        AND ipa.active_status = 1
+       WHERE icd.activity_date = ?
+       GROUP BY icd.employee_code
+       HAVING COUNT(DISTINCT ipa.process_id) = 1
+     ) mapped
+       ON UPPER(TRIM(mapped.employee_code)) = UPPER(TRIM(e.employee_code))
+     SET e.process_id = mapped.process_id
+     WHERE e.active_status = 1 AND e.process_id IS NULL`,
+    [date]
+  );
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       e.id AS employee_id,
+       SUM(icd.total_calls) AS total_calls,
+       SUM(icd.talk_minutes) AS talk_minutes
+     FROM integration_call_daily icd
+     JOIN employees e
+       ON UPPER(TRIM(e.employee_code)) = UPPER(TRIM(icd.employee_code))
+      AND e.active_status = 1
+     WHERE icd.activity_date = ?
+     GROUP BY e.id`,
+    [date]
+  );
+
+  let synced = 0;
+  for (const row of rows as any[]) {
+    const totalCalls = Number(row.total_calls ?? 0);
+    const talkMinutes = Number(row.talk_minutes ?? 0);
+    if (metricIds.has('DIALS')) {
+      await upsertDailyActual(row.employee_id, metricIds.get('DIALS')!, date, totalCalls, 'apr');
+    }
+    if (metricIds.has('TALK_TIME') && totalCalls > 0) {
+      const averageTalkSeconds = (talkMinutes * 60) / totalCalls;
+      await upsertDailyActual(
+        row.employee_id,
+        metricIds.get('TALK_TIME')!,
+        date,
+        Math.round(averageTalkSeconds * 10) / 10,
+        'apr'
+      );
+    }
+    synced++;
+  }
+
+  return { synced, skipped: 0 };
+}
+
 // ─── Sync APR metrics (AHT, TALK_TIME, DIALS, ACW) ────────────────────────────
 
 export async function syncAprMetrics(date: string): Promise<{ synced: number; skipped: number }> {
@@ -144,8 +205,12 @@ export async function syncAttendanceMetrics(date: string): Promise<{ synced: num
   let synced = 0;
 
   for (const rec of records) {
-    // 100 if Present/Half-day, 0 if Absent/LWP
-    const value = ['P', 'H', 'PRESENT', 'HALF_DAY'].includes(String(rec.attendance_status).toUpperCase()) ? 100 : 0;
+    const status = String(rec.attendance_status).toUpperCase();
+    const value = ['P', 'PRESENT'].includes(status)
+      ? 100
+      : ['H', 'HALF_DAY'].includes(status)
+        ? 50
+        : 0;
     await upsertDailyActual(rec.employee_id, attMetricId, date, value, 'attendance');
     synced++;
   }

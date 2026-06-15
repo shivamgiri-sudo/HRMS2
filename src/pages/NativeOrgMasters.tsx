@@ -128,6 +128,7 @@ const TABS: TabConfig[] = [
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function isActive(record: OrgRecord): boolean {
+  if (record.active_status !== undefined) return Number(record.active_status) === 1;
   if (typeof record.is_active === "boolean") return record.is_active;
   if (typeof record.active === "boolean") return record.active;
   if (record.status) return record.status === "active" || record.status === "1";

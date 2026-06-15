@@ -10,8 +10,16 @@ import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
 import { employeeController as c } from "./employee.controller.js";
-import { appendJourneyEvent, listJourneyEvents } from "./journeyLog.service.js";
+import { appendJourneyEvent, listComprehensiveJourney } from "./journeyLog.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { employeeProfileService } from "./employee.profile.service.js";
+import {
+  bankDetailsSchema,
+  emergencyContactSchema,
+  nomineeSchema,
+  selfProfileUpdateSchema,
+  statutoryDetailsSchema,
+} from "./employee.profile.validation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PHOTOS_DIR = path.resolve(__dirname, "../../../uploads/employee-photos");
@@ -48,49 +56,110 @@ router.use(requireAuth);
 router.get("/me", h(async (req: any, res: any) => {
   const userId = req.authUser?.id;
   if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
-  const { db } = await import("../../db/mysql.js");
-  const [rows] = await db.execute(
-    `SELECT e.*,
-            COALESCE(CONCAT(m.first_name, ' ', COALESCE(m.last_name, '')), '') AS reporting_manager_name,
-            dept.dept_name AS department_name,
-            desig.designation_name AS designation
-     FROM employees e
-     LEFT JOIN employees m ON m.id = e.reporting_manager_id
-     LEFT JOIN department_master dept ON dept.id = e.department_id
-     LEFT JOIN designation_master desig ON desig.id = e.designation_id
-     WHERE e.user_id = ? AND e.active_status = 1
-     LIMIT 1`,
-    [userId]
-  ) as any[];
-  if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
-
-  // Transform DB fields to match frontend expectations
-  const employee = rows[0];
-  const transformed = {
-    ...employee,
-    // Map mobile to phone
-    phone: employee.mobile || null,
-    // Map address1 to address
-    address: employee.address1 || null,
-    // country column now exists in DB
-    country: employee.country || null,
-    // Convert gender to lowercase for frontend Select component
-    gender: employee.gender ? String(employee.gender).toLowerCase() : null,
-    // Parse working_days JSON if it's a string
-    working_days: employee.working_days
-      ? (typeof employee.working_days === 'string' ? JSON.parse(employee.working_days) : employee.working_days)
-      : null,
-    // Add department object structure
-    department: employee.department_name ? { name: employee.department_name } : null,
-    // Keep date_of_joining as hire_date for compatibility
-    hire_date: employee.date_of_joining,
-  };
-
-  return res.json({ success: true, data: transformed });
+  try {
+    const data = await employeeProfileService.getMyProfile(userId);
+    return res.json({ success: true, data });
+  } catch (error: any) {
+    if (error?.statusCode === 404) {
+      return res.json({ success: true, data: null, account_type: "system" });
+    }
+    throw error;
+  }
 }));
 
 // PATCH /api/employees/me — update own profile (employee self-service)
-router.patch("/me", h(c.updateMyProfile));
+router.patch("/me", h(async (req: any, res: any) => {
+  const parsed = selfProfileUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      success: false,
+      message: "Validation failed",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+  }
+  const data = await employeeProfileService.updateMyProfile(
+    req.authUser.id,
+    parsed.data,
+    req,
+  );
+  return res.json({ success: true, data, message: "Profile updated" });
+}));
+
+router.put("/me/emergency-contact", h(async (req: any, res: any) => {
+  const parsed = emergencyContactSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      success: false,
+      message: "Validation failed",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+  }
+  const data = await employeeProfileService.saveEmergencyContact(
+    req.authUser.id,
+    parsed.data,
+    req,
+  );
+  return res.json({ success: true, data, message: "Emergency contact saved" });
+}));
+
+router.put("/me/nominee", h(async (req: any, res: any) => {
+  const parsed = nomineeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      success: false,
+      message: "Validation failed",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+  }
+  const data = await employeeProfileService.saveNominee(
+    req.authUser.id,
+    parsed.data,
+    req,
+  );
+  return res.json({ success: true, data, message: "Nominee details saved" });
+}));
+
+router.put("/me/bank-details", h(async (req: any, res: any) => {
+  const parsed = bankDetailsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      success: false,
+      message: "Validation failed",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+  }
+  const data = await employeeProfileService.saveBankDetails(
+    req.authUser.id,
+    parsed.data,
+    req,
+  );
+  return res.json({
+    success: true,
+    data,
+    message: "Bank details submitted for verification",
+  });
+}));
+
+router.put("/me/statutory-details", h(async (req: any, res: any) => {
+  const parsed = statutoryDetailsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      success: false,
+      message: "Validation failed",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+  }
+  const data = await employeeProfileService.saveStatutoryDetails(
+    req.authUser.id,
+    parsed.data,
+    req,
+  );
+  return res.json({
+    success: true,
+    data,
+    message: "Statutory details submitted for verification",
+  });
+}));
 
 // GET /api/employees/me/journey — employee views their own journey timeline
 router.get("/me/journey", h(async (req: any, res: any) => {
@@ -102,7 +171,7 @@ router.get("/me/journey", h(async (req: any, res: any) => {
     [userId]
   ) as any[];
   if (!empRows.length) return res.status(404).json({ success: false, error: "No employee record" });
-  const data = await listJourneyEvents(empRows[0].id);
+  const data = await listComprehensiveJourney(empRows[0].id, { includeCompensation: true });
   return res.json({ success: true, data });
 }));
 
@@ -223,6 +292,29 @@ router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req
   res.json({ data: rows[0] });
 }));
 
+router.get("/options/search", requireAuth, h(async (req: any, res: any) => {
+  const search = String(req.query.q ?? "").trim();
+  if (search.length < 2) return res.json({ success: true, data: [] });
+
+  const limit = Math.min(Math.max(Number(req.query.limit ?? 30), 1), 50);
+  const like = `%${search}%`;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id,
+            e.employee_code,
+            CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS name
+       FROM employees e
+      WHERE e.active_status = 1
+        AND (
+          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) LIKE ?
+          OR e.employee_code LIKE ?
+        )
+      ORDER BY CASE WHEN e.employee_code = ? THEN 0 ELSE 1 END, name
+      LIMIT ${limit}`,
+    [like, like, search]
+  );
+  return res.json({ success: true, data: rows });
+}));
+
 // GET /api/employees/my-team — returns active direct reports of the logged-in user's employee record
 router.get("/my-team", h(async (req: any, res: any) => {
   const userId = req.authUser?.id;
@@ -262,12 +354,41 @@ router.get("/", requireRole("admin", "hr", "manager"), h(async (req, res) => {
       departmentId: "e.department_id",
       managerEmployeeId: "e.reporting_manager_id"
     },
-    { allowCeoAllRead: true }
+    { allowAdminBypass: true, allowCeoAllRead: true }
   );
 
   // Pass scope SQL to controller (will need service update for proper integration)
   (req as any).scopeFilter = scoped;
   return c.listEmployees(req, res);
+}));
+
+router.get("/directory-masters", requireRole("admin", "hr", "manager"), h(async (_req: any, res: any) => {
+  const activeEmployeeWhere = `
+    e.active_status = 1
+    OR LOWER(COALESCE(e.employment_status, '')) IN ('inactive', 'terminated', 'offboarded', 'absconded')
+  `;
+  const [processes] = await db.execute<RowDataPacket[]>(
+    `SELECT MIN(p.id) AS id,
+            p.process_name,
+            COUNT(*) AS employee_count
+       FROM employees e
+       JOIN process_master p ON p.id = e.process_id
+      WHERE (${activeEmployeeWhere}) AND TRIM(COALESCE(p.process_name, '')) <> ''
+      GROUP BY LOWER(TRIM(p.process_name)), p.process_name
+      ORDER BY p.process_name ASC`
+  );
+  const [branches] = await db.execute<RowDataPacket[]>(
+    `SELECT MIN(b.id) AS id,
+            b.branch_name,
+            COUNT(*) AS employee_count
+       FROM employees e
+       JOIN branch_master b ON b.id = e.branch_id
+      WHERE (${activeEmployeeWhere}) AND TRIM(COALESCE(b.branch_name, '')) <> ''
+      GROUP BY LOWER(TRIM(b.branch_name)), b.branch_name
+      ORDER BY b.branch_name ASC`
+  );
+
+  return res.json({ success: true, data: { processes, branches } });
 }));
 router.post("/",
   requireRole("admin", "hr"),
@@ -275,7 +396,7 @@ router.post("/",
     branchId: req.body.branch_id,
     processId: req.body.process_id,
     departmentId: req.body.department_id
-  })),
+  }), { allowAdminBypass: true }),
   h(c.createEmployee)
 );
 router.get("/:id", requireRole("admin", "hr", "manager"), h(c.getEmployee));  // TODO: Add self-scope check
@@ -293,7 +414,7 @@ router.patch("/:id",
       processId: emp?.process_id,
       departmentId: emp?.department_id
     };
-  }),
+  }, { allowAdminBypass: true }),
   h(c.updateEmployee)
 );
 router.delete("/:id", requireRole("admin"), h(c.deactivateEmployee));
@@ -301,11 +422,18 @@ router.delete("/:id", requireRole("admin"), h(c.deactivateEmployee));
 // Journey log
 router.get("/:id/journey", requireRole("admin", "hr", "manager"), async (req: any, res: any, next: any) => {
   try {
-    const data = await listJourneyEvents(req.params.id, {
-      module:    req.query.module    as string | undefined,
-      eventType: req.query.eventType as string | undefined,
-      fromDate:  req.query.fromDate  as string | undefined,
-      toDate:    req.query.toDate    as string | undefined,
+    const includeCompensation = await hasRole(
+      req.authUser!.id,
+      "admin", "hr", "ceo", "finance", "payroll"
+    );
+    const data = await listComprehensiveJourney(req.params.id, {
+      includeCompensation,
+      filters: {
+        module:    req.query.module    as string | undefined,
+        eventType: req.query.eventType as string | undefined,
+        fromDate:  req.query.fromDate  as string | undefined,
+        toDate:    req.query.toDate    as string | undefined,
+      },
     });
     return res.json({ success: true, data });
   } catch (err) { next(err); }
@@ -336,7 +464,7 @@ router.post("/:id/journey", requireRole("admin", "hr"), async (req: any, res: an
 router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
   const { db } = await import("../../db/mysql.js");
   const targetId = req.params.id;
-  const isAdminOrHR = await hasRole(req.authUser!.id, "admin", "hr", "ceo");
+  const isAdminOrHR = await hasRole(req.authUser!.id, "admin", "hr", "ceo", "finance", "payroll");
   const selfEmp = await getEmployeeForUser(req.authUser!.id);
 
   // Access check: admin/hr/ceo can view all; others can only view own
@@ -346,19 +474,64 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
 
   // Core employee with joined master data
   const [[emp]] = await db.execute<RowDataPacket[]>(
-    `SELECT e.*, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS full_name,
+    `SELECT e.id, e.employee_code, e.user_id, e.first_name, e.last_name,
+            COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS full_name,
+            COALESCE(NULLIF(TRIM(e.official_email), ''), e.email) AS email,
+            e.mobile, e.alternate_mobile, e.gender, e.marital_status,
+            e.date_of_birth, e.date_of_joining, e.date_of_exit,
+            e.employment_type, e.employee_category, e.employment_status,
+            e.branch_id, e.department_id, e.process_id, e.designation_id,
+            e.grade_id, e.cost_centre_id, e.reporting_manager_id, e.working_hours_start,
+            e.working_hours_end, e.working_days, e.active_status,
+            e.photo_url, e.avatar_url, e.blood_group, e.city, e.state,
+            e.country, e.pincode,
             d.designation_name, b.branch_name, b.call_centre_code,
-            p.process_name, dept.dept_name,
+            p.process_name, dept.dept_name, cc.cost_centre_name,
+            COALESCE(
+              NULLIF(TRIM(CONCAT(manager.first_name, ' ', COALESCE(manager.last_name, ''))), ''),
+              manager.full_name
+            ) AS reporting_manager_name,
             DATEDIFF(NOW(), e.date_of_joining) AS days_employed
        FROM employees e
        LEFT JOIN designation_master d ON d.id = e.designation_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN process_master p ON p.id = e.process_id
        LEFT JOIN department_master dept ON dept.id = e.department_id
+       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+       LEFT JOIN employees manager ON manager.id = e.reporting_manager_id
       WHERE e.id = ? LIMIT 1`,
     [targetId]
   );
   if (!emp) return res.status(404).json({ error: "Employee not found" });
+
+  let salary: RowDataPacket | null = null;
+  if (isAdminOrHR || selfEmp?.id === targetId) {
+    const [salaryRows] = await db.execute<RowDataPacket[]>(
+      `SELECT esa.id,
+              esa.structure_id,
+              ssm.structure_code,
+              ssm.structure_name,
+              esa.ctc_annual,
+              ROUND(esa.ctc_annual / 12, 2) AS monthly_ctc,
+              ROUND((esa.ctc_annual / 12) * ssm.basic_pct / 100, 2) AS basic,
+              ROUND((esa.ctc_annual / 12) * ssm.hra_pct / 100, 2) AS hra,
+              ROUND(
+                (esa.ctc_annual / 12)
+                - ((esa.ctc_annual / 12) * ssm.basic_pct / 100)
+                - ((esa.ctc_annual / 12) * ssm.hra_pct / 100),
+                2
+              ) AS other_allowances,
+              DATE_FORMAT(esa.effective_from, '%Y-%m-%d') AS effective_from
+         FROM employee_salary_assignment esa
+         JOIN salary_structure_master ssm ON ssm.id = esa.structure_id
+        WHERE esa.employee_id = ?
+          AND esa.active_status = 1
+        ORDER BY esa.effective_from DESC, esa.created_at DESC
+        LIMIT 1`,
+      [targetId]
+    );
+    salary = salaryRows[0] ?? null;
+  }
 
   // Leave balances (all types for current year)
   let leaveBalances: RowDataPacket[] = [];
@@ -440,17 +613,12 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
     gamificationTier = tierRows[0] ?? null;
   } catch (_e) { /* table may not exist yet */ }
 
-  // Journey events (last 20)
+  // Comprehensive journey, including ATS, lifecycle, mobility, PIP and exit.
   let journey: RowDataPacket[] = [];
   try {
-    const [journeyRows] = await db.execute<RowDataPacket[]>(
-      `SELECT event_type, event_date, description, module
-         FROM employee_journey_log
-        WHERE employee_id = ?
-        ORDER BY event_date DESC LIMIT 20`,
-      [targetId]
-    );
-    journey = journeyRows;
+    journey = await listComprehensiveJourney(targetId, {
+      includeCompensation: isAdminOrHR || selfEmp?.id === targetId,
+    }) as unknown as RowDataPacket[];
   } catch (_e) { /* table may not exist yet */ }
 
   return res.json({
@@ -463,6 +631,7 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
       pending_docs: pendingDocs,
       gamification_tier: gamificationTier,
       journey,
+      salary,
     }
   });
 }));

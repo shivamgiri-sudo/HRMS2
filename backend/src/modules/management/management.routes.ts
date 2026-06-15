@@ -51,6 +51,14 @@ router.get("/dashboard", requireRole("admin", "hr", "manager", "branch_head", "c
   res.json({ data: await managementService.getDashboardSummary(req.query.process_id as string | undefined) });
 }));
 
+router.get("/workforce-dashboard", requireRole("admin", "hr", "ceo"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  res.json({ data: await managementService.getWorkforceDashboard() });
+}));
+
+router.get("/system-dashboard", requireRole("admin"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  res.json({ data: await managementService.getSystemDashboard() });
+}));
+
 // ─── TNI (Training Needs Identification) ─────────────────────────────────────
 
 router.get("/tni", requireRole("admin", "hr", "manager", "qa"), h(async (req: AuthenticatedRequest, res: Response) => {

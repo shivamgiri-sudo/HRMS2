@@ -23,7 +23,13 @@ export const leaveService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM leave_type_master WHERE active_status = 1 ORDER BY leave_name ASC"
     );
-    const types = rows as LeaveType[];
+    const seen = new Set<string>();
+    const types = (rows as LeaveType[]).filter((type) => {
+      const normalized = String(type.leave_name ?? "").trim().toLocaleLowerCase();
+      if (!normalized || seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    });
 
     // Apply customizations if employeeId provided
     if (employeeId) {
@@ -345,7 +351,14 @@ export const leaveService = {
        LEFT JOIN employees e    ON e.id = lr.employee_id
        LEFT JOIN department_master dept ON dept.id = e.department_id
        LEFT JOIN leave_type_master lt   ON lt.id = lr.leave_type_id
-       LEFT JOIN employees rev  ON rev.id = lr.reviewed_by
+       LEFT JOIN leave_approval_log approval ON approval.id = (
+         SELECT latest.id
+         FROM leave_approval_log latest
+         WHERE latest.leave_request_id = lr.id
+         ORDER BY latest.action_at DESC
+         LIMIT 1
+       )
+       LEFT JOIN employees rev ON rev.user_id = approval.action_by
        ${where}
        ORDER BY lr.applied_at DESC
        LIMIT ${limit} OFFSET ${offset}`,
@@ -358,6 +371,42 @@ export const leaveService = {
   },
 
   async getBalance(employeeId: string, year: number): Promise<any[]> {
+    await db.execute(
+      `INSERT INTO leave_balance_ledger
+         (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
+       SELECT UUID(), e.id, lt.id, ?,
+              lt.max_days_per_year +
+                CASE
+                  WHEN lt.carry_forward = 1
+                  THEN GREATEST(
+                    COALESCE(prev.allocated_days, 0)
+                    + COALESCE(prev.adjusted_days, 0)
+                    - COALESCE(prev.used_days, 0),
+                    0
+                  )
+                  ELSE 0
+                END,
+              0, 0
+       FROM employees e
+       JOIN leave_type_master lt
+         ON lt.active_status = 1
+        AND lt.max_days_per_year > 0
+        AND LOWER(lt.leave_name) NOT LIKE '%legacy%'
+       LEFT JOIN leave_balance_ledger prev
+         ON prev.employee_id = e.id
+        AND prev.leave_type_id = lt.id
+        AND prev.balance_year = ? - 1
+       WHERE e.id = ?
+         AND e.active_status = 1
+         AND (
+           lt.leave_code NOT IN ('ML', 'MTRL', 'PL', 'PTRL')
+           OR (lt.leave_code IN ('ML', 'MTRL') AND LOWER(TRIM(COALESCE(e.gender, ''))) IN ('female', 'f'))
+           OR (lt.leave_code IN ('PL', 'PTRL') AND LOWER(TRIM(COALESCE(e.gender, ''))) IN ('male', 'm'))
+         )
+       ON DUPLICATE KEY UPDATE id = leave_balance_ledger.id`,
+      [year, year, employeeId]
+    );
+
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT lbl.*, lt.leave_name, lt.leave_code, lt.paid_leave, lt.carry_forward, lt.max_days_per_year
        FROM leave_balance_ledger lbl

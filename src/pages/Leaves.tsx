@@ -348,7 +348,7 @@ const Leaves = () => {
     });
   };
 
-  const pendingRequests = requests.filter((request) => request.status === "pending");
+  const pendingRequests = requests.filter((request) => request.status.startsWith("pending"));
   const allProcessedRequests = requests.filter(
     (request) => request.status !== "pending"
   );
@@ -359,9 +359,9 @@ const Leaves = () => {
 
   const uniqueYears = [
     ...new Set(
-      allProcessedRequests.map((request) =>
-        parseISO(request.startDate).getFullYear()
-      )
+      allProcessedRequests
+        .map((request) => parseISO(request.startDate).getFullYear())
+        .filter((year) => Number.isFinite(year))
     ),
   ].sort((a, b) => b - a);
 
@@ -884,7 +884,7 @@ const Leaves = () => {
                         myEmployeeId && request.employeeId === myEmployeeId;
 
                       const canApproveThisRequest =
-                        canApproveLeaves && !isOwnRequest;
+                        canApproveLeaves && !isOwnRequest && request.status === "pending";
 
                       return (
                         <LeaveRequestCard

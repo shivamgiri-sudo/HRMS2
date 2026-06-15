@@ -85,8 +85,10 @@ router.get("/process-config/:processId", requireRole("admin", "hr", "manager"), 
     `SELECT kpc.*, km.metric_name, km.metric_code, km.category AS metric_type, km.unit,
             ktm.target_value AS template_default
      FROM kpi_process_config kpc
-     JOIN kpi_metric_master km ON km.id = kpc.metric_id
-     LEFT JOIN kpi_template_metric ktm ON ktm.metric_id = kpc.metric_id
+     JOIN kpi_metric_master km
+       ON km.id = CONVERT(kpc.metric_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+     LEFT JOIN kpi_template_metric ktm
+       ON ktm.metric_id = CONVERT(kpc.metric_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
      WHERE kpc.process_id = ?
      ORDER BY km.metric_name`,
     [req.params.processId]

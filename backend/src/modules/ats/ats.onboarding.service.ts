@@ -379,8 +379,10 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
        ON pm.id = c.applied_for_process
        OR pm.process_name = c.applied_for_process
        OR pm.process_code = c.applied_for_process
-     WHERE o.id = ?`,
-    [offerId],
+     WHERE o.id = ? OR o.onboarding_request_id = ?
+     ORDER BY CASE WHEN o.id = ? THEN 0 ELSE 1 END
+     LIMIT 1`,
+    [offerId, offerId, offerId],
   );
   if (!offerRows.length) throw Object.assign(new Error('Offer not found'), { statusCode: 404 });
   const offer = offerRows[0];
@@ -560,8 +562,10 @@ export async function rejectOffer(offerId: string, approverId: string, remarks: 
      FROM ats_employment_offer o
      JOIN ats_onboarding_request r ON r.id = o.onboarding_request_id
      JOIN ats_candidate c ON c.id = r.candidate_id
-     WHERE o.id = ?`,
-    [offerId],
+     WHERE o.id = ? OR o.onboarding_request_id = ?
+     ORDER BY CASE WHEN o.id = ? THEN 0 ELSE 1 END
+     LIMIT 1`,
+    [offerId, offerId, offerId],
   );
   if (!rows.length) throw Object.assign(new Error('Offer not found'), { statusCode: 404 });
   const row = (rows as RowDataPacket[])[0];

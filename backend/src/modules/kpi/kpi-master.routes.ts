@@ -4,6 +4,9 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { getEmployeeForUser } from '../../shared/accessGuard.js';
+import { hasProcessScope } from '../../shared/accessGuard.js';
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
 import {
   listKpiMasterConfig,
   upsertKpiMasterConfig,
@@ -27,6 +30,65 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) =>
   (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
+
+function readPerformanceQuery(req: AuthenticatedRequest, res: Response) {
+  const period = (req.query.period as Period) ?? 'day';
+  const validPeriods: Period[] = ['day', 'wtd', 'mtd', 'past_month'];
+  if (!validPeriods.includes(period)) {
+    res.status(400).json({ success: false, message: 'Invalid period. Use: day, wtd, mtd, past_month' });
+    return null;
+  }
+
+  const date = req.query.date ? String(req.query.date) : undefined;
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    res.status(400).json({ success: false, message: 'Invalid date. Use YYYY-MM-DD' });
+    return null;
+  }
+  return { period, date };
+}
+
+async function canViewEmployeePerformance(req: AuthenticatedRequest, employeeId: string) {
+  const roles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
+  if (roles.some((role) => ['super_admin', 'admin', 'hr'].includes(role))) return true;
+
+  const viewer = await getEmployeeForUser(req.authUser!.id);
+  if (!viewer) return false;
+  if (viewer.id === employeeId) return true;
+
+  if (roles.some((role) => ['manager', 'process_manager'].includes(role))) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `WITH RECURSIVE reporting_tree AS (
+         SELECT id
+           FROM employees
+          WHERE reporting_manager_id = ? AND active_status = 1
+         UNION ALL
+         SELECT e.id
+           FROM employees e
+           JOIN reporting_tree rt ON e.reporting_manager_id = rt.id
+          WHERE e.active_status = 1
+       )
+       SELECT id FROM reporting_tree WHERE id = ? LIMIT 1`,
+      [viewer.id, employeeId]
+    );
+    return rows.length > 0;
+  }
+
+  if (roles.includes('qa')) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      'SELECT process_id, branch_id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1',
+      [employeeId]
+    );
+    const target = rows[0] as any;
+    return Boolean(target?.process_id) && hasProcessScope(
+      req.authUser!.id,
+      target.process_id,
+      target.branch_id,
+      'qa'
+    );
+  }
+
+  return false;
+}
 
 // ─── Admin: list configs ──────────────────────────────────────────────────────
 router.get(
@@ -64,13 +126,10 @@ router.get(
       return res.status(400).json({ success: false, message: 'No employee linked to this user' });
     }
 
-    const period = (req.query.period as Period) ?? 'day';
-    const validPeriods: Period[] = ['day', 'wtd', 'mtd', 'past_month'];
-    if (!validPeriods.includes(period)) {
-      return res.status(400).json({ success: false, message: 'Invalid period. Use: day, wtd, mtd, past_month' });
-    }
+    const query = readPerformanceQuery(req, res);
+    if (!query) return;
 
-    const data = await getTeamKpiSummary(emp.id, period);
+    const data = await getTeamKpiSummary(emp.id, query.period, query.date);
     res.json({ success: true, data });
   })
 );
@@ -141,11 +200,8 @@ router.get(
       return res.status(400).json({ success: false, message: 'No employee linked to this user' });
     }
 
-    const period = (req.query.period as Period) ?? 'day';
-    const validPeriods: Period[] = ['day', 'wtd', 'mtd', 'past_month'];
-    if (!validPeriods.includes(period)) {
-      return res.status(400).json({ success: false, message: 'Invalid period. Use: day, wtd, mtd, past_month' });
-    }
+    const query = readPerformanceQuery(req, res);
+    if (!query) return;
 
     // Auto-resolve if not done yet
     const existing = await getResolvedKpis(emp.id);
@@ -153,7 +209,7 @@ router.get(
       await resolveEmployeeKpis(emp.id);
     }
 
-    const data = await getLiveKpiPerformance(emp.id, period);
+    const data = await getLiveKpiPerformance(emp.id, query.period, query.date);
     res.json({ success: true, data });
   })
 );
@@ -163,8 +219,12 @@ router.get(
   '/live/:empId',
   requireRole('admin', 'hr', 'manager', 'process_manager', 'qa'),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const period = (req.query.period as Period) ?? 'day';
-    const data = await getLiveKpiPerformance(req.params.empId, period);
+    const query = readPerformanceQuery(req, res);
+    if (!query) return;
+    if (!(await canViewEmployeePerformance(req, req.params.empId))) {
+      return res.status(403).json({ success: false, message: 'Employee is outside your reporting or assigned scope' });
+    }
+    const data = await getLiveKpiPerformance(req.params.empId, query.period, query.date);
     res.json({ success: true, data });
   })
 );

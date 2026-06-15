@@ -23,9 +23,15 @@ import {
 
 interface LeaveData {
   id: string;
-  start_date: string;
-  end_date: string;
-  days_count: number;
+  start_date?: string;
+  end_date?: string;
+  from_date?: string;
+  to_date?: string;
+  days_count?: number;
+  total_days?: number;
+  employee_name?: string;
+  avatar_url?: string | null;
+  leave_type_name?: string;
   employee: {
     first_name: string;
     last_name: string;
@@ -34,6 +40,55 @@ interface LeaveData {
   leave_type: {
     name: string;
   } | null;
+}
+
+function normalizeLeave(row: any): LeaveData {
+  if (row.start_date && row.end_date && row.employee && row.leave_type) return row as LeaveData;
+  const employeeName = String(row.employee_name ?? "Unknown").trim();
+  const [firstName = "Unknown", ...rest] = employeeName.split(/\s+/);
+  return {
+    ...row,
+    start_date: row.from_date ?? row.start_date,
+    end_date: row.to_date ?? row.end_date,
+    days_count: Number(row.total_days ?? row.days_count ?? 0),
+    employee: {
+      first_name: firstName,
+      last_name: rest.join(" "),
+      avatar_url: row.avatar_url ?? null,
+    },
+    leave_type: {
+      name: row.leave_type_name ?? row.leave_type?.name ?? "Leave",
+    },
+  };
+}
+
+async function fetchApprovedLeavesForYear(year: number): Promise<LeaveData[]> {
+  const limit = 100;
+  const first = await hrmsApi.get<{success:boolean;data:any[];total?:number}>(
+    `/api/leave/requests?status=approved&year=${year}&page=1&limit=${limit}`
+  );
+  const rows = first.data ?? [];
+  const total = Number(first.total ?? rows.length);
+  const totalPages = Math.ceil(total / limit);
+
+  const remaining = totalPages > 1
+    ? await Promise.all(
+        Array.from({ length: totalPages - 1 }, (_, index) =>
+          hrmsApi.get<{success:boolean;data:any[]}>(
+            `/api/leave/requests?status=approved&year=${year}&page=${index + 2}&limit=${limit}`
+          )
+        )
+      )
+    : [];
+
+  const byId = new Map<string, LeaveData>();
+  for (const raw of rows.concat(...remaining.map((page) => page.data ?? []))) {
+    const leave = normalizeLeave(raw);
+    const key = String(leave.id ?? "");
+    if (!key || byId.has(key) || !leave.start_date || !leave.end_date) continue;
+    byId.set(key, leave);
+  }
+  return Array.from(byId.values());
 }
 
 // leaveTypeColors, leaveColorFallbacks, getLeaveColor imported from @/lib/leaveColors
@@ -49,23 +104,24 @@ export function LeaveCalendarView() {
   const { data: leaves = [], isLoading } = useQuery({
     queryKey: ["leave-calendar-view", format(monthStart, "yyyy-MM-dd")],
     queryFn: async () => {
-      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/leave/requests");
-      return (res.data ?? []) as LeaveData[];
+      return fetchApprovedLeavesForYear(currentDate.getFullYear());
     },
   });
 
   // Generate all dates that have leaves
   const leaveDates = leaves.flatMap((leave) => {
-    const start = parseISO(leave.start_date);
-    const end = parseISO(leave.end_date);
+    const start = parseISO(leave.start_date ?? "");
+    const end = parseISO(leave.end_date ?? "");
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [];
     return eachDayOfInterval({ start, end });
   });
 
   // Get leaves for selected date
   const selectedDateLeaves = selectedDate
     ? leaves.filter((leave) => {
-        const start = parseISO(leave.start_date);
-        const end = parseISO(leave.end_date);
+        const start = parseISO(leave.start_date ?? "");
+        const end = parseISO(leave.end_date ?? "");
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
         return isWithinInterval(selectedDate, { start, end });
       })
     : [];
@@ -185,10 +241,10 @@ export function LeaveCalendarView() {
               </p>
               {selectedDateLeaves.map((leave) => {
                 const fullName = leave.employee 
-                  ? `${leave.employee.first_name} ${leave.employee.last_name}` 
+                  ? `${leave.employee.first_name} ${leave.employee.last_name ?? ""}`.trim()
                   : "Unknown";
                 const initials = leave.employee 
-                  ? `${leave.employee.first_name[0]}${leave.employee.last_name[0]}`.toUpperCase()
+                  ? `${leave.employee.first_name?.[0] ?? ""}${leave.employee.last_name?.[0] ?? ""}`.toUpperCase() || "?"
                   : "??";
                 const leaveType = leave.leave_type?.name || "Leave";
                 
@@ -211,8 +267,8 @@ export function LeaveCalendarView() {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{fullName}</p>
                       <p className="text-xs text-muted-foreground">
-                        {format(parseISO(leave.start_date), "MMM d")} - {format(parseISO(leave.end_date), "MMM d")}
-                        <span className="ml-1">({leave.days_count} day{leave.days_count > 1 ? "s" : ""})</span>
+                        {format(parseISO(leave.start_date ?? ""), "MMM d")} - {format(parseISO(leave.end_date ?? ""), "MMM d")}
+                        <span className="ml-1">({leave.days_count ?? 0} day{Number(leave.days_count ?? 0) > 1 ? "s" : ""})</span>
                       </p>
                     </div>
                     <Badge 

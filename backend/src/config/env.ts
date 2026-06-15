@@ -39,6 +39,11 @@ const envSchema = z.object({
   INTERNAL_DEMO_BYPASS: z.string().default("false"),
   // Set to "true" to start tenure, communication, attendance, and legacy sync workers.
   ENABLE_SCHEDULERS: z.string().default("false"),
+  // Integration Hub schedules run server-side and do not depend on an admin session.
+  INTEGRATION_SCHEDULER_TIMEZONE: z.string().default("Asia/Kolkata"),
+  INTEGRATION_SCHEDULER_POLL_MS: z.coerce.number().int().min(5000).default(30000),
+  INTEGRATION_SCHEDULER_MAX_RETRIES: z.coerce.number().int().min(1).max(5).default(3),
+  INTEGRATION_SCHEDULER_RETRY_DELAY_MS: z.coerce.number().int().min(100).default(5000),
   // Set to "true" to run 043_demo_data.sql during migrations (local dev only).
   SEED_DEMO_DATA: z.string().default("false"),
   SMTP_HOST:   z.string().default("smtp.gmail.com"),

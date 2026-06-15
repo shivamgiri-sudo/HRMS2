@@ -67,12 +67,31 @@ const TABS: { key: TabKey; label: string }[] = [
 ];
 
 const PT_STATES = [
-  { code: "MH", name: "Maharashtra" },
-  { code: "KA", name: "Karnataka" },
-  { code: "TN", name: "Tamil Nadu" },
-  { code: "WB", name: "West Bengal" },
-  { code: "TS", name: "Telangana" },
   { code: "AP", name: "Andhra Pradesh" },
+  { code: "AS", name: "Assam" },
+  { code: "BR", name: "Bihar" },
+  { code: "CG", name: "Chhattisgarh" },
+  { code: "GA", name: "Goa" },
+  { code: "GJ", name: "Gujarat" },
+  { code: "HR", name: "Haryana" },
+  { code: "HP", name: "Himachal Pradesh" },
+  { code: "JH", name: "Jharkhand" },
+  { code: "KA", name: "Karnataka" },
+  { code: "KL", name: "Kerala" },
+  { code: "MP", name: "Madhya Pradesh" },
+  { code: "MH", name: "Maharashtra" },
+  { code: "ML", name: "Meghalaya" },
+  { code: "OD", name: "Odisha" },
+  { code: "PB", name: "Punjab" },
+  { code: "RJ", name: "Rajasthan" },
+  { code: "TN", name: "Tamil Nadu" },
+  { code: "TS", name: "Telangana" },
+  { code: "TR", name: "Tripura" },
+  { code: "UK", name: "Uttarakhand" },
+  { code: "UP", name: "Uttar Pradesh" },
+  { code: "WB", name: "West Bengal" },
+  { code: "DL", name: "Delhi" },
+  { code: "PY", name: "Puducherry" },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -198,15 +217,17 @@ function PayrollRulesTab({ processId }: { processId: string }) {
     setLoading(true);
     Promise.all([
       hrmsApi.get<{ success: boolean; data: PayrollStructure[] }>("/api/payroll/structures"),
-      hrmsApi.get<{ success: boolean; data: StatutoryConfig }>("/api/payroll/statutory-config"),
+      hrmsApi.get<{ success: boolean; data: StatutoryConfig }>(
+        `/api/processes/${processId}/configuration`
+      ),
     ])
       .then(([structRes, statRes]) => {
         setStructures(structRes.data ?? []);
         const cfg = statRes.data ?? {};
         setStatutory(cfg);
-        setWorkingDays(String(cfg[`process_working_days_${processId}`] ?? cfg["working_days"] ?? 26));
-        setPtState(String(cfg[`process_pt_state_${processId}`] ?? "MH"));
-        setStructureId(String(cfg[`process_default_structure_${processId}`] ?? ""));
+        setWorkingDays(String(cfg.workingDays ?? 26));
+        setPtState(String(cfg.ptState ?? "MH"));
+        setStructureId(String(cfg.defaultSalaryStructureId ?? ""));
       })
       .catch((err: unknown) =>
         setMessage({ text: err instanceof Error ? err.message : "Failed to load payroll config", ok: false })
@@ -218,16 +239,13 @@ function PayrollRulesTab({ processId }: { processId: string }) {
     setSaving(true);
     setMessage(null);
     try {
-      const entries = [
-        { config_key: `process_working_days_${processId}`, config_value: Number(workingDays) },
-        { config_key: `process_pt_state_${processId}`,     config_value: ptState },
-        { config_key: `process_default_structure_${processId}`, config_value: structureId },
-      ];
-      await Promise.all(
-        entries.map((e) =>
-          hrmsApi.post("/api/payroll/statutory-config", e)
-        )
-      );
+      await hrmsApi.put(`/api/processes/${processId}/configuration`, {
+        values: {
+          workingDays: Number(workingDays),
+          ptState,
+          defaultSalaryStructureId: structureId || null,
+        },
+      });
       setMessage({ text: "Payroll rules saved.", ok: true });
     } catch (err: unknown) {
       setMessage({ text: err instanceof Error ? err.message : "Save failed", ok: false });
@@ -273,7 +291,7 @@ function PayrollRulesTab({ processId }: { processId: string }) {
             className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <p className="mt-1 text-xs text-slate-400">
-            Global default: {statutory["working_days"] ?? 26}
+            Saved for this process: {statutory.workingDays ?? 26}
           </p>
         </div>
 
@@ -362,13 +380,15 @@ function RosterSettingsTab({ processId }: { processId: string }) {
         .then((r) => setCycles(r.data ?? []))
         .catch(() => setCycles([])),
       hrmsApi
-        .get<{ success: boolean; data: StatutoryConfig }>("/api/payroll/statutory-config")
+        .get<{ success: boolean; data: StatutoryConfig }>(
+          `/api/processes/${processId}/configuration`
+        )
         .then((r) => {
           const cfg = r.data ?? {};
-          setMinHc(String(cfg[`process_min_hc_${processId}`] ?? 0));
-          setWeeklyOff((String(cfg[`process_weekly_off_${processId}`] ?? "5") as "5" | "6"));
-          setGracePeriod(String(cfg[`process_grace_min_${processId}`] ?? 15));
-          setPubSla(String(cfg[`process_pub_sla_${processId}`] ?? 3));
+          setMinHc(String(cfg.minimumHeadcount ?? 0));
+          setWeeklyOff((String(cfg.weeklyOffDays ?? "5") as "5" | "6"));
+          setGracePeriod(String(cfg.gracePeriodMinutes ?? 15));
+          setPubSla(String(cfg.publicationSlaDays ?? 3));
         })
         .catch(() => {}),
     ]).finally(() => setLoading(false));
@@ -378,13 +398,14 @@ function RosterSettingsTab({ processId }: { processId: string }) {
     setSaving(true);
     setMessage(null);
     try {
-      const entries = [
-        { config_key: `process_min_hc_${processId}`,      config_value: Number(minHc) },
-        { config_key: `process_weekly_off_${processId}`,  config_value: Number(weeklyOff) },
-        { config_key: `process_grace_min_${processId}`,   config_value: Number(gracePeriod) },
-        { config_key: `process_pub_sla_${processId}`,     config_value: Number(pubSla) },
-      ];
-      await Promise.all(entries.map((e) => hrmsApi.post("/api/payroll/statutory-config", e)));
+      await hrmsApi.put(`/api/processes/${processId}/configuration`, {
+        values: {
+          minimumHeadcount: Number(minHc),
+          weeklyOffDays: Number(weeklyOff),
+          gracePeriodMinutes: Number(gracePeriod),
+          publicationSlaDays: Number(pubSla),
+        },
+      });
       setMessage({ text: "Roster settings saved.", ok: true });
     } catch (err: unknown) {
       setMessage({ text: err instanceof Error ? err.message : "Save failed", ok: false });
@@ -403,7 +424,7 @@ function RosterSettingsTab({ processId }: { processId: string }) {
           </p>
         </div>
         <button
-          onClick={() => navigate("/wfm-roster")}
+          onClick={() => navigate("/wfm/roster")}
           className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
         >
           Configure via WFM
@@ -598,11 +619,13 @@ function ClientSlaTab({ processId }: { processId: string }) {
     if (!processId) return;
     setLoading(true);
     hrmsApi
-      .get<{ success: boolean; data: StatutoryConfig }>("/api/payroll/statutory-config")
+      .get<{ success: boolean; data: StatutoryConfig }>(
+        `/api/processes/${processId}/configuration`
+      )
       .then((r) => {
         const cfg = r.data ?? {};
-        setBreachThreshold(String(cfg[`process_client_sla_threshold_${processId}`] ?? 85));
-        setSharingEnabled(Number(cfg[`process_client_sla_sharing_${processId}`] ?? 0) === 1);
+        setBreachThreshold(String(cfg.clientSlaThreshold ?? 85));
+        setSharingEnabled(Boolean(cfg.clientSlaSharing));
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -612,16 +635,12 @@ function ClientSlaTab({ processId }: { processId: string }) {
     setSaving(true);
     setMessage(null);
     try {
-      await Promise.all([
-        hrmsApi.post("/api/payroll/statutory-config", {
-          config_key: `process_client_sla_threshold_${processId}`,
-          config_value: Number(breachThreshold),
-        }),
-        hrmsApi.post("/api/payroll/statutory-config", {
-          config_key: `process_client_sla_sharing_${processId}`,
-          config_value: sharingEnabled ? 1 : 0,
-        }),
-      ]);
+      await hrmsApi.put(`/api/processes/${processId}/configuration`, {
+        values: {
+          clientSlaThreshold: Number(breachThreshold),
+          clientSlaSharing: sharingEnabled,
+        },
+      });
       setMessage({ text: "Client SLA settings saved.", ok: true });
     } catch (err: unknown) {
       setMessage({ text: err instanceof Error ? err.message : "Save failed", ok: false });

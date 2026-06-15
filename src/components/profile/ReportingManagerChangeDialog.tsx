@@ -49,8 +49,8 @@ export function ReportingManagerChangeDialog({
       setSelected(null);
       setSearchQuery('');
       setReason('');
-    } catch (err: any) {
-      toast.error(err.message ?? 'Failed to submit request');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to submit request');
     }
   };
 
@@ -95,6 +95,7 @@ export function ReportingManagerChangeDialog({
             <div className="border rounded-md divide-y max-h-48 overflow-y-auto">
               {searchResults.map((emp) => (
                 <button
+                  type="button"
                   key={emp.id}
                   className="w-full text-left px-3 py-2 hover:bg-accent text-sm flex items-center justify-between"
                   onClick={() => {
@@ -145,10 +146,10 @@ export function ReportingManagerChangeDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={!selected || submit.isPending}>
+          <Button type="button" onClick={handleSubmit} disabled={!selected || submit.isPending}>
             {submit.isPending && (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             )}

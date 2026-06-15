@@ -31,7 +31,7 @@ interface PhotoUploadProps {
   onSuccess?: (newUrl: string) => void;
   /** Allow delete? (admin / HR only) */
   canDelete?: boolean;
-  size?: "sm" | "md" | "lg" | "xl";
+  size?: "sm" | "md" | "lg" | "xl" | "2xl";
 }
 
 const sizeMap = {
@@ -39,6 +39,7 @@ const sizeMap = {
   md: "h-16 w-16",
   lg: "h-24 w-24",
   xl: "h-32 w-32",
+  "2xl": "h-40 w-40",
 };
 
 const cameraIconSizeMap = {
@@ -46,6 +47,7 @@ const cameraIconSizeMap = {
   md: "h-3.5 w-3.5",
   lg: "h-4 w-4",
   xl: "h-5 w-5",
+  "2xl": "h-6 w-6",
 };
 
 function getInitials(name?: string) {
@@ -205,7 +207,7 @@ export function PhotoUpload({
           type="button"
           variant="outline"
           size="sm"
-          className="h-7 gap-1.5 rounded-lg px-2.5 text-xs"
+          className="h-7 gap-1.5 rounded-lg border-white bg-white px-2.5 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-[#073f78]"
           onClick={() => inputRef.current?.click()}
           disabled={uploading}
         >

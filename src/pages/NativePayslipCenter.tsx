@@ -3,10 +3,10 @@ import {
   AlertTriangle, CheckCircle2, Download, Eye, FileText,
   Loader, RefreshCcw, Users, X, BookOpen,
 } from "lucide-react";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { downloadMasCallnetPayslip } from "@/lib/masCallnetPayslipGeneratorV2";
+import { numberToWords } from "@/lib/numberToWords";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,8 +57,24 @@ type Payslip = {
   tds_amount?: number;
   total_deductions: number;
   net_pay: number;
+  working_days?: number;
+  present_days?: number;
+  epf_number?: string;
+  esi_number?: string;
+  branch_name?: string;
+  location_name?: string;
+  payslip_ref?: string;
+  earnings?: PayslipComponent[];
+  deductions?: PayslipComponent[];
   acknowledged_at?: string | null;
   status?: string;
+};
+
+type PayslipComponent = {
+  component_code: string;
+  component_name: string;
+  component_type: string;
+  amount: number | string;
 };
 
 type NeftSummary = {
@@ -135,103 +151,76 @@ function StatCard({
 // ─── PDF Generator ────────────────────────────────────────────────────────────
 
 async function downloadPayslipPdf(payslip: Payslip): Promise<void> {
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-  const BRAND_BLUE = [67, 97, 238] as [number, number, number];
-  const pageW = doc.internal.pageSize.getWidth();
+  const earning = (code: string) => Number(
+    payslip.earnings?.find(
+      (component) => component.component_code.toUpperCase() === code
+    )?.amount ?? 0
+  );
+  const deduction = (code: string) => Number(
+    payslip.deductions?.find(
+      (component) => component.component_code.toUpperCase() === code
+    )?.amount ?? 0
+  );
 
-  // Header band
-  doc.setFillColor(...BRAND_BLUE);
-  doc.rect(0, 0, pageW, 28, "F");
+  const basic = earning("BASIC") || Number(payslip.basic ?? 0);
+  const hra = earning("HRA") || Number(payslip.hra ?? 0);
+  const bonus = earning("BONUS");
+  const conv = earning("CONVEYANCE") || earning("CONV");
+  const pa = earning("PA") || earning("PERSONAL_ALLOWANCE");
+  const ma = earning("MA") || earning("MEDICAL_ALLOWANCE");
+  const sa = earning("SPECIAL") || earning("SPECIAL_ALLOWANCE");
+  const arrear = earning("ARREAR");
+  const incentive = earning("INCENTIVE");
+  const knownEarnings = basic + hra + bonus + conv + pa + ma + sa + arrear + incentive;
+  const oa = Math.max(Number(payslip.gross_pay ?? 0) - knownEarnings, 0);
 
-  // Logo placeholder text (logo as image would require base64 embed)
-  doc.setFontSize(16);
-  doc.setTextColor(255, 255, 255);
-  doc.setFont("helvetica", "bold");
-  doc.text("MAS CALLNET", 14, 11);
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "normal");
-  doc.text("PAY SLIP", 14, 17);
-  doc.text(`Period: ${MONTH_NAMES[payslip.month]} ${payslip.year}`, 14, 23);
+  const pf = deduction("PF_EMP") || deduction("PF_EMPLOYEE") || Number(payslip.pf_employee ?? 0);
+  const esic = deduction("ESIC_EMP") || deduction("ESIC_EMPLOYEE") || Number(payslip.esic_employee ?? 0);
+  const loan = deduction("LOAN") || deduction("LOAN_RECOVERY");
+  const adDed = deduction("ADVANCE") || deduction("ADVANCE_RECOVERY") || Number(payslip.advance_recovery ?? 0);
+  const otherDed = Math.max(Number(payslip.total_deductions ?? 0) - pf - esic - loan - adDed, 0);
 
-  // Employee meta box
-  doc.setFillColor(247, 248, 251);
-  doc.rect(0, 30, pageW, 32, "F");
-  doc.setTextColor(30, 41, 59);
-  doc.setFontSize(11);
-  doc.setFont("helvetica", "bold");
-  doc.text(payslip.employee_name, 14, 39);
-  doc.setFontSize(8.5);
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(100, 116, 139);
-  if (payslip.employee_code) doc.text(`Code: ${payslip.employee_code}`, 14, 46);
-  if (payslip.designation)   doc.text(`Designation: ${payslip.designation}`, 14, 52);
-  if (payslip.department)    doc.text(`Department: ${payslip.department}`, 80, 52);
-  if (payslip.ctc_annual)    doc.text(`Annual CTC: ${INR(payslip.ctc_annual)}`, 80, 46);
-
-  let y = 68;
-
-  // Earnings table
-  autoTable(doc, {
-    startY: y,
-    head: [["Earnings", "Amount (₹)"]],
-    body: [
-      ["Basic", INR(payslip.basic)],
-      ["HRA", INR(payslip.hra)],
-      ["Other Allowances", INR(payslip.other_allowances)],
-      ["Gross Pay", INR(payslip.gross_pay)],
-    ],
-    headStyles: { fillColor: BRAND_BLUE, textColor: [255, 255, 255], fontStyle: "bold" },
-    bodyStyles: { textColor: [30, 41, 59] },
-    columnStyles: { 1: { halign: "right", fontStyle: "bold" } },
-    foot: [["", ""]],
-    theme: "striped",
-    styles: { fontSize: 9, cellPadding: 3 },
-    margin: { left: 14, right: 14 },
-  });
-
-  y = (doc as any).lastAutoTable.finalY + 8;
-
-  // Deductions table
-  const deductions: [string, string][] = [
-    ["PF (Employee)", INR(payslip.pf_employee)],
-    ["ESIC (Employee)", INR(payslip.esic_employee)],
-    ["Professional Tax", INR(payslip.pt_amount)],
-  ];
-  if (payslip.tds_amount)       deductions.push(["TDS (Income Tax)", INR(payslip.tds_amount)]);
-  if (payslip.lwp_deduction)    deductions.push(["LWP Deduction", INR(payslip.lwp_deduction)]);
-  if (payslip.advance_recovery) deductions.push(["Advance Recovery", INR(payslip.advance_recovery)]);
-  deductions.push(["Total Deductions", INR(payslip.total_deductions)]);
-
-  autoTable(doc, {
-    startY: y,
-    head: [["Deductions", "Amount (₹)"]],
-    body: deductions,
-    headStyles: { fillColor: [239, 68, 68] as [number,number,number], textColor: [255, 255, 255], fontStyle: "bold" },
-    bodyStyles: { textColor: [30, 41, 59] },
-    columnStyles: { 1: { halign: "right", fontStyle: "bold" } },
-    theme: "striped",
-    styles: { fontSize: 9, cellPadding: 3 },
-    margin: { left: 14, right: 14 },
-  });
-
-  y = (doc as any).lastAutoTable.finalY + 8;
-
-  // Net pay banner
-  doc.setFillColor(15, 23, 42);
-  doc.rect(14, y, pageW - 28, 14, "F");
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(11);
-  doc.setFont("helvetica", "bold");
-  doc.text("Net Pay", 20, y + 9);
-  doc.text(INR(payslip.net_pay), pageW - 14, y + 9, { align: "right" });
-
-  // Footer
-  doc.setTextColor(150, 150, 150);
-  doc.setFontSize(7);
-  doc.setFont("helvetica", "normal");
-  doc.text("This is a system-generated payslip and does not require a signature.", pageW / 2, 285, { align: "center" });
-
-  doc.save(`Payslip_${payslip.employee_code ?? payslip.employee_id}_${MONTH_NAMES[payslip.month]}_${payslip.year}.pdf`);
+  await downloadMasCallnetPayslip({
+    companyName: "Mas Callnet India Pvt Ltd",
+    monthYear: `${MONTH_NAMES[payslip.month]} - ${payslip.year}`,
+    empName: payslip.employee_name,
+    empCode: payslip.employee_code ?? payslip.employee_id,
+    designation: payslip.designation || "N/A",
+    department: payslip.department || "N/A",
+    epfNo: payslip.epf_number || "",
+    esiNo: payslip.esi_number || "",
+    location: payslip.branch_name || payslip.location_name || "N/A",
+    wDays: Number(payslip.working_days ?? 0),
+    earnedDays: Number(payslip.present_days ?? 0),
+    basic,
+    hra,
+    bonus,
+    conv,
+    pa,
+    ma,
+    sa,
+    oa,
+    arrear,
+    incentive,
+    pf,
+    esic,
+    loan,
+    adDed,
+    otherDed,
+    grossSalary: Number(payslip.gross_pay ?? 0),
+    exemptionUs10: 0,
+    balance: 0,
+    deductionUs24: 0,
+    grossTotalIncome: 0,
+    aggOffChapVi: 0,
+    totalIncome: 0,
+    taxOnTotal: 0,
+    taxPayableEduCess: 0,
+    incomeTax: Number(payslip.tds_amount ?? 0),
+    chequeNo: payslip.payslip_ref || "N/A",
+    netSalary: Number(payslip.net_pay ?? 0),
+    netSalaryWords: numberToWords(Math.floor(Number(payslip.net_pay ?? 0))),
+  }, `Payslip_${payslip.employee_code ?? payslip.employee_id}_${MONTH_NAMES[payslip.month]}_${payslip.year}.pdf`);
 }
 
 // ─── Payslip Modal ─────────────────────────────────────────────────────────────

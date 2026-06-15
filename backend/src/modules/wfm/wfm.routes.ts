@@ -39,20 +39,20 @@ wfmRouter.get("/attendance", h(async (req: any, res: any) => {
 
   const { db } = await import("../../db/mysql.js");
   const [rows] = await db.execute(
-    `SELECT attendance_date,
-            status,
-            punch_in AS first_punch,
-            punch_out AS last_punch,
-            TIMESTAMPDIFF(HOUR, punch_in, punch_out) AS working_hours,
-            break_minutes,
-            location AS punch_location,
-            ip_address,
-            remarks
+    `SELECT record_date AS attendance_date,
+            attendance_status AS status,
+            clock_in_time AS first_punch,
+            clock_out_time AS last_punch,
+            ROUND(COALESCE(raw_minutes, TIMESTAMPDIFF(MINUTE, clock_in_time, clock_out_time), 0) / 60, 2) AS working_hours,
+            0 AS break_minutes,
+            COALESCE(clock_in_location, clock_out_location) AS punch_location,
+            attendance_source AS source,
+            override_reason AS remarks
      FROM attendance_daily_record
      WHERE employee_id = ?
-       AND YEAR(attendance_date) = ?
-       AND MONTH(attendance_date) = ?
-     ORDER BY attendance_date ASC`,
+       AND YEAR(record_date) = ?
+       AND MONTH(record_date) = ?
+     ORDER BY record_date ASC`,
     [employee_id, year, month]
   );
 

@@ -16,16 +16,18 @@ import {
 } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Loader2, AlertTriangle, Copy, CheckCircle2, Lock, ShieldAlert } from "lucide-react";
+import { Loader2, AlertTriangle, Copy, CheckCircle2, Lock, ShieldAlert, Eye, EyeOff, WandSparkles } from "lucide-react";
 
 interface AdminPasswordResetDialogProps {
   employee: {
     id: string;
-    first_name: string;
-    last_name: string;
+    name?: string;
+    first_name?: string;
+    last_name?: string;
     email: string;
-    employee_code: string;
-    designation: string | null;
+    employeeCode?: string;
+    employee_code?: string;
+    designation?: string | null;
     user_id?: string;
   } | null;
   open: boolean;
@@ -39,17 +41,21 @@ export function AdminPasswordResetDialog({
 }: AdminPasswordResetDialogProps) {
   const queryClient = useQueryClient();
   const [tempPassword, setTempPassword] = useState<string | null>(null);
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const resetMutation = useMutation({
     mutationFn: async () => {
       const res = await hrmsApi.post<{
         success: boolean;
-        temporaryPassword: string;
+        mustChangePassword: boolean;
         message: string;
         error?: string;
       }>("/api/auth/admin-reset-password", {
         employeeId: employee!.id,
+        temporaryPassword: password,
       });
 
       if (!res.success) {
@@ -59,7 +65,7 @@ export function AdminPasswordResetDialog({
       return res;
     },
     onSuccess: (data) => {
-      setTempPassword(data.temporaryPassword);
+      setTempPassword(password);
       queryClient.invalidateQueries({ queryKey: ["employees"] });
       toast.success("Password reset successfully");
     },
@@ -69,7 +75,26 @@ export function AdminPasswordResetDialog({
   });
 
   const handleReset = () => {
+    if (password.length < 10) {
+      toast.error("Temporary password must be at least 10 characters");
+      return;
+    }
+    if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+      toast.error("Use uppercase, lowercase, number and special character");
+      return;
+    }
+    if (password !== confirmPassword) {
+      toast.error("Temporary passwords do not match");
+      return;
+    }
     resetMutation.mutate();
+  };
+
+  const generatePassword = () => {
+    const generated = `Mas@${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}A7`;
+    setPassword(generated);
+    setConfirmPassword(generated);
+    setShowPassword(true);
   };
 
   const handleCopyPassword = () => {
@@ -83,13 +108,19 @@ export function AdminPasswordResetDialog({
 
   const handleClose = () => {
     setTempPassword(null);
+    setPassword("");
+    setConfirmPassword("");
+    setShowPassword(false);
     setCopied(false);
     onOpenChange(false);
   };
 
   if (!employee) return null;
 
-  const employeeName = `${employee.first_name} ${employee.last_name}`;
+  const employeeName = employee.name
+    ?? `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim()
+    ?? "Employee";
+  const employeeCode = employee.employeeCode ?? employee.employee_code ?? "—";
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -118,7 +149,7 @@ export function AdminPasswordResetDialog({
               </div>
               <div className="flex justify-between">
                 <span className="text-sm font-medium text-muted-foreground">Employee Code</span>
-                <span className="text-sm font-mono">{employee.employee_code}</span>
+                <span className="text-sm font-mono">{employeeCode}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-sm font-medium text-muted-foreground">Email</span>
@@ -140,13 +171,57 @@ export function AdminPasswordResetDialog({
               <AlertTitle className="text-amber-900">Security Notice</AlertTitle>
               <AlertDescription className="text-amber-800 text-sm">
                 <ul className="list-disc list-inside space-y-1 mt-2">
-                  <li>A temporary password will be generated</li>
+                  <li>You create the employee's temporary password</li>
                   <li>Employee will be forced to change password on next login</li>
-                  <li>Notification email will be sent to employee</li>
+                  <li>Existing refresh sessions will be revoked</li>
+                  <li>Share the password only through an approved secure channel</li>
                   <li>This action will be logged in audit trail</li>
                 </ul>
               </AlertDescription>
             </Alert>
+          )}
+
+          {!tempPassword && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <label htmlFor="admin-temp-password" className="text-sm font-semibold">
+                  Temporary password
+                </label>
+                <Button type="button" variant="outline" size="sm" onClick={generatePassword}>
+                  <WandSparkles className="mr-2 h-4 w-4" />
+                  Generate secure
+                </Button>
+              </div>
+              <div className="relative">
+                <input
+                  id="admin-temp-password"
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 pr-10 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((value) => !value)}
+                  className="absolute right-3 top-2.5 text-muted-foreground"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <input
+                type={showPassword ? "text" : "password"}
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                placeholder="Confirm temporary password"
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              />
+              <p className="text-xs text-muted-foreground">
+                Minimum 10 characters with uppercase, lowercase, number and special character.
+              </p>
+            </div>
           )}
 
           {/* Temporary Password Display */}
@@ -182,7 +257,7 @@ export function AdminPasswordResetDialog({
                   </div>
                 </div>
                 <p className="text-sm text-green-800">
-                  ✅ Email sent to <strong>{employee.email}</strong>
+                  Employee notification sent to <strong>{employee.email}</strong> without exposing the password.
                 </p>
                 <p className="text-xs text-green-700">
                   Employee must change this password on next login.

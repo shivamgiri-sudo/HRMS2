@@ -52,7 +52,10 @@ const fakeStatKvRows = [
 ];
 
 describe("calculatePayrollRun", () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockExecute.mockReset().mockResolvedValue([[], []]);
+  });
 
   it("throws when run not found", async () => {
     mockExecute.mockResolvedValueOnce([[]]); // getRun
@@ -69,32 +72,34 @@ describe("calculatePayrollRun", () => {
   //   1.  getRun                          SELECT * FROM salary_prep_run
   //   2.  statKvRows                      SELECT config_key, config_value FROM statutory_config
   //   3.  employees                       SELECT ... FROM employees JOIN ... (process/branch filtered)
-  //   4.  maternityService (per month)    SELECT DISTINCT employee_id FROM maternity_benefit_record
+  //   4.  approved incentives             SELECT ... FROM incentive_upload_line
+  //   5.  maternityService (per month)    SELECT DISTINCT employee_id FROM maternity_benefit_record
   //   --- per-employee loop (1 employee) ---
-  //   5.  adrCountRows                    SELECT COUNT(*) AS cnt FROM attendance_daily_record
-  //   6.  attendance (session fallback)   SELECT ... FROM wfm_attendance_session (cnt=0 path)
-  //   7.  tax_declaration                 SELECT declared_hra... FROM tax_declaration
-  //   8.  advance_recovery                SELECT COALESCE(SUM...) FROM salary_advance_log
-  //   9.  upsert line                     INSERT INTO salary_prep_line ... ON DUPLICATE KEY UPDATE
+  //   6.  adrCountRows                    SELECT COUNT(*) AS cnt FROM attendance_daily_record
+  //   7.  attendance (session fallback)   SELECT ... FROM wfm_attendance_session (cnt=0 path)
+  //   8.  tax_declaration                 SELECT declared_hra... FROM tax_declaration
+  //   9.  advance_recovery                SELECT COALESCE(SUM...) FROM salary_advance_log
+  //   10. upsert line                     INSERT INTO salary_prep_line ... ON DUPLICATE KEY UPDATE
   //   --- end loop ---
-  //   10. update run totals               UPDATE salary_prep_run SET status = 'processing'
-  //   11. re-fetch run                    SELECT * FROM salary_prep_run
+  //   11. update run totals               UPDATE salary_prep_run SET status = 'processing'
+  //   12. re-fetch run                    SELECT * FROM salary_prep_run
   function mockOneEmployeeRun(overrideUpsert?: (sql: string, params: unknown[]) => unknown) {
     mockExecute.mockResolvedValueOnce([[fakeRun]]);                    // 1. getRun
     mockExecute.mockResolvedValueOnce([fakeStatKvRows]);               // 2. statutory kv
     mockExecute.mockResolvedValueOnce([[fakeEmployee]]);               // 3. employees
-    mockExecute.mockResolvedValueOnce([[/* no maternity records */]]); // 4. maternity exempt IDs
-    mockExecute.mockResolvedValueOnce([[{ cnt: 0 }]]);                 // 5. adrCountRows (0 → use fallback)
-    mockExecute.mockResolvedValueOnce([[fakeAttendance]]);             // 6. attendance (session fallback)
-    mockExecute.mockResolvedValueOnce([[/* no declaration */]]);       // 7. tax_declaration
-    mockExecute.mockResolvedValueOnce([[{ monthly_recovery: 0 }]]);   // 8. advance_recovery
+    mockExecute.mockResolvedValueOnce([[]]);                           // 4. incentives
+    mockExecute.mockResolvedValueOnce([[/* no maternity records */]]); // 5. maternity exempt IDs
+    mockExecute.mockResolvedValueOnce([[{ cnt: 0 }]]);                 // 6. adrCountRows (0 → use fallback)
+    mockExecute.mockResolvedValueOnce([[fakeAttendance]]);             // 7. attendance (session fallback)
+    mockExecute.mockResolvedValueOnce([[/* no declaration */]]);       // 8. tax_declaration
+    mockExecute.mockResolvedValueOnce([[{ monthly_recovery: 0 }]]);   // 9. advance_recovery
     if (overrideUpsert) {
       mockExecute.mockImplementationOnce(overrideUpsert as Parameters<typeof mockExecute.mockImplementationOnce>[0]);
     } else {
-      mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);       // 9. upsert line
+      mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);       // 10. upsert line
     }
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);         // 10. update run totals
-    mockExecute.mockResolvedValueOnce([[{ ...fakeRun, status: "processing" }]]); // 11. re-fetch
+    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);         // 11. update run totals
+    mockExecute.mockResolvedValueOnce([[{ ...fakeRun, status: "processing" }]]); // 12. re-fetch
   }
 
   it("fetches employees scoped to run's process_filter", async () => {

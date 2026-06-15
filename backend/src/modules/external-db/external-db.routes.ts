@@ -22,12 +22,13 @@ router.use(requireAuth);
 // GET /api/external-db — list all database connectors
 router.get('/', requireRole('admin'), h(async (_req, res) => {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT integration_key, integration_name, config_json, active_status,
+    `SELECT integration_key, integration_name, config_json, encrypted_credentials, active_status,
             test_ok, test_error, test_at
      FROM integration_config WHERE integration_type = 'database'`
   );
   const data = (rows as any[]).map(row => {
     const config = row.config_json ?? {};
+    const username = config.username ?? config.user ?? '';
     return {
       integration_key: row.integration_key,
       integration_name: row.integration_name,
@@ -35,16 +36,18 @@ router.get('/', requireRole('admin'), h(async (_req, res) => {
       test_ok: row.test_ok,
       test_error: row.test_error,
       test_at: row.test_at,
-      config: {
+      config_json: {
         host: config.host ?? '',
-        port: config.port ?? 1433,
+        port: config.port ?? (config.db_type === 'mssql' ? 1433 : 3306),
         database: config.database ?? '',
-        username: config.username ?? '',
-        password: config.username ? '••••••••' : '',
+        username,
+        password: row.encrypted_credentials || username ? '••••••••' : '',
         date_column: config.date_column ?? 'event_time',
         employee_code_column: config.employee_code_column ?? 'agent_user',
-        tables: config.tables ?? [],
+        tables: config.tables ?? config.source_tables ?? [],
         db_type: config.db_type ?? 'mysql',
+        encrypt: Boolean(config.encrypt),
+        trust_server_certificate: config.trust_server_certificate !== false,
       },
     };
   });
@@ -55,7 +58,7 @@ router.get('/', requireRole('admin'), h(async (_req, res) => {
 router.get('/:key', requireRole('admin'), h(async (req, res) => {
   const { key } = req.params;
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT integration_key, integration_name, config_json, active_status,
+    `SELECT integration_key, integration_name, config_json, encrypted_credentials, active_status,
             test_ok, test_error, test_at
      FROM integration_config WHERE integration_key = ? AND integration_type = 'database'`,
     [key]
@@ -64,6 +67,7 @@ router.get('/:key', requireRole('admin'), h(async (req, res) => {
   if (!row) return res.status(404).json({ error: 'Connector not found' });
 
   const config = row.config_json ?? {};
+  const username = config.username ?? config.user ?? '';
   return res.json({
     success: true,
     data: {
@@ -75,14 +79,16 @@ router.get('/:key', requireRole('admin'), h(async (req, res) => {
       test_at: row.test_at,
       config: {
         host: config.host ?? '',
-        port: config.port ?? 1433,
+        port: config.port ?? (config.db_type === 'mssql' ? 1433 : 3306),
         database: config.database ?? '',
-        username: config.username ?? '',
-        password: config.username ? '••••••••' : '',
+        username,
+        password: row.encrypted_credentials || username ? '••••••••' : '',
         date_column: config.date_column ?? 'event_time',
         employee_code_column: config.employee_code_column ?? 'agent_user',
-        tables: config.tables ?? [],
+        tables: config.tables ?? config.source_tables ?? [],
         db_type: config.db_type ?? 'mysql',
+        encrypt: Boolean(config.encrypt),
+        trust_server_certificate: config.trust_server_certificate !== false,
       },
     },
   });
@@ -124,7 +130,9 @@ router.put('/:key', requireRole('admin'), h(async (req, res) => {
     date_column: input.date_column ?? existingConfig.date_column ?? 'event_time',
     employee_code_column: input.employee_code_column ?? existingConfig.employee_code_column ?? 'agent_user',
     tables: input.tables ?? existingConfig.tables ?? [],
-    db_type: existingConfig.db_type ?? 'mysql',
+    db_type: input.db_type,
+    encrypt: input.encrypt ?? existingConfig.encrypt ?? false,
+    trust_server_certificate: input.trust_server_certificate ?? existingConfig.trust_server_certificate ?? true,
   };
 
   const encrypted = encryptCredentials(creds);
@@ -139,6 +147,8 @@ router.put('/:key', requireRole('admin'), h(async (req, res) => {
     employee_code_column: creds.employee_code_column,
     tables: creds.tables,
     db_type: creds.db_type,
+    encrypt: input.encrypt ?? existingConfig.encrypt ?? false,
+    trust_server_certificate: input.trust_server_certificate ?? existingConfig.trust_server_certificate ?? true,
   };
 
   await db.execute(

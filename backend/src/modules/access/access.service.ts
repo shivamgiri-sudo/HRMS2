@@ -80,6 +80,13 @@ export async function getRbacReconciliation(): Promise<ReconciliationReport> {
 // ── Role administration (MySQL-authoritative writes) ─────────────────────────
 
 export async function assignRole(userId: string, roleKey: string, actorUserId: string, req?: Request): Promise<void> {
+  const [users] = await db.execute<RowDataPacket[]>(
+    "SELECT id FROM auth_user WHERE id = ? AND is_blocked = 0 LIMIT 1",
+    [userId]
+  );
+  if ((users as RowDataPacket[]).length === 0) {
+    throw Object.assign(new Error("User not found or blocked"), { statusCode: 404 });
+  }
   const [catalog] = await db.execute<RowDataPacket[]>(
     "SELECT role_key FROM workforce_role_catalog WHERE role_key = ? AND active_status = 1 LIMIT 1",
     [roleKey]
@@ -133,12 +140,12 @@ export async function querySensitiveActionLog(filters: {
   if (filters.entity_type)   { conds.push("entity_type = ?");   params.push(filters.entity_type); }
   if (filters.entity_id)     { conds.push("entity_id = ?");     params.push(filters.entity_id); }
   const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
-    const limit = Math.min(filters.limit ?? 100, 500);
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, actor_user_id, action_type, module_key, entity_type, entity_id, ip_address, change_summary, acted_at
-     FROM sensitive_action_log ${where} ORDER BY acted_at DESC LIMIT ?`,
-      [...params, limit]
-    );
+  const limit = Math.max(1, Math.min(Math.trunc(filters.limit ?? 100), 500));
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, actor_user_id, action_type, module_key, entity_type, entity_id, ip_address, change_summary, acted_at
+     FROM sensitive_action_log ${where} ORDER BY acted_at DESC LIMIT ${limit}`,
+    params
+  );
   return rows as RowDataPacket[];
 }
 

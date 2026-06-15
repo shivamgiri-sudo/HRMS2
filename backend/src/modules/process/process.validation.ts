@@ -3,7 +3,7 @@ import { z } from "zod";
 export const processFiltersSchema = z.object({
   search: z.string().optional(),
   departmentId: z.string().uuid().optional(),
-  activeStatus: z.enum(["all", "active", "inactive"]).optional().default("all")
+  activeStatus: z.enum(["all", "active", "inactive"]).optional().default("active")
 });
 
 export const createProcessSchema = z.object({

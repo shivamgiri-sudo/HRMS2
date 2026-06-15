@@ -10,6 +10,7 @@ import {
   alertService,
   payrollReadinessService,
   leaveImpactService,
+  getLiveAttendanceSummary,
 } from "./rta.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response } from "express";
@@ -71,6 +72,7 @@ rtaRouter.get(
       fromDate:    z.string().regex(DATE_RE),
       toDate:      z.string().regex(DATE_RE),
       employeeId:  z.string().uuid().optional(),
+      processId:   z.string().uuid().optional(),
       processName: z.string().optional(),
       processId:   z.string().uuid().optional(),
       status:      z.string().optional(),
@@ -80,6 +82,22 @@ rtaRouter.get(
     const filters = schema.parse(req.query);
     const result  = await reconciliationService.listReconciliation(filters);
     return res.json({ success: true, ...result });
+  })
+);
+
+// GET /api/rta/live-summary — bearer-authenticated live attendance summary.
+rtaRouter.get(
+  "/live-summary",
+  requireRole("admin", "hr", "wfm", "process_manager", "team_leader", "assistant_manager", "manager"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const schema = z.object({
+      date: z.string().regex(DATE_RE),
+      processId: z.string().uuid().optional(),
+      branchId: z.string().uuid().optional(),
+    });
+    const { date, processId, branchId } = schema.parse(req.query);
+    const data = await getLiveAttendanceSummary(date, { processId, branchId });
+    return res.json({ success: true, data });
   })
 );
 

@@ -6,7 +6,6 @@ import { KudosCard } from "@/components/engagement/KudosCard";
 import type { ApiResponse, Kudos, KudosTemplate } from "@/components/engagement/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -37,18 +36,18 @@ export default function NativeKudos() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [employeeSearchOpen, setEmployeeSearchOpen] = useState(false);
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeOption | null>(null);
 
-  // Fetch employees for search
   const { data: employees = [] } = useQuery<EmployeeOption[]>({
-    queryKey: ["employees-for-kudos"],
+    queryKey: ["employees-for-kudos", employeeSearch],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/employees?limit=500");
-      return (res.data ?? []).map((emp: any) => ({
-        id: emp.id,
-        name: `${emp.first_name} ${emp.last_name}`,
-        employee_code: emp.employee_code,
-      }));
+      const res = await hrmsApi.get<{ success: boolean; data: EmployeeOption[] }>(
+        `/api/employees/options/search?q=${encodeURIComponent(employeeSearch)}&limit=30`
+      );
+      return res.data ?? [];
     },
+    enabled: employeeSearchOpen && employeeSearch.trim().length >= 2,
   });
 
   const load = async () => {
@@ -77,6 +76,8 @@ export default function NativeKudos() {
         isAnonymous: anonymous,
       });
       setReceiverId("");
+      setSelectedEmployee(null);
+      setEmployeeSearch("");
       setTemplateId("");
       setMessage("");
       setAnonymous(false);
@@ -116,17 +117,25 @@ export default function NativeKudos() {
                         aria-expanded={employeeSearchOpen}
                         className="w-full justify-between"
                       >
-                        {receiverId
-                          ? employees.find((emp) => emp.id === receiverId)?.name || "Select employee..."
+                        {selectedEmployee
+                          ? selectedEmployee.name
                           : "Search by name or employee code..."}
                         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-full p-0" align="start">
-                      <Command>
-                        <CommandInput placeholder="Search employee..." />
+                      <Command shouldFilter={false}>
+                        <CommandInput
+                          placeholder="Type at least 2 characters..."
+                          value={employeeSearch}
+                          onValueChange={setEmployeeSearch}
+                        />
                         <CommandList>
-                          <CommandEmpty>No employee found.</CommandEmpty>
+                          <CommandEmpty>
+                            {employeeSearch.trim().length < 2
+                              ? "Type at least 2 characters."
+                              : "No active employee found."}
+                          </CommandEmpty>
                           <CommandGroup>
                             {employees.map((emp) => (
                               <CommandItem
@@ -134,6 +143,7 @@ export default function NativeKudos() {
                                 value={`${emp.name} ${emp.employee_code}`}
                                 onSelect={() => {
                                   setReceiverId(emp.id);
+                                  setSelectedEmployee(emp);
                                   setEmployeeSearchOpen(false);
                                 }}
                               >

@@ -1,12 +1,57 @@
 -- backend/sql/134_external_db_credentials.sql
 USE mas_hrms;
 
-ALTER TABLE integration_config
-  ADD COLUMN IF NOT EXISTS encrypted_credentials TEXT NULL AFTER config_json,
-  ADD COLUMN IF NOT EXISTS test_ok TINYINT(1) NULL AFTER encrypted_credentials,
-  ADD COLUMN IF NOT EXISTS test_error TEXT NULL AFTER test_ok,
-  ADD COLUMN IF NOT EXISTS test_at DATETIME NULL AFTER test_error,
-  ADD COLUMN IF NOT EXISTS tested_by CHAR(36) NULL AFTER test_at;
+-- MySQL 5.7 does not support ADD COLUMN IF NOT EXISTS. Use dynamic DDL so
+-- this migration remains idempotent across the production and local engines.
+SET @sql = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'integration_config'
+      AND column_name = 'encrypted_credentials') = 0,
+  'ALTER TABLE integration_config ADD COLUMN encrypted_credentials TEXT NULL AFTER config_json',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'integration_config'
+      AND column_name = 'test_ok') = 0,
+  'ALTER TABLE integration_config ADD COLUMN test_ok TINYINT(1) NULL AFTER encrypted_credentials',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'integration_config'
+      AND column_name = 'test_error') = 0,
+  'ALTER TABLE integration_config ADD COLUMN test_error TEXT NULL AFTER test_ok',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'integration_config'
+      AND column_name = 'test_at') = 0,
+  'ALTER TABLE integration_config ADD COLUMN test_at DATETIME NULL AFTER test_error',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'integration_config'
+      AND column_name = 'tested_by') = 0,
+  'ALTER TABLE integration_config ADD COLUMN tested_by CHAR(36) NULL AFTER test_at',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 INSERT INTO integration_config
   (integration_key, integration_name, integration_type, auth_type, active_status, notes, config_json)

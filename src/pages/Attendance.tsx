@@ -8,12 +8,14 @@ import {
   Calendar,
   CheckCircle2,
   Clock,
+  Home,
+  LogIn,
+  LogOut,
   MapPin,
   RefreshCcw,
   Timer,
 } from "lucide-react";
 import { format } from "date-fns";
-import { toast } from "sonner";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { AttendanceCalendar } from "@/components/attendance/AttendanceCalendar";
@@ -83,6 +85,9 @@ const MONTHS = [
   { value: "10", label: "November" },
   { value: "11", label: "December" },
 ];
+
+const isOfficeMode = (mode?: string | null) =>
+  mode === "wfo" || mode === "office";
 
 interface EmployeeSchedule {
   id: string;
@@ -215,19 +220,8 @@ const Attendance = () => {
   const { data: currentEmployee, error: employeeError, isLoading: employeeLoading } = useQuery<EmployeeSchedule | null>({
     queryKey: ["current-employee-schedule", user?.id],
     queryFn: async () => {
-      console.log('[Attendance] Fetching employee for user:', user?.id);
-      try {
-        const empData = await hrmsApi.get<{ data: { id: string; first_name?: string | null; last_name?: string | null; working_hours_start?: string | null; working_hours_end?: string | null; working_days?: number[] | null } }>(`/api/employees/me`);
-        console.log('[Attendance] Employee data:', empData);
-        if (!empData.data) {
-          console.error('[Attendance] No employee data returned');
-          return null;
-        }
-        return empData.data as EmployeeSchedule;
-      } catch (error) {
-        console.error('[Attendance] Failed to fetch employee:', error);
-        throw error;
-      }
+      const empData = await hrmsApi.get<{ data: { id: string; first_name?: string | null; last_name?: string | null; working_hours_start?: string | null; working_hours_end?: string | null; working_days?: number[] | null } }>(`/api/employees/me`);
+      return empData.data ? empData.data as EmployeeSchedule : null;
     },
     enabled: !!user?.id,
     retry: 2,
@@ -240,34 +234,6 @@ const Attendance = () => {
     currentEmployee?.id
   );
 
-  // Debug logging
-  useEffect(() => {
-    console.log("=== Attendance Debug ===", {
-      user: { id: user?.id, email: user?.email },
-      employee: {
-        loading: employeeLoading,
-        error: employeeError?.message,
-        id: currentEmployee?.id,
-        data: currentEmployee,
-      },
-      records: {
-        loading: recordsLoading,
-        error: recordsError?.message,
-        count: attendanceRecords?.length || 0,
-        data: attendanceRecords,
-      },
-      targetDate: targetDate.toISOString(),
-    });
-
-    // Show user-friendly errors
-    if (employeeError) {
-      console.error('[Attendance] Employee Error:', employeeError);
-      toast.error('Failed to load employee information. Please refresh the page.');
-    }
-    if (recordsError) {
-      console.error('[Attendance] Records Error:', recordsError);
-    }
-  }, [user, employeeLoading, employeeError, currentEmployee, recordsLoading, recordsError, attendanceRecords, targetDate]);
   const { data: reportData, isLoading: reportLoading } =
     useAttendanceReport(targetDate);
 
@@ -492,12 +458,12 @@ const Attendance = () => {
       <TooltipProvider>
         <div className="space-y-5">
           {/* Hero Header */}
-          <section className="relative overflow-hidden rounded-2xl bg-slate-950 text-white shadow-lg">
+          <section className="relative overflow-hidden rounded-3xl bg-[#073f78] text-white shadow-lg">
             <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-[#1B6AB5]/20 blur-3xl" />
             <div className="pointer-events-none absolute -bottom-10 left-1/4 h-48 w-48 rounded-full bg-[#3BAD49]/10 blur-3xl" />
             <div className="relative grid gap-0 lg:grid-cols-[1fr_auto]">
               <div className="p-6 sm:p-7">
-                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#5aa0dd]">
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-green-200">
                   Attendance Management
                 </p>
 
@@ -558,48 +524,141 @@ const Attendance = () => {
             </div>
           </section>
 
-          {/* Today's Status */}
+          {/* Today + Schedule */}
           <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
             <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-5 shadow-sm">
-              <div className="mb-5">
-                <h2 className="text-sm font-semibold tracking-tight text-slate-950">
-                  Today&apos;s Status
-                </h2>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
-                  {format(currentTime, "EEEE, MMMM d, yyyy")}
-                </p>
+              <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-sm font-semibold tracking-tight text-slate-950">
+                    Today&apos;s Attendance
+                  </h2>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    {format(currentTime, "EEEE, MMMM d, yyyy")}
+                  </p>
+                </div>
+
+                {todayRecord?.work_mode && (
+                  <Badge className="w-fit bg-slate-100 text-slate-700 hover:bg-slate-100">
+                    {isOfficeMode(todayRecord.work_mode) ? (
+                      <>
+                        <Building2 className="mr-1 h-3.5 w-3.5" />
+                        Office
+                      </>
+                    ) : (
+                      <>
+                        <Home className="mr-1 h-3.5 w-3.5" />
+                        Home
+                      </>
+                    )}
+                  </Badge>
+                )}
               </div>
 
               {todayLoading ? (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {[1, 2].map((item) => (
+                <div className="grid gap-4 sm:grid-cols-3">
+                  {[1, 2, 3].map((item) => (
                     <Skeleton key={item} className="h-24 rounded-2xl" />
                   ))}
                 </div>
               ) : (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-700" />
-                      Attendance Status
+                <>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+                        <LogIn className="h-4 w-4 text-emerald-700" />
+                        Clock In
+                      </div>
+
+                      <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
+                        {todayRecord?.clock_in
+                          ? format(new Date(todayRecord.clock_in), "hh:mm a")
+                          : "--:--"}
+                      </p>
+
+                      {isAdminOrHR &&
+                        todayRecord?.clock_in &&
+                        calculateLateArrival(todayRecord.clock_in) > 0 && (
+                          <p className="mt-2 text-xs font-semibold text-amber-700">
+                            {formatLateDuration(
+                              calculateLateArrival(todayRecord.clock_in)
+                            )}{" "}
+                            late
+                          </p>
+                        )}
                     </div>
-                    <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
-                      {todayRecord?.attendance_status
-                        ? todayRecord.attendance_status.charAt(0).toUpperCase() + todayRecord.attendance_status.slice(1).replace('_', ' ')
-                        : "Not Marked"}
-                    </p>
+
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+                        <LogOut className="h-4 w-4 text-sky-700" />
+                        Clock Out
+                      </div>
+
+                      <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
+                        {todayRecord?.clock_out
+                          ? format(new Date(todayRecord.clock_out), "hh:mm a")
+                          : "--:--"}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+                        <Timer className="h-4 w-4 text-indigo-700" />
+                        Total Hours
+                      </div>
+
+                      <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
+                        {todayRecord?.total_hours
+                          ? `${todayRecord.total_hours.toFixed(2)} hrs`
+                          : "--"}
+                      </p>
+
+                      {todayBreaks && todayBreaks.length > 0 && (
+                        <p className="mt-2 text-xs text-slate-500">
+                          {todayBreaks.length} break
+                          {todayBreaks.length > 1 ? "s" : ""} ·{" "}
+                          {totalBreakHours.toFixed(1)}h total
+                        </p>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-                      <Briefcase className="h-4 w-4 text-indigo-700" />
-                      Work Mode
+                  {todayRecord?.clock_out && (
+                    <div className="mt-5 flex items-center gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-700">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Completed for today
                     </div>
-                    <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
-                      {todayRecord?.work_mode === "wfo" ? "Office" : todayRecord?.work_mode === "wfh" ? "Home" : "--"}
-                    </p>
-                  </div>
-                </div>
+                  )}
+
+                  {(todayRecord?.clock_in_location_name ||
+                    todayRecord?.clock_out_location_name) && (
+                    <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-slate-950">
+                        <MapPin className="h-4 w-4 text-sky-700" />
+                        Location Log
+                      </div>
+
+                      <div className="space-y-2 text-xs leading-5 text-slate-500">
+                        {todayRecord?.clock_in_location_name && (
+                          <p>
+                            <span className="font-semibold text-slate-700">
+                              Clock In:
+                            </span>{" "}
+                            {todayRecord.clock_in_location_name}
+                          </p>
+                        )}
+
+                        {todayRecord?.clock_out_location_name && (
+                          <p>
+                            <span className="font-semibold text-slate-700">
+                              Clock Out:
+                            </span>{" "}
+                            {todayRecord.clock_out_location_name}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
@@ -827,15 +886,8 @@ const Attendance = () => {
                   Failed to Load Employee Information
                 </h3>
                 <p className="mb-4 text-sm text-red-700">
-                  {employeeError?.message || 'Could not fetch your employee profile. Please check if you are linked to an employee record.'}
+                  We could not load your employee profile. Retry, or contact HR if the issue continues.
                 </p>
-                <div className="bg-white rounded-lg p-4 mb-4 text-left">
-                  <p className="text-xs font-mono text-gray-700">
-                    <strong>User ID:</strong> {user?.id}<br />
-                    <strong>Email:</strong> {user?.email}<br />
-                    <strong>Error:</strong> {employeeError?.message}
-                  </p>
-                </div>
                 <Button
                   onClick={() => window.location.reload()}
                   variant="outline"
@@ -854,13 +906,6 @@ const Attendance = () => {
                 <p className="mb-4 text-sm text-amber-700">
                   Your user account is not linked to an employee record. Please contact HR to link your account.
                 </p>
-                <div className="bg-white rounded-lg p-4 mb-4 text-left">
-                  <p className="text-xs font-mono text-gray-700">
-                    <strong>User ID:</strong> {user?.id}<br />
-                    <strong>Email:</strong> {user?.email}<br />
-                    <strong>Status:</strong> No employee record found
-                  </p>
-                </div>
               </div>
             ) : recordsError ? (
               <div className="rounded-xl border-2 border-red-200 bg-red-50 p-8 text-center">
@@ -869,15 +914,8 @@ const Attendance = () => {
                   Failed to Load Attendance History
                 </h3>
                 <p className="mb-4 text-sm text-red-700">
-                  {recordsError?.message || 'An error occurred while fetching your attendance records.'}
+                  We could not load attendance history for this month. Please retry.
                 </p>
-                <div className="bg-white rounded-lg p-4 mb-4 text-left">
-                  <p className="text-xs font-mono text-gray-700">
-                    <strong>Employee ID:</strong> {currentEmployee?.id}<br />
-                    <strong>Month:</strong> {format(targetDate, 'MMMM yyyy')}<br />
-                    <strong>Error:</strong> {recordsError?.message}
-                  </p>
-                </div>
                 <Button
                   onClick={() => window.location.reload()}
                   variant="outline"
@@ -1045,7 +1083,7 @@ const Attendance = () => {
                             <TableCell>
                               {record.work_mode ? (
                                 <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100">
-                                  {record.work_mode === "wfo" ? (
+                                  {isOfficeMode(record.work_mode) ? (
                                     <>
                                       <Building2 className="mr-1 h-3.5 w-3.5" />
                                       Office

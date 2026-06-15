@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -19,7 +20,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Download, FileText, Loader2 } from "lucide-react";
+import { Download, FileText, Loader2, Search } from "lucide-react";
 import { usePayrollSummary } from "@/hooks/usePayrollSummary";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -64,16 +65,35 @@ const getStatusBadge = (status: string) => {
   }
 };
 
+const PAGE_SIZE = 50;
+
 export function PayrollSummaryReport() {
   const currentDate = new Date();
   const [selectedMonth, setSelectedMonth] = useState(String(currentDate.getMonth() + 1));
   const [selectedYear, setSelectedYear] = useState(String(currentDate.getFullYear()));
   const [isExporting, setIsExporting] = useState(false);
+  const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   const { data: summary, isLoading } = usePayrollSummary(
     parseInt(selectedMonth),
     parseInt(selectedYear)
   );
+
+  const filteredRecords = useMemo(() => {
+    if (!summary) return [];
+    const q = search.toLowerCase().trim();
+    if (!q) return summary.records;
+    return summary.records.filter(
+      (r) =>
+        r.employeeName.toLowerCase().includes(q) ||
+        (r.employeeCode ?? "").toLowerCase().includes(q) ||
+        r.department.toLowerCase().includes(q)
+    );
+  }, [summary, search]);
+
+  const totalPages = Math.ceil(filteredRecords.length / PAGE_SIZE);
+  const pagedRecords = filteredRecords.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   const exportToPDF = async () => {
     if (!summary) return;
@@ -226,6 +246,17 @@ export function PayrollSummaryReport() {
             </Button>
           </div>
         </div>
+        {summary && summary.records.length > 0 && (
+          <div className="relative mt-2">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search by name, code or department..."
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
+              className="pl-9 max-w-sm"
+            />
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -261,49 +292,75 @@ export function PayrollSummaryReport() {
 
             {/* Employee Table */}
             {summary.records.length > 0 ? (
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Employee</TableHead>
-                      <TableHead>Department</TableHead>
-                      <TableHead className="text-right">Basic</TableHead>
-                      <TableHead className="text-right">Allowances</TableHead>
-                      <TableHead className="text-right">Deductions</TableHead>
-                      <TableHead className="text-right">Net Salary</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {summary.records.map((record) => (
-                      <TableRow key={record.id}>
-                        <TableCell>
-                          <div>
-                            <p className="font-medium">{record.employeeName}</p>
-                            <p className="text-xs text-muted-foreground">{record.employeeCode}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell>{record.department}</TableCell>
-                        <TableCell className="text-right">{formatCurrency(record.basicSalary)}</TableCell>
-                        <TableCell className="text-right text-green-600">{formatCurrency(record.allowances)}</TableCell>
-                        <TableCell className="text-right text-red-600">{formatCurrency(record.deductions)}</TableCell>
-                        <TableCell className="text-right font-medium">{formatCurrency(record.netSalary)}</TableCell>
-                        <TableCell>{getStatusBadge(record.status)}</TableCell>
+              <>
+                <p className="text-sm text-muted-foreground">
+                  Showing {filteredRecords.length === summary.records.length
+                    ? `all ${summary.records.length}`
+                    : `${filteredRecords.length} of ${summary.records.length}`} employees
+                  {totalPages > 1 && ` — page ${currentPage} of ${totalPages}`}
+                </p>
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Employee</TableHead>
+                        <TableHead>Department</TableHead>
+                        <TableHead className="text-right">Basic</TableHead>
+                        <TableHead className="text-right">Allowances</TableHead>
+                        <TableHead className="text-right">Deductions</TableHead>
+                        <TableHead className="text-right">Net Salary</TableHead>
+                        <TableHead>Status</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                  <TableFooter>
-                    <TableRow>
-                      <TableCell colSpan={2} className="font-bold">Total ({summary.employeeCount} employees)</TableCell>
-                      <TableCell className="text-right font-bold">{formatCurrency(summary.totalBasic)}</TableCell>
-                      <TableCell className="text-right font-bold text-green-600">{formatCurrency(summary.totalAllowances)}</TableCell>
-                      <TableCell className="text-right font-bold text-red-600">{formatCurrency(summary.totalDeductions)}</TableCell>
-                      <TableCell className="text-right font-bold">{formatCurrency(summary.totalNetSalary)}</TableCell>
-                      <TableCell></TableCell>
-                    </TableRow>
-                  </TableFooter>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {pagedRecords.map((record) => (
+                        <TableRow key={record.id}>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{record.employeeName}</p>
+                              <p className="text-xs text-muted-foreground">{record.employeeCode}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>{record.department}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(record.basicSalary)}</TableCell>
+                          <TableCell className="text-right text-green-600">{formatCurrency(record.allowances)}</TableCell>
+                          <TableCell className="text-right text-red-600">{formatCurrency(record.deductions)}</TableCell>
+                          <TableCell className="text-right font-medium">{formatCurrency(record.netSalary)}</TableCell>
+                          <TableCell>{getStatusBadge(record.status)}</TableCell>
+                        </TableRow>
+                      ))}
+                      {pagedRecords.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                            No records match your search
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                    <TableFooter>
+                      <TableRow>
+                        <TableCell colSpan={2} className="font-bold">Total ({summary.employeeCount} employees)</TableCell>
+                        <TableCell className="text-right font-bold">{formatCurrency(summary.totalBasic)}</TableCell>
+                        <TableCell className="text-right font-bold text-green-600">{formatCurrency(summary.totalAllowances)}</TableCell>
+                        <TableCell className="text-right font-bold text-red-600">{formatCurrency(summary.totalDeductions)}</TableCell>
+                        <TableCell className="text-right font-bold">{formatCurrency(summary.totalNetSalary)}</TableCell>
+                        <TableCell></TableCell>
+                      </TableRow>
+                    </TableFooter>
+                  </Table>
+                </div>
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between pt-2">
+                    <Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => setCurrentPage((p) => p - 1)}>
+                      Previous
+                    </Button>
+                    <span className="text-sm text-muted-foreground">Page {currentPage} / {totalPages}</span>
+                    <Button variant="outline" size="sm" disabled={currentPage === totalPages} onClick={() => setCurrentPage((p) => p + 1)}>
+                      Next
+                    </Button>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <FileText className="h-12 w-12 text-muted-foreground mb-4" />

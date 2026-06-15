@@ -57,6 +57,9 @@ export interface EngineResult {
   processId: string | null;
   branchId: string | null;
   source: AttendanceSource;
+  sourceSystem: string;
+  sourceRecordDate: string;
+  sourceReference: string | null;
   diallerMinutes: number | null;
   biometricMinutes: number | null;
   rawMinutes: number;
@@ -92,6 +95,29 @@ export interface BatchResult {
   skipped: number;
   failed: number;
   errors: string[];
+}
+
+export function isOperationsExecutive(departmentName: string, designationName: string): boolean {
+  const department = departmentName.trim().toLowerCase();
+  const designation = designationName.trim().toLowerCase();
+  return (department === 'operations' || department === 'operation')
+    && /^executive(?:\s*-\s*.+)?$/.test(designation);
+}
+
+export function classifyOperationsNetLogin(
+  netLoginMinutes: number
+): { status: 'present' | 'half_day' | 'absent'; lwpValue: number } {
+  if (netLoginMinutes >= 480) return { status: 'present', lwpValue: 0.0 };
+  if (netLoginMinutes > 240) return { status: 'half_day', lwpValue: 0.5 };
+  return { status: 'absent', lwpValue: 1.0 };
+}
+
+export function classifyCosecMinutes(
+  biometricMinutes: number
+): { status: 'present' | 'half_day' | 'absent'; lwpValue: number } {
+  if (biometricMinutes >= 540) return { status: 'present', lwpValue: 0.0 };
+  if (biometricMinutes > 240) return { status: 'half_day', lwpValue: 0.5 };
+  return { status: 'absent', lwpValue: 1.0 };
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -206,13 +232,42 @@ export const attendanceEngineService = {
 
   // Sum biometric login minutes
   async getBiometricMinutes(employeeId: string, date: string): Promise<number> {
+    return (await this.getBiometricEvidence(employeeId, date)).minutes;
+  },
+
+  async getBiometricEvidence(
+    employeeId: string,
+    date: string
+  ): Promise<{ minutes: number; sourceSystem: string; sourceReference: string | null }> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(total_login_minutes), 0) AS total
-       FROM wfm_attendance_session
-       WHERE employee_id = ? AND session_date = ?`,
-      [employeeId, date]
+      `SELECT evidence.minutes, evidence.source_system, evidence.source_reference
+       FROM (
+         SELECT COALESCE(SUM(was.total_login_minutes), 0) AS minutes,
+                'wfm_attendance_session' AS source_system,
+                CAST(MAX(was.id) AS CHAR) AS source_reference
+         FROM wfm_attendance_session was
+         WHERE was.employee_id = ? AND was.session_date = ?
+         UNION ALL
+         SELECT COALESCE(MAX(ibd.biometric_minutes), 0) AS minutes,
+                CONCAT('integration:', MAX(ibd.integration_key)) AS source_system,
+                CAST(MAX(ibd.id) AS CHAR) AS source_reference
+         FROM integration_biometric_daily ibd
+         JOIN employees e
+           ON e.id = ?
+          AND (ibd.employee_code = e.employee_code OR ibd.employee_code = e.biometric_code)
+         WHERE ibd.activity_date = ?
+       ) evidence
+       ORDER BY evidence.minutes DESC
+       LIMIT 1`,
+      [employeeId, date, employeeId, date]
     );
-    return Number((rows[0] as any).total ?? 0);
+    const row = rows[0] as any;
+    const minutes = Number(row?.minutes ?? 0);
+    return {
+      minutes,
+      sourceSystem: minutes > 0 ? String(row?.source_system ?? 'cosec') : 'cosec_policy_absence',
+      sourceReference: minutes > 0 ? String(row?.source_reference ?? '') || null : null,
+    };
   },
 
   // Pure classification — no DB
@@ -267,44 +322,70 @@ export const attendanceEngineService = {
     return { lateMark: 0, lateByMinutes: Math.max(0, lateByMinutes) };
   },
 
-  // Biometric mismatch alert — fires when dialler employee has bio ≥9hrs but status ≠ present
+  // Review alert when COSEC shows a full shift but net login is below eight hours.
   async checkAndNotifyBiometricMismatch(
     employeeId: string,
     date: string,
     result: EngineResult
   ): Promise<void> {
     if (result.source !== 'dialler') return;
-    if (result.status === 'present') return;
+    if ((result.diallerMinutes ?? 0) >= 480) return;
     const bioMinutes = result.biometricMinutes ?? 0;
-    if (bioMinutes < 540) return; // < 9 hours — no alert
+    if (bioMinutes < 540) return;
 
     const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT reporting_manager_id, employee_code,
+      `SELECT user_id, reporting_manager_id, employee_code,
          CONCAT(first_name,' ',COALESCE(last_name,'')) AS full_name
        FROM employees WHERE id = ? LIMIT 1`,
       [employeeId]
     );
     const emp = empRows[0] as any;
-    if (!emp?.reporting_manager_id) return;
+    if (!emp) return;
 
-    const [managerRows] = await db.execute<RowDataPacket[]>(
-      `SELECT user_id FROM employees WHERE id = ? LIMIT 1`, [emp.reporting_manager_id]
-    );
-    const managerUserId = (managerRows[0] as any)?.user_id;
-    if (!managerUserId) return;
+    let managerUserId: string | null = null;
+    if (emp.reporting_manager_id) {
+      const [managerRows] = await db.execute<RowDataPacket[]>(
+        `SELECT user_id FROM employees WHERE id = ? LIMIT 1`, [emp.reporting_manager_id]
+      );
+      managerUserId = (managerRows[0] as any)?.user_id ?? null;
+    }
+
+    const recipients = Array.from(new Set(
+      [emp.user_id, managerUserId].filter((userId): userId is string => Boolean(userId))
+    ));
+    if (recipients.length === 0) return;
 
     try {
       const { inboxService } = await import('../inbox/inbox.service.js');
-      await inboxService.createItem({
-        user_id: managerUserId,
-        type: 'attendance_validation',
-        title: `Attendance Mismatch: ${emp.full_name}`,
-        description: `${emp.employee_code} biometric shows ${(bioMinutes / 60).toFixed(1)}hrs on ${date} but dialler status is ${result.status}. Please validate attendance.`,
-        entity_type: 'attendance',
-        entity_id: employeeId,
-        action_url: `/attendance/regularizations?employeeId=${employeeId}&date=${date}`,
-        priority: 'high',
-      });
+      const actionUrl = `/attendance/regularizations?employeeId=${employeeId}&date=${date}`;
+      const description =
+        `${emp.employee_code} COSEC time is ${(bioMinutes / 60).toFixed(1)} hours on ${date}, `
+        + `but net login is ${((result.diallerMinutes ?? 0) / 60).toFixed(1)} hours. `
+        + `Attendance is marked ${result.status.replace('_', ' ')} and requires review.`;
+
+      for (const userId of recipients) {
+        const [existing] = await db.execute<RowDataPacket[]>(
+          `SELECT id FROM work_inbox_item
+           WHERE user_id = ? AND type = 'attendance_validation'
+             AND entity_id = ? AND action_url = ?
+           LIMIT 1`,
+          [userId, employeeId, actionUrl]
+        );
+        if (existing.length > 0) continue;
+
+        await inboxService.createItem({
+          user_id: userId,
+          type: 'attendance_validation',
+          title: userId === emp.user_id
+            ? 'Attendance review required'
+            : `Attendance mismatch: ${emp.full_name}`,
+          description,
+          entity_type: 'attendance',
+          entity_id: employeeId,
+          action_url: actionUrl,
+          priority: 'high',
+        });
+      }
     } catch {
       // Non-fatal
     }
@@ -335,17 +416,18 @@ export const attendanceEngineService = {
     // Resolve rule
     let rule = await this.resolveRule(designationId, processId, branchId, date);
 
-    // Determine if employee is Operations+Executive (APR source override)
-    const isAprEmployee =
-      emp.dept_name.includes('operation') &&
-      emp.designation_name.includes('executive');
+    // Only Operations Executive variants use net login. All other roles use COSEC.
+    const isAprEmployee = isOperationsExecutive(emp.dept_name, emp.designation_name);
 
     // Check overrides (leave/holiday/week-off)
     const override = await this.resolveOverridePriority(employeeId, date, branchId);
     if (override) {
       return {
         employeeId, date, processId, branchId,
-        source: isAprEmployee ? 'dialler' : rule.attendance_source,
+        source: isAprEmployee ? 'dialler' : 'biometric',
+        sourceSystem: 'attendance_override',
+        sourceRecordDate: date,
+        sourceReference: null,
         diallerMinutes: null, biometricMinutes: null, rawMinutes: 0,
         status: override.status, lwpValue: 0.0,
         lateMark: 0, lateByMinutes: 0,
@@ -354,25 +436,34 @@ export const attendanceEngineService = {
     }
 
     // Always fetch biometric minutes (needed for mismatch check even for dialler employees)
-    const biometricMinutes = await this.getBiometricMinutes(employeeId, date);
+    const biometricEvidence = await this.getBiometricEvidence(employeeId, date);
+    const biometricMinutes = biometricEvidence.minutes;
     let diallerMinutes: number | null = null;
     let rawMinutes: number;
+    let sourceSystem = biometricEvidence.sourceSystem;
+    let sourceReference = biometricEvidence.sourceReference;
 
     if (isAprEmployee) {
-      // APR-based attendance: use Net_Login directly from apr table
-      // Thresholds per spec: ≥480min=Present, 240-479min=Half Day, <240min=Absent
-      diallerMinutes = await this.getAprNetMinutes(emp.employee_code, date);
+      // APR is primary for Operations Executives. Imported dialler aggregates
+      // are the fallback when APR has no usable row for the employee/date.
+      // Thresholds: >=8h present, >4h and <8h half day, <=4h absent.
+      const aprMinutes = await this.getAprNetMinutes(emp.employee_code, date);
+      diallerMinutes = aprMinutes > 0
+        ? aprMinutes
+        : await this.getDiallerMinutes(employeeId, date);
+      sourceSystem = aprMinutes > 0 ? 'apr.ReportDate' : 'dialer_session_log.session_date';
+      sourceReference = emp.employee_code;
       rawMinutes = diallerMinutes;
       rule = { ...rule, attendance_source: 'dialler', full_day_minutes: 480, half_day_minutes: 240 };
-    } else if (rule.attendance_source === 'dialler') {
-      diallerMinutes = await this.getDiallerMinutes(employeeId, date);
-      rawMinutes = diallerMinutes;
     } else {
+      rule = { ...rule, attendance_source: 'biometric', full_day_minutes: 540, half_day_minutes: 240 };
       rawMinutes = biometricMinutes;
     }
 
     // Classify
-    const classification = this.classifyMinutes(rawMinutes, rule);
+    const classification = isAprEmployee
+      ? classifyOperationsNetLogin(rawMinutes)
+      : classifyCosecMinutes(rawMinutes);
 
     // Late arrival
     const lateResult = await this.calculateLateArrival(employeeId, date, rule);
@@ -380,6 +471,9 @@ export const attendanceEngineService = {
     return {
       employeeId, date, processId, branchId,
       source: rule.attendance_source,
+      sourceSystem,
+      sourceRecordDate: date,
+      sourceReference,
       diallerMinutes,
       biometricMinutes: biometricMinutes > 0 ? biometricMinutes : null,
       rawMinutes,
@@ -397,13 +491,17 @@ export const attendanceEngineService = {
     createdBy: string
   ): Promise<AttendanceDailyRecord> {
     await db.execute(
-      `INSERT INTO attendance_daily_record
+       `INSERT INTO attendance_daily_record
          (id, employee_id, record_date, process_id, branch_id, attendance_source,
+          source_system, source_record_date, source_reference,
           dialler_minutes, biometric_minutes, raw_minutes, attendance_status,
           lwp_value, late_mark, late_by_minutes, rule_config_id, processed_at, created_by)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
        ON DUPLICATE KEY UPDATE
          attendance_source  = IF(is_locked = 0, VALUES(attendance_source),  attendance_source),
+         source_system      = IF(is_locked = 0, VALUES(source_system),      source_system),
+         source_record_date = IF(is_locked = 0, VALUES(source_record_date), source_record_date),
+         source_reference   = IF(is_locked = 0, VALUES(source_reference),   source_reference),
          dialler_minutes    = IF(is_locked = 0, VALUES(dialler_minutes),    dialler_minutes),
          biometric_minutes  = IF(is_locked = 0, VALUES(biometric_minutes),  biometric_minutes),
          raw_minutes        = IF(is_locked = 0, VALUES(raw_minutes),        raw_minutes),
@@ -416,7 +514,8 @@ export const attendanceEngineService = {
          created_by         = IF(is_locked = 0, VALUES(created_by),         created_by)`,
       [
         result.employeeId, result.date, result.processId, result.branchId,
-        result.source, result.diallerMinutes, result.biometricMinutes, result.rawMinutes,
+        result.source, result.sourceSystem, result.sourceRecordDate, result.sourceReference,
+        result.diallerMinutes, result.biometricMinutes, result.rawMinutes,
         result.status, result.lwpValue, result.lateMark, result.lateByMinutes,
         result.ruleConfigId, createdBy
       ]
@@ -515,7 +614,8 @@ export const attendanceEngineService = {
   async getRecord(employeeId: string, date: string): Promise<AttendanceDailyRecord | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT adr.*,
-         adr.record_date       AS date,
+         DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
+         DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS date,
          adr.clock_in_time     AS clock_in,
          adr.clock_out_time    AS clock_out,
          ROUND(adr.raw_minutes / 60, 2) AS total_hours,
@@ -545,7 +645,8 @@ export const attendanceEngineService = {
     // plus an employee sub-object for name/code display.
     let q = `SELECT
         adr.*,
-        adr.record_date          AS date,
+        DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
+        DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS date,
         adr.clock_in_time        AS clock_in,
         adr.clock_out_time       AS clock_out,
         ROUND(adr.raw_minutes / 60, 2) AS total_hours,
@@ -553,9 +654,12 @@ export const attendanceEngineService = {
         adr.clock_in_location    AS clock_in_location_name,
         adr.clock_out_location   AS clock_out_location_name,
         e.first_name, e.last_name, e.employee_code,
-        e.working_hours_start, e.working_hours_end
+        CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+        e.working_hours_start, e.working_hours_end,
+        dm.dept_name AS department_name
       FROM attendance_daily_record adr
       LEFT JOIN employees e ON e.id = adr.employee_id
+      LEFT JOIN department_master dm ON dm.id = e.department_id
       WHERE 1=1`;
     const p: unknown[] = [];
     if (filters.employeeId) { q += ' AND adr.employee_id = ?'; p.push(filters.employeeId); }

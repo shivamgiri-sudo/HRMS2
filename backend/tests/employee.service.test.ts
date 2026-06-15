@@ -28,7 +28,10 @@ const fakeEmployee = {
   created_at: "2026-01-01T00:00:00Z",
 };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  exec.mockReset().mockResolvedValue([[], []]);
+});
 
 // ─── Create ───────────────────────────────────────────────────────────────────
 
@@ -136,7 +139,7 @@ describe("employeeService.updateEmployee", () => {
     exec.mockResolvedValueOnce([[fakeEmployee], []]); // re-fetch (no UPDATE call)
     const r = await employeeService.updateEmployee("emp-1", {}, "user-1");
     expect(r.employee_code).toBe("MCN001");
-    expect(exec).toHaveBeenCalledTimes(2); // only get + re-fetch, no UPDATE
+    expect(exec.mock.calls.some(([sql]) => /^\s*UPDATE employees/i.test(sql as string))).toBe(false);
   });
 });
 
@@ -169,8 +172,8 @@ describe("employeeService.createEmployee with structureId + ctcAnnual", () => {
       ctcAnnual: 300000,
     }, "user-1");
     expect(r.employee_code).toBe("MCN001");
-    // 5 db calls: dup check + INSERT emp + re-fetch + deactivate old + INSERT assignment
-    expect(exec).toHaveBeenCalledTimes(5);
+    expect(exec.mock.calls.some(([sql]) => /INSERT INTO employee_salary_assignment/i.test(sql as string))).toBe(true);
+    expect(exec.mock.calls.some(([sql]) => /INSERT INTO employee_journey_log/i.test(sql as string))).toBe(true);
   });
 
   it("skips salary assignment when structureId not provided", async () => {
@@ -182,7 +185,7 @@ describe("employeeService.createEmployee with structureId + ctcAnnual", () => {
       firstName: "Neha",
       dateOfJoining: "2026-06-01",
     }, "user-1");
-    // Only 3 calls: dup check + INSERT + re-fetch (no salary assignment)
-    expect(exec).toHaveBeenCalledTimes(3);
+    expect(exec.mock.calls.some(([sql]) => /INSERT INTO employee_salary_assignment/i.test(sql as string))).toBe(false);
+    expect(exec.mock.calls.some(([sql]) => /INSERT INTO employee_journey_log/i.test(sql as string))).toBe(true);
   });
 });

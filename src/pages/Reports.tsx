@@ -65,7 +65,7 @@ const Reports = () => {
   const { isAdminOrHR, isLoading: roleLoading } = useIsAdminOrHR();
 
   const { data: employeeGrowthData, isLoading: isLoadingGrowth } = useEmployeeGrowthData(year);
-  const { data: departmentData, isLoading: isLoadingDept } = useDepartmentDistribution();
+  const { data: departmentData, isLoading: isLoadingDept } = useDepartmentDistribution(year);
   const { data: leaveStats, isLoading: isLoadingLeave } = useLeaveStatistics(year);
   const { data: payrollTrendData, isLoading: isLoadingPayroll } = usePayrollTrend(year);
   const { data: headcountData, isLoading: isLoadingHeadcount } = useHeadcountSummary(year);
@@ -411,13 +411,13 @@ const Reports = () => {
                   <Skeleton className="h-full w-full" />
                 ) : payrollTrendData && payrollTrendData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={payrollTrendData}>
+                    <LineChart data={payrollTrendData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                       <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={12} />
                       <YAxis
                         stroke="hsl(var(--muted-foreground))"
                         fontSize={12}
-                        tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                        tickFormatter={(value) => `₹${(value / 1000).toFixed(0)}k`}
                       />
                       <Tooltip
                         contentStyle={{
@@ -427,8 +427,15 @@ const Reports = () => {
                         }}
                         formatter={(value: number) => [`₹${value.toLocaleString('en-IN')}`, "Amount"]}
                       />
-                      <Bar dataKey="amount" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} />
-                    </BarChart>
+                      <Line
+                        type="monotone"
+                        dataKey="amount"
+                        stroke="hsl(var(--primary))"
+                        strokeWidth={3}
+                        dot={{ fill: "hsl(var(--primary))", strokeWidth: 2, r: 4 }}
+                        activeDot={{ r: 6 }}
+                      />
+                    </LineChart>
                   </ResponsiveContainer>
                 ) : (
                   <div className="flex h-full items-center justify-center">

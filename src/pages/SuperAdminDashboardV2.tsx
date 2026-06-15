@@ -26,15 +26,16 @@ interface SystemMetrics {
   totalRoles: number;
   totalPages: number;
   activeIntegrations: number;
+  configuredIntegrations: number;
   systemHealth: "healthy" | "warning" | "critical";
 }
 
 interface ModuleHealth {
   module: string;
   status: "operational" | "degraded" | "down";
-  lastSync?: string;
+  lastActivity?: string | null;
   errorCount: number;
-  uptime: number;
+  recordCount: number;
 }
 
 interface RecentActivity {
@@ -44,6 +45,12 @@ interface RecentActivity {
   action: string;
   timestamp: string;
   status: "success" | "warning" | "error";
+}
+
+interface SystemDashboardData {
+  metrics: SystemMetrics;
+  modules: ModuleHealth[];
+  activities: RecentActivity[];
 }
 
 // ─── Components ──────────────────────────────────────────────────────────────
@@ -127,17 +134,19 @@ function ModuleHealthCard({ module }: ModuleCardProps) {
       <CardContent className="space-y-2">
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div>
-            <p className="text-xs font-medium text-slate-500">Uptime</p>
-            <p className="font-mono text-sm font-semibold text-slate-900">{module.uptime.toFixed(1)}%</p>
+            <p className="text-xs font-medium text-slate-500">Records</p>
+            <p className="font-mono text-sm font-semibold text-slate-900">
+              {module.recordCount.toLocaleString("en-IN")}
+            </p>
           </div>
           <div>
             <p className="text-xs font-medium text-slate-500">Errors</p>
             <p className="font-mono text-sm font-semibold text-slate-900">{module.errorCount}</p>
           </div>
         </div>
-        {module.lastSync && (
+        {module.lastActivity && (
           <div className="text-xs text-slate-500">
-            Last sync: {new Date(module.lastSync).toLocaleString()}
+            Last activity: {new Date(module.lastActivity).toLocaleString()}
           </div>
         )}
       </CardContent>
@@ -148,117 +157,21 @@ function ModuleHealthCard({ module }: ModuleCardProps) {
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export default function SuperAdminDashboardV2() {
-  // Fetch system metrics
-  const { data: metrics, isLoading: metricsLoading } = useQuery({
-    queryKey: ["super-admin-metrics"],
+  const { data: systemData, isLoading: metricsLoading } = useQuery<SystemDashboardData>({
+    queryKey: ["super-admin-system-dashboard"],
     queryFn: async () => {
-      const [usersRes, rolesRes, pagesRes, integrationsRes] = await Promise.all([
-        hrmsApi.get<{ success: boolean; data: any[] }>("/api/access/users-for-access"),
-        hrmsApi.get<{ success: boolean; data: any[] }>("/api/access/roles/catalog"),
-        hrmsApi.get<{ success: boolean; data: any[] }>("/api/access/pages/catalog"),
-        hrmsApi.get<{ success: boolean; data: any[] }>("/api/integration-hub/"),
-      ]);
-
-      return {
-        totalUsers: usersRes.data?.length ?? 0,
-        activeEmployees: 0, // Will fetch separately
-        totalRoles: rolesRes.data?.length ?? 0,
-        totalPages: pagesRes.data?.length ?? 0,
-        activeIntegrations: integrationsRes.data?.filter((i: any) => i.status === "active").length ?? 0,
-        systemHealth: "healthy" as const,
-      };
+      const response = await hrmsApi.get<{ data: SystemDashboardData }>(
+        "/api/management/system-dashboard"
+      );
+      return response.data;
     },
+    refetchInterval: 60_000,
   });
 
-  // Fetch module health
-  const { data: modules = [] } = useQuery<ModuleHealth[]>({
-    queryKey: ["module-health"],
-    queryFn: async () => {
-      // Mock data for now - in real implementation, these would be actual health checks
-      return [
-        {
-          module: "ATS (Applicant Tracking)",
-          status: "operational",
-          lastSync: new Date(Date.now() - 3600000).toISOString(),
-          errorCount: 0,
-          uptime: 99.8,
-        },
-        {
-          module: "Payroll Management",
-          status: "operational",
-          errorCount: 0,
-          uptime: 99.9,
-        },
-        {
-          module: "Leave Management",
-          status: "operational",
-          errorCount: 0,
-          uptime: 100,
-        },
-        {
-          module: "WFM (Attendance)",
-          status: "operational",
-          errorCount: 0,
-          uptime: 99.5,
-        },
-        {
-          module: "Integration Hub",
-          status: "operational",
-          lastSync: new Date(Date.now() - 7200000).toISOString(),
-          errorCount: 0,
-          uptime: 98.5,
-        },
-        {
-          module: "KPI Tracking",
-          status: "operational",
-          errorCount: 0,
-          uptime: 99.2,
-        },
-      ];
-    },
-  });
-
-  // Fetch recent activity
-  const { data: activities = [] } = useQuery<RecentActivity[]>({
-    queryKey: ["recent-activity"],
-    queryFn: async () => {
-      // Mock data - in real implementation, fetch from audit log
-      return [
-        {
-          id: "1",
-          type: "access",
-          user: "Admin User",
-          action: "Granted admin role to john.doe@company.com",
-          timestamp: new Date(Date.now() - 300000).toISOString(),
-          status: "success",
-        },
-        {
-          id: "2",
-          type: "integration",
-          user: "System",
-          action: "Completed sync: Dialer Database (1,250 records)",
-          timestamp: new Date(Date.now() - 600000).toISOString(),
-          status: "success",
-        },
-        {
-          id: "3",
-          type: "employee",
-          user: "HR Manager",
-          action: "Onboarded new employee: Jane Smith",
-          timestamp: new Date(Date.now() - 900000).toISOString(),
-          status: "success",
-        },
-        {
-          id: "4",
-          type: "payroll",
-          user: "Payroll Admin",
-          action: "Generated payslips for June 2026",
-          timestamp: new Date(Date.now() - 1800000).toISOString(),
-          status: "success",
-        },
-      ];
-    },
-  });
+  const metrics = systemData?.metrics;
+  const modules = systemData?.modules ?? [];
+  const activities = systemData?.activities ?? [];
+  const isHealthy = metrics?.systemHealth === "healthy";
 
   return (
     <DashboardLayout>
@@ -278,7 +191,7 @@ export default function SuperAdminDashboardV2() {
             title="Total Users"
             value={metrics?.totalUsers ?? 0}
             icon={<Users className="h-5 w-5" />}
-            trend="+5% this month"
+            trend={`${metrics?.activeEmployees ?? 0} active employees`}
             loading={metricsLoading}
             color="blue"
           />
@@ -300,26 +213,37 @@ export default function SuperAdminDashboardV2() {
             title="Integrations"
             value={metrics?.activeIntegrations ?? 0}
             icon={<GitBranch className="h-5 w-5" />}
-            trend="14 total configured"
+            trend={`${metrics?.configuredIntegrations ?? 0} total configured`}
             loading={metricsLoading}
             color="amber"
           />
         </div>
 
         {/* System Health Badge */}
-        <Card className="border-emerald-200 bg-gradient-to-br from-emerald-50 to-white">
+        <Card className={isHealthy
+          ? "border-emerald-200 bg-gradient-to-br from-emerald-50 to-white"
+          : "border-amber-200 bg-gradient-to-br from-amber-50 to-white"
+        }>
           <CardHeader className="pb-3">
             <div className="flex items-center gap-3">
               <div className="rounded-full bg-emerald-100 p-2">
-                <Server className="h-6 w-6 text-emerald-600" />
+                <Server className={`h-6 w-6 ${isHealthy ? "text-emerald-600" : "text-amber-600"}`} />
               </div>
               <div>
                 <CardTitle className="text-xl font-black text-slate-900">System Status</CardTitle>
-                <CardDescription className="text-sm">All systems operational</CardDescription>
+                <CardDescription className="text-sm">
+                  {isHealthy ? "All monitored modules are operational" : "One or more modules need attention"}
+                </CardDescription>
               </div>
-              <Badge className="ml-auto border-emerald-300 bg-emerald-100 text-emerald-800">
-                <CheckCircle2 className="mr-1 h-3 w-3" />
-                Healthy
+              <Badge className={isHealthy
+                ? "ml-auto border-emerald-300 bg-emerald-100 text-emerald-800"
+                : "ml-auto border-amber-300 bg-amber-100 text-amber-800"
+              }>
+                {isHealthy
+                  ? <CheckCircle2 className="mr-1 h-3 w-3" />
+                  : <AlertCircle className="mr-1 h-3 w-3" />
+                }
+                {isHealthy ? "Healthy" : "Attention"}
               </Badge>
             </div>
           </CardHeader>

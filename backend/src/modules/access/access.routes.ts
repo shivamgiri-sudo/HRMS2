@@ -89,6 +89,10 @@ router.get("/roles/user/:userId", requireRole("admin", "hr"), h(async (req: Auth
 router.post("/roles/assign", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { user_id, role_key } = req.body;
   if (!user_id || !role_key) return res.status(400).json({ error: "user_id and role_key required" });
+  const actorRoles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
+  if (role_key === "super_admin" && !actorRoles.includes("super_admin")) {
+    return res.status(403).json({ error: "Only a super administrator can assign the super_admin role" });
+  }
   await assignRole(user_id, role_key, req.authUser!.id, req);
   res.json({ ok: true });
 }));
@@ -97,6 +101,13 @@ router.post("/roles/assign", requireRole("admin"), h(async (req: AuthenticatedRe
 router.post("/roles/revoke", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { user_id, role_key } = req.body;
   if (!user_id || !role_key) return res.status(400).json({ error: "user_id and role_key required" });
+  if (user_id === req.authUser!.id) {
+    return res.status(400).json({ error: "You cannot revoke your own role" });
+  }
+  const actorRoles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
+  if (role_key === "super_admin" && !actorRoles.includes("super_admin")) {
+    return res.status(403).json({ error: "Only a super administrator can revoke the super_admin role" });
+  }
   await revokeRole(user_id, role_key, req.authUser!.id, req);
   res.json({ ok: true });
 }));

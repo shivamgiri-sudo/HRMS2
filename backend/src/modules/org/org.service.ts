@@ -34,7 +34,27 @@ async function listActive(table: string, orderCol = "created_at", entityType?: s
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT * FROM ${table} WHERE active_status = 1 ORDER BY ${orderCol}`
   );
-  let items = rows as RowDataPacket[];
+  const nameColumns: Record<string, string> = {
+    branch_master: "branch_name",
+    department_master: "dept_name",
+    lob_master: "lob_name",
+    designation_master: "designation_name",
+    campaign_master: "campaign_name",
+    cost_centre_master: "cost_centre_name",
+    grade_band_master: "grade_name",
+    location_master: "location_name",
+    policy_master: "policy_name",
+    process_master: "process_name",
+  };
+  const nameColumn = nameColumns[table];
+  const seen = new Set<string>();
+  let items = (rows as RowDataPacket[]).filter((item) => {
+    if (!nameColumn) return true;
+    const normalized = String(item[nameColumn] ?? "").trim().toLocaleLowerCase();
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
 
   // Apply customization if entityType + employeeId provided
   if (entityType && employeeId) {
@@ -114,14 +134,65 @@ export const branchService = {
 // ── Department ────────────────────────────────────────────────────────────────
 
 export const departmentService = {
-  list: (employeeId?: string) => listActive("department_master", "dept_name", "department", employeeId),
+  async list(employeeId?: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT dm.*,
+              dm.dept_head_employee_id AS manager_id,
+              CONCAT(head.first_name, ' ', COALESCE(head.last_name, '')) AS manager_name,
+              COUNT(DISTINCT e.id) AS employee_count
+         FROM department_master dm
+         LEFT JOIN employees head
+           ON head.id = dm.dept_head_employee_id
+          AND head.active_status = 1
+         LEFT JOIN employees e
+           ON e.department_id = dm.id
+          AND e.active_status = 1
+        WHERE dm.active_status = 1
+        GROUP BY dm.id
+        ORDER BY dm.dept_name`
+    );
+    const seen = new Set<string>();
+    const items = rows.filter((item) => {
+      const normalized = String(item.dept_name ?? "").trim().toLocaleLowerCase();
+      if (!normalized || seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    });
+    if (employeeId) {
+      for (const item of items) {
+        try {
+          const result = await getEffectiveConfig(employeeId, "department", item.id, item);
+          Object.assign(item, result.config);
+        } catch (err) {
+          console.warn(`Customization error for department ${item.id}:`, err);
+        }
+      }
+    }
+    return items;
+  },
   getById: (id: string) => getById("department_master", id),
-  async create(data: { dept_code: string; dept_name: string; branch_id?: string; description?: string }) {
+  async create(data: {
+    dept_code?: string;
+    dept_name?: string;
+    name?: string;
+    branch_id?: string;
+    description?: string;
+    manager_id?: string | null;
+  }) {
+    const deptName = String(data.dept_name ?? data.name ?? "").trim();
+    if (!deptName) throw Object.assign(new Error("Department name is required"), { statusCode: 400 });
+    const deptCode = String(data.dept_code ?? deptName)
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "_")
+      .slice(0, 40);
     const id = randomUUID();
     try {
       await db.execute(
-        "INSERT INTO department_master (id, dept_code, dept_name, branch_id, description) VALUES (?, ?, ?, ?, ?)",
-        [id, data.dept_code, data.dept_name, data.branch_id ?? null, data.description ?? null]
+        `INSERT INTO department_master
+           (id, dept_code, dept_name, branch_id, description, dept_head_employee_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [id, deptCode, deptName, data.branch_id ?? null, data.description ?? null, data.manager_id ?? null]
       );
     } catch (err: any) {
       if (err.code === 'ER_DUP_ENTRY' && err.message?.includes('dept_code')) {
@@ -131,10 +202,23 @@ export const departmentService = {
     }
     return getById("department_master", id);
   },
-  async update(id: string, data: { dept_name?: string; branch_id?: string; description?: string }) {
+  async update(id: string, data: {
+    dept_name?: string;
+    name?: string;
+    branch_id?: string;
+    description?: string;
+    manager_id?: string | null;
+  }) {
+    const deptName = data.dept_name ?? data.name ?? null;
     await db.execute(
-      "UPDATE department_master SET dept_name = COALESCE(?, dept_name), branch_id = COALESCE(?, branch_id), description = COALESCE(?, description), updated_at = NOW() WHERE id = ?",
-      [data.dept_name ?? null, data.branch_id ?? null, data.description ?? null, id]
+      `UPDATE department_master
+          SET dept_name = COALESCE(?, dept_name),
+              branch_id = COALESCE(?, branch_id),
+              description = COALESCE(?, description),
+              dept_head_employee_id = ?,
+              updated_at = NOW()
+        WHERE id = ?`,
+      [deptName, data.branch_id ?? null, data.description ?? null, data.manager_id ?? null, id]
     );
     return getById("department_master", id);
   },
@@ -236,7 +320,7 @@ export const costCentreService = {
 // ── Grade / Band ──────────────────────────────────────────────────────────────
 
 export const gradeBandService = {
-  list: (employeeId?: string) => listActive("grade_band_master", "grade_band_name", "grade_band", employeeId),
+  list: (employeeId?: string) => listActive("grade_band_master", "grade_name", "grade_band", employeeId),
   getById: (id: string) => getById("grade_band_master", id),
   async create(data: { grade_code: string; grade_name: string; band?: string; min_ctc?: number; max_ctc?: number }) {
     const id = randomUUID();

@@ -203,12 +203,13 @@ export const reconciliationService = {
 
   async listReconciliation(filters: {
     fromDate: string; toDate: string;
-    employeeId?: string; processName?: string; status?: string;
+    employeeId?: string; processId?: string; processName?: string; status?: string;
     page: number; limit: number;
   }) {
     const conds: string[] = ["r.roster_date BETWEEN ? AND ?"];
     const params: unknown[] = [filters.fromDate, filters.toDate];
     if (filters.employeeId)  { conds.push("r.employee_id = ?");           params.push(filters.employeeId); }
+    if (filters.processId)   { conds.push("e.process_id = ?");            params.push(filters.processId); }
     if (filters.processName) { conds.push("ra.process_name = ?");         params.push(filters.processName); }
     if (filters.status)      { conds.push("r.attendance_status = ?");     params.push(filters.status); }
 
@@ -229,6 +230,7 @@ export const reconciliationService = {
 
     const [cnt] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM attendance_reconciliation_record r
+       JOIN employees e ON e.id = r.employee_id
        LEFT JOIN wfm_roster_assignment ra ON ra.employee_id = r.employee_id AND ra.roster_date = r.roster_date
        WHERE ${where}`,
       params
@@ -237,6 +239,66 @@ export const reconciliationService = {
     return { data: rows as ReconciliationRecord[], total: Number((cnt as RowDataPacket[])[0]?.total ?? 0), page: filters.page, limit: filters.limit };
   },
 };
+
+export async function getLiveAttendanceSummary(
+  requestedDate: string,
+  filters: { processId?: string; branchId?: string }
+) {
+  const filterSql = `${filters.processId ? " AND adr.process_id = ?" : ""}${filters.branchId ? " AND adr.branch_id = ?" : ""}`;
+  const filterParams = [
+    ...(filters.processId ? [filters.processId] : []),
+    ...(filters.branchId ? [filters.branchId] : []),
+  ];
+
+  const [requestedCount] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total
+       FROM attendance_daily_record adr
+      WHERE adr.record_date = ?${filterSql}`,
+    [requestedDate, ...filterParams]
+  );
+
+  let dataDate = requestedDate;
+  let isLatestAvailable = false;
+  if (Number(requestedCount[0]?.total ?? 0) === 0) {
+    const [latest] = await db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(MAX(adr.record_date), '%Y-%m-%d') AS data_date
+         FROM attendance_daily_record adr
+        WHERE 1=1${filterSql}`,
+      filterParams
+    );
+    const rawDate = latest[0]?.data_date;
+    if (rawDate) {
+      dataDate = String(rawDate);
+      isLatestAvailable = dataDate !== requestedDate;
+    }
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COUNT(*) AS rostered,
+       SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS logged_in,
+       SUM(CASE WHEN adr.clock_out_time IS NOT NULL THEN 1 ELSE 0 END) AS logged_out,
+       SUM(CASE WHEN adr.attendance_status = 'absent' THEN 1 ELSE 0 END) AS absent,
+       SUM(CASE WHEN adr.late_mark = 1 THEN 1 ELSE 0 END) AS late_count,
+       ROUND(AVG(LEAST(100, (COALESCE(adr.raw_minutes, 0) / 480) * 100)), 1) AS adherence_pct
+     FROM attendance_daily_record adr
+     WHERE adr.record_date = ?${filterSql}`,
+    [dataDate, ...filterParams]
+  );
+
+  return {
+    ts: Date.now(),
+    requested_date: requestedDate,
+    data_date: dataDate,
+    is_latest_available: isLatestAvailable,
+    rostered: Number(rows[0]?.rostered ?? 0),
+    logged_in: Number(rows[0]?.logged_in ?? 0),
+    logged_out: Number(rows[0]?.logged_out ?? 0),
+    absent: Number(rows[0]?.absent ?? 0),
+    late_count: Number(rows[0]?.late_count ?? 0),
+    adherence_pct: Number(rows[0]?.adherence_pct ?? 0),
+  };
+}
 
 // ─── Shrinkage Service ────────────────────────────────────────────────────────
 

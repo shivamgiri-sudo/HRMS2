@@ -33,6 +33,7 @@ export interface IntegrationConnectorRun {
 export interface IntegrationFieldMap {
   id: string;
   integration_key: string;
+  source_table: string;
   source_field: string;
   target_table: string;
   target_column: string;
@@ -43,9 +44,23 @@ export interface IntegrationFieldMap {
   created_at: string;
 }
 
+export interface IntegrationTableMap {
+  id: string;
+  integration_key: string;
+  source_table: string;
+  target_table: string;
+  sync_mode: "daily_aggregate";
+  active_status: number;
+  confirmed_by: string | null;
+  confirmed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface IntegrationFieldMapSuggestion {
   id: string;
   integration_key: string;
+  source_table: string;
   source_field: string;
   suggested_table: string | null;
   suggested_column: string | null;

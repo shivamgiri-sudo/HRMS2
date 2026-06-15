@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validateCronExpression } from "./cronSchedule.js";
 
 const INTEGRATION_TYPES = ["rest_pull", "rest_push", "database", "sftp", "file_upload"] as const;
 
@@ -28,10 +29,21 @@ export const updateIntegrationSchema = z.object({
 
 export const confirmFieldMapSchema = z.object({
   integrationKey: z.string().trim().min(1).max(100),
+  sourceTable: z.string().trim().min(1).max(255).default("*"),
   sourceField: z.string().trim().min(1).max(255),
   targetTable: z.string().trim().min(1).max(100),
   targetColumn: z.string().trim().min(1).max(100),
   transform: z.string().trim().max(500).nullable().optional(),
+});
+
+export const upsertTableMapSchema = z.object({
+  sourceTable: z.string().trim().min(1).max(255),
+  targetTable: z.enum([
+    "dialer_session_log",
+    "integration_call_daily",
+    "integration_biometric_daily",
+  ]),
+  syncMode: z.enum(["daily_aggregate"]).default("daily_aggregate"),
 });
 
 export const runFiltersSchema = z.object({
@@ -41,22 +53,32 @@ export const runFiltersSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
-// Basic cron: 5 or 6 space-separated tokens — enough to reject obviously wrong input
-const CRON_RE = /^(\S+\s+){4}\S+(\s+\S+)?$/;
-
 export const upsertScheduleSchema = z.object({
   cronExpression: z
     .string()
     .trim()
-    .min(9)
-    .regex(CRON_RE, "Invalid cron expression"),
+    .min(5)
+    .optional(),
   enabled: z.boolean().optional(),
-}).refine((d) => d.cronExpression !== undefined || d.enabled !== undefined, {
-  message: "Provide at least cronExpression or enabled",
-});
+})
+  .refine((d) => d.cronExpression !== undefined || d.enabled !== undefined, {
+    message: "Provide at least cronExpression or enabled",
+  })
+  .superRefine((data, ctx) => {
+    if (!data.cronExpression) return;
+    const error = validateCronExpression(data.cronExpression);
+    if (error) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cronExpression"],
+        message: `Invalid cron expression: ${error}`,
+      });
+    }
+  });
 
 export type CreateIntegrationInput = z.infer<typeof createIntegrationSchema>;
 export type UpdateIntegrationInput = z.infer<typeof updateIntegrationSchema>;
 export type ConfirmFieldMapInput = z.infer<typeof confirmFieldMapSchema>;
+export type UpsertTableMapInput = z.infer<typeof upsertTableMapSchema>;
 export type RunFilters = z.infer<typeof runFiltersSchema>;
 export type UpsertScheduleInput = z.infer<typeof upsertScheduleSchema>;

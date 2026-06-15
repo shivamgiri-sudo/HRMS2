@@ -4,6 +4,7 @@ import { format } from "date-fns";
 
 export interface PayrollRecord {
   id: string;
+  runId: string;
   employeeId: string;
   employeeCode: string;
   employee: {
@@ -27,29 +28,78 @@ const MONTH_NAMES = [
   "July", "August", "September", "October", "November", "December"
 ];
 
+const toRunMonth = (month?: number, year?: number) => {
+  if (month === undefined || year === undefined) return undefined;
+  return `${year}-${String(month).padStart(2, "0")}`;
+};
+
+const normalizePayrollStatus = (runStatus?: string, lineStatus?: string): PayrollRecord["status"] => {
+  const run = String(runStatus || "").toLowerCase();
+  const line = String(lineStatus || "").toLowerCase();
+  if (["disbursed", "finalized", "finalised", "paid"].includes(run)) return "paid";
+  if (["processing", "reviewed", "approved", "locked"].includes(run) || line === "calculated") return "processing";
+  return "pending";
+};
+
+const mapPayrollRecord = (row: any): PayrollRecord => {
+  const [yearStr, monthStr] = String(row.run_month ?? "").split("-");
+  const monthNum = Number(monthStr || 0);
+  const employeeName = String(row.employee_name ?? "").trim() || row.employee_code || "Unknown Employee";
+  const allowances =
+    Number(row.hra ?? 0) +
+    Number(row.special_allowance ?? 0) +
+    Number(row.incentive_total ?? 0);
+
+  return {
+    id: String(row.id),
+    runId: String(row.run_id ?? ""),
+    employeeId: String(row.employee_id ?? ""),
+    employeeCode: String(row.employee_code ?? ""),
+    employee: {
+      name: employeeName,
+      email: String(row.employee_email ?? ""),
+      avatar: row.employee_avatar ?? undefined,
+    },
+    month: MONTH_NAMES[monthNum - 1] ?? String(row.run_month ?? ""),
+    monthNum,
+    year: Number(yearStr || 0),
+    basic: Number(row.basic ?? 0),
+    allowances,
+    deductions: Number(row.total_deductions ?? 0),
+    netSalary: Number(row.net_salary ?? 0),
+    status: normalizePayrollStatus(row.run_status, row.line_status),
+    paidAt: row.disbursed_at ? String(row.disbursed_at).slice(0, 10) : undefined,
+  };
+};
+
+async function fetchPayrollRecordPages(runMonth?: string): Promise<PayrollRecord[]> {
+  const limit = 1000;
+  let page = 1;
+  let total = 0;
+  const records: PayrollRecord[] = [];
+
+  do {
+    const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+    if (runMonth) params.set("runMonth", runMonth);
+
+    const res = await hrmsApi.get<{ success: boolean; data: any[]; total?: number }>(
+      `/api/payroll/records?${params}`
+    );
+    const pageRows = res.data || [];
+    records.push(...pageRows.map(mapPayrollRecord));
+    total = Number(res.total ?? records.length);
+    page += 1;
+  } while (records.length < total);
+
+  return records;
+}
+
 export function usePayrollRecords(month?: number, year?: number) {
   return useQuery({
     queryKey: ["payroll-records", month, year],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (month !== undefined) params.set("month", String(month));
-      if (year  !== undefined) params.set("year",  String(year));
       try {
-        const res = await hrmsApi.get<{ success: boolean; data: any[] }>(`/api/payroll/runs?${params}`);
-        return (res.data || []).map((run: any): PayrollRecord => ({
-          id: run.id,
-          employeeId: "",
-          employeeCode: "",
-          employee: { name: "", email: "" },
-          month: run.run_month ?? "",
-          monthNum: Number((run.run_month ?? "0-0").split("-")[1]),
-          year:     Number((run.run_month ?? "0-0").split("-")[0]),
-          basic: 0,
-          allowances: 0,
-          deductions: Number(run.total_deductions ?? 0),
-          netSalary:  Number(run.total_net ?? 0),
-          status: run.status === "disbursed" ? "paid" : run.status === "processing" || run.status === "locked" ? "processing" : "pending",
-        }));
+        return fetchPayrollRecordPages(toRunMonth(month, year));
       } catch {
         console.warn("Payroll run management requires backend payroll module");
         return [] as PayrollRecord[];
@@ -63,6 +113,12 @@ export interface PayrollStats {
   employeeCount: number | null;
   avgSalary: number | null;
   pending: number | null;
+  salaryAssignedEmployees?: number | null;
+  payrollEmployees?: number | null;
+  missingPayrollEmployees?: number | null;
+  totalBasic?: number | null;
+  totalAllowances?: number | null;
+  totalDeductions?: number | null;
 }
 
 export function usePayrollStats() {
@@ -75,32 +131,27 @@ export function usePayrollStats() {
         const currentMonth = currentDate.getMonth() + 1;
         const currentYear = currentDate.getFullYear();
 
-        const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
-          `/api/payroll/runs?month=${currentMonth}&year=${currentYear}`
+        const runMonth = toRunMonth(currentMonth, currentYear);
+        const res = await hrmsApi.get<{ success: boolean; data: any }>(
+          `/api/payroll/overview?runMonth=${runMonth}`
         );
-
-        const runs = res.data || [];
-
-        if (runs.length === 0) {
-          return {
-            totalPayroll: 0,
-            employeeCount: 0,
-            avgSalary: 0,
-            pending: 0,
-          };
-        }
-
-        // Calculate stats from run data
-        const totalPayroll = runs.reduce((sum: number, run: any) => sum + Number(run.total_net || 0), 0);
-        const employeeCount = runs.reduce((sum: number, run: any) => sum + Number(run.total_employees || 0), 0);
-        const avgSalary = employeeCount > 0 ? totalPayroll / employeeCount : 0;
-        const pending = runs.filter((run: any) => run.status === "pending" || run.status === "draft").length;
+        const overview = res.data || {};
+        const totalPayroll = Number(overview.totalNet ?? 0);
+        const activeEmployees = Number(overview.activeEmployees ?? 0);
+        const payrollEmployees = Number(overview.payrollEmployees ?? 0);
+        const avgSalary = payrollEmployees > 0 ? totalPayroll / payrollEmployees : 0;
 
         return {
           totalPayroll,
-          employeeCount,
+          employeeCount: activeEmployees,
           avgSalary,
-          pending,
+          pending: Number(overview.missingPayrollEmployees ?? 0),
+          salaryAssignedEmployees: Number(overview.salaryAssignedEmployees ?? 0),
+          payrollEmployees,
+          missingPayrollEmployees: Number(overview.missingPayrollEmployees ?? 0),
+          totalBasic: Number(overview.totalBasic ?? 0),
+          totalAllowances: Number(overview.totalAllowances ?? 0),
+          totalDeductions: Number(overview.totalDeductions ?? 0),
         };
       } catch (error) {
         console.error("Failed to fetch payroll stats:", error);
@@ -120,8 +171,31 @@ export function useGeneratePayroll() {
 
   return useMutation({
     mutationFn: async ({ month, year }: { month: number; year: number }) => {
-      console.warn("Payroll run management requires backend payroll module");
-      throw new Error("Payroll generation is managed through the backend payroll module. Please use the payroll run API directly.");
+      const runMonth = toRunMonth(month, year);
+      if (!runMonth) throw new Error("Invalid payroll month");
+
+      let runId: string | null = null;
+      try {
+        const created = await hrmsApi.post<{ data: any }>("/api/payroll/runs", { runMonth });
+        runId = created.data?.id ?? null;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (!message.toLowerCase().includes("already exists")) throw error;
+        const existing = await hrmsApi.get<{ data: any[] }>(
+          `/api/payroll/runs?runMonth=${runMonth}&limit=1`
+        );
+        runId = existing.data?.[0]?.id ?? null;
+      }
+
+      if (!runId) throw new Error("Could not find or create payroll run");
+      const calculated = await hrmsApi.post<{ success: boolean; data: any }>(
+        `/api/payroll/runs/${runId}/calculate`
+      );
+      return {
+        count: Number(calculated.data?.employees_processed ?? 0),
+        runId,
+        ...calculated.data,
+      };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["payroll-records"] });
@@ -135,8 +209,11 @@ export function useUpdatePayrollStatus() {
 
   return useMutation({
     mutationFn: async ({ id, status }: { id: string; status: "draft" | "processed" | "paid" }) => {
-      console.warn("Payroll run management requires backend payroll module");
-      throw new Error("Payroll status updates are managed through the backend payroll module.");
+      const backendStatus =
+        status === "paid" ? "disbursed" :
+        status === "processed" ? "reviewed" :
+        "processing";
+      await hrmsApi.patch(`/api/payroll/runs/${id}/status`, { status: backendStatus });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["payroll-records"] });
@@ -150,8 +227,13 @@ export function useBulkUpdatePayrollStatus() {
 
   return useMutation({
     mutationFn: async ({ ids, status }: { ids: string[]; status: "draft" | "processed" | "paid" }) => {
-      console.warn("Payroll run management requires backend payroll module");
-      throw new Error("Bulk payroll status updates are managed through the backend payroll module.");
+      const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+      await Promise.all(uniqueIds.map((id) =>
+        hrmsApi.patch(`/api/payroll/runs/${id}/status`, {
+          status: status === "paid" ? "disbursed" : status === "processed" ? "reviewed" : "processing",
+        })
+      ));
+      return { count: uniqueIds.length };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["payroll-records"] });

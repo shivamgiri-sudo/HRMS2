@@ -69,19 +69,21 @@ interface SalaryPackage {
   band?: string;
   basic_amt: number;
   conveyance_amt: number;
-  conveyance_type?: "AMT" | "PCT";
+  conveyance_type?: "AMT" | "PCT" | "fixed" | "pct";
   medical_amt: number;
-  medical_type?: "AMT" | "PCT";
+  medical_type?: "AMT" | "PCT" | "fixed" | "pct";
   other_allowance_amt: number;
-  other_allowance_type?: "AMT" | "PCT";
+  other_allowance_type?: "AMT" | "PCT" | "fixed" | "pct";
   bonus_amt: number;
-  bonus_type?: "AMT" | "PCT";
+  bonus_type?: "AMT" | "PCT" | "fixed" | "pct";
   portfolio_amt: number;
   special_allowance_amt: number;
   pli_amt: number;
   gross_monthly?: number;
   ctc_monthly?: number;
   effective_from?: string;
+  derived_source?: "observed";
+  employee_count?: number;
 }
 
 type ComponentType = "AMT" | "PCT";
@@ -189,13 +191,13 @@ function pkgToForm(pkg: SalaryPackage): PackageFormState {
     slab_id: String(pkg.slab_id),
     basic_amt: String(pkg.basic_amt ?? ""),
     conveyance_amt: String(pkg.conveyance_amt ?? ""),
-    conveyance_type: pkg.conveyance_type ?? "AMT",
+    conveyance_type: pkg.conveyance_type === "PCT" || pkg.conveyance_type === "pct" ? "PCT" : "AMT",
     medical_amt: String(pkg.medical_amt ?? ""),
-    medical_type: pkg.medical_type ?? "AMT",
+    medical_type: pkg.medical_type === "PCT" || pkg.medical_type === "pct" ? "PCT" : "AMT",
     other_allowance_amt: String(pkg.other_allowance_amt ?? ""),
-    other_allowance_type: pkg.other_allowance_type ?? "AMT",
+    other_allowance_type: pkg.other_allowance_type === "PCT" || pkg.other_allowance_type === "pct" ? "PCT" : "AMT",
     bonus_amt: String(pkg.bonus_amt ?? ""),
-    bonus_type: pkg.bonus_type ?? "AMT",
+    bonus_type: pkg.bonus_type === "PCT" || pkg.bonus_type === "pct" ? "PCT" : "AMT",
     portfolio_amt: String(pkg.portfolio_amt ?? ""),
     special_allowance_amt: String(pkg.special_allowance_amt ?? ""),
     pli_amt: String(pkg.pli_amt ?? ""),
@@ -757,25 +759,25 @@ export default function NativeSalaryPackages() {
           formData.conveyance_amt,
           formData.conveyance_type
         ),
-        conveyance_type: formData.conveyance_type,
+        conveyance_type: formData.conveyance_type === "PCT" ? "pct" : "fixed",
         medical_amt: resolveAmt(
           basic,
           formData.medical_amt,
           formData.medical_type
         ),
-        medical_type: formData.medical_type,
+        medical_type: formData.medical_type === "PCT" ? "pct" : "fixed",
         other_allowance_amt: resolveAmt(
           basic,
           formData.other_allowance_amt,
           formData.other_allowance_type
         ),
-        other_allowance_type: formData.other_allowance_type,
+        other_allowance_type: formData.other_allowance_type === "PCT" ? "pct" : "fixed",
         bonus_amt: resolveAmt(
           basic,
           formData.bonus_amt,
           formData.bonus_type
         ),
-        bonus_type: formData.bonus_type,
+        bonus_type: formData.bonus_type === "PCT" ? "pct" : "fixed",
         portfolio_amt: toNum(formData.portfolio_amt),
         special_allowance_amt: toNum(formData.special_allowance_amt),
         pli_amt: toNum(formData.pli_amt),
@@ -1093,7 +1095,14 @@ function SlabRow({ slab, pkg, onEdit, onAdd }: SlabRowProps) {
 
   return (
     <TableRow className="text-sm">
-      <TableCell className="font-medium">{slab.name}</TableCell>
+      <TableCell className="font-medium">
+        {slab.name}
+        {pkg.derived_source === "observed" && (
+          <Badge variant="secondary" className="ml-2 text-xs">
+            Observed · {pkg.employee_count ?? 0} employees
+          </Badge>
+        )}
+      </TableCell>
       <TableCell className="text-right">{fmtINR(pkg.basic_amt)}</TableCell>
       <TableCell className="text-right">{fmtINR(pkg.conveyance_amt)}</TableCell>
       <TableCell className="text-right">{fmtINR(pkg.medical_amt)}</TableCell>
@@ -1113,14 +1122,21 @@ function SlabRow({ slab, pkg, onEdit, onAdd }: SlabRowProps) {
         {fmtINR(ctc)}
       </TableCell>
       <TableCell className="text-center">
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => onEdit(pkg)}
-          title="Edit package"
-        >
-          <Pencil className="h-4 w-4" />
-        </Button>
+        {pkg.derived_source === "observed" ? (
+          <Button size="sm" variant="outline" onClick={() => onAdd(String(slab.id))}>
+            <Plus className="h-3 w-3 mr-1" />
+            Create Template
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => onEdit(pkg)}
+            title="Edit package"
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+        )}
       </TableCell>
     </TableRow>
   );

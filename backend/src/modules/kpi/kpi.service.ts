@@ -252,36 +252,34 @@ export const kpiService = {
   // ─── Leaderboard ──────────────────────────────────────────────────────────
 
   async getLeaderboard(filters: LeaderboardFilters): Promise<LeaderboardEntry[]> {
-    const conds: string[] = ["ks.period = ?"];
+    const conds: string[] = ["DATE_FORMAT(kda.score_date, '%Y-%m') = ?"];
     const params: unknown[] = [filters.period];
-    if (filters.templateId) {
-      conds.push(`tm.template_id = ?`);
-      params.push(filters.templateId);
-    }
     if (filters.branchId)  { conds.push("e.branch_id = ?");  params.push(filters.branchId); }
     if (filters.processId) { conds.push("e.process_id = ?"); params.push(filters.processId); }
     if (filters.family)    { conds.push("m.family = ?");     params.push(filters.family); }
-    params.push(filters.limit ?? 50);
+    const limit = filters.limit ?? 50;
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          e.id AS employee_id,
          e.employee_code,
          e.full_name,
-         ROUND(SUM(
+         ROUND(SUM((
            CASE WHEN m.direction = 'lower_is_better'
-                THEN LEAST(tm.target_value / NULLIF(ks.actual_value,0), 1.2)
-                ELSE LEAST(ks.actual_value / NULLIF(tm.target_value,0), 1.2)
-           END * tm.weight_pct
-         ) / NULLIF(SUM(tm.weight_pct), 0), 2) AS weighted_score_pct
-       FROM kpi_score ks
-       JOIN employees e ON e.id = ks.employee_id
-       JOIN kpi_template_metric tm ON tm.metric_id = ks.metric_id
-       JOIN kpi_metric_master m ON m.id = ks.metric_id
+                THEN LEAST(kpc.target_value / NULLIF(kda.actual_value,0), 1.2)
+                ELSE LEAST(kda.actual_value / NULLIF(kpc.target_value,0), 1.2)
+           END * 100
+         ) * kpc.weightage) / NULLIF(SUM(kpc.weightage), 0), 2) AS weighted_score_pct
+       FROM kpi_daily_actual kda
+       JOIN employees e ON e.id = kda.employee_id AND e.active_status = 1
+       JOIN kpi_process_config kpc
+         ON kpc.process_id = e.process_id
+        AND kpc.metric_id = kda.metric_id
+       JOIN kpi_metric_master m ON m.id = kda.metric_id
        WHERE ${conds.join(" AND ")}
        GROUP BY e.id, e.employee_code, e.full_name
        ORDER BY weighted_score_pct DESC
-       LIMIT ?`,
+       LIMIT ${limit}`,
       params
     );
 

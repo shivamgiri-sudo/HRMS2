@@ -11,10 +11,12 @@ interface AuthContextType {
   user: HrmsUser | null;
   isLoading: boolean;
   isSigningOut: boolean;
+  mustChangePassword: boolean;
   signIn: (identifier: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, fullName: string, onboardingToken?: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   forgotPassword: (email: string) => Promise<{ error: Error | null }>;
+  completePasswordChange: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -70,6 +72,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<HrmsUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [mustChangePassword, setMustChangePassword] = useState(
+    localStorage.getItem('hrms_must_change_password') === 'true'
+  );
   const queryClient = useQueryClient();
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -148,8 +153,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         const mockSession = buildDemoSession(demoCred);
         localStorage.setItem('hrms_demo_session', JSON.stringify(mockSession));
+        await queryClient.cancelQueries();
+        queryClient.clear();
         setUser({ id: mockSession.user.id, email: mockSession.user.email });
-        queryClient.invalidateQueries();
         return { error: null };
       }
     }
@@ -166,9 +172,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('hrms_demo_session');
       localStorage.setItem('hrms_access_token', accessToken);
       localStorage.setItem('hrms_refresh_token', refreshToken);
+      const forceChange = authUser.mustChangePassword === true;
+      localStorage.setItem('hrms_must_change_password', String(forceChange));
+      setMustChangePassword(forceChange);
+      await queryClient.cancelQueries();
+      queryClient.clear();
       setUser({ id: authUser.id, email: authUser.email });
       scheduleRefresh();
-      queryClient.invalidateQueries();
       return { error: null };
     } catch (err) {
       return { error: err instanceof Error ? err : new Error('Network error') };
@@ -211,6 +221,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('hrms_demo_session');
       localStorage.removeItem('hrms_access_token');
       localStorage.removeItem('hrms_refresh_token');
+      localStorage.removeItem('hrms_must_change_password');
+      setMustChangePassword(false);
       if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
       setUser(null);
       queryClient.clear();
@@ -235,8 +247,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const completePasswordChange = () => {
+    localStorage.setItem('hrms_must_change_password', 'false');
+    setMustChangePassword(false);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, isSigningOut, signIn, signUp, signOut, forgotPassword }}>
+    <AuthContext.Provider value={{ user, isLoading, isSigningOut, mustChangePassword, signIn, signUp, signOut, forgotPassword, completePasswordChange }}>
       {children}
     </AuthContext.Provider>
   );

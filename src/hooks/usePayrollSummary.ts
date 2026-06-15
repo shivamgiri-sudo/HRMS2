@@ -30,20 +30,43 @@ export interface PayrollSummary {
 }
 
 export function usePayrollSummary(month: number, year: number) {
+  const runMonth = `${year}-${String(month).padStart(2, '0')}`;
   return useQuery({
     queryKey: ["payroll-summary", month, year],
     queryFn: async (): Promise<PayrollSummary> => {
-      const result = await hrmsApi.get<{ success: boolean; data: any[] }>(`/api/payroll/runs?month=${month}&year=${year}`);
-      const runs = result.data ?? [];
-      // Build summary from runs data
-      const records: PayrollSummaryRecord[] = runs.map((r: any) => ({
-        employeeId: r.employee_id ?? r.id,
-        employeeName: r.employee_name ?? 'Unknown',
-        basicSalary: r.basic_salary ?? 0,
-        allowances: r.allowances ?? 0,
-        deductions: r.deductions ?? 0,
-        netSalary: r.net_salary ?? 0,
+      // Step 1: fetch runs for this month to get run IDs
+      const runsResult = await hrmsApi.get<{ success: boolean; data: any[] }>(
+        `/api/payroll/runs?runMonth=${runMonth}`
+      );
+      const runs = runsResult.data ?? [];
+      if (!runs.length) {
+        return {
+          month, year,
+          monthName: `${MONTH_NAMES[month - 1]} ${year}`,
+          totalBasic: 0, totalAllowances: 0, totalDeductions: 0,
+          totalNetSalary: 0, employeeCount: 0, records: [],
+        };
+      }
+
+      // Step 2: fetch salary lines for the first approved run
+      const run = runs[0];
+      const linesResult = await hrmsApi.get<{ success: boolean; data: any[] }>(
+        `/api/payroll/runs/${run.id}/lines`
+      );
+      const lines = linesResult.data ?? [];
+
+      const records: PayrollSummaryRecord[] = lines.map((l: any) => ({
+        id: l.id ?? l.employee_id,
+        employeeCode: l.employee_code ?? '',
+        employeeName: l.employee_name ?? 'Unknown',
+        department: l.department_name ?? l.dept_name ?? '-',
+        basicSalary: Number(l.basic ?? l.basic_salary ?? 0),
+        allowances: Number(l.gross_salary ?? 0) - Number(l.basic ?? 0),
+        deductions: Number(l.total_deductions ?? 0),
+        netSalary: Number(l.net_salary ?? 0),
+        status: l.status ?? 'processed',
       }));
+
       return {
         month, year,
         monthName: `${MONTH_NAMES[month - 1]} ${year}`,

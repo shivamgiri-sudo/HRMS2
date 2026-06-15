@@ -463,7 +463,7 @@ const Payroll = () => {
 
   const handleMarkProcessed = (record: PayrollRecord) => {
     updateStatus.mutate(
-      { id: record.id, status: "processed" },
+      { id: record.runId, status: "processed" },
       {
         onSuccess: () => {
           toast({
@@ -484,7 +484,7 @@ const Payroll = () => {
 
   const handleMarkPaid = (record: PayrollRecord) => {
     updateStatus.mutate(
-      { id: record.id, status: "paid" },
+      { id: record.runId, status: "paid" },
       {
         onSuccess: () => {
           toast({
@@ -505,7 +505,7 @@ const Payroll = () => {
 
   const handleRevertToPending = (record: PayrollRecord) => {
     updateStatus.mutate(
-      { id: record.id, status: "draft" },
+      { id: record.runId, status: "draft" },
       {
         onSuccess: () => {
           toast({
@@ -611,7 +611,7 @@ const Payroll = () => {
     {
       label: "Employees",
       value: String(stats?.employeeCount || 0),
-      description: "Active employees in payroll scope.",
+      description: `${stats?.salaryAssignedEmployees || 0} have active salary assignments.`,
       icon: <Users className="h-5 w-5" />,
       tone: "emerald" as const,
     },
@@ -625,7 +625,7 @@ const Payroll = () => {
     {
       label: "Pending",
       value: String(stats?.pending || currentPending || 0),
-      description: "Payroll records awaiting processing.",
+      description: "Active employees not yet included in current month payroll.",
       icon: <CreditCard className="h-5 w-5" />,
       tone: "amber" as const,
     },

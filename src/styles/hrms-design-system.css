@@ -123,18 +123,18 @@
     --shadow-brand-lg: 0 8px 24px rgba(27,106,181,0.36);
 
     /* ── Sidebar (MAS brand dark sidebar) ─────────────── */
-    --sidebar-canvas:     #071428;   /* deep MAS navy */
-    --sidebar-surface-1:  #0c1d3a;   /* default cards/groups */
-    --sidebar-surface-2:  #122447;   /* hover on items */
-    --sidebar-surface-3:  #183055;   /* active item bg */
-    --sidebar-hairline:   rgba(255,255,255,0.07);
-    --sidebar-hairline-strong: rgba(255,255,255,0.12);
-    --sidebar-ink:        #f1f5f9;
-    --sidebar-ink-muted:  #94a3b8;
-    --sidebar-ink-subtle: #64748b;
-    --sidebar-accent:     #1B6AB5;
-    --sidebar-accent-glow: rgba(27,106,181,0.25);
-    --sidebar-width:      248px;
+    --sidebar-canvas:     #073f78;   /* MCN blue */
+    --sidebar-surface-1:  rgba(255,255,255,0.09);
+    --sidebar-surface-2:  rgba(255,255,255,0.14);
+    --sidebar-surface-3:  rgba(255,255,255,0.19);
+    --sidebar-hairline:   rgba(255,255,255,0.13);
+    --sidebar-hairline-strong: rgba(255,255,255,0.2);
+    --sidebar-ink:        #ffffff;
+    --sidebar-ink-muted:  #d7e9f9;
+    --sidebar-ink-subtle: #9fc6e7;
+    --sidebar-accent:     #3BAD49;
+    --sidebar-accent-glow: rgba(59,173,73,0.34);
+    --sidebar-width:      276px;
 
     /* ── Topbar ──────────────────────────────────────────── */
     --topbar-bg:          rgba(255,255,255,0.96);
@@ -349,7 +349,7 @@
   }
   .nav-item.active .nav-icon {
     background: var(--sidebar-accent-glow);
-    color: #5aa0dd;
+    color: #dff7e2;
   }
   .nav-group-label {
     font-size: 10px;

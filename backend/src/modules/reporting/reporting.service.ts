@@ -148,7 +148,7 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = e.process_id
              LEFT JOIN designation_master d ON d.id = e.designation_id
-            WHERE spr.status IN ('approved','disbursed')
+            WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND ${sc.sql}
               ${f.month ? 'AND spr.run_month = ?' : ''}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -183,7 +183,7 @@ const QUERIES: Record<string, Builder> = {
              JOIN employees e ON e.id = splc.employee_id
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = e.process_id
-            WHERE spr.status IN ('approved','disbursed')
+            WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND ${sc.sql}
               ${f.month ? 'AND spr.run_month = ?' : ''}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -222,7 +222,7 @@ const QUERIES: Record<string, Builder> = {
              JOIN salary_prep_run spr ON spr.id = spl.run_id
              JOIN employees e ON e.id = spl.employee_id
              LEFT JOIN branch_master b ON b.id = e.branch_id
-            WHERE spr.status IN ('approved','disbursed')
+            WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND ${sc.sql}
               ${f.month ? 'AND spr.run_month = ?' : ''}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -256,7 +256,7 @@ const QUERIES: Record<string, Builder> = {
              JOIN salary_prep_run spr ON spr.id = spl.run_id
              JOIN employees e ON e.id = spl.employee_id
              LEFT JOIN branch_master b ON b.id = e.branch_id
-            WHERE spr.status IN ('approved','disbursed')
+            WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND ${sc.sql}
               ${f.month ? 'AND spr.run_month = ?' : ''}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -337,7 +337,7 @@ const QUERIES: Record<string, Builder> = {
              JOIN employees e ON e.id = spl.employee_id
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = e.process_id
-            WHERE spr.status IN ('approved','disbursed')
+            WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND ${sc.sql}
               ${f.financialYear ? 'AND spr.financial_year = ?' : ''}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -1110,7 +1110,7 @@ const QUERIES: Record<string, Builder> = {
              JOIN salary_prep_run spr ON spr.id = spl.run_id
              JOIN employees e ON e.id = spl.employee_id
              LEFT JOIN branch_master b ON b.id = e.branch_id
-            WHERE spr.status IN ('approved','disbursed')
+            WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND spl.pf_employee > 0
               AND ${sc.sql}
               ${f.month ? 'AND spr.run_month = ?' : ''}
@@ -1141,7 +1141,7 @@ const QUERIES: Record<string, Builder> = {
              JOIN salary_prep_run spr ON spr.id = spl.run_id
              JOIN employees e ON e.id = spl.employee_id
              LEFT JOIN branch_master b ON b.id = e.branch_id
-            WHERE spr.status IN ('approved','disbursed')
+            WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND spl.esic_employee > 0
               AND ${sc.sql}
               ${f.month ? 'AND spr.run_month = ?' : ''}
@@ -1338,6 +1338,231 @@ const QUERIES: Record<string, Builder> = {
 // ── Service ───────────────────────────────────────────────────────────────────
 
 export const reportingService = {
+  async leaveBalanceOverview(year: number, userId: string) {
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+      throw Object.assign(new Error("year must be between 2000 and 2100"), { statusCode: 400 });
+    }
+    const scope = await resolveBranchScope(userId);
+    const sc = scopeClause(scope, "e.branch_id");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id AS employee_id,
+              e.employee_code,
+              CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+              COALESCE(NULLIF(TRIM(dm.dept_name), ''), 'Unassigned') AS department_name,
+              lt.id AS leave_type_id,
+              lt.leave_name,
+              COALESCE(lbl.allocated_days, 0) + COALESCE(lbl.adjusted_days, 0) AS total_days,
+              COALESCE(lbl.used_days, 0) AS used_days
+         FROM employees e
+         CROSS JOIN leave_type_master lt
+         LEFT JOIN department_master dm ON dm.id = e.department_id
+         LEFT JOIN leave_balance_ledger lbl
+           ON lbl.employee_id = e.id
+          AND lbl.leave_type_id = lt.id
+          AND lbl.balance_year = ?
+        WHERE e.active_status = 1
+          AND lt.active_status = 1
+          AND ${sc.sql}
+        ORDER BY e.employee_code, lt.leave_name`,
+      [year, ...sc.params]
+    );
+
+    const leaveTypes = Array.from(new Set(rows.map((row) => String(row.leave_name))));
+    const records = new Map<string, {
+      employeeId: string;
+      employeeCode: string;
+      employeeName: string;
+      department: string;
+      balances: Array<{ leaveType: string; total: number; used: number; remaining: number }>;
+    }>();
+    for (const row of rows) {
+      const employeeId = String(row.employee_id);
+      if (!records.has(employeeId)) {
+        records.set(employeeId, {
+          employeeId,
+          employeeCode: String(row.employee_code ?? ""),
+          employeeName: String(row.employee_name ?? ""),
+          department: String(row.department_name ?? "Unassigned"),
+          balances: [],
+        });
+      }
+      const total = Number(row.total_days ?? 0);
+      const used = Number(row.used_days ?? 0);
+      records.get(employeeId)!.balances.push({
+        leaveType: String(row.leave_name),
+        total,
+        used,
+        remaining: total - used,
+      });
+    }
+    return { year, leaveTypes, records: Array.from(records.values()) };
+  },
+
+  async analyticsOverview(
+    year: number,
+    userId: string
+  ): Promise<{
+    employeeGrowth: Array<{ month: string; employees: number }>;
+    departmentDistribution: Array<{ name: string; value: number }>;
+    leaveStatistics: { monthlyData: Array<Record<string, string | number>>; leaveTypeKeys: string[] };
+    payrollTrend: Array<{ month: string; amount: number }>;
+    headcount: {
+      newHires: number;
+      terminations: number;
+      netChange: number;
+      currentHeadcount: number;
+      startOfYearHeadcount: number;
+      monthlyBreakdown: Array<{ month: string; hires: number; terminations: number; net: number }>;
+    };
+  }> {
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+      throw Object.assign(new Error("year must be between 2000 and 2100"), { statusCode: 400 });
+    }
+
+    const scope = await resolveBranchScope(userId);
+    const employeeScope = scopeClause(scope, "e.branch_id");
+    const [employeeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.date_of_joining,
+              COALESCE(e.date_of_exit, e.date_of_leaving, e.resignation_date) AS exit_date,
+              e.active_status,
+              e.employment_status,
+              COALESCE(NULLIF(TRIM(dm.dept_name), ''), 'Unassigned') AS department_name
+         FROM employees e
+         LEFT JOIN department_master dm ON dm.id = e.department_id
+        WHERE ${employeeScope.sql}`,
+      employeeScope.params
+    );
+
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const toDate = (value: unknown): Date | null => {
+      if (!value) return null;
+      const date = value instanceof Date ? value : new Date(String(value));
+      return Number.isNaN(date.getTime()) ? null : date;
+    };
+    const yearStart = new Date(year, 0, 1);
+    const yearEnd = new Date(year, 11, 31, 23, 59, 59, 999);
+    const employees = employeeRows.map((row) => ({
+      joined: toDate(row.date_of_joining),
+      exited: toDate(row.exit_date),
+      active: Number(row.active_status) === 1,
+      terminated: ['resigned', 'inactive', 'terminated'].includes(String(row.employment_status ?? '').toLowerCase()),
+      department: String(row.department_name ?? "Unassigned"),
+    }));
+
+    const monthlyBreakdown = monthNames.map((month, index) => {
+      const start = new Date(year, index, 1);
+      const end = new Date(year, index + 1, 0, 23, 59, 59, 999);
+      const hires = employees.filter((employee) =>
+        employee.joined && employee.joined >= start && employee.joined <= end
+      ).length;
+      const terminations = employees.filter((employee) => {
+        if (employee.exited && employee.exited >= start && employee.exited <= end) return true;
+        // Also catch employees without exit_date but with terminated status who joined before this month
+        return false;
+      }).length;
+      return { month, hires, terminations, net: hires - terminations };
+    });
+
+    // Growth: closing active headcount per month end
+    // An employee is active at end of month M if joined <= month_end AND (no exit OR exit > month_end)
+    const employeeGrowth = monthNames.map((month, index) => {
+      const end = new Date(year, index + 1, 0, 23, 59, 59, 999);
+      const count = employees.filter((employee) => {
+        const joinedBeforeEnd = !employee.joined || employee.joined <= end;
+        const notExitedYet = !employee.exited || employee.exited > end;
+        return joinedBeforeEnd && notExitedYet && employee.active;
+      }).length;
+      return { month, employees: count };
+    });
+
+    const departmentMap = new Map<string, number>();
+    for (const employee of employees) {
+      if (!employee.active) continue;
+      departmentMap.set(employee.department, (departmentMap.get(employee.department) ?? 0) + 1);
+    }
+    const departmentDistribution = Array.from(departmentMap, ([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+
+    const leaveScope = scopeClause(scope, "e.branch_id");
+    const [leaveRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MONTH(lr.from_date) AS month_no,
+              lt.leave_name,
+              SUM(lr.total_days) AS total_days
+         FROM leave_request lr
+         JOIN employees e ON e.id = lr.employee_id
+         JOIN leave_type_master lt ON lt.id = lr.leave_type_id
+        WHERE YEAR(lr.from_date) = ?
+          AND LOWER(lr.status) = 'approved'
+          AND lt.active_status = 1
+          AND ${leaveScope.sql}
+        GROUP BY MONTH(lr.from_date), lt.leave_name
+        ORDER BY month_no, lt.leave_name`,
+      [year, ...leaveScope.params]
+    );
+    const leaveNames = Array.from(new Set(leaveRows.map((row) => String(row.leave_name))));
+    const leaveKey = (name: string) => name.trim().toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_");
+    const leaveTypeKeys = leaveNames.map(leaveKey);
+    const monthlyData = monthNames.map((month, index) => {
+      const item: Record<string, string | number> = { month };
+      for (const name of leaveNames) item[leaveKey(name)] = 0;
+      for (const row of leaveRows) {
+        if (Number(row.month_no) === index + 1) {
+          item[leaveKey(String(row.leave_name))] = Number(row.total_days ?? 0);
+        }
+      }
+      return item;
+    });
+
+    const payrollScope = scopeClause(scope, "e.branch_id");
+    const [payrollRows] = await db.execute<RowDataPacket[]>(
+      `SELECT spr.run_month, SUM(spl.net_salary) AS total_net
+         FROM salary_prep_line spl
+         JOIN salary_prep_run spr ON spr.id = spl.run_id
+         JOIN employees e ON e.id = spl.employee_id
+        WHERE LEFT(spr.run_month, 4) = ?
+          AND LOWER(spr.status) IN ('approved', 'disbursed', 'finalized')
+          AND ${payrollScope.sql}
+        GROUP BY spr.run_month
+        ORDER BY spr.run_month`,
+      [String(year), ...payrollScope.params]
+    );
+    const payrollByMonth = new Map(payrollRows.map((row) => [
+      Number(String(row.run_month).slice(5, 7)),
+      Number(row.total_net ?? 0),
+    ]));
+    const payrollTrend = monthNames
+      .map((month, index) => ({ month, amount: payrollByMonth.get(index + 1) ?? 0 }));
+
+    const newHires = employees.filter((employee) =>
+      employee.joined && employee.joined >= yearStart && employee.joined <= yearEnd
+    ).length;
+    const terminations = employees.filter((employee) =>
+      (employee.exited && employee.exited >= yearStart && employee.exited <= yearEnd) ||
+      (employee.terminated && !employee.exited && employee.joined && employee.joined >= yearStart && employee.joined <= yearEnd)
+    ).length;
+    // Employees active on Jan 1: joined before Jan 1 AND (no exit date OR exit on/after Jan 1)
+    const startOfYearHeadcount = employees.filter((employee) => {
+      const joinedBeforeYear = !employee.joined || employee.joined < yearStart;
+      const notExitedBeforeYear = !employee.exited || employee.exited >= yearStart;
+      return joinedBeforeYear && notExitedBeforeYear;
+    }).length;
+
+    return {
+      employeeGrowth,
+      departmentDistribution,
+      leaveStatistics: { monthlyData, leaveTypeKeys },
+      payrollTrend,
+      headcount: {
+        newHires,
+        terminations,
+        netChange: newHires - terminations,
+        currentHeadcount: employees.filter((employee) => employee.active).length,
+        startOfYearHeadcount,
+        monthlyBreakdown,
+      },
+    };
+  },
+
   async listReports(userId: string): Promise<RowDataPacket[]> {
     const scope = await resolveBranchScope(userId);
     const [roleRows] = await db.execute<RowDataPacket[]>(

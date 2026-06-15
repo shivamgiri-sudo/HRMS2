@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -17,7 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Download, Calendar, Loader2 } from "lucide-react";
+import { Download, Calendar, Loader2, Search } from "lucide-react";
 import { useLeaveBalanceReport } from "@/hooks/useLeaveBalanceReport";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -28,11 +29,30 @@ const YEARS = Array.from({ length: 5 }, (_, i) => ({
   label: String(currentYear - i),
 }));
 
+const PAGE_SIZE = 50;
+
 export function LeaveBalanceReport() {
   const [selectedYear, setSelectedYear] = useState(String(currentYear));
   const [isExporting, setIsExporting] = useState(false);
+  const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   const { data: report, isLoading } = useLeaveBalanceReport(parseInt(selectedYear));
+
+  const filteredRecords = useMemo(() => {
+    if (!report) return [];
+    const q = search.toLowerCase().trim();
+    if (!q) return report.records;
+    return report.records.filter(
+      (r) =>
+        r.employeeName.toLowerCase().includes(q) ||
+        (r.employeeCode ?? "").toLowerCase().includes(q) ||
+        r.department.toLowerCase().includes(q)
+    );
+  }, [report, search]);
+
+  const totalPages = Math.ceil(filteredRecords.length / PAGE_SIZE);
+  const pagedRecords = filteredRecords.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   const exportToPDF = async () => {
     if (!report || report.records.length === 0) return;
@@ -154,6 +174,17 @@ export function LeaveBalanceReport() {
             </Button>
           </div>
         </div>
+        {report && report.records.length > 0 && (
+          <div className="relative mt-2">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search by name, code or department..."
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
+              className="pl-9 max-w-sm"
+            />
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -163,58 +194,84 @@ export function LeaveBalanceReport() {
         ) : report ? (
           <div className="space-y-4">
             {report.records.length > 0 ? (
-              <div className="rounded-md border overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="sticky left-0 bg-background">Employee</TableHead>
-                      <TableHead>Department</TableHead>
-                      {report.leaveTypes.map((lt) => (
-                        <TableHead key={lt} colSpan={3} className="text-center border-l">
-                          {lt}
-                        </TableHead>
-                      ))}
-                    </TableRow>
-                    <TableRow>
-                      <TableHead className="sticky left-0 bg-background"></TableHead>
-                      <TableHead></TableHead>
-                      {report.leaveTypes.map((lt) => (
-                        <>
-                          <TableHead key={`${lt}-t`} className="text-center text-xs border-l">Total</TableHead>
-                          <TableHead key={`${lt}-u`} className="text-center text-xs">Used</TableHead>
-                          <TableHead key={`${lt}-r`} className="text-center text-xs">Left</TableHead>
-                        </>
-                      ))}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {report.records.map((record) => (
-                      <TableRow key={record.employeeId}>
-                        <TableCell className="sticky left-0 bg-background">
-                          <div>
-                            <p className="font-medium">{record.employeeName}</p>
-                            <p className="text-xs text-muted-foreground">{record.employeeCode}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell>{record.department}</TableCell>
-                        {record.balances.map((bal, i) => (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  Showing {filteredRecords.length === report.records.length
+                    ? `all ${report.records.length}`
+                    : `${filteredRecords.length} of ${report.records.length}`} employees
+                  {totalPages > 1 && ` — page ${currentPage} of ${totalPages}`}
+                </p>
+                <div className="rounded-md border overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="sticky left-0 bg-background">Employee</TableHead>
+                        <TableHead>Department</TableHead>
+                        {report.leaveTypes.map((lt) => (
+                          <TableHead key={lt} colSpan={3} className="text-center border-l">
+                            {lt}
+                          </TableHead>
+                        ))}
+                      </TableRow>
+                      <TableRow>
+                        <TableHead className="sticky left-0 bg-background"></TableHead>
+                        <TableHead></TableHead>
+                        {report.leaveTypes.map((lt) => (
                           <>
-                            <TableCell key={`${record.employeeId}-${i}-t`} className="text-center border-l">
-                              {bal.total}
-                            </TableCell>
-                            <TableCell key={`${record.employeeId}-${i}-u`} className="text-center text-orange-600">
-                              {bal.used}
-                            </TableCell>
-                            <TableCell key={`${record.employeeId}-${i}-r`} className="text-center font-medium text-green-600">
-                              {bal.remaining}
-                            </TableCell>
+                            <TableHead key={`${lt}-t`} className="text-center text-xs border-l">Total</TableHead>
+                            <TableHead key={`${lt}-u`} className="text-center text-xs">Used</TableHead>
+                            <TableHead key={`${lt}-r`} className="text-center text-xs">Left</TableHead>
                           </>
                         ))}
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {pagedRecords.map((record) => (
+                        <TableRow key={record.employeeId}>
+                          <TableCell className="sticky left-0 bg-background">
+                            <div>
+                              <p className="font-medium">{record.employeeName}</p>
+                              <p className="text-xs text-muted-foreground">{record.employeeCode}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>{record.department}</TableCell>
+                          {record.balances.map((bal, i) => (
+                            <>
+                              <TableCell key={`${record.employeeId}-${i}-t`} className="text-center border-l">
+                                {bal.total}
+                              </TableCell>
+                              <TableCell key={`${record.employeeId}-${i}-u`} className="text-center text-orange-600">
+                                {bal.used}
+                              </TableCell>
+                              <TableCell key={`${record.employeeId}-${i}-r`} className="text-center font-medium text-green-600">
+                                {bal.remaining}
+                              </TableCell>
+                            </>
+                          ))}
+                        </TableRow>
+                      ))}
+                      {pagedRecords.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={2 + report.leaveTypes.length * 3} className="text-center text-muted-foreground py-8">
+                            No records match your search
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between pt-2">
+                    <Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => setCurrentPage((p) => p - 1)}>
+                      Previous
+                    </Button>
+                    <span className="text-sm text-muted-foreground">Page {currentPage} / {totalPages}</span>
+                    <Button variant="outline" size="sm" disabled={currentPage === totalPages} onClick={() => setCurrentPage((p) => p + 1)}>
+                      Next
+                    </Button>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <Calendar className="h-12 w-12 text-muted-foreground mb-4" />

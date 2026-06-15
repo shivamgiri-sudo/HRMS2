@@ -150,7 +150,9 @@ export default function NativeEngagement() {
               </div>
               <p className="text-sm text-slate-300">
                 {summary?.points_to_next_tier == null ? (
-                  "Keep earning points!"
+                  <span className="font-bold text-white">
+                    You have reached the highest tier.
+                  </span>
                 ) : (
                   <>
                     <span className="font-bold text-white">

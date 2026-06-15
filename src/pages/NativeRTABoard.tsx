@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Activity, AlertTriangle, CheckCircle2, Clock, RefreshCcw,
@@ -77,11 +77,15 @@ type UserRole = "admin" | "hr" | "wfm" | "operations" | "manager" | string;
 
 interface LiveSummary {
   ts: number;
-  rostered: number | null;
-  logged_in: number | null;
-  logged_out: number | null;
-  absent: number | null;
-  adherence_pct: number | null;
+  requested_date: string;
+  data_date: string;
+  is_latest_available: boolean;
+  rostered: number;
+  logged_in: number;
+  logged_out: number;
+  absent: number;
+  late_count: number;
+  adherence_pct: number;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -165,8 +169,6 @@ function StatCard({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-const SSE_FALLBACK_MS = 30_000; // polling interval used when SSE unavailable
-
 const SHRINKAGE_ROLES: UserRole[] = ["admin", "hr", "wfm", "operations", "wfm_manager"];
 
 export default function NativeRTABoard() {
@@ -176,8 +178,6 @@ export default function NativeRTABoard() {
   const [date, setDate]           = useState<string>(today());
   const [processId, setProcessId] = useState<string>("");
   const [notice, setNotice]       = useState<string>("");
-  const [sseConnected, setSseConnected] = useState<boolean>(false);
-  const [liveSummary, setLiveSummary]   = useState<LiveSummary | null>(null);
 
   // ── Processes ───────────────────────────────────────────────────────────────
   const processesQ = useQuery({
@@ -193,6 +193,21 @@ export default function NativeRTABoard() {
   const reconKey     = ["rta-reconciliation", date, processId];
   const alertsKey    = ["rta-alerts", date, processId];
   const shrinkageKey = ["rta-shrinkage", date, processId];
+  const liveKey      = ["rta-live-summary", date, processId];
+
+  const liveQ = useQuery({
+    queryKey: liveKey,
+    queryFn: async () => {
+      const params = new URLSearchParams({ date });
+      if (processId) params.set("processId", processId);
+      const res = await hrmsApi.get<{ success: boolean; data: LiveSummary }>(
+        `/api/rta/live-summary?${params}`,
+      );
+      return res.data;
+    },
+    refetchInterval: 30_000,
+  });
+  const liveSummary = liveQ.data ?? null;
 
   // ── Reconciliation data ──────────────────────────────────────────────────────
   const reconQ = useQuery({
@@ -279,69 +294,10 @@ export default function NativeRTABoard() {
     void qc.invalidateQueries({ queryKey: reconKey });
     void qc.invalidateQueries({ queryKey: alertsKey });
     void qc.invalidateQueries({ queryKey: shrinkageKey });
+    void qc.invalidateQueries({ queryKey: liveKey });
   }, [date, processId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── SSE connection with polling fallback ──────────────────────────────────────
-  // EventSource cannot send Authorization headers; it relies on the session
-  // cookie sent automatically with withCredentials:true.
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    setLiveSummary(null);
-
-    const params = new URLSearchParams({ date });
-    if (processId) params.set("process_id", processId);
-    const url = `/api/rta/live-stream?${params}`;
-
-    let es: EventSource | null = null;
-
-    const startPollingFallback = () => {
-      setSseConnected(false);
-      if (timerRef.current) return; // already polling
-      timerRef.current = setInterval(refreshAll, SSE_FALLBACK_MS);
-    };
-
-    try {
-      es = new EventSource(url, { withCredentials: true });
-
-      es.onopen = () => {
-        setSseConnected(true);
-        // Cancel any polling fallback that may have started
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
-      };
-
-      es.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data) as LiveSummary & { error?: string };
-          if (!data.error) {
-            setLiveSummary(data);
-          }
-        } catch { /* ignore parse errors */ }
-      };
-
-      es.onerror = () => {
-        es?.close();
-        setSseConnected(false);
-        startPollingFallback();
-      };
-    } catch {
-      startPollingFallback();
-    }
-
-    return () => {
-      es?.close();
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      setSseConnected(false);
-    };
-  }, [date, processId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const isLoading = reconQ.isFetching || shrinkageQ.isFetching;
+  const isLoading = reconQ.isFetching || shrinkageQ.isFetching || liveQ.isFetching;
 
   const canLogSnapshot = SHRINKAGE_ROLES.some((r) =>
     (user as { role?: string } | null)?.role === r,
@@ -366,15 +322,15 @@ export default function NativeRTABoard() {
                 Planned vs actual attendance reconciliation, shrinkage and adherence alerts.
               </p>
             </div>
-            {sseConnected ? (
+            {!liveQ.isError ? (
               <span className="mt-1 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1.5 text-xs font-black text-emerald-300">
                 <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
-                Live
+                Live · 30s
               </span>
             ) : (
               <span className="mt-1 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-500/20 px-3 py-1.5 text-xs font-black text-amber-300">
                 <span className="h-2 w-2 rounded-full bg-amber-400" />
-                Polling 30s
+                Live feed unavailable
               </span>
             )}
           </div>
@@ -384,6 +340,12 @@ export default function NativeRTABoard() {
         {notice && (
           <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm font-semibold text-blue-800">
             {notice}
+          </div>
+        )}
+
+        {liveSummary?.is_latest_available && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
+            No attendance was loaded for {liveSummary.requested_date}. Showing the latest available data from {liveSummary.data_date}.
           </div>
         )}
 
@@ -458,7 +420,7 @@ export default function NativeRTABoard() {
               className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white disabled:bg-slate-300"
             >
               <RefreshCcw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
-              {sseConnected ? "Live ●" : "Auto-refresh 30s ↻"}
+              Auto-refresh 30s
             </button>
             {canLogSnapshot && (
               <button

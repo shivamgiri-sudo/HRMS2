@@ -36,7 +36,10 @@ const fakeReg = {
   created_at: "2026-05-21T00:00:00Z", updated_at: "2026-05-21T00:00:00Z",
 };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  exec.mockReset().mockResolvedValue([[], []]);
+});
 
 // ─── Shifts ──────────────────────────────────────────────────────────────────
 
@@ -154,6 +157,7 @@ describe("wfmService.listSessions", () => {
 
 describe("wfmService.submitRegularization", () => {
   it("creates regularization request", async () => {
+    exec.mockResolvedValueOnce([[{ branch_id: null }], []]);
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     exec.mockResolvedValueOnce([[fakeReg], []]);
     const r = await wfmService.submitRegularization(

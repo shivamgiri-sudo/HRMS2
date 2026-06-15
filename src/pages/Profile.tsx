@@ -21,9 +21,9 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Loader2, User, Mail, Phone, MapPin, Building2, Calendar,
-  Briefcase, Save, Clock, Wallet, Files, Package, Star,
-  Users, Cake, Edit3, X, ChevronRight, GitBranch,
-  Award, TrendingUp, RefreshCcw, UserCheck, AlertCircle,
+    Briefcase, Save, Clock, Wallet, Files, Package, Star,
+    Users, Cake, Edit3, X, ChevronRight, GitBranch, Landmark,
+    HeartHandshake,
 } from "lucide-react";
 import { PhotoUpload } from "@/components/employee/PhotoUpload";
 import { useToast } from "@/hooks/use-toast";
@@ -39,14 +39,23 @@ import { MyAttendanceHistory } from "@/components/profile/MyAttendanceHistory";
 import { AttendanceCalendar } from "@/components/attendance/AttendanceCalendar";
 import { MyAssets } from "@/components/profile/MyAssets";
 import { MyPerformanceReviews } from "@/components/profile/MyPerformanceReviews";
+import { EmployeeJourneyTimeline } from "@/components/employees/EmployeeJourneyTimeline";
+import {
+  BankStatutoryDetails,
+  EmergencyNomineeDetails,
+} from "@/components/profile/ProfileSensitiveDetails";
 
 interface ProfileForm {
+  email: string;
   phone: string;
+  alternate_mobile: string;
   address: string;
   city: string;
   country: string;
   date_of_birth: string;
   gender: string;
+  marital_status: string;
+  blood_group: string;
   working_hours_start: string;
   working_hours_end: string;
   working_days: number[];
@@ -56,8 +65,18 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const formatDate = (dateStr: string | null) => {
   if (!dateStr) return "—";
-  // Handle timezone issues by parsing as local date
-  const date = new Date(dateStr + 'T00:00:00');
+  const datePart = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/)?.slice(1);
+  if (!datePart) return "—";
+  const [year, month, day] = datePart.map(Number);
+  const date = new Date(year, month - 1, day);
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return "—";
+  }
   return date.toLocaleDateString("en-IN", {
     year: "numeric", month: "long", day: "numeric",
   });
@@ -78,7 +97,7 @@ function InfoRow({ icon: Icon, label, value }: { icon: React.ElementType; label:
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">{label}</p>
-        <p className="mt-0.5 text-sm font-semibold text-slate-900 truncate">{value || "—"}</p>
+        <p className="mt-1 break-words text-base font-bold leading-6 text-slate-900">{value || "—"}</p>
       </div>
     </div>
   );
@@ -94,133 +113,6 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ── Journey event helpers ─────────────────────────────────────────────────────
-
-const EVENT_META: Record<string, { icon: React.ElementType; color: string; bg: string }> = {
-  hire:          { icon: UserCheck,   color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200" },
-  promotion:     { icon: TrendingUp,  color: "text-[#1B6AB5]",   bg: "bg-[#e8f2fc] border-[#c4dcf5]" },
-  transfer:      { icon: RefreshCcw,  color: "text-violet-700",  bg: "bg-violet-50 border-violet-200" },
-  award:         { icon: Award,       color: "text-amber-700",   bg: "bg-amber-50 border-amber-200" },
-  warning:       { icon: AlertCircle, color: "text-rose-700",    bg: "bg-rose-50 border-rose-200" },
-  designation_change: { icon: Briefcase, color: "text-indigo-700", bg: "bg-indigo-50 border-indigo-200" },
-  department_change:  { icon: Building2,  color: "text-cyan-700",   bg: "bg-cyan-50 border-cyan-200" },
-};
-
-const getEventMeta = (type: string) =>
-  EVENT_META[type.toLowerCase()] ?? { icon: GitBranch, color: "text-slate-700", bg: "bg-slate-50 border-slate-200" };
-
-function JourneyTimeline({
-  employee, events, loading,
-}: {
-  employee: any;
-  events: any[];
-  loading: boolean;
-}) {
-  // Always show hire event derived from employee data
-  const hireEvent = {
-    id: "__hire__",
-    event_type: "hire",
-    event_date: employee.hire_date,
-    description: `Joined as ${employee.designation || "Employee"}${employee.department?.name ? ` · ${employee.department.name}` : ""}`,
-    module: "onboarding",
-    new_value: null,
-    old_value: null,
-  };
-
-  const allEvents = [
-    ...events,
-    // Only add the synthetic hire event if there's no real one
-    ...(events.some(e => e.event_type === "hire") ? [] : [hireEvent]),
-  ].sort((a, b) => new Date(b.event_date).getTime() - new Date(a.event_date).getTime());
-
-  return (
-    <div className="space-y-6">
-      {/* header */}
-      <div className="rounded-3xl bg-slate-950 px-6 py-7 text-white">
-        <p className="text-xs font-black uppercase tracking-[0.22em] text-[#5aa0dd]">Timeline</p>
-        <h2 className="mt-1 text-2xl font-black">Employee Journey</h2>
-        <p className="mt-1 text-sm text-slate-400">
-          Every milestone, move, and recognition since you joined.
-        </p>
-      </div>
-
-      {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-slate-300" />
-        </div>
-      ) : allEvents.length === 0 ? (
-        <div className="rounded-3xl border border-dashed border-slate-200 bg-white py-16 text-center">
-          <GitBranch className="mx-auto h-10 w-10 text-slate-300" />
-          <p className="mt-3 text-sm font-semibold text-slate-500">No journey events recorded yet.</p>
-        </div>
-      ) : (
-        <div className="relative">
-          {/* vertical line */}
-          <div className="absolute left-[27px] top-4 bottom-4 w-px bg-slate-200" />
-
-          <div className="space-y-5">
-            {allEvents.map((ev, i) => {
-              const { icon: Icon, color, bg } = getEventMeta(ev.event_type);
-              const isFirst = i === 0;
-              return (
-                <div key={ev.id} className="relative flex gap-4">
-                  {/* dot */}
-                  <div className={`relative z-10 flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border-2 ${bg} shadow-sm`}>
-                    <Icon className={`h-5 w-5 ${color}`} />
-                  </div>
-
-                  {/* card */}
-                  <div className={`flex-1 rounded-2xl border bg-white p-4 shadow-sm transition-shadow hover:shadow-md ${isFirst ? "border-slate-300 ring-1 ring-slate-950/5" : "border-slate-100"}`}>
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <span className={`inline-block rounded-lg px-2.5 py-0.5 text-[11px] font-black uppercase tracking-widest ${bg} ${color} border`}>
-                          {ev.event_type.replace(/_/g, " ")}
-                        </span>
-                        {ev.module && (
-                          <span className="ml-2 text-[10px] font-semibold uppercase tracking-widest text-slate-400">
-                            {ev.module}
-                          </span>
-                        )}
-                      </div>
-                      <time className="text-xs font-semibold text-slate-400 whitespace-nowrap">
-                        {formatDate(ev.event_date)}
-                      </time>
-                    </div>
-
-                    {ev.description && (
-                      <p className="mt-2 text-sm font-medium text-slate-700">{ev.description}</p>
-                    )}
-
-                    {(ev.old_value || ev.new_value) && (
-                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                        {ev.old_value && (
-                          <span className="rounded-lg bg-rose-50 px-2.5 py-1 font-semibold text-rose-600 border border-rose-100">
-                            {ev.old_value}
-                          </span>
-                        )}
-                        {ev.old_value && ev.new_value && (
-                          <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
-                        )}
-                        {ev.new_value && (
-                          <span className="rounded-lg bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700 border border-emerald-100">
-                            {ev.new_value}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-
 const Profile = () => {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -228,7 +120,7 @@ const Profile = () => {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const tabParam = (searchParams.get("tab") || "").toLowerCase();
-  const allowedTabs = ["profile", "journey", "leaves", "attendance", "assets", "reviews", "payslips", "documents"] as const;
+  const allowedTabs = ["profile", "statutory", "emergency", "journey", "leaves", "attendance", "assets", "reviews", "payslips", "documents"] as const;
   const initialTab = allowedTabs.includes(tabParam as (typeof allowedTabs)[number]) ? tabParam : "profile";
 
   const [activeTab, setActiveTab] = useState<string>(initialTab);
@@ -237,8 +129,8 @@ const Profile = () => {
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [formData, setFormData] = useState<ProfileForm>({
-    phone: "", address: "", city: "", country: "",
-    date_of_birth: "", gender: "",
+    email: "", phone: "", alternate_mobile: "", address: "", city: "", country: "",
+    date_of_birth: "", gender: "", marital_status: "", blood_group: "",
     working_hours_start: "09:00", working_hours_end: "18:00",
     working_days: [1, 2, 3, 4, 5],
   });
@@ -272,7 +164,9 @@ const Profile = () => {
       if (!avatarUrl) setAvatarUrl(employee.avatar_url ?? null);
       const fmt = (t: string | null) => (t ? t.slice(0, 5) : "");
       setFormData({
+        email: employee.email || "",
         phone: employee.phone || "",
+        alternate_mobile: employee.alternate_mobile || "",
         address: employee.address || "",
         city: employee.city || "",
         country: employee.country || "",
@@ -280,6 +174,8 @@ const Profile = () => {
           ? employee.date_of_birth.slice(0, 10)
           : "",
         gender: employee.gender || "",
+        marital_status: employee.marital_status || "",
+        blood_group: employee.blood_group || "",
         working_hours_start: fmt(employee.working_hours_start) || "09:00",
         working_hours_end: fmt(employee.working_hours_end) || "18:00",
         working_days: employee.working_days || [1, 2, 3, 4, 5],
@@ -310,12 +206,16 @@ const Profile = () => {
     setIsEditing(false);
     const fmt = (t: string | null) => (t ? t.slice(0, 5) : "");
     if (employee) setFormData({
+      email: employee.email || "",
       phone: employee.phone || "",
+      alternate_mobile: employee.alternate_mobile || "",
       address: employee.address || "",
       city: employee.city || "",
       country: employee.country || "",
       date_of_birth: employee.date_of_birth ? employee.date_of_birth.slice(0, 10) : "",
       gender: employee.gender || "",
+      marital_status: employee.marital_status || "",
+      blood_group: employee.blood_group || "",
       working_hours_start: fmt(employee.working_hours_start) || "09:00",
       working_hours_end: fmt(employee.working_hours_end) || "18:00",
       working_days: employee.working_days || [1, 2, 3, 4, 5],
@@ -353,31 +253,31 @@ const Profile = () => {
         ) : (
           <>
             {/* ── Hero Banner ─────────────────────────────────────────── */}
-            <div className="relative overflow-hidden rounded-3xl bg-slate-950 px-6 py-8 text-white">
+            <div className="relative overflow-hidden rounded-3xl bg-[#073f78] px-6 py-8 text-white shadow-lg">
               {/* decorative blobs */}
               <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-[#1B6AB5]/20 blur-3xl" />
               <div className="pointer-events-none absolute -bottom-10 left-1/3 h-48 w-48 rounded-full bg-[#3BAD49]/15 blur-3xl" />
 
-              <div className="relative flex flex-col gap-6 sm:flex-row sm:items-center">
+              <div className="relative flex flex-col gap-7 lg:flex-row lg:items-center">
                 {/* Avatar */}
                 <div className="shrink-0">
                   <PhotoUpload
                     currentUrl={avatarUrl}
                     displayName={`${employee.first_name} ${employee.last_name}`}
                     onSuccess={(url) => setAvatarUrl(url || null)}
-                    size="xl"
+                    size="2xl"
                   />
                 </div>
 
                 {/* Identity */}
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-black uppercase tracking-[0.22em] text-[#5aa0dd]">
+                  <p className="text-sm font-black uppercase tracking-[0.2em] text-green-200">
                     Employee Profile
                   </p>
-                  <h1 className="mt-1 text-3xl font-black tracking-tight">
+                  <h1 className="mt-2 text-balance text-4xl font-black tracking-tight">
                     {employee.first_name} {employee.last_name}
                   </h1>
-                  <p className="mt-1 text-base font-semibold text-slate-300">
+                  <p className="mt-2 text-lg font-bold text-blue-100">
                     {employee.designation || "—"}
                   </p>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -392,7 +292,7 @@ const Profile = () => {
                       {employee.employee_code}
                     </Badge>
                     {employee.department?.name && (
-                      <Badge className="rounded-full px-3 py-0.5 text-xs font-bold border" style={{ background: "rgba(27,106,181,0.25)", color: "#8bbde9", borderColor: "rgba(27,106,181,0.35)" }}>
+                      <Badge className="rounded-full border px-4 py-1 text-sm font-extrabold" style={{ background: "rgba(27,106,181,0.3)", color: "#d9ecff", borderColor: "rgba(139,189,233,0.55)" }}>
                         {employee.department.name}
                       </Badge>
                     )}
@@ -400,16 +300,16 @@ const Profile = () => {
                 </div>
 
                 {/* Quick stats */}
-                <div className="hidden lg:grid grid-cols-2 gap-3 shrink-0">
+                <div className="grid shrink-0 grid-cols-2 gap-3 lg:w-[420px]">
                   {[
                     { label: "Joined", value: formatDate(employee.hire_date) },
                     { label: "DOB", value: formatDate(employee.date_of_birth) },
                     { label: "Email", value: employee.email },
                     { label: "Phone", value: employee.phone || "—" },
                   ].map(({ label, value }) => (
-                    <div key={label} className="rounded-2xl bg-white/8 border border-white/10 px-4 py-3">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</p>
-                      <p className="mt-0.5 text-xs font-bold text-white truncate max-w-[140px]">{value}</p>
+                    <div key={label} className="rounded-2xl border border-white/20 bg-white/10 px-4 py-4">
+                      <p className="text-xs font-black uppercase tracking-widest text-blue-200">{label}</p>
+                      <p className="mt-1 truncate text-sm font-bold text-white">{value}</p>
                     </div>
                   ))}
                 </div>
@@ -419,9 +319,11 @@ const Profile = () => {
             {/* ── Tabs ─────────────────────────────────────────────────── */}
             <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
               <div className="overflow-x-auto pb-px">
-                <TabsList className="inline-flex h-auto gap-1 rounded-2xl bg-slate-100 p-1">
+                <TabsList className="inline-flex h-auto gap-1 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
                   {[
                     { value: "profile",    icon: User,       label: "Profile" },
+                    { value: "statutory",  icon: Landmark,   label: "Bank & Statutory" },
+                    { value: "emergency",  icon: HeartHandshake, label: "Emergency & Nominee" },
                     { value: "journey",    icon: GitBranch,  label: "Journey" },
                     { value: "leaves",     icon: Calendar,   label: "Leaves" },
                     { value: "attendance", icon: Clock,     label: "Attendance" },
@@ -433,10 +335,10 @@ const Profile = () => {
                     <TabsTrigger
                       key={value}
                       value={value}
-                      className="gap-1.5 rounded-xl px-4 py-2 text-xs font-bold data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-slate-900 text-slate-500"
+                      className="gap-2 rounded-xl px-4 py-3 text-sm font-extrabold text-slate-600 data-[state=active]:bg-[#e8f2fc] data-[state=active]:text-[#073f78] data-[state=active]:shadow-sm"
                     >
-                      <Icon className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">{label}</span>
+                      <Icon className="h-4 w-4" />
+                      <span>{label}</span>
                     </TabsTrigger>
                   ))}
                 </TabsList>
@@ -453,6 +355,7 @@ const Profile = () => {
                       <div className="divide-y divide-slate-50">
                         <InfoRow icon={Mail}      label="Email"      value={employee.email} />
                         <InfoRow icon={Phone}     label="Phone"      value={employee.phone} />
+                        <InfoRow icon={Phone}     label="Alternate"  value={employee.alternate_mobile} />
                         <InfoRow icon={MapPin}    label="City"       value={employee.city} />
                         <InfoRow icon={MapPin}    label="Country"    value={employee.country} />
                       </div>
@@ -496,6 +399,8 @@ const Profile = () => {
                       <div className="divide-y divide-slate-50">
                         <InfoRow icon={Cake}      label="Date of Birth"  value={formatDate(employee.date_of_birth)} />
                         <InfoRow icon={User}      label="Gender"         value={employee.gender} />
+                        <InfoRow icon={HeartHandshake} label="Marital Status" value={employee.marital_status} />
+                        <InfoRow icon={User} label="Blood Group" value={employee.blood_group} />
                       </div>
                     </div>
                   </div>
@@ -551,8 +456,20 @@ const Profile = () => {
                             <Input value={employee.last_name} disabled className="rounded-xl bg-slate-50" />
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Email</Label>
-                            <Input value={employee.email} disabled className="rounded-xl bg-slate-50" />
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Official Email</Label>
+                            <Input
+                              type="email"
+                              value={formData.email}
+                              onChange={(e) => setFormData(p => ({ ...p, email: e.target.value.toLowerCase() }))}
+                              disabled={!isEditing}
+                              placeholder="name@teammas.in"
+                              className="rounded-xl"
+                            />
+                            <p className={`text-xs font-semibold ${employee.official_email_compliant ? "text-emerald-600" : "text-amber-600"}`}>
+                              {employee.official_email_compliant
+                                ? "Official email verified"
+                                : "Use @teammas.in or @teammas.co.in"}
+                            </p>
                           </div>
                           <div className="space-y-1.5">
                             <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Employee Code</Label>
@@ -574,6 +491,17 @@ const Profile = () => {
                               onChange={(e) => setFormData(p => ({ ...p, phone: e.target.value }))}
                               disabled={!isEditing}
                               placeholder="e.g. +91 98765 43210"
+                              className="rounded-xl"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Alternate Number</Label>
+                            <Input
+                              type="tel"
+                              value={formData.alternate_mobile}
+                              onChange={(e) => setFormData(p => ({ ...p, alternate_mobile: e.target.value }))}
+                              disabled={!isEditing}
+                              placeholder="Alternate contact number"
                               className="rounded-xl"
                             />
                           </div>
@@ -645,6 +573,35 @@ const Profile = () => {
                                 <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem>
                               </SelectContent>
                             </Select>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Marital Status</Label>
+                            <Select
+                              value={formData.marital_status}
+                              onValueChange={(v) => setFormData(p => ({ ...p, marital_status: v }))}
+                              disabled={!isEditing}
+                            >
+                              <SelectTrigger className="rounded-xl">
+                                <SelectValue placeholder="Select marital status" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="single">Single</SelectItem>
+                                <SelectItem value="married">Married</SelectItem>
+                                <SelectItem value="divorced">Divorced</SelectItem>
+                                <SelectItem value="widowed">Widowed</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Blood Group</Label>
+                            <Input
+                              value={formData.blood_group}
+                              onChange={(e) => setFormData(p => ({ ...p, blood_group: e.target.value.toUpperCase() }))}
+                              disabled={!isEditing}
+                              placeholder="e.g. O+"
+                              maxLength={10}
+                              className="rounded-xl"
+                            />
                           </div>
                         </div>
                       </div>
@@ -731,9 +688,17 @@ const Profile = () => {
               </TabsContent>
 
               {/* ── Other Tabs ─────────────────────────────────────────── */}
+              <TabsContent value="statutory">
+                <BankStatutoryDetails employee={employee} />
+              </TabsContent>
+
+              <TabsContent value="emergency">
+                <EmergencyNomineeDetails employee={employee} />
+              </TabsContent>
+
               <TabsContent value="journey">
-                <JourneyTimeline
-                  employee={employee}
+                <EmployeeJourneyTimeline
+                  employeeName={`${employee.first_name} ${employee.last_name}`}
                   events={journeyEvents}
                   loading={journeyLoading}
                 />

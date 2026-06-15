@@ -27,7 +27,7 @@ export function DatabaseConfigModal({ open, onClose, integrationKey, name, initi
   const [form, setForm] = useState(initialConfig);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
 
-  useEffect(() => { setForm(initialConfig); setTestResult(null); }, [open]);
+  useEffect(() => { setForm(initialConfig); setTestResult(null); }, [initialConfig, open]);
 
   const set = (key: keyof DbConnectorConfig) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [key]: key === 'port' ? Number(e.target.value) : e.target.value }));
@@ -58,6 +58,24 @@ export function DatabaseConfigModal({ open, onClose, integrationKey, name, initi
         </DialogHeader>
 
         <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2 space-y-1">
+            <Label>Database Engine *</Label>
+            <select
+              value={form.db_type}
+              onChange={(event) => {
+                const dbType = event.target.value as DbConnectorConfig['db_type'];
+                setForm((current) => ({
+                  ...current,
+                  db_type: dbType,
+                  port: current.port || (dbType === 'mssql' ? 1433 : 3306),
+                }));
+              }}
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="mysql">MySQL</option>
+              <option value="mssql">Microsoft SQL Server</option>
+            </select>
+          </div>
           <div className="space-y-1">
             <Label>Host / IP Address *</Label>
             <Input value={form.host} onChange={set('host')} placeholder="e.g. 172.10.10.146" />

@@ -11,10 +11,20 @@ USE mas_hrms;
 -- A1. Add expires_at column to user_page_access (idempotent)
 -- ============================================================================
 
-ALTER TABLE user_page_access
-  ADD COLUMN IF NOT EXISTS expires_at DATETIME NULL
-    COMMENT 'NULL = permanent access; set to auto-expire at this timestamp'
-  AFTER active_status;
+SET @col = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'user_page_access'
+    AND COLUMN_NAME = 'expires_at'
+);
+SET @sql = IF(
+  @col = 0,
+  'ALTER TABLE user_page_access ADD COLUMN expires_at DATETIME NULL COMMENT ''NULL = permanent access; set to auto-expire at this timestamp'' AFTER active_status',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- ============================================================================
 -- A1b. Seed assistant_manager into workforce_role_catalog if not present
@@ -65,6 +75,20 @@ COMMENT='Employee requests for page access — admin approves/denies via Unified
 -- ============================================================================
 -- A4. Seed ALL page codes used in App.tsx WorkforcePageGate wrappers
 -- ============================================================================
+
+-- Some upgraded databases have 100_user_page_access.sql recorded as applied
+-- without page_catalog having been created. Repair that drift before seeding.
+CREATE TABLE IF NOT EXISTS page_catalog (
+  id            CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  page_code     VARCHAR(100) NOT NULL UNIQUE,
+  page_name     VARCHAR(255) NOT NULL,
+  page_path     VARCHAR(255) NULL COMMENT 'Frontend route path',
+  module        VARCHAR(100) NULL COMMENT 'Module grouping',
+  description   TEXT         NULL,
+  active_status TINYINT(1)   NOT NULL DEFAULT 1,
+  created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+COMMENT='Master list of all pages in the system';
 
 INSERT INTO page_catalog (page_code, page_name, module, page_path, description) VALUES
 -- KPI (newly gated)

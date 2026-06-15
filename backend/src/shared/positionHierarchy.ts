@@ -144,20 +144,25 @@ export function canResetPassword(
  * Generate secure temporary password
  */
 export function generateTemporaryPassword(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
-  let password = "";
+  const uppercase = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lowercase = "abcdefghjkmnpqrstuvwxyz";
+  const digits = "23456789";
+  const special = "!@#$%";
+  const all = `${uppercase}${lowercase}${digits}${special}`;
+  const pick = (characters: string) => characters[randomInt(characters.length)];
+  const password = [
+    pick(uppercase),
+    pick(lowercase),
+    pick(digits),
+    pick(special),
+    ...Array.from({ length: 8 }, () => pick(all)),
+  ];
 
-  // Ensure at least: 1 uppercase, 1 lowercase, 1 number, 1 special
-  password += chars[Math.floor(Math.random() * 26)]; // Uppercase
-  password += chars[26 + Math.floor(Math.random() * 26)]; // Lowercase
-  password += chars[52 + Math.floor(Math.random() * 7)]; // Number
-  password += chars[59 + Math.floor(Math.random() * 5)]; // Special
-
-  // Fill remaining 8 characters randomly
-  for (let i = 0; i < 8; i++) {
-    password += chars[Math.floor(Math.random() * chars.length)];
+  for (let index = password.length - 1; index > 0; index -= 1) {
+    const swapIndex = randomInt(index + 1);
+    [password[index], password[swapIndex]] = [password[swapIndex], password[index]];
   }
 
-  // Shuffle
-  return password.split("").sort(() => Math.random() - 0.5).join("");
+  return password.join("");
 }
+import { randomInt } from "crypto";

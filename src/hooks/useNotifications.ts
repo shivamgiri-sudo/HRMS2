@@ -8,21 +8,44 @@ export interface Notification {
   title: string;
   message: string;
   type: string;
+  priority: "low" | "normal" | "high" | "urgent";
   read: boolean;
+  actioned: boolean;
   link: string | null;
+  entity_type: string | null;
+  entity_id: string | null;
+  created_at: string;
+}
+
+interface InboxItem {
+  id: string;
+  user_id: string;
+  title: string;
+  description?: string | null;
+  type: string;
+  priority?: Notification["priority"] | null;
+  is_read: boolean | number;
+  is_actioned: boolean | number;
+  action_url?: string | null;
+  entity_type?: string | null;
+  entity_id?: string | null;
   created_at: string;
 }
 
 // Map work_inbox_item rows to Notification shape
-function mapInboxItem(item: any): Notification {
+function mapInboxItem(item: InboxItem): Notification {
   return {
     id: item.id,
     user_id: item.user_id,
     title: item.title,
     message: item.description || '',
     type: item.type,
+    priority: item.priority || "normal",
     read: item.is_read === 1 || item.is_read === true,
+    actioned: item.is_actioned === 1 || item.is_actioned === true,
     link: item.action_url || null,
+    entity_type: item.entity_type || null,
+    entity_id: item.entity_id || null,
     created_at: item.created_at,
   };
 }
@@ -34,8 +57,8 @@ export const useNotifications = () => {
     queryKey: ["notifications", user?.id],
     queryFn: async () => {
       if (!user?.id) return [];
-      const res = await hrmsApi.get('/api/inbox');
-      return (res.data?.data ?? []).map(mapInboxItem) as Notification[];
+      const res = await hrmsApi.get<{ success: boolean; data: InboxItem[] }>('/api/inbox');
+      return (res.data ?? []).map(mapInboxItem) as Notification[];
     },
     enabled: !!user?.id,
     refetchInterval: 60000,
@@ -49,8 +72,8 @@ export const useUnreadNotificationsCount = () => {
     queryKey: ["notifications-unread-count", user?.id],
     queryFn: async () => {
       if (!user?.id) return 0;
-      const res = await hrmsApi.get('/api/inbox/count');
-      return Number(res.data?.count ?? 0);
+      const res = await hrmsApi.get<{ success: boolean; count: number }>('/api/inbox/count');
+      return Number(res.count ?? 0);
     },
     enabled: !!user?.id,
     refetchInterval: 60000,

@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
+vi.mock("../src/db/mysql.js", () => ({
+  db: {
+    execute: vi.fn().mockResolvedValue([[], []]),
+    getConnection: vi.fn(),
+  },
+  pingDb: vi.fn(),
+}));
 vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
@@ -10,6 +16,12 @@ import { db } from "../src/db/mysql.js";
 import { payrollService } from "../src/modules/payroll/payroll.service.js";
 
 const exec = db.execute as ReturnType<typeof vi.fn>;
+const getConnection = db.getConnection as ReturnType<typeof vi.fn>;
+const txExecute = vi.fn();
+const beginTransaction = vi.fn();
+const commit = vi.fn();
+const rollback = vi.fn();
+const release = vi.fn();
 
 const fakeStructure = { id: "str-1", structure_code: "BPO_A", structure_name: "BPO Grade A", basic_pct: 40, hra_pct: 20, active_status: 1 };
 const fakeComponent = { id: "cmp-1", component_code: "BASIC", component_name: "Basic Salary", component_type: "earning", taxable: 1, active_status: 1 };
@@ -18,7 +30,22 @@ const fakeRun = { id: "run-1", run_month: "2026-05", status: "draft", total_empl
 const fakeLine = { id: "line-1", run_id: "run-1", employee_id: "emp-1", employee_code: "MCN001", gross_salary: 25000, net_salary: 22000, status: "draft" };
 const fakeAdvance = { id: "adv-1", employee_id: "emp-1", amount: 5000, status: "active" };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  exec.mockReset().mockResolvedValue([[], []]);
+  txExecute.mockReset().mockResolvedValue([{ affectedRows: 1 }, []]);
+  beginTransaction.mockReset().mockResolvedValue(undefined);
+  commit.mockReset().mockResolvedValue(undefined);
+  rollback.mockReset().mockResolvedValue(undefined);
+  release.mockReset();
+  getConnection.mockReset().mockResolvedValue({
+    execute: txExecute,
+    beginTransaction,
+    commit,
+    rollback,
+    release,
+  });
+});
 
 // ─── Structures ──────────────────────────────────────────────────────────────
 
@@ -118,9 +145,12 @@ describe("payrollService.listComponents", () => {
 
 describe("payrollService.assignSalary", () => {
   it("deactivates old assignment and creates new", async () => {
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // deactivate old
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT new
-    exec.mockResolvedValueOnce([[fakeAssignment], []]);     // re-fetch
+    exec.mockResolvedValueOnce([[fakeStructure], []]); // validate structure
+    exec.mockResolvedValueOnce([[], []]); // no previous assignment
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // journey INSERT
+    exec.mockResolvedValueOnce([[], []]); // journey re-fetch
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // sensitive audit INSERT
+    exec.mockResolvedValueOnce([[fakeAssignment], []]); // assignment re-fetch
     const r = await payrollService.assignSalary({
       employeeId: "emp-1",
       structureId: "str-1",
@@ -128,7 +158,12 @@ describe("payrollService.assignSalary", () => {
       effectiveFrom: "2026-01-01",
     }, "user-1");
     expect(r.ctc_annual).toBe(300000);
-    expect(exec).toHaveBeenCalledTimes(3);
+    expect(beginTransaction).toHaveBeenCalledOnce();
+    expect(commit).toHaveBeenCalledOnce();
+    expect(rollback).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+    expect(txExecute).toHaveBeenCalledTimes(3);
+    expect(txExecute.mock.calls.some(([sql]) => /UPDATE employees SET ctc/i.test(sql))).toBe(true);
   });
 });
 

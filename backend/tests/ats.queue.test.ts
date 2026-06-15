@@ -14,6 +14,11 @@ import { atsQueueService } from "../src/modules/ats/ats.queue.service.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 
+function resetDbMock() {
+  vi.clearAllMocks();
+  mockExecute.mockReset().mockResolvedValue([[], []]);
+}
+
 const fakeToken = {
   id: "tok-1",
   candidate_id: "cand-1",
@@ -30,11 +35,11 @@ const fakeToken = {
 };
 
 describe("atsQueueService.createToken", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("creates a queue token for a valid candidate", async () => {
     mockExecute
-      .mockResolvedValueOnce([[{ id: "cand-1" }]])    // candidate exists
+      .mockResolvedValueOnce([[{ id: "cand-1", active_status: 1 }]]) // candidate exists
       .mockResolvedValueOnce([[]])                      // no existing active token
       .mockResolvedValueOnce([{ affectedRows: 1 }])    // INSERT
       .mockResolvedValueOnce([[fakeToken]]);            // re-fetch
@@ -52,7 +57,7 @@ describe("atsQueueService.createToken", () => {
 
   it("throws 409 DUPLICATE_QUEUE_TOKEN when active token already exists", async () => {
     mockExecute
-      .mockResolvedValueOnce([[{ id: "cand-1" }]])   // candidate exists
+      .mockResolvedValueOnce([[{ id: "cand-1", active_status: 1 }]]) // candidate exists
       .mockResolvedValueOnce([[{ id: "tok-1" }]]);    // active token already exists
     const err = await atsQueueService.createToken("cand-1", "2026-06-10 09:00:00").catch((e) => e);
     expect(err.message).toMatch(/already has an active queue token/i);
@@ -62,7 +67,7 @@ describe("atsQueueService.createToken", () => {
 });
 
 describe("atsQueueService.walkOut", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("marks token as walked_out and records walk_out_at", async () => {
     mockExecute
@@ -90,12 +95,12 @@ describe("atsQueueService.walkOut", () => {
 });
 
 describe("atsQueueService.reEntry", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("creates a new active token after walk-out", async () => {
     mockExecute
       .mockResolvedValueOnce([[]])                      // no active token
-      .mockResolvedValueOnce([[{ id: "cand-1" }]])     // candidate exists (inside createToken)
+      .mockResolvedValueOnce([[{ id: "cand-1", active_status: 1 }]]) // candidate exists
       .mockResolvedValueOnce([[]])                      // no active token (inside createToken)
       .mockResolvedValueOnce([{ affectedRows: 1 }])    // INSERT
       .mockResolvedValueOnce([[{ ...fakeToken, id: "tok-2" }]]); // re-fetch
@@ -113,7 +118,7 @@ describe("atsQueueService.reEntry", () => {
 });
 
 describe("atsQueueService.listActiveQueue — wait-time and alert", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("includes wait_minutes and over_threshold=false for candidates under 20 minutes", async () => {
     mockExecute.mockResolvedValueOnce([[
@@ -143,7 +148,7 @@ describe("atsQueueService.listActiveQueue — wait-time and alert", () => {
 });
 
 describe("atsQueueService.getTokenById — direct ID tampering", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("throws 404 for a non-existent token id", async () => {
     mockExecute.mockResolvedValueOnce([[]]); // not found

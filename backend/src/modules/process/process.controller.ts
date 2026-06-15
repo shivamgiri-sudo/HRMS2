@@ -29,6 +29,31 @@ export const processController = {
     });
   },
 
+  async getConfiguration(req: AuthenticatedRequest, res: Response) {
+    const data = await processService.getConfiguration(req.params.id);
+    return res.json({ success: true, data });
+  },
+
+  async saveConfiguration(req: AuthenticatedRequest, res: Response) {
+    const values = req.body?.values;
+    if (!values || typeof values !== "object" || Array.isArray(values)) {
+      return res.status(400).json({
+        success: false,
+        message: "values must be an object"
+      });
+    }
+    const data = await processService.saveConfiguration(
+      req.params.id,
+      values,
+      req.authUser!.id
+    );
+    return res.json({
+      success: true,
+      data,
+      message: "Process configuration saved"
+    });
+  },
+
   async create(req: AuthenticatedRequest, res: Response) {
     const input = createProcessSchema.parse(req.body);
 
