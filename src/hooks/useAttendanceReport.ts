@@ -25,6 +25,9 @@ interface AttendanceReportSummary {
   avgLateMinutes: number;
 }
 
+const EMPLOYEE_PAGE_SIZE = 200;
+const ATTENDANCE_PAGE_SIZE = 200;
+
 export function useAttendanceReportData(month: number, year: number) {
   const startDate = startOfMonth(new Date(year, month - 1));
   const endDate = endOfMonth(startDate);
@@ -34,68 +37,67 @@ export function useAttendanceReportData(month: number, year: number) {
   return useQuery({
     queryKey: ["attendance-report-data", month, year],
     queryFn: async (): Promise<AttendanceReportSummary> => {
-      // Fetch all active employees from employee master (paginate if large)
+      // Fetch all active employees. Backend employee API caps limit at 200.
       let empPage = 1;
       const allEmployees: any[] = [];
       while (true) {
-        const empRes = await hrmsApi.get<{ success: boolean; data: any[]; total: number }>(
-          `/api/employees?recordStatus=active&limit=500&page=${empPage}`
+        const empRes = await hrmsApi.get<{ success?: boolean; data: any[]; total: number; page: number; limit: number }>(
+          `/api/employees?recordStatus=active&limit=${EMPLOYEE_PAGE_SIZE}&page=${empPage}`
         );
         const batch = empRes.data ?? [];
         allEmployees.push(...batch);
-        const total = (empRes as any).total ?? batch.length;
-        if (allEmployees.length >= total || batch.length < 500) break;
+        const total = Number((empRes as any).total ?? batch.length);
+        if (allEmployees.length >= total || batch.length < EMPLOYEE_PAGE_SIZE) break;
         empPage++;
       }
 
-      // Fetch all attendance pages — backend caps at 200 per page
+      // Fetch all attendance pages. Backend attendance API caps limit at 200.
       let page = 1;
       const allSessions: any[] = [];
       while (true) {
         const res = await hrmsApi.get<{ success: boolean; data: any[]; total: number; limit: number }>(
-          `/api/wfm/attendance/daily?fromDate=${start}&toDate=${end}&limit=200&page=${page}`
+          `/api/wfm/attendance/daily?fromDate=${start}&toDate=${end}&limit=${ATTENDANCE_PAGE_SIZE}&page=${page}`
         );
         const batch = res.data ?? [];
         allSessions.push(...batch);
-        const total = (res as any).total ?? batch.length;
-        if (allSessions.length >= total || batch.length < 200) break;
+        const total = Number((res as any).total ?? batch.length);
+        if (allSessions.length >= total || batch.length < ATTENDANCE_PAGE_SIZE) break;
         page++;
       }
 
-      // Build map of attendance data keyed by employee_id
       const attMap = new Map<string, {
         totalDays: number; totalHours: number; lateArrivals: number; totalLateMinutes: number;
         employeeName: string; employeeCode: string; department: string;
       }>();
 
       for (const s of allSessions) {
-        if (!attMap.has(s.employee_id)) {
-          attMap.set(s.employee_id, {
+        const employeeId = String(s.employee_id ?? s.employeeId ?? "");
+        if (!employeeId) continue;
+        if (!attMap.has(employeeId)) {
+          attMap.set(employeeId, {
             totalDays: 0, totalHours: 0, lateArrivals: 0, totalLateMinutes: 0,
-            employeeName: s.employee_name ?? `${s.first_name ?? ''} ${s.last_name ?? ''}`.trim(),
+            employeeName: s.employee_name ?? `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim(),
             employeeCode: s.employee_code ?? "",
             department: s.department_name ?? s.dept_name ?? "-",
           });
         }
-        const r = attMap.get(s.employee_id)!;
-        if (['present', 'half_day'].includes(String(s.attendance_status ?? '').toLowerCase())) {
-          r.totalDays++;
-        }
-        r.totalHours += Number(s.raw_minutes ?? 0) / 60;
+        const r = attMap.get(employeeId)!;
+        if (["present", "half_day"].includes(String(s.attendance_status ?? "").toLowerCase())) r.totalDays++;
+        r.totalHours += Number(s.raw_minutes ?? s.biometric_minutes ?? 0) / 60;
         if (s.late_mark) {
           r.lateArrivals++;
           r.totalLateMinutes += Number(s.late_by_minutes ?? 0);
         }
       }
 
-      // Merge: start from employee master so all employees are shown
       const records: AttendanceReportRecord[] = allEmployees.map((emp: any) => {
-        const att = attMap.get(emp.id);
+        const employeeId = String(emp.id ?? emp.employee_id ?? "");
+        const att = attMap.get(employeeId);
         return {
-          employeeId: emp.id,
-          employeeName: att?.employeeName ?? `${emp.first_name ?? ''} ${emp.last_name ?? ''}`.trim(),
+          employeeId,
+          employeeName: att?.employeeName ?? emp.full_name ?? `${emp.first_name ?? ""} ${emp.last_name ?? ""}`.trim(),
           employeeCode: att?.employeeCode ?? emp.employee_code ?? "",
-          department: att?.department ?? emp.department_name ?? "-",
+          department: att?.department ?? emp.department_name ?? emp.dept_name ?? "-",
           totalDays: att?.totalDays ?? 0,
           totalHours: att?.totalHours ?? 0,
           lateArrivals: att?.lateArrivals ?? 0,
@@ -113,7 +115,7 @@ export function useAttendanceReportData(month: number, year: number) {
         records,
         totalEmployees: records.length,
         totalLateArrivals,
-        totalOvertimeHours: 0,
+        totalOvertimeHours: records.reduce((s, r) => s + r.totalOvertimeHours, 0),
         avgLateMinutes: totalLateArrivals > 0 ? Math.round(totalLateMinutes / totalLateArrivals) : 0,
       };
     },
