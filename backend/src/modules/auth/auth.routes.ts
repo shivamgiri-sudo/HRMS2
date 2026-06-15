@@ -203,9 +203,9 @@ router.post("/change-password", requireAuth, h(async (req: any, res: any) => {
   const { db } = await import("../../db/mysql.js");
   const bcrypt = await import("bcrypt");
 
-  // Get user's current password hash
+  // Get user's current password hash from auth_user table
   const [userRows] = await db.execute(
-    `SELECT id, email, password_hash FROM users WHERE id = ?`,
+    `SELECT id, email, password_hash FROM auth_user WHERE id = ?`,
     [req.authUser.id]
   );
 
@@ -227,32 +227,36 @@ router.post("/change-password", requireAuth, h(async (req: any, res: any) => {
   // Hash new password
   const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-  // Update password and clear force_password_change flag
+  // Update password and clear must_change_password flag
   await db.execute(
-    `UPDATE users
+    `UPDATE auth_user
      SET password_hash = ?,
-         force_password_change = 0,
-         password_changed_at = NOW(),
-         updated_at = NOW()
+         must_change_password = 0,
+         password_changed_at = NOW()
      WHERE id = ?`,
     [hashedPassword, req.authUser.id]
   );
 
-  // Log password change action
-  await db.execute(
-    `INSERT INTO audit_log (user_id, action, entity_type, entity_id, details, ip_address)
-     VALUES (?, 'PASSWORD_CHANGE', 'user', ?, ?, ?)`,
-    [
-      req.authUser.id,
-      req.authUser.id,
-      JSON.stringify({ self_service: true }),
-      req.ip || req.connection?.remoteAddress
-    ]
-  );
+  // Log password change action (optional - only if audit_log table exists)
+  try {
+    await db.execute(
+      `INSERT INTO audit_log (user_id, action, entity_type, entity_id, details, ip_address)
+       VALUES (?, 'PASSWORD_CHANGE', 'user', ?, ?, ?)`,
+      [
+        req.authUser.id,
+        req.authUser.id,
+        JSON.stringify({ self_service: true }),
+        req.ip || req.connection?.remoteAddress
+      ]
+    );
+  } catch (err) {
+    // Audit log is optional
+    console.warn("[HRMS] Audit log failed (table may not exist):", err);
+  }
 
   // Send confirmation email
   try {
-    await emailService.sendEmail({
+    await emailService.send({
       to: user.email,
       subject: "Password Changed Successfully",
       html: `
