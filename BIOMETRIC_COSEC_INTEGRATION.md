@@ -14,7 +14,7 @@
 | **COSEC Server** | 172.10.10.146 |
 | **MIS_SQL Server** | 172.10.10.140 |
 | **Username** | shivamg |
-| **Password** | Noida$1234 |
+| **Password** | Store only in `backend/.env` or the encrypted Integration Hub |
 | **Port** | 3306 (MySQL) |
 | **Access** | Internal network only |
 
@@ -78,7 +78,7 @@ Fields (expected):
 
 **Step 1**: Connect to COSEC MIS_SQL server from authorized machine
 ```bash
-mysql -h 172.10.10.140 -u shivamg -p'Noida$1234'
+mysql -h 172.10.10.140 -u shivamg -p
 ```
 
 **Step 2**: List databases
@@ -391,7 +391,7 @@ ERROR 1045 (28000): Access denied for user 'shivamg'@'host'
 
 **Solutions**:
 1. Verify username: `shivamg`
-2. Verify password: `Noida$1234`
+2. Verify the rotated password stored in the secure environment configuration.
 3. Check if user has access from this IP
 4. Contact COSEC admin to grant access
 
@@ -477,7 +477,7 @@ Employee has 10 IN punches, 8 OUT punches on 2026-06-12
 # Store in environment variables
 export COSEC_HOST="172.10.10.140"
 export COSEC_USER="shivamg"
-export COSEC_PASSWORD="Noida$1234"
+export COSEC_PASSWORD="<read-from-secure-secret-store>"
 export COSEC_DATABASE="<database_name>"
 ```
 
@@ -506,5 +506,5 @@ const COSEC_CONFIG = {
 
 **Generated**: 2026-06-12  
 **COSEC Server**: 172.10.10.140  
-**Credentials**: shivamg / Noida$1234  
+**Credentials**: configure the username and rotated password outside source control.
 **Status**: Pending schema discovery from authorized server

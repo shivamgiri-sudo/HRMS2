@@ -369,7 +369,7 @@ export const authService = {
     }
     const hash = await bcrypt.hash(newPassword, 10);
     await db.execute(
-      'UPDATE auth_user SET password_hash = ?, must_change_password = 0, updated_at = NOW() WHERE id = ?',
+      'UPDATE auth_user SET password_hash = ?, must_change_password = 0, password_changed_at = NOW(), updated_at = NOW() WHERE id = ?',
       [hash, userId]
     );
   },

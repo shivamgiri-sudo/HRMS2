@@ -74,7 +74,6 @@ rtaRouter.get(
       employeeId:  z.string().uuid().optional(),
       processId:   z.string().uuid().optional(),
       processName: z.string().optional(),
-      processId:   z.string().uuid().optional(),
       status:      z.string().optional(),
       page:        z.coerce.number().int().min(1).default(1),
       limit:       z.coerce.number().int().min(1).max(200).default(50),

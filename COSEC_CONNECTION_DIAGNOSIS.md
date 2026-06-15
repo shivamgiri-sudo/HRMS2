@@ -285,7 +285,7 @@ async function fetchAttendanceViaAPI(date: string) {
       params: { date },
       auth: {
         username: 'shivamg',
-        password: 'Noida$1234'
+        password: process.env.NCOSEC_DB_PASSWORD
       }
     }
   );

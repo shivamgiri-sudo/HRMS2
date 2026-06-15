@@ -6,8 +6,8 @@
  * for integration into employee performance reviews.
  */
 
-import { RowDataPacket } from 'mysql2';
-import { getPoolForKey } from '../external-db/external-db.service.js';
+import type { Pool, RowDataPacket } from 'mysql2/promise';
+import { getCredentialsForKey, getPoolForKey } from '../external-db/external-db.service.js';
 
 interface QualityMetrics {
   employee_code: string;
@@ -32,6 +32,15 @@ interface QualityTrend {
   quality_band: string;
 }
 
+async function getQualityPool(): Promise<Pool> {
+  const credentials = await getCredentialsForKey('shivamgiri_quality');
+  if (!credentials) throw new Error('Quality database connector is not configured');
+  if (credentials.db_type !== 'mysql') {
+    throw new Error('The Shivamgiri quality queries require a MySQL connector');
+  }
+  return await getPoolForKey('shivamgiri_quality') as Pool;
+}
+
 /**
  * Get quality metrics for an employee for a specific period
  */
@@ -41,7 +50,7 @@ export async function getEmployeeQualityMetrics(
   endDate: string
 ): Promise<QualityMetrics | null> {
   try {
-    const pool = await getPoolForKey('shivamgiri_quality');
+    const pool = await getQualityPool();
 
     // Get aggregate metrics
     const [metrics] = await pool.execute<RowDataPacket[]>(
@@ -160,7 +169,7 @@ export async function getEmployeeQualityTrend(
   endDate: string
 ): Promise<QualityTrend[]> {
   try {
-    const pool = await getPoolForKey('shivamgiri_quality');
+    const pool = await getQualityPool();
 
     const [trends] = await pool.execute<RowDataPacket[]>(
       `SELECT
@@ -209,7 +218,7 @@ export async function getTeamQualityMetrics(
   }
 
   try {
-    const pool = await getPoolForKey('shivamgiri_quality');
+    const pool = await getQualityPool();
 
     const placeholders = employeeCodes.map(() => '?').join(',');
 

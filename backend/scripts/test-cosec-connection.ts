@@ -9,11 +9,17 @@
 import 'dotenv/config';
 import sql from 'mssql';
 
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} is required; configure it in backend/.env or the Integration Hub`);
+  return value;
+}
+
 const config: sql.config = {
   server: process.env.NCOSEC_DB_HOST || '14.97.30.234',
   port: parseInt(process.env.NCOSEC_DB_PORT || '1433', 10),
-  user: process.env.NCOSEC_DB_USER || 'shivamg',
-  password: process.env.NCOSEC_DB_PASSWORD || 'Noida$1234',
+  user: requiredEnv('NCOSEC_DB_USER'),
+  password: requiredEnv('NCOSEC_DB_PASSWORD'),
   database: process.env.NCOSEC_DB_NAME || 'NCOSEC',
   options: {
     encrypt: process.env.NCOSEC_DB_ENCRYPT === 'true',

@@ -24,7 +24,7 @@ Encrypt:  false
    NCOSEC_DB_HOST=14.97.30.234
    NCOSEC_DB_PORT=1433
    NCOSEC_DB_USER=shivamg
-   NCOSEC_DB_PASSWORD=Noida$1234
+   NCOSEC_DB_PASSWORD=<set-securely-in-backend-env>
    NCOSEC_DB_NAME=NCOSEC
    NCOSEC_DB_ENCRYPT=false
    ```
@@ -285,7 +285,7 @@ Login failed for user 'shivamg'
    - Connect to: 14.97.30.234,1433
    - Authentication: SQL Server Authentication
    - Login: shivamg
-   - Password: Noida$1234
+   - Password: use the rotated credential stored securely in `backend/.env`
 
 3. **Check User Permissions:**
    ```sql

@@ -46,7 +46,7 @@ Status: Running
 Host: 14.97.30.234
 Port: 1433 (BLOCKED)
 Database: NCOSEC (assumed)
-Credentials: shivamg / Noida$1234
+Credentials: configure the username and rotated password outside source control.
 Status: Firewall blocked
 ```
 
@@ -133,7 +133,7 @@ curl -X POST http://14.97.30.234/COSEC/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "username": "shivamg",
-    "password": "Noida$1234"
+    "password": "<secure-password>"
   }'
 ```
 
@@ -182,7 +182,7 @@ import axios from 'axios';
 
 const COSEC_BASE_URL = 'http://14.97.30.234/COSEC/api';
 const COSEC_USER = process.env.COSEC_API_USER || 'shivamg';
-const COSEC_PASS = process.env.COSEC_API_PASSWORD || 'Noida$1234';
+const COSEC_PASS = process.env.COSEC_API_PASSWORD;
 
 class CosecApiAdapter {
   private token: string | null = null;
@@ -244,7 +244,7 @@ curl -I http://14.97.30.234/COSEC/Login
 # Try to login (adjust endpoint based on actual API)
 curl -X POST http://14.97.30.234/COSEC/api/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"shivamg","password":"Noida$1234"}' \
+  -d '{"username":"shivamg","password":"<secure-password>"}' \
   -v
 ```
 
