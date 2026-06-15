@@ -6,14 +6,18 @@ import { randomUUID } from 'crypto';
 
 export async function listSlabs() {
   const [rows] = await db.execute<RowDataPacket[]>(
-    'SELECT * FROM salary_slab_master WHERE active_status = 1 ORDER BY seq_order ASC'
+    `SELECT *, CASE WHEN active_status = 1 THEN 'active' ELSE 'inactive' END AS status
+       FROM salary_slab_master
+      WHERE active_status = 1
+      ORDER BY seq_order ASC`
   );
   return rows;
 }
 
 export async function getSlabById(id: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    'SELECT * FROM salary_slab_master WHERE id = ?', [id]
+    `SELECT *, CASE WHEN active_status = 1 THEN 'active' ELSE 'inactive' END AS status
+       FROM salary_slab_master WHERE id = ?`, [id]
   );
   return rows[0] ?? null;
 }
@@ -54,13 +58,11 @@ function calcGrossAndCtc(data: {
   bonus_amt: number; bonus_type: string;
   portfolio_amt: number; special_allowance_amt: number; pli_amt: number;
 }) {
-  // Components that are 'pct' are % of basic — compute absolute value
   const conv   = data.conveyance_type   === 'pct' ? data.basic_amt * data.conveyance_amt   / 100 : data.conveyance_amt;
   const med    = data.medical_type      === 'pct' ? data.basic_amt * data.medical_amt      / 100 : data.medical_amt;
   const other  = data.other_allowance_type === 'pct' ? data.basic_amt * data.other_allowance_amt / 100 : data.other_allowance_amt;
   const bonus  = data.bonus_type        === 'pct' ? data.basic_amt * data.bonus_amt        / 100 : data.bonus_amt;
   const gross  = data.basic_amt + conv + med + other + bonus + data.portfolio_amt + data.special_allowance_amt + data.pli_amt;
-  // CTC = gross + employer PF (12% of basic, capped at 15000) + employer ESIC (3.25% if gross <= 21000)
   const pfBase   = Math.min(data.basic_amt, 15000);
   const pfEr     = pfBase * 0.12;
   const esicEr   = gross <= 21000 ? gross * 0.0325 : 0;
@@ -242,7 +244,6 @@ export async function lookupBandForDesignation(departmentId: string, designation
   );
   if (!rows.length) return null;
   const entry = rows[0] as any;
-  // Fetch suggested package for this grade + min_slab
   let suggestedPackage = null;
   if (entry.min_slab_id) {
     const [pkgs] = await db.execute<RowDataPacket[]>(
