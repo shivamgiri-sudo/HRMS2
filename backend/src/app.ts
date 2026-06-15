@@ -57,6 +57,7 @@ import { communicationRouter } from "./modules/communication/communication.route
 import { attendanceEngineRouter } from "./modules/wfm/attendance-engine.routes.js";
 import { biometricPunchRouter } from "./modules/wfm/biometric-punch.routes.js";
 import { cosecSyncRouter } from "./modules/wfm/cosec-sync.routes.js";
+import { biometricSummaryRouter } from "./modules/wfm/biometric-summary.routes.js";
 import customizationRouter from "./modules/customization/customization.routes.js";
 import { rosterMasterRouter } from "./modules/roster/roster-master.routes.js";
 import rosterCapacityRouter from "./modules/roster/roster-capacity.routes.js";
@@ -201,6 +202,7 @@ app.use("/api/dialer", dialerRouter);
 app.use("/api/tasks", taskRouter);
 app.use('/api/wfm/biometric-punch', biometricPunchRouter);
 app.use('/api/wfm/cosec-sync', cosecSyncRouter);
+app.use('/api/wfm/biometric-summary', biometricSummaryRouter);
 app.use("/api/customization", customizationRouter);
 app.use("/api/roster-master", rosterMasterRouter);
 app.use("/api/roster-capacity", rosterCapacityRouter);
