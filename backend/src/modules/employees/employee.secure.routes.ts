@@ -24,6 +24,7 @@ type EmployeeAccessTarget = {
 
 const PEOPLE_SCOPE_ROLES = ["hr", "manager", "branch_head", "process_manager", "assistant_manager", "tl"];
 const STAT_CARD_SCOPE_ROLES = [...PEOPLE_SCOPE_ROLES, "finance", "payroll"];
+const UUID_ROUTE = "/:id([0-9a-fA-F-]{36})";
 
 async function getEmployeeTarget(employeeId: string): Promise<EmployeeAccessTarget | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -106,6 +107,45 @@ router.get("/stats", h(async (req: any, res: any) => {
   return res.json({ success: true, data: rows[0] });
 }));
 
+router.get("/directory-masters", h(async (req: any, res: any) => {
+  const userId = req.authUser!.id;
+  const scoped = await employeeScopeWhere(userId);
+  const activeEmployeeWhere = `
+    e.active_status = 1
+    OR LOWER(COALESCE(e.employment_status, '')) IN ('inactive', 'terminated', 'offboarded', 'absconded', 'resigned', 'left', 'separated')
+  `;
+
+  const [processes] = await db.execute<RowDataPacket[]>(
+    `SELECT MIN(p.id) AS id,
+            p.process_name,
+            COUNT(*) AS employee_count
+       FROM employees e
+       JOIN process_master p ON p.id = e.process_id
+      WHERE (${activeEmployeeWhere})
+        AND (${scoped.sql})
+        AND TRIM(COALESCE(p.process_name, '')) <> ''
+      GROUP BY LOWER(TRIM(p.process_name)), p.process_name
+      ORDER BY p.process_name ASC`,
+    scoped.params,
+  );
+
+  const [branches] = await db.execute<RowDataPacket[]>(
+    `SELECT MIN(b.id) AS id,
+            b.branch_name,
+            COUNT(*) AS employee_count
+       FROM employees e
+       JOIN branch_master b ON b.id = e.branch_id
+      WHERE (${activeEmployeeWhere})
+        AND (${scoped.sql})
+        AND TRIM(COALESCE(b.branch_name, '')) <> ''
+      GROUP BY LOWER(TRIM(b.branch_name)), b.branch_name
+      ORDER BY b.branch_name ASC`,
+    scoped.params,
+  );
+
+  return res.json({ success: true, data: { processes, branches } });
+}));
+
 router.get("/options/search", h(async (req: any, res: any) => {
   const userId = req.authUser!.id;
   const search = String(req.query.q ?? "").trim();
@@ -137,7 +177,7 @@ router.get("/options/search", h(async (req: any, res: any) => {
   return res.json({ success: true, data: rows });
 }));
 
-router.get("/:id/stat-card", h(async (req: any, res: any) => {
+router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
   const userId = req.authUser!.id;
   const targetId = String(req.params.id);
   await assertEmployeeAccess(userId, targetId, STAT_CARD_SCOPE_ROLES);
@@ -295,7 +335,7 @@ router.get("/:id/stat-card", h(async (req: any, res: any) => {
   });
 }));
 
-router.get("/:id", h(async (req: any, res: any) => {
+router.get(UUID_ROUTE, h(async (req: any, res: any) => {
   const userId = req.authUser!.id;
   const targetId = String(req.params.id);
   await assertEmployeeAccess(userId, targetId, PEOPLE_SCOPE_ROLES);
