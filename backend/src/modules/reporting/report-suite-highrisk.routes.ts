@@ -53,9 +53,9 @@ reportSuiteHighRiskRouter.get("/employee-movement", roles, h(async (req, res) =>
                       CASE WHEN e.date_of_joining BETWEEN ? AND ? THEN 'joining' ELSE 'exit' END AS movement_type,
                       b.branch_name, d.dept_name AS department_name, p.process_name
                  FROM employees e
-                 LEFT JOIN branch_master b ON b.id = e.branch_id
-                 LEFT JOIN department_master d ON d.id = e.department_id
-                 LEFT JOIN process_master p ON p.id = e.process_id
+                 LEFT JOIN branch_master b ON b.id = e.branch_id AND COALESCE(b.active_status,1)=1
+                 LEFT JOIN department_master d ON d.id = e.department_id AND COALESCE(d.active_status,1)=1
+                 LEFT JOIN process_master p ON p.id = e.process_id AND COALESCE(p.active_status,1)=1
                 WHERE ${clauses.join(" AND ")}
                 ORDER BY COALESCE(e.date_of_joining,e.date_of_exit,e.date_of_leaving,e.resignation_date) DESC`;
   return sendRows(res, "employee-movement", sql, [from, to, ...filterParams], limitParam(req.query.limit));
@@ -72,18 +72,17 @@ reportSuiteHighRiskRouter.get("/leave-balance", roles, h(async (req, res) => {
                       COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                       b.branch_name, d.dept_name AS department_name, p.process_name,
                       lt.leave_code, lt.leave_name,
-                      COALESCE(lbl.opening_days, 0) AS opening_days,
                       COALESCE(lbl.allocated_days, 0) AS allocated_days,
                       COALESCE(lbl.used_days, 0) AS used_days,
                       COALESCE(lbl.adjusted_days, 0) AS adjusted_days,
-                      (COALESCE(lbl.opening_days,0) + COALESCE(lbl.allocated_days,0) + COALESCE(lbl.adjusted_days,0) - COALESCE(lbl.used_days,0)) AS remaining_days,
-                      CASE WHEN (COALESCE(lbl.opening_days,0) + COALESCE(lbl.allocated_days,0) + COALESCE(lbl.adjusted_days,0) - COALESCE(lbl.used_days,0)) < 0 THEN 'NEGATIVE_BALANCE' ELSE 'OK' END AS balance_status
+                      (COALESCE(lbl.allocated_days,0) + COALESCE(lbl.adjusted_days,0) - COALESCE(lbl.used_days,0)) AS remaining_days,
+                      CASE WHEN (COALESCE(lbl.allocated_days,0) + COALESCE(lbl.adjusted_days,0) - COALESCE(lbl.used_days,0)) < 0 THEN 'NEGATIVE_BALANCE' ELSE 'OK' END AS balance_status
                  FROM leave_balance_ledger lbl
                  JOIN employees e ON e.id = lbl.employee_id
                  JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
-                 LEFT JOIN branch_master b ON b.id = e.branch_id
-                 LEFT JOIN department_master d ON d.id = e.department_id
-                 LEFT JOIN process_master p ON p.id = e.process_id
+                 LEFT JOIN branch_master b ON b.id = e.branch_id AND COALESCE(b.active_status,1)=1
+                 LEFT JOIN department_master d ON d.id = e.department_id AND COALESCE(d.active_status,1)=1
+                 LEFT JOIN process_master p ON p.id = e.process_id AND COALESCE(p.active_status,1)=1
                 WHERE ${clauses.join(" AND ")}
                 ORDER BY employee_name, lt.leave_code`;
   return sendRows(res, "leave-balance", sql, params, limitParam(req.query.limit));
@@ -136,7 +135,7 @@ reportSuiteHighRiskRouter.get("/payroll-variance", roles, h(async (req, res) => 
                  LEFT JOIN salary_prep_line prev ON prev.run_id = pspr.id AND prev.employee_id = spl.employee_id
                 WHERE ${clauses.join(" AND ")}
                 ORDER BY ABS(COALESCE(net_variance_pct,0)) DESC`;
-  return sendRows(res, "payroll-variance", sql, [...params, ...PAYROLL_STATUSES], limitParam(req.query.limit), { payrollStatuses: PAYROLL_STATUSES });
+  return sendRows(res, "payroll-variance", sql, [...PAYROLL_STATUSES, ...params], limitParam(req.query.limit), { payrollStatuses: PAYROLL_STATUSES });
 }));
 
 reportSuiteHighRiskRouter.get("/payslip-status", roles, h(async (req, res) => {
