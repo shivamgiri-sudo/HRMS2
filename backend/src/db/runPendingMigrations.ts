@@ -122,6 +122,7 @@ const MIGRATION_MANIFEST: string[] = [
   "195_reporting_manager_role_alignment.sql",
   "196_seed_call_master_header_mappings.sql",
   "197_salary_increment_governance.sql",
+  "198_it_provisioning.sql",
 ];
 
 export type MigrationHealth = {

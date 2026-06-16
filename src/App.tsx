@@ -162,6 +162,7 @@ const NativeRosterMasterBuilder = lazy(() => import("./pages/NativeRosterMasterB
 const NativeWeekOffPreferences = lazy(() => import("./pages/NativeWeekOffPreferences"));
 const NativeRosterCapacityConfig = lazy(() => import("./pages/NativeRosterCapacityConfig"));
 const NativeWFMAutoRoster = lazy(() => import("./pages/NativeWFMAutoRoster"));
+const NativeITProvisioningTracker = lazy(() => import("./pages/NativeITProvisioningTracker"));
 const NativeControlTower = lazy(() => import("./pages/NativeControlTower"));
 const NativeRTABoard = lazy(() => import("./pages/NativeRTABoard"));
 const NativeWalkinQueue = lazy(() => import("./pages/NativeWalkinQueueEnhanced"));
@@ -270,6 +271,7 @@ const App = () => (
               <Route path="/performance/command-center" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><UnifiedPerformanceCommandCenter /></Gate></ProtectedRoute>} />
               <Route path="/settings/access-control" element={<ProtectedRoute><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />
               <Route path="/super-admin/page-access" element={<ProtectedRoute roles={['admin']}><SuperAdminAccessControl /></ProtectedRoute>} />
+              <Route path="/it-provisioning" element={<ProtectedRoute><Gate pageCode="IT_PROVISIONING_TRACKER"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
               <Route path="/settings/call-centre-config" element={<ProtectedRoute roles={['admin']}><NativeCallCentreConfig /></ProtectedRoute>} />
               <Route path="/performance-feedback/my-reports" element={<ProtectedRoute><NativePerformanceFeedbackMyReports /></ProtectedRoute>} />
               <Route path="/performance-feedback/reports/:id" element={<ProtectedRoute><NativePerformanceFeedbackReportDetail /></ProtectedRoute>} />

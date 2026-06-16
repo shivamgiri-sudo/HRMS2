@@ -536,6 +536,19 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
     // Employee creation is already committed; journey logging can be retried independently.
   });
 
+  // Fire IT provisioning tasks — runs after transaction commits, fire-and-forget
+  const branchIdForProvisioning: string | null = (offer.resolved_branch_id ?? offer.applied_for_branch) || null;
+  import('../it-provisioning/it-provisioning.service.js').then(({ dispatchJoinProvisioningTasks }) => {
+    dispatchJoinProvisioningTasks({
+      employeeId,
+      employeeCode,
+      employeeName: offer.full_name,
+      branchId: branchIdForProvisioning,
+      actorUserId: approverId,
+      triggerEventId: offerId,
+    }).catch((err: unknown) => console.error('[it-provisioning] join dispatch failed:', err));
+  }).catch((err: unknown) => console.error('[it-provisioning] module load failed:', err));
+
   // Send welcome email after transaction commits — email failure should not roll back employee creation
   const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
   if (offer.email) {

@@ -25,7 +25,7 @@ import {
   Activity, BarChart3, Bell, Briefcase, Building2, Calendar,
   CalendarDays, ClipboardList, Clock, CreditCard, FileCheck,
   FileText, GraduationCap, Heart, Home, Landmark, Menu,
-  Network, Package, Settings, Settings2, ShieldCheck, Sparkles,
+  Network, Package, Server, Settings, Settings2, ShieldCheck, Sparkles,
   Target, TrendingUp, User, UserMinus, UserPlus, Users, Wallet,
   X, Zap,
 } from "lucide-react";
@@ -138,6 +138,7 @@ const navGroups: NavGroup[] = [
       { label: "Client Master",    href: "/client-master",                 icon: <Users className="h-[15px] w-[15px]" />,       roles: ["admin","hr"], description: "Clients" },
       { label: "Integration Hub",  href: "/integration-hub",               icon: <Network className="h-[15px] w-[15px]" />,     roles: ["admin"], description: "Integration" },
       { label: "Exit Management",  href: "/exit-management",               icon: <UserMinus className="h-[15px] w-[15px]" />,   roles: ["admin","hr"], description: "Exit" },
+      { label: "IT Provisioning",  href: "/it-provisioning",               icon: <Server className="h-[15px] w-[15px]" />,       pageCode: "IT_PROVISIONING_TRACKER", roles: ["admin","branch_it","hr"], description: "IT Provisioning" },
     ],
   },
 ];
