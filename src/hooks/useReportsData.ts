@@ -11,13 +11,7 @@ const CHART_COLORS = [
 ];
 
 interface AnalyticsOverview {
-  employeeGrowth: Array<{
-    month: string;
-    employees?: number;
-    headcount?: number;
-    joiners?: number;
-    exits?: number;
-  }>;
+  employeeGrowth: Array<{ month: string; employees?: number; headcount?: number; joiners?: number; exits?: number }>;
   departmentDistribution: Array<{ name: string; value: number }>;
   leaveStatistics: {
     monthlyData: Array<Record<string, string | number>>;
@@ -32,8 +26,9 @@ interface AnalyticsOverview {
     currentHeadcount: number;
     startOfYearHeadcount?: number;
     startOfYear?: number;
-    monthlyBreakdown: Array<{ month: string; hires: number; terminations: number; net: number }>;
+    monthlyBreakdown: Array<{ month: string; hires?: number; joiners?: number; terminations?: number; exits?: number; net: number }>;
   };
+  dataHealth?: Record<string, unknown>;
 }
 
 function titleFromKey(key: string) {
@@ -60,13 +55,13 @@ export function useEmployeeGrowthData(year: number) {
   const query = useAnalyticsOverview(year);
   return {
     ...query,
-    data: query.data?.employeeGrowth.map((item) => {
-      const monthBreakdown = query.data?.headcount.monthlyBreakdown.find((row) => row.month === item.month);
+    data: query.data?.employeeGrowth.map((row) => {
+      const breakdown = query.data?.headcount.monthlyBreakdown.find((item) => item.month === row.month);
       return {
-        month: item.month,
-        headcount: Number(item.headcount ?? item.employees ?? 0),
-        joiners: Number(item.joiners ?? monthBreakdown?.hires ?? 0),
-        exits: Number(item.exits ?? monthBreakdown?.terminations ?? 0),
+        month: row.month,
+        headcount: Number(row.headcount ?? row.employees ?? 0),
+        joiners: Number(row.joiners ?? breakdown?.joiners ?? breakdown?.hires ?? 0),
+        exits: Number(row.exits ?? breakdown?.exits ?? breakdown?.terminations ?? 0),
       };
     }),
   };
@@ -103,7 +98,7 @@ export function useHeadcountSummary(year: number) {
   const query = useAnalyticsOverview(year);
   return {
     ...query,
-    data: query.data
+    data: query.data?.headcount
       ? {
           ...query.data.headcount,
           startOfYear: Number(query.data.headcount.startOfYear ?? query.data.headcount.startOfYearHeadcount ?? 0),
