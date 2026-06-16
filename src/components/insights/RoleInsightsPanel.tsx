@@ -1,7 +1,6 @@
 import { Link } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, Info, ShieldAlert } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { insightsForRoles, type InsightSeverity } from "@/lib/roleInsightsCatalog";
 import { cn } from "@/lib/utils";
 
@@ -42,9 +41,13 @@ export function RoleInsightsPanel({
         {insights.map((insight) => {
           const Icon = iconBySeverity[insight.severity];
           return (
-            <div
+            <Link
               key={insight.id}
-              className={cn("rounded-2xl border p-4", toneBySeverity[insight.severity])}
+              to={insight.actionPath}
+              className={cn(
+                "block rounded-2xl border p-4 transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-300",
+                toneBySeverity[insight.severity],
+              )}
             >
               <div className="flex items-start gap-3">
                 <div className="rounded-xl bg-white/70 p-2">
@@ -53,12 +56,12 @@ export function RoleInsightsPanel({
                 <div className="min-w-0 flex-1">
                   <h3 className="text-sm font-black leading-5">{insight.title}</h3>
                   <p className="mt-1 text-xs leading-5 opacity-80">{insight.description}</p>
-                  <Button asChild size="sm" variant="secondary" className="mt-3 h-8 rounded-xl bg-white/80 px-3 text-xs font-bold text-slate-800 hover:bg-white">
-                    <Link to={insight.actionPath}>{insight.actionLabel}</Link>
-                  </Button>
+                  <span className="mt-3 inline-flex h-8 items-center rounded-xl bg-white/80 px-3 text-xs font-bold text-slate-800 hover:bg-white">
+                    {insight.actionLabel}
+                  </span>
                 </div>
               </div>
-            </div>
+            </Link>
           );
         })}
       </CardContent>

@@ -41,6 +41,8 @@ interface EmployeePage {
   total: number;
   page: number;
   limit: number;
+  stats?: EmployeeStatsResponse;
+  process_breakdown?: EmployeeProcessBreakdown[];
 }
 
 export interface RawEmployee {
@@ -79,6 +81,25 @@ interface EmployeeStatsResponse {
   total_employees?: number;
   active_employees?: number;
   onboarding_employees?: number;
+  inactive_employees?: number;
+  department_count?: number;
+}
+
+export interface EmployeeProcessBreakdown {
+  process_id?: string | null;
+  process_name: string;
+  active_count: number;
+  inactive_count: number;
+  total_count: number;
+}
+
+export interface EmployeeSearchOption {
+  id: string;
+  employee_code: string;
+  name: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  full_name?: string | null;
 }
 
 interface DepartmentRow {
@@ -172,9 +193,53 @@ export function useEmployeeDirectory(filters: EmployeeDirectoryFilters) {
       return {
         employees: (response.data ?? []).map(mapEmployee),
         total: Number(response.total ?? 0),
+        stats: response.stats,
+        processBreakdown: response.process_breakdown ?? [],
       };
     },
     placeholderData: (previous) => previous,
+    staleTime: 30_000,
+  });
+}
+
+export function useEmployeeDirectoryAnalytics(filters: EmployeeDirectoryFilters) {
+  return useQuery({
+    queryKey: ["employee-directory-analytics", filters],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        page: "1",
+        limit: "1",
+        recordStatus: filters.recordStatus,
+        includeAnalytics: "true",
+      });
+      if (filters.status) params.set("status", filters.status);
+      if (filters.search) params.set("search", filters.search);
+      if (filters.departmentId) params.set("departmentId", filters.departmentId);
+      if (filters.processId) params.set("processId", filters.processId);
+      if (filters.branchId) params.set("branchId", filters.branchId);
+
+      const response = await hrmsApi.get<EmployeePage>(`/api/employees?${params.toString()}`);
+      return {
+        stats: response.stats,
+        processBreakdown: response.process_breakdown ?? [],
+      };
+    },
+    placeholderData: (previous) => previous,
+    staleTime: 30_000,
+  });
+}
+
+export function useEmployeeSearchOptions(query: string) {
+  const q = query.trim();
+  return useQuery({
+    queryKey: ["employee-search-options", q],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: EmployeeSearchOption[] }>(
+        `/api/employees/options/search?q=${encodeURIComponent(q)}&limit=8`
+      );
+      return res.data ?? [];
+    },
+    enabled: q.length >= 1,
     staleTime: 30_000,
   });
 }

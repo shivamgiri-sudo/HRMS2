@@ -149,7 +149,7 @@ router.get("/directory-masters", h(async (req: any, res: any) => {
 router.get("/options/search", h(async (req: any, res: any) => {
   const userId = req.authUser!.id;
   const search = String(req.query.q ?? "").trim();
-  if (search.length < 2) return res.json({ success: true, data: [] });
+  if (search.length < 1) return res.json({ success: true, data: [] });
 
   const limit = Math.min(Math.max(Number(req.query.limit ?? 30), 1), 50);
   const like = `%${search}%`;
@@ -169,10 +169,11 @@ router.get("/options/search", h(async (req: any, res: any) => {
         AND (
           COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) LIKE ?
           OR e.employee_code LIKE ?
+          OR COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email, '') LIKE ?
         )
       ORDER BY CASE WHEN e.employee_code = ? THEN 0 ELSE 1 END, name
       LIMIT ${limit}`,
-    [...scoped.params, ...(self?.id ? [self.id] : []), like, like, search],
+    [...scoped.params, ...(self?.id ? [self.id] : []), like, like, like, search],
   );
   return res.json({ success: true, data: rows });
 }));

@@ -57,7 +57,7 @@ export function DateRangeExportDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" disabled={disabled}>
+        <Button variant="outline" disabled={disabled} className="text-slate-950 hover:text-slate-950">
           <Download className="mr-2 h-4 w-4" />
           Export
         </Button>

@@ -128,17 +128,20 @@ export const employeeService = {
   },
 
   async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } | string }): Promise<PaginatedResult<Employee>> {
-    const { page, limit, status, recordStatus, processId, branchId, departmentId, search, scopeFilter } = filters;
+    const { page, limit, status, recordStatus, processId, branchId, departmentId, search, scopeFilter, includeAnalytics } = filters;
     const offset = (page - 1) * limit;
     const conds: string[] = [];
     const params: unknown[] = [];
 
+    const inactiveStatusSql =
+      "('Inactive', 'inactive', 'INACTIVE', 'Terminated', 'terminated', 'TERMINATED', 'Offboarded', 'offboarded', 'OFFBOARDED', 'Absconded', 'absconded', 'ABSCONDED', 'Resigned', 'resigned', 'RESIGNED', 'Left', 'left', 'LEFT', 'Separated', 'separated', 'SEPARATED')";
+
     if (recordStatus === "active") {
-      conds.push("e.active_status = 1 AND LOWER(COALESCE(e.employment_status, 'active')) NOT IN ('inactive', 'terminated', 'offboarded', 'absconded')");
+      conds.push(`e.active_status = 1 AND (e.employment_status IS NULL OR e.employment_status NOT IN ${inactiveStatusSql})`);
     } else if (recordStatus === "inactive") {
-      conds.push("LOWER(COALESCE(e.employment_status, '')) IN ('inactive', 'terminated', 'offboarded', 'absconded')");
+      conds.push("e.active_status = 0");
     } else {
-      conds.push("(e.active_status = 1 OR LOWER(COALESCE(e.employment_status, '')) IN ('inactive', 'terminated', 'offboarded', 'absconded'))");
+      conds.push("e.active_status IN (0, 1)");
     }
 
     if (status)    { conds.push("LOWER(e.employment_status) = LOWER(?)"); params.push(status); }
@@ -190,9 +193,8 @@ export const employeeService = {
         OR COALESCE(e.cost_center_code, '') LIKE ?
         OR COALESCE(TRIM(CONCAT(m.first_name, ' ', COALESCE(m.last_name, ''))), '') LIKE ?
         OR CAST(COALESCE(e.legacy_emp_id, e.legacy_id, '') AS CHAR) LIKE ?
-        OR COALESCE(eu.uan, '') LIKE ?
       )`);
-      params.push(term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term);
+      params.push(term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term);
     }
 
     if (scopeFilter) {
@@ -216,8 +218,14 @@ export const employeeService = {
        LEFT JOIN branch_master      b     ON b.id     = e.branch_id      AND b.active_status     = 1
        LEFT JOIN process_master     p     ON p.id     = e.process_id     AND p.active_status     = 1
        LEFT JOIN cost_centre_master cc    ON cc.id    = e.cost_centre_id
-       LEFT JOIN employees          m     ON m.id     = COALESCE(e.reporting_manager_id, e.manager_id)
-       LEFT JOIN employee_uan       eu    ON eu.employee_id = e.id AND eu.is_active = 1`;
+       LEFT JOIN employees          m     ON m.id     = COALESCE(e.reporting_manager_id, e.manager_id)`;
+    const needsFilterJoins = Boolean(processId || branchId || departmentId || search);
+    const fromForCounts = needsFilterJoins ? fromWithJoins : "FROM employees e";
+    const fromForProcessBreakdown = needsFilterJoins
+      ? fromWithJoins
+      : `
+       FROM employees e
+       LEFT JOIN process_master p ON p.id = e.process_id AND p.active_status = 1`;
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.*,
@@ -230,10 +238,7 @@ export const employeeService = {
          b.branch_name,
          p.process_name,
          cc.cost_centre_name,
-         TRIM(CONCAT(m.first_name, ' ', COALESCE(m.last_name, ''))) AS reporting_manager_name,
-         eu.uan,
-         eu.member_id,
-         eu.epf_join_date
+         TRIM(CONCAT(m.first_name, ' ', COALESCE(m.last_name, ''))) AS reporting_manager_name
        ${fromWithJoins}
        ${where}
        ORDER BY e.employee_code ASC
@@ -241,9 +246,63 @@ export const employeeService = {
       params
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total ${fromWithJoins} ${where}`, params
+      `SELECT COUNT(DISTINCT e.id) AS total ${fromForCounts} ${where}`, params
     );
-    return { data: rows as Employee[], total: (countRows as any)[0]?.total ?? 0, page, limit };
+    const [statsRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(DISTINCT e.id) AS total_employees,
+         COUNT(DISTINCT CASE
+           WHEN e.active_status = 1
+            AND (e.employment_status IS NULL OR e.employment_status NOT IN ${inactiveStatusSql})
+           THEN e.id END) AS active_employees,
+         COUNT(DISTINCT CASE
+           WHEN e.active_status = 0
+           THEN e.id END) AS inactive_employees,
+         COUNT(DISTINCT e.department_id) AS department_count
+       ${fromForCounts}
+       ${where}`,
+      params
+    );
+    const [processBreakdownRows] = includeAnalytics
+      ? await db.execute<RowDataPacket[]>(
+          `SELECT
+             e.process_id,
+             COALESCE(NULLIF(TRIM(p.process_name), ''), 'Unassigned') AS process_name,
+             COUNT(DISTINCT CASE
+               WHEN e.active_status = 1
+                AND (e.employment_status IS NULL OR e.employment_status NOT IN ${inactiveStatusSql})
+               THEN e.id END) AS active_count,
+         COUNT(DISTINCT CASE
+           WHEN e.active_status = 0
+           THEN e.id END) AS inactive_count,
+             COUNT(DISTINCT e.id) AS total_count
+           ${fromForProcessBreakdown}
+           ${where}
+           GROUP BY e.process_id, process_name
+           ORDER BY total_count DESC, process_name ASC
+           LIMIT 12`,
+          params
+        )
+      : [[]];
+    return {
+      data: rows as Employee[],
+      total: Number((countRows as any)[0]?.total ?? 0),
+      page,
+      limit,
+      stats: {
+        total_employees: Number((statsRows as any)[0]?.total_employees ?? 0),
+        active_employees: Number((statsRows as any)[0]?.active_employees ?? 0),
+        inactive_employees: Number((statsRows as any)[0]?.inactive_employees ?? 0),
+        department_count: Number((statsRows as any)[0]?.department_count ?? 0),
+      },
+      process_breakdown: (processBreakdownRows as any[]).map((row) => ({
+        process_id: row.process_id ?? null,
+        process_name: row.process_name ?? "Unassigned",
+        active_count: Number(row.active_count ?? 0),
+        inactive_count: Number(row.inactive_count ?? 0),
+        total_count: Number(row.total_count ?? 0),
+      })),
+    };
   },
 
   async updateEmployee(id: string, input: UpdateEmployeeInput, _userId: string): Promise<Employee> {

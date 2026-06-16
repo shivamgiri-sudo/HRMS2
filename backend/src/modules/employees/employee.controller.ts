@@ -18,7 +18,14 @@ export const employeeController = {
       ...parsed.data,
       scopeFilter: (req as any).scopeFilter
     });
-    res.json({ data: result.data, total: result.total, page: result.page, limit: result.limit });
+    res.json({
+      data: result.data,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      stats: result.stats,
+      process_breakdown: result.process_breakdown,
+    });
   },
 
   async getEmployee(req: Request, res: Response) {

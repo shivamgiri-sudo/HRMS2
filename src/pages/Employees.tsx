@@ -1,5 +1,14 @@
-import { useDeferredValue, useEffect, useState, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import {
   Building2,
   CheckCircle2,
@@ -31,8 +40,9 @@ import {
   useBulkUpdateEmployeeStatus,
   useDepartments,
   useEmployeeDirectory,
+  useEmployeeDirectoryAnalytics,
   useEmployeeDirectoryMasters,
-  useEmployeeStats,
+  useEmployeeSearchOptions,
 } from "@/hooks/useEmployees";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import { useSorting } from "@/hooks/useSorting";
@@ -69,6 +79,7 @@ interface EmployeeMetricCardProps {
   description: string;
   icon: ReactNode;
   tone: "sky" | "emerald" | "indigo" | "amber";
+  onClick?: () => void;
 }
 
 const metricToneMap = {
@@ -96,11 +107,16 @@ const EmployeeMetricCard = ({
   description,
   icon,
   tone,
+  onClick,
 }: EmployeeMetricCardProps) => {
   const style = metricToneMap[tone];
 
   return (
-    <div className={`rounded-2xl border p-4 shadow-sm hover:shadow-2xl hover:-translate-y-0.5 transition-all duration-200 cursor-pointer ${style.card}`}>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full rounded-2xl border p-4 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-[#1B6AB5]/30 ${style.card}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
@@ -118,12 +134,13 @@ const EmployeeMetricCard = ({
       </div>
 
       <p className="mt-3 text-xs leading-5 text-slate-500">{description}</p>
-    </div>
+    </button>
   );
 };
 
 const Employees = () => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [departmentFilter, setDepartmentFilter] = useState("all");
   const [processFilter, setProcessFilter] = useState("all");
   const [branchFilter, setBranchFilter] = useState("all");
@@ -165,11 +182,21 @@ const Employees = () => {
     processId: processFilter === "all" ? undefined : processFilter,
     branchId: branchFilter === "all" ? undefined : branchFilter,
   });
+  const { data: directoryAnalytics, isFetching: isFetchingAnalytics } = useEmployeeDirectoryAnalytics({
+    page: 1,
+    limit: 1,
+    recordStatus,
+    status: employmentStatus,
+    search: deferredSearch || undefined,
+    departmentId: departmentFilter === "all" ? undefined : departmentFilter,
+    processId: processFilter === "all" ? undefined : processFilter,
+    branchId: branchFilter === "all" ? undefined : branchFilter,
+  });
   const employees = directoryData?.employees ?? [];
   const directoryTotal = directoryData?.total ?? 0;
   const { data: departments = [] } = useDepartments();
   const { data: directoryMasters } = useEmployeeDirectoryMasters();
-  const { data: employeeStats } = useEmployeeStats();
+  const { data: employeeSearchOptions = [] } = useEmployeeSearchOptions(searchQuery);
   const { isAdminOrHR, isLoading: isLoadingRole, roleKeys } = useIsAdminOrHR();
   const canResetEmployeePassword =
     roleKeys.includes("super_admin") || roleKeys.includes("admin") || roleKeys.includes("wfm");
@@ -195,7 +222,22 @@ const Employees = () => {
 
   const isLoading = isLoadingEmployees || isLoadingRole;
 
-  const activeEmployees = employeeStats?.active ?? 0;
+  const filteredStats = directoryData?.stats;
+  const totalEmployees = filteredStats?.total_employees ?? directoryTotal;
+  const activeEmployees = filteredStats?.active_employees ?? 0;
+  const inactiveEmployees = filteredStats?.inactive_employees ?? 0;
+  const filteredDepartmentCount = filteredStats?.department_count ?? departments.length;
+  const processChartData = useMemo(
+    () =>
+      (directoryAnalytics?.processBreakdown ?? []).map((row) => ({
+        process: row.process_name,
+        Active: row.active_count,
+        Inactive: row.inactive_count,
+        Total: row.total_count,
+      })),
+    [directoryAnalytics?.processBreakdown],
+  );
+  const chartMode = statusFilter === "inactive" || statusFilter === "offboarded" ? "Inactive" : "Active";
 
   useEffect(() => {
     setCurrentPage(1);
@@ -470,7 +512,7 @@ const Employees = () => {
               <div className="mt-4 flex flex-wrap gap-2">
                 <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total</p>
-                  <p className="text-lg font-black text-white">{employeeStats?.total ?? directoryTotal}</p>
+                  <p className="text-lg font-black text-white">{totalEmployees}</p>
                 </div>
                 <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Active</p>
@@ -478,7 +520,7 @@ const Employees = () => {
                 </div>
                 <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Departments</p>
-                  <p className="text-lg font-black text-[#5aa0dd]">{departments.length}</p>
+                  <p className="text-lg font-black text-[#5aa0dd]">{filteredDepartmentCount}</p>
                 </div>
               </div>
             </div>
@@ -515,42 +557,41 @@ const Employees = () => {
             <>
               <EmployeeMetricCard
                 title={isAdminOrHR ? "Employees" : "Team Members"}
-                value={employeeStats?.total ?? directoryTotal}
+                value={totalEmployees}
                 description={
                   isAdminOrHR
-                    ? "Total employee records available."
-                    : "Total visible team records."
+                    ? "Matching employee records for the selected filters."
+                    : "Matching visible team records."
                 }
                 icon={<Users className="h-5 w-5" />}
                 tone="sky"
+                onClick={() => setStatusFilter("all")}
               />
 
               <EmployeeMetricCard
                 title="Active"
                 value={activeEmployees}
-                description="Employees currently marked active."
+                description="Active employees matching the current filters."
                 icon={<UserCheck className="h-5 w-5" />}
                 tone="emerald"
+                onClick={() => setStatusFilter("active")}
               />
 
               <EmployeeMetricCard
                 title="Departments"
-                value={departments.length}
-                description="Departments configured in HRMS."
+                value={filteredDepartmentCount}
+                description="Departments represented in this result set."
                 icon={<Building2 className="h-5 w-5" />}
                 tone="indigo"
               />
 
               <EmployeeMetricCard
-                title="Selected"
-                value={selectedEmployeeIds.length}
-                description={
-                  selectedEmployeeIds.length > 0
-                    ? "Selected for bulk action."
-                    : "No employee selected."
-                }
+                title="Inactive"
+                value={inactiveEmployees}
+                description="Inactive/offboarded employees in the selected result."
                 icon={<CheckCircle2 className="h-5 w-5" />}
                 tone="amber"
+                onClick={() => setStatusFilter("inactive")}
               />
             </>
           )}
@@ -566,7 +607,41 @@ const Employees = () => {
                 className="h-11 rounded-xl border-slate-200 bg-white pl-10 text-sm shadow-sm"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
+                onFocus={() => setIsSearchFocused(true)}
+                onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 150)}
               />
+
+              {isSearchFocused && searchQuery.trim() && (
+                <div className="absolute left-0 right-0 top-12 z-30 overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-2xl">
+                  {employeeSearchOptions.length > 0 ? (
+                    employeeSearchOptions.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm text-slate-900 transition hover:bg-[#e8f2fc]"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          setSearchQuery(option.name || option.employee_code);
+                          setCurrentPage(1);
+                          setIsSearchFocused(false);
+                        }}
+                      >
+                        <span>
+                          <span className="block font-bold text-slate-950">{option.name || "Unnamed employee"}</span>
+                          <span className="text-xs text-slate-500">{option.employee_code}</span>
+                        </span>
+                        <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-600">
+                          Select
+                        </span>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="px-4 py-3 text-sm text-slate-500">
+                      No matching employee found yet.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
@@ -667,6 +742,60 @@ const Employees = () => {
             </button>
           )}
         </div>
+
+        <section className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
+          <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-sm font-black text-slate-950">
+                Process-wise {chartMode.toLowerCase()} employee view
+              </h2>
+              <p className="text-xs text-slate-500">
+                Chart follows the same search, status, department, process and branch filters as the list.
+              </p>
+            </div>
+            <div className="rounded-full bg-[#e8f2fc] px-3 py-1 text-xs font-bold text-[#1B6AB5]">
+              {statusFilter === "inactive" || statusFilter === "offboarded"
+                ? "Inactive comparison"
+                : "Active comparison"}
+            </div>
+          </div>
+
+          {processChartData.length > 0 ? (
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={processChartData} margin={{ top: 8, right: 16, left: 0, bottom: 36 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis
+                    dataKey="process"
+                    interval={0}
+                    angle={-25}
+                    textAnchor="end"
+                    height={70}
+                    tick={{ fill: "#475569", fontSize: 11 }}
+                  />
+                  <YAxis allowDecimals={false} tick={{ fill: "#475569", fontSize: 11 }} />
+                  <Tooltip
+                    cursor={{ fill: "rgba(27, 106, 181, 0.08)" }}
+                    contentStyle={{
+                      borderRadius: 12,
+                      border: "1px solid #dbeafe",
+                      color: "#0f172a",
+                    }}
+                  />
+                  <Bar dataKey={chartMode} fill={chartMode === "Active" ? "#3BAD49" : "#f59e0b"} radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : isFetchingAnalytics ? (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+              Loading process-wise analytics...
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+              No process-wise data available for the selected filters.
+            </div>
+          )}
+        </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
