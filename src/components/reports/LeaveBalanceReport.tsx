@@ -18,7 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Download, Calendar, Loader2, Search } from "lucide-react";
+import { Download, Calendar, Loader2, Search, FileSpreadsheet } from "lucide-react";
 import { useLeaveBalanceReport } from "@/hooks/useLeaveBalanceReport";
 import { useReportMasters } from "@/hooks/useReportMasters";
 import jsPDF from "jspdf";
@@ -30,7 +30,26 @@ const YEARS = Array.from({ length: 5 }, (_, i) => ({
   label: String(currentYear - i),
 }));
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [
+  { value: "50", label: "50 rows" },
+  { value: "100", label: "100 rows" },
+  { value: "250", label: "250 rows" },
+  { value: "500", label: "500 rows" },
+  { value: "0", label: "Show all" },
+];
+
+function exportCSV(filename: string, headers: string[], rows: (string | number)[][]) {
+  const escape = (v: string | number) => {
+    const s = String(v ?? "");
+    return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [headers, ...rows].map((r) => r.map(escape).join(",")).join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
 
 export function LeaveBalanceReport() {
   const [selectedYear, setSelectedYear] = useState(String(currentYear));
@@ -39,6 +58,7 @@ export function LeaveBalanceReport() {
   const [isExporting, setIsExporting] = useState(false);
   const [search, setSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
   const { data: masters } = useReportMasters();
   const { data: report, isLoading } = useLeaveBalanceReport(
@@ -59,8 +79,18 @@ export function LeaveBalanceReport() {
     );
   }, [report, search]);
 
-  const totalPages = Math.ceil(filteredRecords.length / PAGE_SIZE);
-  const pagedRecords = filteredRecords.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const totalPages = pageSize === 0 ? 1 : Math.ceil(filteredRecords.length / pageSize);
+  const pagedRecords = pageSize === 0 ? filteredRecords : filteredRecords.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  const exportToCSV = () => {
+    if (!report || !report.records.length) return;
+    const headers = ["Employee", "Code", "Department", ...report.leaveTypes.flatMap((lt) => [`${lt} Total`, `${lt} Used`, `${lt} Remaining`])];
+    const rows = report.records.map((r) => [
+      r.employeeName, r.employeeCode ?? "", r.department,
+      ...r.balances.flatMap((b) => [b.total, b.used, b.remaining]),
+    ]);
+    exportCSV(`Leave_Balance_Report_${report.year}.csv`, headers, rows);
+  };
 
   const exportToPDF = async () => {
     if (!report || report.records.length === 0) return;
@@ -198,25 +228,41 @@ export function LeaveBalanceReport() {
                 </SelectContent>
               </Select>
             )}
+            <Button variant="outline" onClick={exportToCSV} disabled={!report?.records.length}>
+              <FileSpreadsheet className="h-4 w-4 mr-2" />
+              CSV
+            </Button>
             <Button onClick={exportToPDF} disabled={isExporting || !report?.records.length}>
               {isExporting ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
               ) : (
                 <Download className="h-4 w-4 mr-2" />
               )}
-              Export PDF
+              PDF
             </Button>
           </div>
         </div>
         {report && report.records.length > 0 && (
-          <div className="relative mt-2">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search by name, code or department..."
-              value={search}
-              onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
-              className="pl-9 max-w-sm"
-            />
+          <div className="flex flex-wrap items-center gap-3 mt-2">
+            <div className="relative flex-1 min-w-[200px] max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search by name, code or department..."
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
+                className="pl-9"
+              />
+            </div>
+            <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setCurrentPage(1); }}>
+              <SelectTrigger className="w-[120px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PAGE_SIZE_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         )}
       </CardHeader>

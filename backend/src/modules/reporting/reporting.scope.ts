@@ -1,9 +1,11 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 
+const NO_BRANCH_SCOPE_SENTINEL = '__NO_BRANCH_SCOPE__';
+
 export interface BranchScope {
   isSuperAdmin: boolean;
-  branchIds: string[];  // empty = all, non-empty = restricted list
+  branchIds: string[];  // empty = all only for super admin or explicit all-scope users
 }
 
 const SUPER_ADMIN_ROLES = ['super_admin', 'admin', 'ceo'];
@@ -43,6 +45,10 @@ export async function resolveBranchScope(userId: string): Promise<BranchScope> {
     const emp = empRows as { branch_id: string | null }[];
     if (emp[0]?.branch_id) branchIds.push(emp[0].branch_id);
   }
+
+  // Fail closed: a non-super-admin user without explicit all-scope and without an
+  // employee branch must not receive company-wide report data.
+  if (branchIds.length === 0) branchIds.push(NO_BRANCH_SCOPE_SENTINEL);
 
   return { isSuperAdmin: false, branchIds };
 }

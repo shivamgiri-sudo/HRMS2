@@ -200,7 +200,7 @@ export function useAttendanceReport(month: Date) {
         if (!employeeMap.has(key)) {
           const firstName = record.first_name ?? record.employee?.first_name ?? "";
           const lastName = record.last_name ?? record.employee?.last_name ?? "";
-          const employeeName = record.employee_name ?? `${firstName} ${lastName}`.trim() || "Unknown";
+          const employeeName = record.employee_name ?? (`${firstName} ${lastName}`.trim() || "Unknown");
           employeeMap.set(key, {
             employeeId: record.employee_id,
             employeeName,
