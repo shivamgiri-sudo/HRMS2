@@ -5,7 +5,22 @@ import { db } from "../../db/mysql.js";
 export const lmsService = {
   async getProgress(employeeId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM lms_learning_progress_snapshot WHERE employee_id = ? ORDER BY synced_at DESC",
+      `SELECT id,
+              employee_id,
+              lms_learner_id,
+              course_id,
+              course_name,
+              course_name AS content_title,
+              'course' AS content_type,
+              NULL AS content_url,
+              completion_pct,
+              score,
+              status,
+              last_accessed,
+              synced_at
+         FROM lms_learning_progress_snapshot
+        WHERE employee_id = ?
+        ORDER BY synced_at DESC`,
       [employeeId]
     );
     return rows as RowDataPacket[];
