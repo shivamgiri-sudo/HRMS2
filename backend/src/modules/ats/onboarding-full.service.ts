@@ -208,8 +208,8 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       panHash,
       aadhaarMasked,
       aadhaarHash,
-      input.passportNo ?? null,
-      input.drivingLicenseNo ?? null,
+      input.passportNo ?? (input as any).passportNumber ?? (input as any).passport_number ?? null,
+      input.drivingLicenseNo ?? (input as any).dlNumber ?? (input as any).dl_number ?? null,
       input.uanNumber ?? null,
       input.epfNumber ?? null,
       input.esicNumber ?? null,
@@ -273,8 +273,8 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
        updated_at = NOW()
      WHERE id = ?`,
     [
-      input.passportNo ?? null,
-      input.drivingLicenseNo ?? null,
+      input.passportNo ?? (input as any).passportNumber ?? (input as any).passport_number ?? null,
+      input.drivingLicenseNo ?? (input as any).dlNumber ?? (input as any).dl_number ?? null,
       input.uanNumber ?? null,
       input.epfNumber ?? null,
       input.esicNumber ?? null,

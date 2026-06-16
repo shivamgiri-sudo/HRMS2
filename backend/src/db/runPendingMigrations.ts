@@ -128,6 +128,7 @@ const MIGRATION_MANIFEST: string[] = [
   "200_onboarding_empcode_bgv_gaps.sql",
   "201_bgv_portal_initiation.sql",
   "202_onboarding_v2_court_check.sql",
+  "203_bgv_missing_tables.sql",
 ];
 
 export type MigrationHealth = {
@@ -158,11 +159,25 @@ export function getMigrationHealth(): MigrationHealth {
 }
 
 function isIdempotentMigrationError(error: any): boolean {
+  const code = error?.code;
+  const errno = Number(error?.errno ?? 0);
+  const msg = String(error?.message ?? "").toLowerCase();
   return (
-    error?.code === "ER_TABLE_EXISTS_ERROR" ||
-    error?.code === "ER_DUP_FIELDNAME" ||
-    error?.code === "ER_DUP_KEYNAME" ||
-    String(error?.message ?? "").includes("Duplicate column")
+    // Named codes (mysql2 preferred)
+    code === "ER_TABLE_EXISTS_ERROR" ||   // 1050
+    code === "ER_DUP_FIELDNAME" ||        // 1060
+    code === "ER_DUP_KEYNAME" ||          // 1061
+    code === "ER_CANT_DROP_FIELD_OR_KEY" ||// 1091
+    // Numeric codes as fallback (in case mysql2 version differs)
+    errno === 1050 ||  // table already exists
+    errno === 1060 ||  // duplicate column name
+    errno === 1061 ||  // duplicate key name
+    errno === 1091 ||  // can't drop non-existent field/key
+    // Message-based fallback
+    msg.includes("duplicate column") ||
+    msg.includes("already exists") ||
+    msg.includes("duplicate key") ||
+    msg.includes("can't drop")
   );
 }
 
