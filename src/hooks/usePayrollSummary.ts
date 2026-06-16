@@ -9,7 +9,10 @@ export interface PayrollSummaryRecord {
   id: string;
   employeeCode: string;
   employeeName: string;
+  branch: string;
+  process: string;
   department: string;
+  costCentre: string;
   basicSalary: number;
   allowances: number;
   deductions: number;
@@ -38,18 +41,19 @@ function normalizeStatus(row: any): string {
   return raw || "processed";
 }
 
-export function usePayrollSummary(month: number, year: number, branchId?: string, processId?: string) {
+export function usePayrollSummary(month: number, year: number, branchId?: string, processId?: string, costCentreId?: string) {
   const runMonth = `${year}-${String(month).padStart(2, '0')}`;
   return useQuery({
-    queryKey: ["payroll-summary", month, year, branchId, processId],
+    queryKey: ["payroll-summary", month, year, branchId, processId, costCentreId],
     queryFn: async (): Promise<PayrollSummary> => {
       const allRows: any[] = [];
       let page = 1;
       const baseParams = [
         `runMonth=${runMonth}`,
         `limit=${PAGE_SIZE}`,
-        branchId  ? `branchId=${branchId}`   : "",
+        branchId ? `branchId=${branchId}` : "",
         processId ? `processId=${processId}` : "",
+        costCentreId ? `costCentreId=${costCentreId}` : "",
       ].filter(Boolean).join("&");
       while (true) {
         const response = await hrmsApi.get<{ success: boolean; data: any[]; total: number; page: number; limit: number }>(
@@ -72,7 +76,10 @@ export function usePayrollSummary(month: number, year: number, branchId?: string
           id: String(l.id ?? l.employee_id ?? l.employee_code),
           employeeCode: l.employee_code ?? '',
           employeeName: l.employee_name ?? 'Unknown',
+          branch: l.branch_name ?? '-',
+          process: l.process_name ?? '-',
           department: l.department_name ?? l.dept_name ?? l.process_name ?? '-',
+          costCentre: l.cost_centre_name ?? '-',
           basicSalary: basic,
           allowances,
           deductions: Number(l.total_deductions ?? 0),
