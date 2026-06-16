@@ -7,6 +7,7 @@ import { startAttendanceEngineScheduler } from "./modules/wfm/attendance-engine.
 import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
 import { legacySyncWorker } from "./workers/legacy-sync-worker.js";
 import { startAccessExpiryScheduler } from "./workers/access-expiry.worker.js";
+import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
 import { startOfficialEmailComplianceScheduler } from "./workers/official-email-compliance.worker.js";
 import { startIntegrationScheduler } from "./workers/integration-scheduler.worker.js";
 import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-db.service.js";
@@ -22,7 +23,8 @@ function startServer() {
       startAttendanceEngineScheduler();
       legacySyncWorker.start();
       startAccessExpiryScheduler();
-      console.log(`[schedulers] tenure, communication, attendance, legacy-sync, access-expiry started`);
+      startITProvisioningLockScheduler();
+      console.log(`[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning started`);
     } else {
       console.log(`[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)`);
     }

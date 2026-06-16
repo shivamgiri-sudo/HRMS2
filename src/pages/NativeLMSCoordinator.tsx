@@ -1,145 +1,62 @@
 import { useQuery } from "@tanstack/react-query";
-import { ExternalLink, RefreshCw, Users, BookOpen } from "lucide-react";
+import { BookOpen, RefreshCw, Users, AlertTriangle } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { useUserRole } from "@/hooks/useUserRole";
 
 export default function NativeLMSCoordinator() {
-  const { data: roleData } = useUserRole();
-  const employeeId = roleData?.employeeId ?? null;
-
-  const { data: launchUrls } = useQuery({
-    queryKey: ["lms-launch-urls", employeeId],
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ["native-lms-coordinator-dashboard"],
     queryFn: async () => {
-      if (!employeeId) return null;
-      const res = await hrmsApi.get<{ success: boolean; data: any }>(`/api/lms/launch-urls/${employeeId}`);
-      return res.data ?? null;
-    },
-    enabled: !!employeeId,
-  });
-
-  const { data: mappings = [], isLoading: loadingMappings } = useQuery({
-    queryKey: ["lms-mappings"],
-    queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/lms/mapping");
-      return res.data ?? [];
+      const res = await hrmsApi.get<{ success: boolean; data: any }>("/api/lms/native/coordinator");
+      if (!res.success) throw new Error("Failed to fetch LMS coordinator dashboard");
+      return res.data;
     },
   });
 
-  const { data: syncLog = [], isLoading: loadingSync } = useQuery({
-    queryKey: ["lms-sync-log"],
-    queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/lms/sync-log");
-      return res.data ?? [];
-    },
-  });
+  const batches = data?.batches ?? [];
+  const trainees = data?.trainees ?? [];
+  const attendance = data?.attendance ?? [];
+  const scope = data?.scope ?? {};
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-950">LMS Coordinator</h1>
-          <p className="mt-1 text-slate-600">
-            Training coordination and learner management via the deployed LMS system.
-          </p>
+        <div className="rounded-3xl bg-slate-950 p-6 text-white shadow-sm">
+          <p className="text-xs font-black uppercase tracking-[.22em] text-emerald-300">Native LMS</p>
+          <h1 className="mt-2 text-3xl font-black">LMS Coordinator</h1>
+          <p className="mt-2 max-w-3xl text-sm text-slate-300">Training coordination embedded inside HRMS and synced with the independent MCN LMS database.</p>
         </div>
 
-        {/* LMS Deep Links */}
-        <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <h2 className="font-semibold text-slate-950 mb-4">Launch LMS</h2>
-          <div className="flex flex-wrap gap-3">
-            {launchUrls?.coordinator_url && (
-              <a
-                href={launchUrls.coordinator_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white hover:bg-slate-800"
-              >
-                <BookOpen className="h-4 w-4" />
-                Open LMS Coordinator
-                <ExternalLink className="h-3 w-3" />
-              </a>
-            )}
-            {launchUrls?.admin_url && (
-              <a
-                href={launchUrls.admin_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-5 py-3 font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                <BookOpen className="h-4 w-4" />
-                Open LMS Admin
-                <ExternalLink className="h-3 w-3" />
-              </a>
-            )}
-            {!launchUrls && (
-              <p className="text-sm text-slate-500">
-                LMS launch URLs require your employee profile to be mapped to an LMS learner account.
-              </p>
-            )}
-          </div>
-        </div>
+        {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-800 flex gap-3"><AlertTriangle className="h-5 w-5" />{(error as Error).message}</div>}
+        {isLoading && <div className="rounded-2xl border bg-white p-6 text-slate-500">Loading coordinator dashboard…</div>}
 
-        {/* Learner Mappings */}
-        <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-slate-950 flex items-center gap-2">
-              <Users className="h-4 w-4" />
-              Learner Mappings
-            </h2>
-            <span className="text-sm text-slate-500">{mappings.length} mapped</span>
-          </div>
-          {loadingMappings ? (
-            <p className="text-sm text-slate-500">Loading...</p>
-          ) : mappings.length === 0 ? (
-            <p className="text-sm text-slate-500">No learner mappings found. Add mappings via the LMS Integration page.</p>
-          ) : (
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {mappings.map((m: any) => (
-                <div key={m.id ?? m.employee_id} className="flex items-center justify-between rounded-xl border p-3">
-                  <div>
-                    <div className="font-medium text-sm">{m.employee_id}</div>
-                    <div className="text-xs text-slate-500">LMS ID: {m.lms_learner_id}</div>
-                  </div>
-                  {m.sync_status && (
-                    <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">
-                      {m.sync_status}
-                    </span>
-                  )}
-                </div>
-              ))}
+        {!isLoading && !error && (
+          <>
+            <div className="grid gap-4 md:grid-cols-4">
+              <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase text-slate-500">Scope Branch</p><h2 className="mt-2 font-black text-slate-950">{scope.branch ?? "All"}</h2></div>
+              <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase text-slate-500">Scope Process</p><h2 className="mt-2 font-black text-slate-950">{scope.process ?? "All"}</h2></div>
+              <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase text-slate-500">Batches</p><h2 className="mt-2 font-black text-slate-950">{batches.length}</h2></div>
+              <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase text-slate-500">Trainees</p><h2 className="mt-2 font-black text-slate-950">{trainees.length}</h2></div>
             </div>
-          )}
-        </div>
 
-        {/* Sync Log */}
-        <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-2 mb-4">
-            <RefreshCw className="h-4 w-4 text-slate-600" />
-            <h2 className="font-semibold text-slate-950">Sync Log</h2>
-          </div>
-          {loadingSync ? (
-            <p className="text-sm text-slate-500">Loading...</p>
-          ) : syncLog.length === 0 ? (
-            <p className="text-sm text-slate-500">No sync events recorded.</p>
-          ) : (
-            <div className="space-y-2 max-h-48 overflow-y-auto">
-              {syncLog.slice(0, 20).map((entry: any, i: number) => (
-                <div key={i} className="flex items-start gap-3 rounded-xl border p-3 text-sm">
-                  <div className="flex-1">
-                    <span className="font-medium">{entry.event_type ?? entry.sync_type ?? "sync"}</span>
-                    {entry.message && <span className="ml-2 text-slate-500">{entry.message}</span>}
-                  </div>
-                  {entry.created_at && (
-                    <span className="text-xs text-slate-400 whitespace-nowrap">
-                      {new Date(entry.created_at).toLocaleDateString()}
-                    </span>
-                  )}
-                </div>
-              ))}
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                <div className="mb-4 flex items-center justify-between"><h2 className="flex items-center gap-2 text-lg font-black text-slate-950"><BookOpen className="h-5 w-5" />Active Batches</h2><button onClick={() => refetch()} className="rounded-xl border px-3 py-2 text-xs font-bold"><RefreshCw className="inline h-3.5 w-3.5" /> Refresh</button></div>
+                <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">{batches.length === 0 ? <p className="text-sm text-slate-500">No batches found for your LMS scope.</p> : batches.map((b: any) => <div key={b.id ?? b.batch_no} className="rounded-2xl border bg-slate-50 p-4"><p className="text-xs font-bold uppercase text-blue-600">{b.batch_type ?? "Batch"}</p><h3 className="font-bold text-slate-950">{b.batch_name ?? b.batch_no}</h3><p className="text-xs text-slate-500">{b.branch ?? "—"} • {b.process ?? "—"} • {b.batch_status ?? "—"}</p><p className="mt-2 text-xs text-slate-500">Trainees: {b.total_trainees ?? 0} • Certified: {b.certified ?? 0}</p></div>)}</div>
+              </div>
+
+              <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                <h2 className="mb-4 flex items-center gap-2 text-lg font-black text-slate-950"><Users className="h-5 w-5" />Learners</h2>
+                <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">{trainees.length === 0 ? <p className="text-sm text-slate-500">No learners found.</p> : trainees.map((t: any) => <div key={t.id ?? t.employee_id} className="rounded-2xl border p-4"><h3 className="font-bold text-slate-950">{t.trainee_name ?? t.employee_id}</h3><p className="text-xs text-slate-500">{t.employee_id} • {t.batch_no ?? "No batch"}</p><p className="mt-2 text-xs text-slate-500">Course: {Number(t.course_completion_pct ?? 0).toFixed(0)}% • Assessment Pass: {Number(t.assessment_pass_pct ?? 0).toFixed(0)}% • {t.risk_status ?? "HEALTHY"}</p></div>)}</div>
+              </div>
             </div>
-          )}
-        </div>
+
+            <div className="rounded-3xl border bg-white p-5 shadow-sm">
+              <h2 className="mb-4 text-lg font-black text-slate-950">Recent Attendance Inference</h2>
+              <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-50 text-left"><tr><th className="p-3">Batch</th><th>Employee</th><th>Date</th><th>Status</th></tr></thead><tbody>{attendance.length === 0 ? <tr><td colSpan={4} className="p-5 text-center text-slate-500">No attendance inference rows found.</td></tr> : attendance.slice(0, 50).map((a: any) => <tr key={a.id} className="border-t"><td className="p-3">{a.batch_no ?? "—"}</td><td>{a.employee_id ?? "—"}</td><td>{String(a.attendance_date ?? a.created_at ?? "").slice(0, 10)}</td><td>{a.status ?? a.inferred_status ?? "—"}</td></tr>)}</tbody></table></div>
+            </div>
+          </>
+        )}
       </div>
     </DashboardLayout>
   );

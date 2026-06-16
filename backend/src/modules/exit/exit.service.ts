@@ -178,6 +178,20 @@ export const exitService = {
         `UPDATE employees SET employment_status = 'inactive', updated_at = NOW() WHERE id = ?`,
         [(existing as any).employee_id]
       ).catch(() => null);
+
+      // Fire IT exit provisioning tasks — fire-and-forget, must not throw
+      const exitRec = existing as any;
+      import('../it-provisioning/it-provisioning.service.js').then(({ dispatchExitProvisioningTasks }) => {
+        dispatchExitProvisioningTasks({
+          employeeId:     exitRec.employee_id,
+          employeeCode:   exitRec.employee_code  ?? '',
+          employeeName:   exitRec.employee_name  ?? exitRec.employee_id,
+          branchId:       exitRec.branch_id      ?? null,
+          lastWorkingDay: exitRec.last_working_day_proposed ?? null,
+          exitRequestId:  id,
+          actorUserId:    userId,
+        }).catch((err: unknown) => console.error('[it-provisioning] exit dispatch failed:', err));
+      }).catch((err: unknown) => console.error('[it-provisioning] module load failed:', err));
     }
 
     return this.getExitRequest(id);

@@ -463,3 +463,63 @@ export function branchHeadApprovalEmail(data: BranchHeadApprovalEmailData): stri
 </html>
   `;
 }
+
+// ── Professional Rejection Email ──────────────────────────────────────────────
+
+export interface RejectionEmailData {
+  candidateName: string;
+  branchDisplayName: string;
+  processName?: string | null;
+  applicationRef?: string | null;
+  companyName?: string;
+  hrEmail?: string;
+}
+
+export function rejectedEmail(data: RejectionEmailData): string {
+  const company = data.companyName ?? 'MAS Callnet India Pvt. Ltd.';
+  const hrEmail = data.hrEmail ?? 'hr@mascallnet.com';
+  const ref = data.applicationRef ? `<p style="font-size:13px;color:#6b7280;margin:4px 0 0;">Ref: ${data.applicationRef}</p>` : '';
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Application Update — ${company}</title>
+<style>${BASE_STYLES}
+  .rej-header { background: linear-gradient(135deg, #374151 0%, #4b5563 100%); padding: 32px 24px; text-align: center; }
+  .rej-badge { display: inline-block; background: #fef2f2; color: #991b1b; padding: 8px 18px; border-radius: 20px; font-size: 13px; font-weight: 700; margin: 8px 0; border: 1px solid #fecaca; }
+  .encourage-box { background: #eff6ff; border-left: 4px solid #3b82f6; padding: 16px; border-radius: 8px; margin: 16px 0; }
+  .encourage-text { font-size: 14px; color: #1e40af; margin: 0; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="rej-header">
+      <p class="logo">${company}</p>
+      <p class="tagline">Talent Acquisition</p>
+    </div>
+    <div class="content">
+      <p class="text">Dear <strong>${data.candidateName}</strong>,</p>
+      <p class="text">Thank you for your interest in joining <strong>${company}</strong> and for taking the time to attend our recruitment process at our <strong>${data.branchDisplayName}</strong> location${data.processName ? ` — <strong>${data.processName}</strong>` : ''}.</p>
+      <p class="text">After careful evaluation of all candidates, we regret to inform you that we are unable to proceed with your application at this time.</p>
+      <span class="rej-badge">Application Not Progressed</span>
+      ${ref}
+      <div class="divider"></div>
+      <div class="encourage-box">
+        <p class="encourage-text">
+          <strong>Keep going!</strong> This decision is specific to this opening and does not reflect on your overall potential or abilities. We encourage you to continue developing your skills and apply for future opportunities that match your profile.
+        </p>
+      </div>
+      <p class="text">We will retain your profile in our database and may reach out for suitable future openings.</p>
+      <p class="text">For any queries, write to us at <a href="mailto:${hrEmail}" style="color:#6d28d9;">${hrEmail}</a>.</p>
+      <p class="text" style="margin-top:24px;">We wish you the very best in your career journey.</p>
+      <p class="text">Warm regards,<br><strong>Talent Acquisition Team</strong><br>${company}</p>
+    </div>
+    <div class="footer">
+      <p class="footer-text">This is an automated notification. Please do not reply to this email.</p>
+      <p class="footer-text" style="margin-top:8px;">For queries: <a href="mailto:${hrEmail}" class="footer-link">${hrEmail}</a></p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+}

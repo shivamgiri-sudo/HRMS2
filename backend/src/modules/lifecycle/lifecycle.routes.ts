@@ -58,7 +58,17 @@ router.get("/documents/expiring", requireRole("admin", "hr"), h(async (req: Auth
 
 router.get("/documents/unverified", requireRole("admin", "hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ed.*, e.first_name, e.last_name, e.employee_code
+    `SELECT ed.id,
+            ed.employee_id,
+            ed.doc_type AS document_type,
+            ed.doc_name AS document_name,
+            ed.doc_category,
+            ed.file_url,
+            ed.verified,
+            ed.created_at,
+            e.first_name,
+            e.last_name,
+            e.employee_code
        FROM employee_documents ed
        LEFT JOIN employees e ON e.id = ed.employee_id
       WHERE ed.verified = 0
@@ -70,9 +80,12 @@ router.get("/documents/unverified", requireRole("admin", "hr"), h(async (_req: A
 
 router.get("/documents/:id/access-log", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT dal.*, e.first_name, e.last_name
+    `SELECT dal.*,
+            dal.access_type AS action_type,
+            e.first_name,
+            e.last_name
        FROM employee_document_access_log dal
-       LEFT JOIN employees e ON e.id = dal.accessed_by
+       LEFT JOIN employees e ON e.user_id = dal.accessed_by
       WHERE dal.document_id = ?
       ORDER BY dal.accessed_at DESC
       LIMIT 100`,

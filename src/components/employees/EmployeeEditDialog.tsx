@@ -55,6 +55,7 @@ interface EditFormData {
   first_name: string;
   last_name: string;
   email: string;
+  official_email: string;
   phone: string;
   address: string;
   city: string;
@@ -98,6 +99,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     first_name: "",
     last_name: "",
     email: "",
+    official_email: "",
     phone: "",
     address: "",
     city: "",
@@ -241,6 +243,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         first_name: employeeDetails.first_name || "",
         last_name: employeeDetails.last_name || "",
         email: employeeDetails.email || "",
+        official_email: employeeDetails.official_email || "",
         phone: employeeDetails.mobile || employeeDetails.phone || "",
         address: employeeDetails.address1 || employeeDetails.address || "",
         city: employeeDetails.city || "",
@@ -267,6 +270,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         firstName: data.first_name,
         lastName: data.last_name,
         email: data.email,
+        officialEmail: data.official_email || null,
         mobile: data.phone || null,
         address1: data.address || null,
         city: data.city || null,
@@ -340,6 +344,10 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     e.preventDefault();
     if (!formData.employee_code.trim()) {
       toast.error("Employee code is required");
+      return;
+    }
+    if (formData.official_email && !/^[a-zA-Z0-9._%+\-]+@(teammas\.in|teammas\.co\.in)$/.test(formData.official_email)) {
+      toast.error("Official email must be @teammas.in or @teammas.co.in");
       return;
     }
     if (!formData.first_name || !formData.last_name || !formData.email || !formData.designation) {
@@ -464,6 +472,18 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                       onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                     />
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="official_email">Official Email</Label>
+                  <Input
+                    id="official_email"
+                    type="email"
+                    placeholder="firstname.lastname@teammas.in"
+                    value={formData.official_email}
+                    onChange={(e) => setFormData({ ...formData, official_email: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Must be @teammas.in or @teammas.co.in</p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
