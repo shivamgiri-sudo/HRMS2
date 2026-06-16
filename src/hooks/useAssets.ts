@@ -5,11 +5,11 @@ import { format } from "date-fns";
 export interface Asset {
   id: string;
   name: string;
-  type: "laptop" | "monitor" | "phone" | "accessory";
+  type: "laptop" | "monitor" | "phone" | "accessory" | string;
   serialNumber: string;
   purchaseDate: string;
   cost: number;
-  status: "available" | "assigned" | "maintenance" | "retired";
+  status: "available" | "assigned" | "maintenance" | "repair" | "retired" | "lost";
   notes?: string;
   assignedTo?: {
     name: string;
@@ -31,7 +31,7 @@ export function useAssets() {
           ? format(new Date(a.purchase_date), "MMM d, yyyy")
           : "Unknown",
         cost: Number(a.purchase_cost ?? 0),
-        status: a.status as Asset["status"],
+        status: (a.status ?? "available") as Asset["status"],
         notes: a.notes ?? undefined,
         assignedTo: (() => {
           const ca = typeof a.current_assignment === "string"
@@ -116,7 +116,7 @@ export interface UpdateAssetData {
   vendor?: string;
   warranty_end_date?: string;
   notes?: string;
-  status?: "available" | "assigned" | "maintenance" | "retired";
+  status?: Asset["status"];
 }
 
 export function useUpdateAsset() {
@@ -130,6 +130,7 @@ export function useUpdateAsset() {
         notes: data.notes ?? null,
         serial_number: data.serial_number ?? null,
         asset_category: data.category ?? null,
+        purchase_date: data.purchase_date ?? null,
         purchase_cost: data.purchase_cost ?? null,
         vendor: data.vendor ?? null,
         warranty_expiry: data.warranty_end_date ?? null,
