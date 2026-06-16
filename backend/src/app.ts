@@ -19,6 +19,7 @@ import { payrollExtendedRouter } from "./modules/payroll/payroll-extended.routes
 import { payrollMoreRouter } from "./modules/payroll/payroll-more.routes.js";
 import { employeeRouter } from "./modules/employees/employee.routes.js";
 import { employeeSecureRouter } from "./modules/employees/employee.secure.routes.js";
+import { employeeGovernanceRouter } from "./modules/employees/employee-governance.routes.js";
 import { employeePhotoCompatRouter } from "./modules/employees/employee.photo.compat.routes.js";
 import { rmChangeRouter } from "./modules/employees/rm-change.routes.js";
 import { kpiRouter } from "./modules/kpi/kpi.routes.js";
@@ -144,6 +145,7 @@ app.use("/api/payroll", payrollExtendedRouter);
 app.use("/api/payroll", payrollMoreRouter);
 app.use("/api/payroll-compliance", payrollComplianceRouter);
 app.use("/api/employees", employeeSecureRouter);
+app.use("/api/employees", employeeGovernanceRouter);
 app.use("/api/employees", employeePhotoCompatRouter);
 app.use("/api/employees", employeeRouter);
 app.use("/api/rm-change", rmChangeRouter);
