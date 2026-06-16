@@ -104,6 +104,8 @@ import { incentivesRouter } from "./modules/incentives/incentives.routes.js";
 
 export const app = express();
 
+app.set("trust proxy", 1);
+
 function allowedOrigins(): string[] {
   const configured = String(process.env.CORS_ALLOWED_ORIGINS || "")
     .split(",")
