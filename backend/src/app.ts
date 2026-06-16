@@ -12,6 +12,7 @@ import { wfmRouter } from "./modules/wfm/wfm.routes.js";
 import { rosterRouter } from "./modules/wfm/roster.routes.js";
 import { leaveRouter } from "./modules/leave/leave.routes.js";
 import { payrollRouter } from "./modules/payroll/payroll.routes.js";
+import { payrollStatutoryConfigCompatRouter } from "./modules/payroll/payroll-statutory-config.compat.routes.js";
 import { payrollExtendedRouter } from "./modules/payroll/payroll-extended.routes.js";
 import { payrollMoreRouter } from "./modules/payroll/payroll-more.routes.js";
 import { employeeRouter } from "./modules/employees/employee.routes.js";
@@ -95,7 +96,6 @@ function allowedOrigins(): string[] {
 }
 
 function isAllowedOrigin(origin: string): boolean {
-  // Allow localhost only in non-production environments
   if (env.NODE_ENV !== "production" && (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:"))) return true;
   if (allowedOrigins().includes(origin)) return true;
   return false;
@@ -148,6 +148,7 @@ app.use("/api/wfm/auto-roster", autoRosterSyncedRouter); // MUST be before /api/
 app.use("/api/wfm", wfmRouter);
 app.use("/api/wfm/roster", rosterRouter);
 app.use("/api/leave", leaveRouter);
+app.use("/api/payroll", payrollStatutoryConfigCompatRouter);
 app.use("/api/payroll", payrollRouter);
 app.use("/api/payroll", payrollExtendedRouter);
 app.use("/api/payroll", payrollMoreRouter);
