@@ -11,6 +11,7 @@ import { integrationRouter } from "./modules/integration-hub/integration.routes.
 import { wfmRouter } from "./modules/wfm/wfm.routes.js";
 import { rosterRouter } from "./modules/wfm/roster.routes.js";
 import { leaveRouter } from "./modules/leave/leave.routes.js";
+import { leaveSecureRouter } from "./modules/leave/leave.secure.routes.js";
 import { payrollRouter } from "./modules/payroll/payroll.routes.js";
 import { payrollSecureRouter } from "./modules/payroll/payroll.secure.routes.js";
 import { payrollStatutoryConfigCompatRouter } from "./modules/payroll/payroll-statutory-config.compat.routes.js";
@@ -137,6 +138,7 @@ app.use("/api/integration-hub", integrationRouter);
 app.use("/api/wfm/auto-roster", autoRosterSyncedRouter);
 app.use("/api/wfm", wfmRouter);
 app.use("/api/wfm/roster", rosterRouter);
+app.use("/api/leave", leaveSecureRouter);
 app.use("/api/leave", leaveRouter);
 app.use("/api/payroll", payrollStatutoryConfigCompatRouter);
 app.use("/api/payroll", payrollLinesCompatRouter);
