@@ -70,7 +70,7 @@ export const processRepositoryMySQL: ProcessRepository = {
     const where =
       conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const sql = `SELECT * FROM process_master ${where} ORDER BY process_name ASC`;
+    const sql = `SELECT DISTINCT * FROM process_master ${where} ORDER BY process_name ASC`;
 
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     return (rows as RowDataPacket[]).map(mapRow);

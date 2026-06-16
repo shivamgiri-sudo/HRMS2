@@ -209,6 +209,56 @@ export function buildCdrAggregateQuery(
   `.trim();
 }
 
+export function buildDailySnapshotAggregateQuery(
+  tableName: string,
+  opts: {
+    dialect?: DbDialect;
+    employeeCodeCol?: string;
+    dateCol?: string;
+    processCol?: string;
+    totalCallsCol?: string;
+    talkMinutesCol?: string;
+    fromDate?: string;
+    toDate?: string;
+  } = {},
+): string {
+  const dialect = opts.dialect ?? "mysql";
+  const table = quoteIdentifier(tableName, dialect);
+  const employeeCode = quoteIdentifier(opts.employeeCodeCol ?? "agent_employee_code", dialect);
+  const date = quoteIdentifier(opts.dateCol ?? "snapshot_date", dialect);
+  const process = quoteIdentifier(opts.processCol ?? "process_name", dialect);
+  const totalCalls = quoteIdentifier(opts.totalCallsCol ?? "total_calls", dialect);
+  const fromDate = safeDate(opts.fromDate, "fromDate");
+  const toDate = safeDate(opts.toDate, "toDate");
+  const dayExpr = dialect === "mssql" ? `CAST(${date} AS date)` : `DATE(${date})`;
+  const talkExpr = opts.talkMinutesCol
+    ? `SUM(COALESCE(${quoteIdentifier(opts.talkMinutesCol, dialect)}, 0))`
+    : "0";
+
+  let where = "WHERE 1=1";
+  if (fromDate) where += ` AND ${dayExpr} >= '${fromDate}'`;
+  if (toDate) where += ` AND ${dayExpr} <= '${toDate}'`;
+
+  const top = dialect === "mssql" ? "TOP (10000) " : "";
+  const limit = dialect === "mysql" ? "LIMIT 10000" : "";
+
+  return `
+    SELECT ${top}
+      ${employeeCode} AS employee_code,
+      ${dayExpr} AS session_date,
+      ${process} AS process_name,
+      SUM(COALESCE(${totalCalls}, 0)) AS total_calls,
+      ${talkExpr} AS login_minutes
+    FROM ${table}
+    ${where}
+      AND ${employeeCode} IS NOT NULL
+      AND ${employeeCode} <> ''
+    GROUP BY ${employeeCode}, ${dayExpr}, ${process}
+    ORDER BY ${dayExpr} DESC, total_calls DESC
+    ${limit}
+  `.trim();
+}
+
 export function buildBiometricAggregateQuery(
   tableName: string,
   opts: {

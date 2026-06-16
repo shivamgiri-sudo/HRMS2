@@ -17,7 +17,9 @@ SET @sql = IF(
   'ALTER TABLE process_master ADD COLUMN client_id CHAR(36) NULL, ADD CONSTRAINT fk_process_client FOREIGN KEY (client_id) REFERENCES client_master(id) ON DELETE SET NULL',
   'SELECT 1'
 );
-PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- Portal users (one per contact at the client company)
 CREATE TABLE IF NOT EXISTS client_user (

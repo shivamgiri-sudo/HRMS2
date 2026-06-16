@@ -4,6 +4,7 @@ import { runPendingMigrations } from "./db/runPendingMigrations.js";
 import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
 import { startAttendanceEngineScheduler } from "./modules/wfm/attendance-engine.cron.js";
+import { startCosecSyncWorker } from "./modules/wfm/cosec-sync.worker.js";
 import { legacySyncWorker } from "./workers/legacy-sync-worker.js";
 import { startAccessExpiryScheduler } from "./workers/access-expiry.worker.js";
 import { startOfficialEmailComplianceScheduler } from "./workers/official-email-compliance.worker.js";
@@ -14,7 +15,8 @@ function startServer() {
   app.listen(env.PORT, () => {
     startOfficialEmailComplianceScheduler();
     startIntegrationScheduler();
-    console.log("[scheduler] official-email compliance and Integration Hub schedules started");
+    startCosecSyncWorker();
+    console.log("[scheduler] official-email, integration, and COSEC sync checks completed");
     if (env.ENABLE_SCHEDULERS) {
       startTenureBadgeScheduler();
       startCommunicationCleanup();

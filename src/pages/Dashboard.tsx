@@ -135,8 +135,10 @@ async function getDashboardStats() {
       pendingLeaves: leaveRes.status === 'fulfilled' ? (leaveRes.value.data?.length ?? 0) : 0,
       approvedLeaves: approvedLeaveRes.status === 'fulfilled' ? (approvedLeaveRes.value.data?.length ?? 0) : 0,
       departments: deptRes.status === 'fulfilled' ? (deptRes.value.data?.length ?? 0) : 0,
-      attendanceToday: wfmRes.status === 'fulfilled' ? (wfmRes.value.data?.summary?.logged_in ?? 0) : 0,
-      attendanceRate: wfmRes.status === 'fulfilled' ? (wfmRes.value.data?.summary?.overall_adherence_pct ?? 0) : 0,
+      attendanceToday: wfmRes.status === 'fulfilled' ? (wfmRes.value.data?.summary?.present_count ?? wfmRes.value.data?.summary?.logged_in ?? 0) : 0,
+      attendanceRate: empRes.status === 'fulfilled' && wfmRes.status === 'fulfilled'
+        ? Math.round(((wfmRes.value.data?.summary?.present_count ?? wfmRes.value.data?.summary?.logged_in ?? 0) / Math.max(1, empRes.value.total ?? 1)) * 100)
+        : 0,
       atsCandidates: atsRes.status === 'fulfilled' ? (atsRes.value.data?.total ?? 0) : 0,
       onboarding: 0,
       assets: 0,
@@ -174,8 +176,16 @@ export default function Dashboard() {
     return Math.min(100, Math.round(stats.attendanceRate));
   }, [stats.attendanceRate]);
 
-  const approvalHealth = stats.pendingLeaves > 10 ? 62 : stats.pendingLeaves > 4 ? 78 : 92;
-  const workforceCoverage = stats.departments > 0 ? 86 : 45;
+  const approvalHealth = useMemo(() => {
+    const total = stats.pendingLeaves + stats.approvedLeaves;
+    if (total === 0) return 100;
+    return Math.round((stats.approvedLeaves / total) * 100);
+  }, [stats.pendingLeaves, stats.approvedLeaves]);
+
+  const workforceCoverage = useMemo(() => {
+    if (stats.employees === 0 || stats.departments === 0) return 0;
+    return Math.round((stats.attendanceToday / stats.employees) * 100);
+  }, [stats.attendanceToday, stats.employees, stats.departments]);
 
   const userName =
     user?.email?.split("@")[0] ||

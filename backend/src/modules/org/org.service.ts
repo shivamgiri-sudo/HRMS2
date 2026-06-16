@@ -32,7 +32,7 @@ async function listActive(table: string, orderCol = "created_at", entityType?: s
     throw new Error(`Invalid orderCol: ${orderCol}`);
   }
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM ${table} WHERE active_status = 1 ORDER BY ${orderCol}`
+    `SELECT DISTINCT * FROM ${table} WHERE active_status = 1 ORDER BY ${orderCol}`
   );
   const nameColumns: Record<string, string> = {
     branch_master: "branch_name",

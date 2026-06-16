@@ -2,8 +2,11 @@ import { Router } from 'express';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { reportingService } from './reporting.service.js';
+import { reportingAnalyticsV2Service } from './reporting.analytics-v2.service.js';
+import { reportSuiteRouter } from "./report-suite.routes.js";
 
 const router = Router();
+router.use("/suite", reportSuiteRouter);
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<void>) =>
   (req: any, res: any, next: any) => fn(req, res).catch(next);
 
@@ -15,7 +18,7 @@ router.get('/', requireAuth, h(async (req, res) => {
 
 router.get('/analytics-overview', requireAuth, h(async (req, res) => {
   const year = Number(req.query.year ?? new Date().getFullYear());
-  const data = await reportingService.analyticsOverview(year, req.authUser!.id);
+  const data = await reportingAnalyticsV2Service.analyticsOverview(year, req.authUser!.id);
   res.json({ success: true, data });
 }));
 

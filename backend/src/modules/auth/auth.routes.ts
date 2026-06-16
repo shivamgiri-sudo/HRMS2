@@ -195,7 +195,6 @@ router.post("/change-password", requireAuth, h(async (req: any, res: any) => {
 }));
 
 // POST /api/auth/admin-reset-password — Admin password reset for employees
-// Super Admin can reset for positions <= Level 8 (Manager, Team Lead, Staff, etc.)
 // Super Admin can reset any other user; Admin and WFM are limited to reporting downlines.
 router.post("/admin-reset-password", requireAuth, h(async (req: any, res: any) => {
   const { userId, employeeId, temporaryPassword } = req.body;
@@ -228,7 +227,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req: any, res: any) =
     ? "super_admin"
     : roles.has("admin")
       ? "admin"
-      : roles.has("wfm")
+      : roles.has("wfm") || roles.has("wfm_admin")
         ? "wfm"
         : null;
 
@@ -331,7 +330,6 @@ router.post("/admin-reset-password", requireAuth, h(async (req: any, res: any) =
   }
 
   const hashedPassword = await bcrypt.hash(temporaryPassword, 12);
-
   await db.execute(
     `UPDATE auth_user
      SET password_hash = ?,

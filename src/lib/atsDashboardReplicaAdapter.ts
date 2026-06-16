@@ -1,19 +1,34 @@
 import { hrmsApi } from "@/lib/hrmsApi";
 
 // Module-level cache for the candidate list shared by DashboardReplica, DashboardV2, and CommandCenter.
-// Prevents each page mount from issuing a separate 3000-row query within a short window.
+// Backend ATS validation caps candidate list requests at 200 rows, so the dashboard pages safely.
 const _candidateListCache: { data: any[] | null; fetchedAt: number } = { data: null, fetchedAt: 0 };
 const CANDIDATE_LIST_STALE_MS = 60_000; // 1 minute
+const CANDIDATE_PAGE_LIMIT = 200;
 
 export async function getCachedCandidateList(limit = 3000): Promise<any[]> {
   const now = Date.now();
   if (_candidateListCache.data && now - _candidateListCache.fetchedAt < CANDIDATE_LIST_STALE_MS) {
     return _candidateListCache.data;
   }
-  const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
-    `/api/ats/candidates?limit=${limit}&page=1`
-  );
-  _candidateListCache.data = res.data ?? [];
+
+  const target = Math.max(1, Math.min(Number(limit) || CANDIDATE_PAGE_LIMIT, 3000));
+  const rows: any[] = [];
+  let page = 1;
+  let total = Number.POSITIVE_INFINITY;
+
+  while (rows.length < target && rows.length < total) {
+    const res = await hrmsApi.get<{ success: boolean; data: any[]; total?: number }>(
+      `/api/ats/candidates?limit=${CANDIDATE_PAGE_LIMIT}&page=${page}`
+    );
+    const pageRows = res.data ?? [];
+    rows.push(...pageRows);
+    total = typeof res.total === "number" ? res.total : rows.length;
+    if (pageRows.length < CANDIDATE_PAGE_LIMIT) break;
+    page += 1;
+  }
+
+  _candidateListCache.data = rows.slice(0, target);
   _candidateListCache.fetchedAt = now;
   return _candidateListCache.data;
 }

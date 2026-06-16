@@ -96,6 +96,7 @@ export const authService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT au.id, au.email, au.password_hash, au.is_blocked,
               COALESCE(au.must_change_password, 0) AS must_change_password,
+              au.password_changed_at,
               e.active_status
          FROM auth_user au
          LEFT JOIN employees e ON e.user_id = au.id
@@ -103,6 +104,7 @@ export const authService = {
         UNION
        SELECT au.id, au.email, au.password_hash, au.is_blocked,
               COALESCE(au.must_change_password, 0) AS must_change_password,
+              au.password_changed_at,
               e.active_status
          FROM auth_user au
          JOIN employees e ON e.user_id = au.id
@@ -110,6 +112,7 @@ export const authService = {
         UNION
        SELECT au.id, au.email, au.password_hash, au.is_blocked,
               COALESCE(au.must_change_password, 0) AS must_change_password,
+              au.password_changed_at,
               e.active_status
          FROM auth_user au
          JOIN employees e ON e.user_id = au.id
@@ -117,6 +120,7 @@ export const authService = {
         UNION
        SELECT au.id, au.email, au.password_hash, au.is_blocked,
               COALESCE(au.must_change_password, 0) AS must_change_password,
+              au.password_changed_at,
               e.active_status
          FROM auth_user au
          JOIN employees e ON e.user_id = au.id
@@ -147,6 +151,7 @@ export const authService = {
             const [repairRows] = await db.execute<RowDataPacket[]>(
               `SELECT au.id, au.email, au.password_hash, au.is_blocked,
                       COALESCE(au.must_change_password, 0) AS must_change_password,
+                      au.password_changed_at,
                       e.active_status
                  FROM auth_user au
                  JOIN employees e ON e.user_id = au.id
@@ -170,6 +175,18 @@ export const authService = {
 
     const valid = await bcrypt.compare(password, user.password_hash as string);
     if (!valid) throw new Error('Invalid credentials');
+
+    // Check if password is older than 90 days and force password change
+    const passwordChangedAt = user.password_changed_at as Date | null;
+    const passwordAgeDays = passwordChangedAt
+      ? Math.floor((Date.now() - new Date(passwordChangedAt).getTime()) / (1000 * 60 * 60 * 24))
+      : null;
+
+    if (passwordAgeDays !== null && passwordAgeDays >= 90 && Number(user.must_change_password ?? 0) === 0) {
+      // Password is 90+ days old, force password change
+      await db.execute('UPDATE auth_user SET must_change_password = 1 WHERE id = ?', [user.id]);
+      user.must_change_password = 1;
+    }
 
     await db.execute('UPDATE auth_user SET last_login_at = NOW() WHERE id = ?', [user.id]);
 
@@ -352,7 +369,7 @@ export const authService = {
     }
     const hash = await bcrypt.hash(newPassword, 10);
     await db.execute(
-      'UPDATE auth_user SET password_hash = ?, must_change_password = 0, updated_at = NOW() WHERE id = ?',
+      'UPDATE auth_user SET password_hash = ?, must_change_password = 0, password_changed_at = NOW(), updated_at = NOW() WHERE id = ?',
       [hash, userId]
     );
   },

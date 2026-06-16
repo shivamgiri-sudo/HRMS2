@@ -100,60 +100,52 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
 
   currentY += 8;
 
-  // === EMPLOYEE DETAILS TABLE (3 rows, matching exact layout) ===
+  // === EMPLOYEE DETAILS TABLE ===
+  // Strict label/value pairs avoid spacer cells and keep Designation/Department aligned.
+  const labelCell = (content: string) => ({
+    content,
+    styles: { fontStyle: "bold" as const, fillColor: [245, 245, 245] as [number, number, number] },
+  });
+
   autoTable(doc, {
     startY: currentY,
     head: [],
     body: [
       [
-        { content: "Emp Name", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-        { content: data.empName, styles: { colSpan: 2 } },
-        null,
-        { content: "Designation", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-        { content: data.designation, styles: { colSpan: 2 } },
-        null,
-        { content: "Department", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-        data.department,
+        labelCell("Emp Name"), data.empName,
+        labelCell("Designation"), data.designation || "",
+        labelCell("Department"), data.department || "",
       ],
       [
-        { content: "Emp Code", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-        data.empCode,
-        { content: "EPF No", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-        { content: data.epfNo || "", styles: { colSpan: 2 } },
-        null,
-        { content: "Location", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-        { content: data.location, styles: { colSpan: 2 } },
-        null,
+        labelCell("Emp Code"), data.empCode,
+        labelCell("EPF No"), data.epfNo || "",
+        labelCell("Location"), data.location || "",
       ],
       [
-        { content: "ESI No", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-        data.esiNo || "",
-        { content: "W Days", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-        String(data.wDays),
-        "",
-        { content: "Earned Days", styles: { fontStyle: "bold", fillColor: [245, 245, 245] } },
-        { content: String(data.earnedDays), styles: { colSpan: 2 } },
-        null,
+        labelCell("ESI No"), data.esiNo || "",
+        labelCell("W Days"), String(data.wDays),
+        labelCell("Earned Days"), String(data.earnedDays),
       ],
     ],
     theme: "grid",
     styles: {
-      fontSize: 9,
+      fontSize: 8.5,
       cellPadding: 2,
-      lineColor: [200, 200, 200],
-      lineWidth: 0.1,
+      lineColor: [170, 170, 170],
+      lineWidth: 0.15,
       textColor: [0, 0, 0],
       halign: "left",
+      valign: "middle",
+      minCellHeight: 7,
+      overflow: "linebreak",
     },
     columnStyles: {
       0: { cellWidth: 22 },
-      1: { cellWidth: 30 },
-      2: { cellWidth: 20 },
-      3: { cellWidth: 30 },
-      4: { cellWidth: 8 },
-      5: { cellWidth: 25 },
-      6: { cellWidth: 30 },
-      7: { cellWidth: 25 },
+      1: { cellWidth: 40 },
+      2: { cellWidth: 24 },
+      3: { cellWidth: 34 },
+      4: { cellWidth: 24 },
+      5: { cellWidth: 38 },
     },
   });
 

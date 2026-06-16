@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 
+const ATTENDANCE_PAGE_LIMIT = 200;
+
 export interface AttendanceRecord {
   id: string;
   employee_id: string;
@@ -46,6 +48,27 @@ export interface LocationData {
 
 export type WorkMode = 'wfh' | 'wfo';
 
+async function fetchAttendancePages(params: URLSearchParams): Promise<AttendanceRecord[]> {
+  const allRecords: AttendanceRecord[] = [];
+  let page = 1;
+  let total = Number.POSITIVE_INFINITY;
+
+  while (allRecords.length < total) {
+    const paged = new URLSearchParams(params);
+    paged.set("limit", String(ATTENDANCE_PAGE_LIMIT));
+    paged.set("page", String(page));
+    const res = await hrmsApi.get<{ success: boolean; data: AttendanceRecord[]; total?: number }>(`/api/wfm/attendance/daily?${paged}`);
+    if (!res.success) throw new Error((res as any).message || "Failed to fetch attendance records");
+    const rows = res.data ?? [];
+    allRecords.push(...rows);
+    total = typeof res.total === "number" ? res.total : allRecords.length;
+    if (rows.length < ATTENDANCE_PAGE_LIMIT) break;
+    page += 1;
+  }
+
+  return allRecords;
+}
+
 export function useAttendance(month?: Date, employeeId?: string) {
   const targetMonth = month || new Date();
   const start = format(startOfMonth(targetMonth), "yyyy-MM-dd");
@@ -54,18 +77,12 @@ export function useAttendance(month?: Date, employeeId?: string) {
   return useQuery({
     queryKey: ["attendance", start, end, employeeId ?? "all"],
     queryFn: async () => {
-      const params = new URLSearchParams({ fromDate: start, toDate: end, limit: "200" });
+      const params = new URLSearchParams({ fromDate: start, toDate: end, limit: String(ATTENDANCE_PAGE_LIMIT) });
       if (employeeId) {
         params.set("employeeId", employeeId);
       }
 
-      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(`/api/wfm/attendance/daily?${params}`);
-
-      if (!res.success) {
-        throw new Error((res as any).message || 'Failed to fetch attendance records');
-      }
-
-      return (res.data || []) as AttendanceRecord[];
+      return fetchAttendancePages(params);
     },
     enabled: true,
     retry: 2,
@@ -162,9 +179,8 @@ export function useAttendanceReport(month: Date) {
   return useQuery({
     queryKey: ["attendance-report", start, end],
     queryFn: async () => {
-      const params = new URLSearchParams({ fromDate: start, toDate: end, limit: "500" });
-      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(`/api/wfm/attendance/daily?${params}`);
-      const records = res.data || [];
+      const params = new URLSearchParams({ fromDate: start, toDate: end });
+      const records = await fetchAttendancePages(params);
 
       const employeeMap = new Map<string, {
         employeeId: string;
@@ -184,9 +200,10 @@ export function useAttendanceReport(month: Date) {
         if (!employeeMap.has(key)) {
           const firstName = record.first_name ?? record.employee?.first_name ?? "";
           const lastName = record.last_name ?? record.employee?.last_name ?? "";
+          const employeeName = record.employee_name ?? `${firstName} ${lastName}`.trim() || "Unknown";
           employeeMap.set(key, {
             employeeId: record.employee_id,
-            employeeName: `${firstName} ${lastName}`.trim() || "Unknown",
+            employeeName,
             employeeCode: record.employee_code ?? record.employee?.employee_code ?? "",
             department: record.department_name ?? record.employee?.department?.name ?? "-",
             records: [],

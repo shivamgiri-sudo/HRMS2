@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 
 const MAX_BYTES = 3 * 1024 * 1024; // 3 MB
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const API_BASE = import.meta.env.VITE_API_URL ?? import.meta.env.VITE_HRMS_API_URL ?? "http://localhost:5055";
+const API_BASE = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_HRMS_API_URL ?? "http://localhost:5055").replace(/\/$/, "");
 
 interface PhotoUploadProps {
   /** Current avatar URL (from DB) */
@@ -70,6 +70,20 @@ function getToken(): string | null {
   );
 }
 
+function normalizeFileUrl(url?: string | null): string | undefined {
+  if (!url) return undefined;
+  if (/^https?:\/\//i.test(url) || url.startsWith("data:")) return url;
+  if (url.startsWith("/api/")) return `${API_BASE}${url}`;
+  return url;
+}
+
+async function readJsonSafely(res: Response): Promise<any> {
+  const contentType = res.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) return res.json();
+  const text = await res.text();
+  return { success: false, error: text || res.statusText };
+}
+
 export function PhotoUpload({
   currentUrl,
   employeeId,
@@ -91,7 +105,7 @@ export function PhotoUpload({
     ? `${API_BASE}/api/employees/${employeeId}/photo`
     : null;
 
-  const displayUrl = preview ?? currentUrl ?? undefined;
+  const displayUrl = preview ?? normalizeFileUrl(currentUrl);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -129,12 +143,12 @@ export function PhotoUpload({
         body: form,
       });
 
-      const data = await res.json();
+      const data = await readJsonSafely(res);
       if (!res.ok || !data.success) {
-        throw new Error(data.error ?? "Upload failed");
+        throw new Error(data.error ?? data.message ?? `Upload failed with status ${res.status}`);
       }
       setPreview(null); // clear local preview; parent will supply new URL
-      onSuccess?.(data.avatarUrl);
+      onSuccess?.(data.avatarUrl ?? data.photoUrl ?? data.url ?? "");
     } catch (err: any) {
       setError(err.message ?? "Upload failed — please try again.");
       setPreview(null);
@@ -153,12 +167,14 @@ export function PhotoUpload({
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         credentials: "include",
       });
-      if (res.ok) {
-        setPreview(null);
-        onSuccess?.("");
+      const data = await readJsonSafely(res);
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error ?? data.message ?? `Delete failed with status ${res.status}`);
       }
-    } catch {
-      setError("Delete failed — please try again.");
+      setPreview(null);
+      onSuccess?.("");
+    } catch (err: any) {
+      setError(err.message ?? "Delete failed — please try again.");
     } finally {
       setUploading(false);
     }

@@ -87,7 +87,6 @@ export function useCreateAsset() {
 
   return useMutation({
     mutationFn: async (data: CreateAssetData) => {
-      // asset_code is generated server-side if not provided
       const res = await hrmsApi.post<{ data: any }>("/api/assets-mgmt", {
         asset_name: data.name,
         asset_category: data.category,
@@ -188,6 +187,7 @@ export function useReturnAsset() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["assets"] });
       queryClient.invalidateQueries({ queryKey: ["asset-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["asset-history"] });
     },
   });
 }
@@ -208,10 +208,17 @@ export function useAssetHistory(assetId: string | null) {
     queryKey: ["asset-history", assetId],
     queryFn: async (): Promise<AssetAssignment[]> => {
       if (!assetId) return [];
-
-      // TODO: dedicated GET /api/assets-mgmt/:id/history endpoint not yet implemented.
-      // Returning empty array until the backend exposes assignment history.
-      return [];
+      const res = await hrmsApi.get<{ data: any[] }>(`/api/assets-mgmt/${assetId}/history`);
+      return (res.data ?? []).map((row: any) => ({
+        id: row.id,
+        assignedDate: row.assigned_date ? format(new Date(row.assigned_date), "MMM d, yyyy") : "",
+        returnedDate: row.returned_date ? format(new Date(row.returned_date), "MMM d, yyyy") : null,
+        notes: row.notes ?? null,
+        employee: {
+          name: row.employee_name || row.employee_code || "Unknown employee",
+          avatar: row.avatar_url ?? row.photo_url ?? undefined,
+        },
+      }));
     },
     enabled: !!assetId,
   });

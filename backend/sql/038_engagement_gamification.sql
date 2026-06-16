@@ -403,12 +403,14 @@ INSERT IGNORE INTO survey_master (survey_id, survey_title, survey_description, s
 (@survey1_id, 'Monthly Engagement Survey', 'Help us understand your work experience and engagement levels', 'engagement', CURDATE(), DATE_ADD(CURDATE(), INTERVAL 30 DAY), TRUE, TRUE, 25, '{"all_employees": true}');
 
 -- Survey 1 Questions
-INSERT IGNORE INTO survey_question (question_id, survey_id, question_text, question_type, question_order, is_required, options_json, scale_min, scale_max, scale_labels_json) VALUES
-(UUID(), @survey1_id, 'How satisfied are you with your current role?', 'scale', 1, TRUE, NULL, 1, 5, '{"1": "Very Dissatisfied", "5": "Very Satisfied"}'),
-(UUID(), @survey1_id, 'Do you feel valued as a team member?', 'rating', 2, TRUE, NULL, 1, 5, '{"1": "Not at all", "5": "Absolutely"}'),
-(UUID(), @survey1_id, 'What do you enjoy most about working here?', 'text', 3, FALSE, NULL, NULL, NULL, NULL),
-(UUID(), @survey1_id, 'How would you rate work-life balance?', 'scale', 4, TRUE, NULL, 1, 5, '{"1": "Poor", "5": "Excellent"}'),
-(UUID(), @survey1_id, 'Would you recommend this company to a friend?', 'yes_no', 5, TRUE, '["Yes", "No"]', NULL, NULL, NULL);
+INSERT IGNORE INTO survey_question
+  (id, survey_id, question_text, question_type, display_order, is_required, options_json)
+VALUES
+  (UUID(), @survey1_id, 'How satisfied are you with your current role?', 'scale', 1, TRUE, '{"min":1,"max":5,"labels":{"1":"Very Dissatisfied","5":"Very Satisfied"}}'),
+  (UUID(), @survey1_id, 'Do you feel valued as a team member?', 'rating', 2, TRUE, '{"min":1,"max":5,"labels":{"1":"Not at all","5":"Absolutely"}}'),
+  (UUID(), @survey1_id, 'What do you enjoy most about working here?', 'text', 3, FALSE, NULL),
+  (UUID(), @survey1_id, 'How would you rate work-life balance?', 'scale', 4, TRUE, '{"min":1,"max":5,"labels":{"1":"Poor","5":"Excellent"}}'),
+  (UUID(), @survey1_id, 'Would you recommend this company to a friend?', 'yes_no', 5, TRUE, '["Yes", "No"]');
 
 -- Survey 2: Team Feedback Survey
 SET @survey2_id = COALESCE(
@@ -419,11 +421,13 @@ INSERT IGNORE INTO survey_master (survey_id, survey_title, survey_description, s
 (@survey2_id, 'Team Feedback Survey', 'Share your thoughts on team collaboration and communication', 'feedback', CURDATE(), DATE_ADD(CURDATE(), INTERVAL 14 DAY), TRUE, TRUE, 20, '{"all_employees": true}');
 
 -- Survey 2 Questions
-INSERT IGNORE INTO survey_question (question_id, survey_id, question_text, question_type, question_order, is_required, options_json, scale_min, scale_max, scale_labels_json) VALUES
-(UUID(), @survey2_id, 'How effective is communication within your team?', 'scale', 1, TRUE, NULL, 1, 5, '{"1": "Very Poor", "5": "Excellent"}'),
-(UUID(), @survey2_id, 'What communication tools do you use most?', 'multiple_choice', 2, TRUE, '["Email", "Slack", "Teams", "Phone", "In-person", "Other"]', NULL, NULL, NULL),
-(UUID(), @survey2_id, 'Does your team hold regular meetings?', 'single_choice', 3, TRUE, '["Daily", "Weekly", "Bi-weekly", "Monthly", "Rarely", "Never"]', NULL, NULL, NULL),
-(UUID(), @survey2_id, 'What could improve team collaboration?', 'text', 4, FALSE, NULL, NULL, NULL, NULL);
+INSERT IGNORE INTO survey_question
+  (id, survey_id, question_text, question_type, display_order, is_required, options_json)
+VALUES
+  (UUID(), @survey2_id, 'How effective is communication within your team?', 'scale', 1, TRUE, '{"min":1,"max":5,"labels":{"1":"Very Poor","5":"Excellent"}}'),
+  (UUID(), @survey2_id, 'What communication tools do you use most?', 'multiple_choice', 2, TRUE, '["Email", "Slack", "Teams", "Phone", "In-person", "Other"]'),
+  (UUID(), @survey2_id, 'Does your team hold regular meetings?', 'single_choice', 3, TRUE, '["Daily", "Weekly", "Bi-weekly", "Monthly", "Rarely", "Never"]'),
+  (UUID(), @survey2_id, 'What could improve team collaboration?', 'text', 4, FALSE, NULL);
 
 -- =====================================================
 -- END OF SCHEMA

@@ -27,7 +27,6 @@ const assignSalary = async (
     "INSERT INTO employee_salary_assignment (id, employee_id, structure_id, ctc_annual, effective_from) VALUES (?, ?, ?, ?, ?)",
     [asgId, employeeId, structureId, ctcAnnual, effectiveFrom]
   );
-  // Mirror CTC onto employees.ctc for fast payslip joins
   await db.execute("UPDATE employees SET ctc = ? WHERE id = ?", [ctcAnnual, employeeId]);
   await appendJourneyEvent({
     employeeId,
@@ -53,7 +52,7 @@ async function getEmployeeContext(id: string) {
        LEFT JOIN department_master dept ON dept.id = e.department_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN process_master p ON p.id = e.process_id
-       LEFT JOIN employees m ON m.id = e.reporting_manager_id
+       LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
       WHERE e.id = ? LIMIT 1`,
     [id]
   );
@@ -69,7 +68,6 @@ export const employeeService = {
     if ((dup as RowDataPacket[]).length > 0) throw new Error("Employee code already exists");
 
     const id = randomUUID();
-    // salary_start_date defaults to date_of_joining when not explicitly set
     const salaryStartDate = input.salaryStartDate ?? input.dateOfJoining;
     await db.execute(
       `INSERT INTO employees
@@ -99,7 +97,6 @@ export const employeeService = {
     );
     const employee = await this.getEmployee(id);
 
-    // Auto-assign salary when structureId + ctcAnnual provided at creation
     if (input.structureId && input.ctcAnnual) {
       const salaryDate = input.salaryStartDate ?? input.dateOfJoining;
       await assignSalary(id, input.structureId, input.ctcAnnual, salaryDate, userId);
@@ -175,8 +172,9 @@ export const employeeService = {
     if (search)    {
       const term = `%${search}%`;
       conds.push(`(
-        CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) LIKE ?
-        OR e.first_name LIKE ?
+        COALESCE(e.full_name, '') LIKE ?
+        OR CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) LIKE ?
+        OR COALESCE(e.first_name, '') LIKE ?
         OR COALESCE(e.last_name, '') LIKE ?
         OR e.employee_code LIKE ?
         OR COALESCE(e.biometric_code, '') LIKE ?
@@ -192,11 +190,11 @@ export const employeeService = {
         OR COALESCE(e.cost_center_code, '') LIKE ?
         OR COALESCE(TRIM(CONCAT(m.first_name, ' ', COALESCE(m.last_name, ''))), '') LIKE ?
         OR CAST(COALESCE(e.legacy_emp_id, e.legacy_id, '') AS CHAR) LIKE ?
+        OR COALESCE(eu.uan, '') LIKE ?
       )`);
-      params.push(term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term);
+      params.push(term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term);
     }
 
-    // Apply scope filter from middleware (object {sql, params} or legacy string)
     if (scopeFilter) {
       if (typeof scopeFilter === 'object' && scopeFilter.sql) {
         const scopeClause = String(scopeFilter.sql).replace(/^WHERE\s+/i, '').trim();
@@ -213,22 +211,29 @@ export const employeeService = {
     const where = `WHERE ${conds.join(" AND ")}`;
     const fromWithJoins = `
        FROM employees e
-       LEFT JOIN department_master  dept  ON dept.id  = e.department_id
-       LEFT JOIN designation_master desig ON desig.id = e.designation_id
-       LEFT JOIN branch_master      b     ON b.id     = e.branch_id
-       LEFT JOIN process_master     p     ON p.id     = e.process_id
+       LEFT JOIN department_master  dept  ON dept.id  = e.department_id  AND dept.active_status  = 1
+       LEFT JOIN designation_master desig ON desig.id = e.designation_id AND desig.active_status = 1
+       LEFT JOIN branch_master      b     ON b.id     = e.branch_id      AND b.active_status     = 1
+       LEFT JOIN process_master     p     ON p.id     = e.process_id     AND p.active_status     = 1
        LEFT JOIN cost_centre_master cc    ON cc.id    = e.cost_centre_id
-       LEFT JOIN employees          m     ON m.id     = e.reporting_manager_id`;
+       LEFT JOIN employees          m     ON m.id     = COALESCE(e.reporting_manager_id, e.manager_id)
+       LEFT JOIN employee_uan       eu    ON eu.employee_id = e.id AND eu.is_active = 1`;
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.*,
+         COALESCE(NULLIF(TRIM(e.first_name), ''), NULLIF(TRIM(e.full_name), ''), '') AS first_name,
+         COALESCE(e.last_name, '') AS last_name,
+         e.id AS employee_id,
          COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS email,
          dept.dept_name         AS department_name,
          desig.designation_name AS designation_name,
          b.branch_name,
          p.process_name,
          cc.cost_centre_name,
-         TRIM(CONCAT(m.first_name, ' ', COALESCE(m.last_name, ''))) AS reporting_manager_name
+         TRIM(CONCAT(m.first_name, ' ', COALESCE(m.last_name, ''))) AS reporting_manager_name,
+         eu.uan,
+         eu.member_id,
+         eu.epf_join_date
        ${fromWithJoins}
        ${where}
        ORDER BY e.employee_code ASC
@@ -286,7 +291,6 @@ export const employeeService = {
       await db.execute(`UPDATE employees SET ${sets.join(", ")} WHERE id = ?`, params);
     }
 
-    // Auto-assign roles mapped to the new designation (additive only, never removes)
     if (input.designationId) {
       try {
         const updated = await this.getEmployee(id);
@@ -301,7 +305,6 @@ export const employeeService = {
           }
         }
       } catch (err) {
-        // Non-fatal — log but don't fail the update
         console.error("[employee.service] designation role auto-assign failed:", err);
       }
     }

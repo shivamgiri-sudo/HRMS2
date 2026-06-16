@@ -6,21 +6,18 @@ import { randomUUID } from 'crypto';
 
 export async function listSlabs() {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ssm.*,
-            ssm.label AS name,
-            ssm.range_from AS min_ctc,
-            ssm.range_to AS max_ctc,
-            CASE WHEN ssm.active_status = 1 THEN 'active' ELSE 'inactive' END AS status
-       FROM salary_slab_master ssm
-      WHERE ssm.active_status = 1
-      ORDER BY ssm.seq_order ASC`
+    `SELECT *, label AS name, CASE WHEN active_status = 1 THEN 'active' ELSE 'inactive' END AS status
+       FROM salary_slab_master
+      WHERE active_status = 1
+      ORDER BY seq_order ASC`
   );
   return rows;
 }
 
 export async function getSlabById(id: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    'SELECT * FROM salary_slab_master WHERE id = ?', [id]
+    `SELECT *, label AS name, CASE WHEN active_status = 1 THEN 'active' ELSE 'inactive' END AS status
+       FROM salary_slab_master WHERE id = ?`, [id]
   );
   return rows[0] ?? null;
 }
@@ -61,13 +58,11 @@ function calcGrossAndCtc(data: {
   bonus_amt: number; bonus_type: string;
   portfolio_amt: number; special_allowance_amt: number; pli_amt: number;
 }) {
-  // Components that are 'pct' are % of basic — compute absolute value
   const conv   = data.conveyance_type   === 'pct' ? data.basic_amt * data.conveyance_amt   / 100 : data.conveyance_amt;
   const med    = data.medical_type      === 'pct' ? data.basic_amt * data.medical_amt      / 100 : data.medical_amt;
   const other  = data.other_allowance_type === 'pct' ? data.basic_amt * data.other_allowance_amt / 100 : data.other_allowance_amt;
   const bonus  = data.bonus_type        === 'pct' ? data.basic_amt * data.bonus_amt        / 100 : data.bonus_amt;
   const gross  = data.basic_amt + conv + med + other + bonus + data.portfolio_amt + data.special_allowance_amt + data.pli_amt;
-  // CTC = gross + employer PF (12% of basic, capped at 15000) + employer ESIC (3.25% if gross <= 21000)
   const pfBase   = Math.min(data.basic_amt, 15000);
   const pfEr     = pfBase * 0.12;
   const esicEr   = gross <= 21000 ? gross * 0.0325 : 0;
@@ -87,69 +82,16 @@ export async function listPackages(filters: {
     FROM salary_package_master spm
     JOIN grade_band_master gbm ON gbm.id = spm.grade_id
     JOIN salary_slab_master ssm ON ssm.id = spm.slab_id
-    LEFT JOIN location_master lm
-      ON CONVERT(lm.id USING utf8mb4) COLLATE utf8mb4_unicode_ci = spm.location_id
+    LEFT JOIN location_master lm ON lm.id = spm.location_id
     LEFT JOIN cost_centre_master ccm ON ccm.id = spm.cost_centre_id
-    WHERE spm.active_status = 1`;
+    WHERE 1=1`;
   const params: unknown[] = [];
   if (filters.grade_id)    { sql += ' AND spm.grade_id = ?';    params.push(filters.grade_id); }
   if (filters.slab_id)     { sql += ' AND spm.slab_id = ?';     params.push(filters.slab_id); }
   if (filters.location_id) { sql += ' AND spm.location_id = ?'; params.push(filters.location_id); }
   sql += ' ORDER BY gbm.band, ssm.seq_order';
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-  if (rows.length > 0) return rows;
-
-  let observedSql = `
-    SELECT CONCAT('observed-', e.grade_id, '-', ssm.id) AS id,
-           e.grade_id,
-           ssm.id AS slab_id,
-           gbm.grade_name,
-           gbm.band,
-           ssm.label AS slab_label,
-           ROUND(AVG((esa.ctc_annual / 12) * COALESCE(str.basic_pct, 0) / 100), 2) AS basic_amt,
-           0 AS conveyance_amt,
-           'fixed' AS conveyance_type,
-           0 AS medical_amt,
-           'fixed' AS medical_type,
-           ROUND(AVG((esa.ctc_annual / 12) * COALESCE(str.hra_pct, 0) / 100), 2) AS other_allowance_amt,
-           'fixed' AS other_allowance_type,
-           0 AS bonus_amt,
-           'fixed' AS bonus_type,
-           0 AS portfolio_amt,
-           ROUND(AVG(
-             (esa.ctc_annual / 12)
-             - ((esa.ctc_annual / 12) * COALESCE(str.basic_pct, 0) / 100)
-             - ((esa.ctc_annual / 12) * COALESCE(str.hra_pct, 0) / 100)
-           ), 2) AS special_allowance_amt,
-           0 AS pli_amt,
-           ROUND(AVG(esa.ctc_annual / 12), 2) AS gross_monthly,
-           ROUND(AVG(esa.ctc_annual / 12), 2) AS ctc_monthly,
-           MAX(esa.effective_from) AS effective_from,
-           COUNT(*) AS employee_count,
-           'observed' AS derived_source,
-           1 AS active_status
-      FROM employee_salary_assignment esa
-      JOIN employees e ON e.id = esa.employee_id AND e.active_status = 1
-      JOIN grade_band_master gbm ON gbm.id = e.grade_id AND gbm.active_status = 1
-      LEFT JOIN salary_structure_master str ON str.id = esa.structure_id
-      JOIN salary_slab_master ssm
-        ON (esa.ctc_annual / 12) BETWEEN ssm.range_from AND ssm.range_to
-       AND ssm.active_status = 1
-     WHERE esa.active_status = 1`;
-  const observedParams: unknown[] = [];
-  if (filters.grade_id) {
-    observedSql += ' AND e.grade_id = ?';
-    observedParams.push(filters.grade_id);
-  }
-  if (filters.slab_id) {
-    observedSql += ' AND ssm.id = ?';
-    observedParams.push(filters.slab_id);
-  }
-  observedSql += `
-     GROUP BY e.grade_id, ssm.id, gbm.grade_name, gbm.band, ssm.label, ssm.seq_order
-     ORDER BY gbm.band, ssm.seq_order`;
-  const [observedRows] = await db.execute<RowDataPacket[]>(observedSql, observedParams);
-  return observedRows;
+  return rows;
 }
 
 export async function getPackageById(id: string) {
@@ -302,7 +244,6 @@ export async function lookupBandForDesignation(departmentId: string, designation
   );
   if (!rows.length) return null;
   const entry = rows[0] as any;
-  // Fetch suggested package for this grade + min_slab
   let suggestedPackage = null;
   if (entry.min_slab_id) {
     const [pkgs] = await db.execute<RowDataPacket[]>(

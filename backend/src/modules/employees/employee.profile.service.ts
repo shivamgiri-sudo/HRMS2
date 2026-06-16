@@ -58,7 +58,10 @@ export const employeeProfileService = {
   async getMyProfile(userId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
-         e.id, e.employee_code, e.user_id, e.first_name, e.last_name, e.full_name,
+         e.id, e.employee_code, e.user_id,
+         COALESCE(NULLIF(e.first_name, ''), NULLIF(e.full_name, ''), '') AS first_name,
+         COALESCE(e.last_name, '') AS last_name,
+         e.full_name,
          COALESCE(NULLIF(TRIM(e.official_email), ''), e.email) AS email,
          e.mobile, e.alternate_mobile, e.avatar_url, e.gender,
          DATE_FORMAT(e.date_of_birth, '%Y-%m-%d') AS date_of_birth,
@@ -73,7 +76,7 @@ export const employeeProfileService = {
          RIGHT(COALESCE(eu.member_id, e.epf_number), 4) AS pf_last4,
          RIGHT(COALESCE(eu.uan, e.uan_number), 4) AS uan_last4,
          eu.verification_status AS statutory_verification_status,
-         COALESCE(CONCAT(m.first_name, ' ', COALESCE(m.last_name, '')), '') AS reporting_manager_name,
+         COALESCE(NULLIF(m.full_name, ''), CONCAT(m.first_name, ' ', COALESCE(m.last_name, '')), '') AS reporting_manager_name,
          dept.dept_name AS department_name,
          desig.designation_name AS designation,
          br.branch_name,
@@ -145,7 +148,7 @@ export const employeeProfileService = {
       user_id: row.user_id,
       first_name: row.first_name,
       last_name: row.last_name,
-      full_name: row.full_name,
+      full_name: row.full_name || `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim(),
       email: row.email,
       official_email_compliant: isOfficialEmail(row.email),
       phone: row.mobile,
@@ -270,219 +273,6 @@ export const employeeProfileService = {
       employeeId,
       "SELF_PROFILE_UPDATED",
       entries.map(([key]) => String(key)),
-      req,
-    );
-    return this.getMyProfile(userId);
-  },
-
-  async saveEmergencyContact(
-    userId: string,
-    input: EmergencyContactInput,
-    req?: Request,
-  ) {
-    const employeeId = await employeeIdForUser(userId);
-    await db.execute(
-      `INSERT INTO employee_emergency_contact
-         (id, employee_id, contact_seq, is_primary, name, relationship, mobile, address)
-       VALUES (?, ?, 1, 1, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         is_primary = 1, name = VALUES(name), relationship = VALUES(relationship),
-         mobile = VALUES(mobile), address = VALUES(address)`,
-      [
-        randomUUID(),
-        employeeId,
-        input.name,
-        input.relationship,
-        input.mobile,
-        input.address ?? null,
-      ],
-    );
-    await auditProfileChange(
-      userId,
-      employeeId,
-      "EMERGENCY_CONTACT_UPDATED",
-      Object.keys(input),
-      req,
-    );
-    return this.getMyProfile(userId);
-  },
-
-  async saveNominee(userId: string, input: NomineeInput, req?: Request) {
-    const employeeId = await employeeIdForUser(userId);
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM employee_nominee
-       WHERE employee_id = ? ORDER BY created_at ASC LIMIT 1`,
-      [employeeId],
-    );
-    const nomineeId = rows[0]?.id ? String(rows[0].id) : randomUUID();
-
-    if (rows[0]?.id) {
-      await db.execute(
-        `UPDATE employee_nominee
-         SET nominee_name = ?, relationship = ?, date_of_birth = ?, mobile = ?,
-             address = ?, nominee_for = 'general', updated_at = NOW()
-         WHERE id = ? AND employee_id = ?`,
-        [
-          input.nominee_name,
-          input.relationship,
-          input.date_of_birth ?? null,
-          input.mobile ?? null,
-          input.address ?? null,
-          nomineeId,
-          employeeId,
-        ],
-      );
-    } else {
-      await db.execute(
-        `INSERT INTO employee_nominee
-           (id, employee_id, nominee_name, relationship, date_of_birth, mobile,
-            address, nominee_for, share_percentage)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'general', 100.00)`,
-        [
-          nomineeId,
-          employeeId,
-          input.nominee_name,
-          input.relationship,
-          input.date_of_birth ?? null,
-          input.mobile ?? null,
-          input.address ?? null,
-        ],
-      );
-    }
-    await auditProfileChange(
-      userId,
-      employeeId,
-      "NOMINEE_DETAILS_UPDATED",
-      Object.keys(input),
-      req,
-    );
-    return this.getMyProfile(userId);
-  },
-
-  async saveBankDetails(userId: string, input: BankDetailsInput, req?: Request) {
-    const employeeId = await employeeIdForUser(userId);
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM employee_bank_detail
-       WHERE employee_id = ? AND is_primary = 1 AND active_status = 1 LIMIT 1`,
-      [employeeId],
-    );
-    const existingId = rows[0]?.id ? String(rows[0].id) : null;
-    if (!existingId && !input.account_number) {
-      throw badRequest("Account number is required when adding bank details");
-    }
-
-    if (existingId) {
-      const accountSet = input.account_number
-        ? ", account_number = AES_ENCRYPT(?, ?)"
-        : "";
-      const params: unknown[] = [
-        input.bank_name,
-        input.account_holder_name,
-        input.bank_branch ?? null,
-        input.ifsc_code,
-        input.account_type,
-      ];
-      if (input.account_number) {
-        params.push(input.account_number, env.PAYROLL_BANK_KEY);
-      }
-      params.push(existingId, employeeId);
-      await db.execute(
-        `UPDATE employee_bank_detail
-         SET bank_name = ?, account_holder_name = ?, bank_branch = ?,
-             ifsc_code = ?, account_type = ?, verified = 0${accountSet},
-             updated_at = NOW()
-         WHERE id = ? AND employee_id = ?`,
-        params,
-      );
-    } else {
-      await db.execute(
-        `INSERT INTO employee_bank_detail
-           (id, employee_id, is_primary, account_seq, active_status, bank_name,
-            account_holder_name, bank_branch, account_number, ifsc_code,
-            account_type, verified)
-         VALUES (?, ?, 1, 1, 1, ?, ?, ?, AES_ENCRYPT(?, ?), ?, ?, 0)`,
-        [
-          randomUUID(),
-          employeeId,
-          input.bank_name,
-          input.account_holder_name,
-          input.bank_branch ?? null,
-          input.account_number,
-          env.PAYROLL_BANK_KEY,
-          input.ifsc_code,
-          input.account_type,
-        ],
-      );
-    }
-    await auditProfileChange(
-      userId,
-      employeeId,
-      "BANK_DETAILS_SUBMITTED",
-      Object.keys(input),
-      req,
-    );
-    return this.getMyProfile(userId);
-  },
-
-  async saveStatutoryDetails(
-    userId: string,
-    input: StatutoryDetailsInput,
-    req?: Request,
-  ) {
-    const employeeId = await employeeIdForUser(userId);
-    const employeeSets: string[] = [];
-    const employeeValues: unknown[] = [];
-
-    if (input.pan_number) {
-      employeeSets.push("pan_number = ?", "pan_verified_on = NULL");
-      employeeValues.push(input.pan_number);
-    }
-    if (input.aadhaar_last4) {
-      employeeSets.push("aadhaar_last4 = ?", "aadhaar_verified_on = NULL");
-      employeeValues.push(input.aadhaar_last4);
-    }
-    if (input.pf_number) {
-      employeeSets.push("epf_number = ?");
-      employeeValues.push(input.pf_number);
-    }
-    if (input.uan) {
-      employeeSets.push("uan_number = ?");
-      employeeValues.push(input.uan);
-    }
-    if (employeeSets.length) {
-      await db.execute(
-        `UPDATE employees SET ${employeeSets.join(", ")}, updated_at = NOW() WHERE id = ?`,
-        [...employeeValues, employeeId],
-      );
-    }
-
-    const [uanRows] = await db.execute<RowDataPacket[]>(
-      "SELECT uan FROM employee_uan WHERE employee_id = ? LIMIT 1",
-      [employeeId],
-    );
-    const existingUan = uanRows[0]?.uan ? String(uanRows[0].uan) : null;
-    const uan = input.uan ?? existingUan;
-    if (uan) {
-      await db.execute(
-        `INSERT INTO employee_uan
-           (id, employee_id, uan, member_id, verification_status, verified_by, verified_at)
-         VALUES (?, ?, ?, ?, 'pending', NULL, NULL)
-         ON DUPLICATE KEY UPDATE
-           uan = VALUES(uan),
-           member_id = COALESCE(VALUES(member_id), member_id),
-           verification_status = 'pending',
-           verified_by = NULL,
-           verified_at = NULL,
-           updated_at = NOW()`,
-        [randomUUID(), employeeId, uan, input.pf_number ?? null],
-      );
-    }
-
-    await auditProfileChange(
-      userId,
-      employeeId,
-      "STATUTORY_DETAILS_SUBMITTED",
-      Object.keys(input),
       req,
     );
     return this.getMyProfile(userId);

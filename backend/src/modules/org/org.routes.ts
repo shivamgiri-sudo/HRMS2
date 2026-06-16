@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Request, Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { db } from "../../db/mysql.js";
 import {
   branchService, departmentService, lobService, designationService,
   campaignService, costCentreService, gradeBandService,
@@ -42,6 +43,32 @@ function buildCrud(
     res.json({ ok: true });
   }));
 }
+
+// Canonical filter source for all pages. Use this instead of building filters from employee/report rows.
+router.get("/filter-options", h(async (_req: Request, res: Response) => {
+  const [managers] = await db.execute<any[]>(
+    `SELECT e.id, e.employee_code,
+            COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS full_name
+       FROM employees e
+      WHERE e.active_status = 1
+        AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+        AND EXISTS (SELECT 1 FROM employees team WHERE team.reporting_manager_id = e.id OR team.manager_id = e.id)
+      ORDER BY full_name ASC`
+  );
+  res.json({
+    success: true,
+    data: {
+      branches: await branchService.list(),
+      departments: await departmentService.list(),
+      processes: await processService.list(),
+      costCentres: await costCentreService.list(),
+      designations: await designationService.list(),
+      locations: await locationService.list(),
+      managers,
+    },
+    meta: { activeOnly: true },
+  });
+}));
 
 // Call Centre Code: register GET before buildCrud to avoid /:id swallowing the static segment
 router.get("/branches/cc-code-map",

@@ -6,6 +6,7 @@ import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { payrollController as c } from "./payroll.controller.js";
 import { calculatePayrollRun } from "./payrollCalculate.service.js";
+import { payrollGovernanceService } from "./payroll-governance.service.js";
 import { payslipService } from "./payslip.service.js";
 import { taxDeclarationService } from "./taxDeclaration.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -94,11 +95,44 @@ router.post("/runs",
   h(c.createRun)
 );
 router.get("/runs/:id", requireRole("admin", "hr", "finance", "payroll"), h(c.getRun));
+router.get("/runs/:id/readiness", requireRole("admin", "hr", "finance", "payroll"), h(async (req, res) => {
+  const data = await payrollGovernanceService.readiness(req.params.id);
+  return res.json({ success: true, data });
+}));
+
+router.post("/runs/:id/freeze-attendance", requireRole("admin", "finance", "payroll"), h(async (req, res) => {
+  const actorId = req.authUser?.id ?? "system";
+  const data = await payrollGovernanceService.freezeAttendance(req.params.id, actorId);
+
+  void logSensitiveAction({
+    actor_user_id: actorId,
+    action_type: "PAYROLL_ATTENDANCE_FROZEN",
+    module_key: "payroll",
+    entity_type: "salary_prep_run",
+    entity_id: req.params.id,
+    change_summary: data,
+    req,
+  });
+
+  return res.json({ success: true, data, message: "Attendance frozen for payroll run" });
+}));
+
 router.patch("/runs/:id/status", requireRole("admin", "finance", "payroll"), h(c.updateRunStatus));
 router.get("/runs/:id/lines", requireRole("admin", "hr", "finance", "payroll"), h(c.listLines));
 router.post("/runs/:id/calculate", requireRole("admin", "finance", "payroll"), async (req: any, res: any, next: any) => {
   try {
     const actorId = req.authUser?.id ?? "system";
+    if (process.env.PAYROLL_STRICT_READINESS === "true") {
+      const readiness = await payrollGovernanceService.readiness(req.params.id);
+
+      if (!readiness.canCalculate || !readiness.attendanceSnapshotLocked) {
+        return res.status(409).json({
+          success: false,
+          message: "Payroll readiness check failed. Resolve blockers and freeze attendance before calculation.",
+          data: readiness,
+        });
+      }
+    }
     const result = await calculatePayrollRun(req.params.id, actorId);
     void logSensitiveAction({
       actor_user_id: actorId,

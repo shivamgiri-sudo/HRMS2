@@ -39,6 +39,7 @@ const APPROVED_MAPPING_TARGETS = {
   integration_call_daily: [
     "employee_code",
     "activity_date",
+    "total_calls",
     "talk_minutes",
     "process_name",
   ],

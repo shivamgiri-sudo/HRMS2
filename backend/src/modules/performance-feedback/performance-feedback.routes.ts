@@ -2,6 +2,11 @@ import { Router } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { performanceFeedbackController as c } from "./performance-feedback.controller.js";
+import {
+  getEmployeeQualityMetrics,
+  getEmployeeQualityTrend,
+  getTeamQualityMetrics
+} from "./quality-data.service.js";
 
 const router = Router();
 
@@ -45,5 +50,63 @@ router.get("/development-plans/:id", h(c.getDevelopmentPlanById));
 router.patch("/development-plans/:id", requireRole("admin", "hr", "manager"), h(c.updateDevelopmentPlan));
 router.patch("/development-plans/:planId/goals/:goalId", h(c.updateGoal));
 router.delete("/development-plans/:id", requireRole("admin", "hr"), h(c.deleteDevelopmentPlan));
+
+// ================== Quality Data Integration (3 routes) ==================
+// GET /api/performance-feedback/quality/:employeeCode - Get quality metrics for employee
+router.get("/quality/:employeeCode", h(async (req: any, res: any) => {
+  const { employeeCode } = req.params;
+  const { startDate, endDate } = req.query;
+
+  if (!startDate || !endDate) {
+    return res.status(400).json({
+      success: false,
+      error: "startDate and endDate query parameters are required"
+    });
+  }
+
+  const metrics = await getEmployeeQualityMetrics(employeeCode, startDate, endDate);
+
+  if (!metrics) {
+    return res.status(404).json({
+      success: false,
+      error: "No quality data found for this employee in the specified period"
+    });
+  }
+
+  return res.json({ success: true, data: metrics });
+}));
+
+// GET /api/performance-feedback/quality/:employeeCode/trend - Get quality trend
+router.get("/quality/:employeeCode/trend", h(async (req: any, res: any) => {
+  const { employeeCode } = req.params;
+  const { startDate, endDate } = req.query;
+
+  if (!startDate || !endDate) {
+    return res.status(400).json({
+      success: false,
+      error: "startDate and endDate query parameters are required"
+    });
+  }
+
+  const trend = await getEmployeeQualityTrend(employeeCode, startDate, endDate);
+
+  return res.json({ success: true, data: trend });
+}));
+
+// POST /api/performance-feedback/quality/team - Get quality metrics for multiple employees
+router.post("/quality/team", h(async (req: any, res: any) => {
+  const { employeeCodes, startDate, endDate } = req.body;
+
+  if (!employeeCodes || !Array.isArray(employeeCodes) || !startDate || !endDate) {
+    return res.status(400).json({
+      success: false,
+      error: "employeeCodes (array), startDate, and endDate are required"
+    });
+  }
+
+  const metrics = await getTeamQualityMetrics(employeeCodes, startDate, endDate);
+
+  return res.json({ success: true, data: metrics });
+}));
 
 export { router as performanceFeedbackRouter };

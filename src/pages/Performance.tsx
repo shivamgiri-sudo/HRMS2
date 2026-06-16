@@ -1,4 +1,5 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,7 +14,7 @@ import { TeamReviewsManager } from "@/components/performance/TeamReviewsManager"
 import { TeamAnalytics } from "@/components/performance/TeamAnalytics";
 import { AprSection } from "@/components/performance/AprSection";
 import { TeamKpiView } from "@/components/performance/TeamKpiView";
-import { MyLiveKpiView } from "@/components/performance/MyLiveKpiView";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 export interface TeamMember {
   id: string;
@@ -28,8 +29,15 @@ export interface TeamMember {
   process_name: string | null;
 }
 
+function employeeDisplayName(employee: any): string {
+  return String(employee?.full_name ?? "").trim()
+    || `${employee?.first_name ?? ""} ${employee?.last_name ?? ""}`.trim()
+    || "Employee";
+}
+
 const Performance = () => {
   const { user } = useAuth();
+  const { roleKeys } = useWorkforceAccess();
 
   // Fetch employee record
   const { data: employeeData, isLoading: empLoading } = useQuery({
@@ -92,7 +100,7 @@ const Performance = () => {
     );
   }
 
-  const employeeName = `${employeeData.first_name ?? ""} ${employeeData.last_name ?? ""}`.trim();
+  const employeeName = employeeDisplayName(employeeData);
 
   return (
     <DashboardLayout>
@@ -115,6 +123,8 @@ const Performance = () => {
             </div>
           </div>
         </section>
+
+        <RoleInsightsPanel roles={roleKeys} title="Performance control insights" />
 
         <Tabs defaultValue="live-performance" className="space-y-4">
           <TabsList className="flex-wrap h-auto gap-1">

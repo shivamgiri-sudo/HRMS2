@@ -3,6 +3,7 @@ import {
   assertSafeIdentifier,
   buildBiometricAggregateQuery,
   buildCdrAggregateQuery,
+  buildDailySnapshotAggregateQuery,
   buildDialerAggregateQuery,
   fetchFromDatabase,
   type DbDialect,
@@ -129,6 +130,8 @@ export async function syncDatabaseConnector(
         const isVicidial = plainTableName.startsWith("vicidial_agent_log");
         const isCdr = plainTableName.startsWith("cdr_");
         const isGenericCallLog = plainTableName === "call_logs";
+        const isCallMasterView = plainTableName.startsWith("v_call_master_");
+        const isDailySnapshot = plainTableName === "daily_performance_snapshot";
         const tableFieldMaps = fieldMaps.filter(
           (mapping) => mapping.source_table === sourceTable || mapping.source_table === "*",
         );
@@ -187,6 +190,31 @@ export async function syncDatabaseConnector(
             dispositionCol: config.disposition_col ?? (
               isGenericCallLog ? "call_type" : outbound ? "CallStatus" : "Disposition"
             ),
+            fromDate,
+            toDate,
+          });
+        } else if (isCallMasterView) {
+          query = buildCdrAggregateQuery(sourceTable, {
+            dialect,
+            agentIdCol: sourceFor("employee_code", "agent_employee_code"),
+            agentNameCol: config.agent_name_column ?? "agent_employee_name",
+            dateCol: sourceFor(dateTarget, "call_date"),
+            talkCol: sourceFor(minutesTarget, "length_in_sec"),
+            campaignCol: sourceFor("process_name", "process_name"),
+            dispositionCol: config.disposition_col ?? "quality_band",
+            fromDate,
+            toDate,
+          });
+        } else if (isDailySnapshot) {
+          query = buildDailySnapshotAggregateQuery(sourceTable, {
+            dialect,
+            employeeCodeCol: sourceFor("employee_code", "agent_employee_code"),
+            dateCol: sourceFor(dateTarget, "snapshot_date"),
+            processCol: sourceFor("process_name", "process_name"),
+            totalCallsCol: sourceFor("total_calls", "total_calls"),
+            talkMinutesCol: tableFieldMaps.find(
+              (mapping) => mapping.target_table === targetTable && mapping.target_column === minutesTarget,
+            )?.source_field,
             fromDate,
             toDate,
           });

@@ -16,6 +16,7 @@ import { format, isWithinInterval, parse } from "date-fns";
 import { toast } from "sonner";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { EmployeeTable, type Employee } from "@/components/employees/EmployeeTable";
 import { EmployeeDocuments } from "@/components/documents/EmployeeDocuments";
 import { EmployeeViewDialog } from "@/components/employees/EmployeeViewDialog";
@@ -452,7 +453,6 @@ const Employees = () => {
   return (
     <DashboardLayout>
       <div className="space-y-5">
-        {/* Hero Header */}
         <section className="relative overflow-hidden rounded-2xl bg-slate-950 text-white shadow-lg">
           <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-[#1B6AB5]/25 blur-3xl" />
           <div className="pointer-events-none absolute -bottom-10 left-1/4 h-48 w-48 rounded-full bg-[#3BAD49]/10 blur-3xl" />
@@ -502,7 +502,8 @@ const Employees = () => {
           </div>
         </section>
 
-        {/* Metrics */}
+        <RoleInsightsPanel roles={roleKeys} title="Employee control insights" />
+
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {isLoading ? (
             <>
@@ -555,7 +556,6 @@ const Employees = () => {
           )}
         </section>
 
-        {/* Filters */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="grid flex-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_200px_200px_180px_160px]">
             <div className="relative">
@@ -668,7 +668,6 @@ const Employees = () => {
           )}
         </div>
 
-        {/* Table */}
         <section className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -759,15 +758,15 @@ const Employees = () => {
                       value={pageSize.toString()}
                       onValueChange={(value) => setPageSize(Number(value))}
                     >
-                      <SelectTrigger className="h-8 w-[74px] rounded-lg bg-white text-xs">
+                      <SelectTrigger className="h-8 w-[74px] rounded-lg bg-white text-xs !text-slate-900 [&>span]:!text-slate-900">
                         <SelectValue />
                       </SelectTrigger>
 
-                      <SelectContent>
-                        <SelectItem value="5">5</SelectItem>
-                        <SelectItem value="10">10</SelectItem>
-                        <SelectItem value="20">20</SelectItem>
-                        <SelectItem value="50">50</SelectItem>
+                      <SelectContent className="bg-white !text-slate-900">
+                        <SelectItem value="5" className="!text-slate-900">5</SelectItem>
+                        <SelectItem value="10" className="!text-slate-900">10</SelectItem>
+                        <SelectItem value="20" className="!text-slate-900">20</SelectItem>
+                        <SelectItem value="50" className="!text-slate-900">50</SelectItem>
                       </SelectContent>
                     </Select>
 
@@ -831,28 +830,24 @@ const Employees = () => {
           )}
         </section>
 
-        {/* View Profile Dialog */}
         <EmployeeViewDialog
           employee={viewEmployee}
           open={!!viewEmployee}
           onOpenChange={(open) => !open && setViewEmployee(null)}
         />
 
-        {/* Edit Employee Dialog */}
         <EmployeeEditDialog
           employee={editEmployee}
           open={!!editEmployee}
           onOpenChange={(open) => !open && setEditEmployee(null)}
         />
 
-        {/* Admin Password Reset Dialog */}
         <AdminPasswordResetDialog
           employee={resetPasswordEmployee}
           open={!!resetPasswordEmployee}
           onOpenChange={(open) => !open && setResetPasswordEmployee(null)}
         />
 
-        {/* Documents Dialog */}
         <Dialog
           open={!!documentsEmployee}
           onOpenChange={(open) => !open && setDocumentsEmployee(null)}
@@ -868,7 +863,6 @@ const Employees = () => {
           </DialogContent>
         </Dialog>
 
-        {/* Bulk Delete Confirmation Dialog */}
         <BulkDeleteDialog
           open={bulkDeleteOpen}
           onOpenChange={(open) => {
@@ -899,7 +893,6 @@ const Employees = () => {
           }}
         />
 
-        {/* Bulk Assign Manager Dialog */}
         <BulkAssignManagerDialog
           open={bulkAssignManagerOpen}
           onOpenChange={setBulkAssignManagerOpen}

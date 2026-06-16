@@ -5,6 +5,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,7 +29,7 @@ router.get("/search-managers", h(async (req: any, res: any) => {
      FROM employees e
      LEFT JOIN designation_master d ON d.id = e.designation_id
      WHERE e.active_status = 1
-       AND LOWER(e.employment_status) = 'active'
+       AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
        AND e.id <> ?
        AND (CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) LIKE ? OR e.employee_code LIKE ?)
      ORDER BY e.first_name ASC
@@ -62,7 +63,7 @@ router.get("/my-requests", h(async (req: any, res: any) => {
 }));
 
 // GET /api/rm-change/pending - list pending requests for approval (WFM/HR/Admin)
-router.get("/pending", requireRole("admin", "hr", "wfm"), h(async (req: any, res: any) => {
+router.get("/pending", requireRole("admin", "hr", "wfm"), h(async (_req: any, res: any) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT rm.*,
             e.employee_code,
@@ -89,7 +90,7 @@ router.post("/", h(async (req: any, res: any) => {
 
   // Fetch full employee details
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, branch_id, reporting_manager_id FROM employees WHERE id = ? LIMIT 1`,
+    `SELECT id, branch_id, reporting_manager_id, manager_id FROM employees WHERE id = ? LIMIT 1`,
     [basicEmp.id]
   );
   const emp = empRows[0];
@@ -119,7 +120,7 @@ router.post("/", h(async (req: any, res: any) => {
   // Verify the requested manager exists and is active
   const [managerCheck] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM employees
-     WHERE id = ? AND active_status = 1 AND LOWER(employment_status) = 'active' LIMIT 1`,
+     WHERE id = ? AND active_status = 1 AND LOWER(COALESCE(employment_status, 'active')) = 'active' LIMIT 1`,
     [requested_manager_id]
   );
 
@@ -133,7 +134,7 @@ router.post("/", h(async (req: any, res: any) => {
     `INSERT INTO rm_change_requests
      (id, employee_id, branch_id, current_manager_id, requested_manager_id, reason, status, created_at)
      VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW())`,
-    [requestId, emp.id, emp.branch_id, emp.reporting_manager_id, requested_manager_id, reason || null]
+    [requestId, emp.id, emp.branch_id, emp.reporting_manager_id ?? emp.manager_id ?? null, requested_manager_id, reason || null]
   );
 
   return res.status(201).json({ success: true, ok: true, data: { id: requestId } });
@@ -148,41 +149,74 @@ router.post("/:id/action", requireRole("admin", "hr", "wfm"), h(async (req: any,
     return res.status(400).json({ ok: false, message: "action must be 'approved' or 'rejected'" });
   }
 
-  // Get the request details
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM rm_change_requests WHERE id = ? LIMIT 1`,
-    [id]
-  );
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
 
-  if (rows.length === 0) {
-    return res.status(404).json({ ok: false, message: "Request not found" });
-  }
-
-  const request = rows[0];
-
-  if (request.status !== "pending") {
-    return res.status(400).json({ ok: false, message: "Request is not pending" });
-  }
-
-  // Update the request status
-  await db.execute(
-    `UPDATE rm_change_requests
-     SET status = ?, actioned_by = ?, actioned_at = NOW(), remarks = ?
-     WHERE id = ?`,
-    [action, req.authUser!.id, remarks || null, id]
-  );
-
-  // If approved, update the employee's reporting manager
-  if (action === "approved") {
-    await db.execute(
-      `UPDATE employees
-       SET reporting_manager_id = ?, updated_at = NOW()
-       WHERE id = ?`,
-      [request.requested_manager_id, request.employee_id]
+    // Get and lock the request details
+    const [rows] = await connection.execute<RowDataPacket[]>(
+      `SELECT * FROM rm_change_requests WHERE id = ? LIMIT 1 FOR UPDATE`,
+      [id]
     );
-  }
 
-  return res.json({ ok: true, message: `Request ${action}` });
+    if (rows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ ok: false, message: "Request not found" });
+    }
+
+    const request = rows[0];
+
+    if (request.status !== "pending") {
+      await connection.rollback();
+      return res.status(400).json({ ok: false, message: "Request is not pending" });
+    }
+
+    // Update the request status
+    await connection.execute(
+      `UPDATE rm_change_requests
+       SET status = ?, actioned_by = ?, actioned_at = NOW(), remarks = ?
+       WHERE id = ?`,
+      [action, req.authUser!.id, remarks || null, id]
+    );
+
+    // If approved, update both manager columns used across HRMS1.
+    if (action === "approved") {
+      await connection.execute(
+        `UPDATE employees
+         SET reporting_manager_id = ?,
+             manager_id = ?,
+             updated_at = NOW()
+         WHERE id = ?`,
+        [request.requested_manager_id, request.requested_manager_id, request.employee_id]
+      );
+    }
+
+    await connection.commit();
+
+    if (action === "approved") {
+      void logSensitiveAction({
+        actor_user_id: req.authUser!.id,
+        action_type: "REPORTING_MANAGER_CHANGED",
+        module_key: "employees",
+        entity_type: "employee",
+        entity_id: request.employee_id,
+        change_summary: {
+          request_id: id,
+          old_manager_id: request.current_manager_id,
+          new_manager_id: request.requested_manager_id,
+          remarks: remarks || null,
+        },
+        req,
+      });
+    }
+
+    return res.json({ ok: true, message: `Request ${action}` });
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 }));
 
 export { router as rmChangeRouter };
