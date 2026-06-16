@@ -25,6 +25,7 @@ import { portalRouter } from "./modules/portal/portal.routes.js";
 import { atsRouter } from "./modules/ats/ats.routes.js";
 import { atsFormConfigRouter } from "./modules/ats/ats-form-config.routes.js";
 import { exitRouter } from "./modules/exit/exit.routes.js";
+import { exitCompatRouter } from "./modules/exit/exit.compat.routes.js";
 import { migrationRouter } from "./modules/migration/migration.routes.js";
 import { accessRouter } from "./modules/access/access.routes.js";
 import { orgRouter } from "./modules/org/org.routes.js";
@@ -145,7 +146,7 @@ app.use("/api/health", healthRouter);
 app.use("/api/admin", roleAssignmentRouter);
 app.use("/api/processes", processRouter);
 app.use("/api/integration-hub", integrationRouter);
-app.use("/api/wfm/auto-roster", autoRosterSyncedRouter); // MUST be before /api/wfm/roster
+app.use("/api/wfm/auto-roster", autoRosterSyncedRouter);
 app.use("/api/wfm", wfmRouter);
 app.use("/api/wfm/roster", rosterRouter);
 app.use("/api/leave", leaveRouter);
@@ -154,7 +155,7 @@ app.use("/api/payroll", payrollLinesCompatRouter);
 app.use("/api/payroll", payrollRouter);
 app.use("/api/payroll", payrollExtendedRouter);
 app.use("/api/payroll", payrollMoreRouter);
-app.use("/api/payroll-compliance", payrollComplianceRouter); // India statutory compliance & registers
+app.use("/api/payroll-compliance", payrollComplianceRouter);
 app.use("/api/employees", employeePhotoCompatRouter);
 app.use("/api/employees", employeeRouter);
 app.use("/api/rm-change", rmChangeRouter);
@@ -162,10 +163,11 @@ app.use("/api/kpi/process-role", kpiProcessRoleRouter);
 app.use("/api/kpi-master", kpiMasterRouter);
 app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
-app.use("/api/ats", atsFormConfigRouter); // form-config/bootstrap is public — must be before clientRouter's requireAuth catch-all
+app.use("/api/ats", atsFormConfigRouter);
 app.use("/api/ats", atsRouter);
-app.use("/api", clientRouter); // Client management — broad /api mount, must come after specific ATS routes
-app.use("/api/ats-full-parity", atsFullParityRouter); // Google Sheets App Script parity
+app.use("/api", clientRouter);
+app.use("/api/ats-full-parity", atsFullParityRouter);
+app.use("/api/exit", exitCompatRouter);
 app.use("/api/exit", exitRouter);
 app.use("/api/migration", migrationRouter);
 app.use("/api/access", accessRouter);
@@ -199,7 +201,7 @@ app.use("/api/compliance", complianceRouter);
 app.use("/api/privacy", privacyRouter);
 app.use("/api/performance-feedback", performanceFeedbackRouter);
 app.use("/api/engagement", engagementRouter);
-app.use("/api/engagement-intelligence", engagementIntelligenceRouter); // Health scoring + command center
+app.use("/api/engagement-intelligence", engagementIntelligenceRouter);
 app.use("/api/communication", communicationRouter);
 app.use("/api/external-db", externalDbRouter);
 app.use("/api/apr", aprRouter);
