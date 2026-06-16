@@ -1,13 +1,71 @@
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { exitController } from "./exit.controller.js";
 
 export const exitCompatRouter = Router();
 exitCompatRouter.use(requireAuth);
 
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+
+function normalizeStatus(status: unknown) {
+  const next = String(status ?? "").trim();
+  return next === "exit_confirmed" ? "exited" : next;
+}
+
+async function finalExitBlockers(exitRequestId: string) {
+  const [clearanceRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS open_count
+       FROM exit_clearance_task
+      WHERE exit_request_id = ?
+        AND status NOT IN ('cleared', 'waived')`,
+    [exitRequestId],
+  );
+  const [ffRows] = await db.execute<RowDataPacket[]>(
+    `SELECT status, is_ff_provisional
+       FROM full_final_calculation
+      WHERE exit_request_id = ?
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [exitRequestId],
+  );
+  const ff = ffRows[0];
+  const blockers: string[] = [];
+  const openClearance = Number(clearanceRows[0]?.open_count ?? 0);
+  if (openClearance > 0) blockers.push(`${openClearance} clearance task(s) still open`);
+  if (!ff) blockers.push("F&F calculation is missing");
+  else {
+    if (!["approved", "paid"].includes(String(ff.status))) blockers.push(`F&F is ${ff.status}`);
+    if (Number(ff.is_ff_provisional) === 1) blockers.push("F&F is provisional");
+  }
+  return blockers;
+}
+
+const guardedStatusUpdate = [
+  requireRole("admin", "hr", "manager"),
+  h(async (req: AuthenticatedRequest, res) => {
+    const nextStatus = normalizeStatus(req.body?.status);
+    if (!nextStatus) return res.status(400).json({ success: false, message: "status is required" });
+    if (nextStatus === "exited") {
+      const blockers = await finalExitBlockers(req.params.id);
+      if (blockers.length) {
+        return res.status(409).json({
+          success: false,
+          message: "Cannot mark employee exited until exit controls are complete.",
+          blockers,
+        });
+      }
+    }
+    req.body = { ...req.body, status: nextStatus };
+    return exitController.updateExitStatus(req, res);
+  }),
+] as const;
+
+exitCompatRouter.patch("/:id/status", ...guardedStatusUpdate);
+exitCompatRouter.post("/:id/status", ...guardedStatusUpdate);
 
 exitCompatRouter.get("/", h(async (req, res) => {
   const userId = req.authUser!.id;
