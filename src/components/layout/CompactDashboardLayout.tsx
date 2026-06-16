@@ -75,6 +75,7 @@ const navGroups: NavGroup[] = [
       { label: "Departments",           href: "/departments",                    icon: <Building2 className="h-[15px] w-[15px]" />,    roles: ["admin","hr","manager","ceo","branch_head"], description: "Departments" },
       { label: "Onboarding",            href: "/onboarding",                     icon: <UserPlus className="h-[15px] w-[15px]" />,     roles: ["admin","hr"], description: "Onboarding" },
       { label: "Document Verification", href: "/document-verification",          icon: <FileCheck className="h-[15px] w-[15px]" />,    roles: ["admin","hr"], description: "Documents" },
+      { label: "BGV Reports",           href: "/ats/bgv-report",                 icon: <FileCheck className="h-[15px] w-[15px]" />,    roles: ["admin","hr"], description: "BGV" },
       { label: "Employee Journey",      href: "/employee-stat-card",             icon: <Users className="h-[15px] w-[15px]" />,        description: "Journey" },
       { label: "ATS Command",           href: "/ats/command-center",             icon: <Briefcase className="h-[15px] w-[15px]" />,    pageCode: "ATS_DASHBOARD", description: "ATS" },
       { label: "Walk-in Queue",         href: "/ats/walkin-queue",               icon: <Users className="h-[15px] w-[15px]" />,        pageCode: "ATS_WAITING_QUEUE", description: "Queue" },

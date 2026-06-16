@@ -422,16 +422,63 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
   try {
     await conn.beginTransaction();
 
-    // Employee code — lock via FOR UPDATE to prevent concurrent duplicates
-    const [codeRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT CAST(SUBSTRING(employee_code, 4) AS UNSIGNED) AS last_seq
-       FROM employees
-       WHERE employee_code REGEXP '^MAS[0-9]+$'
-       ORDER BY CAST(SUBSTRING(employee_code, 4) AS UNSIGNED) DESC
+    // Employee code — 4-format logic based on entity (branch) + emp_type
+    // MAS+ONROLL  → MAS#####   e.g. MAS62857
+    // IDC+ONROLL  → IDC#####   e.g. IDC62857
+    // MAS+TRAINEE → #####C     e.g. 62857C  (no prefix)
+    // IDC+TRAINEE → IDC#####C  e.g. IDC62857C
+    // All share one global sequential counter.
+    const empTypeLower = String(offer.emp_type ?? 'OnRoll').toLowerCase().trim();
+    const isTrainee = empTypeLower.includes('mgmt') || empTypeLower.includes('trainee');
+
+    // Detect entity from branch name (IDC / ISPARK branches belong to IDC entity)
+    let branchNameForCode = '';
+    if (offer.resolved_branch_id) {
+      const [brRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT branch_name FROM branch_master WHERE id = ? LIMIT 1`,
+        [offer.resolved_branch_id],
+      );
+      branchNameForCode = String((brRows as RowDataPacket[])[0]?.branch_name ?? '').toUpperCase();
+    }
+    const isIDC = branchNameForCode.includes('IDC') || branchNameForCode.includes('ISPARK');
+    const entityPrefix = isIDC ? 'IDC' : 'MAS';
+
+    // Lock the shared sequence row to prevent concurrent duplicate codes
+    const [seqRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT current_sequence FROM employee_code_sequence
+       WHERE company_prefix = ? AND is_offrole = FALSE
        LIMIT 1 FOR UPDATE`,
+      [entityPrefix],
     );
-    const lastSeq: number = (codeRows as RowDataPacket[])[0]?.last_seq ?? 0;
-    employeeCode = `MAS${String(lastSeq + 1).padStart(5, '0')}`;
+    // If sequence row missing, fall back to reading max from live employees
+    let nextSeq: number;
+    if ((seqRows as RowDataPacket[]).length > 0) {
+      nextSeq = ((seqRows as RowDataPacket[])[0].current_sequence as number) + 1;
+    } else {
+      const [maxRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT GREATEST(
+           IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,4) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^MAS[0-9]+$'),0),
+           IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,4) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^IDC[0-9]+$'),0),
+           IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,1,CHAR_LENGTH(employee_code)-1) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^[0-9]+C$'),0),
+           IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,4,CHAR_LENGTH(employee_code)-4) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^IDC[0-9]+C$'),0)
+         ) AS global_max`,
+      );
+      nextSeq = ((maxRows as RowDataPacket[])[0]?.global_max as number ?? 0) + 1;
+    }
+
+    // Advance ALL four sequence rows so they stay in sync regardless of which path runs next
+    await conn.execute(
+      `UPDATE employee_code_sequence SET current_sequence = ?, last_generated_at = NOW()
+       WHERE current_sequence < ?`,
+      [nextSeq, nextSeq],
+    );
+
+    // Build the code in the correct format
+    if (isTrainee) {
+      employeeCode = isIDC ? `IDC${nextSeq}C` : `${nextSeq}C`;
+    } else {
+      employeeCode = `${entityPrefix}${nextSeq}`;
+    }
 
     await conn.execute(
       `INSERT INTO auth_user (id, email, password_hash, must_change_password)

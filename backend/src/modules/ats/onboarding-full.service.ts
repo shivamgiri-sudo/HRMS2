@@ -144,23 +144,33 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   await db.execute(
     `INSERT INTO candidate_onboarding_profile
        (id, candidate_id, onboarding_token_hash, title, employee_name, relation, father_husband_name,
-        gender, marital_status, date_of_birth, blood_group, nominee_name, nominee_relation,
-        nominee_date_of_birth, permanent_address, permanent_state, permanent_city, permanent_pincode,
+        gender, marital_status, date_of_birth, blood_group,
+        nominee_name, nominee_relation, nominee_date_of_birth, nominee1_share_pct,
+        nominee2_name, nominee2_relation, nominee2_dob, nominee2_share_pct,
+        permanent_address, permanent_state, permanent_city, permanent_pincode,
         present_address, present_state, present_city, present_pincode, mobile_number, alt_mobile_number,
         personal_email_id, official_email_id, pan_number_masked, pan_number_hash, aadhaar_number_masked,
-        aadhaar_number_hash, source_type, source, profile_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'employee_details_saved')
+        aadhaar_number_hash, passport_no, driving_license_no,
+        uan_number, epf_number, esic_number,
+        source_type, source, profile_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'employee_details_saved')
      ON DUPLICATE KEY UPDATE
         title = VALUES(title), employee_name = VALUES(employee_name), relation = VALUES(relation),
         father_husband_name = VALUES(father_husband_name), gender = VALUES(gender), marital_status = VALUES(marital_status),
-        date_of_birth = VALUES(date_of_birth), blood_group = VALUES(blood_group), nominee_name = VALUES(nominee_name),
-        nominee_relation = VALUES(nominee_relation), nominee_date_of_birth = VALUES(nominee_date_of_birth),
+        date_of_birth = VALUES(date_of_birth), blood_group = VALUES(blood_group),
+        nominee_name = VALUES(nominee_name), nominee_relation = VALUES(nominee_relation),
+        nominee_date_of_birth = VALUES(nominee_date_of_birth), nominee1_share_pct = VALUES(nominee1_share_pct),
+        nominee2_name = VALUES(nominee2_name), nominee2_relation = VALUES(nominee2_relation),
+        nominee2_dob = VALUES(nominee2_dob), nominee2_share_pct = VALUES(nominee2_share_pct),
         permanent_address = VALUES(permanent_address), permanent_state = VALUES(permanent_state), permanent_city = VALUES(permanent_city),
         permanent_pincode = VALUES(permanent_pincode), present_address = VALUES(present_address), present_state = VALUES(present_state),
         present_city = VALUES(present_city), present_pincode = VALUES(present_pincode), mobile_number = VALUES(mobile_number),
         alt_mobile_number = VALUES(alt_mobile_number), personal_email_id = VALUES(personal_email_id), official_email_id = VALUES(official_email_id),
-        pan_number_masked = VALUES(pan_number_masked), pan_number_hash = VALUES(pan_number_hash), aadhaar_number_masked = VALUES(aadhaar_number_masked),
-        aadhaar_number_hash = VALUES(aadhaar_number_hash), source_type = VALUES(source_type), source = VALUES(source),
+        pan_number_masked = VALUES(pan_number_masked), pan_number_hash = VALUES(pan_number_hash),
+        aadhaar_number_masked = VALUES(aadhaar_number_masked), aadhaar_number_hash = VALUES(aadhaar_number_hash),
+        passport_no = VALUES(passport_no), driving_license_no = VALUES(driving_license_no),
+        uan_number = VALUES(uan_number), epf_number = VALUES(epf_number), esic_number = VALUES(esic_number),
+        source_type = VALUES(source_type), source = VALUES(source),
         profile_status = IF(profile_status='submitted', profile_status, 'employee_details_saved'), updated_at = NOW()`,
     [
       id,
@@ -177,6 +187,11 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       input.nominee ?? input.nomineeName ?? null,
       input.nomineeRelation ?? null,
       input.nomineeDateOfBirth ?? null,
+      input.nominee1SharePct ?? null,
+      input.nominee2Name ?? null,
+      input.nominee2Relation ?? null,
+      input.nominee2Dob ?? null,
+      input.nominee2SharePct ?? null,
       input.permanentAddress ?? null,
       input.permanentState ?? null,
       input.permanentCity ?? null,
@@ -193,6 +208,11 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       panHash,
       aadhaarMasked,
       aadhaarHash,
+      input.passportNo ?? null,
+      input.drivingLicenseNo ?? null,
+      input.uanNumber ?? null,
+      input.epfNumber ?? null,
+      input.esicNumber ?? null,
       input.sourceType ?? tokenData.source_type ?? null,
       input.source ?? tokenData.source ?? null,
     ]
@@ -241,6 +261,26 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       candidateId,
     ]
   );
+  // Update extra identity/statutory fields on ats_candidate if columns exist
+  // These are safe UPDATE SET with COALESCE to not overwrite non-null existing values
+  await db.execute(
+    `UPDATE ats_candidate SET
+       passport_no = COALESCE(?, passport_no),
+       driving_license_no = COALESCE(?, driving_license_no),
+       uan_number = COALESCE(?, uan_number),
+       epf_number = COALESCE(?, epf_number),
+       esic_number = COALESCE(?, esic_number),
+       updated_at = NOW()
+     WHERE id = ?`,
+    [
+      input.passportNo ?? null,
+      input.drivingLicenseNo ?? null,
+      input.uanNumber ?? null,
+      input.epfNumber ?? null,
+      input.esicNumber ?? null,
+      candidateId,
+    ]
+  ).catch(() => { /* columns may not exist on older schema — safe to ignore */ });
 
   await logCandidateAction(candidateId, "SAVE_EMPLOYEE_DETAILS", { fields: Object.keys(input) }, meta);
   return getFullOnboardingStatus(token);

@@ -124,6 +124,7 @@ const MIGRATION_MANIFEST: string[] = [
   "197_salary_increment_governance.sql",
   "198_it_provisioning.sql",
   "199_process_branch_dept_cleanup.sql",
+  "200_onboarding_empcode_bgv_gaps.sql",
 ];
 
 export type MigrationHealth = {

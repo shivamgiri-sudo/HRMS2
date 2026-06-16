@@ -45,10 +45,19 @@ type BgvStatus = {
 
 const emptyEmployee = {
   title: "Mr", employeeName: "", relation: "Father", fatherHusbandName: "", gender: "", maritalStatus: "", dateOfBirth: "", bloodGroup: "",
-  nominee: "", nomineeRelation: "", nomineeDateOfBirth: "",
+  // Nominee 1
+  nominee: "", nomineeRelation: "", nomineeDateOfBirth: "", nominee1SharePct: "",
+  // Nominee 2 (optional)
+  nominee2Name: "", nominee2Relation: "", nominee2Dob: "", nominee2SharePct: "",
   permanentAddress: "", permanentState: "", permanentCity: "", permanentPincode: "",
   presentAddress: "", presentState: "", presentCity: "", presentPincode: "",
-  mobileNumber: "", altMobileNumber: "", personalEmailId: "", officialEmailId: "", panNumber: "", aadhaarNumber: "", sourceType: "", source: "",
+  mobileNumber: "", altMobileNumber: "", personalEmailId: "", officialEmailId: "",
+  panNumber: "", aadhaarNumber: "",
+  // Identity documents (candidate fills if available — optional)
+  passportNo: "", drivingLicenseNo: "",
+  // Statutory IDs from previous employment (optional)
+  uanNumber: "", epfNumber: "", esicNumber: "",
+  sourceType: "", source: "",
 };
 
 const emptyBank = { bankName: "", branchName: "", accountHolderName: "", accountNo: "", ifscCode: "", accountType: "Savings" };
@@ -190,17 +199,81 @@ export default function CandidateOnboardingFullPage() {
 
         {step === 1 && <Card><CardHeader><CardTitle>Auto-filled from ATS</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-3"><ReadOnly label="Name" value={status?.token.full_name} /><ReadOnly label="Mobile" value={status?.token.mobile} /><ReadOnly label="Email" value={status?.token.email} /><ReadOnly label="Source type" value={status?.token.source_type} /><ReadOnly label="Source" value={status?.token.source} /><ReadOnly label="Candidate ID" value={status?.token.candidate_code || status?.token.candidate_id} /></CardContent></Card>}
 
-        {step === 2 && <Card><CardHeader><CardTitle>Employee Details</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-3">
-          <Field label="Title" value={employee.title} onChange={(v) => updateEmployee("title", v)} /><Field label="Employee Name" value={employee.employeeName} onChange={(v) => updateEmployee("employeeName", v)} /><Field label="Relation" value={employee.relation} onChange={(v) => updateEmployee("relation", v)} />
-          <Field label="Father/Husband Name" value={employee.fatherHusbandName} onChange={(v) => updateEmployee("fatherHusbandName", v)} /><Field label="Gender" value={employee.gender} onChange={(v) => updateEmployee("gender", v)} /><Field label="Marital Status" value={employee.maritalStatus} onChange={(v) => updateEmployee("maritalStatus", v)} />
-          <Field type="date" label="Date Of Birth" value={employee.dateOfBirth} onChange={(v) => updateEmployee("dateOfBirth", v)} /><Field label="Blood Group" value={employee.bloodGroup} onChange={(v) => updateEmployee("bloodGroup", v)} /><Field label="Nominee" value={employee.nominee} onChange={(v) => updateEmployee("nominee", v)} />
-          <Field label="Nominee Relation" value={employee.nomineeRelation} onChange={(v) => updateEmployee("nomineeRelation", v)} /><Field type="date" label="Nominee Date Of Birth" value={employee.nomineeDateOfBirth} onChange={(v) => updateEmployee("nomineeDateOfBirth", v)} /><Field label="PAN Number" value={employee.panNumber} onChange={(v) => updateEmployee("panNumber", v.toUpperCase())} />
-          <Field label="Aadhaar Number" value={employee.aadhaarNumber} onChange={(v) => updateEmployee("aadhaarNumber", v)} /><Field label="Mobile Number" value={employee.mobileNumber} onChange={(v) => updateEmployee("mobileNumber", v)} /><Field label="Alt Mobile Number" value={employee.altMobileNumber} onChange={(v) => updateEmployee("altMobileNumber", v)} />
-          <Field label="Personal Email Id" value={employee.personalEmailId} onChange={(v) => updateEmployee("personalEmailId", v)} /><Field label="Official Email Id" value={employee.officialEmailId} onChange={(v) => updateEmployee("officialEmailId", v)} /><Field label="Source Type" value={employee.sourceType} onChange={(v) => updateEmployee("sourceType", v)} />
-          <div className="md:col-span-3 grid gap-4 md:grid-cols-2"><Text label="Permanent Address" value={employee.permanentAddress} onChange={(v) => updateEmployee("permanentAddress", v)} /><Text label="Present Address" value={employee.presentAddress} onChange={(v) => updateEmployee("presentAddress", v)} /></div>
-          <Field label="Permanent State" value={employee.permanentState} onChange={(v) => updateEmployee("permanentState", v)} /><Field label="Permanent City" value={employee.permanentCity} onChange={(v) => updateEmployee("permanentCity", v)} /><Field label="Permanent Pincode" value={employee.permanentPincode} onChange={(v) => updateEmployee("permanentPincode", v)} />
-          <Field label="Present State" value={employee.presentState} onChange={(v) => updateEmployee("presentState", v)} /><Field label="Present City" value={employee.presentCity} onChange={(v) => updateEmployee("presentCity", v)} /><Field label="Present Pincode" value={employee.presentPincode} onChange={(v) => updateEmployee("presentPincode", v)} />
-          <div className="md:col-span-3"><Button onClick={saveEmployee} disabled={saving}>Save Employee Details</Button></div>
+        {step === 2 && <Card><CardHeader><CardTitle>Employee Details</CardTitle></CardHeader><CardContent className="space-y-6">
+          {/* ── Personal Info ── */}
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">Personal Information</p>
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field label="Title *" value={employee.title} onChange={(v) => updateEmployee("title", v)} />
+              <Field label="Full Name *" value={employee.employeeName} onChange={(v) => updateEmployee("employeeName", v)} />
+              <Field label="Relation" value={employee.relation} onChange={(v) => updateEmployee("relation", v)} />
+              <Field label="Father / Husband Name *" value={employee.fatherHusbandName} onChange={(v) => updateEmployee("fatherHusbandName", v)} />
+              <Field label="Gender *" value={employee.gender} onChange={(v) => updateEmployee("gender", v)} />
+              <Field label="Marital Status *" value={employee.maritalStatus} onChange={(v) => updateEmployee("maritalStatus", v)} />
+              <Field type="date" label="Date of Birth *" value={employee.dateOfBirth} onChange={(v) => updateEmployee("dateOfBirth", v)} />
+              <Field label="Blood Group" value={employee.bloodGroup} onChange={(v) => updateEmployee("bloodGroup", v)} />
+              <Field label="Mobile Number *" value={employee.mobileNumber} onChange={(v) => updateEmployee("mobileNumber", v)} />
+              <Field label="Alternate Mobile" value={employee.altMobileNumber} onChange={(v) => updateEmployee("altMobileNumber", v)} />
+              <Field label="Personal Email *" value={employee.personalEmailId} onChange={(v) => updateEmployee("personalEmailId", v)} />
+              <Field label="Official Email" value={employee.officialEmailId} onChange={(v) => updateEmployee("officialEmailId", v)} />
+            </div>
+          </div>
+          {/* ── KYC Documents ── */}
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">KYC &amp; Identity Documents</p>
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field label="PAN Number *" value={employee.panNumber} onChange={(v) => updateEmployee("panNumber", v.toUpperCase())} />
+              <Field label="Aadhaar Number *" value={employee.aadhaarNumber} onChange={(v) => updateEmployee("aadhaarNumber", v)} />
+              <Field label="Passport No (if any)" value={employee.passportNo} onChange={(v) => updateEmployee("passportNo", v.toUpperCase())} />
+              <Field label="Driving License No (if any)" value={employee.drivingLicenseNo} onChange={(v) => updateEmployee("drivingLicenseNo", v.toUpperCase())} />
+            </div>
+          </div>
+          {/* ── Previous Employment (PF/ESIC) ── */}
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">Previous Employment — Statutory IDs <span className="normal-case font-medium text-slate-500">(Fill only if previously employed)</span></p>
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field label="UAN Number" value={employee.uanNumber} onChange={(v) => updateEmployee("uanNumber", v)} />
+              <Field label="Previous EPF Number" value={employee.epfNumber} onChange={(v) => updateEmployee("epfNumber", v)} />
+              <Field label="Previous ESIC Number" value={employee.esicNumber} onChange={(v) => updateEmployee("esicNumber", v)} />
+            </div>
+          </div>
+          {/* ── Nominee 1 ── */}
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">Nominee 1 (Primary) *</p>
+            <div className="grid gap-4 md:grid-cols-4">
+              <Field label="Nominee Name *" value={employee.nominee} onChange={(v) => updateEmployee("nominee", v)} />
+              <Field label="Relation *" value={employee.nomineeRelation} onChange={(v) => updateEmployee("nomineeRelation", v)} />
+              <Field type="date" label="Date of Birth" value={employee.nomineeDateOfBirth} onChange={(v) => updateEmployee("nomineeDateOfBirth", v)} />
+              <Field label="Share %" value={employee.nominee1SharePct} onChange={(v) => updateEmployee("nominee1SharePct", v)} />
+            </div>
+          </div>
+          {/* ── Nominee 2 ── */}
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">Nominee 2 (Optional)</p>
+            <div className="grid gap-4 md:grid-cols-4">
+              <Field label="Nominee 2 Name" value={employee.nominee2Name} onChange={(v) => updateEmployee("nominee2Name", v)} />
+              <Field label="Relation" value={employee.nominee2Relation} onChange={(v) => updateEmployee("nominee2Relation", v)} />
+              <Field type="date" label="Date of Birth" value={employee.nominee2Dob} onChange={(v) => updateEmployee("nominee2Dob", v)} />
+              <Field label="Share %" value={employee.nominee2SharePct} onChange={(v) => updateEmployee("nominee2SharePct", v)} />
+            </div>
+          </div>
+          {/* ── Address ── */}
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">Address</p>
+            <div className="grid gap-4 md:grid-cols-2 mb-4">
+              <Text label="Permanent Address *" value={employee.permanentAddress} onChange={(v) => updateEmployee("permanentAddress", v)} />
+              <Text label="Present / Current Address *" value={employee.presentAddress} onChange={(v) => updateEmployee("presentAddress", v)} />
+            </div>
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field label="Permanent State" value={employee.permanentState} onChange={(v) => updateEmployee("permanentState", v)} />
+              <Field label="Permanent City" value={employee.permanentCity} onChange={(v) => updateEmployee("permanentCity", v)} />
+              <Field label="Permanent Pincode" value={employee.permanentPincode} onChange={(v) => updateEmployee("permanentPincode", v)} />
+              <Field label="Present State" value={employee.presentState} onChange={(v) => updateEmployee("presentState", v)} />
+              <Field label="Present City" value={employee.presentCity} onChange={(v) => updateEmployee("presentCity", v)} />
+              <Field label="Present Pincode" value={employee.presentPincode} onChange={(v) => updateEmployee("presentPincode", v)} />
+            </div>
+          </div>
+          <div><Button onClick={saveEmployee} disabled={saving}>Save Employee Details</Button></div>
         </CardContent></Card>}
 
         {step === 3 && <Card><CardHeader><CardTitle>Document Details</CardTitle></CardHeader><CardContent className="space-y-5">

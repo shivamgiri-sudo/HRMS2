@@ -72,6 +72,7 @@ const SuperAdminModuleAccess = lazy(() => import("./pages/SuperAdminModuleAccess
 const SuperAdminDashboardV2 = lazy(() => import("./pages/SuperAdminDashboardV2"));
 const ATSCommandCentre = lazy(() => import("./pages/ATSCommandCentre"));
 const NativeBGVEnhanced = lazy(() => import("./pages/NativeBGVEnhanced"));
+const NativeBGVReport = lazy(() => import("./pages/NativeBGVReport"));
 
 const NativeLMSMyLearning = lazy(() => import("./pages/NativeLMSMyLearning"));
 const NativeLMSCoordinator = lazy(() => import("./pages/NativeLMSCoordinator"));
@@ -254,6 +255,7 @@ const App = () => (
               <Route path="/super-admin/dashboard" element={<ProtectedRoute roles={['admin']}><SuperAdminDashboardV2 /></ProtectedRoute>} />
               <Route path="/ats/command-centre" element={<ProtectedRoute roles={['admin', 'manager', 'hr']}><ATSCommandCentre /></ProtectedRoute>} />
               <Route path="/ats/bgv-enhanced" element={<ProtectedRoute roles={['admin', 'hr']}><NativeBGVEnhanced /></ProtectedRoute>} />
+              <Route path="/ats/bgv-report" element={<ProtectedRoute roles={['admin', 'hr']}><NativeBGVReport /></ProtectedRoute>} />
               <Route path="/lms/my-learning" element={<ProtectedRoute><Gate pageCode="LMS_MY_LEARNING"><NativeLMSMyLearning /></Gate></ProtectedRoute>} />
               <Route path="/lms/coordinator" element={<ProtectedRoute><Gate pageCode="LMS_COORDINATOR"><NativeLMSCoordinator /></Gate></ProtectedRoute>} />
               <Route path="/lms/admin" element={<ProtectedRoute><Gate pageCode="LMS_ADMIN"><LMSIntegrationAdmin /></Gate></ProtectedRoute>} />
