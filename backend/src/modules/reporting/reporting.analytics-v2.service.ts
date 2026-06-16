@@ -43,13 +43,7 @@ export const reportingAnalyticsV2Service = {
 
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const yearStart = new Date(year, 0, 1, 23, 59, 59, 999);
-    const yearEnd = new Date(year, 11, 31, 23, 59, 59, 999);
     const today = new Date();
-
-    const employeeGrowth = monthNames.map((month, index) => {
-      const asOf = new Date(year, index + 1, 0, 23, 59, 59, 999);
-      return { month, employees: employeeRows.filter((employee) => activeAsOf(employee, asOf)).length };
-    });
 
     const monthlyBreakdown = monthNames.map((month, index) => {
       const start = new Date(year, index, 1);
@@ -63,6 +57,19 @@ export const reportingAnalyticsV2Service = {
         return exited && exited >= start && exited <= end;
       }).length;
       return { month, hires, terminations, net: hires - terminations };
+    });
+
+    const employeeGrowth = monthNames.map((month, index) => {
+      const asOf = new Date(year, index + 1, 0, 23, 59, 59, 999);
+      const headcount = employeeRows.filter((employee) => activeAsOf(employee, asOf)).length;
+      const monthBreakdown = monthlyBreakdown[index];
+      return {
+        month,
+        employees: headcount,
+        headcount,
+        joiners: monthBreakdown.hires,
+        exits: monthBreakdown.terminations,
+      };
     });
 
     const payrollScope = scopeClause(scope, 'e.branch_id');
@@ -80,21 +87,27 @@ export const reportingAnalyticsV2Service = {
     );
     const payrollByMonth = new Map(payrollRows.map((row) => [Number(String(row.run_month).slice(5, 7)), Number(row.total_net ?? 0)]));
 
+    const newJoiners = monthlyBreakdown.reduce((sum, item) => sum + item.hires, 0);
+    const terminations = monthlyBreakdown.reduce((sum, item) => sum + item.terminations, 0);
+    const startOfYearHeadcount = employeeRows.filter((employee) => activeAsOf(employee, yearStart)).length;
+
     return {
       ...base,
       employeeGrowth,
       payrollTrend: monthNames.map((month, index) => ({ month, amount: payrollByMonth.get(index + 1) ?? 0 })),
       headcount: {
         ...base.headcount,
-        newHires: monthlyBreakdown.reduce((sum, item) => sum + item.hires, 0),
-        terminations: monthlyBreakdown.reduce((sum, item) => sum + item.terminations, 0),
-        netChange: monthlyBreakdown.reduce((sum, item) => sum + item.net, 0),
+        newHires: newJoiners,
+        newJoiners,
+        terminations,
+        netChange: newJoiners - terminations,
         currentHeadcount: employeeRows.filter((employee) => activeAsOf(employee, today)).length,
-        startOfYearHeadcount: employeeRows.filter((employee) => activeAsOf(employee, yearStart)).length,
+        startOfYearHeadcount,
+        startOfYear: startOfYearHeadcount,
         monthlyBreakdown,
       },
       dataHealth: {
-        logicVersion: 'analytics_as_of_v2',
+        logicVersion: 'analytics_as_of_v2_compat',
         year,
         employeeRowsScanned: employeeRows.length,
       },
