@@ -141,6 +141,7 @@ const MIGRATION_MANIFEST: string[] = [
   "210_fix_el_accrual_ledger_collation.sql",
   "211_employee_personal_contact_fields.sql",
   "212_reporting_manager_bulk_template.sql",
+  "213_salary_prep_line_component_columns.sql",
 ];
 
 export type MigrationHealth = {

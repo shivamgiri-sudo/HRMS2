@@ -395,20 +395,25 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     // Net pay = payrollService net + advance recovery deducted on top + approved incentives added
     const empIncentive = incentivesByEmployee.get(emp.employee_id) ?? 0;
     const netPayFinal = Math.max(0, calc.net_salary - advanceRecovery + empIncentive);
-    const totalDedFinal = calc.total_deductions + advanceRecovery + lwpDeduction;
+    // LWP is already applied inside grossAfterLwp (reducing gross); don't add it again to deductions.
+    // total_deductions = statutory deductions (PF + ESIC + PT + TDS) + advance recovery only.
+    const totalDedFinal = calc.total_deductions + advanceRecovery;
 
     // 6. Upsert prep line
     await db.execute(
       `INSERT INTO salary_prep_line
          (id, run_id, employee_id, employee_code,
           working_days, present_days, leave_days, lwp_days, late_marks, dialer_hours,
+          basic, hra, special_allowance,
           gross_salary, total_deductions, net_salary,
           pf_employee, pf_employer, esic_employee, esic_employer,
           professional_tax, tds, tds_amount, lwp_deduction, advance_recovery, incentive_total, status)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
        ON DUPLICATE KEY UPDATE
          working_days = VALUES(working_days), present_days = VALUES(present_days),
-         lwp_days = VALUES(lwp_days), gross_salary = VALUES(gross_salary),
+         lwp_days = VALUES(lwp_days),
+         basic = VALUES(basic), hra = VALUES(hra), special_allowance = VALUES(special_allowance),
+         gross_salary = VALUES(gross_salary),
          total_deductions = VALUES(total_deductions), net_salary = VALUES(net_salary),
          pf_employee = VALUES(pf_employee), pf_employer = VALUES(pf_employer),
          esic_employee = VALUES(esic_employee), esic_employer = VALUES(esic_employer),
@@ -420,6 +425,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       [
         runId, emp.employee_id, emp.employee_code,
         att.working_days, att.present_days, att.leave_days, att.lwp_days, att.late_marks, att.dialer_hours,
+        calc.basic, calc.hra, calc.special_allowance,
         calc.gross_salary, totalDedFinal, netPayFinal,
         calc.pf_employee, calc.pf_employer, calc.esic_employee, calc.esic_employer,
         calc.professional_tax, tdsMonthly, tdsMonthly, lwpDeduction, advanceRecovery, empIncentive,
