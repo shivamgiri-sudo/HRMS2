@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Script to check all branches and aliases in the database
- * Run with: npx tsx scripts/check-branches.ts
+ * Run with: cd backend && npx tsx ../scripts/check-branches.ts
  */
 
 import { db } from '../backend/src/db/mysql.js';
@@ -26,8 +26,7 @@ async function main() {
        canonical_key,
        display_name,
        alias_text,
-       active_status,
-       created_at
+       active_status
      FROM ats_branch_alias_master
      ORDER BY active_status DESC, display_name`
   );

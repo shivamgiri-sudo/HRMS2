@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Script to fix incorrect branch aliases
- * Run with: npx tsx scripts/fix-branch-aliases.ts
+ * Run with: cd backend && npx tsx ../scripts/fix-branch-aliases.ts
  */
 
 import { db } from '../backend/src/db/mysql.js';
