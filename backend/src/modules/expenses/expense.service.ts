@@ -7,31 +7,29 @@ import {
   type AddExpenseItemDto,
   type ExpenseClaimWithDetails
 } from './expense.model.js';
+import { expenseCategoryService } from './expenseCategory.service.js';
 
 class ExpenseService {
-  private async generateClaimNumber(): Promise<string> {
+  private async generateClaimNumber(insertId: number): Promise<string> {
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const prefix = `EXP-${year}-${month}`;
     const [rows] = await db.query<RowDataPacket[]>(
-      'SELECT claim_number FROM expense_claims WHERE claim_number LIKE ? ORDER BY claim_number DESC LIMIT 1',
-      [`${prefix}%`]
+      'SELECT COUNT(*) as cnt FROM expense_claims WHERE claim_number LIKE ? AND id <= ?',
+      [`${prefix}%`, insertId]
     );
-    let sequence = 1;
-    if (rows.length > 0) {
-      const lastNumber = rows[0].claim_number.split('-')[3];
-      sequence = parseInt(lastNumber, 10) + 1;
-    }
+    const sequence = rows[0].cnt;
     return `${prefix}-${String(sequence).padStart(4, '0')}`;
   }
 
   async createDraftClaim(employeeId: number, processId: number, branchId: number): Promise<ExpenseClaim> {
-    const claimNumber = await this.generateClaimNumber();
     const [result] = await db.query<ResultSetHeader>(
       'INSERT INTO expense_claims (claim_number, employee_id, process_id, branch_id, status, total_amount) VALUES (?, ?, ?, ?, ?, 0)',
-      [claimNumber, employeeId, processId, branchId, ExpenseStatus.DRAFT]
+      ['PENDING', employeeId, processId, branchId, ExpenseStatus.DRAFT]
     );
+    const claimNumber = await this.generateClaimNumber(result.insertId);
+    await db.query('UPDATE expense_claims SET claim_number = ? WHERE id = ?', [claimNumber, result.insertId]);
     const claim = await this.getClaimById(result.insertId);
     if (!claim) throw new Error('Failed to create claim');
     return claim;
@@ -75,6 +73,8 @@ class ExpenseService {
     const claim = await this.getClaimById(claimId);
     if (!claim) throw new Error('Claim not found');
     if (claim.status !== ExpenseStatus.DRAFT) throw new Error('Can only add items to draft claims');
+    const category = await expenseCategoryService.getCategoryById(itemData.category_id);
+    if (!category || !category.is_active) throw new Error('Category not found or inactive');
     const [result] = await db.query<ResultSetHeader>(
       'INSERT INTO expense_items (expense_claim_id, category_id, expense_date, amount, description, vendor_name) VALUES (?, ?, ?, ?, ?, ?)',
       [claimId, itemData.category_id, itemData.expense_date, itemData.amount, itemData.description, itemData.vendor_name || null]

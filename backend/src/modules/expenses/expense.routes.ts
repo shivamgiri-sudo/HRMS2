@@ -21,7 +21,7 @@ expenseRouter.get('/claims/:claimId', h(expenseController.getClaimDetails.bind(e
 
 expenseRouter.post('/claims', h(expenseController.createClaim.bind(expenseController)));
 expenseRouter.post('/claims/:claimId/items', h(expenseController.addClaimItem.bind(expenseController)));
-expenseRouter.delete('/claims/items/:itemId', h(expenseController.deleteClaimItem.bind(expenseController)));
+expenseRouter.delete('/claims/:claimId/items/:itemId', h(expenseController.deleteClaimItem.bind(expenseController)));
 expenseRouter.post('/claims/:claimId/items/:itemId/receipt', h(expenseController.uploadReceipt.bind(expenseController)));
 expenseRouter.post('/claims/:claimId/submit', h(expenseController.submitClaim.bind(expenseController)));
 expenseRouter.post('/claims/:claimId/manager-approve', requireRole('manager'), h(expenseController.managerApprove.bind(expenseController)));
