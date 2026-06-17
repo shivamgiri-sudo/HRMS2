@@ -10,8 +10,8 @@ import { startAccessExpiryScheduler } from "./workers/access-expiry.worker.js";
 import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
 import { startOfficialEmailComplianceScheduler } from "./workers/official-email-compliance.worker.js";
 import { startIntegrationScheduler } from "./workers/integration-scheduler.worker.js";
-import { startLeaveMonthlyWorker } from "./workers/leave-monthly-credit.worker.js";
-import { startAnnualLeaveWorker } from "./workers/leave-annual-el-credit.worker.js";
+import { startLeaveMonthlyCreditWorker } from "./workers/leave-monthly-credit.worker.js";
+import { startELAnnualCreditWorker } from "./workers/leave-annual-el-credit.worker.js";
 import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-db.service.js";
 
 function startServer() {
@@ -26,8 +26,8 @@ function startServer() {
       legacySyncWorker.start();
       startAccessExpiryScheduler();
       startITProvisioningLockScheduler();
-      startLeaveMonthlyWorker();
-      startAnnualLeaveWorker();
+      startLeaveMonthlyCreditWorker();
+      startELAnnualCreditWorker();
       console.log(`[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual started`);
     } else {
       console.log(`[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)`);
