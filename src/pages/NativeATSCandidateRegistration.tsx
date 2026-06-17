@@ -1,10 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { CompanyLogo } from "@/components/CompanyLogo";
 
 type BranchAlias = {
   canonical: string;
   display: string;
   alias: string;
+};
+
+type RecruiterDetail = {
+  name: string;
+  email: string | null;
+  mobile: string | null;
 };
 
 type Bootstrap = {
@@ -17,6 +24,7 @@ type Bootstrap = {
   recruiterOptions: string[];
   branchOptions: string[];
   branchAliases?: BranchAlias[];
+  recruiterDetails?: RecruiterDetail[];
   yesNoOptions: string[];
   preferredShiftOptions: string[];
   nightShiftComfortOptions: string[];
@@ -442,34 +450,87 @@ export default function NativeATSCandidateRegistration() {
 
   const validateForm = () => {
     const nextErrors: Record<string, string> = {};
+    const errors: string[] = [];
 
-    dynamicSections.forEach((section) => {
-      section.fields.forEach((f) => {
-        if (f.t === "camera" || f.t === "file") return;
+    // Name validation
+    const name = String(form.name || "").trim();
+    if (!name) {
+      nextErrors.name = "📝 Please enter your full name";
+      errors.push("📝 Please enter your full name");
+    } else if (name.length < 3) {
+      nextErrors.name = "📝 Name must be at least 3 characters";
+      errors.push("📝 Name must be at least 3 characters");
+    } else if (!/^[a-zA-Z\s]+$/.test(name)) {
+      nextErrors.name = "📝 Name should only contain letters";
+      errors.push("📝 Name should only contain letters");
+    }
 
-        const value = String(form[f.k] || "").trim();
-        if (!value) {
-          nextErrors[f.k] = f.t === "select" ? "Please select an option." : "This field is required.";
-        }
-      });
+    // Mobile validation
+    const mobile = String(form.mobile || "").replace(/\s/g, "");
+    if (!mobile) {
+      nextErrors.mobile = "📞 Please enter your mobile number";
+      errors.push("📞 Please enter your mobile number");
+    } else if (!/^[6-9]\d{9}$/.test(mobile)) {
+      nextErrors.mobile = "📞 Please enter a valid 10-digit Indian mobile number";
+      errors.push("📞 Please enter a valid 10-digit Indian mobile number (starting with 6-9)");
+    }
+
+    // Email validation (if provided)
+    const email = String(form.email || "").trim();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      nextErrors.email = "✉️ Please enter a valid email address";
+      errors.push("✉️ Please enter a valid email address");
+    }
+
+    // Address validation
+    const address = String(form.address || "").trim();
+    if (!address) {
+      nextErrors.address = "📍 Please enter your address";
+      errors.push("📍 Please enter your address");
+    } else if (address.length < 10) {
+      nextErrors.address = "📍 Please enter a complete address (minimum 10 characters)";
+      errors.push("📍 Please enter a complete address");
+    }
+
+    // Required field checks with friendly labels
+    const requiredFields = [
+      { key: 'education', label: '🎓 Education' },
+      { key: 'experience', label: '💼 Experience' },
+      { key: 'gender', label: '🧑 Gender' },
+      { key: 'roleApplied', label: '🗂️ Role Applied' },
+      { key: 'recruiterName', label: '🤝 Recruiter Name' },
+      { key: 'branch', label: '🏢 Branch' },
+      { key: 'rotationalShift', label: '🔄 Rotational Shift' },
+      { key: 'preferredShift', label: '🕐 Preferred Shift' },
+      { key: 'nightShiftComfort', label: '🌙 Night Shift Comfort' },
+      { key: 'leavesRequired', label: '📅 Leaves in 3 Months' },
+      { key: 'ownTwoWheeler', label: '🛵 Own 2 Wheeler' },
+      { key: 'idProofAvailable', label: '🪪 ID Proof' },
+      { key: 'educationProofAvailable', label: '📄 Education Proof' },
+    ];
+
+    requiredFields.forEach(field => {
+      const value = String(form[field.key as keyof typeof form] || "").trim();
+      if (!value) {
+        nextErrors[field.key] = `${field.label} is required`;
+        errors.push(`${field.label} is required`);
+      }
     });
 
-    if (!/^\d{10}$/.test(String(form.mobile || "").replace(/\D/g, ""))) {
-      nextErrors.mobile = "Enter a valid 10-digit number.";
-    }
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(form.email || "").trim())) {
-      nextErrors.email = "Enter a valid email address.";
-    }
-
     setErrors(nextErrors);
-    const firstErrorKey = Object.keys(nextErrors)[0];
-    if (firstErrorKey) {
-      window.setTimeout(() => {
-        document.getElementById(`native_ats_field_${firstErrorKey}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-      }, 50);
+
+    if (errors.length > 0) {
+      alert('⚠️ Please fix the following:\n\n' + errors.join('\n'));
+      const firstErrorKey = Object.keys(nextErrors)[0];
+      if (firstErrorKey) {
+        window.setTimeout(() => {
+          document.getElementById(`native_ats_field_${firstErrorKey}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 50);
+      }
+      return false;
     }
-    return Object.keys(nextErrors).length === 0;
+
+    return true;
   };
 
   const fileToPublicPreview = (file: File) => URL.createObjectURL(file);
@@ -874,10 +935,16 @@ export default function NativeATSCandidateRegistration() {
       setScanMode('done');
     } catch (err: any) {
       const reason = err?.message === 'Failed to load Tesseract'
-        ? 'OCR library could not load (check internet connection)'
-        : err?.message || 'OCR engine error';
-      setScanStatus(`${reason}. Please fill the form manually.`);
+        ? '📡 Could not load scanning engine. Please check your internet connection and try again.'
+        : err?.message?.includes('network')
+          ? '🌐 Network issue detected. Please check your internet and retry.'
+          : '⚠️ Scanning failed. Please fill the form manually - it\'s quick and easy!';
+      setScanStatus(reason);
       setScanMode('done');
+      // Auto-hide error after 5 seconds
+      setTimeout(() => {
+        setScanStatus('');
+      }, 5000);
     }
   };
 
@@ -890,7 +957,9 @@ export default function NativeATSCandidateRegistration() {
 
   const renderWelcome = () => (
     <div className="native-ats-welcome native-ats-anim">
-      <div className="native-ats-welcome-icon">👥</div>
+      <div className="native-ats-welcome-icon">
+        <CompanyLogo size="lg" />
+      </div>
       <h1 className="native-ats-welcome-title">Welcome! 👋</h1>
       <p className="native-ats-welcome-desc">Welcome to the registration desk. Fill in your details accurately to help our recruiters process your application.</p>
       <button className="native-ats-btn-start" onClick={startReg}>✦ Start Registration</button>
@@ -1035,7 +1104,9 @@ export default function NativeATSCandidateRegistration() {
       <div className="native-ats-app">
         <div className="native-ats-hdr">
           <div className="native-ats-hdr-brand">
-            <div className="native-ats-hdr-icon">MC</div>
+            <div className="native-ats-hdr-icon">
+              <CompanyLogo size="sm" />
+            </div>
             <div>
               <div className="native-ats-hdr-title">{bootstrap.companyName.toUpperCase()}</div>
               <div className="native-ats-hdr-sub">Interview Registration Portal</div>
