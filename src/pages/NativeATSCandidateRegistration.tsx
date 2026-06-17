@@ -544,6 +544,12 @@ export default function NativeATSCandidateRegistration() {
     update("resumeFile", file);
   };
 
+  // Helper to get recruiter contact info
+  const getRecruiterContact = (recruiterName: string): RecruiterDetail | null => {
+    if (!bootstrap.recruiterDetails) return null;
+    return bootstrap.recruiterDetails.find(r => r.name === recruiterName) || null;
+  };
+
   const openCam = async () => {
     stopCam();
     const input = cameraInputRef.current;
@@ -1060,8 +1066,9 @@ export default function NativeATSCandidateRegistration() {
   );
 
   const renderSuccess = () => {
-    const mobile = result?.recruiterMobile || "";
-    const email = result?.recruiterEmail || "";
+    const recruiterContact = getRecruiterContact(result?.recruiterName || '');
+    const mobile = result?.recruiterMobile || recruiterContact?.mobile || "";
+    const email = result?.recruiterEmail || recruiterContact?.email || "";
     return (
       <div className="native-ats-succ-page native-ats-anim">
         <div className="native-ats-succ-banner">
