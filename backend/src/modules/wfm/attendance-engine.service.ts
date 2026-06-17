@@ -455,17 +455,26 @@ export const attendanceEngineService = {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 50;
     const offset = (page - 1) * limit;
-    let q = 'SELECT * FROM attendance_daily_record WHERE 1=1';
+    let q = `SELECT id, employee_id, process_id, branch_id,
+       DATE_FORMAT(record_date, '%Y-%m-%d') AS record_date,
+       DATE_FORMAT(clock_in_time,  '%Y-%m-%d %H:%i:%s') AS clock_in_time,
+       DATE_FORMAT(clock_out_time, '%Y-%m-%d %H:%i:%s') AS clock_out_time,
+       raw_minutes, biometric_minutes, attendance_status, lwp_value,
+       late_mark, late_by_minutes, is_locked, attendance_source,
+       source_system, source_record_date, source_reference, rule_config_id,
+       DATE_FORMAT(processed_at, '%Y-%m-%d %H:%i:%s') AS processed_at,
+       created_by
+     FROM attendance_daily_record WHERE 1=1`;
     const p: unknown[] = [];
     if (filters.employeeId) { q += ' AND employee_id = ?'; p.push(filters.employeeId); }
     if (filters.processId)  { q += ' AND process_id = ?';  p.push(filters.processId); }
     if (filters.fromDate)   { q += ' AND record_date >= ?'; p.push(filters.fromDate); }
     if (filters.toDate)     { q += ' AND record_date <= ?'; p.push(filters.toDate); }
     if (filters.attendanceStatus) { q += ' AND attendance_status = ?'; p.push(filters.attendanceStatus); }
-    const cq = q.replace('SELECT *', 'SELECT COUNT(*) AS total');
+    const cq = q.replace(/SELECT[\s\S]+?FROM/, 'SELECT COUNT(*) AS total FROM');
     const [countRows] = await db.execute<RowDataPacket[]>(cq, p);
-    q += ' ORDER BY record_date DESC LIMIT ? OFFSET ?';
-    const [rows] = await db.execute<RowDataPacket[]>(q, [...p, limit, offset]);
+    q += ` ORDER BY record_date DESC LIMIT ${limit} OFFSET ${offset}`;
+    const [rows] = await db.execute<RowDataPacket[]>(q, p);
     return { data: rows as AttendanceDailyRecord[], total: (countRows[0] as any).total, page, limit };
   },
 

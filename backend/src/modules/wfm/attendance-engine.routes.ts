@@ -3,6 +3,8 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { attendanceEngineService, type CorrectionInput } from './attendance-engine.service.js';
 import { z } from 'zod';
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -149,6 +151,91 @@ router.patch('/daily/:employeeId/:date', requireRole('admin', 'hr', 'wfm'), h(as
 router.get('/summary/:employeeId/:month', h(async (req, res) => {
   const data = await attendanceEngineService.getMonthlySummary(req.params.employeeId, req.params.month);
   return res.json({ success: true, data });
+}));
+
+// GET /day-detail/:employeeId/:date — full biometric detail for one day
+// Returns attendance_record + cosec_daily_agg (COSEC's own summary) + raw punches
+router.get('/day-detail/:employeeId/:date', h(async (req, res) => {
+  const { employeeId, date } = req.params;
+
+  // 1. Attendance record + biometric log
+  // DATE_FORMAT returns plain string to avoid mysql2 timezone-shifting DATE columns
+  const [adrRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       adr.id,
+       DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
+       DATE_FORMAT(adr.clock_in_time,  '%Y-%m-%d %H:%i:%s') AS clock_in_time,
+       DATE_FORMAT(adr.clock_out_time, '%Y-%m-%d %H:%i:%s') AS clock_out_time,
+       adr.raw_minutes, adr.biometric_minutes, adr.attendance_status,
+       adr.lwp_value, adr.late_mark, adr.late_by_minutes, adr.is_locked,
+       adr.source_system, adr.attendance_source,
+       DATE_FORMAT(adr.processed_at, '%Y-%m-%d %H:%i:%s') AS processed_at,
+       DATE_FORMAT(b.first_punch_in,  '%Y-%m-%d %H:%i:%s') AS bio_first_punch_in,
+       DATE_FORMAT(b.last_punch_out,  '%Y-%m-%d %H:%i:%s') AS bio_last_punch_out,
+       b.total_punches, b.cosec_user_id, b.source_system AS bio_source
+     FROM attendance_daily_record adr
+     LEFT JOIN biometric_attendance_log b
+       ON b.employee_id = adr.employee_id
+       AND b.punch_date = adr.record_date
+       AND b.source_system = 'ncosec'
+     WHERE adr.employee_id = ? AND adr.record_date = ?
+     LIMIT 1`,
+    [employeeId, date]
+  );
+
+  // 2. cosec_daily_agg — COSEC's authoritative daily summary (night-shift-aware)
+  // CONVERT() is required: cosec_daily_agg.user_id=utf8mb4_0900_ai_ci, employees=utf8mb4_unicode_ci
+  const [aggRows] = await db.execute<RowDataPacket[]>(
+    `SELECT cda.user_id,
+            DATE_FORMAT(cda.shift_date,     '%Y-%m-%d')          AS shift_date,
+            DATE_FORMAT(cda.first_punch_in, '%Y-%m-%d %H:%i:%s') AS first_punch_in,
+            DATE_FORMAT(cda.last_punch_out, '%Y-%m-%d %H:%i:%s') AS last_punch_out,
+            cda.work_minutes,
+            DATE_FORMAT(cda.synced_at,      '%Y-%m-%d %H:%i:%s') AS synced_at
+     FROM cosec_daily_agg cda
+     JOIN employees e ON CONVERT(e.employee_code USING utf8mb4) = CONVERT(cda.user_id USING utf8mb4)
+                     OR CONVERT(e.biometric_code USING utf8mb4) = CONVERT(cda.user_id USING utf8mb4)
+     WHERE e.id = ? AND cda.shift_date = ?
+     LIMIT 1`,
+    [employeeId, date]
+  );
+
+  // 3. Raw individual punch events (night-shift-aware window: after 6 AM on date, or before 6 AM next day)
+  const [punchRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(cps.punch_time, '%Y-%m-%d %H:%i:%s') AS punch_time,
+            cps.io_type, cps.device_id
+     FROM cosec_punch_sync cps
+     JOIN employees e ON CONVERT(e.employee_code USING utf8mb4) = CONVERT(cps.user_id USING utf8mb4)
+                     OR CONVERT(e.biometric_code USING utf8mb4) = CONVERT(cps.user_id USING utf8mb4)
+     WHERE e.id = ?
+       AND (
+         (HOUR(cps.punch_time) >= 6 AND DATE(cps.punch_time) = ?)
+         OR
+         (HOUR(cps.punch_time) < 6  AND DATE(cps.punch_time) = DATE_ADD(?, INTERVAL 1 DAY))
+       )
+     ORDER BY cps.punch_time ASC`,
+    [employeeId, date, date]
+  );
+
+  const adr = (adrRows as RowDataPacket[])[0] ?? null;
+  const agg = (aggRows as RowDataPacket[])[0] ?? null;
+  const punches = (punchRows as RowDataPacket[]).map((p: RowDataPacket) => ({
+    punch_time: p.punch_time,
+    io_type:    p.io_type,
+    io_label:   p.io_type === 0 ? 'IN' : 'OUT',
+    device_id:  p.device_id,
+  }));
+
+  return res.json({
+    success: true,
+    data: {
+      date,
+      attendance_record: adr,
+      cosec_daily_agg:   agg,
+      raw_punches:       punches,
+      punch_count:       punches.length,
+    },
+  });
 }));
 
 export { router as attendanceEngineRouter };

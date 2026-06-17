@@ -19,6 +19,88 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 
 router.use(requireAuth);
 
+// ─── Analytics & Trends ───────────────────────────────────────────────────────
+
+// GET /analytics/trends?months=6 — monthly payroll trend for the chart
+router.get('/analytics/trends', h(async (req, res) => {
+  const months = Math.min(Number(req.query.months ?? 6), 24);
+  // One row per month: prefer approved > processing > FINALIZED, skip zero-employee runs
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT run_month,
+            MAX(total_employees)                          AS headcount,
+            MAX(COALESCE(total_gross,       0))           AS total_gross,
+            MAX(COALESCE(total_deductions,  0))           AS total_deductions,
+            MAX(COALESCE(total_net,         0))           AS total_net
+     FROM salary_prep_run
+     WHERE status IN ('approved','processing','FINALIZED')
+       AND COALESCE(total_employees, 0) > 0
+     GROUP BY run_month
+     ORDER BY run_month DESC
+     LIMIT ${months}`
+  );
+  // Return in ascending order for the chart
+  const data = (rows as RowDataPacket[]).slice().reverse();
+  return res.json({ success: true, data });
+}));
+
+// GET /analytics?runMonth=2026-06&dimension=department — KPI + breakdown
+router.get('/analytics', h(async (req, res) => {
+  const { runMonth, dimension = 'department' } = req.query as Record<string, string>;
+
+  // If no runMonth specified, use the latest run
+  let targetMonth = runMonth;
+  if (!targetMonth) {
+    const [[latest]] = await db.execute<RowDataPacket[]>(
+      `SELECT run_month FROM salary_prep_run
+       WHERE status IN ('approved','processing','FINALIZED')
+       ORDER BY run_month DESC LIMIT 1`
+    );
+    targetMonth = (latest as RowDataPacket)?.run_month ?? null;
+  }
+
+  if (!targetMonth) return res.json({ success: true, runMonth: null, kpi: {}, data: [] });
+
+  // KPI from salary_prep_run
+  const [[run]] = await db.execute<RowDataPacket[]>(
+    `SELECT total_employees AS headcount, total_gross, total_deductions, total_net,
+            ROUND(total_net / NULLIF(total_employees, 0), 0) AS avg_net,
+            COALESCE(SUM(0), 0) AS total_pf_employer, COALESCE(SUM(0), 0) AS total_esic_employer
+     FROM salary_prep_run WHERE run_month = ? LIMIT 1`,
+    [targetMonth]
+  );
+
+  // Breakdown by dimension
+  const dimCol = dimension === 'branch' ? 'e.branch_id' :
+                 dimension === 'process' ? 'e.process_id' : 'e.department_id';
+  const dimLabel = dimension === 'branch' ? 'b.branch_name' :
+                   dimension === 'process' ? 'p.process_name' : 'd.dept_name';
+  const dimJoin = dimension === 'branch'
+    ? 'LEFT JOIN branch_master b ON b.id = e.branch_id'
+    : dimension === 'process'
+    ? 'LEFT JOIN process_master p ON p.id = e.process_id'
+    : 'LEFT JOIN department_master d ON d.id = e.department_id';
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(${dimLabel}, 'Unknown') AS label,
+            COUNT(spl.id)             AS headcount,
+            SUM(spl.gross_salary)     AS total_gross,
+            SUM(spl.total_deductions) AS total_deductions,
+            SUM(spl.net_salary)       AS total_net,
+            SUM(spl.pf_employer)      AS total_pf_employer,
+            SUM(spl.esic_employer)    AS total_esic_employer
+     FROM salary_prep_line spl
+     JOIN salary_prep_run spr ON spr.id = spl.run_id
+     JOIN employees e ON e.id = spl.employee_id
+     ${dimJoin}
+     WHERE spr.run_month = ?
+     GROUP BY ${dimCol}, ${dimLabel}
+     ORDER BY total_net DESC`,
+    [targetMonth]
+  );
+
+  return res.json({ success: true, runMonth: targetMonth, kpi: (run as RowDataPacket) ?? {}, data: rows });
+}));
+
 // ─── Structures ───────────────────────────────────────────────────────────────
 
 router.get("/structures", h(c.listStructures));
