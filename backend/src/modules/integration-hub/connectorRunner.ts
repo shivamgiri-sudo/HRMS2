@@ -134,6 +134,60 @@ export async function executeConnector(
   }
   const config = parseConfig(connector.config_json);
 
+  if (connector.integration_key === "cosec_biometric") {
+    const run = await integrationService.createRun(connector.integration_key, triggeredBy, userId);
+    const startedAt = Date.now();
+    try {
+      const { cosecSyncService } = await import("../wfm/cosec-sync.service.js");
+      const result = await cosecSyncService.sync({
+        from: input.fromDate,
+        to: input.toDate,
+      });
+      const failedCount = result.failed.length + result.unmappedUsers.length;
+      const status = result.success ? "complete" : "failed";
+      await db.execute(
+        `UPDATE integration_connector_run
+            SET status = ?, rows_fetched = ?, rows_promoted = ?, rows_failed = ?,
+                duration_ms = ?, error_message = ?, completed_at = NOW()
+          WHERE id = ?`,
+        [
+          status,
+          result.pulledEvents,
+          result.migratedDays,
+          failedCount,
+          Date.now() - startedAt,
+          failedCount > 0
+            ? `${result.unmappedUsers.length} unmapped user(s); ${result.failed.length} failed day(s)`
+            : null,
+          run.id,
+        ],
+      );
+      return {
+        run_id: run.id,
+        rows_fetched: result.pulledEvents,
+        rows_promoted: result.migratedDays,
+        rows_failed: failedCount,
+        status,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await db.execute(
+        `UPDATE integration_connector_run
+            SET status = 'failed', rows_failed = 1, duration_ms = ?,
+                error_message = ?, completed_at = NOW()
+          WHERE id = ?`,
+        [Date.now() - startedAt, message, run.id],
+      );
+      return {
+        run_id: run.id,
+        rows_fetched: 0,
+        rows_promoted: 0,
+        rows_failed: 1,
+        status: "failed",
+      };
+    }
+  }
+
   if (connector.integration_type === "database") {
     const tableMaps = await integrationService.listTableMaps(connector.integration_key);
     if (tableMaps.length > 0 || config.target_table === "dialer_session_log") {

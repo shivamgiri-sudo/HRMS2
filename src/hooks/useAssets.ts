@@ -5,11 +5,11 @@ import { format } from "date-fns";
 export interface Asset {
   id: string;
   name: string;
-  type: "laptop" | "monitor" | "phone" | "accessory";
+  type: "laptop" | "monitor" | "phone" | "accessory" | string;
   serialNumber: string;
   purchaseDate: string;
   cost: number;
-  status: "available" | "assigned" | "maintenance" | "retired";
+  status: "available" | "assigned" | "maintenance" | "repair" | "retired" | "lost";
   notes?: string;
   assignedTo?: {
     name: string;
@@ -31,7 +31,7 @@ export function useAssets() {
           ? format(new Date(a.purchase_date), "MMM d, yyyy")
           : "Unknown",
         cost: Number(a.purchase_cost ?? 0),
-        status: a.status as Asset["status"],
+        status: (a.status ?? "available") as Asset["status"],
         notes: a.notes ?? undefined,
         assignedTo: (() => {
           const ca = typeof a.current_assignment === "string"
@@ -87,7 +87,6 @@ export function useCreateAsset() {
 
   return useMutation({
     mutationFn: async (data: CreateAssetData) => {
-      // asset_code is generated server-side if not provided
       const res = await hrmsApi.post<{ data: any }>("/api/assets-mgmt", {
         asset_name: data.name,
         asset_category: data.category,
@@ -117,7 +116,7 @@ export interface UpdateAssetData {
   vendor?: string;
   warranty_end_date?: string;
   notes?: string;
-  status?: "available" | "assigned" | "maintenance" | "retired";
+  status?: Asset["status"];
 }
 
 export function useUpdateAsset() {
@@ -131,6 +130,7 @@ export function useUpdateAsset() {
         notes: data.notes ?? null,
         serial_number: data.serial_number ?? null,
         asset_category: data.category ?? null,
+        purchase_date: data.purchase_date ?? null,
         purchase_cost: data.purchase_cost ?? null,
         vendor: data.vendor ?? null,
         warranty_expiry: data.warranty_end_date ?? null,
@@ -188,6 +188,7 @@ export function useReturnAsset() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["assets"] });
       queryClient.invalidateQueries({ queryKey: ["asset-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["asset-history"] });
     },
   });
 }
@@ -208,10 +209,17 @@ export function useAssetHistory(assetId: string | null) {
     queryKey: ["asset-history", assetId],
     queryFn: async (): Promise<AssetAssignment[]> => {
       if (!assetId) return [];
-
-      // TODO: dedicated GET /api/assets-mgmt/:id/history endpoint not yet implemented.
-      // Returning empty array until the backend exposes assignment history.
-      return [];
+      const res = await hrmsApi.get<{ data: any[] }>(`/api/assets-mgmt/${assetId}/history`);
+      return (res.data ?? []).map((row: any) => ({
+        id: row.id,
+        assignedDate: row.assigned_date ? format(new Date(row.assigned_date), "MMM d, yyyy") : "",
+        returnedDate: row.returned_date ? format(new Date(row.returned_date), "MMM d, yyyy") : null,
+        notes: row.notes ?? null,
+        employee: {
+          name: row.employee_name || row.employee_code || "Unknown employee",
+          avatar: row.avatar_url ?? row.photo_url ?? undefined,
+        },
+      }));
     },
     enabled: !!assetId,
   });

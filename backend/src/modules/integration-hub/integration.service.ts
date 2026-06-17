@@ -49,6 +49,7 @@ const APPROVED_MAPPING_TARGETS = {
     "punch_time",
     "first_punch",
     "last_punch",
+    "total_punches",
     "biometric_minutes",
   ],
 } as const;
@@ -395,9 +396,42 @@ export const integrationService = {
       }];
     }
 
+    const config = configObject(connector.config_json);
+    if (
+      integrationKey === "cosec_biometric"
+      && String(config.source_mode ?? process.env.NCOSEC_SOURCE_MODE ?? "mysql") !== "mssql"
+    ) {
+      const tables = [
+        "integration_biometric_daily",
+        "wfm_external_punch_staging",
+        "stg_legacy_attendance",
+        "attendance_daily_record",
+      ];
+      const result: Array<{ table: string; columns: Array<{ name: string; type: string }> }> = [];
+      for (const table of tables) {
+        const [columns] = await db.execute<RowDataPacket[]>(
+          `SELECT COLUMN_NAME AS name, COLUMN_TYPE AS type
+             FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+            ORDER BY ORDINAL_POSITION`,
+          [table],
+        );
+        if (columns.length > 0) {
+          result.push({
+            table: `mas_hrms.${table}`,
+            columns: columns.map((column) => ({
+              name: String(column.name ?? ""),
+              type: String(column.type ?? "unknown"),
+            })),
+          });
+        }
+      }
+      return result;
+    }
+
     const credentials = await getCredentialsForKey(integrationKey);
     if (!credentials) throw Object.assign(new Error("Database credentials are not configured"), { statusCode: 400 });
-    const config = configObject(connector.config_json);
     const tables = configuredSourceTables(config, credentials.tables ?? []);
     if (tables.length === 0) {
       throw Object.assign(new Error("No source tables are configured for this connector"), { statusCode: 400 });
@@ -406,9 +440,16 @@ export const integrationService = {
     const dialect: DbDialect = credentials.db_type === "mssql" ? "mssql" : "mysql";
     const result: Array<{ table: string; columns: Array<{ name: string; type: string }> }> = [];
     for (const table of tables) {
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) continue;
+      const parts = table.split(".");
+      if (parts.some((part) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(part))) continue;
+      const tableName = parts.at(-1)!;
+      const schemaName = parts.length > 1 ? parts.at(-2)! : null;
       const query = dialect === "mssql"
-        ? `SELECT COLUMN_NAME AS name, DATA_TYPE AS type FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '${table}' ORDER BY ORDINAL_POSITION`
+        ? `SELECT COLUMN_NAME AS name, DATA_TYPE AS type
+             FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = '${tableName}'
+              ${schemaName ? `AND TABLE_SCHEMA = '${schemaName}'` : ""}
+            ORDER BY ORDINAL_POSITION`
         : `SHOW COLUMNS FROM ${quoteIdentifier(table, dialect)}`;
       const fetched = await fetchFromDatabase({
         host: credentials.host,

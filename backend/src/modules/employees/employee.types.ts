@@ -30,4 +30,17 @@ export interface PaginatedResult<T> {
   total: number;
   page: number;
   limit: number;
+  stats?: {
+    total_employees: number;
+    active_employees: number;
+    inactive_employees: number;
+    department_count: number;
+  };
+  process_breakdown?: Array<{
+    process_id: string | null;
+    process_name: string;
+    active_count: number;
+    inactive_count: number;
+    total_count: number;
+  }>;
 }

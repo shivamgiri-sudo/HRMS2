@@ -27,7 +27,6 @@ const assignSalary = async (
     "INSERT INTO employee_salary_assignment (id, employee_id, structure_id, ctc_annual, effective_from) VALUES (?, ?, ?, ?, ?)",
     [asgId, employeeId, structureId, ctcAnnual, effectiveFrom]
   );
-  // Mirror CTC onto employees.ctc for fast payslip joins
   await db.execute("UPDATE employees SET ctc = ? WHERE id = ?", [ctcAnnual, employeeId]);
   await appendJourneyEvent({
     employeeId,
@@ -53,7 +52,7 @@ async function getEmployeeContext(id: string) {
        LEFT JOIN department_master dept ON dept.id = e.department_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN process_master p ON p.id = e.process_id
-       LEFT JOIN employees m ON m.id = e.reporting_manager_id
+       LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
       WHERE e.id = ? LIMIT 1`,
     [id]
   );
@@ -69,7 +68,6 @@ export const employeeService = {
     if ((dup as RowDataPacket[]).length > 0) throw new Error("Employee code already exists");
 
     const id = randomUUID();
-    // salary_start_date defaults to date_of_joining when not explicitly set
     const salaryStartDate = input.salaryStartDate ?? input.dateOfJoining;
     await db.execute(
       `INSERT INTO employees
@@ -99,7 +97,6 @@ export const employeeService = {
     );
     const employee = await this.getEmployee(id);
 
-    // Auto-assign salary when structureId + ctcAnnual provided at creation
     if (input.structureId && input.ctcAnnual) {
       const salaryDate = input.salaryStartDate ?? input.dateOfJoining;
       await assignSalary(id, input.structureId, input.ctcAnnual, salaryDate, userId);
@@ -131,17 +128,20 @@ export const employeeService = {
   },
 
   async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } | string }): Promise<PaginatedResult<Employee>> {
-    const { page, limit, status, recordStatus, processId, branchId, departmentId, search, scopeFilter } = filters;
+    const { page, limit, status, recordStatus, processId, branchId, departmentId, search, scopeFilter, includeAnalytics } = filters;
     const offset = (page - 1) * limit;
     const conds: string[] = [];
     const params: unknown[] = [];
 
+    const inactiveStatusSql =
+      "('Inactive', 'inactive', 'INACTIVE', 'Terminated', 'terminated', 'TERMINATED', 'Offboarded', 'offboarded', 'OFFBOARDED', 'Absconded', 'absconded', 'ABSCONDED', 'Resigned', 'resigned', 'RESIGNED', 'Left', 'left', 'LEFT', 'Separated', 'separated', 'SEPARATED')";
+
     if (recordStatus === "active") {
-      conds.push("e.active_status = 1 AND LOWER(COALESCE(e.employment_status, 'active')) NOT IN ('inactive', 'terminated', 'offboarded', 'absconded')");
+      conds.push(`e.active_status = 1 AND (e.employment_status IS NULL OR e.employment_status NOT IN ${inactiveStatusSql})`);
     } else if (recordStatus === "inactive") {
-      conds.push("LOWER(COALESCE(e.employment_status, '')) IN ('inactive', 'terminated', 'offboarded', 'absconded')");
+      conds.push("e.active_status = 0");
     } else {
-      conds.push("(e.active_status = 1 OR LOWER(COALESCE(e.employment_status, '')) IN ('inactive', 'terminated', 'offboarded', 'absconded'))");
+      conds.push("e.active_status IN (0, 1)");
     }
 
     if (status)    { conds.push("LOWER(e.employment_status) = LOWER(?)"); params.push(status); }
@@ -175,8 +175,9 @@ export const employeeService = {
     if (search)    {
       const term = `%${search}%`;
       conds.push(`(
-        CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) LIKE ?
-        OR e.first_name LIKE ?
+        COALESCE(e.full_name, '') LIKE ?
+        OR CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) LIKE ?
+        OR COALESCE(e.first_name, '') LIKE ?
         OR COALESCE(e.last_name, '') LIKE ?
         OR e.employee_code LIKE ?
         OR COALESCE(e.biometric_code, '') LIKE ?
@@ -193,10 +194,9 @@ export const employeeService = {
         OR COALESCE(TRIM(CONCAT(m.first_name, ' ', COALESCE(m.last_name, ''))), '') LIKE ?
         OR CAST(COALESCE(e.legacy_emp_id, e.legacy_id, '') AS CHAR) LIKE ?
       )`);
-      params.push(term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term);
+      params.push(term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term, term);
     }
 
-    // Apply scope filter from middleware (object {sql, params} or legacy string)
     if (scopeFilter) {
       if (typeof scopeFilter === 'object' && scopeFilter.sql) {
         const scopeClause = String(scopeFilter.sql).replace(/^WHERE\s+/i, '').trim();
@@ -218,10 +218,20 @@ export const employeeService = {
        LEFT JOIN branch_master      b     ON b.id     = e.branch_id      AND b.active_status     = 1
        LEFT JOIN process_master     p     ON p.id     = e.process_id     AND p.active_status     = 1
        LEFT JOIN cost_centre_master cc    ON cc.id    = e.cost_centre_id
-       LEFT JOIN employees          m     ON m.id     = e.reporting_manager_id`;
+       LEFT JOIN employees          m     ON m.id     = COALESCE(e.reporting_manager_id, e.manager_id)`;
+    const needsFilterJoins = Boolean(processId || branchId || departmentId || search);
+    const fromForCounts = needsFilterJoins ? fromWithJoins : "FROM employees e";
+    const fromForProcessBreakdown = needsFilterJoins
+      ? fromWithJoins
+      : `
+       FROM employees e
+       LEFT JOIN process_master p ON p.id = e.process_id AND p.active_status = 1`;
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.*,
+         COALESCE(NULLIF(TRIM(e.first_name), ''), NULLIF(TRIM(e.full_name), ''), '') AS first_name,
+         COALESCE(e.last_name, '') AS last_name,
+         e.id AS employee_id,
          COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS email,
          dept.dept_name         AS department_name,
          desig.designation_name AS designation_name,
@@ -236,9 +246,63 @@ export const employeeService = {
       params
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total ${fromWithJoins} ${where}`, params
+      `SELECT COUNT(DISTINCT e.id) AS total ${fromForCounts} ${where}`, params
     );
-    return { data: rows as Employee[], total: (countRows as any)[0]?.total ?? 0, page, limit };
+    const [statsRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(DISTINCT e.id) AS total_employees,
+         COUNT(DISTINCT CASE
+           WHEN e.active_status = 1
+            AND (e.employment_status IS NULL OR e.employment_status NOT IN ${inactiveStatusSql})
+           THEN e.id END) AS active_employees,
+         COUNT(DISTINCT CASE
+           WHEN e.active_status = 0
+           THEN e.id END) AS inactive_employees,
+         COUNT(DISTINCT e.department_id) AS department_count
+       ${fromForCounts}
+       ${where}`,
+      params
+    );
+    const [processBreakdownRows] = includeAnalytics
+      ? await db.execute<RowDataPacket[]>(
+          `SELECT
+             e.process_id,
+             COALESCE(NULLIF(TRIM(p.process_name), ''), 'Unassigned') AS process_name,
+             COUNT(DISTINCT CASE
+               WHEN e.active_status = 1
+                AND (e.employment_status IS NULL OR e.employment_status NOT IN ${inactiveStatusSql})
+               THEN e.id END) AS active_count,
+         COUNT(DISTINCT CASE
+           WHEN e.active_status = 0
+           THEN e.id END) AS inactive_count,
+             COUNT(DISTINCT e.id) AS total_count
+           ${fromForProcessBreakdown}
+           ${where}
+           GROUP BY e.process_id, process_name
+           ORDER BY total_count DESC, process_name ASC
+           LIMIT 12`,
+          params
+        )
+      : [[]];
+    return {
+      data: rows as Employee[],
+      total: Number((countRows as any)[0]?.total ?? 0),
+      page,
+      limit,
+      stats: {
+        total_employees: Number((statsRows as any)[0]?.total_employees ?? 0),
+        active_employees: Number((statsRows as any)[0]?.active_employees ?? 0),
+        inactive_employees: Number((statsRows as any)[0]?.inactive_employees ?? 0),
+        department_count: Number((statsRows as any)[0]?.department_count ?? 0),
+      },
+      process_breakdown: (processBreakdownRows as any[]).map((row) => ({
+        process_id: row.process_id ?? null,
+        process_name: row.process_name ?? "Unassigned",
+        active_count: Number(row.active_count ?? 0),
+        inactive_count: Number(row.inactive_count ?? 0),
+        total_count: Number(row.total_count ?? 0),
+      })),
+    };
   },
 
   async updateEmployee(id: string, input: UpdateEmployeeInput, _userId: string): Promise<Employee> {
@@ -286,7 +350,6 @@ export const employeeService = {
       await db.execute(`UPDATE employees SET ${sets.join(", ")} WHERE id = ?`, params);
     }
 
-    // Auto-assign roles mapped to the new designation (additive only, never removes)
     if (input.designationId) {
       try {
         const updated = await this.getEmployee(id);
@@ -301,7 +364,6 @@ export const employeeService = {
           }
         }
       } catch (err) {
-        // Non-fatal — log but don't fail the update
         console.error("[employee.service] designation role auto-assign failed:", err);
       }
     }

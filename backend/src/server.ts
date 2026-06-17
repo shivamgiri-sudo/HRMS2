@@ -4,9 +4,10 @@ import { runPendingMigrations } from "./db/runPendingMigrations.js";
 import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
 import { startAttendanceEngineScheduler } from "./modules/wfm/attendance-engine.cron.js";
-import { startCosecSyncWorker } from "./modules/wfm/cosec-sync.worker.js";
+import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
 import { legacySyncWorker } from "./workers/legacy-sync-worker.js";
 import { startAccessExpiryScheduler } from "./workers/access-expiry.worker.js";
+import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
 import { startOfficialEmailComplianceScheduler } from "./workers/official-email-compliance.worker.js";
 import { startIntegrationScheduler } from "./workers/integration-scheduler.worker.js";
 import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-db.service.js";
@@ -15,7 +16,6 @@ function startServer() {
   app.listen(env.PORT, () => {
     startOfficialEmailComplianceScheduler();
     startIntegrationScheduler();
-    startCosecSyncWorker();
     console.log("[scheduler] official-email, integration, and COSEC sync checks completed");
     if (env.ENABLE_SCHEDULERS) {
       startTenureBadgeScheduler();
@@ -23,7 +23,8 @@ function startServer() {
       startAttendanceEngineScheduler();
       legacySyncWorker.start();
       startAccessExpiryScheduler();
-      console.log(`[schedulers] tenure, communication, attendance, legacy-sync, access-expiry started`);
+      startITProvisioningLockScheduler();
+      console.log(`[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning started`);
     } else {
       console.log(`[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)`);
     }
@@ -31,12 +32,16 @@ function startServer() {
   });
 }
 
+async function initializeRuntime() {
+  await migrateLegacyIntegrationSecrets();
+  const cosecActive = await bootstrapCosecIntegration();
+  console.log(`[cosec-sync] automatic schedule ${cosecActive ? "active" : "inactive"}`);
+  startServer();
+}
+
 runPendingMigrations()
-  .then(async () => {
-    await migrateLegacyIntegrationSecrets();
-    startServer();
-  })
-  .catch((error) => {
+  .then(initializeRuntime)
+  .catch(async (error) => {
     console.error("[startup] migration runner failed:", error instanceof Error ? error.message : error);
 
     if (env.NODE_ENV === "production") {
@@ -45,5 +50,5 @@ runPendingMigrations()
     }
 
     console.warn("[startup] development mode: starting with degraded migration health.");
-    startServer();
+    await initializeRuntime();
   });

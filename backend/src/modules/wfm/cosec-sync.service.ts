@@ -1,12 +1,8 @@
 import sql from "mssql";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { getNcosecPool } from "../../db/ncosecDb.js";
 import { attendanceEngineService } from "./attendance-engine.service.js";
-
-type PunchRow = {
-  user_id: string;
-  event_datetime: Date;
-};
 
 type PunchGroup = {
   cosecUserId: string;
@@ -14,6 +10,9 @@ type PunchGroup = {
   firstPunch: Date;
   lastPunch: Date;
   totalPunches: number;
+  workingMinutes: number;
+  sourceSystem: string;
+  sourceTable: string;
 };
 
 type SyncResult = {
@@ -70,15 +69,6 @@ function toIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function formatDateInIndia(date: Date): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
-}
-
 function defaultFromDate(): string {
   const date = new Date();
   date.setDate(date.getDate() - 1);
@@ -105,99 +95,182 @@ function getConfig() {
     trustServerCertificate: boolEnv("NCOSEC_DB_TRUST_CERT", true),
     table: process.env.NCOSEC_EVENT_TABLE?.trim() || "dbo.Mx_ATDEventTrn",
     userColumn: process.env.NCOSEC_USER_ID_COLUMN?.trim() || "UserID",
-    datetimeColumn: process.env.NCOSEC_DATETIME_COLUMN?.trim() || "EventDateTime",
+    datetimeColumn: process.env.NCOSEC_DATETIME_COLUMN?.trim() || "Edatetime",
+    sourceMode: process.env.NCOSEC_SOURCE_MODE === "mssql" ? "mssql" : "mysql",
     batchDays: numberEnv("NCOSEC_SYNC_LOOKBACK_DAYS", 1),
   };
 }
 
-async function getPool() {
-  const cfg = getConfig();
-  return sql.connect({
-    server: cfg.host,
-    port: cfg.port,
-    user: cfg.user,
-    password: cfg.password,
-    database: cfg.database,
-    options: {
-      encrypt: cfg.encrypt,
-      trustServerCertificate: cfg.trustServerCertificate,
-    },
-    pool: {
-      max: 5,
-      min: 0,
-      idleTimeoutMillis: 30000,
-    },
-  });
-}
-
-async function pullCosecPunches(from: string, to: string): Promise<PunchRow[]> {
+async function pullCosecAttendance(from: string, to: string): Promise<PunchGroup[]> {
   const cfg = getConfig();
   const table = quoteTable(cfg.table);
   const userColumn = quoteColumn(cfg.userColumn);
   const datetimeColumn = quoteColumn(cfg.datetimeColumn);
-  const pool = await getPool();
-  try {
-    const request = pool.request();
-    request.input("fromDate", sql.DateTime2, new Date(`${from}T00:00:00+05:30`));
-    request.input("toDate", sql.DateTime2, new Date(`${to}T23:59:59+05:30`));
-    const result = await request.query(`
+  const pool = await getNcosecPool();
+  const request = pool.request();
+  request.input("fromDate", sql.Date, from);
+  request.input("toDate", sql.Date, to);
+  const result = await request.query(`
       SELECT
         CAST(${userColumn} AS NVARCHAR(100)) AS user_id,
-        ${datetimeColumn} AS event_datetime
+        CONVERT(CHAR(10), CAST(${datetimeColumn} AS DATE), 23) AS attendance_date,
+        MIN(${datetimeColumn}) AS first_punch,
+        MAX(${datetimeColumn}) AS last_punch,
+        COUNT_BIG(*) AS total_punches,
+        DATEDIFF(MINUTE, MIN(${datetimeColumn}), MAX(${datetimeColumn})) AS working_minutes
       FROM ${table}
       WHERE ${datetimeColumn} >= @fromDate
-        AND ${datetimeColumn} <= @toDate
+        AND ${datetimeColumn} < DATEADD(DAY, 1, @toDate)
         AND ${userColumn} IS NOT NULL
-      ORDER BY ${userColumn}, ${datetimeColumn}
+      GROUP BY ${userColumn}, CAST(${datetimeColumn} AS DATE)
+      ORDER BY ${userColumn}, attendance_date
     `);
-    return result.recordset
-      .map((row: any) => ({ user_id: String(row.user_id ?? "").trim(), event_datetime: new Date(row.event_datetime) }))
-      .filter((row: PunchRow) => row.user_id && !Number.isNaN(row.event_datetime.getTime()));
-  } finally {
-    await pool.close();
-  }
+  return result.recordset
+    .map((row: any) => ({
+      cosecUserId: String(row.user_id ?? "").trim(),
+      punchDate: String(row.attendance_date ?? "").trim(),
+      firstPunch: new Date(row.first_punch),
+      lastPunch: new Date(row.last_punch),
+      totalPunches: Math.max(0, Number(row.total_punches ?? 0)),
+      workingMinutes: Math.max(0, Number(row.working_minutes ?? 0)),
+      sourceSystem: "cosec_sqlserver",
+      sourceTable: cfg.table,
+    }))
+    .filter((row: PunchGroup) =>
+      row.cosecUserId
+      && /^\d{4}-\d{2}-\d{2}$/.test(row.punchDate)
+      && !Number.isNaN(row.firstPunch.getTime())
+      && !Number.isNaN(row.lastPunch.getTime())
+      && Number.isFinite(row.totalPunches)
+      && Number.isFinite(row.workingMinutes)
+    );
 }
 
-function groupPunches(rows: PunchRow[]): PunchGroup[] {
-  const map = new Map<string, PunchGroup>();
-  for (const row of rows) {
-    const punchDate = formatDateInIndia(row.event_datetime);
-    const key = `${row.user_id}__${punchDate}`;
-    const existing = map.get(key);
-    if (!existing) {
-      map.set(key, {
-        cosecUserId: row.user_id,
+async function tableExists(tableName: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1
+       FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = ?
+      LIMIT 1`,
+    [tableName],
+  );
+  return rows.length > 0;
+}
+
+async function pullMysqlAttendance(from: string, to: string): Promise<PunchGroup[]> {
+  const groups = new Map<string, PunchGroup>();
+  const add = (row: any, sourceSystem: string, sourceTable: string) => {
+    const cosecUserId = String(row.user_id ?? "").trim();
+    const punchDate = String(row.attendance_date ?? "").trim();
+    const firstPunch = new Date(row.first_punch);
+    const lastPunch = new Date(row.last_punch);
+    const totalPunches = Math.max(0, Number(row.total_punches ?? 0));
+    const workingMinutes = Math.max(0, Number(row.working_minutes ?? 0));
+    if (
+      !cosecUserId
+      || !/^\d{4}-\d{2}-\d{2}$/.test(punchDate)
+      || Number.isNaN(firstPunch.getTime())
+      || Number.isNaN(lastPunch.getTime())
+    ) return;
+    const key = `${cosecUserId}__${punchDate}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        cosecUserId,
         punchDate,
-        firstPunch: row.event_datetime,
-        lastPunch: row.event_datetime,
-        totalPunches: 1,
+        firstPunch,
+        lastPunch,
+        totalPunches,
+        workingMinutes,
+        sourceSystem,
+        sourceTable,
       });
-      continue;
     }
-    if (row.event_datetime < existing.firstPunch) existing.firstPunch = row.event_datetime;
-    if (row.event_datetime > existing.lastPunch) existing.lastPunch = row.event_datetime;
-    existing.totalPunches += 1;
+  };
+
+  if (await tableExists("integration_biometric_daily")) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_code AS user_id,
+              DATE_FORMAT(activity_date, '%Y-%m-%d') AS attendance_date,
+              first_punch,
+              last_punch,
+              COALESCE(total_punches, CASE WHEN first_punch IS NULL THEN 0 WHEN first_punch = last_punch THEN 1 ELSE 2 END) AS total_punches,
+              biometric_minutes AS working_minutes
+         FROM integration_biometric_daily
+        WHERE activity_date >= ?
+          AND activity_date <= ?
+          AND employee_code IS NOT NULL
+        ORDER BY activity_date DESC, updated_at DESC`,
+      [from, to],
+    );
+    for (const row of rows) add(row, "cosec_mysql", "mas_hrms.integration_biometric_daily");
   }
-  return Array.from(map.values());
+
+  if (await tableExists("wfm_external_punch_staging")) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_code AS user_id,
+              DATE_FORMAT(MIN(DATE(punch_time)), '%Y-%m-%d') AS attendance_date,
+              MIN(punch_time) AS first_punch,
+              MAX(punch_time) AS last_punch,
+              COUNT(*) AS total_punches,
+              TIMESTAMPDIFF(MINUTE, MIN(punch_time), MAX(punch_time)) AS working_minutes
+         FROM wfm_external_punch_staging
+        WHERE DATE(punch_time) >= ?
+          AND DATE(punch_time) <= ?
+          AND employee_code IS NOT NULL
+        GROUP BY employee_code, DATE(punch_time)`,
+      [from, to],
+    );
+    for (const row of rows) add(row, "cosec_mysql", "mas_hrms.wfm_external_punch_staging");
+  }
+
+  if (await tableExists("stg_legacy_attendance")) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_code AS user_id,
+              DATE_FORMAT(attendance_date, '%Y-%m-%d') AS attendance_date,
+              in_time AS first_punch,
+              out_time AS last_punch,
+              CASE WHEN in_time IS NULL THEN 0 WHEN in_time = out_time THEN 1 ELSE 2 END AS total_punches,
+              COALESCE(ROUND(total_hours * 60), TIMESTAMPDIFF(MINUTE, in_time, out_time), 0) AS working_minutes
+         FROM stg_legacy_attendance
+        WHERE attendance_date >= ?
+          AND attendance_date <= ?
+          AND employee_code IS NOT NULL`,
+      [from, to],
+    );
+    for (const row of rows) add(row, "cosec_mysql", "mas_hrms.stg_legacy_attendance");
+  }
+
+  return [...groups.values()];
 }
 
 async function resolveEmployee(cosecUserId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ebe.employee_id,
+    `SELECT e.id AS employee_id,
             e.employee_code,
             e.branch_id,
             e.process_id,
             b.branch_name,
             p.process_name
-       FROM employee_biometric_enrollment ebe
-       JOIN employees e ON e.id = ebe.employee_id
+       FROM employees e
+       LEFT JOIN employee_biometric_enrollment ebe
+         ON ebe.employee_id = e.id
+        AND ebe.is_active = 1
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN process_master p ON p.id = e.process_id
-      WHERE ebe.cosec_user_id = ?
-        AND ebe.is_active = 1
+      WHERE (
+          ebe.cosec_user_id = ?
+          OR e.biometric_code = ?
+          OR e.employee_code = ?
+        )
         AND e.active_status = 1
+      ORDER BY CASE
+        WHEN ebe.cosec_user_id = ? THEN 0
+        WHEN e.biometric_code = ? THEN 1
+        ELSE 2
+      END
       LIMIT 1`,
-    [cosecUserId],
+    [cosecUserId, cosecUserId, cosecUserId, cosecUserId, cosecUserId],
   );
   return rows[0] as any | undefined;
 }
@@ -206,31 +279,42 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
   const employee = await resolveEmployee(group.cosecUserId);
   if (!employee) return "unmapped";
 
-  const rawMinutes = Math.max(0, Math.round((group.lastPunch.getTime() - group.firstPunch.getTime()) / 60000));
+  const rawMinutes = Math.round(group.workingMinutes);
+  await db.execute(
+    `INSERT INTO employee_biometric_enrollment
+       (id, employee_id, cosec_user_id, is_active, last_sync_at)
+     VALUES (UUID(), ?, ?, 1, NOW())
+     ON DUPLICATE KEY UPDATE is_active = 1, last_sync_at = NOW()`,
+    [employee.employee_id, group.cosecUserId],
+  );
 
   await db.execute(
     `INSERT INTO biometric_attendance_log
-       (id, employee_id, cosec_user_id, punch_date, first_punch_in, last_punch_out, raw_minutes, source_system, migrated_at)
-     VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'cosec_sqlserver', NOW())
+       (id, employee_id, cosec_user_id, punch_date, first_punch_in, last_punch_out,
+        total_punches, raw_minutes, source_system, migrated_at)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, NOW())
      ON DUPLICATE KEY UPDATE
        cosec_user_id = VALUES(cosec_user_id),
-       first_punch_in = LEAST(COALESCE(first_punch_in, VALUES(first_punch_in)), VALUES(first_punch_in)),
-       last_punch_out = GREATEST(COALESCE(last_punch_out, VALUES(last_punch_out)), VALUES(last_punch_out)),
-       raw_minutes = GREATEST(raw_minutes, VALUES(raw_minutes)),
+       first_punch_in = VALUES(first_punch_in),
+       last_punch_out = VALUES(last_punch_out),
+       total_punches = VALUES(total_punches),
+       raw_minutes = VALUES(raw_minutes),
        migrated_at = NOW()`,
-    [employee.employee_id, group.cosecUserId, group.punchDate, group.firstPunch, group.lastPunch, rawMinutes],
+    [employee.employee_id, group.cosecUserId, group.punchDate, group.firstPunch, group.lastPunch, group.totalPunches, rawMinutes, group.sourceSystem],
   );
 
   await db.execute(
     `INSERT INTO integration_biometric_daily
-       (id, integration_key, source_table, employee_code, activity_date, first_punch, last_punch, biometric_minutes)
-     VALUES (UUID(), 'cosec_sqlserver', 'Mx_ATDEventTrn', ?, ?, ?, ?, ?)
+       (id, integration_key, source_table, employee_code, activity_date,
+        first_punch, last_punch, total_punches, biometric_minutes)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
-       first_punch = LEAST(COALESCE(first_punch, VALUES(first_punch)), VALUES(first_punch)),
-       last_punch = GREATEST(COALESCE(last_punch, VALUES(last_punch)), VALUES(last_punch)),
-       biometric_minutes = GREATEST(biometric_minutes, VALUES(biometric_minutes)),
+       first_punch = VALUES(first_punch),
+       last_punch = VALUES(last_punch),
+       total_punches = VALUES(total_punches),
+       biometric_minutes = VALUES(biometric_minutes),
        updated_at = NOW()`,
-    [employee.employee_code, group.punchDate, group.firstPunch, group.lastPunch, rawMinutes],
+    [group.sourceSystem, group.sourceTable, employee.employee_code, group.punchDate, group.firstPunch, group.lastPunch, group.totalPunches, rawMinutes],
   );
 
   await db.execute(
@@ -239,9 +323,9 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
         current_status, punch_source, branch_name, process_name)
      VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'BIOMETRIC', ?, ?)
      ON DUPLICATE KEY UPDATE
-       login_time = LEAST(COALESCE(login_time, VALUES(login_time)), VALUES(login_time)),
-       logout_time = GREATEST(COALESCE(logout_time, VALUES(logout_time)), VALUES(logout_time)),
-       total_login_minutes = GREATEST(total_login_minutes, VALUES(total_login_minutes)),
+       login_time = VALUES(login_time),
+       logout_time = VALUES(logout_time),
+       total_login_minutes = VALUES(total_login_minutes),
        current_status = VALUES(current_status),
        punch_source = 'BIOMETRIC'`,
     [
@@ -262,7 +346,7 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
   );
 
   const attendance = await attendanceEngineService.processEmployee(employee.employee_id, group.punchDate);
-  await attendanceEngineService.upsertDailyRecord(attendance, "cosec_sqlserver_sync");
+  await attendanceEngineService.upsertDailyRecord(attendance, `${group.sourceSystem}_sync`);
   await db.execute(
     `UPDATE attendance_daily_record
         SET clock_in_time = ?, clock_out_time = ?
@@ -288,7 +372,10 @@ export const cosecSyncService = {
     running = true;
     const from = normalizeDateInput(options.from, defaultFromDate());
     const to = normalizeDateInput(options.to, defaultToDate());
-    const sourceTable = getConfig().table;
+    const config = getConfig();
+    const sourceTable = config.sourceMode === "mysql"
+      ? "mas_hrms.integration_biometric_daily,wfm_external_punch_staging,stg_legacy_attendance"
+      : config.table;
 
     const result: SyncResult = {
       success: true,
@@ -303,9 +390,10 @@ export const cosecSyncService = {
     };
 
     try {
-      const rows = await pullCosecPunches(from, to);
-      result.pulledEvents = rows.length;
-      const groups = groupPunches(rows);
+      const groups = config.sourceMode === "mysql"
+        ? await pullMysqlAttendance(from, to)
+        : await pullCosecAttendance(from, to);
+      result.pulledEvents = groups.reduce((total, group) => total + group.totalPunches, 0);
       result.groupedDays = groups.length;
 
       for (const group of groups) {
@@ -328,5 +416,55 @@ export const cosecSyncService = {
     } finally {
       running = false;
     }
+  },
+
+  async testConnection() {
+    const cfg = getConfig();
+    if (cfg.sourceMode === "mysql") {
+      const tables = [
+        "integration_biometric_daily",
+        "wfm_external_punch_staging",
+        "stg_legacy_attendance",
+        "attendance_daily_record",
+      ];
+      const counts: Record<string, number> = {};
+      for (const table of tables) {
+        if (!(await tableExists(table))) {
+          counts[table] = 0;
+          continue;
+        }
+        const [rows] = await db.query<RowDataPacket[]>("SELECT COUNT(*) AS total FROM ??", [table]);
+        counts[table] = Number(rows[0]?.total ?? 0);
+      }
+      return {
+        ok: true,
+        source: "mas_hrms",
+        accessMode: "MYSQL_HRMS_OWNED_TABLES",
+        tables: counts,
+        latestUserId: null,
+        latestEventAt: null,
+      };
+    }
+    const table = quoteTable(cfg.table);
+    const userColumn = quoteColumn(cfg.userColumn);
+    const datetimeColumn = quoteColumn(cfg.datetimeColumn);
+    const pool = await getNcosecPool();
+    const result = await pool.request().query(`
+        SELECT TOP (1)
+          CAST(${userColumn} AS NVARCHAR(100)) AS user_id,
+          ${datetimeColumn} AS event_datetime
+        FROM ${table}
+        WHERE ${userColumn} IS NOT NULL
+          AND ${datetimeColumn} IS NOT NULL
+        ORDER BY ${datetimeColumn} DESC
+      `);
+      const row = result.recordset[0];
+      return {
+        ok: true,
+        source: `${cfg.database}.${cfg.table}`,
+        accessMode: "SELECT_ONLY",
+        latestUserId: row?.user_id ? String(row.user_id) : null,
+        latestEventAt: row?.event_datetime ?? null,
+      };
   },
 };

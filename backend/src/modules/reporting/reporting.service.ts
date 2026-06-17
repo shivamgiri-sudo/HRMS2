@@ -1338,12 +1338,17 @@ const QUERIES: Record<string, Builder> = {
 // ── Service ───────────────────────────────────────────────────────────────────
 
 export const reportingService = {
-  async leaveBalanceOverview(year: number, userId: string) {
+  async leaveBalanceOverview(year: number, userId: string, filters?: { branchId?: string; processId?: string }) {
     if (!Number.isInteger(year) || year < 2000 || year > 2100) {
       throw Object.assign(new Error("year must be between 2000 and 2100"), { statusCode: 400 });
     }
     const scope = await resolveBranchScope(userId);
     const sc = scopeClause(scope, "e.branch_id");
+    const extraConds: string[] = [];
+    const extraParams: unknown[] = [];
+    if (filters?.branchId)  { extraConds.push("e.branch_id = ?");  extraParams.push(filters.branchId); }
+    if (filters?.processId) { extraConds.push("e.process_id = ?"); extraParams.push(filters.processId); }
+    const extraSql = extraConds.length ? "AND " + extraConds.join(" AND ") : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.id AS employee_id,
               e.employee_code,
@@ -1363,8 +1368,9 @@ export const reportingService = {
         WHERE e.active_status = 1
           AND lt.active_status = 1
           AND ${sc.sql}
+          ${extraSql}
         ORDER BY e.employee_code, lt.leave_name`,
-      [year, ...sc.params]
+      [year, ...sc.params, ...extraParams]
     );
 
     const leaveTypes = Array.from(new Set(rows.map((row) => String(row.leave_name))));

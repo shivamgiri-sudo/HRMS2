@@ -290,11 +290,12 @@ export async function syncDatabaseConnector(
               await db.execute(
                 `INSERT INTO integration_biometric_daily
                    (id, integration_key, source_table, employee_code, activity_date,
-                    first_punch, last_punch, biometric_minutes, run_id)
-                 VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, NULL)
+                    first_punch, last_punch, total_punches, biometric_minutes, run_id)
+                 VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, NULL)
                  ON DUPLICATE KEY UPDATE
                    first_punch = VALUES(first_punch),
                    last_punch = VALUES(last_punch),
+                   total_punches = VALUES(total_punches),
                    biometric_minutes = VALUES(biometric_minutes),
                    updated_at = NOW()`,
                 [
@@ -304,6 +305,7 @@ export async function syncDatabaseConnector(
                   sessionDate,
                   row.first_punch ?? null,
                   row.last_punch ?? null,
+                  Math.max(0, Number(row.total_punches ?? 0)),
                   Math.max(0, Number(row.login_minutes ?? 0)),
                 ],
               );

@@ -67,6 +67,7 @@ export async function fetchFromDatabase(
       options: {
         encrypt: config.encrypt ?? false,
         trustServerCertificate: config.trustServerCertificate ?? true,
+        readOnlyIntent: true,
       },
     }).connect();
 
@@ -306,6 +307,7 @@ export function buildBiometricAggregateQuery(
       ${dayExpr} AS session_date,
       MIN(${firstPunch}) AS first_punch,
       MAX(${lastPunch}) AS last_punch,
+      COUNT(*) AS total_punches,
       ${minuteExpr} AS login_minutes
     FROM ${table}
     ${where}

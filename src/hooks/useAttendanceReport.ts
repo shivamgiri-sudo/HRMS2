@@ -7,6 +7,9 @@ interface AttendanceReportRecord {
   employeeName: string;
   employeeCode: string;
   department: string;
+  branch: string;
+  process: string;
+  costCentre: string;
   totalDays: number;
   totalHours: number;
   lateArrivals: number;
@@ -25,24 +28,30 @@ interface AttendanceReportSummary {
   avgLateMinutes: number;
 }
 
-const EMPLOYEE_PAGE_SIZE = 200;
-const ATTENDANCE_PAGE_SIZE = 200;
+const EMPLOYEE_PAGE_SIZE = 500;
+const ATTENDANCE_PAGE_SIZE = 500;
 
-export function useAttendanceReportData(month: number, year: number) {
+export function useAttendanceReportData(month: number, year: number, branchId?: string, processId?: string, costCentreId?: string) {
   const startDate = startOfMonth(new Date(year, month - 1));
   const endDate = endOfMonth(startDate);
   const start = format(startDate, "yyyy-MM-dd");
   const end = format(endDate, "yyyy-MM-dd");
 
   return useQuery({
-    queryKey: ["attendance-report-data", month, year],
+    queryKey: ["attendance-report-data", month, year, branchId, processId, costCentreId],
     queryFn: async (): Promise<AttendanceReportSummary> => {
-      // Fetch all active employees. Backend employee API caps limit at 200.
       let empPage = 1;
       const allEmployees: any[] = [];
+      const empFilters = [
+        "recordStatus=active",
+        `limit=${EMPLOYEE_PAGE_SIZE}`,
+        branchId ? `branchId=${branchId}` : "",
+        processId ? `processId=${processId}` : "",
+        costCentreId ? `costCentreId=${costCentreId}` : "",
+      ].filter(Boolean).join("&");
       while (true) {
         const empRes = await hrmsApi.get<{ success?: boolean; data: any[]; total: number; page: number; limit: number }>(
-          `/api/employees?recordStatus=active&limit=${EMPLOYEE_PAGE_SIZE}&page=${empPage}`
+          `/api/employees?${empFilters}&page=${empPage}`
         );
         const batch = empRes.data ?? [];
         allEmployees.push(...batch);
@@ -51,12 +60,19 @@ export function useAttendanceReportData(month: number, year: number) {
         empPage++;
       }
 
-      // Fetch all attendance pages. Backend attendance API caps limit at 200.
       let page = 1;
       const allSessions: any[] = [];
+      const attFilters = [
+        `fromDate=${start}`,
+        `toDate=${end}`,
+        `limit=${ATTENDANCE_PAGE_SIZE}`,
+        branchId ? `branchId=${branchId}` : "",
+        processId ? `processId=${processId}` : "",
+        costCentreId ? `costCentreId=${costCentreId}` : "",
+      ].filter(Boolean).join("&");
       while (true) {
         const res = await hrmsApi.get<{ success: boolean; data: any[]; total: number; limit: number }>(
-          `/api/wfm/attendance/daily?fromDate=${start}&toDate=${end}&limit=${ATTENDANCE_PAGE_SIZE}&page=${page}`
+          `/api/wfm/attendance/daily?${attFilters}&page=${page}`
         );
         const batch = res.data ?? [];
         allSessions.push(...batch);
@@ -67,7 +83,7 @@ export function useAttendanceReportData(month: number, year: number) {
 
       const attMap = new Map<string, {
         totalDays: number; totalHours: number; lateArrivals: number; totalLateMinutes: number;
-        employeeName: string; employeeCode: string; department: string;
+        employeeName: string; employeeCode: string; department: string; branch: string; process: string; costCentre: string;
       }>();
 
       for (const s of allSessions) {
@@ -79,6 +95,9 @@ export function useAttendanceReportData(month: number, year: number) {
             employeeName: s.employee_name ?? `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim(),
             employeeCode: s.employee_code ?? "",
             department: s.department_name ?? s.dept_name ?? "-",
+            branch: s.branch_name ?? "-",
+            process: s.process_name ?? "-",
+            costCentre: s.cost_centre_name ?? "-",
           });
         }
         const r = attMap.get(employeeId)!;
@@ -98,13 +117,16 @@ export function useAttendanceReportData(month: number, year: number) {
           employeeName: att?.employeeName ?? emp.full_name ?? `${emp.first_name ?? ""} ${emp.last_name ?? ""}`.trim(),
           employeeCode: att?.employeeCode ?? emp.employee_code ?? "",
           department: att?.department ?? emp.department_name ?? emp.dept_name ?? "-",
+          branch: att?.branch ?? emp.branch_name ?? "-",
+          process: att?.process ?? emp.process_name ?? "-",
+          costCentre: att?.costCentre ?? emp.cost_centre_name ?? "-",
           totalDays: att?.totalDays ?? 0,
           totalHours: att?.totalHours ?? 0,
           lateArrivals: att?.lateArrivals ?? 0,
           totalLateMinutes: att?.totalLateMinutes ?? 0,
           totalOvertimeHours: 0,
-          workingHoursStart: null,
-          workingHoursEnd: null,
+          workingHoursStart: emp.working_hours_start ?? null,
+          workingHoursEnd: emp.working_hours_end ?? null,
         };
       }).sort((a, b) => a.employeeName.localeCompare(b.employeeName));
 

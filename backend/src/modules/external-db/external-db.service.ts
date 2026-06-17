@@ -179,6 +179,7 @@ export async function getPoolForKey(key: string): Promise<sql.ConnectionPool | m
         encrypt: creds.encrypt ?? false,
         trustServerCertificate: creds.trust_server_certificate ?? true,
         enableArithAbort: true,
+        readOnlyIntent: true,
       },
       connectionTimeout: 15000,
       requestTimeout: 60000,

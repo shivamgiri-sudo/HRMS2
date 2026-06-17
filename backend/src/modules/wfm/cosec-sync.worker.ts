@@ -13,7 +13,13 @@ function dateOnly(value: Date): string {
 
 export function startCosecSyncWorker() {
   if (intervalHandle) return;
-  if (process.env.NCOSEC_SYNC_ENABLED !== "true") {
+  const explicitlyDisabled = process.env.NCOSEC_SYNC_ENABLED === "false";
+  const configured = Boolean(
+    process.env.NCOSEC_DB_HOST
+    && process.env.NCOSEC_DB_USER
+    && process.env.NCOSEC_DB_PASSWORD
+  );
+  if (explicitlyDisabled || !configured) {
     console.log("[cosec-sync] disabled");
     return;
   }

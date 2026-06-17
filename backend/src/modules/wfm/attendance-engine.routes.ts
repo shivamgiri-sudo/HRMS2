@@ -99,6 +99,7 @@ router.get('/daily', h(async (req: AuthenticatedRequest, res: Response) => {
   const isPrivileged = await hasRole(userId, 'admin', 'hr', 'wfm', 'manager');
   const filters: any = {
     processId:        req.query.processId as string | undefined,
+    branchId:         req.query.branchId as string | undefined,
     fromDate:         req.query.fromDate as string | undefined,
     toDate:           req.query.toDate as string | undefined,
     attendanceStatus: req.query.attendanceStatus as string | undefined,

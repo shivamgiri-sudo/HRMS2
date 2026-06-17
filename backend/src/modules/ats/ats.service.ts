@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { sendSelectedEmail, sendRejectedEmail } from "./ats.email.service.js";
+import { sendSelectedEmail, sendRejectedEmail, sendRejectedEmailProfessional } from "./ats.email.service.js";
 import { sendOnboardingToken } from "./ats.onboarding.service.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import type {
@@ -193,14 +193,31 @@ export const atsService = {
     return this.getCandidate(id);
   },
 
-  async moveStage(candidateId: string, toStage: string, userId: string, remarks?: string): Promise<AtsCandidate> {
+  async moveStage(
+    candidateId: string,
+    toStage: string,
+    userId: string,
+    remarks?: string,
+    extra?: { interviewRating?: number | null; interviewNotes?: string | null }
+  ): Promise<AtsCandidate> {
     const candidate = await this.getCandidate(candidateId);
     await db.execute("UPDATE ats_candidate SET current_stage = ?, updated_at = NOW() WHERE id = ?", [toStage, candidateId]);
-    await db.execute(
-      `INSERT INTO ats_candidate_stage_log (id, candidate_id, from_stage, to_stage, remarks, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [randomUUID(), candidateId, candidate.current_stage, toStage, remarks ?? null, userId]
-    );
+
+    // Store recruiter feedback if provided (migration 202 adds these columns)
+    const hasRatingCols = !!(extra?.interviewRating !== undefined || extra?.interviewNotes !== undefined);
+    if (hasRatingCols) {
+      await db.execute(
+        `INSERT INTO ats_candidate_stage_log (id, candidate_id, from_stage, to_stage, remarks, updated_by, interview_rating, interview_notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [randomUUID(), candidateId, candidate.current_stage, toStage, remarks ?? null, userId, extra?.interviewRating ?? null, extra?.interviewNotes ?? null]
+      );
+    } else {
+      await db.execute(
+        `INSERT INTO ats_candidate_stage_log (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [randomUUID(), candidateId, candidate.current_stage, toStage, remarks ?? null, userId]
+      );
+    }
 
     // Fire email side-effects after the stage is committed — failure must not break the stage move
     if (toStage === 'Selected' && candidate.email) {
@@ -214,12 +231,23 @@ export const atsService = {
       }).catch(() => { /* already logged in ats_email_log */ });
       sendOnboardingToken(candidateId, userId).catch(() => {});
     } else if (toStage === 'Rejected' && candidate.email) {
-      sendRejectedEmail({
+      // Professional rejection email — replaces the old plain-text rejection
+      sendRejectedEmailProfessional({
         candidateId,
         to: candidate.email,
         candidateName: candidate.full_name ?? '',
-        branchName: candidate.applied_for_branch ?? '',
-      }).catch(() => { /* already logged in ats_email_log */ });
+        branchDisplayName: (candidate as any).branch_name ?? candidate.applied_for_branch ?? '',
+        processName: (candidate as any).process_name ?? null,
+        applicationRef: candidate.candidate_code ?? null,
+      }).catch(() => {
+        // Fallback to legacy rejection email if professional template fails
+        sendRejectedEmail({
+          candidateId,
+          to: candidate.email!,
+          candidateName: candidate.full_name ?? '',
+          branchName: candidate.applied_for_branch ?? '',
+        }).catch(() => {});
+      });
     }
 
     return this.getCandidate(candidateId);

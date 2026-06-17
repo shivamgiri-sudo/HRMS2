@@ -9,9 +9,10 @@ import {
   bgvCompletionEmail,
   payrollHRNotificationEmail,
   branchHeadApprovalEmail,
+  rejectedEmail,
 } from './email.templates.js';
 
-type EmailType = 'registration' | 'selected' | 'rejected' | 'token_sent' | 'offer_review' | 'approved' | 'welcome' |
+type EmailType = 'registration' | 'selected' | 'rejected' | 'rejected_professional' | 'token_sent' | 'offer_review' | 'approved' | 'welcome' |
                  'recruiter_notification' | 'selection_congratulations' | 'bgv_completion' | 'payroll_hr_notification' | 'branch_head_approval';
 
 interface SendResult { ok: boolean; error?: string }
@@ -322,5 +323,28 @@ export async function sendBranchHeadApprovalEmail(params: {
     html,
     params.candidateId,
     'branch_head_approval',
+  );
+}
+
+export async function sendRejectedEmailProfessional(params: {
+  candidateId: string;
+  to: string;
+  candidateName: string;
+  branchDisplayName: string;
+  processName?: string | null;
+  applicationRef?: string | null;
+}): Promise<SendResult> {
+  const html = rejectedEmail({
+    candidateName: params.candidateName,
+    branchDisplayName: params.branchDisplayName,
+    processName: params.processName ?? null,
+    applicationRef: params.applicationRef ?? null,
+  });
+  return send(
+    params.to,
+    'Update on Your Application — MAS Callnet India',
+    html,
+    params.candidateId,
+    'rejected_professional',
   );
 }

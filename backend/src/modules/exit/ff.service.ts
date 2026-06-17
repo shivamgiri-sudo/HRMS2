@@ -37,11 +37,9 @@ export interface FullFinalCalculation {
   approved_at: string | null;
   created_at: string;
   updated_at: string;
-  // joined fields
   employee_name?: string;
 }
 
-// FIX G — exported gratuity calculation type
 export interface GratuityCalculation {
   amount: number;
   status: "draft" | "not_eligible" | "pending_configuration";
@@ -49,18 +47,12 @@ export interface GratuityCalculation {
 }
 
 export const ffService = {
-  /**
-   * Create a Full & Final calculation for an exit request.
-   * Always sets is_ff_provisional = 1 on insert.
-   * Logs FULL_FINAL_CREATED audit entry.
-   */
   async createFF(
     exitRequestId: string,
     data: FfInput,
     preparedBy: string,
     req?: Request
   ): Promise<FullFinalCalculation> {
-    // Verify exit_request exists and get employee_id
     const [exitRows] = await db.execute<RowDataPacket[]>(
       "SELECT id, employee_id FROM exit_request WHERE id = ? LIMIT 1",
       [exitRequestId]
@@ -69,7 +61,6 @@ export const ffService = {
     if (!exitReq) throw new Error("Exit request not found");
 
     const id = randomUUID();
-    // FIX H — explicitly set is_ff_provisional = 1 on every new insert
     await db.execute(
       `INSERT INTO full_final_calculation
          (id, exit_request_id, employee_id, calculation_date,
@@ -107,13 +98,10 @@ export const ffService = {
     return this.getFF(exitRequestId);
   },
 
-  /**
-   * Fetch F&F calculation with employee name joined.
-   */
   async getFF(exitRequestId: string): Promise<FullFinalCalculation> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT ff.*,
-              CONCAT_WS(' ', e.first_name, e.last_name) AS employee_name
+              COALESCE(NULLIF(e.full_name, ''), CONCAT_WS(' ', e.first_name, e.last_name)) AS employee_name
          FROM full_final_calculation ff
          LEFT JOIN employees e ON e.id = ff.employee_id
         WHERE ff.exit_request_id = ?
@@ -125,11 +113,6 @@ export const ffService = {
     return rec;
   },
 
-  /**
-   * Approve an F&F calculation. Admin only (enforced at route level).
-   * FIX H — blocks approval when is_ff_provisional = 1.
-   * Logs FULL_FINAL_APPROVED audit entry.
-   */
   async approveFF(
     id: string,
     approvedBy: string,
@@ -143,7 +126,6 @@ export const ffService = {
     if (!rec) throw new Error("F&F calculation not found");
     if (rec.status === "paid") throw new Error("F&F already paid — cannot re-approve");
 
-    // FIX H — block approval while any statutory value is provisional
     if (Number(rec.is_ff_provisional) === 1) {
       throw new Error(
         "Cannot approve F&F: calculation contains provisional statutory values. " +
@@ -171,11 +153,6 @@ export const ffService = {
     return this.getFF(rec.exit_request_id);
   },
 
-  /**
-   * FIX H — Mark an F&F record as no longer provisional after manual verification.
-   * Authorised user confirms all statutory values are approved and correct.
-   * Logs FF_PROVISIONAL_CLEARED audit entry.
-   */
   async setProvisionalFalse(
     id: string,
     verifiedBy: string,
@@ -208,18 +185,6 @@ export const ffService = {
     return this.getFF(rec.exit_request_id);
   },
 
-  /**
-   * FIX G — Gratuity calculation per Payment of Gratuity Act.
-   * Requires explicit gratuityWageBase (approved eligible wage).
-   * Returns pending_configuration when wage base is not supplied.
-   * Returns not_eligible when tenure < minYears.
-   * Returns draft amount with note when eligible.
-   *
-   * @param doj              - Date of joining (ISO string or Date)
-   * @param exitDate         - Last working date (ISO string or Date)
-   * @param gratuityWageBase - Approved eligible monthly wage; undefined = not configured
-   * @param config           - Optional overrides: minYears, daysInMonth, monthsPerYear, maxGratuity
-   */
   calculateGratuity(
     doj: string | Date,
     exitDate: string | Date,
@@ -270,14 +235,7 @@ export const ffService = {
     };
   },
 
-  /**
-   * Compute gratuity for an employee by looking up their current salary assignment
-   * and delegating to the payroll calculateGratuity helper.
-   * Formula: (last_basic / 26) * 15 * years_served
-   * Uses the employee's active salary assignment basic component.
-   */
   async calculateGratuityFromEmployee(employeeId: string): Promise<GratuityCalculation> {
-    // Fetch current active salary assignment to derive last basic
     const [salRows] = await db.execute<RowDataPacket[]>(
       `SELECT esa.ctc_annual, ss.basic_pct
          FROM employee_salary_assignment esa

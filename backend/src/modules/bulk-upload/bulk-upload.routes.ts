@@ -93,17 +93,22 @@ router.post("/batches/:id/rows", requireRole("admin", "hr"), h(async (req: Authe
   res.status(201).json({ success: true, count: rows.length });
 }));
 
-// POST /batches/:id/import — placeholder for batch import (RPC equivalent)
+// POST /batches/:id/import — dispatch import by rpc_name
 router.post("/batches/:id/import", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
-  // This is a placeholder for batch import logic that was previously handled by Supabase RPCs.
-  // Actual import logic should be implemented per upload_type_code.
   const { id } = req.params;
   const { rpc_name } = req.body as { rpc_name?: string };
 
-  // For now, return a not-implemented message so the frontend knows the feature needs backend work
+  if (rpc_name === "import_official_email_update_batch") {
+    const { importOfficialEmailBatch } = await import(
+      "../it-provisioning/it-provisioning.bulk.service.js"
+    );
+    const data = await importOfficialEmailBatch(id, req.authUser!.id);
+    return res.json({ success: true, data });
+  }
+
   return res.status(501).json({
     success: false,
-    error: `Import function '${rpc_name || "unknown"}' for batch ${id} is not yet implemented in the MySQL backend. Please implement the import logic.`,
+    error: `Import function '${rpc_name || "unknown"}' for batch ${id} is not yet implemented in the MySQL backend.`,
   });
 }));
 

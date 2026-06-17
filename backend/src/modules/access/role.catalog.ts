@@ -11,6 +11,7 @@ export const ROLES = [
   "recruiter",
   "employee",
   "wfm",
+  "branch_it",
   "process_manager",
   "assistant_manager",
   "team_leader",
@@ -63,6 +64,7 @@ export const MODULES = [
   "demo_seed",
   "account_control",
   "communication",
+  "it_provisioning",
 ] as const;
 
 export type PeopleOSModule = (typeof MODULES)[number];
@@ -81,6 +83,11 @@ export const ROLE_MODULE_ACCESS: Record<PeopleOSRole, PeopleOSModule[]> = {
     "helpdesk", "leave", "attendance", "exit", "org", "workflow",
     "workforce_mandate", "reports", "audit_logs", "account_control",
     "lms", "kpi", "performance_feedback", "engagement", "communication",
+    "it_provisioning",
+  ],
+
+  branch_it: [
+    "dashboard", "employees", "it_provisioning",
   ],
 
   recruiter: [

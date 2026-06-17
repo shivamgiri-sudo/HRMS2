@@ -946,20 +946,19 @@ const Onboarding = () => {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="space-y-2">
-                      <Label htmlFor="employeeCode">Employee Number *</Label>
+                      <Label htmlFor="employeeCode">Employee Number</Label>
                       <div className="relative">
                         <Hash className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input 
-                          id="employeeCode" 
-                          placeholder={loadingNextCode ? "Loading..." : nextEmployeeCode || "ACQ001"}
-                          value={formData.employeeCode}
-                          onChange={(e) => handleInputChange('employeeCode', e.target.value.toUpperCase())}
-                          disabled={isSubmitting || loadingNextCode}
-                          className="pl-9 font-mono"
+                        <Input
+                          id="employeeCode"
+                          value={formData.employeeCode || nextEmployeeCode || ''}
+                          readOnly
+                          disabled
+                          className="pl-9 font-mono bg-slate-50 cursor-not-allowed"
                         />
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Next available: {loadingNextCode ? "..." : nextEmployeeCode}. You can customize if needed.
+                        Auto-assigned on employee creation. Format: MAS##### / IDC##### / #####C
                       </p>
                     </div>
                     <div className="space-y-2">

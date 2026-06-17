@@ -62,6 +62,7 @@ export const employeeFiltersSchema = z.object({
   branchId: z.string().uuid().optional(),
   departmentId: z.string().uuid().optional(),
   search: z.string().trim().optional(),
+  includeAnalytics: z.coerce.boolean().default(false),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });

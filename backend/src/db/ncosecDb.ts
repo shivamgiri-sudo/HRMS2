@@ -10,8 +10,9 @@ const legacyConfig: sql.config = {
   database: env.NCOSEC_DB_NAME,
   options: {
     encrypt: env.NCOSEC_DB_ENCRYPT === 'true',
-    trustServerCertificate: true,
+    trustServerCertificate: env.NCOSEC_DB_TRUST_CERT === 'true',
     enableArithAbort: true,
+    readOnlyIntent: true,
   },
   connectionTimeout: 15000,
   requestTimeout: 60000,

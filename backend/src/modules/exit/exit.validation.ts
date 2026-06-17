@@ -39,6 +39,7 @@ export const updateExitStatusSchema = z.object({
 export const listExitRequestsSchema = z.object({
   status: z.string().optional(),
   employeeId: z.string().uuid().optional(),
+  managerEmployeeId: z.string().uuid().optional(),
   branchId: z.string().uuid().optional(),
   processId: z.string().uuid().optional(),
   search: z.string().trim().optional(),

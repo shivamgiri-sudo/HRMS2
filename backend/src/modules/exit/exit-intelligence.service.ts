@@ -127,16 +127,25 @@ export async function createDefaultClearanceTasks(exitRequestId: string, employe
   return { created: tasks.length, skipped: false };
 }
 
-export async function getExitCommandCenter() {
+export async function getExitCommandCenter(filters: { managerEmployeeId?: string } = {}) {
+  const params: unknown[] = [];
+  const scopeWhere = filters.managerEmployeeId
+    ? `WHERE (e.reporting_manager_id = ? OR e.manager_id = ?)`
+    : "";
+  if (filters.managerEmployeeId) params.push(filters.managerEmployeeId, filters.managerEmployeeId);
+
   const [summary] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*) AS total,
-       SUM(CASE WHEN status IN ('submitted','manager_review','hr_review','admin_review') THEN 1 ELSE 0 END) AS pending_review,
-       SUM(CASE WHEN status IN ('accepted','notice_serving') THEN 1 ELSE 0 END) AS active_notice,
-       SUM(CASE WHEN status IN ('exited','exit_confirmed') THEN 1 ELSE 0 END) AS completed,
+       SUM(CASE WHEN er.status IN ('submitted','manager_review','hr_review','admin_review') THEN 1 ELSE 0 END) AS pending_review,
+       SUM(CASE WHEN er.status IN ('accepted','notice_serving') THEN 1 ELSE 0 END) AS active_notice,
+       SUM(CASE WHEN er.status IN ('exited','exit_confirmed') THEN 1 ELSE 0 END) AS completed,
        SUM(CASE WHEN hs.regrettable_exit = 1 THEN 1 ELSE 0 END) AS regrettable
      FROM exit_request er
-     LEFT JOIN exit_employee_health_snapshot hs ON hs.exit_request_id = er.id`
+     JOIN employees e ON e.id = er.employee_id
+     LEFT JOIN exit_employee_health_snapshot hs ON hs.exit_request_id = er.id
+     ${scopeWhere}`,
+    params,
   );
 
   const [requests] = await db.execute<RowDataPacket[]>(
@@ -151,7 +160,7 @@ export async function getExitCommandCenter() {
             COALESCE(clearance.total_tasks, 0) AS clearance_total,
             COALESCE(clearance.cleared_tasks, 0) AS clearance_cleared
        FROM exit_request er
-       LEFT JOIN employees e ON e.id = er.employee_id
+       JOIN employees e ON e.id = er.employee_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN process_master p ON p.id = e.process_id
        LEFT JOIN exit_employee_health_snapshot hs ON hs.exit_request_id = er.id
@@ -161,15 +170,27 @@ export async function getExitCommandCenter() {
                 SUM(CASE WHEN status IN ('cleared','waived') THEN 1 ELSE 0 END) AS cleared_tasks
            FROM exit_clearance_task GROUP BY exit_request_id
        ) clearance ON clearance.exit_request_id = er.id
+      ${scopeWhere}
       ORDER BY er.created_at DESC
-      LIMIT 100`
+      LIMIT 100`,
+    params,
   );
 
+  const clearanceParams: unknown[] = [];
+  const clearanceScope = filters.managerEmployeeId
+    ? `JOIN exit_request er ON er.id = ect.exit_request_id
+       JOIN employees e ON e.id = er.employee_id
+       WHERE (e.reporting_manager_id = ? OR e.manager_id = ?)`
+    : "";
+  if (filters.managerEmployeeId) clearanceParams.push(filters.managerEmployeeId, filters.managerEmployeeId);
+
   const [clearance] = await db.execute<RowDataPacket[]>(
-    `SELECT clearance_area, status, COUNT(*) AS count
-       FROM exit_clearance_task
-      GROUP BY clearance_area, status
-      ORDER BY clearance_area, status`
+    `SELECT ect.clearance_area, ect.status, COUNT(*) AS count
+       FROM exit_clearance_task ect
+       ${clearanceScope}
+      GROUP BY ect.clearance_area, ect.status
+      ORDER BY ect.clearance_area, ect.status`,
+    clearanceParams,
   );
 
   return { summary: summary[0] ?? {}, requests, clearance };

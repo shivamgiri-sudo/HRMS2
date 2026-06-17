@@ -632,6 +632,7 @@ export const attendanceEngineService = {
   async listRecords(filters: {
     employeeId?: string;
     processId?: string;
+    branchId?: string;
     fromDate?: string;
     toDate?: string;
     attendanceStatus?: string;
@@ -664,12 +665,14 @@ export const attendanceEngineService = {
     const p: unknown[] = [];
     if (filters.employeeId) { q += ' AND adr.employee_id = ?'; p.push(filters.employeeId); }
     if (filters.processId)  { q += ' AND adr.process_id = ?';  p.push(filters.processId); }
+    if (filters.branchId)   { q += ' AND adr.branch_id = ?';   p.push(filters.branchId); }
     if (filters.fromDate)   { q += ' AND adr.record_date >= ?'; p.push(filters.fromDate); }
     if (filters.toDate)     { q += ' AND adr.record_date <= ?'; p.push(filters.toDate); }
     if (filters.attendanceStatus) { q += ' AND adr.attendance_status = ?'; p.push(filters.attendanceStatus); }
     const cq = `SELECT COUNT(*) AS total FROM attendance_daily_record adr WHERE 1=1` +
       (filters.employeeId    ? ` AND adr.employee_id = ?`       : '') +
       (filters.processId     ? ` AND adr.process_id = ?`        : '') +
+      (filters.branchId      ? ` AND adr.branch_id = ?`         : '') +
       (filters.fromDate      ? ` AND adr.record_date >= ?`      : '') +
       (filters.toDate        ? ` AND adr.record_date <= ?`      : '') +
       (filters.attendanceStatus ? ` AND adr.attendance_status = ?` : '');

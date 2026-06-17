@@ -6,14 +6,18 @@ import { randomUUID } from 'crypto';
 
 export async function listIncentiveMasters() {
   const [rows] = await db.execute<RowDataPacket[]>(
-    'SELECT * FROM incentive_master ORDER BY incentive_name'
+    `SELECT *, CASE WHEN active_status = 1 THEN 'active' ELSE 'inactive' END AS status
+       FROM incentive_master
+      WHERE active_status = 1
+      ORDER BY incentive_name`
   );
   return rows;
 }
 
 export async function getIncentiveMasterById(id: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    'SELECT * FROM incentive_master WHERE id=?', [id]
+    `SELECT *, CASE WHEN active_status = 1 THEN 'active' ELSE 'inactive' END AS status
+       FROM incentive_master WHERE id=?`, [id]
   );
   return rows[0] ?? null;
 }
@@ -88,11 +92,11 @@ export async function createBatch(data: {
 export async function getBatchLines(batchId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT iul.*,
-            CONCAT(e.first_name, ' ', e.last_name) AS employee_name
+            COALESCE(NULLIF(e.full_name, ''), CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))) AS employee_name
      FROM incentive_upload_line iul
      JOIN employees e ON e.id = iul.employee_id
      WHERE iul.batch_id=?
-     ORDER BY e.first_name`,
+     ORDER BY employee_name`,
     [batchId]
   );
   return rows;
@@ -102,23 +106,36 @@ export async function importLines(
   batchId: string,
   rows: Array<{ employee_code: string; amount: number; remarks?: string | null }>
 ) {
-  // Look up employee IDs by code
-  const codes = rows.map(r => r.employee_code);
+  if (!rows.length) {
+    return { imported: 0, valid: 0, total_amount: 0 };
+  }
+
+  const codes = Array.from(new Set(rows.map(r => String(r.employee_code ?? '').trim()).filter(Boolean)));
+  if (!codes.length) {
+    return { imported: rows.length, valid: 0, total_amount: 0 };
+  }
+
   const placeholders = codes.map(() => '?').join(',');
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_code FROM employees WHERE employee_code IN (${placeholders})`,
+    `SELECT id, employee_code
+       FROM employees
+      WHERE employee_code IN (${placeholders})
+        AND active_status = 1
+        AND LOWER(COALESCE(employment_status, 'active')) NOT IN ('inactive', 'terminated', 'offboarded', 'absconded')`,
     codes
   );
   const empMap = new Map<string, string>();
-  for (const e of empRows as any[]) empMap.set(e.employee_code, e.id);
+  for (const e of empRows as any[]) empMap.set(String(e.employee_code), e.id);
 
   let validCount = 0;
   let totalAmount = 0;
 
   for (const row of rows) {
-    const empId = empMap.get(row.employee_code);
+    const code = String(row.employee_code ?? '').trim();
+    const empId = empMap.get(code);
     const id = randomUUID();
-    const isValid = !!empId;
+    const amount = Number(row.amount ?? 0);
+    const isValid = !!empId && Number.isFinite(amount) && amount > 0;
     await db.execute(
       `INSERT INTO incentive_upload_line
          (id, batch_id, employee_id, employee_code, amount, remarks, validation_status, validation_msg)
@@ -128,16 +145,15 @@ export async function importLines(
          validation_status=VALUES(validation_status), validation_msg=VALUES(validation_msg)`,
       [id, batchId,
        empId ?? '00000000-0000-0000-0000-000000000000',
-       row.employee_code,
-       row.amount,
+       code,
+       Number.isFinite(amount) ? amount : 0,
        row.remarks ?? null,
        isValid ? 'ok' : 'error',
-       isValid ? null : `Employee code '${row.employee_code}' not found`]
+       isValid ? null : !empId ? `Employee code '${code}' not found or inactive` : `Amount must be greater than 0`]
     );
-    if (isValid) { validCount++; totalAmount += row.amount; }
+    if (isValid) { validCount++; totalAmount += amount; }
   }
 
-  // Update batch totals
   await db.execute(
     'UPDATE incentive_upload_batch SET total_employees=?, total_amount=? WHERE id=?',
     [validCount, totalAmount, batchId]
@@ -172,7 +188,6 @@ export async function rejectBatch(batchId: string, actorId: string, remarks?: st
 }
 
 export async function applyToRun(runId: string, payMonth: string, actorId: string) {
-  // Idempotent: delete prior incentive components for this run, then re-insert
   await db.execute(
     `DELETE FROM salary_prep_line_component
      WHERE line_id IN (SELECT id FROM salary_prep_line WHERE run_id=?)
@@ -180,13 +195,11 @@ export async function applyToRun(runId: string, payMonth: string, actorId: strin
     [runId]
   );
 
-  // Reset incentive_total on all lines for this run
   await db.execute(
     'UPDATE salary_prep_line SET incentive_total=0 WHERE run_id=?',
     [runId]
   );
 
-  // Get all approved batches for this month
   const [batches] = await db.execute<RowDataPacket[]>(
     `SELECT iub.id, im.incentive_code, im.incentive_name, im.taxable
      FROM incentive_upload_batch iub
@@ -205,7 +218,6 @@ export async function applyToRun(runId: string, payMonth: string, actorId: strin
     );
 
     for (const line of lines as any[]) {
-      // Find the prep_line for this employee in this run
       const [prepLines] = await db.execute<RowDataPacket[]>(
         'SELECT id FROM salary_prep_line WHERE run_id=? AND employee_id=? LIMIT 1',
         [runId, line.employee_id]
@@ -214,7 +226,6 @@ export async function applyToRun(runId: string, payMonth: string, actorId: strin
       const prepLineId = (prepLines[0] as any).id;
       const compId = randomUUID();
 
-      // Insert component line (all columns required by salary_prep_line_component schema)
       await db.execute(
         `INSERT INTO salary_prep_line_component
            (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
@@ -225,7 +236,6 @@ export async function applyToRun(runId: string, payMonth: string, actorId: strin
          line.amount, batch.taxable ?? 1]
       );
 
-      // Accumulate incentive_total
       await db.execute(
         'UPDATE salary_prep_line SET incentive_total = incentive_total + ? WHERE id=?',
         [line.amount, prepLineId]
@@ -233,7 +243,6 @@ export async function applyToRun(runId: string, payMonth: string, actorId: strin
       applied++;
     }
 
-    // Mark batch as applied
     await transitionBatch(batch.id, 'applied', actorId, 'applied');
   }
 

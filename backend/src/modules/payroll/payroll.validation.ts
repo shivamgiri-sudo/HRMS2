@@ -78,6 +78,8 @@ export const updatePrepLineSchema = z.object({
 export const runFiltersSchema = z.object({
   runMonth: z.string().regex(MONTH_REGEX).optional(),
   status: z.string().optional(),
+  branchId: z.string().uuid().optional(),
+  processId: z.string().uuid().optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(1000).default(50),
 });

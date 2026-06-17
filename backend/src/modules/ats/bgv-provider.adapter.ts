@@ -44,12 +44,72 @@ export interface VerificationResult {
   raw?: Record<string, unknown>;
 }
 
+export interface AddressDocInput {
+  docType: 'driving_license' | 'voter_id';
+  documentNumber: string;
+  candidateName?: string | null;
+  dateOfBirth?: string | null;
+  state?: string | null;
+}
+
+export interface EducationVerificationInput {
+  boardType: 'cbse_10' | 'cbse_12' | 'university' | 'other';
+  rollNumber?: string | null;
+  certificateNumber?: string | null;
+  yearOfPassing: number;
+  candidateName?: string | null;
+  institutionName?: string | null;
+}
+
+export interface CourtVerificationInput {
+  candidateName: string;
+  dateOfBirth: string;
+  fatherName?: string | null;
+  address?: string | null;
+  state?: string | null;
+  pincode?: string | null;
+}
+
+export interface CourtVerificationResult extends VerificationResult {
+  courtCases?: Array<{
+    caseType: string;
+    caseNumber: string;
+    court: string;
+    year: number;
+    status: string;
+  }> | null;
+}
+
+export interface BgvCandidatePortalInput {
+  candidateId: string;
+  candidateName: string;
+  email: string;
+  mobile?: string | null;
+  dateOfBirth?: string | null;
+  fatherName?: string | null;
+  address?: string | null;
+  employeeCode?: string | null;
+}
+
+export interface BgvPortalInitiationResult {
+  providerKey: string;
+  caseId: string;
+  portalLoginUrl: string;
+  candidateEmail: string;
+  expiresAt: Date;
+  raw?: Record<string, unknown>;
+}
+
 export interface BgvProviderAdapter {
   readonly providerKey: string;
   verifyPan(input: PanVerificationInput): Promise<VerificationResult>;
   verifyBank(input: BankVerificationInput): Promise<VerificationResult>;
   verifyAadhaarOffline(input: AadhaarOfflineInput): Promise<VerificationResult>;
+  verifyAddressDoc(input: AddressDocInput): Promise<VerificationResult>;
+  verifyEducation(input: EducationVerificationInput): Promise<VerificationResult>;
+  verifyCourt(input: CourtVerificationInput): Promise<CourtVerificationResult>;
   startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession>;
+  initiateCandidateBgv(input: BgvCandidatePortalInput): Promise<BgvPortalInitiationResult>;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -136,12 +196,67 @@ export class MockBgvProviderAdapter implements BgvProviderAdapter {
     };
   }
 
+  async verifyAddressDoc(input: AddressDocInput): Promise<VerificationResult> {
+    return {
+      status: "manual_review",
+      providerKey: "mock_bgv",
+      providerRequestId: randomUUID(),
+      providerReferenceId: `MOCK-ADDR-${Date.now()}`,
+      matchScore: 50,
+      matchedName: input.candidateName ?? null,
+      resultSummary: `${input.docType} address doc uploaded. Configure BGV_PROVIDER=infinity_ai for live checks.`,
+      riskFlags: ["ADDRESS_DOC_MANUAL_REVIEW"],
+      raw: { mode: "mock", docType: input.docType },
+    };
+  }
+
+  async verifyEducation(input: EducationVerificationInput): Promise<VerificationResult> {
+    return {
+      status: "manual_review",
+      providerKey: "mock_bgv",
+      providerRequestId: randomUUID(),
+      providerReferenceId: `MOCK-EDU-${Date.now()}`,
+      matchScore: 50,
+      matchedName: input.candidateName ?? null,
+      resultSummary: `Education (${input.boardType}) submitted. Configure BGV_PROVIDER=infinity_ai for live checks.`,
+      riskFlags: ["EDUCATION_MANUAL_REVIEW"],
+      raw: { mode: "mock", boardType: input.boardType },
+    };
+  }
+
+  async verifyCourt(input: CourtVerificationInput): Promise<CourtVerificationResult> {
+    return {
+      status: "queued",
+      providerKey: "mock_bgv",
+      providerRequestId: randomUUID(),
+      providerReferenceId: `MOCK-COURT-${Date.now()}`,
+      matchScore: null,
+      matchedName: input.candidateName,
+      resultSummary: "Court check queued. Configure BGV_PROVIDER=infinity_ai for live court record checks.",
+      riskFlags: [],
+      courtCases: null,
+      raw: { mode: "mock" },
+    };
+  }
+
   async startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession> {
     const state = randomUUID();
     return {
       state,
       authUrl: `/mock-digilocker/authorize?state=${state}&candidateId=${candidateId}&docs=${encodeURIComponent(requestedDocuments.join(","))}`,
       expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+    };
+  }
+
+  async initiateCandidateBgv(input: BgvCandidatePortalInput): Promise<BgvPortalInitiationResult> {
+    const mockToken = Buffer.from(`MOCK-${input.candidateId}`).toString("base64");
+    return {
+      providerKey: "mock_bgv",
+      caseId: `MOCK-CASE-${randomUUID()}`,
+      portalLoginUrl: `http://localhost:5173/mock-bgv-portal/login/${mockToken}`,
+      candidateEmail: input.email,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      raw: { mode: "mock", note: "Set BGV_PROVIDER=infinity_ai for live InfinitiAI portal initiation." },
     };
   }
 }
@@ -253,6 +368,115 @@ export class InfinityAiBgvAdapter implements BgvProviderAdapter {
     };
   }
 
+  async verifyAddressDoc(input: AddressDocInput): Promise<VerificationResult> {
+    const requestId = randomUUID();
+    const endpoint = input.docType === 'driving_license'
+      ? '/v1/bgv/dl/verify'
+      : '/v1/bgv/voter/verify';
+    const payload = input.docType === 'driving_license'
+      ? { request_id: requestId, dl_number: input.documentNumber, dob: input.dateOfBirth ?? undefined, name: input.candidateName ?? undefined, state: input.state ?? undefined }
+      : { request_id: requestId, epic_number: input.documentNumber, name: input.candidateName ?? undefined };
+    const res = await this.http.post(endpoint, payload);
+    const d = res.data?.data ?? res.data ?? {};
+    const apiStatus = String(d.status ?? '').toLowerCase();
+    const status: VerificationStatus =
+      apiStatus === 'valid' || apiStatus === 'verified' ? 'verified'
+      : apiStatus === 'name_mismatch' || apiStatus === 'mismatch' ? 'mismatch'
+      : 'failed';
+    const matchedName = d.name ?? d.holder_name ?? d.voter_name ?? null;
+    return {
+      status,
+      providerKey: 'infinity_ai',
+      providerRequestId: requestId,
+      providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
+      matchScore: roughNameMatchScore(input.candidateName, matchedName),
+      matchedName,
+      matchedDob: d.dob ?? null,
+      resultSummary: d.message ?? `${input.docType} check: ${status}`,
+      riskFlags: status === 'verified' ? [] : [String(d.failure_reason ?? 'ADDRESS_DOC_FAILED').toUpperCase()],
+      raw: d,
+    };
+  }
+
+  async verifyEducation(input: EducationVerificationInput): Promise<VerificationResult> {
+    const requestId = randomUUID();
+    const res = await this.http.post('/v1/bgv/education/verify', {
+      request_id: requestId,
+      board_type: input.boardType,
+      roll_number: input.rollNumber ?? undefined,
+      certificate_number: input.certificateNumber ?? undefined,
+      year_of_passing: input.yearOfPassing,
+      name: input.candidateName ?? undefined,
+      institution_name: input.institutionName ?? undefined,
+    });
+    const d = res.data?.data ?? res.data ?? {};
+    const apiStatus = String(d.status ?? '').toLowerCase();
+    const status: VerificationStatus =
+      apiStatus === 'valid' || apiStatus === 'verified' ? 'verified'
+      : apiStatus === 'manual_review' || apiStatus === 'pending' ? 'manual_review'
+      : apiStatus === 'name_mismatch' || apiStatus === 'mismatch' ? 'mismatch'
+      : 'failed';
+    const matchedName = d.candidate_name ?? d.name ?? null;
+    return {
+      status,
+      providerKey: 'infinity_ai',
+      providerRequestId: requestId,
+      providerReferenceId: String(d.reference_id ?? requestId),
+      matchScore: roughNameMatchScore(input.candidateName, matchedName),
+      matchedName,
+      resultSummary: d.message ?? `Education (${input.boardType}) check: ${status}`,
+      riskFlags: status === 'verified' ? [] : [String(d.failure_reason ?? 'EDUCATION_FAILED').toUpperCase()],
+      raw: d,
+    };
+  }
+
+  async verifyCourt(input: CourtVerificationInput): Promise<CourtVerificationResult> {
+    const requestId = randomUUID();
+    const courtHttp = axios.create({
+      baseURL: env.COURT_CHECK_API_URL,
+      headers: {
+        'x-api-key': env.COURT_CHECK_API_KEY ?? env.INFINITY_AI_API_KEY ?? '',
+        'Content-Type': 'application/json',
+      },
+      timeout: 30_000,
+    });
+    const res = await courtHttp.post('/v1/bgv/court/verify', {
+      request_id: requestId,
+      name: input.candidateName,
+      dob: input.dateOfBirth,
+      father_name: input.fatherName ?? undefined,
+      address: input.address ?? undefined,
+      state: input.state ?? undefined,
+      pincode: input.pincode ?? undefined,
+    });
+    const d = res.data?.data ?? res.data ?? {};
+    const apiStatus = String(d.status ?? '').toLowerCase();
+    const status: VerificationStatus =
+      apiStatus === 'clear' || apiStatus === 'no_records' ? 'verified'
+      : apiStatus === 'positive' || apiStatus === 'records_found' ? 'failed'
+      : apiStatus === 'manual_review' || apiStatus === 'pending' ? 'manual_review'
+      : 'queued';
+    const cases = Array.isArray(d.court_cases) ? d.court_cases.map((c: Record<string, unknown>) => ({
+      caseType: String(c.case_type ?? ''),
+      caseNumber: String(c.case_number ?? ''),
+      court: String(c.court_name ?? c.court ?? ''),
+      year: Number(c.year ?? 0),
+      status: String(c.status ?? ''),
+    })) : null;
+    return {
+      status,
+      providerKey: 'infinity_ai',
+      providerRequestId: requestId,
+      providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
+      matchScore: null,
+      matchedName: input.candidateName,
+      resultSummary: d.message ?? `Court check: ${status}`,
+      riskFlags: cases?.length ? ['COURT_RECORDS_FOUND'] : [],
+      courtCases: cases,
+      raw: d,
+    };
+  }
+
   async startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession> {
     const state = randomUUID();
     const res = await this.http.post("/v1/digilocker/session/create", {
@@ -266,6 +490,37 @@ export class InfinityAiBgvAdapter implements BgvProviderAdapter {
       state: String(d.state ?? state),
       authUrl: String(d.auth_url ?? d.redirect_url ?? ""),
       expiresAt: d.expires_at ? new Date(d.expires_at) : new Date(Date.now() + 30 * 60 * 1000),
+    };
+  }
+
+  async initiateCandidateBgv(input: BgvCandidatePortalInput): Promise<BgvPortalInitiationResult> {
+    // InfinitiAI candidate portal initiation.
+    // Creates the candidate on their portal; they receive a login email with URL http://candidates.theinfiniti.ai/login/{token}
+    // Endpoint confirmed from InfinitiAI support email (support@theinfiniti.ai) — Mas Callnet India Pvt Ltd integration.
+    const res = await this.http.post("/v1/bgv/candidate/initiate", {
+      reference_id: input.candidateId,
+      candidate_name: input.candidateName,
+      email: input.email,
+      mobile: input.mobile ?? undefined,
+      dob: input.dateOfBirth ?? undefined,
+      father_name: input.fatherName ?? undefined,
+      address: input.address ?? undefined,
+      employee_id: input.employeeCode ?? undefined,
+      notify_candidate: true,
+    });
+    const d = res.data?.data ?? res.data ?? {};
+    const caseId = String(d.case_id ?? d.candidate_id ?? d.id ?? randomUUID());
+    // Build portal login URL: InfinitiAI sends candidates http://candidates.theinfiniti.ai/login/{token}
+    const portalToken = String(d.login_token ?? d.token ?? caseId);
+    const portalLoginUrl = `${env.INFINITY_AI_PORTAL_URL}/login/${portalToken}`;
+    const expiryDays = Number(d.expiry_days ?? d.token_validity_days ?? 7);
+    return {
+      providerKey: "infinity_ai",
+      caseId,
+      portalLoginUrl,
+      candidateEmail: input.email,
+      expiresAt: d.expires_at ? new Date(d.expires_at) : new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000),
+      raw: d,
     };
   }
 }
@@ -378,6 +633,72 @@ export class DigioBgvAdapter implements BgvProviderAdapter {
     };
   }
 
+  async verifyAddressDoc(input: AddressDocInput): Promise<VerificationResult> {
+    const requestId = randomUUID();
+    const endpoint = input.docType === 'driving_license'
+      ? '/v2/client/verify/driving_license'
+      : '/v2/client/verify/voter_id';
+    const payload = input.docType === 'driving_license'
+      ? { dl_number: input.documentNumber, dob: input.dateOfBirth ?? undefined, name: input.candidateName ?? undefined }
+      : { voter_id: input.documentNumber, name: input.candidateName ?? undefined };
+    const res = await this.http.post(endpoint, payload);
+    const d = res.data ?? {};
+    const code = String(d.response_code ?? d.code ?? '').toUpperCase();
+    const status: VerificationStatus =
+      code === '200' || d.status === 'VALID' ? 'verified'
+      : d.status === 'NAME_MISMATCH' ? 'mismatch'
+      : 'failed';
+    const matchedName = d.name ?? d.holder_name ?? null;
+    return {
+      status,
+      providerKey: 'digio',
+      providerRequestId: requestId,
+      providerReferenceId: String(d.id ?? requestId),
+      matchScore: roughNameMatchScore(input.candidateName, matchedName),
+      matchedName,
+      matchedDob: d.dob ?? null,
+      resultSummary: d.message ?? `${input.docType} check: ${status}`,
+      riskFlags: status === 'verified' ? [] : [code || 'ADDRESS_DOC_FAILED'],
+      raw: d,
+    };
+  }
+
+  async verifyEducation(input: EducationVerificationInput): Promise<VerificationResult> {
+    const requestId = randomUUID();
+    const res = await this.http.post('/v2/client/verify/education', {
+      board_type: input.boardType,
+      roll_number: input.rollNumber ?? undefined,
+      certificate_number: input.certificateNumber ?? undefined,
+      year_of_passing: input.yearOfPassing,
+      name: input.candidateName ?? undefined,
+    });
+    const d = res.data ?? {};
+    const code = String(d.response_code ?? d.code ?? '').toUpperCase();
+    const status: VerificationStatus =
+      code === '200' || d.status === 'VALID' ? 'verified'
+      : d.status === 'MANUAL_REVIEW' ? 'manual_review'
+      : d.status === 'NAME_MISMATCH' ? 'mismatch'
+      : 'failed';
+    return {
+      status,
+      providerKey: 'digio',
+      providerRequestId: requestId,
+      providerReferenceId: String(d.id ?? requestId),
+      matchScore: roughNameMatchScore(input.candidateName, d.candidate_name ?? d.name),
+      matchedName: d.candidate_name ?? d.name ?? null,
+      resultSummary: d.message ?? `Education check: ${status}`,
+      riskFlags: status === 'verified' ? [] : [code || 'EDUCATION_FAILED'],
+      raw: d,
+    };
+  }
+
+  async verifyCourt(_input: CourtVerificationInput): Promise<CourtVerificationResult> {
+    throw Object.assign(
+      new Error("Court check is not supported by the Digio adapter. Switch BGV_PROVIDER=infinity_ai."),
+      { statusCode: 501 },
+    );
+  }
+
   async startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession> {
     // Digio DigiLocker: POST /v2/client/digilocker/create_request
     const res = await this.http.post("/v2/client/digilocker/create_request", {
@@ -392,6 +713,14 @@ export class DigioBgvAdapter implements BgvProviderAdapter {
       authUrl: String(d.access_link ?? d.digilocker_url ?? ""),
       expiresAt: d.expire_on ? new Date(d.expire_on) : new Date(Date.now() + 30 * 60 * 1000),
     };
+  }
+
+  async initiateCandidateBgv(input: BgvCandidatePortalInput): Promise<BgvPortalInitiationResult> {
+    // Digio does not provide a hosted candidate BGV portal; use InfinitiAI for this flow.
+    throw Object.assign(
+      new Error("Candidate BGV portal initiation is not supported by the Digio adapter. Switch BGV_PROVIDER=infinity_ai."),
+      { statusCode: 501 },
+    );
   }
 }
 

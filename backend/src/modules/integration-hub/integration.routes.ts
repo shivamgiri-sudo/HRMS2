@@ -104,6 +104,20 @@ integrationRouter.post("/:key/db-sync", async (req: any, res: any, next: any) =>
     }
 
     const { fromDate, toDate } = req.body ?? {};
+    if (connector.integration_key === "cosec_biometric") {
+      const run = await executeConnector(
+        connector,
+        req.authUser?.id ?? null,
+        { fromDate, toDate },
+      );
+      return res.status(run.status === "complete" ? 200 : 502).json({
+        success: run.status === "complete",
+        data: run,
+        message: run.status === "complete"
+          ? `Synced ${run.rows_promoted} COSEC attendance day(s)`
+          : "COSEC attendance sync failed",
+      });
+    }
     const result = await syncDatabaseConnector(connector, {
       fromDate,
       toDate,

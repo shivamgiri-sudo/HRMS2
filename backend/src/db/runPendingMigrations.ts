@@ -106,6 +106,7 @@ const MIGRATION_MANIFEST: string[] = [
   "179_super_admin_access.sql",
   "180_ats_registration_onboarding_repair.sql",
   "181_careers_super_admin.sql",
+  "181_integration_hub_last_run.sql",
   "182_user_notification_preferences.sql",
   "183_launch_data_repairs.sql",
   "184_master_data_integrity.sql",
@@ -122,6 +123,15 @@ const MIGRATION_MANIFEST: string[] = [
   "195_reporting_manager_role_alignment.sql",
   "196_seed_call_master_header_mappings.sql",
   "197_salary_increment_governance.sql",
+  "198_cosec_punch_evidence.sql",
+  "198_it_provisioning.sql",
+  "199_employee_directory_indexes.sql",
+  "199_process_branch_dept_cleanup.sql",
+  "200_employee_directory_process_index.sql",
+  "200_onboarding_empcode_bgv_gaps.sql",
+  "201_bgv_portal_initiation.sql",
+  "202_onboarding_v2_court_check.sql",
+  "203_bgv_missing_tables.sql",
 ];
 
 export type MigrationHealth = {
@@ -152,67 +162,180 @@ export function getMigrationHealth(): MigrationHealth {
 }
 
 function isIdempotentMigrationError(error: any): boolean {
+  const code = error?.code;
+  const errno = Number(error?.errno ?? 0);
+  const msg = String(error?.message ?? "").toLowerCase();
   return (
-    error?.code === "ER_TABLE_EXISTS_ERROR" ||
-    error?.code === "ER_DUP_KEYNAME" ||
-    error?.code === "ER_DUP_FIELDNAME" ||
-    error?.errno === 1060 ||
-    error?.errno === 1061 ||
-    error?.errno === 1050 ||
-    /Duplicate column name/i.test(String(error?.message || "")) ||
-    /Duplicate key name/i.test(String(error?.message || "")) ||
-    /already exists/i.test(String(error?.message || ""))
+    // Named codes (mysql2 preferred)
+    code === "ER_TABLE_EXISTS_ERROR" ||   // 1050
+    code === "ER_DUP_FIELDNAME" ||        // 1060
+    code === "ER_DUP_KEYNAME" ||          // 1061
+    code === "ER_CANT_DROP_FIELD_OR_KEY" ||// 1091
+    // Numeric codes as fallback (in case mysql2 version differs)
+    errno === 1050 ||  // table already exists
+    errno === 1060 ||  // duplicate column name
+    errno === 1061 ||  // duplicate key name
+    errno === 1091 ||  // can't drop non-existent field/key
+    // Message-based fallback
+    msg.includes("duplicate column") ||
+    msg.includes("already exists") ||
+    msg.includes("duplicate key") ||
+    msg.includes("can't drop")
   );
 }
 
-export function splitSqlStatements(sql: string): string[] {
+/**
+ * Pre-process SQL from a MySQL CLI file:
+ * Strips DELIMITER directives and replaces the custom delimiter (// or $$)
+ * with the standard semicolon so that splitSql can handle the file normally.
+ * mysql2/promise does not understand DELIMITER — it is a CLI-only command.
+ */
+function normaliseDelimiters(raw: string): string {
+  // Match: DELIMITER <delim> ... DELIMITER ; blocks
+  // Replaces custom delimiters (e.g. // or $$) with ; and removes DELIMITER lines.
+  return raw.replace(
+    /DELIMITER\s+(\S+)([\s\S]*?)DELIMITER\s*;/gi,
+    (_match, delim: string, body: string) => {
+      // Escape the custom delimiter for use in a regex
+      const escaped = delim.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // Replace all occurrences of the custom delimiter with ;
+      return body.replace(new RegExp(escaped, "g"), ";");
+    }
+  );
+}
+
+/**
+ * Safe SQL splitter that respects:
+ *  - single-quoted strings (with '' and \' escapes)
+ *  - double-quoted identifiers (with "" and \" escapes)
+ *  - backtick-quoted identifiers (with `` escapes)
+ *  - line comments (-- ...)
+ *  - block comments (/* ... *\/)
+ *  - DELIMITER directives (pre-processed by normaliseDelimiters)
+ *  - BEGIN...END compound statement nesting (stored procedures / functions)
+ *    Semicolons inside a BEGIN...END body are NOT statement terminators.
+ *    END IF / END LOOP / END WHILE / END CASE / END REPEAT do NOT close
+ *    the compound block; only a bare END does.
+ *
+ * Returns non-empty, trimmed statement strings.
+ */
+export function splitSql(raw: string): string[] {
+  raw = normaliseDelimiters(raw);
   const statements: string[] = [];
   let current = "";
   let i = 0;
+  const len = raw.length;
+  let beginDepth = 0; // tracks BEGIN...END nesting depth
 
-  while (i < sql.length) {
-    const ch = sql[i];
+  const isWordChar = (c: string | undefined): boolean =>
+    c !== undefined && /\w/.test(c);
 
-    if (ch === "-" && sql[i + 1] === "-") {
-      while (i < sql.length && sql[i] !== "\n") i++;
+  while (i < len) {
+    const ch = raw[i];
+
+    // Line comment: consume to end of line (do not add to current)
+    if (ch === "-" && raw[i + 1] === "-") {
+      while (i < len && raw[i] !== "\n") i++;
       continue;
     }
 
-    if (ch === "/" && sql[i + 1] === "*") {
+    // Block comment: consume until */ (do not add to current)
+    if (ch === "/" && raw[i + 1] === "*") {
       i += 2;
-      while (i < sql.length && !(sql[i] === "*" && sql[i + 1] === "/")) i++;
-      i += 2;
-      continue;
-    }
-
-    if (ch === "'" || ch === '"' || ch === "`") {
-      const quote = ch;
-      current += ch;
-      i++;
-      while (i < sql.length) {
-        const quoted = sql[i];
-        if (quoted === "\\" && quote !== "`") {
-          current += quoted + (sql[i + 1] ?? "");
+      while (i < len) {
+        if (raw[i] === "*" && raw[i + 1] === "/") {
           i += 2;
-          continue;
+          break;
         }
-        current += quoted;
         i++;
-        if (quoted !== quote) continue;
-        if (sql[i] === quote) {
-          current += sql[i];
-          i++;
-          continue;
-        }
-        break;
       }
       continue;
     }
 
+    // Quoted string/identifier: copy verbatim including the closing quote
+    if (ch === "'" || ch === '"' || ch === "`") {
+      const quote = ch;
+      const doubleEscape = quote; // '' inside '' means literal quote
+      current += ch;
+      i++;
+      while (i < len) {
+        const c = raw[i];
+        if (c === "\\" && (quote === "'" || quote === '"')) {
+          // backslash escape: consume both chars
+          current += raw[i] + (raw[i + 1] ?? "");
+          i += 2;
+          continue;
+        }
+        if (c === quote) {
+          current += c;
+          i++;
+          // doubled quote inside same-quote string = escaped literal
+          if (raw[i] === doubleEscape) {
+            current += raw[i];
+            i++;
+            continue;
+          }
+          break; // closing quote
+        }
+        current += c;
+        i++;
+      }
+      continue;
+    }
+
+    // Keyword detection at a word boundary (not mid-identifier)
+    const prevIsWord = i > 0 && isWordChar(raw[i - 1]);
+    if (!prevIsWord && /[A-Za-z_]/.test(ch)) {
+      // Read the full identifier/keyword
+      let j = i;
+      while (j < len && isWordChar(raw[j])) j++;
+      const word = raw.slice(i, j).toUpperCase();
+
+      if (word === "BEGIN") {
+        beginDepth++;
+        current += raw.slice(i, j);
+        i = j;
+        continue;
+      }
+
+      if (word === "END") {
+        // Peek past whitespace to find the next word
+        let k = j;
+        while (k < len && (raw[k] === " " || raw[k] === "\t" || raw[k] === "\r" || raw[k] === "\n")) k++;
+        let m = k;
+        while (m < len && isWordChar(raw[m])) m++;
+        const followWord = raw.slice(k, m).toUpperCase();
+        // END IF / END LOOP / END WHILE / END CASE / END REPEAT are
+        // control-flow terminators — they do NOT close a BEGIN...END block
+        const isControlEnd =
+          followWord === "IF" ||
+          followWord === "LOOP" ||
+          followWord === "WHILE" ||
+          followWord === "CASE" ||
+          followWord === "REPEAT";
+        if (!isControlEnd && beginDepth > 0) {
+          beginDepth--;
+        }
+        current += raw.slice(i, j);
+        i = j;
+        continue;
+      }
+
+      // Any other identifier: add in full and advance
+      current += raw.slice(i, j);
+      i = j;
+      continue;
+    }
+
+    // Statement terminator: only split when outside a BEGIN...END block
     if (ch === ";") {
-      const statement = current.trim();
-      if (statement) statements.push(statement);
-      current = "";
+      if (beginDepth === 0) {
+        const stmt = current.trim();
+        if (stmt) statements.push(stmt);
+        current = "";
+      } else {
+        current += ch;
+      }
       i++;
       continue;
     }
@@ -221,11 +344,68 @@ export function splitSqlStatements(sql: string): string[] {
     i++;
   }
 
-  const trailing = current.trim();
-  if (trailing) statements.push(trailing);
+  // Trailing statement without terminator
+  const tail = current.trim();
+  if (tail) statements.push(tail);
+
   return statements;
 }
 
+/**
+ * Ensures the target database exists before the pooled connection (which
+ * requires the DB name) is used. Uses a temporary no-database connection.
+ */
+async function ensureDatabaseExists(
+  host: string,
+  port: number,
+  user: string,
+  password: string,
+  dbName: string
+): Promise<void> {
+  const conn = await mysql.createConnection({ host, port, user, password });
+  try {
+    await conn.query(
+      `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+    );
+    console.log(`[migration] database '${dbName}' ensured`);
+  } finally {
+    await conn.end();
+  }
+}
+
+/**
+ * Run a single SQL file on a dedicated connection (text-protocol query, not
+ * prepared-statement execute) so that:
+ *  - DDL works (CREATE TABLE, ALTER TABLE, etc.)
+ *  - Session variables (@var) persist across statements within the file
+ *  - PREPARE / EXECUTE / DEALLOCATE blocks work correctly
+ *
+ * USE and SOURCE directives are silently skipped (they are MySQL CLI artefacts).
+ */
+async function runFileOnConnection(
+  conn: mysql.Connection,
+  filePath: string
+): Promise<void> {
+  const rawSql = fs.readFileSync(filePath, "utf8");
+  const statements = splitSql(rawSql).filter((stmt) => {
+    const upper = stmt.toUpperCase();
+    return !upper.startsWith("SOURCE ") && !upper.startsWith("USE ");
+  });
+
+  for (const stmt of statements) {
+    await conn.query(stmt);
+  }
+}
+
+/**
+ * Runs pending SQL migrations in manifest order and records a health summary.
+ * - Uses MIGRATION_MANIFEST (derived from 000_run_all.sql) instead of directory scan.
+ * - Each migration file runs on a dedicated single connection (for session variable support).
+ * - Safe SQL splitter avoids false splits on semicolons inside string literals.
+ * - Skips non-b duplicate variants (020, 021, 022) which are excluded from manifest.
+ * - Runs 043_demo_data.sql only when SEED_DEMO_DATA=true.
+ * - Production startup is blocked when any migration fails.
+ */
 export async function runPendingMigrations(): Promise<MigrationHealth> {
   migrationHealth = {
     status: "running",
@@ -236,48 +416,117 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
     completedAt: null,
   };
 
-  const connection = await mysql.createConnection({
+  const connConfig = {
     host: env.DB_HOST,
     port: env.DB_PORT,
     user: env.DB_USER,
     password: env.DB_PASSWORD,
     database: env.DB_NAME,
     multipleStatements: false,
-  });
+  };
 
   try {
-    for (const filename of MIGRATION_MANIFEST) {
-      const fullPath = path.join(SQL_DIR, filename);
-      if (!fs.existsSync(fullPath)) {
-        migrationHealth.skipped.push(filename);
-        continue;
-      }
+    await ensureDatabaseExists(
+      env.DB_HOST,
+      env.DB_PORT,
+      env.DB_USER,
+      env.DB_PASSWORD,
+      env.DB_NAME
+    );
 
-      const sql = fs.readFileSync(fullPath, "utf8");
-      const statements = splitSqlStatements(sql);
+    // Ensure schema_migrations tracking table exists
+    {
+      const conn = await mysql.createConnection(connConfig);
       try {
-        for (const statement of statements) {
-          await connection.query(statement);
-        }
-        migrationHealth.applied.push(filename);
-      } catch (error: any) {
-        if (isIdempotentMigrationError(error)) {
-          migrationHealth.skipped.push(filename);
-          continue;
-        }
-        migrationHealth.failed.push({ filename, error: error?.message ?? String(error) });
-        throw error;
+        await conn.query(`
+          CREATE TABLE IF NOT EXISTS schema_migrations (
+            filename   VARCHAR(255) NOT NULL PRIMARY KEY,
+            applied_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+      } finally {
+        await conn.end();
       }
     }
 
-    migrationHealth.status = "ok";
-    migrationHealth.completedAt = new Date().toISOString();
-    return getMigrationHealth();
-  } catch (error) {
-    migrationHealth.status = "failed";
-    migrationHealth.completedAt = new Date().toISOString();
-    throw error;
-  } finally {
-    await connection.end();
+    // Read the set of already-applied migrations
+    const appliedSet = new Set<string>();
+    {
+      const conn = await mysql.createConnection(connConfig);
+      try {
+        const [rows] = await conn.query<any[]>("SELECT filename FROM schema_migrations");
+        for (const row of rows) appliedSet.add(row.filename);
+      } finally {
+        await conn.end();
+      }
+    }
+
+    // Build the effective file list: manifest + optional demo seed
+    const files: string[] = [...MIGRATION_MANIFEST];
+    if (env.SEED_DEMO_DATA) {
+      const idx = files.indexOf("050_auth_mysql.sql");
+      files.splice(idx + 1, 0, "043_demo_data.sql");
+    }
+
+    for (const file of files) {
+      const filePath = path.join(SQL_DIR, file);
+      if (!fs.existsSync(filePath)) {
+        console.warn(`[migration] skipping missing file: ${file}`);
+        migrationHealth.skipped.push(file);
+        continue;
+      }
+
+      if (appliedSet.has(file)) {
+        migrationHealth.skipped.push(file);
+        continue;
+      }
+
+      // Each file gets its own dedicated connection for session-variable isolation
+      const conn = await mysql.createConnection(connConfig);
+      try {
+        await runFileOnConnection(conn, filePath);
+
+        // Record as applied using a separate query on the same connection
+        await conn.query("INSERT INTO schema_migrations (filename) VALUES (?)", [file]);
+        migrationHealth.applied.push(file);
+        console.log(`[migration] applied: ${file}`);
+      } catch (error: any) {
+        if (isIdempotentMigrationError(error)) {
+          // Record as applied even for idempotent errors (table/column already exists)
+          const conn2 = await mysql.createConnection(connConfig);
+          try {
+            await conn2.query(
+              "INSERT IGNORE INTO schema_migrations (filename) VALUES (?)",
+              [file]
+            );
+          } finally {
+            await conn2.end();
+          }
+          migrationHealth.skipped.push(file);
+          console.log(`[migration] already applied/idempotent: ${file}`);
+        } else {
+          const message = error?.message ?? String(error);
+          migrationHealth.failed.push({ filename: file, error: message });
+          console.error(`[migration] FAILED: ${file} — ${message}`);
+        }
+      } finally {
+        await conn.end();
+      }
+    }
+  } catch (error: any) {
+    migrationHealth.failed.push({
+      filename: "migration-runner",
+      error: error?.message ?? String(error),
+    });
   }
+
+  migrationHealth.completedAt = new Date().toISOString();
+  migrationHealth.status = migrationHealth.failed.length > 0 ? "failed" : "ok";
+
+  if (migrationHealth.failed.length > 0 && env.NODE_ENV === "production") {
+    const names = migrationHealth.failed.map((item) => item.filename).join(", ");
+    throw new Error(`Production startup blocked because migrations failed: ${names}`);
+  }
+
+  return getMigrationHealth();
 }

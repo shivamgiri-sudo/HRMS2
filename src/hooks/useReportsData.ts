@@ -11,7 +11,7 @@ const CHART_COLORS = [
 ];
 
 interface AnalyticsOverview {
-  employeeGrowth: Array<{ month: string; employees: number }>;
+  employeeGrowth: Array<{ month: string; employees?: number; headcount?: number; joiners?: number; exits?: number }>;
   departmentDistribution: Array<{ name: string; value: number }>;
   leaveStatistics: {
     monthlyData: Array<Record<string, string | number>>;
@@ -19,13 +19,24 @@ interface AnalyticsOverview {
   };
   payrollTrend: Array<{ month: string; amount: number }>;
   headcount: {
-    newHires: number;
+    newHires?: number;
+    newJoiners?: number;
     terminations: number;
     netChange: number;
     currentHeadcount: number;
-    startOfYearHeadcount: number;
-    monthlyBreakdown: Array<{ month: string; hires: number; terminations: number; net: number }>;
+    startOfYearHeadcount?: number;
+    startOfYear?: number;
+    monthlyBreakdown: Array<{ month: string; hires?: number; joiners?: number; terminations?: number; exits?: number; net: number }>;
   };
+  dataHealth?: Record<string, unknown>;
+}
+
+function titleFromKey(key: string) {
+  return key
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function useAnalyticsOverview(year: number) {
@@ -42,7 +53,18 @@ function useAnalyticsOverview(year: number) {
 
 export function useEmployeeGrowthData(year: number) {
   const query = useAnalyticsOverview(year);
-  return { ...query, data: query.data?.employeeGrowth };
+  return {
+    ...query,
+    data: query.data?.employeeGrowth.map((row) => {
+      const breakdown = query.data?.headcount.monthlyBreakdown.find((item) => item.month === row.month);
+      return {
+        month: row.month,
+        headcount: Number(row.headcount ?? row.employees ?? 0),
+        joiners: Number(row.joiners ?? breakdown?.joiners ?? breakdown?.hires ?? 0),
+        exits: Number(row.exits ?? breakdown?.exits ?? breakdown?.terminations ?? 0),
+      };
+    }),
+  };
 }
 
 export function useDepartmentDistribution(year = new Date().getFullYear()) {
@@ -58,7 +80,13 @@ export function useDepartmentDistribution(year = new Date().getFullYear()) {
 
 export function useLeaveStatistics(year: number) {
   const query = useAnalyticsOverview(year);
-  return { ...query, data: query.data?.leaveStatistics };
+  return {
+    ...query,
+    data: query.data?.leaveStatistics.leaveTypeKeys.map((key) => ({
+      name: titleFromKey(key),
+      days: query.data?.leaveStatistics.monthlyData.reduce((sum, month) => sum + Number(month[key] ?? 0), 0) ?? 0,
+    })),
+  };
 }
 
 export function usePayrollTrend(year: number) {
@@ -68,5 +96,14 @@ export function usePayrollTrend(year: number) {
 
 export function useHeadcountSummary(year: number) {
   const query = useAnalyticsOverview(year);
-  return { ...query, data: query.data?.headcount };
+  return {
+    ...query,
+    data: query.data?.headcount
+      ? {
+          ...query.data.headcount,
+          startOfYear: Number(query.data.headcount.startOfYear ?? query.data.headcount.startOfYearHeadcount ?? 0),
+          newJoiners: Number(query.data.headcount.newJoiners ?? query.data.headcount.newHires ?? 0),
+        }
+      : undefined,
+  };
 }

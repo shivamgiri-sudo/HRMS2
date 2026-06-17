@@ -39,6 +39,7 @@ export const reviewLeaveSchema = z.object({
 
 export const leaveRequestFiltersSchema = z.object({
   employeeId: DB_ID.optional(),
+  managerEmployeeId: DB_ID.optional(),
   leaveTypeId: DB_ID.optional(),
   status: z.string().optional(),
   fromDate: z.string().regex(DATE_REGEX).optional(),

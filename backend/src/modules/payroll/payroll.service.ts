@@ -298,12 +298,14 @@ export const payrollService = {
   },
 
   async listRuns(filters: RunFilters & { scopeFilter?: { sql: string; params: unknown[] } | string }): Promise<PaginatedResult<SalaryPrepRun>> {
-    const { page, limit, runMonth, status, scopeFilter } = filters;
+    const { page, limit, runMonth, status, branchId, processId, scopeFilter } = filters;
     const offset = (page - 1) * limit;
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (runMonth) { conds.push("run_month = ?"); params.push(runMonth); }
-    if (status)   { conds.push("status = ?");    params.push(status); }
+    if (runMonth)   { conds.push("run_month = ?");    params.push(runMonth); }
+    if (status)     { conds.push("status = ?");       params.push(status); }
+    if (branchId)   { conds.push("branch_id = ?");    params.push(branchId); }
+    if (processId)  { conds.push("process_id = ?");   params.push(processId); }
 
     // Apply scope filter from middleware (object {sql, params} or legacy string)
     if (scopeFilter) {
