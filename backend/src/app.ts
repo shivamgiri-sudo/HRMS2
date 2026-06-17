@@ -101,6 +101,7 @@ import { kpiMasterRouter } from "./modules/kpi/kpi-master.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
 import { payrollMastersRouter } from "./modules/payroll-masters/payrollMasters.routes.js";
 import { incentivesRouter } from "./modules/incentives/incentives.routes.js";
+import { expenseRouter } from "./modules/expenses/expense.routes.js";
 
 export const app = express();
 
@@ -233,6 +234,7 @@ app.use('/api/reports', reportingLeaveBalanceRouter);
 app.use('/api/reports', reportingRouter);
 app.use('/api/control-tower', controlTowerRouter);
 app.use("/api/legacy", legacyRouter);
+app.use("/api/expenses", expenseRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
