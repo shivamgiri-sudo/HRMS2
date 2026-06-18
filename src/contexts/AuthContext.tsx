@@ -58,11 +58,14 @@ function decodeJwtUser(token: string): HrmsUser | null {
 async function tryRefresh(): Promise<HrmsUser | null> {
   const raw = localStorage.getItem('hrms_refresh_token');
   if (!raw) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
   try {
     const res = await fetch(`${API_URL}/api/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken: raw }),
+      signal: controller.signal,
     });
     if (!res.ok) return null;
     const { data } = await res.json();
@@ -70,6 +73,8 @@ async function tryRefresh(): Promise<HrmsUser | null> {
     return decodeJwtUser(data.accessToken);
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

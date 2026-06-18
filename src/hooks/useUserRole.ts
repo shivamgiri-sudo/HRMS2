@@ -123,7 +123,8 @@ export const useUserRole = () => {
       };
     },
     enabled: !!user?.id,
-    retry: 2,
+    retry: 1,
+    retryDelay: 1000,
     staleTime: 30_000,
   });
 };
