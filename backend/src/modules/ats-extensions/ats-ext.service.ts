@@ -276,6 +276,8 @@ export const duplicateService = {
       match_score: row.match_score != null ? Number(row.match_score) / 100 : undefined,
       created_at: row.detected_at,
       resolved: Boolean(row.resolved),
+      candidate_mobile_masked: row.candidate_mobile_masked,
+      matched_mobile_masked: row.matched_mobile_masked,
       candidates: [
         { id: row.candidate_id, name: row.candidate_name, email: row.candidate_email, phone: row.candidate_mobile_masked, is_primary: true },
         { id: row.matched_with_id, name: row.matched_name, email: row.matched_email, phone: row.matched_mobile_masked, is_primary: false },

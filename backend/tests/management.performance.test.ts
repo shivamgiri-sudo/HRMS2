@@ -21,6 +21,8 @@ function mockEmployee(empId: string) { mockGetUser.mockResolvedValue({ data: { u
 describe("GET /api/management/team-kpi", () => {
   it("returns 200 for admin with kpi rows", async () => {
     mockAdmin();
+    // resolveTeamScope hasRole check — admin is a wide role
+    mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
     // getTeamKpiSummary db.execute
     mockExecute.mockResolvedValueOnce([[
       { id: "k1", employee_id: "e1", employee_code: "MCN001", full_name: "Alice", period: "2026-05", overall_score: 92.5, rank_position: 1 },
@@ -65,6 +67,8 @@ describe("GET /api/management/coaching", () => {
     mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
     // getEmployeeForUser call
     mockExecute.mockResolvedValueOnce([[{ id: "emp-1", employee_code: "MCN003" }], []]);
+    // getDirectReportIds call — employee has no reports, so route falls back to own sessions
+    mockExecute.mockResolvedValueOnce([[], []]);
     // listCoachingSessions filtered by employee_id=emp-1
     mockExecute.mockResolvedValueOnce([[
       { id: "cs-3", employee_id: "emp-1", employee_code: "MCN003", full_name: "Carol", session_type: "coaching", status: "scheduled" },
@@ -123,6 +127,8 @@ describe("POST /api/management/coaching", () => {
 describe("GET /api/management/alerts", () => {
   it("returns 200 for admin with alert rows", async () => {
     mockAdmin();
+    // resolveTeamScope hasRole check — admin is a wide role
+    mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
     // listAlerts db.execute
     mockExecute.mockResolvedValueOnce([[
       { id: "a1", employee_id: "e1", employee_code: "MCN001", full_name: "Alice", severity: "critical", acknowledged: 0 },
@@ -175,6 +181,8 @@ describe("POST /api/management/alerts/:id/acknowledge", () => {
 describe("GET /api/management/dashboard", () => {
   it("returns a live operational summary for admin", async () => {
     mockAdmin();
+    // resolveTeamScope hasRole check — admin is a wide role
+    mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
     mockExecute.mockResolvedValueOnce([[{ headcount: 100, exits_30d: 5 }], []]);
     mockExecute.mockResolvedValueOnce([[{ pending_leaves: 3 }], []]);
     mockExecute.mockResolvedValueOnce([[{ open_tickets: 2 }], []]);
@@ -215,32 +223,61 @@ describe("Portal endpoint blocked without Supabase JWT", () => {
   });
 });
 
-describe("SECURITY — Manager scope (deferred pending user_assignment_scope)", () => {
-  // These tests are deferred: manager access to team-kpi/alerts/dashboard will be
-  // blocked once user_assignment_scope enforcement is fully implemented.
-  // Currently the routes permit manager role; skip until scope enforcement is wired.
-  it.skip("manager 403 on team-kpi", async () => {
+describe("SECURITY — Manager scope", () => {
+  it("manager team-kpi is restricted to direct reports plus self", async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: "u-mgr" } }, error: null });
     mockExecute.mockResolvedValueOnce([[{ role_key: "manager" }], []]);
+    mockExecute.mockResolvedValueOnce([[{ role_key: "manager" }], []]);
+    mockExecute.mockResolvedValueOnce([[{ id: "mgr-emp", employee_code: "MGR001" }], []]);
+    mockExecute.mockResolvedValueOnce([[{ id: "rep-1" }], []]);
+    mockExecute.mockResolvedValueOnce([[], []]);
+
     const r = await request(app).get("/api/management/team-kpi").set({ Authorization: "Bearer mgr.token" });
-    expect(r.status).toBe(403);
+    expect(r.status).toBe(200);
+    expect(r.body.data).toEqual([]);
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.stringContaining("e.id IN (?,?)"),
+      expect.arrayContaining(["rep-1", "mgr-emp"])
+    );
   });
-  it.skip("manager 403 on alerts", async () => {
+
+  it("manager alerts are restricted to direct reports plus self", async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: "u-mgr" } }, error: null });
     mockExecute.mockResolvedValueOnce([[{ role_key: "manager" }], []]);
+    mockExecute.mockResolvedValueOnce([[{ role_key: "manager" }], []]);
+    mockExecute.mockResolvedValueOnce([[{ id: "mgr-emp", employee_code: "MGR001" }], []]);
+    mockExecute.mockResolvedValueOnce([[{ id: "rep-1" }], []]);
+    mockExecute.mockResolvedValueOnce([[], []]);
+
     const r = await request(app).get("/api/management/alerts").set({ Authorization: "Bearer mgr.token" });
-    expect(r.status).toBe(403);
+    expect(r.status).toBe(200);
+    expect(r.body.data).toEqual([]);
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.stringContaining("pa.employee_id IN (?,?)"),
+      expect.arrayContaining(["rep-1", "mgr-emp"])
+    );
   });
-  it.skip("manager 403 on dashboard", async () => {
+
+  it("manager dashboard is restricted to direct reports plus self", async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: "u-mgr" } }, error: null });
     mockExecute.mockResolvedValueOnce([[{ role_key: "manager" }], []]);
+    mockExecute.mockResolvedValueOnce([[{ role_key: "manager" }], []]);
+    mockExecute.mockResolvedValueOnce([[{ id: "mgr-emp", employee_code: "MGR001" }], []]);
+    mockExecute.mockResolvedValueOnce([[{ id: "rep-1" }], []]);
+    mockExecute.mockResolvedValue([[{ headcount: 0, exits_30d: 0, pending_leaves: 0, open_tickets: 0, total: 0, present: 0, half_day: 0 }], []]);
+
     const r = await request(app).get("/api/management/dashboard").set({ Authorization: "Bearer mgr.token" });
-    expect(r.status).toBe(403);
+    expect(r.status).toBe(200);
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.stringContaining("e.id IN (?,?)"),
+      expect.arrayContaining(["rep-1", "mgr-emp"])
+    );
   });
   it("employee sees own coaching (200) via server-side mapping", async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: "u-emp" } }, error: null });
     mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
     mockExecute.mockResolvedValueOnce([[{ id: "emp-self", employee_code: "E001" }], []]);
+    mockExecute.mockResolvedValueOnce([[], []]);
     mockExecute.mockResolvedValueOnce([[{ id: "c-1", employee_id: "emp-self" }], []]);
     const r = await request(app).get("/api/management/coaching").set({ Authorization: "Bearer emp.token" });
     expect(r.status).toBe(200);

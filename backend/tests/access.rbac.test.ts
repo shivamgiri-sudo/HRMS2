@@ -108,25 +108,12 @@ describe("GET /api/access/rbac-reconciliation — admin access", () => {
     expect(r.body.data).toHaveProperty("checked_at");
   });
 
-  // Skipped: reconciliation service no longer queries Supabase (MySQL is the sole
-  // authority since supabase_roles was removed from the comparison).
-  // Mismatch detection is now MySQL-vs-MySQL only; cross-store check is deferred.
-  it.skip("reports mismatch when user exists in Supabase but not MySQL", async () => {
+  it("reports active MySQL roles pointing to a missing auth_user without querying Supabase", async () => {
     mockStaffAuth("user-admin");
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
-    // MySQL: no rows for the mismatched user
+    mockExecute.mockResolvedValueOnce([[{ user_id: "u-missing", role_key: "hr" }], []]);
+    mockExecute.mockResolvedValueOnce([[{ role_key: "hr" }], []]);
     mockExecute.mockResolvedValueOnce([[], []]);
-    // Supabase: user exists with 'hr' role
-    mockFrom.mockReturnValueOnce({
-      select: vi.fn(() => ({
-        order: vi.fn(() =>
-          Promise.resolve({
-            data: [{ user_id: "u-supabase-only", role: "hr" }],
-            error: null,
-          })
-        ),
-      })),
-    });
 
     const r = await request(app)
       .get("/api/access/rbac-reconciliation")
@@ -135,10 +122,11 @@ describe("GET /api/access/rbac-reconciliation — admin access", () => {
     expect(r.status).toBe(200);
     const report = r.body.data;
     expect(report.mismatches.length).toBeGreaterThan(0);
-    const mismatch = report.mismatches.find((m: any) => m.user_id === "u-supabase-only");
+    const mismatch = report.mismatches.find((m: any) => m.user_id === "u-missing");
     expect(mismatch).toBeDefined();
-    expect(mismatch.in_supabase_only).toContain("hr");
-    expect(mismatch.mysql_roles).toHaveLength(0);
+    expect(mismatch.in_mysql_only).toContain("hr");
+    expect(mismatch.supabase_roles).toHaveLength(0);
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 });
 

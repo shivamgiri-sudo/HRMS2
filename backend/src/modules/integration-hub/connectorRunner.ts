@@ -5,6 +5,7 @@ import { runConnector, type ConnectorRunSummary } from "./connectorService.js";
 import { integrationService } from "./integration.service.js";
 import type { IntegrationConfig } from "./integration.types.js";
 import { syncDatabaseConnector } from "./adapters/dbSyncService.js";
+import { assertSafeOutboundUrl } from "../../shared/outboundUrlGuard.js";
 
 interface ConnectorConfig {
   method?: "GET" | "POST";
@@ -91,6 +92,7 @@ async function readRestRows(
   config: ConnectorConfig
 ): Promise<Record<string, unknown>[]> {
   if (!connector.base_url) throw new Error("REST connector base_url is required");
+  const sourceUrl = await assertSafeOutboundUrl(connector.base_url, "REST connector");
 
   const headers = new Headers({ Accept: "application/json" });
   if (connector.secret_name) {
@@ -106,7 +108,7 @@ async function readRestRows(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
   try {
-    const response = await fetch(connector.base_url, {
+    const response = await fetch(sourceUrl, {
       method,
       headers: method === "POST"
         ? new Headers({ ...Object.fromEntries(headers.entries()), "Content-Type": "application/json" })

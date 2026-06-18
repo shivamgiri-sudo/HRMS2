@@ -92,15 +92,15 @@ export default defineConfig(({ mode }) => ({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          "vendor-react":   ["react", "react-dom", "react-router-dom"],
-          "vendor-query":   ["@tanstack/react-query"],
-          "vendor-ui":      ["@radix-ui/react-dialog", "@radix-ui/react-dropdown-menu", "@radix-ui/react-select", "@radix-ui/react-tabs", "@radix-ui/react-tooltip"],
-          "vendor-utils":   ["date-fns", "clsx", "tailwind-merge", "class-variance-authority"],
-          // Heavy libraries — lazy-loaded only when relevant pages are visited
-          "vendor-charts":  ["recharts"],
-          "vendor-pdf":     ["jspdf", "jspdf-autotable"],
-          "vendor-xlsx":    ["xlsx"],
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (/[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom)[\\/]/.test(id)) return "vendor-react";
+          if (id.includes("@tanstack/react-query")) return "vendor-query";
+          if (id.includes("@radix-ui/")) return "vendor-ui";
+          if (/[\\/]node_modules[\\/](date-fns|clsx|tailwind-merge|class-variance-authority)[\\/]/.test(id)) return "vendor-utils";
+          if (id.includes("recharts")) return "vendor-charts";
+          if (/[\\/]node_modules[\\/](jspdf|jspdf-autotable)[\\/]/.test(id)) return "vendor-pdf";
+          return undefined;
         },
       },
     },

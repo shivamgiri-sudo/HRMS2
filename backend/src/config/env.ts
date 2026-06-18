@@ -55,6 +55,7 @@ const envSchema = z.object({
   INTEGRATION_SCHEDULER_POLL_MS: z.coerce.number().int().min(5000).default(30000),
   INTEGRATION_SCHEDULER_MAX_RETRIES: z.coerce.number().int().min(1).max(5).default(3),
   INTEGRATION_SCHEDULER_RETRY_DELAY_MS: z.coerce.number().int().min(100).default(5000),
+  OUTBOUND_ALLOW_PRIVATE_URLS: z.string().default("false"),
   SEED_DEMO_DATA: z.string().default("false"),
   SMTP_HOST:   z.string().default("smtp.gmail.com"),
   SMTP_PORT:   z.coerce.number().default(587),
@@ -144,6 +145,10 @@ if (parsed.data.NODE_ENV === "production") {
     console.error("[FATAL] PORTAL_DEMO_BYPASS must not be 'true' in production.");
     process.exit(1);
   }
+  if (parsed.data.OUTBOUND_ALLOW_PRIVATE_URLS === "true") {
+    console.error("[FATAL] OUTBOUND_ALLOW_PRIVATE_URLS must not be 'true' in production.");
+    process.exit(1);
+  }
   if (!parsed.data.BGV_WEBHOOK_SECRET) {
     console.error("[FATAL] BGV_WEBHOOK_SECRET must be set in production.");
     process.exit(1);
@@ -169,5 +174,6 @@ export const env = {
   LEGACY_SYNC_ENABLED: parsed.data.LEGACY_SYNC_ENABLED === 'true',
   LEGACY_SYNC_PARALLEL_DOMAINS: parsed.data.LEGACY_SYNC_PARALLEL_DOMAINS !== 'false',
   ENABLE_SCHEDULERS: parsed.data.ENABLE_SCHEDULERS === 'true',
+  OUTBOUND_ALLOW_PRIVATE_URLS: parsed.data.OUTBOUND_ALLOW_PRIVATE_URLS === 'true',
   SEED_DEMO_DATA: parsed.data.SEED_DEMO_DATA === 'true',
 };

@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import * as XLSX from 'xlsx';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { useToast } from '@/hooks/use-toast';
@@ -11,7 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Label } from '@/components/ui/label';
-import { BarChart3, ChevronDown, ChevronRight, Download, FileSpreadsheet, Play, Loader2 } from 'lucide-react';
+import { BarChart3, ChevronDown, ChevronRight, Download, Play, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -61,16 +60,6 @@ function downloadCsv(columns: string[], rows: Record<string, unknown>[], filenam
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
-}
-
-function downloadXlsx(columns: string[], rows: Record<string, unknown>[], filename: string) {
-  const data = [columns, ...rows.map(r => columns.map(c => r[c] ?? ''))];
-  const ws = XLSX.utils.aoa_to_sheet(data);
-  // Auto-width columns
-  ws['!cols'] = columns.map(c => ({ wch: Math.max(c.length + 2, 12) }));
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Report');
-  XLSX.writeFile(wb, filename);
 }
 
 // ── Category badge colours ─────────────────────────────────────────────────────
@@ -307,20 +296,6 @@ export default function NativeMasterReports() {
                             >
                               <Download className="h-4 w-4 mr-2" />
                               CSV
-                            </Button>
-                            <Button
-                              variant="outline"
-                              className="border-green-300 text-green-700 hover:bg-green-50"
-                              onClick={() =>
-                                downloadXlsx(
-                                  result.columns,
-                                  result.rows,
-                                  `${selected.report_code}_${new Date().toISOString().slice(0, 10)}.xlsx`
-                                )
-                              }
-                            >
-                              <FileSpreadsheet className="h-4 w-4 mr-2" />
-                              Excel
                             </Button>
                           </>
                         )}
