@@ -26,14 +26,34 @@ export const atsController = {
 
   async createCandidate(req: AuthenticatedRequest, res: Response) {
     const input = createCandidateSchema.parse(req.body);
+    // Convert numeric boolean fields to strings for CreateCandidateInput type compatibility
+    const normalizedInput = {
+      ...input,
+      rotationalShift: input.rotationalShift != null ? String(input.rotationalShift) : input.rotationalShift,
+      nightShiftOk: input.nightShiftOk != null ? String(input.nightShiftOk) : input.nightShiftOk,
+      leavesIn3months: input.leavesIn3months != null ? String(input.leavesIn3months) : input.leavesIn3months,
+      ownsTwoWheeler: input.ownsTwoWheeler != null ? String(input.ownsTwoWheeler) : input.ownsTwoWheeler,
+      idProofAvailable: input.idProofAvailable != null ? String(input.idProofAvailable) : input.idProofAvailable,
+      educationProofAvailable: input.educationProofAvailable != null ? String(input.educationProofAvailable) : input.educationProofAvailable,
+    };
     // Normalization handled inside atsService.createCandidate
-    const data  = await atsService.createCandidate(input, req.authUser?.id ?? null);
+    const data  = await atsService.createCandidate(normalizedInput, req.authUser?.id ?? null);
     return res.status(201).json({ success: true, data, message: "Candidate registered" });
   },
 
   async updateCandidate(req: AuthenticatedRequest, res: Response) {
     const input = updateCandidateSchema.parse(req.body);
-    const data  = await atsService.updateCandidate(req.params.id, input, req.authUser!.id);
+    // Convert numeric boolean fields to strings for CreateCandidateInput type compatibility
+    const normalizedInput = {
+      ...input,
+      rotationalShift: input.rotationalShift != null ? String(input.rotationalShift) : input.rotationalShift,
+      nightShiftOk: input.nightShiftOk != null ? String(input.nightShiftOk) : input.nightShiftOk,
+      leavesIn3months: input.leavesIn3months != null ? String(input.leavesIn3months) : input.leavesIn3months,
+      ownsTwoWheeler: input.ownsTwoWheeler != null ? String(input.ownsTwoWheeler) : input.ownsTwoWheeler,
+      idProofAvailable: input.idProofAvailable != null ? String(input.idProofAvailable) : input.idProofAvailable,
+      educationProofAvailable: input.educationProofAvailable != null ? String(input.educationProofAvailable) : input.educationProofAvailable,
+    };
+    const data  = await atsService.updateCandidate(req.params.id, normalizedInput, req.authUser!.id);
     return res.json({ success: true, data, message: "Candidate updated" });
   },
 

@@ -418,7 +418,7 @@ async function runFileOnConnection(
  */
 export async function runPendingMigrations(): Promise<MigrationHealth> {
   if (process.env.SKIP_MIGRATIONS === 'true') {
-    migrationHealth = { status: "healthy", applied: [], skipped: [], failed: [], startedAt: new Date().toISOString(), completedAt: new Date().toISOString() };
+    migrationHealth = { status: "ok", applied: [], skipped: [], failed: [], startedAt: new Date().toISOString(), completedAt: new Date().toISOString() };
     return migrationHealth;
   }
 

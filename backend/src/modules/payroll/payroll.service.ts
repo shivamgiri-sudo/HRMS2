@@ -618,11 +618,12 @@ export const payrollService = {
 
     // Log the action
     await logSensitiveAction({
-      userId,
-      action: "payroll.overtime.update",
-      resourceType: "salary_prep_line",
-      resourceId: lineId,
-      metadata: {
+      actor_user_id: userId,
+      action_type: "payroll.overtime.update",
+      module_key: "payroll",
+      entity_type: "salary_prep_line",
+      entity_id: lineId,
+      change_summary: {
         employeeCode: line.employee_code,
         branchId: line.branch_id,
         overtimeHours: input.overtimeHours,
@@ -634,13 +635,14 @@ export const payrollService = {
     await appendJourneyEvent({
       employeeId: line.employee_id,
       eventType: "overtime_updated",
-      eventCategory: "payroll",
+      eventDate: new Date().toISOString(),
       description: `Overtime updated: ${input.overtimeHours}h = ₹${input.overtimeAmount}`,
+      module: "payroll",
+      triggeredBy: userId,
       metadata: {
         lineId,
         overtimeHours: input.overtimeHours,
         overtimeAmount: input.overtimeAmount,
-        updatedBy: userId,
       },
     });
 
