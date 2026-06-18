@@ -52,7 +52,6 @@ interface ProfileForm {
   personal_email: string;
   personal_phone: string;
   alternate_mobile: string;
-  personal_email: string;
   personal_mobile: string;
   address: string;
   city: string;
@@ -177,7 +176,6 @@ const Profile = () => {
         personal_email: employee.personal_email || "",
         personal_phone: employee.personal_phone || "",
         alternate_mobile: employee.alternate_mobile || "",
-        personal_email: employee.personal_email || "",
         personal_mobile: employee.personal_mobile || "",
         address: employee.address || "",
         city: employee.city || "",
@@ -223,7 +221,6 @@ const Profile = () => {
       personal_email: employee.personal_email || "",
       personal_phone: employee.personal_phone || "",
       alternate_mobile: employee.alternate_mobile || "",
-      personal_email: employee.personal_email || "",
       personal_mobile: employee.personal_mobile || "",
       address: employee.address || "",
       city: employee.city || "",

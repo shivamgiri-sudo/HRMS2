@@ -89,6 +89,12 @@ const MONTHS = [
 const isOfficeMode = (mode?: string | null) =>
   mode === "wfo" || mode === "office";
 
+function safeFormatDate(value: string | null | undefined, fmt: string, fallback = "-"): string {
+  if (!value) return fallback;
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? fallback : format(d, fmt);
+}
+
 interface EmployeeSchedule {
   id: string;
   first_name: string | null;
@@ -570,9 +576,7 @@ const Attendance = () => {
                       </div>
 
                       <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
-                        {todayRecord?.clock_in
-                          ? format(new Date(todayRecord.clock_in), "hh:mm a")
-                          : "--:--"}
+                        {safeFormatDate(todayRecord?.clock_in, "hh:mm a", "--:--")}
                       </p>
 
                       {isAdminOrHR &&
@@ -594,9 +598,7 @@ const Attendance = () => {
                       </div>
 
                       <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
-                        {todayRecord?.clock_out
-                          ? format(new Date(todayRecord.clock_out), "hh:mm a")
-                          : "--:--"}
+                        {safeFormatDate(todayRecord?.clock_out, "hh:mm a", "--:--")}
                       </p>
                     </div>
 
@@ -1021,7 +1023,7 @@ const Attendance = () => {
                         return (
                           <TableRow key={record.id} className="hover:bg-slate-50/80 transition-colors duration-150 cursor-pointer">
                             <TableCell className="font-medium text-slate-900">
-                              {format(new Date(record.date), "MMM d, yyyy")}
+                              {safeFormatDate(record.date, "MMM d, yyyy")}
                             </TableCell>
 
                             <TableCell>
@@ -1042,11 +1044,7 @@ const Attendance = () => {
 
                             <TableCell>
                               <div>
-                                <p>
-                                  {record.clock_in
-                                    ? format(new Date(record.clock_in), "hh:mm a")
-                                    : "-"}
-                                </p>
+                                <p>{safeFormatDate(record.clock_in, "hh:mm a")}</p>
 
                                 {isAdminOrHR && lateMinutes > 0 && (
                                   <p className="mt-1 text-xs font-semibold text-amber-700">
@@ -1057,9 +1055,7 @@ const Attendance = () => {
                             </TableCell>
 
                             <TableCell>
-                              {record.clock_out
-                                ? format(new Date(record.clock_out), "hh:mm a")
-                                : "-"}
+                              {safeFormatDate(record.clock_out, "hh:mm a")}
                             </TableCell>
 
                             <TableCell>

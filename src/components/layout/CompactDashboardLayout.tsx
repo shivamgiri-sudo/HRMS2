@@ -63,6 +63,7 @@ const navGroups: NavGroup[] = [
       { label: "Attendance",       href: "/attendance",           icon: <Clock className="h-[15px] w-[15px]" />,         description: "Attendance" },
       { label: "Leaves",           href: "/leaves",               icon: <CalendarDays className="h-[15px] w-[15px]" />,  description: "Leave" },
       { label: "My Roster",        href: "/my-roster",            icon: <Calendar className="h-[15px] w-[15px]" />,      description: "Roster" },
+      { label: "Week-off Preference", href: "/week-off-preferences", icon: <CalendarDays className="h-[15px] w-[15px]" />, description: "Week-off" },
       { label: "Payslips",         href: "/profile?tab=payslips", icon: <CreditCard className="h-[15px] w-[15px]" />,    description: "Payslips" },
       { label: "Tax Declaration",  href: "/payroll/tax-declaration", icon: <Landmark className="h-[15px] w-[15px]" />,  description: "Tax" },
       { label: "Engagement",       href: "/engagement",           icon: <Sparkles className="h-[15px] w-[15px]" />,      description: "Engagement" },

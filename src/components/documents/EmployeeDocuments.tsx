@@ -36,7 +36,7 @@ interface EmployeeDocumentsProps {
   canDelete?: boolean;
 }
 
-export function EmployeeDocuments({ employeeId, canUpload = true, canDelete = true }: EmployeeDocumentsProps) {
+export function EmployeeDocuments({ employeeId, canUpload = false, canDelete = false }: EmployeeDocumentsProps) {
   const [selectedType, setSelectedType] = useState<string>("contract");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [viewingDocument, setViewingDocument] = useState<{
