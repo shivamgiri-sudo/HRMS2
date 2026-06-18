@@ -79,6 +79,7 @@ const NativeLMSMyLearning = lazy(() => import("./pages/NativeLMSMyLearning"));
 const NativeLMSCoordinator = lazy(() => import("./pages/NativeLMSCoordinator"));
 const LMSIntegrationAdmin = lazy(() => import("./pages/LMSIntegrationAdmin"));
 const NativePlaceholderPage = lazy(() => import("./pages/NativePlaceholderPage"));
+const NativeQualityDashboard = lazy(() => import("./pages/NativeQualityDashboard"));
 const NativeLMSIntegration = lazy(() => import("./pages/NativeLMSIntegration"));
 
 const NativeWFMRoster = lazy(() => import("./pages/NativeWFMRoster"));
@@ -289,7 +290,7 @@ const App = () => (
               <Route path="/wfm/extensions" element={<ProtectedRoute><Gate pageCode="WFM_EXTENSIONS"><NativeWFMExtensions /></Gate></ProtectedRoute>} />
               <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />
               <Route path="/roster-preference" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeRosterPreference /></Gate></ProtectedRoute>} />
-              <Route path="/quality/dashboard" element={<ProtectedRoute><Gate pageCode="QUALITY_DASHBOARD"><NativePlaceholderPage title="Quality Dashboard" module="Quality" /></Gate></ProtectedRoute>} />
+              <Route path="/quality/dashboard" element={<ProtectedRoute><Gate pageCode="QUALITY_DASHBOARD"><NativeQualityDashboard /></Gate></ProtectedRoute>} />
               <Route path="/operations/dashboard" element={<ProtectedRoute><Gate pageCode="OPERATIONS_DASHBOARD"><NativePlaceholderPage title="Operations Dashboard" module="Operations" /></Gate></ProtectedRoute>} />
               <Route path="/performance/command-center" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><UnifiedPerformanceCommandCenter /></Gate></ProtectedRoute>} />
               <Route path="/settings/access-control" element={<ProtectedRoute><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />

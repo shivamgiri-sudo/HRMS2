@@ -5,7 +5,17 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Calculator, ChevronLeft } from 'lucide-react';
+import { Loader2, Calculator, ChevronLeft, ShieldCheck } from 'lucide-react';
+
+interface BgvCheckItem { check_type: string; status: string; result_summary?: string; }
+interface BgvData { score: number; checks: BgvCheckItem[]; }
+
+const BGV_STATUS_COLOR: Record<string, string> = {
+  passed: 'text-green-700 bg-green-50',
+  failed: 'text-red-700 bg-red-50',
+  pending: 'text-amber-700 bg-amber-50',
+  not_run: 'text-gray-500 bg-gray-50',
+};
 
 interface OnboardingRequest {
   id: string;
@@ -60,6 +70,7 @@ export default function NativeHROnboardingRequests() {
   const [salaryPreview, setSalaryPreview] = useState<SalaryPreview | null>(null);
   const [calcLoading, setCalcLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [bgv, setBgv] = useState<BgvData | null>(null);
 
   const [departments, setDepartments] = useState<DropdownItem[]>([]);
   const [designations, setDesignations] = useState<DropdownItem[]>([]);
@@ -110,6 +121,17 @@ export default function NativeHROnboardingRequests() {
 
   const setF = (key: keyof typeof offer, value: unknown) => setOffer(p => ({ ...p, [key]: value }));
 
+  const openCandidate = (row: OnboardingRequest) => {
+    setSelected(row);
+    setBgv(null);
+    hrmsApi.get<{ data?: BgvData; score?: number; checks?: BgvCheckItem[] }>(
+      `/api/ats/bgv/status?candidateId=${row.candidate_id}`
+    ).then(r => {
+      const d = (r as any).data ?? r;
+      if (d && typeof d === 'object') setBgv(d as BgvData);
+    }).catch(() => {});
+  };
+
   const calcSalary = async () => {
     if (!offer.offered_ctc || !offer.salary_band) return;
     setCalcLoading(true);
@@ -151,7 +173,7 @@ export default function NativeHROnboardingRequests() {
 
   if (selected) return (
     <div className="p-6 max-w-3xl mx-auto space-y-5">
-      <Button variant="outline" onClick={() => { setSelected(null); setSalaryPreview(null); }}>
+      <Button variant="outline" onClick={() => { setSelected(null); setSalaryPreview(null); setBgv(null); }}>
         <ChevronLeft className="w-4 h-4 mr-1" /> Back to Requests
       </Button>
 
@@ -171,6 +193,29 @@ export default function NativeHROnboardingRequests() {
 
         <CardContent className="space-y-6">
 
+          {/* ── BGV Score Panel ── */}
+          {bgv && (
+            <section>
+              <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3 flex items-center gap-1.5">
+                <ShieldCheck size={13} /> Background Verification
+              </p>
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-sm text-slate-600">BGV Score:</span>
+                <span className={`font-bold text-base px-2 py-0.5 rounded ${bgv.score >= 70 ? 'bg-green-100 text-green-800' : bgv.score >= 40 ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800'}`}>
+                  {bgv.score}/100
+                </span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                {(bgv.checks ?? []).map(c => (
+                  <div key={c.check_type} className={`rounded-lg px-3 py-2 text-xs flex items-center justify-between gap-2 ${BGV_STATUS_COLOR[c.status] ?? BGV_STATUS_COLOR.not_run}`}>
+                    <span className="capitalize">{c.check_type.replace(/_/g, ' ')}</span>
+                    <span className="font-semibold uppercase">{c.status}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           {/* ── Employment Info ── */}
           <section>
             <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">Employment Details</p>
@@ -188,6 +233,7 @@ export default function NativeHROnboardingRequests() {
               <div>
                 <Label>Date of Salary Start</Label>
                 <Input type="date" value={offer.date_of_salary} onChange={e => setF('date_of_salary', e.target.value)} />
+                <p className="text-xs text-slate-400 mt-1">Leave blank to use Date of Joining. Set a later date for processes with unpaid training period.</p>
               </div>
               <div>
                 <Label>Department</Label>
@@ -353,10 +399,10 @@ export default function NativeHROnboardingRequests() {
                 </td>
                 <td className="px-3 py-2">
                   {r.profile_status === 'profile_submitted' && (
-                    <Button size="sm" onClick={() => setSelected(r)}>Create Offer</Button>
+                    <Button size="sm" onClick={() => openCandidate(r)}>Create Offer</Button>
                   )}
                   {r.offer_status === 'draft' && (
-                    <Button size="sm" variant="outline" onClick={() => setSelected(r)}>Edit Offer</Button>
+                    <Button size="sm" variant="outline" onClick={() => openCandidate(r)}>Edit Offer</Button>
                   )}
                 </td>
               </tr>

@@ -24,8 +24,16 @@ export function S4_StatutoryIds({ token: _token, initialData, saveSection }: S4P
 
   useAutoSave(payload => saveSection('employee-details', payload), form);
 
+  const uanError = form.uan_number && !/^\d{12}$/.test(form.uan_number)
+    ? 'UAN must be exactly 12 digits'
+    : null;
+  const esicError = form.esic_number && !/^\d{17}$/.test(form.esic_number)
+    ? 'ESIC number must be exactly 17 digits'
+    : null;
+
   const lbl = 'block text-xs font-semibold text-gray-600 mb-1';
   const inp = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400';
+  const inpErr = inp + ' border-red-300 focus:ring-red-300';
   const sel = inp;
 
   return (
@@ -36,7 +44,8 @@ export function S4_StatutoryIds({ token: _token, initialData, saveSection }: S4P
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className={lbl}>UAN (Universal Account Number)</label>
-          <input className={inp} value={form.uan_number} onChange={set('uan_number')} placeholder="12-digit UAN" maxLength={12} />
+          <input className={uanError ? inpErr : inp} value={form.uan_number} onChange={set('uan_number')} placeholder="12-digit UAN" maxLength={12} inputMode="numeric" />
+          {uanError && <p className="text-xs text-red-500 mt-1">{uanError}</p>}
         </div>
         <div>
           <label className={lbl}>PF Member ID (Old)</label>
@@ -48,7 +57,8 @@ export function S4_StatutoryIds({ token: _token, initialData, saveSection }: S4P
         </div>
         <div>
           <label className={lbl}>ESIC Beneficiary Number</label>
-          <input className={inp} value={form.esic_number} onChange={set('esic_number')} placeholder="17-digit ESIC number" maxLength={17} />
+          <input className={esicError ? inpErr : inp} value={form.esic_number} onChange={set('esic_number')} placeholder="17-digit ESIC number" maxLength={17} inputMode="numeric" />
+          {esicError && <p className="text-xs text-red-500 mt-1">{esicError}</p>}
         </div>
         <div>
           <label className={lbl}>PF Eligibility</label>

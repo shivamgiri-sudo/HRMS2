@@ -33,7 +33,7 @@ export const leaveRequestSchema = z
   });
 
 export const reviewLeaveSchema = z.object({
-  status: z.enum(["approved", "rejected", "branch_head_approved", "branch_head_rejected"]),
+  status: z.enum(["approved", "rejected", "branch_head_approved", "branch_head_rejected", "cancelled"]),
   remarks: z.string().trim().nullable().optional(),
 });
 

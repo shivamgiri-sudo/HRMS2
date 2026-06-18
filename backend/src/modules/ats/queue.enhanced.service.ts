@@ -80,22 +80,23 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
     conditions.push(`(
       c.full_name LIKE ? OR
       c.mobile LIKE ? OR
-      qt.token_number LIKE ?
+      qt.token_number LIKE ? OR
+      qt.token LIKE ?
     )`);
     const searchTerm = `%${filters.search}%`;
-    params.push(searchTerm, searchTerm, searchTerm);
+    params.push(searchTerm, searchTerm, searchTerm, searchTerm);
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
       qt.id,
-      qt.token_number,
+      COALESCE(qt.token_number, qt.token) as token_number,
       qt.candidate_id,
       c.full_name as candidate_name,
       c.mobile,
       c.email,
-      c.applied_for_role as applied_role,
-      qt.branch_name,
+      COALESCE(c.role_applied, c.applied_for_process) as applied_role,
+      COALESCE(qt.branch_name, c.applied_for_branch) as branch_name,
       c.branch_display_name,
       qt.queue_status,
       qt.recruiter_id,
@@ -181,13 +182,13 @@ export async function getNextCandidate(recruiterId: string, branch: string): Pro
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
       qt.id,
-      qt.token_number,
+      COALESCE(qt.token_number, qt.token) as token_number,
       qt.candidate_id,
       c.full_name as candidate_name,
       c.mobile,
       c.email,
-      c.applied_for_role as applied_role,
-      qt.branch_name,
+      COALESCE(c.role_applied, c.applied_for_process) as applied_role,
+      COALESCE(qt.branch_name, c.applied_for_branch) as branch_name,
       c.branch_display_name,
       qt.queue_status,
       qt.recruiter_id,
@@ -294,13 +295,13 @@ export async function getRecruiterQueue(recruiterId: string): Promise<QueueEntry
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
       qt.id,
-      qt.token_number,
+      COALESCE(qt.token_number, qt.token) as token_number,
       qt.candidate_id,
       c.full_name as candidate_name,
       c.mobile,
       c.email,
-      c.applied_for_role as applied_role,
-      qt.branch_name,
+      COALESCE(c.role_applied, c.applied_for_process) as applied_role,
+      COALESCE(qt.branch_name, c.applied_for_branch) as branch_name,
       c.branch_display_name,
       qt.queue_status,
       qt.recruiter_id,

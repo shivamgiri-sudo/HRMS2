@@ -222,6 +222,10 @@ const css = `
   .native-ats-ti,.native-ats-ta,.native-ats-si { width:100%; border:1.5px solid var(--ats-border); outline:none; background:#f7f9fc; color:var(--ats-text); font-family:'DM Sans',sans-serif; font-size:15px; font-weight:500; padding:13px 14px 13px 42px; border-radius:var(--ats-rs); appearance:none; -webkit-appearance:none; transition:border-color .15s,box-shadow .15s,background .15s; line-height:1.4; }
   .native-ats-ta { resize:none; min-height:82px; padding-top:12px; padding-bottom:12px; }
   .native-ats-ti:focus,.native-ats-ta:focus,.native-ats-si:focus { border-color:var(--ats-primary); box-shadow:0 0 0 3px rgba(109,40,217,.1); background:#fff; }
+  .native-ats-ti.error,.native-ats-ta.error { border-color:#ef4444; background:#fff5f5; }
+  .native-ats-ti.error:focus,.native-ats-ta.error:focus { box-shadow:0 0 0 3px rgba(239,68,68,.1); }
+  .native-ats-ti.valid,.native-ats-ta.valid { border-color:#10b981; background:#f0fdf4; }
+  .native-ats-ti.valid:focus,.native-ats-ta.valid:focus { box-shadow:0 0 0 3px rgba(16,185,129,.1); }
   .native-ats-sw { position:relative; }
   .native-ats-sw::after { content:'▾'; position:absolute; right:12px; top:50%; transform:translateY(-50%); color:#94a3b8; pointer-events:none; font-size:13px; }
   .native-ats-si { cursor:pointer; padding-right:34px; }
@@ -231,6 +235,7 @@ const css = `
   .native-ats-uz { border:2px dashed var(--ats-border); border-radius:var(--ats-rs); padding:20px 16px; text-align:center; cursor:pointer; background:#f7f9fc; transition:border-color .15s,background .15s; }
   .native-ats-uz:active { background:var(--ats-plight); }
   .native-ats-uz.has { border-color:var(--ats-green); background:#f0fdf4; }
+  .native-ats-uz.error { border-color:#ef4444; background:#fff5f5; }
   .native-ats-uz-ico { font-size:26px; margin-bottom:6px; }
   .native-ats-uz-lbl { font-size:14px; font-weight:700; margin-bottom:3px; }
   .native-ats-uz-sub { font-size:12px; color:var(--ats-muted); }
@@ -408,6 +413,7 @@ export default function NativeATSCandidateRegistration() {
         genderOptions:           data.genderOptions       ?? ["Male","Female","Other"],
         roleOptions:             data.roleOptions         ?? ["Inbound Agent","Outbound Agent","Back Office","Team Leader","Quality Analyst"],
         recruiterOptions:        data.recruiterOptions    ?? ["Admin","HR Team","Sourcer"],
+        recruiterDetails:        data.recruiterDetails    ?? [],
         branchOptions,
         branchAliases:           data.branchAliases       ?? [],
         yesNoOptions:            ["Yes","No"],
@@ -447,9 +453,68 @@ export default function NativeATSCandidateRegistration() {
     setScreen("welcome");
   };
 
+  const validateField = (key: keyof CandidateFormData, value: string): string => {
+    // Mobile number validation
+    if (key === 'mobile') {
+      const cleaned = value.replace(/\D/g, '');
+      if (!cleaned) return ''; // Empty is ok during typing
+      if (cleaned.length < 10) return `📞 Enter ${10 - cleaned.length} more digit${10 - cleaned.length > 1 ? 's' : ''}`;
+      if (cleaned.length > 10) return '📞 Mobile must be 10 digits only';
+      if (!/^[6-9]/.test(cleaned)) return '📞 Must start with 6, 7, 8, or 9';
+      return ''; // Valid!
+    }
+
+    // Email validation
+    if (key === 'email' && value) {
+      if (!value.includes('@')) return '✉️ Email must contain @';
+      const parts = value.split('@');
+      if (parts.length !== 2) return '✉️ Only one @ allowed';
+      if (parts[0].length < 1) return '✉️ Enter username before @';
+      if (parts[1].length < 3) return '✉️ Enter domain after @';
+      if (!parts[1].includes('.')) return '✉️ Domain must have extension (e.g., .com)';
+      const domainParts = parts[1].split('.');
+      if (domainParts[domainParts.length - 1].length < 2) return '✉️ Invalid domain extension';
+      if (!/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(value)) return '✉️ Invalid characters in email';
+      return ''; // Valid!
+    }
+
+    // Name validation
+    if (key === 'name' && value) {
+      if (value.length < 3) return `📝 Enter ${3 - value.length} more character${3 - value.length > 1 ? 's' : ''}`;
+      if (value.length > 100) return '📝 Name too long (max 100 characters)';
+      if (!/^[a-zA-Z\s]+$/.test(value)) return '📝 Name can only contain letters and spaces';
+      if (value.trim().split(/\s+/).length < 2) return '📝 Please enter full name (first and last)';
+      return ''; // Valid!
+    }
+
+    // Address validation
+    if (key === 'address' && value) {
+      if (value.length < 10) return `📍 Enter ${10 - value.length} more character${10 - value.length > 1 ? 's' : ''} for complete address`;
+      if (value.length > 500) return '📍 Address too long (max 500 characters)';
+      if (!/[a-zA-Z]/.test(value)) return '📍 Address must contain some letters';
+      if (!/\d/.test(value)) return '📍 Please include house/building number';
+      return ''; // Valid!
+    }
+
+    return '';
+  };
+
   const update = (key: keyof CandidateFormData, value: string | File | null) => {
+    // For mobile, restrict to 10 digits only
+    if (key === 'mobile' && typeof value === 'string') {
+      const cleaned = value.replace(/\D/g, '');
+      value = cleaned.slice(0, 10); // Hard limit to 10 digits
+    }
+
     setForm((prev) => ({ ...prev, [key]: value }));
-    setErrors((prev) => ({ ...prev, [key]: "" }));
+
+    // Real-time validation
+    if (typeof value === 'string') {
+      const error = validateField(key, value);
+      setErrors((prev) => ({ ...prev, [key]: error }));
+    } else {
+      setErrors((prev) => ({ ...prev, [key]: "" }));
+    }
   };
 
   const validateForm = () => {
@@ -541,17 +606,35 @@ export default function NativeATSCandidateRegistration() {
 
   const onResumeFile = (file: File | null) => {
     if (!file) return;
-    if (file.size > 10 * 1024 * 1024) {
-      alert("Max file size is 10 MB.");
+
+    // Validate file type
+    const allowedTypes = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/jpeg', 'image/png', 'image/jpg'];
+    if (!allowedTypes.includes(file.type)) {
+      setErrors((prev) => ({ ...prev, resumeFile: '📎 Only PDF, DOC, DOCX, JPG, PNG files allowed' }));
       return;
     }
+
+    // Validate file size
+    if (file.size > 10 * 1024 * 1024) {
+      setErrors((prev) => ({ ...prev, resumeFile: '📎 File too large! Max 10 MB allowed' }));
+      return;
+    }
+
+    // Validate file name length
+    if (file.name.length > 100) {
+      setErrors((prev) => ({ ...prev, resumeFile: '📎 File name too long (max 100 characters)' }));
+      return;
+    }
+
+    setErrors((prev) => ({ ...prev, resumeFile: '' }));
     update("resumeFile", file);
   };
 
-  // Helper to get recruiter contact info
+  // Helper to get recruiter contact info — case-insensitive match
   const getRecruiterContact = (recruiterName: string): RecruiterDetail | null => {
-    if (!bootstrap.recruiterDetails) return null;
-    return bootstrap.recruiterDetails.find(r => r.name === recruiterName) || null;
+    if (!bootstrap.recruiterDetails?.length) return null;
+    const needle = recruiterName.trim().toLowerCase();
+    return bootstrap.recruiterDetails.find(r => r.name.trim().toLowerCase() === needle) || null;
   };
 
   const openCam = async () => {
@@ -784,26 +867,72 @@ export default function NativeATSCandidateRegistration() {
     const value = form[f.k];
 
     if (f.t === "text" || f.t === "tel" || f.t === "email") {
+      const hasValue = String(value || "").length > 0;
+      const isValid = hasValue && !error;
+      const inputClass = `native-ats-ti ${error ? 'error' : ''} ${isValid ? 'valid' : ''}`;
+
+      // Helper text based on field
+      let helperText = '';
+      if (f.k === 'mobile' && hasValue) {
+        const cleaned = String(value || "").replace(/\D/g, '');
+        if (cleaned.length > 0 && cleaned.length < 10) {
+          helperText = `${cleaned.length}/10 digits entered`;
+        }
+      } else if (f.k === 'email' && hasValue && !isValid && !error) {
+        helperText = 'e.g., yourname@example.com';
+      } else if (f.k === 'name' && hasValue && String(value || "").length < 3) {
+        helperText = `${String(value || "").length}/3 characters (minimum)`;
+      }
+
       return (
         <div className="native-ats-fg" id={id} key={f.k}>
           <label className="native-ats-fl">{f.lb}</label>
           <div className="native-ats-iw">
             <span className="native-ats-ii">{f.ic}</span>
-            <input className="native-ats-ti" type={f.t} value={String(value || "")} placeholder={f.ph || f.lb} onChange={(e) => update(f.k, e.target.value.trimStart())} />
+            <input
+              className={inputClass}
+              type={f.t}
+              value={String(value || "")}
+              placeholder={f.ph || f.lb}
+              onChange={(e) => update(f.k, e.target.value.trimStart())}
+              maxLength={f.k === 'mobile' ? 10 : f.k === 'email' ? 100 : 255}
+              inputMode={f.k === 'mobile' ? 'numeric' : f.t === 'email' ? 'email' : 'text'}
+            />
+            {isValid && <span style={{ position: 'absolute', right: 12, fontSize: 16, color: '#10b981' }}>✓</span>}
           </div>
+          {helperText && !error && (
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>{helperText}</div>
+          )}
           <div className={`native-ats-fe ${error ? "show" : ""}`}>{error}</div>
         </div>
       );
     }
 
     if (f.t === "textarea") {
+      const hasValue = String(value || "").length > 0;
+      const isValid = hasValue && !error && String(value || "").length >= 10;
+      const charCount = String(value || "").length;
+      const inputClass = `native-ats-ta native-ats-ti ${error ? 'error' : ''} ${isValid ? 'valid' : ''}`;
+
       return (
         <div className="native-ats-fg" id={id} key={f.k}>
           <label className="native-ats-fl">{f.lb}</label>
           <div className="native-ats-iw" style={{ alignItems: "flex-start" }}>
             <span className="native-ats-ii" style={{ top: 13 }}>{f.ic}</span>
-            <textarea className="native-ats-ta native-ats-ti" value={String(value || "")} placeholder={f.ph || f.lb} onChange={(e) => update(f.k, e.target.value.trimStart())} />
+            <textarea
+              className={inputClass}
+              value={String(value || "")}
+              placeholder={f.ph || f.lb}
+              onChange={(e) => update(f.k, e.target.value.trimStart())}
+              maxLength={500}
+            />
+            {isValid && <span style={{ position: 'absolute', right: 12, top: 12, fontSize: 16, color: '#10b981' }}>✓</span>}
           </div>
+          {hasValue && (
+            <div style={{ fontSize: 11, color: charCount < 10 ? '#ef4444' : '#64748b', marginTop: 3, textAlign: 'right' }}>
+              {charCount}/500 characters {charCount < 10 && `(min 10 required)`}
+            </div>
+          )}
           <div className={`native-ats-fe ${error ? "show" : ""}`}>{error}</div>
         </div>
       );
@@ -811,19 +940,24 @@ export default function NativeATSCandidateRegistration() {
 
     if (f.t === "select") {
       const options = f.ok ? bootstrap[f.ok] || [] : [];
+      const hasValue = String(value || "").length > 0;
+      const isValid = hasValue;
+      const selectClass = `native-ats-si ${error ? 'error' : ''} ${isValid ? 'valid' : ''}`;
+
       return (
         <div className="native-ats-fg" id={id} key={f.k}>
           <label className="native-ats-fl">{f.lb}</label>
           <div className="native-ats-iw native-ats-sw">
             <span className="native-ats-ii">{f.ic}</span>
-            <select className="native-ats-si" value={String(value || "")} onChange={(e) => update(f.k, e.target.value)}>
-              <option value="">Select...</option>
+            <select className={selectClass} value={String(value || "")} onChange={(e) => update(f.k, e.target.value)}>
+              <option value="">-- Select {f.lb} --</option>
               {options.map((opt) => (
                 <option key={opt} value={opt}>
                   {opt}
                 </option>
               ))}
             </select>
+            {isValid && <span style={{ position: 'absolute', right: 36, fontSize: 16, color: '#10b981', pointerEvents: 'none' }}>✓</span>}
           </div>
           <div className={`native-ats-fe ${error ? "show" : ""}`}>{error}</div>
         </div>
@@ -832,15 +966,35 @@ export default function NativeATSCandidateRegistration() {
 
     if (f.t === "file") {
       const hasFile = !!form.resumeFile;
+      const fileError = errors['resumeFile'];
+      const fileSize = form.resumeFile ? (form.resumeFile.size / 1024 / 1024).toFixed(2) : '0';
+
       return (
         <div className="native-ats-fg" key={f.k}>
           <label className="native-ats-fl">{f.lb}</label>
-          <button type="button" className={`native-ats-uz ${hasFile ? "has" : ""}`} onClick={() => resumeInputRef.current?.click()}>
+          <button
+            type="button"
+            className={`native-ats-uz ${hasFile ? "has" : ""} ${fileError ? "error" : ""}`}
+            onClick={() => resumeInputRef.current?.click()}
+          >
             <div className="native-ats-uz-ico">{hasFile ? "✅" : "⬆️"}</div>
-            <div className="native-ats-uz-lbl">{hasFile ? `✓ ${form.resumeFile?.name}` : "Tap to upload resume"}</div>
-            <div className="native-ats-uz-sub">PDF, DOC, DOCX, JPG – max 10 MB</div>
+            <div className="native-ats-uz-lbl">
+              {hasFile ? `✓ ${form.resumeFile?.name}` : "Tap to upload resume"}
+            </div>
+            <div className="native-ats-uz-sub">
+              {hasFile
+                ? `${fileSize} MB • Click to change`
+                : "PDF, DOC, DOCX, JPG, PNG • Max 10 MB"}
+            </div>
           </button>
-          <input ref={resumeInputRef} type="file" className="native-ats-hf" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => onResumeFile(e.target.files?.[0] || null)} />
+          {fileError && <div className="native-ats-fe show">{fileError}</div>}
+          <input
+            ref={resumeInputRef}
+            type="file"
+            className="native-ats-hf"
+            accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+            onChange={(e) => onResumeFile(e.target.files?.[0] || null)}
+          />
         </div>
       );
     }
@@ -902,8 +1056,19 @@ export default function NativeATSCandidateRegistration() {
     setScanMode('scanning');
     setScanStatus('Loading OCR engine...');
     try {
+      // Load Tesseract only if not already loaded — wait for actual load, not just tag presence
       await new Promise<void>((resolve, reject) => {
-        if (document.getElementById('tesseract-script') || (window as any).Tesseract) { resolve(); return; }
+        if ((window as any).Tesseract) { resolve(); return; }
+        const existing = document.getElementById('tesseract-script');
+        if (existing) {
+          // Tag exists but may not be loaded yet — poll for Tesseract
+          let attempts = 0;
+          const poll = setInterval(() => {
+            if ((window as any).Tesseract) { clearInterval(poll); resolve(); }
+            else if (++attempts > 40) { clearInterval(poll); reject(new Error('Tesseract load timeout')); }
+          }, 250);
+          return;
+        }
         const s = document.createElement('script');
         s.id = 'tesseract-script';
         s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
@@ -911,10 +1076,30 @@ export default function NativeATSCandidateRegistration() {
         s.onerror = () => reject(new Error('Failed to load Tesseract'));
         document.head.appendChild(s);
       });
-      setScanStatus('Extracting text from image...');
+
+      setScanStatus('Starting OCR...');
       const TesseractLib = (window as any).Tesseract;
-      if (!TesseractLib) throw new Error('Tesseract not available');
-      const worker = await TesseractLib.createWorker('eng');
+      if (!TesseractLib) throw new Error('Tesseract not available after load');
+
+      // Must provide explicit CDN paths — without these, worker.min.js 404s when loaded via script tag
+      const worker = await TesseractLib.createWorker('eng', 1, {
+        workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
+        langPath: 'https://tessdata.projectnaptha.com/4.0.0/',
+        corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd-lstm.wasm.js',
+        logger: (m: any) => {
+          if (m.status === 'recognizing text' && m.progress > 0) {
+            setScanStatus(`Scanning resume... ${Math.round(m.progress * 100)}%`);
+          } else if (m.status === 'loading tesseract core') {
+            setScanStatus('Loading OCR engine...');
+          } else if (m.status === 'initializing tesseract') {
+            setScanStatus('Initializing...');
+          } else if (m.status === 'loading language traineddata') {
+            setScanStatus('Loading language data...');
+          }
+        },
+      });
+
+      setScanStatus('Extracting text from image...');
       const { data: { text } } = await worker.recognize(imageDataUrl);
       await worker.terminate();
       setScanStatus('Mapping fields...');
@@ -972,17 +1157,17 @@ export default function NativeATSCandidateRegistration() {
       setScanStatus(`Extracted ${count} field(s). Please review and correct before submitting.`);
       setScanMode('done');
     } catch (err: any) {
-      const reason = err?.message === 'Failed to load Tesseract'
-        ? '📡 Could not load scanning engine. No worries! The form below is simple and quick to fill.'
-        : err?.message?.includes('network')
-          ? '🌐 Network issue detected. But don\'t worry - filling the form manually takes just 2 minutes!'
-          : '💡 No problem! Our smart form below is designed for speed - you\'ll be done in no time!';
+      const msg = err?.message ?? '';
+      const reason =
+        msg.includes('Failed to load Tesseract') || msg.includes('load timeout')
+          ? '📡 Could not load OCR engine. Check your internet and try again.'
+          : msg.includes('network') || msg.includes('fetch')
+            ? '🌐 Network error while loading OCR engine. Check your connection.'
+            : msg.includes('not available')
+              ? '⚙️ OCR engine did not initialise. Try refreshing the page.'
+              : `⚠️ OCR failed: ${msg || 'Unknown error'}`;
       setScanStatus(reason);
-      setScanMode('idle');
-      // Auto-hide message after 6 seconds
-      setTimeout(() => {
-        setScanStatus('');
-      }, 6000);
+      setScanMode('done'); // Keep visible so user sees the error, not swallowed
     }
   };
 
@@ -1025,13 +1210,46 @@ export default function NativeATSCandidateRegistration() {
     </div>
   );
 
-  const renderForm = () => (
-    <div className="native-ats-single-page native-ats-anim">
-      <div className="native-ats-step-hdr">
-        <div className="native-ats-step-lbl">Candidate Registration</div>
-        <h2 className="native-ats-step-ttl">Complete Details</h2>
-        <p className="native-ats-step-dsc">Fill all details below in one page</p>
-      </div>
+  const renderForm = () => {
+    // Calculate completion percentage
+    const requiredFields = ['name', 'mobile', 'email', 'address', 'education', 'experience', 'gender', 'roleApplied', 'recruiterName', 'branch', 'rotationalShift', 'preferredShift', 'nightShiftComfort', 'leavesRequired', 'ownTwoWheeler', 'idProofAvailable', 'educationProofAvailable'];
+    const filledFields = requiredFields.filter(k => {
+      const val = form[k as keyof CandidateFormData];
+      return val && String(val).trim().length > 0 && !errors[k];
+    });
+    const completionPercent = Math.round((filledFields.length / requiredFields.length) * 100);
+
+    return (
+      <div className="native-ats-single-page native-ats-anim">
+        <div className="native-ats-step-hdr">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+            <CompanyLogo size="md" />
+            <div style={{ flex: 1 }}>
+              <div className="native-ats-step-lbl">Candidate Registration</div>
+              <h2 className="native-ats-step-ttl">Complete Details</h2>
+            </div>
+          </div>
+          <div style={{ background: '#f0f4ff', borderRadius: 10, padding: '10px 14px', marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#4338ca' }}>
+                {completionPercent}% Complete
+              </span>
+              <span style={{ fontSize: 11, color: '#6b7280' }}>
+                {filledFields.length}/{requiredFields.length} fields filled
+              </span>
+            </div>
+            <div style={{ height: 6, background: '#ddd6fe', borderRadius: 99, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%',
+                background: 'linear-gradient(90deg, #6366f1, #8b5cf6)',
+                borderRadius: 99,
+                width: `${completionPercent}%`,
+                transition: 'width 0.3s ease'
+              }} />
+            </div>
+          </div>
+          <p className="native-ats-step-dsc">✨ Real-time validation • All fields required</p>
+        </div>
       <div className="native-ats-form-card">
           {/* Scan Resume — optional, above form sections */}
           {scanStatus && scanMode === 'idle' && (
@@ -1082,7 +1300,16 @@ export default function NativeATSCandidateRegistration() {
               </div>
             )}
             {scanMode === 'done' && (
-              <div style={{ background: 'linear-gradient(135deg,#ecfdf5,#d1fae5)', borderRadius: 10, padding: '12px 16px', fontSize: '0.88rem', color: '#166534', fontWeight: 600, border: '1px solid #a7f3d0', boxShadow: '0 3px 10px rgba(16,185,129,.15)' }}>✅ {scanStatus}</div>
+              <div style={{
+                background: scanStatus.startsWith('⚠️') || scanStatus.startsWith('📡') || scanStatus.startsWith('🌐') || scanStatus.startsWith('⚙️')
+                  ? 'linear-gradient(135deg,#fef2f2,#fee2e2)' : 'linear-gradient(135deg,#ecfdf5,#d1fae5)',
+                borderRadius: 10, padding: '12px 16px', fontSize: '0.88rem',
+                color: scanStatus.startsWith('⚠️') || scanStatus.startsWith('📡') || scanStatus.startsWith('🌐') || scanStatus.startsWith('⚙️')
+                  ? '#991b1b' : '#166534',
+                fontWeight: 600,
+                border: scanStatus.startsWith('⚠️') || scanStatus.startsWith('📡') || scanStatus.startsWith('🌐') || scanStatus.startsWith('⚙️')
+                  ? '1px solid #fca5a5' : '1px solid #a7f3d0',
+              }}>{scanStatus}</div>
             )}
           </div>
         {dynamicSections.map((section) => (
@@ -1107,7 +1334,8 @@ export default function NativeATSCandidateRegistration() {
         </div>
       </div>
     </div>
-  );
+    );
+  };
 
   const renderSubmitting = () => (
     <div className="native-ats-loading-wrap native-ats-anim">
@@ -1198,7 +1426,14 @@ export default function NativeATSCandidateRegistration() {
         {screen === "form" && (
           <div className="native-ats-bnav">
             <button className="native-ats-btn-back" onClick={goBack}>‹ Back</button>
-            <button className="native-ats-btn-next" onClick={submitForm} disabled={!consentGiven}>Finish & Submit ✓</button>
+            <button
+              className="native-ats-btn-next"
+              onClick={submitForm}
+              disabled={!consentGiven || Object.values(errors).some(e => e.length > 0)}
+              title={!consentGiven ? "Please accept consent to continue" : Object.values(errors).some(e => e.length > 0) ? "Please fix validation errors" : "Submit your registration"}
+            >
+              {Object.values(errors).some(e => e.length > 0) ? "⚠️ Fix Errors First" : "Finish & Submit ✓"}
+            </button>
           </div>
         )}
 

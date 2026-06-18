@@ -31,6 +31,7 @@ export function S6_Qualifications({ token, initialData, verifyBgv, eduCheck }: S
   const [rows, setRows] = useState<QualRow[]>([blank()]);
   const [verifying, setVerifying] = useState<number | null>(null);
   const [saving, setSaving] = useState<number | null>(null);
+  const [saveError, setSaveError] = useState<{ idx: number; msg: string } | null>(null);
 
   useEffect(() => {
     if (Array.isArray(initialData) && initialData.length > 0) {
@@ -42,12 +43,18 @@ export function S6_Qualifications({ token, initialData, verifyBgv, eduCheck }: S
     setRows(prev => prev.map((r, i) => i === idx ? { ...r, [k]: v } : r));
 
   const saveRow = async (idx: number) => {
+    const row = rows[idx];
+    if (!row.qualification || !row.passed_out_year) {
+      setSaveError({ idx, msg: 'Qualification type and year of passing are required.' });
+      return;
+    }
+    setSaveError(null);
     setSaving(idx);
     try {
       await fetch(`${QUAL_API}/qualification`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, ...rows[idx] }),
+        body: JSON.stringify({ token, ...row }),
       });
     } finally {
       setSaving(null);
@@ -113,6 +120,9 @@ export function S6_Qualifications({ token, initialData, verifyBgv, eduCheck }: S
             <div><label className={lbl}>State</label><input className={inp} value={row.passed_out_state} onChange={e => setRow(idx, 'passed_out_state', e.target.value)} /></div>
           </div>
           <InlineDocUpload token={token} docType={`marksheet_${idx}`} label="Upload Marksheet / Certificate *" />
+          {saveError?.idx === idx && (
+            <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded px-2 py-1">{saveError.msg}</p>
+          )}
           <div className="flex gap-2 flex-wrap">
             <button
               type="button"

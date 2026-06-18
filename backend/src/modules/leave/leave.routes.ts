@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
+import { getLegacyPool } from "../../db/legacyDb.js";
 import type { RowDataPacket } from "mysql2";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response } from "express";
@@ -112,7 +113,57 @@ leaveRouter.get("/requests", h(async (req: AuthenticatedRequest, res: Response) 
   return leaveController.listRequests(req, res);
 }));
 
-leaveRouter.patch("/requests/:id/review",         requireRole("admin", "hr", "manager"), h(leaveController.reviewRequest.bind(leaveController)));
+leaveRouter.patch("/requests/:id/review", requireRole("admin", "hr", "manager"), h(leaveController.reviewRequest.bind(leaveController)));
+
+// GET /requests/legacy?employeeId=&year= — historical leave records from db_bill
+leaveRouter.get("/requests/legacy", h(async (req: AuthenticatedRequest, res: Response) => {
+  const privileged = await isLeavePrivileged(req.authUser!.id);
+  let employeeId = String(req.query.employeeId ?? "");
+  if (!privileged) {
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (!callerEmp) return res.status(403).json({ success: false, message: "No employee record" });
+    employeeId = callerEmp.id;
+  }
+  if (!employeeId) return res.status(400).json({ success: false, message: "employeeId required" });
+
+  // Resolve employee_code from mas_hrms
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    "SELECT employee_code FROM employees WHERE id = ? LIMIT 1", [employeeId]
+  );
+  const empCode = (empRows[0] as any)?.employee_code;
+  if (!empCode) return res.json({ success: true, data: [] });
+
+  const year = req.query.year ? Number(req.query.year) : null;
+  const legacy = await getLegacyPool();
+
+  const params: any[] = [empCode];
+  let yearCond = "";
+  if (year) { yearCond = " AND YEAR(LeaveFrom) = ?"; params.push(year); }
+
+  const [rows] = await legacy.execute<RowDataPacket[]>(`
+    SELECT
+      Id                                                  AS id,
+      EmpCode                                             AS emp_code,
+      LeaveFrom                                           AS from_date,
+      LeaveTo                                             AS to_date,
+      LeaveType                                           AS leave_type_code,
+      COALESCE(CL,0)+COALESCE(EL,0)+COALESCE(ML,0)+COALESCE(PTRL,0)+COALESCE(MTRL,0)+COALESCE(LWP,0) AS total_days,
+      CASE Status
+        WHEN 'Approved'     THEN 'approved'
+        WHEN 'Not Approved' THEN 'rejected'
+        WHEN 'Pending'      THEN 'pending'
+        ELSE LOWER(Status)
+      END                                                 AS status,
+      TRIM(Purpose)                                       AS reason,
+      CreateDate                                          AS created_at
+    FROM leave_management
+    WHERE EmpCode = ?${yearCond}
+    ORDER BY LeaveFrom DESC
+    LIMIT 200
+  `, params);
+
+  return res.json({ success: true, data: rows });
+}));
 
 // Employee self-scope: employees can view only their own leave balance.
 leaveRouter.get("/balance/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
@@ -155,10 +206,86 @@ leaveRouter.post("/balance/seed", requireRole("admin", "hr"), h(async (req: Auth
   res.json({ success: true, count: rows.length });
 }));
 
-// GET /eligibility/:employeeId — returns all active leave types (all employees are eligible)
-leaveRouter.get("/eligibility/:employeeId", h(async (_req: AuthenticatedRequest, res: Response) => {
+// GET /eligibility/:employeeId — returns leave types eligible for this employee (gender-filtered)
+leaveRouter.get("/eligibility/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId } = req.params;
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    "SELECT gender FROM employees WHERE id = ? LIMIT 1", [employeeId]
+  );
+  const gender = ((empRows[0] as any)?.gender ?? "").toLowerCase().trim();
+  const isFemale = ["female", "f"].includes(gender);
+  const isMale   = ["male", "m"].includes(gender);
+
+  // ML/MTRL = female only; PL/PTRL = male only; all other types = everyone
   const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT id, leave_code, leave_name, max_days_per_year, carry_forward, requires_approval, paid_leave FROM leave_type_master WHERE active_status = 1 ORDER BY leave_name ASC"
+    `SELECT id, leave_code, leave_name, max_days_per_year, carry_forward, requires_approval, paid_leave
+     FROM leave_type_master
+     WHERE active_status = 1
+       AND (
+         leave_code NOT IN ('ML','MTRL','PL','PTRL')
+         OR (leave_code IN ('ML','MTRL') AND ?)
+         OR (leave_code IN ('PL','PTRL') AND ?)
+       )
+     ORDER BY leave_name ASC`,
+    [isFemale ? 1 : 0, isMale ? 1 : 0]
   );
   res.json({ success: true, data: rows });
+}));
+
+// POST /admin/sync-used-days-from-db-bill — sync 2026 used_days from db_bill (admin/hr only)
+leaveRouter.post("/admin/sync-used-days-from-db-bill", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const year = Number(req.query.year ?? 2026);
+  const legacy = await getLegacyPool();
+
+  const [dbBillRows] = await legacy.execute<RowDataPacket[]>(`
+    SELECT EmpCode,
+      COALESCE(SUM(CL), 0)   AS cl_used,
+      COALESCE(SUM(EL), 0)   AS el_used,
+      COALESCE(SUM(ML), 0)   AS ml_used,
+      COALESCE(SUM(PTRL), 0) AS ptrl_used,
+      COALESCE(SUM(MTRL), 0) AS mtrl_used
+    FROM leave_management
+    WHERE YEAR(LeaveFrom) = ? AND Status = 'Approved'
+    GROUP BY EmpCode
+  `, [year]);
+
+  const [ltRows] = await db.execute<RowDataPacket[]>(`SELECT id, leave_code FROM leave_type_master WHERE active_status = 1`);
+  const ltMap: Record<string, string> = {};
+  for (const lt of ltRows) ltMap[lt.leave_code] = lt.id;
+
+  const [empRows] = await db.execute<RowDataPacket[]>(`SELECT id, employee_code FROM employees WHERE active_status = 1`);
+  const empMap: Record<string, string> = {};
+  for (const e of empRows) empMap[e.employee_code] = e.id;
+
+  const cols = [
+    { col: 'cl_used', code: 'CL' }, { col: 'el_used', code: 'EL' },
+    { col: 'ml_used', code: 'ML' }, { col: 'ptrl_used', code: 'PTRL' },
+    { col: 'mtrl_used', code: 'MTRL' },
+  ];
+
+  let updated = 0;
+  for (const row of dbBillRows) {
+    const empId = empMap[row.EmpCode];
+    if (!empId) continue;
+    for (const { col, code } of cols) {
+      const usedDays = Number(row[col] ?? 0);
+      if (usedDays <= 0) continue;
+      const ltId = ltMap[code];
+      if (!ltId) continue;
+      const [existing] = await db.execute<RowDataPacket[]>(
+        `SELECT id, used_days FROM leave_balance_ledger WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+        [empId, ltId, year]
+      );
+      if (!existing.length) continue;
+      const currentUsed = Number(existing[0].used_days ?? 0);
+      if (currentUsed >= usedDays) continue;
+      await db.execute(
+        `UPDATE leave_balance_ledger SET used_days = ? WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+        [usedDays, empId, ltId, year]
+      );
+      updated++;
+    }
+  }
+
+  res.json({ success: true, message: `Synced ${year} used_days from db_bill`, updated, employees: dbBillRows.length });
 }));

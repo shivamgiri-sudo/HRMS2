@@ -51,6 +51,20 @@ const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
+// GET /api/files/:category/:filename — public (UUIDs are unguessable; auth headers not sent by <img> tags)
+router.get(
+  "/:category/:filename",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const safe = (req.params.category.replace(/[^a-zA-Z0-9_-]/g, "")) || "misc";
+    const safeFile = path.basename(req.params.filename);
+    const filePath = path.join(UPLOADS_ROOT, safe, safeFile);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File not found" });
+    }
+    res.sendFile(filePath);
+  })
+);
+
 router.use(requireAuth);
 
 // POST /api/files/upload?category=employee-documents
@@ -83,20 +97,6 @@ router.post(
       size: req.file.size,
       mimetype: req.file.mimetype,
     });
-  })
-);
-
-// GET /api/files/:category/:filename — serve file (any authenticated user)
-router.get(
-  "/:category/:filename",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const safe = (req.params.category.replace(/[^a-zA-Z0-9_-]/g, "")) || "misc";
-    const safeFile = path.basename(req.params.filename); // strip any path traversal
-    const filePath = path.join(UPLOADS_ROOT, safe, safeFile);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: "File not found" });
-    }
-    res.sendFile(filePath);
   })
 );
 

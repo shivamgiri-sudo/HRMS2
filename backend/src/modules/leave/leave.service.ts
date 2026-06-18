@@ -80,6 +80,22 @@ export const leaveService = {
       throw new Error(`Leave type not found: ${input.leaveTypeId}`);
     }
 
+    // Gender-restricted leave types
+    if (['ML', 'MTRL', 'PL', 'PTRL'].includes(leaveCode)) {
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        "SELECT gender FROM employees WHERE id = ? LIMIT 1", [input.employeeId]
+      );
+      const gender = ((empRows[0] as any)?.gender ?? "").toLowerCase().trim();
+      const isFemale = ["female", "f"].includes(gender);
+      const isMale   = ["male", "m"].includes(gender);
+      if (['ML', 'MTRL'].includes(leaveCode) && !isFemale) {
+        throw new Error("Maternity leave is only applicable for female employees");
+      }
+      if (['PL', 'PTRL'].includes(leaveCode) && !isMale) {
+        throw new Error("Paternity leave is only applicable for male employees");
+      }
+    }
+
     let initialStatus = "pending";
 
     if (leaveCode === "CL" || leaveCode === "ML") {
@@ -313,6 +329,42 @@ export const leaveService = {
       }
     }
 
+    // Restore leave balance when an approved request is cancelled
+    if (input.status === 'cancelled' && request.status === 'approved') {
+      const duration = request.total_days;
+      const employeeId = request.employee_id;
+      const leaveTypeId = request.leave_type_id;
+      if (leaveTypeId && duration > 0) {
+        const year = new Date(request.from_date).getFullYear();
+        const conn = await db.getConnection();
+        try {
+          await conn.beginTransaction();
+          await conn.execute(
+            `UPDATE leave_balance_ledger
+             SET used_days = GREATEST(0, used_days - ?)
+             WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+            [duration, employeeId, leaveTypeId, year]
+          );
+          await conn.execute(
+            "UPDATE leave_request SET status = ? WHERE id = ?",
+            [input.status, id]
+          );
+          await conn.execute(
+            `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
+             VALUES (UUID(), ?, ?, ?, ?)`,
+            [id, input.status, reviewerId, input.remarks ?? null]
+          );
+          await conn.commit();
+        } catch (err) {
+          await conn.rollback();
+          throw err;
+        } finally {
+          conn.release();
+        }
+        return this.getRequest(id);
+      }
+    }
+
     await db.execute(
       "UPDATE leave_request SET status = ? WHERE id = ?",
       [input.status, id]
@@ -405,21 +457,6 @@ export const leaveService = {
          )
        ON DUPLICATE KEY UPDATE id = leave_balance_ledger.id`,
       [year, year, employeeId]
-    );
-
-    // Recalculate used_days from actual approved leave requests
-    await db.execute(
-      `UPDATE leave_balance_ledger lbl
-       SET used_days = (
-         SELECT COALESCE(SUM(lr.total_days), 0)
-         FROM leave_request lr
-         WHERE lr.employee_id = lbl.employee_id
-           AND lr.leave_type_id = lbl.leave_type_id
-           AND lr.status = 'approved'
-           AND YEAR(lr.from_date) = lbl.balance_year
-       )
-       WHERE lbl.employee_id = ? AND lbl.balance_year = ?`,
-      [employeeId, year]
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(

@@ -15,15 +15,15 @@ interface QueueToken {
   token_number: string;
   candidate_id: string;
   candidate_name: string;
-  candidate_mobile: string;
-  applied_for_role: string;
-  applied_for_branch: string;
-  branch_display_name: string;
-  status: QueueStatus;
-  queue_position: number | null;
+  mobile: string;
+  applied_role: string;
+  branch_name: string;
+  branch_display_name: string | null;
+  queue_status: QueueStatus;
+  position_in_queue: number | null;
   called_at: string | null;
   interview_started_at: string | null;
-  completed_at: string | null;
+  interview_completed_at: string | null;
   estimated_wait_time: number | null;
   recruiter_id: string | null;
   recruiter_name: string | null;
@@ -31,11 +31,11 @@ interface QueueToken {
 }
 
 interface QueueMetrics {
-  total_in_queue: number;
-  waiting_count: number;
-  in_interview_count: number;
-  completed_today: number;
-  no_show_count: number;
+  total_waiting: number;
+  total_in_interview: number;
+  total_completed_today: number;
+  average_wait_time: number;
+  average_interview_duration: number;
   avg_wait_time: number;
   avg_interview_duration: number;
 }
@@ -144,7 +144,7 @@ export default function NativeWalkinQueueEnhanced() {
 
   const handleCallNext = async (tokenId: string) => {
     try {
-      await hrmsApi.post('/api/ats/queue/call-next', { token_id: tokenId });
+      await hrmsApi.post('/api/ats/queue/call-next', { queue_id: tokenId });
       await loadQueue(true);
     } catch (err: any) {
       alert(err.message || "Failed to call candidate");
@@ -153,7 +153,7 @@ export default function NativeWalkinQueueEnhanced() {
 
   const handleMarkNoShow = async (tokenId: string) => {
     try {
-      await hrmsApi.post('/api/ats/queue/mark-no-show', { token_id: tokenId });
+      await hrmsApi.post('/api/ats/queue/mark-no-show', { queue_id: tokenId });
       await loadQueue(true);
     } catch (err: any) {
       alert(err.message || "Failed to mark no-show");
@@ -163,7 +163,7 @@ export default function NativeWalkinQueueEnhanced() {
   const handleUpdateStatus = async (tokenId: string, status: QueueStatus) => {
     try {
       await hrmsApi.post('/api/ats/queue/update-status', {
-        token_id: tokenId,
+        queue_id: tokenId,
         status,
       });
       await loadQueue(true);
@@ -174,7 +174,7 @@ export default function NativeWalkinQueueEnhanced() {
 
   // ── Render ─────────────────────────────────────────────────────────────────────
 
-  const branches = Array.from(new Set(tokens.map(t => t.branch_display_name))).filter(Boolean);
+  const branches = Array.from(new Set(tokens.map(t => t.branch_display_name || t.branch_name))).filter(Boolean);
 
   if (loading && !tokens.length) {
     return (
@@ -209,7 +209,7 @@ export default function NativeWalkinQueueEnhanced() {
                 <span className="text-sm font-medium text-gray-600">In Queue</span>
                 <Users className="w-5 h-5 text-amber-500" />
               </div>
-              <p className="text-2xl font-bold text-gray-900">{metrics.waiting_count}</p>
+              <p className="text-2xl font-bold text-gray-900">{metrics.total_waiting}</p>
               <p className="text-xs text-gray-500 mt-1">Waiting for interview</p>
             </div>
 
@@ -218,7 +218,7 @@ export default function NativeWalkinQueueEnhanced() {
                 <span className="text-sm font-medium text-gray-600">In Progress</span>
                 <Clock className="w-5 h-5 text-purple-500" />
               </div>
-              <p className="text-2xl font-bold text-gray-900">{metrics.in_interview_count}</p>
+              <p className="text-2xl font-bold text-gray-900">{metrics.total_in_interview}</p>
               <p className="text-xs text-gray-500 mt-1">Currently interviewing</p>
             </div>
 
@@ -227,7 +227,7 @@ export default function NativeWalkinQueueEnhanced() {
                 <span className="text-sm font-medium text-gray-600">Completed</span>
                 <UserCheck className="w-5 h-5 text-green-500" />
               </div>
-              <p className="text-2xl font-bold text-gray-900">{metrics.completed_today}</p>
+              <p className="text-2xl font-bold text-gray-900">{metrics.total_completed_today}</p>
               <p className="text-xs text-gray-500 mt-1">Today's interviews</p>
             </div>
 
@@ -237,7 +237,7 @@ export default function NativeWalkinQueueEnhanced() {
                 <TrendingUp className="w-5 h-5 text-blue-500" />
               </div>
               <p className="text-2xl font-bold text-gray-900">
-                {formatWaitTime(metrics.avg_wait_time)}
+                {formatWaitTime(metrics.average_wait_time)}
               </p>
               <p className="text-xs text-gray-500 mt-1">Average wait time</p>
             </div>
@@ -340,9 +340,9 @@ export default function NativeWalkinQueueEnhanced() {
                   <tr key={token.id} className="hover:bg-gray-50">
                     <td className="px-4 py-4">
                       <div className="flex items-center gap-2">
-                        {token.queue_position && (
+                        {token.position_in_queue && (
                           <span className="w-6 h-6 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-xs font-bold">
-                            {token.queue_position}
+                            {token.position_in_queue}
                           </span>
                         )}
                         <span className="font-mono text-sm font-medium text-gray-900">
@@ -357,19 +357,19 @@ export default function NativeWalkinQueueEnhanced() {
                         </p>
                         <p className="text-xs text-gray-500 flex items-center gap-1 mt-1">
                           <Phone className="w-3 h-3" />
-                          {token.candidate_mobile}
+                          {token.mobile}
                         </p>
                       </div>
                     </td>
                     <td className="px-4 py-4 text-sm text-gray-900">
-                      {token.applied_for_role}
+                      {token.applied_role}
                     </td>
                     <td className="px-4 py-4 text-sm text-gray-600">
-                      {token.branch_display_name}
+                      {token.branch_display_name || token.branch_name}
                     </td>
                     <td className="px-4 py-4">
-                      <span className={`inline-flex px-2 py-1 text-xs font-medium rounded border ${STATUS_STYLES[token.status]}`}>
-                        {STATUS_LABEL[token.status]}
+                      <span className={`inline-flex px-2 py-1 text-xs font-medium rounded border ${STATUS_STYLES[token.queue_status] || STATUS_STYLES.waiting}`}>
+                        {STATUS_LABEL[token.queue_status] || token.queue_status}
                       </span>
                     </td>
                     <td className="px-4 py-4 text-sm text-gray-600">
@@ -380,7 +380,7 @@ export default function NativeWalkinQueueEnhanced() {
                     </td>
                     <td className="px-4 py-4">
                       <div className="flex items-center gap-2">
-                        {token.status === "waiting" && (
+                        {token.queue_status === "waiting" && (
                           <button
                             onClick={() => handleCallNext(token.id)}
                             className="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 transition-colors"
@@ -388,7 +388,7 @@ export default function NativeWalkinQueueEnhanced() {
                             Call
                           </button>
                         )}
-                        {token.status === "called" && (
+                        {token.queue_status === "called" && (
                           <button
                             onClick={() => handleUpdateStatus(token.id, "in_interview")}
                             className="px-3 py-1 bg-purple-600 text-white text-xs font-medium rounded hover:bg-purple-700 transition-colors"
@@ -396,7 +396,7 @@ export default function NativeWalkinQueueEnhanced() {
                             Start
                           </button>
                         )}
-                        {(token.status === "waiting" || token.status === "called") && (
+                        {(token.queue_status === "waiting" || token.queue_status === "called") && (
                           <button
                             onClick={() => handleMarkNoShow(token.id)}
                             className="px-3 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700 transition-colors"

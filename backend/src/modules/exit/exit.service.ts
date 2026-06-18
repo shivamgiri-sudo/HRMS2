@@ -4,6 +4,40 @@ import { db } from "../../db/mysql.js";
 import type { ExitRequest, ExitStats, PaginatedResult } from "./exit.types.js";
 import { createDefaultClearanceTasks, createExitHealthSnapshot } from "./exit-intelligence.service.js";
 
+async function notifyManagerOfResignation(employeeId: string, exitRequestId: string) {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.first_name, e.last_name, e.email AS emp_email,
+              m.first_name AS mgr_first, m.last_name AS mgr_last, m.email AS mgr_email
+         FROM employees e
+         LEFT JOIN employees m ON m.id = e.reporting_manager_id
+        WHERE e.id = ? LIMIT 1`,
+      [employeeId]
+    );
+    const emp = (rows as RowDataPacket[])[0];
+    if (!emp?.mgr_email) return; // no manager email — skip silently
+
+    const nodemailer = await import('nodemailer');
+    const transporter = nodemailer.default.createTransport({
+      host: process.env.SMTP_HOST ?? 'smtp.gmail.com',
+      port: Number(process.env.SMTP_PORT ?? 587),
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    });
+
+    await transporter.sendMail({
+      from: `"MAS HRMS" <${process.env.SMTP_USER ?? 'noreply@teammas.in'}>`,
+      to: emp.mgr_email,
+      subject: `Resignation Notice — ${emp.first_name} ${emp.last_name}`,
+      html: `<p>Dear ${emp.mgr_first ?? 'Manager'},</p>
+             <p><strong>${emp.first_name} ${emp.last_name}</strong> has submitted a resignation request.</p>
+             <p>Please log in to HRMS to review and action this request.</p>
+             <p style="color:#888;font-size:12px">Exit Request ID: ${exitRequestId}</p>`,
+    });
+  } catch (err) {
+    console.error('[exit] manager notification email failed:', err instanceof Error ? err.message : err);
+  }
+}
+
 function normalizeStatus(status: string) {
   return status === "exit_confirmed" ? "exited" : status;
 }
@@ -136,6 +170,10 @@ export const exitService = {
     );
 
     await createExitHealthSnapshot(id).catch(() => null);
+
+    // Fire-and-forget: notify manager of resignation
+    notifyManagerOfResignation(input.employeeId, id).catch(() => null);
+
     return this.getExitRequest(id);
   },
 
@@ -178,6 +216,17 @@ export const exitService = {
         `UPDATE employees SET employment_status = 'inactive', updated_at = NOW() WHERE id = ?`,
         [(existing as any).employee_id]
       ).catch(() => null);
+
+      // Create a pending F&F record so payroll team is alerted to process settlement
+      await db.execute(
+        `INSERT IGNORE INTO full_final_calculation
+           (id, exit_request_id, employee_id, calculation_date,
+            notice_period_days, notice_shortfall_days, notice_recovery,
+            earned_leave_encashment, gratuity_amount, salary_hold,
+            advances_recovery, net_payable, status, is_ff_provisional, prepared_by)
+         VALUES (UUID(), ?, ?, CURDATE(), 0, 0, 0, 0, 0, 0, 0, 0, 'draft', 1, ?)`,
+        [id, (existing as any).employee_id, userId]
+      ).catch((err: unknown) => console.warn('[exit] F&F record creation failed:', err instanceof Error ? err.message : err));
 
       // Fire IT exit provisioning tasks — fire-and-forget, must not throw
       const exitRec = existing as any;

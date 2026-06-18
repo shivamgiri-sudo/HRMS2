@@ -442,14 +442,10 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
       WHERE candidate_id = ?`,
     [candidateId]
   );
+  // Keep all three status tables in sync via syncOnboardingStatus
+  await syncOnboardingStatus(candidateId, 'submitted', 'profile_submitted', 'profile_submitted');
   await db.execute(
-    `UPDATE ats_candidate SET profile_status = 'profile_submitted', profile_submitted_at = NOW(), updated_at = NOW()
-      WHERE id = ?`,
-    [candidateId]
-  );
-  await db.execute(
-    `UPDATE ats_onboarding_request SET status = 'profile_submitted', updated_at = NOW()
-      WHERE candidate_id = ?`,
+    `UPDATE ats_candidate SET profile_submitted_at = NOW() WHERE id = ?`,
     [candidateId]
   );
   await db.execute(
@@ -542,6 +538,28 @@ export async function reviewFullOnboarding(candidateId: string, input: { status:
   );
   await logCandidateAction(candidateId, "HR_REVIEW", input, { actorType: "hr", actorId: reviewedBy });
   return getFullOnboardingByCandidate(candidateId);
+}
+
+// Single source-of-truth sync: keeps ats_candidate, ats_onboarding_request, and
+// candidate_onboarding_profile aligned after each major status transition.
+export async function syncOnboardingStatus(
+  candidateId: string,
+  profileStatus: string,
+  requestStatus: string,
+  candidateProfileStatus: string
+) {
+  await db.execute(
+    `UPDATE ats_candidate SET profile_status = ?, updated_at = NOW() WHERE id = ?`,
+    [candidateProfileStatus, candidateId]
+  );
+  await db.execute(
+    `UPDATE ats_onboarding_request SET status = ?, updated_at = NOW() WHERE candidate_id = ?`,
+    [requestStatus, candidateId]
+  );
+  await db.execute(
+    `UPDATE candidate_onboarding_profile SET profile_status = ?, updated_at = NOW() WHERE candidate_id = ?`,
+    [profileStatus, candidateId]
+  );
 }
 
 export async function saveProgress(token: string, stepIdx: number) {

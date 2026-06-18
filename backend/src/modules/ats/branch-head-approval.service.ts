@@ -1,6 +1,7 @@
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { generateEmployeeCode } from './ats.enhanced.service.js';
+import { sendSelectedEmail, sendRejectedEmail } from './ats.email.service.js';
 
 /**
  * Branch Head Approval Service
@@ -164,10 +165,19 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
         [employeeCode, approval.candidate_id]
       );
 
-      // TODO: Send approval email to candidate
-      // Email notification will be implemented with proper email service
-
       await connection.commit();
+
+      // Fire-and-forget: send approval email after transaction commits
+      if (approval.email) {
+        sendSelectedEmail({
+          candidateId: approval.candidate_id,
+          to: approval.email,
+          candidateName: approval.full_name,
+          branchName: approval.applied_for_branch,
+          hrName: 'MAS Callnet HR',
+          hrPhone: '',
+        }).catch((err: unknown) => console.error('[branch-head] approval email failed:', err));
+      }
 
       return {
         success: true,
@@ -191,10 +201,17 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
         [approval.candidate_id]
       );
 
-      // TODO: Send rejection email
-      // Email notification will be implemented with proper email service
-
       await connection.commit();
+
+      // Fire-and-forget: send rejection email after transaction commits
+      if (approval.email) {
+        sendRejectedEmail({
+          candidateId: approval.candidate_id,
+          to: approval.email,
+          candidateName: approval.full_name,
+          branchName: approval.applied_for_branch,
+        }).catch((err: unknown) => console.error('[branch-head] rejection email failed:', err));
+      }
 
       return {
         success: true,

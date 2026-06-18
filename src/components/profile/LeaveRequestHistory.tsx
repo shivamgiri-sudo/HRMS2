@@ -11,7 +11,7 @@ interface LeaveRequestHistoryProps {
 }
 
 interface LeaveRequest {
-  id: string;
+  id: string | number;
   from_date: string;
   to_date: string;
   total_days: number;
@@ -19,6 +19,8 @@ interface LeaveRequest {
   status: "pending" | "approved" | "rejected" | "cancelled";
   created_at: string;
   leave_type_name: string | null;
+  leave_type_code?: string | null;
+  source?: "hrms" | "legacy";
 }
 
 const statusStyles: Record<string, string> = {
@@ -29,14 +31,39 @@ const statusStyles: Record<string, string> = {
 };
 
 export function LeaveRequestHistory({ employeeId }: LeaveRequestHistoryProps) {
-  const { data: requests, isLoading } = useQuery({
+  const { data: hrmsRequests, isLoading: loadingHrms } = useQuery({
     queryKey: ["leave-requests", employeeId],
     queryFn: async () => {
       const res = await hrmsApi.get<{success:boolean;data:any}>(`/api/leave/requests?employeeId=${employeeId}`);
-      return (res.data ?? []) as LeaveRequest[];
+      return ((res.data ?? []) as LeaveRequest[]).map(r => ({ ...r, source: "hrms" as const }));
     },
     enabled: !!employeeId,
   });
+
+  const { data: legacyRequests, isLoading: loadingLegacy } = useQuery({
+    queryKey: ["leave-requests-legacy", employeeId],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{success:boolean;data:any}>(`/api/leave/requests/legacy?employeeId=${employeeId}`);
+      return ((res.data ?? []) as LeaveRequest[]).map(r => ({
+        ...r,
+        leave_type_name: r.leave_type_code ?? null,
+        source: "legacy" as const,
+      }));
+    },
+    enabled: !!employeeId,
+  });
+
+  const isLoading = loadingHrms || loadingLegacy;
+
+  // Merge: hrms requests take priority; de-dup by legacy_leave_id if present
+  const hrmsLegacyIds = new Set(
+    (hrmsRequests ?? []).map((r: any) => r.legacy_leave_id).filter(Boolean)
+  );
+  const filteredLegacy = (legacyRequests ?? []).filter(r => !hrmsLegacyIds.has(r.id));
+  const requests: LeaveRequest[] = [
+    ...(hrmsRequests ?? []),
+    ...filteredLegacy,
+  ].sort((a, b) => new Date(b.from_date).getTime() - new Date(a.from_date).getTime());
 
   if (isLoading) {
     return (

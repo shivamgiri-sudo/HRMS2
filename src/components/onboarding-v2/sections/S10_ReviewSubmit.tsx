@@ -26,10 +26,17 @@ export function S10_ReviewSubmit({ status, bgv, submitOnboarding }: S10Props) {
   const profile = status?.profile as Record<string, unknown> | null;
   const isAlreadySubmitted = String(profile?.profile_status ?? '') === 'submitted';
 
-  const mandatoryFilled =
-    !!(profile?.employee_name) &&
-    !!(profile?.mobile_number) &&
-    !!(profile?.pan_number_masked);
+  const hasBank = !!(status?.bank as Record<string, unknown> | null);
+  const hasQualifications = Array.isArray(status?.qualifications) && (status.qualifications as unknown[]).length > 0;
+
+  const missingItems: string[] = [];
+  if (!profile?.employee_name || !profile?.mobile_number || !profile?.pan_number_masked) {
+    missingItems.push('Personal information (name, mobile, PAN)');
+  }
+  if (!hasBank) missingItems.push('Bank details (Section 5)');
+  if (!hasQualifications) missingItems.push('Qualifications (Section 6 — at least one required)');
+
+  const mandatoryFilled = missingItems.length === 0;
 
   const doSubmit = async () => {
     setSubmitting(true);
@@ -97,9 +104,12 @@ export function S10_ReviewSubmit({ status, bgv, submitOnboarding }: S10Props) {
         </div>
       </div>
 
-      {!mandatoryFilled && (
+      {missingItems.length > 0 && (
         <div className="bg-red-50 border border-red-100 rounded-xl p-4 text-sm text-red-700">
-          Please complete mandatory sections (Personal Info, PAN) before submitting.
+          <p className="font-semibold mb-1">Please complete these sections before submitting:</p>
+          <ul className="list-disc list-inside space-y-0.5">
+            {missingItems.map(item => <li key={item}>{item}</li>)}
+          </ul>
         </div>
       )}
 

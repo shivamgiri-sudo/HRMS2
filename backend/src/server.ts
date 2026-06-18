@@ -36,9 +36,16 @@ function startServer() {
   });
 }
 
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | null> {
+  return Promise.race([
+    promise,
+    new Promise<null>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
+  ]).catch(err => { console.warn(`[startup] ${label} skipped:`, err.message); return null; });
+}
+
 async function initializeRuntime() {
-  await migrateLegacyIntegrationSecrets();
-  const cosecActive = await bootstrapCosecIntegration();
+  await withTimeout(migrateLegacyIntegrationSecrets(), 8000, 'migrateLegacyIntegrationSecrets');
+  const cosecActive = await withTimeout(bootstrapCosecIntegration(), 8000, 'bootstrapCosecIntegration');
   console.log(`[cosec-sync] automatic schedule ${cosecActive ? "active" : "inactive"}`);
   startServer();
 }

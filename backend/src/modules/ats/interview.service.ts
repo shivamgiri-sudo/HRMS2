@@ -2,6 +2,7 @@ import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'crypto';
 import { sendSelectionCongratulationsEmail } from './ats.email.service.js';
+import { sendOnboardingToken } from './ats.onboarding.service.js';
 
 /**
  * Interview Service
@@ -192,7 +193,6 @@ export async function submitInterviewResult(input: InterviewResultInput) {
  * Handle candidate selection - create portal login and send email
  */
 async function handleCandidateSelection(candidateId: string) {
-  // Get candidate details
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, full_name, mobile, email, applied_for_branch, branch_display_name, applied_for_role
      FROM ats_candidate WHERE id = ?`,
@@ -203,26 +203,27 @@ async function handleCandidateSelection(candidateId: string) {
 
   const candidate = rows[0];
 
-  // Generate temporary password
-  const tempPassword = generateTempPassword();
-
-  // Create candidate portal login
-  const loginId = randomUUID();
-  await db.execute(
-    `INSERT INTO ats_candidate_portal_login (
-      id, candidate_id, email, temp_password, password_reset_required
-    ) VALUES (?, ?, ?, ?, 1)
-    ON DUPLICATE KEY UPDATE
-      temp_password = VALUES(temp_password),
-      password_reset_required = 1`,
-    [loginId, candidateId, candidate.email, tempPassword] // In production, hash the password
+  // Always generate onboarding token regardless of whether email exists.
+  // HR can share the link manually for walk-in candidates without email.
+  sendOnboardingToken(candidateId, 'system').catch((err) =>
+    console.error('[interview] Failed to generate onboarding token for', candidateId, err)
   );
 
-  // Generate onboarding portal URL
-  const onboardingPortalUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/candidate-portal/login`;
+  const tempPassword = generateTempPassword();
 
-  // Send selection congratulations email
   if (candidate.email) {
+    const loginId = randomUUID();
+    await db.execute(
+      `INSERT INTO ats_candidate_portal_login (
+        id, candidate_id, email, temp_password, password_reset_required
+      ) VALUES (?, ?, ?, ?, 1)
+      ON DUPLICATE KEY UPDATE
+        temp_password = VALUES(temp_password),
+        password_reset_required = 1`,
+      [loginId, candidateId, candidate.email, tempPassword]
+    );
+
+    const onboardingPortalUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/candidate-portal/login`;
     sendSelectionCongratulationsEmail({
       candidateId: candidate.id,
       to: candidate.email,
@@ -234,7 +235,6 @@ async function handleCandidateSelection(candidateId: string) {
     }).catch((err) => console.error('Failed to send selection email:', err));
   }
 
-  // Create notification
   await db.execute(
     `INSERT INTO portal_notification (
       id, user_id, user_type, title, message, notification_type,
@@ -243,10 +243,10 @@ async function handleCandidateSelection(candidateId: string) {
     [
       candidateId,
       'Congratulations! You are Selected',
-      `You have been selected for ${candidate.applied_for_role} at ${candidate.branch_display_name}. Please complete your onboarding.`,
+      `You have been selected for ${candidate.applied_for_role ?? 'the role'} at ${candidate.branch_display_name ?? ''}. Please complete your onboarding.`,
       candidateId,
     ]
-  );
+  ).catch(() => {}); // notification table may not exist on all deployments
 }
 
 /**

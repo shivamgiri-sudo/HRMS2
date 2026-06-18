@@ -10,6 +10,7 @@ import {
   sendOnboardingTokenEmail,
   sendOfferReviewEmail,
   sendWelcomeEmail,
+  sendRejectedEmail,
 } from './ats.email.service.js';
 
 // ── PII Helpers ───────────────────────────────────────────────────────────────
@@ -491,19 +492,22 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
     );
     resolvedAuthUserId = (existingAuth as RowDataPacket[])[0]?.id ?? authUserId;
 
+    // salary_start_date: use date_of_salary if set (some processes have unpaid training post-joining)
+    const salaryStartDate: string | null = (offer.date_of_salary as string | null) ?? (offer.date_of_joining as string | null) ?? null;
+
     await conn.execute(
       `INSERT INTO employees
          (id, employee_code, first_name, last_name, email, mobile,
           branch_id, process_id, department_id, designation_id,
-          date_of_joining, employment_type, reporting_manager_id,
+          date_of_joining, salary_start_date, employment_type, reporting_manager_id,
           user_id, active_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
       [
         employeeId, employeeCode, firstName, lastName,
         offer.email, offer.mobile,
         offer.resolved_branch_id ?? null, offer.resolved_process_id ?? null,
         offer.department_id ?? null, offer.designation_id ?? null,
-        offer.date_of_joining, offer.emp_type,
+        offer.date_of_joining, salaryStartDate, offer.emp_type,
         offer.reporting_manager_id ?? null,
         resolvedAuthUserId,
       ],
@@ -524,6 +528,37 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
         offer.professional_tax, offer.gratuity, offer.admin_charges, offer.net_in_hand,
       ],
     );
+
+    // Create payroll salary assignment so monthly payroll can run immediately.
+    // Requires a valid structure_id — use the first available structure as default.
+    const [structRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT id FROM salary_structure_master ORDER BY created_at ASC LIMIT 1`,
+    );
+    if ((structRows as RowDataPacket[]).length > 0) {
+      const defaultStructureId = (structRows as RowDataPacket[])[0].id;
+      await conn.execute(
+        `INSERT IGNORE INTO employee_salary_assignment
+           (id, employee_id, structure_id, ctc_annual, effective_from, active_status)
+         VALUES (UUID(), ?, ?, ?, ?, 1)`,
+        [employeeId, defaultStructureId, offer.offered_ctc ?? 0, salaryStartDate ?? new Date().toISOString().slice(0, 10)],
+      );
+    }
+
+    // Initialize leave balance ledger for the joining year (allocated_days = 0; HR can top-up later)
+    const joiningYear = offer.date_of_joining
+      ? new Date(offer.date_of_joining as string).getFullYear()
+      : new Date().getFullYear();
+    const [leaveTypes] = await conn.execute<RowDataPacket[]>(
+      `SELECT id FROM leave_type_master WHERE active_status = 1`,
+    );
+    for (const lt of leaveTypes as RowDataPacket[]) {
+      await conn.execute(
+        `INSERT IGNORE INTO leave_balance_ledger
+           (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
+         VALUES (UUID(), ?, ?, ?, 0, 0, 0)`,
+        [employeeId, lt.id, joiningYear],
+      );
+    }
 
     await conn.execute(
       `INSERT INTO ats_offer_approval (id, offer_id, approver_id, action, remarks)
@@ -618,7 +653,7 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
 export async function rejectOffer(offerId: string, approverId: string, remarks: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT o.onboarding_request_id, r.candidate_id,
-            c.applied_for_branch, c.applied_for_process
+            c.full_name, c.email, c.applied_for_branch, c.applied_for_process
      FROM ats_employment_offer o
      JOIN ats_onboarding_request r ON r.id = o.onboarding_request_id
      JOIN ats_candidate c ON c.id = r.candidate_id
@@ -660,4 +695,14 @@ export async function rejectOffer(offerId: string, approverId: string, remarks: 
      VALUES (UUID(), ?, 'Offer Submitted', 'Offer Rejected', ?, ?)`,
     [row.candidate_id, remarks, approverId],
   );
+
+  // Fire-and-forget: notify candidate and HR of rejection
+  if (row.email) {
+    sendRejectedEmail({
+      candidateId: row.candidate_id,
+      to: row.email,
+      candidateName: row.full_name ?? 'Candidate',
+      branchName: row.applied_for_branch ?? '',
+    }).catch((err: unknown) => console.error('[rejectOffer] email failed:', err));
+  }
 }

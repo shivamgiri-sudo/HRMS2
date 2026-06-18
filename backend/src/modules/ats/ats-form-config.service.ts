@@ -80,7 +80,10 @@ export const atsFormConfigService = {
     });
     if (recruiterOptions.length === 0) {
       const [employeeRecruiters] = await db.execute<RowDataPacket[]>(
-        `SELECT DISTINCT TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name
+        `SELECT DISTINCT
+           TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
+           COALESCE(e.office_email, e.official_email, e.email) AS email,
+           e.mobile
          FROM employees e
          JOIN department_master d ON d.id = e.department_id
          JOIN designation_master des ON des.id = e.designation_id
@@ -90,10 +93,21 @@ export const atsFormConfigService = {
              LOWER(des.designation_name) LIKE '%executive%'
              OR LOWER(des.designation_name) LIKE '%recruiter%'
              OR LOWER(des.designation_name) LIKE '%hr manager%'
+             OR LOWER(des.designation_name) LIKE '%hr%'
            )
          ORDER BY name`
       );
-      recruiterOptions = (employeeRecruiters as RowDataPacket[]).map((r: any) => String(r.name));
+      const empRows = employeeRecruiters as RowDataPacket[];
+      recruiterOptions = empRows.map((r: any) => String(r.name));
+      // Populate recruiterDetails from employees when ats_recruiter table is empty
+      recruiterDetails.length = 0;
+      for (const r of empRows) {
+        recruiterDetails.push({
+          name:   String(r.name),
+          email:  r.email  || null,
+          mobile: r.mobile || null,
+        });
+      }
     }
 
     return {

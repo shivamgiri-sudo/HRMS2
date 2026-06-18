@@ -61,3 +61,23 @@ leaveSecureRouter.patch("/requests/:id/review", h(async (req: any, res: any) => 
   const data = await leaveService.reviewRequest(req.params.id, { status: status as any, remarks: req.body.remarks ?? req.body.reviewNotes ?? null }, req.authUser!.id);
   return res.json({ success: true, data, message: `Leave ${status}` });
 }));
+
+// PATCH /requests/:id/cancel — employee cancels their own leave (pending or approved)
+leaveSecureRouter.patch("/requests/:id/cancel", h(async (req: any, res: any) => {
+  const callerEmp = await getEmployeeForUser(req.authUser!.id);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT employee_id, status FROM leave_request WHERE id = ? LIMIT 1",
+    [req.params.id]
+  );
+  const request = rows[0] as any;
+  if (!request) return res.status(404).json({ success: false, message: "Leave request not found" });
+  // Allow employee to cancel their own; admin/hr can cancel anyone's
+  const isOwn = callerEmp?.id === request.employee_id;
+  const isPrivileged = await hasAnyRole(req.authUser!.id, "admin", "hr");
+  if (!isOwn && !isPrivileged) return res.status(403).json({ success: false, message: "Forbidden" });
+  if (!["pending", "approved", "pending_branch_head"].includes(request.status)) {
+    return res.status(400).json({ success: false, message: `Cannot cancel a leave with status '${request.status}'` });
+  }
+  const data = await leaveService.reviewRequest(req.params.id, { status: "cancelled", remarks: req.body.reason ?? null }, req.authUser!.id);
+  return res.json({ success: true, data, message: "Leave cancelled" });
+}));
