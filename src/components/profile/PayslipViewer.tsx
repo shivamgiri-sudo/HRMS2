@@ -38,6 +38,7 @@ import {
   Minus,
   Plus,
   ShieldCheck,
+  TrendingUp,
   Wallet,
 } from "lucide-react";
 import { downloadMasCallnetPayslip } from "@/lib/masCallnetPayslipGeneratorV2";
