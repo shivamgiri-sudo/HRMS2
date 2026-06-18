@@ -66,3 +66,42 @@ cosecSyncRouter.post(
     return res.json(result);
   }),
 );
+
+// GET /api/cosec-sync/stats
+// Aggregate stats: biometric log counts, attendance record count, unmapped users, watermarks
+cosecSyncRouter.get(
+  "/stats",
+  requireRole("admin", "hr", "wfm", "ceo"),
+  h(async (_req: any, res: any) => {
+    const [bioRows, attRows, unmappedRows, watermarkRows] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS total_bio_logs,
+                MAX(attendance_date) AS latest_bio_date
+           FROM biometric_attendance_log`
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS total_attendance_records
+           FROM attendance_daily_record`
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS unmapped_count
+           FROM cosec_unmapped_users`
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT *
+           FROM source_sync_watermark
+          ORDER BY source_key ASC`
+      ),
+    ]);
+
+    return res.json({
+      success: true,
+      data: {
+        biometric_log: bioRows[0][0] ?? {},
+        attendance_records: attRows[0][0] ?? {},
+        unmapped_users: unmappedRows[0][0] ?? {},
+        watermarks: watermarkRows[0],
+      },
+    });
+  })
+);
