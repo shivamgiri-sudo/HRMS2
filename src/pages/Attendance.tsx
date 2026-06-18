@@ -89,6 +89,12 @@ const MONTHS = [
 const isOfficeMode = (mode?: string | null) =>
   mode === "wfo" || mode === "office";
 
+function getExpectedHours(workStart: string, workEnd: string): number {
+  const [sh, sm] = workStart.split(":").map(Number);
+  const [eh, em] = workEnd.split(":").map(Number);
+  return Math.max(0, (eh * 60 + em - (sh * 60 + sm)) / 60);
+}
+
 function safeFormatDate(value: string | null | undefined, fmt: string, fallback = "-"): string {
   if (!value) return fallback;
   const d = new Date(value);

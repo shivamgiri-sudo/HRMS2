@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   Bar,
@@ -189,7 +189,7 @@ const Employees = () => {
     limit: 1,
     recordStatus,
     status: employmentStatus,
-    search: deferredSearch || undefined,
+    search: debouncedSearch || undefined,
     departmentId: departmentFilter === "all" ? undefined : departmentFilter,
     processId: processFilter === "all" ? undefined : processFilter,
     branchId: branchFilter === "all" ? undefined : branchFilter,
