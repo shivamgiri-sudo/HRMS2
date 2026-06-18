@@ -1,5 +1,10 @@
 # Deployment Guide — HRMS (Self-Hosted, PM2 on Windows)
 
+## ⚠️ URGENT — Deploy Now
+
+All pages (Login, Payroll, Attendance, Employees, etc.) are broken on production.
+Run the deploy commands below immediately to restore service.
+
 ## Server Setup
 
 - Backend: PM2 running `node dist/server.js` from `backend/`
