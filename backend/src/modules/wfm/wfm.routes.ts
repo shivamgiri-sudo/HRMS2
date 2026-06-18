@@ -277,3 +277,72 @@ wfmRouter.patch("/week-off-preference/:id/approve", requireAuth, requireRole("ad
   );
   return res.json({ success: true, data: (rows as any[])[0] });
 }));
+
+// GET /api/wfm/attendance/day-detail/:employeeId/:date
+// Combined attendance + COSEC daily aggregate + individual punches for one employee on one date
+wfmRouter.get(
+  "/attendance/day-detail/:employeeId/:date",
+  requireRole("admin", "hr", "wfm", "manager", "ceo", "finance", "payroll"),
+  h(async (req: any, res: any) => {
+    const { employeeId, date } = req.params;
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ success: false, error: "Invalid date format. Use YYYY-MM-DD" });
+    }
+
+    const { db: dbConn } = await import("../../db/mysql.js");
+
+    // 1. Attendance record + biometric log
+    const [attRows] = await dbConn.execute(
+      `SELECT adr.*,
+              DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
+              e.employee_code,
+              COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+              e.working_hours_start,
+              e.working_hours_end,
+              bal.first_punch,
+              bal.last_punch,
+              bal.biometric_minutes AS bio_minutes_log
+         FROM attendance_daily_record adr
+         JOIN employees e ON e.id = adr.employee_id
+         LEFT JOIN biometric_attendance_log bal
+           ON bal.employee_id = adr.employee_id AND DATE(bal.attendance_date) = adr.record_date
+        WHERE adr.employee_id = ? AND adr.record_date = ?
+        LIMIT 1`,
+      [employeeId, date]
+    );
+
+    // 2. COSEC daily aggregate (authoritative work minutes)
+    const [cosecRows] = await dbConn.execute(
+      `SELECT *
+         FROM cosec_daily_agg
+        WHERE employee_id = ? AND work_date = ?
+        LIMIT 1`,
+      [employeeId, date]
+    );
+
+    // 3. Individual punch events — handle night shift (prev-day punches before 06:00)
+    const [punchRows] = await dbConn.execute(
+      `SELECT punch_time, io_type,
+              CASE io_type WHEN 'I' THEN 'In' WHEN 'O' THEN 'Out' ELSE io_type END AS io_label,
+              device_id
+         FROM cosec_punch_sync
+        WHERE employee_id = ?
+          AND (
+            DATE(punch_time) = ?
+            OR (DATE(punch_time) = DATE_SUB(?, INTERVAL 1 DAY) AND TIME(punch_time) >= '00:00:00' AND TIME(punch_time) < '06:00:00')
+          )
+        ORDER BY punch_time ASC`,
+      [employeeId, date, date]
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        attendance_record: (attRows as any[])[0] ?? null,
+        cosec_daily_agg: (cosecRows as any[])[0] ?? null,
+        raw_punches: punchRows as any[],
+      },
+    });
+  })
+);
