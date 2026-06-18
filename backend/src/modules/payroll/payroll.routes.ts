@@ -887,6 +887,62 @@ router.get("/runs/:id/neft-summary", requireRole("admin", "finance", "payroll"),
   res.json({ success: true, data: (rows as RowDataPacket[])[0] });
 }));
 
+// GET /api/payroll/runs/:runId/neft-lines — per-employee bank details + net salary for Finance review
+router.get(
+  "/runs/:runId/neft-lines",
+  requireAuth,
+  requireRole("admin", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { runId } = req.params;
+
+    const [runRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, run_month, status FROM salary_prep_run WHERE id = ? LIMIT 1`,
+      [runId]
+    );
+    if (!(runRows as RowDataPacket[]).length) {
+      return res.status(404).json({ success: false, error: "Payroll run not found" });
+    }
+    const run = (runRows as RowDataPacket[])[0];
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.employee_code,
+              e.first_name,
+              e.last_name,
+              COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+              ebd.bank_name,
+              ebd.ifsc_code,
+              COALESCE(ebd.account_holder_name, CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS account_holder_name,
+              AES_DECRYPT(ebd.account_number, ?) AS account_number,
+              spl.net_salary,
+              spl.gross_salary,
+              spl.total_deductions,
+              spl.status AS line_status
+         FROM salary_prep_line spl
+         JOIN employees e ON e.id = spl.employee_id
+         LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = spl.employee_id
+        WHERE spl.run_id = ?
+          AND spl.net_salary > 0
+        ORDER BY e.employee_code ASC`,
+      [env.PAYROLL_BANK_KEY, runId]
+    );
+
+    const lines = (rows as RowDataPacket[]).map((r: any) => ({
+      ...r,
+      account_number: r.account_number?.toString() ?? null,
+    }));
+
+    return res.json({
+      success: true,
+      run,
+      data: lines,
+      meta: {
+        count: lines.length,
+        total_net: lines.reduce((sum: number, r: any) => sum + Number(r.net_salary ?? 0), 0),
+      },
+    });
+  })
+);
+
 // GET /api/payroll/runs/:id/neft-export — generate NEFT disbursement CSV
 router.get("/runs/:id/neft-export", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const runId = req.params.id;
