@@ -8,9 +8,10 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response, NextFunction } from "express";
 import {
   calculateEmployeeEngagementHealth,
-  getEngagementCommandCenter,
   scanEngagementHealth,
 } from "./engagement-health.service.js";
+import { resolvePeopleExperienceScope } from "../people-experience/people-experience.scope.js";
+import { getPeopleExperienceCommandCenter } from "../people-experience/people-experience.service.js";
 
 export const engagementIntelligenceRouter = Router();
 engagementIntelligenceRouter.use(requireAuth);
@@ -21,8 +22,9 @@ const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =
 engagementIntelligenceRouter.get(
   "/command-center",
   requireRole("admin", "hr", "manager", "process_manager", "ceo"),
-  h(async (_req, res) => {
-    const data = await getEngagementCommandCenter();
+  h(async (req, res) => {
+    const scope = await resolvePeopleExperienceScope(req);
+    const data = await getPeopleExperienceCommandCenter(scope, req.query as Record<string, string | undefined>);
     return res.json({ success: true, data });
   })
 );

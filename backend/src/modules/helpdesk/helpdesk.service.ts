@@ -85,6 +85,41 @@ export const helpdeskService = {
     return this.getTicket(id);
   },
 
+  async escalateTicket(id: string, reason?: string | null) {
+    await db.execute(
+      `UPDATE helpdesk_ticket
+          SET escalation_level = COALESCE(escalation_level, 0) + 1,
+              priority = CASE WHEN priority IN ('low','medium') THEN 'high' ELSE priority END,
+              updated_at = NOW()
+        WHERE id = ?`,
+      [id]
+    );
+    if (reason) await this.addComment(id, "system", `Escalated: ${reason}`, true);
+    return this.getTicket(id);
+  },
+
+  async reopenTicket(id: string, reason?: string | null) {
+    await db.execute(
+      `UPDATE helpdesk_ticket
+          SET status = 'open',
+              reopened_count = COALESCE(reopened_count, 0) + 1,
+              resolved_at = NULL,
+              updated_at = NOW()
+        WHERE id = ?`,
+      [id]
+    );
+    if (reason) await this.addComment(id, "system", `Reopened: ${reason}`, false);
+    return this.getTicket(id);
+  },
+
+  async rateTicket(id: string, rating: number) {
+    await db.execute(
+      "UPDATE helpdesk_ticket SET closure_rating = ?, updated_at = NOW() WHERE id = ?",
+      [rating, id]
+    );
+    return { id, rating };
+  },
+
   async addComment(ticketId: string, authorUserId: string, text: string, isInternal = false) {
     const id = randomUUID();
     await db.execute(
@@ -92,6 +127,44 @@ export const helpdeskService = {
       [id, ticketId, authorUserId, text, isInternal ? 1 : 0]
     );
     return id;
+  },
+
+  async ownerWorkload(_filters: Record<string, unknown> = {}) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(assigned_to, 'unassigned') AS owner_user_id,
+              COUNT(*) AS open_count,
+              SUM(CASE WHEN priority = 'urgent' THEN 1 ELSE 0 END) AS urgent_count
+         FROM helpdesk_ticket
+        WHERE status NOT IN ('resolved','closed','cancelled')
+        GROUP BY COALESCE(assigned_to, 'unassigned')
+        ORDER BY open_count DESC
+        LIMIT 50`
+    );
+    return rows;
+  },
+
+  async aging(_filters: Record<string, unknown> = {}) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(CASE WHEN TIMESTAMPDIFF(DAY, created_at, NOW()) BETWEEN 0 AND 1 THEN 1 ELSE 0 END) AS bucket_0_1,
+         SUM(CASE WHEN TIMESTAMPDIFF(DAY, created_at, NOW()) BETWEEN 2 AND 3 THEN 1 ELSE 0 END) AS bucket_2_3,
+         SUM(CASE WHEN TIMESTAMPDIFF(DAY, created_at, NOW()) BETWEEN 4 AND 7 THEN 1 ELSE 0 END) AS bucket_4_7,
+         SUM(CASE WHEN TIMESTAMPDIFF(DAY, created_at, NOW()) > 7 THEN 1 ELSE 0 END) AS bucket_7_plus
+       FROM helpdesk_ticket
+       WHERE status NOT IN ('resolved','closed','cancelled')`
+    );
+    return rows[0] ?? {};
+  },
+
+  async rootCauses(_filters: Record<string, unknown> = {}) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(root_cause, category, 'Unclassified') AS label, COUNT(*) AS value
+         FROM helpdesk_ticket
+        GROUP BY COALESCE(root_cause, category, 'Unclassified')
+        ORDER BY value DESC
+        LIMIT 20`
+    );
+    return rows;
   },
 
   async listGrievances(filters: { status?: string; assigned_to?: string; employee_id?: string }) {
@@ -154,6 +227,39 @@ export const helpdeskService = {
     return (rows as RowDataPacket[])[0];
   },
 
+  async getGrievance(id: string, viewerUserId: string) {
+    const [viewerRoles] = await db.execute<RowDataPacket[]>(
+      "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
+      [viewerUserId]
+    );
+    const roles = viewerRoles.map((row: any) => String(row.role_key));
+    const privileged = roles.some((role) => ["super_admin", "admin", "hr", "grievance_officer"].includes(role));
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT g.*,
+              e.employee_code,
+              e.full_name,
+              e.branch_id,
+              e.process_id
+         FROM grievance g
+         JOIN employees e ON e.id = g.employee_id
+        WHERE g.id = ?
+        LIMIT 1`,
+      [id]
+    );
+    const row = rows[0] as any;
+    if (!row) return null;
+    if (!privileged && row.is_anonymous) {
+      row.employee_id = null;
+      row.employee_code = null;
+      row.full_name = "Anonymous";
+    }
+    if (!privileged) {
+      row.resolution_note = row.status === "closed" || row.status === "resolved" ? row.resolution_note : null;
+    }
+    return row;
+  },
+
   async updateGrievance(id: string, data: { status?: string; assigned_to?: string; resolution_note?: string }) {
     await db.execute(
       `UPDATE grievance SET
@@ -186,5 +292,43 @@ export const helpdeskService = {
       [id]
     );
     return (rows as RowDataPacket[])[0];
+  },
+
+  async escalateGrievance(id: string, reason?: string | null) {
+    await db.execute(
+      `UPDATE grievance
+          SET status = 'escalated',
+              escalation_level = COALESCE(escalation_level, 0) + 1,
+              updated_at = NOW()
+        WHERE id = ?`,
+      [id]
+    );
+    if (reason) {
+      await db.execute(
+        `INSERT INTO sensitive_action_log
+           (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary)
+         VALUES (?, 'system', 'GRIEVANCE_ESCALATED', 'PEOPLE_EXPERIENCE', 'grievance', ?, ?)`,
+        [randomUUID(), id, JSON.stringify({ reason })]
+      );
+    }
+    return this.updateGrievance(id, {});
+  },
+
+  async addGrievanceInvestigationNote(id: string, actorUserId: string, note: string) {
+    await db.execute(
+      `INSERT INTO sensitive_action_log
+         (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary)
+       VALUES (?, ?, 'GRIEVANCE_INVESTIGATION_NOTE', 'PEOPLE_EXPERIENCE', 'grievance', ?, ?)`,
+      [randomUUID(), actorUserId, id, JSON.stringify({ note })]
+    );
+    return { id, note_saved: true };
+  },
+
+  async addGrievanceEvidence(id: string, evidence: Record<string, unknown>) {
+    await db.execute(
+      "UPDATE grievance SET evidence_count = COALESCE(evidence_count, 0) + 1, updated_at = NOW() WHERE id = ?",
+      [id]
+    );
+    return { grievance_id: id, evidence_recorded: true, metadata: evidence };
   },
 };

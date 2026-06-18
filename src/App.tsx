@@ -106,6 +106,7 @@ const NativeKudos = lazy(() => import("./pages/NativeKudos"));
 const NativeSurveys = lazy(() => import("./pages/NativeSurveys"));
 const NativeLeaderboard = lazy(() => import("./pages/NativeLeaderboard"));
 const NativeEngagementCommandCenter = lazy(() => import("./pages/NativeEngagementCommandCenter"));
+const NativePeopleExperienceCommandCenter = lazy(() => import("./pages/NativePeopleExperienceCommandCenter"));
 const NativeExitCommandCenter = lazy(() => import("./pages/NativeExitCommandCenter"));
 const NativeOfferLetterGeneration = lazy(() => import("./pages/NativeOfferLetterGeneration"));
 const NativeMasterReports = lazy(() => import("./pages/NativeMasterReports"));
@@ -290,7 +291,8 @@ const App = () => (
               <Route path="/engagement/kudos" element={<ProtectedRoute><NativeKudos /></ProtectedRoute>} />
               <Route path="/engagement/surveys" element={<ProtectedRoute><NativeSurveys /></ProtectedRoute>} />
               <Route path="/engagement/leaderboard" element={<ProtectedRoute><NativeLeaderboard /></ProtectedRoute>} />
-              <Route path="/engagement/command-center" element={<ProtectedRoute><Gate pageCode="ENGAGEMENT_COMMAND_CENTER"><NativeEngagementCommandCenter /></Gate></ProtectedRoute>} />
+              <Route path="/people-experience/command-center" element={<ProtectedRoute roles={['admin', 'hr', 'ceo', 'manager', 'process_manager', 'team_leader', 'tl', 'branch_head', 'employee']}><NativePeopleExperienceCommandCenter /></ProtectedRoute>} />
+              <Route path="/engagement/command-center" element={<Navigate to="/people-experience/command-center" replace />} />
               <Route path="/employee-stat-card" element={<ProtectedRoute><NativeEmployeeStatCard /></ProtectedRoute>} />
               <Route path="/employee-stat-card/:id" element={<ProtectedRoute><NativeEmployeeStatCard /></ProtectedRoute>} />
               <Route path="/portal/login" element={<PortalLogin />} />

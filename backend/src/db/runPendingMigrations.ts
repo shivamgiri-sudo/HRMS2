@@ -132,6 +132,7 @@ const MIGRATION_MANIFEST: string[] = [
   "201_bgv_portal_initiation.sql",
   "202_onboarding_v2_court_check.sql",
   "203_bgv_missing_tables.sql",
+  "204_people_experience_command_center.sql",
 ];
 
 export type MigrationHealth = {

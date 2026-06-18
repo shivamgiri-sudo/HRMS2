@@ -87,6 +87,13 @@ exitSecureRouter.get("/stats", h(async (req: any, res: any) => {
 }));
 
 exitSecureRouter.get("/", h(async (req: any, res: any) => {
+  const privileged = await hasAnyRole(req.authUser!.id, "admin", "hr", "finance", "payroll", "ceo", ...EXIT_SCOPE_ROLES);
+  if (!privileged) {
+    const emp = await getEmployeeForUser(req.authUser!.id);
+    if (!emp || !req.query.employeeId || String(req.query.employeeId) !== emp.id) {
+      return res.status(403).json({ success: false, message: "Forbidden: employee collection access is not allowed" });
+    }
+  }
   const scope = await exitListScope(req.authUser!.id);
   const page = Math.max(1, Number(req.query.page ?? 1) || 1);
   const limit = Math.min(Math.max(1, Number(req.query.limit ?? 100) || 100), 500);
