@@ -11,14 +11,25 @@ type WebData = {
   todayISO: string;
   summary: AnyRow;
   trends: Record<string, AnyRow>;
-  options: Record<string, string[]>;
+  options: {
+    branches: string[];
+    processes: string[];
+    roles: string[];
+    recruiters: string[];
+    sources: string[];
+    statuses: string[];
+    months: string[];
+    slots: string[];
+  };
   queueRows: AnyRow[];
   candidateRows: AnyRow[];
   dashboardRows: AnyRow[];
   branchTable: AnyRow[];
   processTable: AnyRow[];
+  roleTable: AnyRow[];
   recruiterTable: AnyRow[];
   sourceTable: AnyRow[];
+  slotTable: AnyRow[];
   reusablePool: AnyRow[];
 };
 
@@ -73,8 +84,11 @@ export default function NativeATSFullParityCommandCenter() {
   const [process, setProcess] = useState("");
   const [recruiter, setRecruiter] = useState("");
   const [journeyQuery, setJourneyQuery] = useState("");
+  const [journeyLoading, setJourneyLoading] = useState(false);
+  const [journeyError, setJourneyError] = useState("");
   const [journey, setJourney] = useState<AnyRow | null>(null);
   const [health, setHealth] = useState<AnyRow | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -101,28 +115,57 @@ export default function NativeATSFullParityCommandCenter() {
 
   async function runJourney() {
     if (!journeyQuery.trim()) return;
-    const res = await hrmsApi.get<{ success: boolean; data: AnyRow }>(`/api/ats-full-parity/journey?query=${encodeURIComponent(journeyQuery.trim())}`);
-    setJourney(res.data);
+    setJourneyLoading(true);
+    setJourneyError("");
+    setJourney(null);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: AnyRow }>(`/api/ats-full-parity/journey?query=${encodeURIComponent(journeyQuery.trim())}`);
+      setJourney(res.data);
+      if (!res.data) setJourneyError("Candidate not found.");
+    } catch (e: any) {
+      setJourneyError(e?.message || "Search failed.");
+    } finally {
+      setJourneyLoading(false);
+    }
   }
 
   async function loadHealth() {
-    const res = await hrmsApi.get<{ success: boolean; data: AnyRow }>(`/api/ats-full-parity/health`);
-    setHealth(res.data);
+    setHealthLoading(true);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: AnyRow }>(`/api/ats-full-parity/health`);
+      setHealth(res.data);
+    } catch (e: any) {
+      setError(e?.message || "Health check failed.");
+    } finally {
+      setHealthLoading(false);
+    }
   }
 
   async function runSla() {
-    await hrmsApi.post(`/api/ats-full-parity/jobs/sla-check`, {});
-    await load();
+    try {
+      await hrmsApi.post(`/api/ats-full-parity/jobs/sla-check`, {});
+      await load();
+    } catch (e: any) {
+      setError(e?.message || "SLA check failed.");
+    }
   }
 
   async function runRepair() {
-    await hrmsApi.post(`/api/ats-full-parity/jobs/repair`, { limit: 500 });
-    await load();
+    try {
+      await hrmsApi.post(`/api/ats-full-parity/jobs/repair`, { limit: 500 });
+      await load();
+    } catch (e: any) {
+      setError(e?.message || "Repair failed.");
+    }
   }
 
   async function previewDailyReport() {
-    await hrmsApi.get(`/api/ats-full-parity/daily-report/snapshot?mode=preview`);
-    alert("Daily report preview snapshot generated in ATS report log.");
+    try {
+      await hrmsApi.get(`/api/ats-full-parity/daily-report/snapshot?mode=preview`);
+      alert("Daily report preview snapshot generated in ATS report log.");
+    } catch (e: any) {
+      setError(e?.message || "Daily report preview failed.");
+    }
   }
 
   return (
@@ -192,15 +235,43 @@ export default function NativeATSFullParityCommandCenter() {
 
         {tab === "Candidate Journey" && <div className="space-y-4">
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex gap-3"><input value={journeyQuery} onChange={(e) => setJourneyQuery(e.target.value)} placeholder="Candidate ID / QToken / mobile / email / name" className="flex-1 rounded-xl border border-slate-200 px-3 py-2" /><button onClick={runJourney} className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white">Search</button></div>
+            <div className="flex gap-3">
+              <input value={journeyQuery} onChange={(e) => setJourneyQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && runJourney()} placeholder="Candidate ID / QToken / mobile / email / name" className="flex-1 rounded-xl border border-slate-200 px-3 py-2" />
+              <button onClick={runJourney} disabled={journeyLoading} className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white disabled:opacity-60">{journeyLoading ? "Searching..." : "Search"}</button>
+            </div>
+            {journeyError && <div className="mt-2 text-sm text-rose-600">{journeyError}</div>}
           </div>
           {journey && <>
-            <div className="grid gap-4 md:grid-cols-4"><Kpi label="Candidate" value={journey.candidate?.FullName || "-"} /><Kpi label="Stage" value={journey.candidate?.CurrentStage || "-"} /><Kpi label="Quality" value={`${journey.candidate?._candidateQualityScore || 0}`} foot={journey.candidate?._candidateQualityLabel} /><Kpi label="Handling" value={`${journey.candidate?._handlingQualityScore || 0}`} foot={journey.candidate?._handlingQualityLabel} /></div>
-            <SimpleTable rows={journey.stageLogs || []} columns={[{ key: "from_stage", label: "From" }, { key: "to_stage", label: "To" }, { key: "stage_date", label: "Date" }, { key: "remarks", label: "Remarks" }]} />
+            <div className="grid gap-4 md:grid-cols-4">
+              <Kpi label="Candidate" value={journey.candidate?.FullName || "-"} foot={journey.candidate?.CandidateID || journey.candidate?.candidate_code} />
+              <Kpi label="Stage" value={journey.candidate?.CurrentStage || journey.candidate?.current_stage || "-"} foot={journey.candidate?.Status || journey.candidate?.status} />
+              <Kpi label="Quality" value={`${journey.candidate?._candidateQualityScore || 0}`} foot={journey.candidate?._candidateQualityLabel} />
+              <Kpi label="Handling" value={`${journey.candidate?._handlingQualityScore || 0}`} foot={journey.candidate?._handlingQualityLabel} />
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div>
+                <div className="mb-2 font-bold text-slate-700">Stage Log</div>
+                <SimpleTable rows={journey.stageLogs || []} columns={[{ key: "from_stage", label: "From" }, { key: "to_stage", label: "To" }, { key: "stage_date", label: "Date" }, { key: "remarks", label: "Remarks" }]} empty="No stage transitions recorded" />
+              </div>
+              <div>
+                <div className="mb-2 font-bold text-slate-700">Confirmations</div>
+                <SimpleTable rows={journey.confirmations || []} columns={[{ key: "will_join", label: "Will Join" }, { key: "hr_query", label: "HR Query" }, { key: "process_name", label: "Process" }, { key: "created_at", label: "Date" }]} empty="No confirmations" />
+              </div>
+            </div>
           </>}
         </div>}
 
-        {tab === "Health" && <SimpleTable rows={health?.checks || []} columns={[{ key: "type", label: "Type" }, { key: "name", label: "Check" }, { key: "ok", label: "Status", render: (r) => r.ok ? <span className="font-bold text-emerald-600">OK</span> : <span className="font-bold text-rose-600">Fix Needed</span> }, { key: "count", label: "Count" }]} />}
+        {tab === "Health" && <>
+          {healthLoading && <div className="rounded-2xl border border-slate-200 bg-white p-4 text-slate-500">Running health checks...</div>}
+          {!healthLoading && health && (
+            <div className="space-y-3">
+              <div className={`rounded-2xl border p-3 text-sm font-bold ${health.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+                Overall: {health.ok ? "All checks passed" : "One or more checks need attention"}
+              </div>
+              <SimpleTable rows={health.checks || []} columns={[{ key: "type", label: "Type" }, { key: "name", label: "Check" }, { key: "ok", label: "Status", render: (r) => r.ok ? <span className="font-bold text-emerald-600">OK</span> : <span className="font-bold text-rose-600">Fix Needed</span> }, { key: "count", label: "Count" }]} />
+            </div>
+          )}
+        </>}
       </div>
     </div>
   );

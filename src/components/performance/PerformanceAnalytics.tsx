@@ -18,7 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 import { CalendarIcon, Download, FileText, Loader2, Table } from "lucide-react";
 import { format, subMonths, isWithinInterval, startOfDay, endOfDay } from "date-fns";
 import { DatePresets } from "./DatePresets";
-import { cn } from "@/lib/utils";
+import { cn, normalizeDate } from "@/lib/utils";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -131,7 +131,7 @@ export function PerformanceAnalytics({ employeeId }: PerformanceAnalyticsProps) 
   const ratingTrend = filteredReviews.map((review) => ({
     period: review.review_period,
     rating: review.overall_rating || 0,
-    date: new Date(review.review_date).toLocaleDateString("en-US", {
+    date: new Date(normalizeDate(review.review_date)).toLocaleDateString("en-US", {
       month: "short",
       year: "2-digit",
     }),

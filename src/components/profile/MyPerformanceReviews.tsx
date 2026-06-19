@@ -5,6 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Star, Calendar, MessageSquare, TrendingUp, AlertTriangle, CheckCircle } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
+import { parseLocalDate } from "@/lib/utils";
 
 interface MyPerformanceReviewsProps {
   employeeId: string;
@@ -111,7 +112,7 @@ export function MyPerformanceReviews({ employeeId }: MyPerformanceReviewsProps) 
                     <h4 className="font-semibold">{review.review_period}</h4>
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Calendar className="h-4 w-4" />
-                      <span>{format(new Date(review.review_date), "MMMM d, yyyy")}</span>
+                      <span>{format(parseLocalDate(review.review_date), "MMMM d, yyyy")}</span>
                       {review.reviewer && (
                         <>
                           <span>•</span>

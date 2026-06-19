@@ -35,7 +35,7 @@ export type AutoAwardActivity =
  */
 export async function getBadges(filters?: BadgeFilters): Promise<BadgeMaster[]> {
   let sql = `
-    SELECT badge_id, badge_name, badge_description, badge_icon,
+    SELECT DISTINCT badge_id, badge_name, badge_description, badge_icon,
            badge_category, points_value, criteria_json, is_active,
            created_at, updated_at
     FROM gamification_badge_master
@@ -59,7 +59,7 @@ export async function getBadges(filters?: BadgeFilters): Promise<BadgeMaster[]> 
     params.push(searchTerm, searchTerm);
   }
 
-  sql += ' ORDER BY badge_category, badge_name';
+  sql += ' GROUP BY badge_id ORDER BY badge_category, badge_name';
 
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
 

@@ -1,12 +1,16 @@
 import { db } from "../../../db/mysql.js";
 import {
   assertSafeIdentifier,
+  buildBiometricAggregateQuery,
   buildCdrAggregateQuery,
+  buildDailySnapshotAggregateQuery,
   buildDialerAggregateQuery,
   fetchFromDatabase,
   type DbDialect,
 } from "./databaseAdapter.js";
 import type { IntegrationConfig } from "../integration.types.js";
+import { integrationService } from "../integration.service.js";
+import { getCredentialsForKey } from "../../external-db/external-db.service.js";
 
 interface DbConfig {
   db_type?: "mysql" | "mssql" | "sqlserver";
@@ -20,6 +24,7 @@ interface DbConfig {
   date_column?: string;
   talk_col?: string;
   pause_col?: string;
+  wait_col?: string;
   campaign_col?: string;
   disposition_col?: string;
   encrypt?: boolean;
@@ -33,6 +38,7 @@ interface SyncResult {
   rows_skipped: number;
   duration_ms: number;
   errors: string[];
+  affected_dates: string[];
 }
 
 function parseConfig(value: IntegrationConfig["config_json"]): DbConfig {
@@ -46,21 +52,24 @@ function parseConfig(value: IntegrationConfig["config_json"]): DbConfig {
   return (value ?? {}) as unknown as DbConfig;
 }
 
-function getDbCredentials(secretName: string): { user: string; password: string } {
-  const prefix = String(secretName ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "_");
-  if (!prefix) throw new Error("Database connector secret_name is required");
-
-  const user = process.env[`${prefix}_USER`];
-  const password = process.env[`${prefix}_PASS`] ?? process.env[`${prefix}_PASSWORD`];
-  if (!user || !password) {
-    throw new Error(`Missing connector credentials: ${prefix}_USER and ${prefix}_PASS/PASSWORD`);
-  }
-
-  return { user, password };
-}
-
 function dialectFor(config: DbConfig): DbDialect {
   return config.db_type === "mssql" || config.db_type === "sqlserver" ? "mssql" : "mysql";
+}
+
+function sqlDate(value: unknown, fallback: string): string {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(value);
+    const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+    return `${part("year")}-${part("month")}-${part("day")}`;
+  }
+  const text = String(value ?? "").trim();
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match?.[1] ?? fallback;
 }
 
 export async function syncDatabaseConnector(
@@ -73,6 +82,7 @@ export async function syncDatabaseConnector(
     rows_skipped: 0,
     duration_ms: 0,
     errors: [],
+    affected_dates: [],
   };
   const startedAt = Date.now();
 
@@ -82,50 +92,129 @@ export async function syncDatabaseConnector(
 
     const config = parseConfig(connector.config_json);
     if (!config.host || !config.database) throw new Error("Missing host or database in config_json");
-    if (!Array.isArray(config.source_tables) || config.source_tables.length === 0) {
+    const credentials = await getCredentialsForKey(connector.integration_key);
+    if (!credentials) throw new Error("Database credentials are not configured");
+    const tableMaps = await integrationService.listTableMaps(connector.integration_key);
+    const effectiveMaps = tableMaps.length > 0
+      ? tableMaps
+      : (config.source_tables ?? []).map((sourceTable) => ({
+          source_table: sourceTable,
+          target_table: config.target_table,
+          sync_mode: "daily_aggregate",
+        }));
+    if (effectiveMaps.length === 0) {
       throw new Error("At least one approved source table is required");
     }
 
-    // The legacy dialer connector currently promotes only into this controlled table.
-    // Generic HRMS master-data mappings must use the staged Data Tunnel engine.
-    if (config.target_table !== "dialer_session_log") {
-      throw new Error("Unsupported target table. Use an approved staged mapping for HRMS master data");
+    const approvedTargets = new Set([
+      "dialer_session_log",
+      "integration_call_daily",
+      "integration_biometric_daily",
+    ]);
+    if (effectiveMaps.some((mapping) => !mapping.target_table || !approvedTargets.has(mapping.target_table))) {
+      throw new Error("Unsupported target table. Select an approved Integration Hub destination");
     }
 
-    assertSafeIdentifier(config.target_table, "target table");
-    const credentials = getDbCredentials(connector.secret_name ?? "");
+    const fieldMaps = await integrationService.listFieldMaps(connector.integration_key);
     const dialect = dialectFor(config);
     const fromDate = opts.fromDate ?? new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
     const toDate = opts.toDate ?? new Date().toISOString().slice(0, 10);
 
-    for (const sourceTable of config.source_tables) {
+    for (const tableMap of effectiveMaps) {
+      const sourceTable = tableMap.source_table;
+      const targetTable = tableMap.target_table;
       try {
         assertSafeIdentifier(sourceTable, "source table");
+        assertSafeIdentifier(targetTable, "target table");
         const plainTableName = sourceTable.split(".").at(-1) ?? sourceTable;
         const isVicidial = plainTableName.startsWith("vicidial_agent_log");
         const isCdr = plainTableName.startsWith("cdr_");
+        const isGenericCallLog = plainTableName === "call_logs";
+        const isCallMasterView = plainTableName.startsWith("v_call_master_");
+        const isDailySnapshot = plainTableName === "daily_performance_snapshot";
+        const tableFieldMaps = fieldMaps.filter(
+          (mapping) => mapping.source_table === sourceTable || mapping.source_table === "*",
+        );
+        const sourceFor = (targetColumn: string, fallback: string): string =>
+          tableFieldMaps.find(
+            (mapping) => mapping.target_table === targetTable && mapping.target_column === targetColumn,
+          )?.source_field ?? fallback;
+        const isBiometric = targetTable === "integration_biometric_daily";
+        const dateTarget = targetTable === "dialer_session_log" ? "session_date" : "activity_date";
+        const minutesTarget = targetTable === "integration_call_daily"
+          ? "talk_minutes"
+          : isBiometric ? "biometric_minutes" : "login_minutes";
 
         let query: string;
-        if (isVicidial) {
-          query = buildDialerAggregateQuery(sourceTable, {
+        if (isBiometric) {
+          const mapped = (targetColumn: string) =>
+            tableFieldMaps.find(
+              (mapping) => mapping.target_table === targetTable && mapping.target_column === targetColumn,
+            )?.source_field;
+          query = buildBiometricAggregateQuery(sourceTable, {
             dialect,
-            agentCodeCol: config.agent_code_column ?? "user",
-            dateCol: config.date_column ?? "event_time",
-            talkCol: config.talk_col ?? "talk_sec",
-            pauseCol: config.pause_col ?? "pause_sec",
-            campaignCol: config.campaign_col ?? "campaign_id",
+            employeeCodeCol: sourceFor("employee_code", config.agent_code_column ?? "employee_code"),
+            dateCol: sourceFor(dateTarget, config.date_column ?? "event_time"),
+            punchTimeCol: mapped("punch_time"),
+            firstPunchCol: mapped("first_punch"),
+            lastPunchCol: mapped("last_punch"),
+            minutesCol: mapped(minutesTarget),
             fromDate,
             toDate,
           });
-        } else if (isCdr) {
+        } else if (isVicidial) {
+          query = buildDialerAggregateQuery(sourceTable, {
+            dialect,
+            agentCodeCol: sourceFor("employee_code", config.agent_code_column ?? "user"),
+            dateCol: sourceFor(dateTarget, config.date_column ?? "event_time"),
+            talkCol: sourceFor(minutesTarget, config.talk_col ?? "talk_sec"),
+            pauseCol: config.pause_col ?? "pause_sec",
+            waitCol: config.wait_col ?? "wait_sec",
+            campaignCol: sourceFor("process_name", config.campaign_col ?? "campaign_id"),
+            groupByCampaign: targetTable !== "dialer_session_log",
+            includePauseWait: targetTable === "dialer_session_log",
+            fromDate,
+            toDate,
+          });
+        } else if (isCdr || isGenericCallLog) {
+          const outbound = plainTableName.startsWith("cdr_ob");
           query = buildCdrAggregateQuery(sourceTable, {
             dialect,
-            agentIdCol: config.agent_code_column ?? "AgentId",
-            agentNameCol: config.agent_name_column ?? "AgentName",
-            dateCol: config.date_column ?? "CallDate",
-            talkCol: config.talk_col ?? "CallDurationSecond",
-            campaignCol: config.campaign_col ?? "CampaignName",
-            dispositionCol: config.disposition_col ?? "Disposition",
+            agentIdCol: sourceFor("employee_code", isGenericCallLog ? "agent_id" : outbound ? "Agent" : "AgentId"),
+            agentNameCol: config.agent_name_column ?? (
+              isGenericCallLog ? "agent_id" : outbound ? "Agent" : "AgentName"
+            ),
+            dateCol: sourceFor(dateTarget, isGenericCallLog ? "start_time" : "CallDate"),
+            talkCol: sourceFor(minutesTarget, isGenericCallLog ? "duration" : outbound ? "talk_sec" : "CallDurationSecond"),
+            campaignCol: sourceFor("process_name", isGenericCallLog ? "campaign_id" : outbound ? "campaign_id" : "CampaignName"),
+            dispositionCol: config.disposition_col ?? (
+              isGenericCallLog ? "call_type" : outbound ? "CallStatus" : "Disposition"
+            ),
+            fromDate,
+            toDate,
+          });
+        } else if (isCallMasterView) {
+          query = buildCdrAggregateQuery(sourceTable, {
+            dialect,
+            agentIdCol: sourceFor("employee_code", "agent_employee_code"),
+            agentNameCol: config.agent_name_column ?? "agent_employee_name",
+            dateCol: sourceFor(dateTarget, "call_date"),
+            talkCol: sourceFor(minutesTarget, "length_in_sec"),
+            campaignCol: sourceFor("process_name", "process_name"),
+            dispositionCol: config.disposition_col ?? "quality_band",
+            fromDate,
+            toDate,
+          });
+        } else if (isDailySnapshot) {
+          query = buildDailySnapshotAggregateQuery(sourceTable, {
+            dialect,
+            employeeCodeCol: sourceFor("employee_code", "agent_employee_code"),
+            dateCol: sourceFor(dateTarget, "snapshot_date"),
+            processCol: sourceFor("process_name", "process_name"),
+            totalCallsCol: sourceFor("total_calls", "total_calls"),
+            talkMinutesCol: tableFieldMaps.find(
+              (mapping) => mapping.target_table === targetTable && mapping.target_column === minutesTarget,
+            )?.source_field,
             fromDate,
             toDate,
           });
@@ -137,7 +226,7 @@ export async function syncDatabaseConnector(
           host: config.host,
           port: config.port ?? (dialect === "mssql" ? 1433 : 3306),
           database: config.database,
-          user: credentials.user,
+          user: credentials.username,
           password: credentials.password,
           db_type: dialect,
           encrypt: config.encrypt ?? false,
@@ -148,30 +237,82 @@ export async function syncDatabaseConnector(
 
         for (const row of fetched.rows) {
           const employeeCode = String(row.employee_code ?? "").trim();
-          const sessionDate = String(row.session_date ?? toDate).slice(0, 10);
+          const sessionDate = sqlDate(row.session_date, toDate);
           if (!employeeCode || !/^\d{4}-\d{2}-\d{2}$/.test(sessionDate)) {
             result.rows_skipped++;
+            if (result.errors.length < 25) {
+              result.errors.push(`${sourceTable}: invalid employee code or session date`);
+            }
             continue;
           }
 
           try {
-            await db.execute(
-              `INSERT INTO dialer_session_log
-                 (id, integration_key, employee_code, session_date, login_minutes, process_name, source_system)
-               VALUES (UUID(), ?, ?, ?, ?, ?, ?)
-               ON DUPLICATE KEY UPDATE
-                 login_minutes = VALUES(login_minutes),
-                 process_name = VALUES(process_name),
-                 source_system = VALUES(source_system)`,
-              [
-                connector.integration_key,
-                employeeCode,
-                sessionDate,
-                Number(row.login_minutes ?? 0),
-                String(row.process_name ?? "").trim(),
-                `${config.database}.${sourceTable}`,
-              ],
-            );
+            const processName = String(row.process_name ?? "").trim();
+            if (targetTable === "dialer_session_log") {
+              await db.execute(
+                `INSERT INTO dialer_session_log
+                   (id, integration_key, employee_code, session_date, login_minutes, process_name, source_system)
+                 VALUES (UUID(), ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE
+                   login_minutes = VALUES(login_minutes),
+                   process_name = VALUES(process_name),
+                   source_system = VALUES(source_system)`,
+                [
+                  connector.integration_key,
+                  employeeCode,
+                  sessionDate,
+                  Number(row.login_minutes ?? 0),
+                  processName,
+                  `${config.database}.${sourceTable}`,
+                ],
+              );
+            } else if (targetTable === "integration_call_daily") {
+              await db.execute(
+                `INSERT INTO integration_call_daily
+                   (id, integration_key, source_table, employee_code, activity_date,
+                    process_name, total_calls, talk_minutes, run_id)
+                 VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, NULL)
+                 ON DUPLICATE KEY UPDATE
+                   total_calls = VALUES(total_calls),
+                   talk_minutes = VALUES(talk_minutes),
+                   updated_at = NOW()`,
+                [
+                  connector.integration_key,
+                  sourceTable,
+                  employeeCode,
+                  sessionDate,
+                  processName,
+                  Number(row.total_calls ?? row.event_count ?? 0),
+                  Number(row.login_minutes ?? 0),
+                ],
+              );
+            } else {
+              await db.execute(
+                `INSERT INTO integration_biometric_daily
+                   (id, integration_key, source_table, employee_code, activity_date,
+                    first_punch, last_punch, total_punches, biometric_minutes, run_id)
+                 VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                 ON DUPLICATE KEY UPDATE
+                   first_punch = VALUES(first_punch),
+                   last_punch = VALUES(last_punch),
+                   total_punches = VALUES(total_punches),
+                   biometric_minutes = VALUES(biometric_minutes),
+                   updated_at = NOW()`,
+                [
+                  connector.integration_key,
+                  sourceTable,
+                  employeeCode,
+                  sessionDate,
+                  row.first_punch ?? null,
+                  row.last_punch ?? null,
+                  Math.max(0, Number(row.total_punches ?? 0)),
+                  Math.max(0, Number(row.login_minutes ?? 0)),
+                ],
+              );
+              if (!result.affected_dates.includes(sessionDate)) {
+                result.affected_dates.push(sessionDate);
+              }
+            }
             result.rows_inserted++;
           } catch (error) {
             result.rows_skipped++;

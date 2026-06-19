@@ -1,5 +1,14 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import {
   Building2,
   CheckCircle2,
@@ -16,23 +25,29 @@ import { format, isWithinInterval, parse } from "date-fns";
 import { toast } from "sonner";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { EmployeeTable, type Employee } from "@/components/employees/EmployeeTable";
 import { EmployeeDocuments } from "@/components/documents/EmployeeDocuments";
 import { EmployeeViewDialog } from "@/components/employees/EmployeeViewDialog";
 import { EmployeeEditDialog } from "@/components/employees/EmployeeEditDialog";
+import { AdminPasswordResetDialog } from "@/components/admin/AdminPasswordResetDialog";
 import { BulkDeleteDialog } from "@/components/employees/BulkDeleteDialog";
 import { BulkAssignManagerDialog } from "@/components/employees/BulkAssignManagerDialog";
 import { DateRangeExportDialog } from "@/components/export/DateRangeExportDialog";
+import { ProcessWiseChart } from "@/components/employees/ProcessWiseChart";
 
 import {
   useBulkDeleteEmployees,
   useBulkUpdateEmployeeStatus,
   useDepartments,
-  useEmployees,
+  useEmployeeDirectory,
+  useEmployeeDirectoryAnalytics,
+  useEmployeeDirectoryMasters,
+  useEmployeeSearchOptions,
 } from "@/hooks/useEmployees";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
-import { usePagination } from "@/hooks/usePagination";
 import { useSorting } from "@/hooks/useSorting";
+import { useDebounce } from "@/hooks/useDebounce";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -66,6 +81,7 @@ interface EmployeeMetricCardProps {
   description: string;
   icon: ReactNode;
   tone: "sky" | "emerald" | "indigo" | "amber";
+  onClick?: () => void;
 }
 
 const metricToneMap = {
@@ -78,8 +94,8 @@ const metricToneMap = {
     icon: "bg-emerald-50 text-emerald-700 ring-emerald-100",
   },
   indigo: {
-    card: "border-indigo-100 bg-gradient-to-br from-white via-white to-indigo-50",
-    icon: "bg-indigo-50 text-indigo-700 ring-indigo-100",
+    card: "border-[#c4dcf5] bg-gradient-to-br from-white via-white to-[#e8f2fc]",
+    icon: "bg-[#e8f2fc] text-[#1B6AB5] ring-[#c4dcf5]",
   },
   amber: {
     card: "border-amber-100 bg-gradient-to-br from-white via-white to-amber-50",
@@ -93,11 +109,16 @@ const EmployeeMetricCard = ({
   description,
   icon,
   tone,
+  onClick,
 }: EmployeeMetricCardProps) => {
   const style = metricToneMap[tone];
 
   return (
-    <div className={`rounded-2xl border p-4 shadow-sm hover:shadow-2xl hover:-translate-y-0.5 transition-all duration-200 cursor-pointer ${style.card}`}>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full rounded-2xl border p-4 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-[#1B6AB5]/30 ${style.card}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
@@ -115,17 +136,24 @@ const EmployeeMetricCard = ({
       </div>
 
       <p className="mt-3 text-xs leading-5 text-slate-500">{description}</p>
-    </div>
+    </button>
   );
 };
 
 const Employees = () => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [departmentFilter, setDepartmentFilter] = useState("all");
+  const [processFilter, setProcessFilter] = useState("all");
+  const [branchFilter, setBranchFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("active");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const [documentsEmployee, setDocumentsEmployee] = useState<Employee | null>(null);
   const [viewEmployee, setViewEmployee] = useState<Employee | null>(null);
   const [editEmployee, setEditEmployee] = useState<Employee | null>(null);
+  const [resetPasswordEmployee, setResetPasswordEmployee] = useState<Employee | null>(null);
 
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -133,29 +161,54 @@ const Employees = () => {
   const [bulkAssignManagerOpen, setBulkAssignManagerOpen] = useState(false);
   const [employeesToAssignManager, setEmployeesToAssignManager] = useState<Employee[]>([]);
 
-  const { data: employees = [], isLoading: isLoadingEmployees } = useEmployees();
+  const debouncedSearch = useDebounce(searchQuery.trim(), 300);
+  const recordStatus = statusFilter === "active" || statusFilter === "onboarding"
+    ? "active"
+    : statusFilter === "all"
+      ? "all"
+      : "inactive";
+  const employmentStatus = statusFilter === "onboarding"
+    ? "Onboarding"
+    : statusFilter === "inactive"
+      ? "Inactive"
+      : statusFilter === "offboarded"
+        ? "Terminated"
+        : undefined;
+  const { data: directoryData, isLoading: isLoadingEmployees } = useEmployeeDirectory({
+    page: currentPage,
+    limit: pageSize,
+    recordStatus,
+    status: employmentStatus,
+    search: debouncedSearch || undefined,
+    departmentId: departmentFilter === "all" ? undefined : departmentFilter,
+    processId: processFilter === "all" ? undefined : processFilter,
+    branchId: branchFilter === "all" ? undefined : branchFilter,
+  });
+  const { data: directoryAnalytics, isFetching: isFetchingAnalytics } = useEmployeeDirectoryAnalytics({
+    page: 1,
+    limit: 1,
+    recordStatus,
+    status: employmentStatus,
+    search: debouncedSearch || undefined,
+    departmentId: departmentFilter === "all" ? undefined : departmentFilter,
+    processId: processFilter === "all" ? undefined : processFilter,
+    branchId: branchFilter === "all" ? undefined : branchFilter,
+  });
+  const employees = directoryData?.employees ?? [];
+  const directoryTotal = directoryData?.total ?? 0;
   const { data: departments = [] } = useDepartments();
-  const { isAdminOrHR, isLoading: isLoadingRole } = useIsAdminOrHR();
+  const { data: directoryMasters } = useEmployeeDirectoryMasters();
+  const { data: employeeSearchOptions = [] } = useEmployeeSearchOptions(searchQuery);
+  const { isAdminOrHR, isLoading: isLoadingRole, roleKeys } = useIsAdminOrHR();
+  const canResetEmployeePassword =
+    roleKeys.includes("super_admin") || roleKeys.includes("admin") || roleKeys.includes("wfm");
 
   const bulkDeleteMutation = useBulkDeleteEmployees();
   const bulkStatusMutation = useBulkUpdateEmployeeStatus();
 
-  const normalizedSearch = searchQuery.trim().toLowerCase();
-
-  const filteredEmployees = employees.filter((employee) => {
-    const matchesSearch =
-      !normalizedSearch ||
-      employee.name.toLowerCase().includes(normalizedSearch) ||
-      employee.email.toLowerCase().includes(normalizedSearch) ||
-      employee.employeeCode.toLowerCase().includes(normalizedSearch) ||
-      employee.designation.toLowerCase().includes(normalizedSearch) ||
-      employee.department.toLowerCase().includes(normalizedSearch);
-
-    const matchesDepartment =
-      departmentFilter === "all" || employee.department === departmentFilter;
-
-    return matchesSearch && matchesDepartment;
-  });
+  const filteredEmployees = employees;
+  const processes = directoryMasters?.processes ?? [];
+  const branches = directoryMasters?.branches ?? [];
 
   const {
     sortedItems: sortedEmployees,
@@ -163,25 +216,35 @@ const Employees = () => {
     requestSort,
   } = useSorting<Employee>(filteredEmployees);
 
-  const {
-    currentPage,
-    pageSize,
-    totalPages,
-    totalItems,
-    paginatedItems: paginatedEmployees,
-    setPage,
-    setPageSize,
-    goToNextPage,
-    goToPreviousPage,
-    canGoNext,
-    canGoPrevious,
-  } = usePagination(sortedEmployees, { initialPageSize: 10 });
+  const totalPages = Math.max(1, Math.ceil(directoryTotal / pageSize));
+  const totalItems = directoryTotal;
+  const paginatedEmployees = sortedEmployees;
+  const canGoNext = currentPage < totalPages;
+  const canGoPrevious = currentPage > 1;
 
   const isLoading = isLoadingEmployees || isLoadingRole;
 
-  const activeEmployees = employees.filter((employee) =>
-    String(employee.status || "").toLowerCase().includes("active")
-  ).length;
+  const filteredStats = directoryData?.stats;
+  const totalEmployees = filteredStats?.total_employees ?? directoryTotal;
+  const activeEmployees = filteredStats?.active_employees ?? 0;
+  const inactiveEmployees = filteredStats?.inactive_employees ?? 0;
+  const filteredDepartmentCount = filteredStats?.department_count ?? departments.length;
+  const processChartData = useMemo(
+    () =>
+      (directoryAnalytics?.processBreakdown ?? []).map((row) => ({
+        process: row.process_name,
+        Active: row.active_count,
+        Inactive: row.inactive_count,
+        Total: row.total_count,
+      })),
+    [directoryAnalytics?.processBreakdown],
+  );
+  const chartMode = statusFilter === "inactive" || statusFilter === "offboarded" ? "Inactive" : "Active";
+
+  useEffect(() => {
+    setCurrentPage(1);
+    setSelectedEmployeeIds([]);
+  }, [debouncedSearch, departmentFilter, processFilter, branchFilter, statusFilter, pageSize]);
 
   const filterByDateRange = (
     items: Employee[],
@@ -429,194 +492,312 @@ const Employees = () => {
     }
   };
 
-  const hasActiveFilters = searchQuery.trim() || departmentFilter !== "all";
+  const hasActiveFilters = searchQuery.trim() || departmentFilter !== "all" || processFilter !== "all" || branchFilter !== "all" || statusFilter !== "active";
 
   return (
     <DashboardLayout>
       <div className="space-y-5">
-        {/* Header */}
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="grid gap-0 lg:grid-cols-[1fr_auto]">
-            <div className="relative p-5 sm:p-6">
-              <div className="absolute inset-y-0 left-0 w-1 bg-slate-950" />
-
-              <div className="pl-2">
-                <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">
-                  People Management
-                </p>
-
-                <h1 className="mt-2 text-3xl font-black text-slate-950">
-                  {isAdminOrHR ? "Employee Directory" : "Team Directory"}
-                </h1>
-
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                  {isAdminOrHR
-                    ? "Manage employees, documents, status, departments, exports and bulk actions."
-                    : "View your team members and employee information."}
-                </p>
+        <section className="relative overflow-hidden rounded-2xl bg-slate-950 text-white shadow-lg">
+          <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-[#1B6AB5]/25 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-10 left-1/4 h-48 w-48 rounded-full bg-[#3BAD49]/10 blur-3xl" />
+          <div className="relative flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between sm:p-8">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#5aa0dd]">
+                People & Workforce
+              </p>
+              <h1 className="mt-2 text-2xl font-black tracking-tight text-white">
+                Employee Directory
+              </h1>
+              <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">
+                Manage employee profiles, departments, roles and employment records.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total</p>
+                  <p className="text-lg font-black text-white">{totalEmployees}</p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Active</p>
+                  <p className="text-lg font-black text-[#3BAD49]">{activeEmployees}</p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Departments</p>
+                  <p className="text-lg font-black text-[#5aa0dd]">{filteredDepartmentCount}</p>
+                </div>
               </div>
             </div>
-
             {isAdminOrHR && (
-              <div className="flex flex-col justify-center gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:flex-row sm:items-center lg:border-l lg:border-t-0">
-                <DateRangeExportDialog
-                  title="Export Employee Directory"
-                  description="Export employee directory with optional date range filter based on join date."
-                  onExportCSV={exportToCSV}
-                  onExportPDF={exportToPDF}
-                />
-
+              <div className="flex shrink-0 flex-wrap gap-2">
                 <Button
                   asChild
-                  className="bg-slate-950 text-white hover:bg-slate-800 rounded-2xl px-5 py-2.5 font-semibold cursor-pointer transition-colors"
+                  className="rounded-xl bg-[#1B6AB5] px-5 font-bold text-white shadow-lg shadow-[#1B6AB5]/25 hover:bg-[#155e9f]"
                 >
                   <Link to="/onboarding">
                     <UserPlus className="mr-2 h-4 w-4" />
                     Add Employee
                   </Link>
                 </Button>
+                <DateRangeExportDialog
+                  onExportCSV={exportToCSV}
+                  onExportPDF={exportToPDF}
+                />
               </div>
             )}
           </div>
         </section>
 
-        {/* Metrics */}
+        <RoleInsightsPanel roles={roleKeys} title="Employee control insights" />
+
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {isLoading ? (
-            <>
+            <div className="flex gap-6">
               {[1, 2, 3, 4].map((item) => (
-                <Skeleton key={item} className="h-32 rounded-2xl" />
+                <Skeleton key={item} className="h-20 w-24 rounded-xl" />
               ))}
-            </>
+            </div>
           ) : (
             <>
               <EmployeeMetricCard
                 title={isAdminOrHR ? "Employees" : "Team Members"}
-                value={employees.length}
+                value={totalEmployees}
                 description={
                   isAdminOrHR
-                    ? "Total employee records available."
-                    : "Total visible team records."
+                    ? "Matching employee records for the selected filters."
+                    : "Matching visible team records."
                 }
                 icon={<Users className="h-5 w-5" />}
                 tone="sky"
+                onClick={() => setStatusFilter("all")}
               />
 
               <EmployeeMetricCard
                 title="Active"
                 value={activeEmployees}
-                description="Employees currently marked active."
+                description="Active employees matching the current filters."
                 icon={<UserCheck className="h-5 w-5" />}
                 tone="emerald"
+                onClick={() => setStatusFilter("active")}
               />
 
               <EmployeeMetricCard
                 title="Departments"
-                value={departments.length}
-                description="Departments configured in HRMS."
+                value={filteredDepartmentCount}
+                description="Departments represented in this result set."
                 icon={<Building2 className="h-5 w-5" />}
                 tone="indigo"
               />
 
               <EmployeeMetricCard
-                title="Selected"
-                value={selectedEmployeeIds.length}
-                description={
-                  selectedEmployeeIds.length > 0
-                    ? "Selected for bulk action."
-                    : "No employee selected."
-                }
+                title="Inactive"
+                value={inactiveEmployees}
+                description="Inactive/offboarded employees in the selected result."
                 icon={<CheckCircle2 className="h-5 w-5" />}
                 tone="amber"
+                onClick={() => setStatusFilter("inactive")}
               />
             </>
           )}
         </section>
 
-        {/* Filters */}
-        <section className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm">
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-sm font-semibold tracking-tight text-slate-950">
-                Directory Controls
-              </h2>
-              <p className="mt-1 text-xs leading-5 text-slate-500">
-                Search, filter and manage employee directory records.
-              </p>
-            </div>
-
-            {isAdminOrHR && (
-              <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs font-medium text-slate-500">
-                <Download className="h-3.5 w-3.5 text-sky-700" />
-                Export available
-              </div>
-            )}
-          </div>
-
-          <div className="grid gap-3 lg:grid-cols-[1fr_240px]">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="grid flex-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_200px_200px_180px_160px]">
             <div className="relative">
               <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
               <Input
-                placeholder="Search by name, email, employee no., designation or department..."
+                placeholder="Search by name, official email or employee number..."
                 className="h-11 rounded-xl border-slate-200 bg-white pl-10 text-sm shadow-sm"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
+                onFocus={() => setIsSearchFocused(true)}
+                onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 150)}
               />
+
+              {isSearchFocused && searchQuery.trim() && (
+                <div className="absolute left-0 right-0 top-12 z-30 overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-2xl">
+                  {employeeSearchOptions.length > 0 ? (
+                    employeeSearchOptions.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm text-slate-900 transition hover:bg-[#e8f2fc]"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          setSearchQuery(option.name || option.employee_code);
+                          setCurrentPage(1);
+                          setIsSearchFocused(false);
+                        }}
+                      >
+                        <span>
+                          <span className="block font-bold text-slate-950">{option.name || "Unnamed employee"}</span>
+                          <span className="text-xs text-slate-500">{option.employee_code}</span>
+                        </span>
+                        <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-600">
+                          Select
+                        </span>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="px-4 py-3 text-sm text-slate-500">
+                      No matching employee found yet.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
-              <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+              <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm [&>span]:text-slate-900">
                 <SelectValue placeholder="Department" />
               </SelectTrigger>
 
-              <SelectContent>
-                <SelectItem value="all">All Departments</SelectItem>
+              <SelectContent className="bg-white">
+                <SelectItem value="all" className="text-slate-900 font-medium">All Departments</SelectItem>
 
                 {departments.map((dept) => (
-                  <SelectItem key={dept.id} value={dept.name}>
+                  <SelectItem key={dept.id} value={dept.id} className="text-slate-900 font-medium">
                     {dept.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+
+            <Select value={processFilter} onValueChange={setProcessFilter}>
+              <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm [&>span]:text-slate-900">
+                <SelectValue placeholder="Process" />
+              </SelectTrigger>
+              <SelectContent className="bg-white">
+                <SelectItem value="all" className="text-slate-900 font-medium">All Processes</SelectItem>
+                {processes.map((process) => (
+                  <SelectItem key={process.id} value={process.id} className="text-slate-900 font-medium">
+                    {process.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={branchFilter} onValueChange={setBranchFilter}>
+              <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm [&>span]:text-slate-900">
+                <SelectValue placeholder="Branch" />
+              </SelectTrigger>
+              <SelectContent className="bg-white">
+                <SelectItem value="all" className="text-slate-900 font-medium">All Branches</SelectItem>
+                {branches.map((branch) => (
+                  <SelectItem key={branch.id} value={branch.id} className="text-slate-900 font-medium">
+                    {branch.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm [&>span]:text-slate-900">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent className="bg-white">
+                <SelectItem value="all" className="text-slate-900 font-medium">Active & Inactive</SelectItem>
+                <SelectItem value="active" className="text-slate-900 font-medium">Active</SelectItem>
+                <SelectItem value="inactive" className="text-slate-900 font-medium">Inactive</SelectItem>
+                <SelectItem value="onboarding" className="text-slate-900 font-medium">Onboarding</SelectItem>
+                <SelectItem value="offboarded" className="text-slate-900 font-medium">Offboarded</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-            <span className="rounded-full bg-slate-100 px-3 py-1 font-medium">
-              Showing {filteredEmployees.length} result
-              {filteredEmployees.length === 1 ? "" : "s"}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+          <span className="rounded-full bg-slate-100 px-3 py-1 font-medium">
+            {directoryTotal === 0 ? "No employees found" : `${directoryTotal} matching employee${directoryTotal === 1 ? "" : "s"}`}
+          </span>
+
+          {departmentFilter !== "all" && (
+            <span className="rounded-full bg-sky-50 px-3 py-1 font-medium text-sky-700">
+              Department: {departments.find((department) => department.id === departmentFilter)?.name ?? departmentFilter}
             </span>
+          )}
+          {processFilter !== "all" && <span className="rounded-full bg-indigo-50 px-3 py-1 font-medium text-indigo-700">Process: {processes.find((process) => process.id === processFilter)?.name ?? processFilter}</span>}
+          {branchFilter !== "all" && <span className="rounded-full bg-violet-50 px-3 py-1 font-medium text-violet-700">Branch: {branches.find((branch) => branch.id === branchFilter)?.name ?? branchFilter}</span>}
+          {statusFilter !== "active" && <span className="rounded-full bg-amber-50 px-3 py-1 font-medium capitalize text-amber-700">Status: {statusFilter}</span>}
 
-            {departmentFilter !== "all" && (
-              <span className="rounded-full bg-sky-50 px-3 py-1 font-medium text-sky-700">
-                Department: {departmentFilter}
-              </span>
-            )}
+          {searchQuery.trim() && (
+            <span className="rounded-full bg-[#e8f2fc] px-3 py-1 font-medium text-[#1B6AB5]">
+              Search: {searchQuery}
+            </span>
+          )}
 
-            {searchQuery.trim() && (
-              <span className="rounded-full bg-indigo-50 px-3 py-1 font-medium text-indigo-700">
-                Search: {searchQuery}
-              </span>
-            )}
+          {hasActiveFilters && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+              onClick={() => {
+                setSearchQuery("");
+                setDepartmentFilter("all");
+                setProcessFilter("all");
+                setBranchFilter("all");
+                setStatusFilter("active");
+              }}
+            >
+              <X className="h-3 w-3" />
+              Clear Filters
+            </button>
+          )}
+        </div>
 
-            {hasActiveFilters && (
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
-                onClick={() => {
-                  setSearchQuery("");
-                  setDepartmentFilter("all");
-                }}
-              >
-                <X className="h-3 w-3" />
-                Clear Filters
-              </button>
-            )}
+        <section className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
+          <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-sm font-black text-slate-950">
+                Process-wise {chartMode.toLowerCase()} employee view
+              </h2>
+              <p className="text-xs text-slate-500">
+                Chart follows the same search, status, department, process and branch filters as the list.
+              </p>
+            </div>
+            <div className="rounded-full bg-[#e8f2fc] px-3 py-1 text-xs font-bold text-[#1B6AB5]">
+              {statusFilter === "inactive" || statusFilter === "offboarded"
+                ? "Inactive comparison"
+                : "Active comparison"}
+            </div>
           </div>
+
+          {processChartData.length > 0 ? (
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={processChartData} margin={{ top: 8, right: 16, left: 0, bottom: 36 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis
+                    dataKey="process"
+                    interval={0}
+                    angle={-25}
+                    textAnchor="end"
+                    height={70}
+                    tick={{ fill: "#475569", fontSize: 11 }}
+                  />
+                  <YAxis allowDecimals={false} tick={{ fill: "#475569", fontSize: 11 }} />
+                  <Tooltip
+                    cursor={{ fill: "rgba(27, 106, 181, 0.08)" }}
+                    contentStyle={{
+                      borderRadius: 12,
+                      border: "1px solid #dbeafe",
+                      color: "#0f172a",
+                    }}
+                  />
+                  <Bar dataKey={chartMode} fill={chartMode === "Active" ? "#3BAD49" : "#f59e0b"} radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : isFetchingAnalytics ? (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+              Loading process-wise analytics...
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+              No process-wise data available for the selected filters.
+            </div>
+          )}
         </section>
 
-        {/* Table */}
         <section className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -683,7 +864,9 @@ const Employees = () => {
                   onManageDocuments={
                     isAdminOrHR ? (employee) => setDocumentsEmployee(employee) : undefined
                   }
+                  onResetPassword={canResetEmployeePassword ? (employee) => setResetPasswordEmployee(employee) : undefined}
                   isAdminOrHR={isAdminOrHR}
+                  canResetPassword={canResetEmployeePassword}
                   sortKey={sortConfig.key}
                   sortDirection={sortConfig.direction}
                   onSort={requestSort}
@@ -705,15 +888,15 @@ const Employees = () => {
                       value={pageSize.toString()}
                       onValueChange={(value) => setPageSize(Number(value))}
                     >
-                      <SelectTrigger className="h-8 w-[74px] rounded-lg bg-white text-xs">
+                      <SelectTrigger className="h-8 w-[74px] rounded-lg bg-white text-xs !text-slate-900 [&>span]:!text-slate-900">
                         <SelectValue />
                       </SelectTrigger>
 
-                      <SelectContent>
-                        <SelectItem value="5">5</SelectItem>
-                        <SelectItem value="10">10</SelectItem>
-                        <SelectItem value="20">20</SelectItem>
-                        <SelectItem value="50">50</SelectItem>
+                      <SelectContent className="bg-white !text-slate-900">
+                        <SelectItem value="5" className="!text-slate-900">5</SelectItem>
+                        <SelectItem value="10" className="!text-slate-900">10</SelectItem>
+                        <SelectItem value="20" className="!text-slate-900">20</SelectItem>
+                        <SelectItem value="50" className="!text-slate-900">50</SelectItem>
                       </SelectContent>
                     </Select>
 
@@ -724,7 +907,7 @@ const Employees = () => {
                     <PaginationContent>
                       <PaginationItem>
                         <PaginationPrevious
-                          onClick={() => canGoPrevious && goToPreviousPage()}
+                          onClick={() => canGoPrevious && setCurrentPage((page) => page - 1)}
                           className={
                             !canGoPrevious
                               ? "pointer-events-none opacity-50"
@@ -749,7 +932,7 @@ const Employees = () => {
                         return (
                           <PaginationItem key={pageNum}>
                             <PaginationLink
-                              onClick={() => setPage(pageNum)}
+                              onClick={() => setCurrentPage(pageNum)}
                               isActive={currentPage === pageNum}
                               className="cursor-pointer"
                             >
@@ -761,7 +944,7 @@ const Employees = () => {
 
                       <PaginationItem>
                         <PaginationNext
-                          onClick={() => canGoNext && goToNextPage()}
+                          onClick={() => canGoNext && setCurrentPage((page) => page + 1)}
                           className={
                             !canGoNext
                               ? "pointer-events-none opacity-50"
@@ -777,21 +960,24 @@ const Employees = () => {
           )}
         </section>
 
-        {/* View Profile Dialog */}
         <EmployeeViewDialog
           employee={viewEmployee}
           open={!!viewEmployee}
           onOpenChange={(open) => !open && setViewEmployee(null)}
         />
 
-        {/* Edit Employee Dialog */}
         <EmployeeEditDialog
           employee={editEmployee}
           open={!!editEmployee}
           onOpenChange={(open) => !open && setEditEmployee(null)}
         />
 
-        {/* Documents Dialog */}
+        <AdminPasswordResetDialog
+          employee={resetPasswordEmployee}
+          open={!!resetPasswordEmployee}
+          onOpenChange={(open) => !open && setResetPasswordEmployee(null)}
+        />
+
         <Dialog
           open={!!documentsEmployee}
           onOpenChange={(open) => !open && setDocumentsEmployee(null)}
@@ -807,7 +993,6 @@ const Employees = () => {
           </DialogContent>
         </Dialog>
 
-        {/* Bulk Delete Confirmation Dialog */}
         <BulkDeleteDialog
           open={bulkDeleteOpen}
           onOpenChange={(open) => {
@@ -838,7 +1023,6 @@ const Employees = () => {
           }}
         />
 
-        {/* Bulk Assign Manager Dialog */}
         <BulkAssignManagerDialog
           open={bulkAssignManagerOpen}
           onOpenChange={setBulkAssignManagerOpen}

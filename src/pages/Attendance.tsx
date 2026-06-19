@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -8,62 +8,37 @@ import {
   Calendar,
   CheckCircle2,
   Clock,
-  Coffee,
   Home,
-  Loader2,
   LogIn,
   LogOut,
   MapPin,
-  Pause,
-  Play,
+  RefreshCcw,
   Timer,
 } from "lucide-react";
 import { format } from "date-fns";
-import { toast } from "sonner";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { AttendanceCalendar } from "@/components/attendance/AttendanceCalendar";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import {
   AttendanceRecord,
-  LocationData,
-  WorkMode,
   useAttendance,
   useAttendanceReport,
-  useClockIn,
-  useClockOut,
   useTodayAttendance,
 } from "@/hooks/useAttendance";
 import {
   calculateTotalBreakHours,
   useActiveBreak,
   useBreaksForRecord,
-  usePause,
-  useResume,
 } from "@/hooks/useAttendanceBreaks";
-import {
-  getDistanceMeters,
-  useOfficeLocation,
-} from "@/components/settings/OfficeLocationSettings";
-import { getExpectedHours, getShiftEndTime } from "@/lib/shiftUtils";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { usePagination } from "@/hooks/usePagination";
 import { useSorting } from "@/hooks/useSorting";
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import {
   Pagination,
   PaginationContent,
@@ -111,6 +86,21 @@ const MONTHS = [
   { value: "11", label: "December" },
 ];
 
+const isOfficeMode = (mode?: string | null) =>
+  mode === "wfo" || mode === "office";
+
+function getExpectedHours(workStart: string, workEnd: string): number {
+  const [sh, sm] = workStart.split(":").map(Number);
+  const [eh, em] = workEnd.split(":").map(Number);
+  return Math.max(0, (eh * 60 + em - (sh * 60 + sm)) / 60);
+}
+
+function safeFormatDate(value: string | null | undefined, fmt: string, fallback = "-"): string {
+  if (!value) return fallback;
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? fallback : format(d, fmt);
+}
+
 interface EmployeeSchedule {
   id: string;
   first_name: string | null;
@@ -138,8 +128,8 @@ const metricToneMap = {
     icon: "bg-emerald-50 text-emerald-700 ring-emerald-100",
   },
   indigo: {
-    card: "border-indigo-100 bg-gradient-to-br from-white via-white to-indigo-50",
-    icon: "bg-indigo-50 text-indigo-700 ring-indigo-100",
+    card: "border-[#c4dcf5] bg-gradient-to-br from-white via-white to-[#e8f2fc]",
+    icon: "bg-[#e8f2fc] text-[#1B6AB5] ring-[#c4dcf5]",
   },
   amber: {
     card: "border-amber-100 bg-gradient-to-br from-white via-white to-amber-50",
@@ -233,38 +223,20 @@ const Attendance = () => {
   const [selectedYear, setSelectedYear] = useState(
     new Date().getFullYear().toString()
   );
-  const [workMode, setWorkMode] = useState<WorkMode>("wfo");
-
-  const [showEarlyClockOutWarning, setShowEarlyClockOutWarning] =
-    useState(false);
-  const [earlyClockOutReasons, setEarlyClockOutReasons] = useState<{
-    beforeEndTime: boolean;
-    insufficientHours: boolean;
-  }>({
-    beforeEndTime: false,
-    insufficientHours: false,
-  });
-
-  const [showLateClockOutDialog, setShowLateClockOutDialog] = useState(false);
-  const [lateClockOutMode, setLateClockOutMode] = useState<
-    "overtime" | "missed" | null
-  >(null);
-  const [missedClockOutTime, setMissedClockOutTime] = useState("");
-
   const targetDate = new Date(
     parseInt(selectedYear),
     parseInt(selectedMonth),
     1
   );
 
-  const { data: currentEmployee } = useQuery<EmployeeSchedule | null>({
+  const { data: currentEmployee, error: employeeError, isLoading: employeeLoading } = useQuery<EmployeeSchedule | null>({
     queryKey: ["current-employee-schedule", user?.id],
     queryFn: async () => {
       const empData = await hrmsApi.get<{ data: { id: string; first_name?: string | null; last_name?: string | null; working_hours_start?: string | null; working_hours_end?: string | null; working_days?: number[] | null } }>(`/api/employees/me`);
-      if (!empData.data) return null;
-      return empData.data as EmployeeSchedule;
+      return empData.data ? empData.data as EmployeeSchedule : null;
     },
     enabled: !!user?.id,
+    retry: 2,
   });
 
   const { data: todayRecord, isLoading: todayLoading } =
@@ -274,27 +246,11 @@ const Attendance = () => {
     currentEmployee?.id
   );
 
-  // Debug logging
-  useEffect(() => {
-    console.log("Attendance Debug:", {
-      recordsLoading,
-      recordsError,
-      attendanceRecords,
-      targetDate,
-      employeeId: currentEmployee?.id,
-    });
-  }, [recordsLoading, recordsError, attendanceRecords, targetDate, currentEmployee?.id]);
   const { data: reportData, isLoading: reportLoading } =
     useAttendanceReport(targetDate);
 
   const { data: activeBreak } = useActiveBreak(todayRecord?.id);
   const { data: todayBreaks } = useBreaksForRecord(todayRecord?.id);
-  const { data: officeLocation } = useOfficeLocation();
-
-  const clockIn = useClockIn();
-  const clockOut = useClockOut();
-  const pauseMutation = usePause();
-  const resumeMutation = useResume();
 
   const attendanceList = (attendanceRecords || []) as AttendanceRecord[];
   const historySorting = useSorting<AttendanceRecord>(attendanceList);
@@ -303,8 +259,6 @@ const Attendance = () => {
   });
 
   const currentTime = new Date();
-  const isPaused = !!activeBreak;
-  const isClockedIn = !!todayRecord?.clock_in && !todayRecord?.clock_out;
   const totalBreakHours = todayBreaks ? calculateTotalBreakHours(todayBreaks) : 0;
 
   const formatTimeDisplay = (time: string | null): string => {
@@ -398,327 +352,6 @@ const Attendance = () => {
     return attendanceRecords.filter(
       (record) => calculateLateArrival(record.clock_in, record.employee) > 0
     ).length;
-  };
-
-  const getCurrentLocation = (): Promise<LocationData | undefined> => {
-    return new Promise((resolve) => {
-      if (!navigator.geolocation) {
-        toast.error("Geolocation is not supported by your browser");
-        resolve(undefined);
-        return;
-      }
-
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const { latitude, longitude } = position.coords;
-
-          let locationName: string | undefined;
-
-          try {
-            const response = await fetch(
-              `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`
-            );
-            const data = await response.json();
-
-            if (data.address) {
-              const addr = data.address;
-              const parts: string[] = [];
-
-              if (addr.road) parts.push(addr.road);
-              else if (addr.neighbourhood) parts.push(addr.neighbourhood);
-              else if (addr.suburb) parts.push(addr.suburb);
-
-              if (addr.suburb && !parts.includes(addr.suburb)) {
-                parts.push(addr.suburb);
-              } else if (
-                addr.neighbourhood &&
-                !parts.includes(addr.neighbourhood)
-              ) {
-                parts.push(addr.neighbourhood);
-              }
-
-              const city =
-                addr.city ||
-                addr.town ||
-                addr.village ||
-                addr.municipality ||
-                addr.county;
-
-              if (city) parts.push(city);
-              if (addr.state && addr.state !== city) parts.push(addr.state);
-
-              locationName = parts.slice(0, 4).join(", ");
-            } else if (data.display_name) {
-              const parts = data.display_name.split(", ");
-              locationName = parts.slice(0, 4).join(", ");
-            }
-          } catch (error) {
-            console.error("Failed to get location name:", error);
-          }
-
-          resolve({ latitude, longitude, locationName });
-        },
-        (error) => {
-          console.error("Geolocation error:", error);
-
-          switch (error.code) {
-            case error.PERMISSION_DENIED:
-              toast.error(
-                "Location access is required to clock in. Please enable location permissions and try again."
-              );
-              break;
-            case error.POSITION_UNAVAILABLE:
-              toast.error(
-                "Location information is unavailable. Clock-in requires location access."
-              );
-              break;
-            case error.TIMEOUT:
-              toast.error("Location request timed out. Please try again.");
-              break;
-            default:
-              toast.error("Failed to get location. Clock-in requires location access.");
-          }
-
-          resolve(undefined);
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0,
-        }
-      );
-    });
-  };
-
-  const handleClockIn = async (mode: WorkMode) => {
-    if (!currentEmployee) {
-      toast.error("Employee profile not found");
-      return;
-    }
-
-    try {
-      toast.info("Getting your location...");
-
-      const location = await getCurrentLocation();
-
-      if (mode === "wfo" && !location) {
-        toast.error("Location is required to clock in from office");
-        return;
-      }
-
-      let detectedMode = mode;
-
-      if (location && officeLocation?.latitude && officeLocation?.longitude) {
-        const distance = getDistanceMeters(
-          location.latitude,
-          location.longitude,
-          officeLocation.latitude,
-          officeLocation.longitude
-        );
-        const radius = officeLocation.radius_meters || 500;
-
-        detectedMode = distance <= radius ? "wfo" : "wfh";
-
-        if (mode === "wfo" && detectedMode === "wfh") {
-          toast.error(
-            `You are not at the office location (${Math.round(
-              distance
-            )}m away). Please choose Work From Home instead.`
-          );
-          return;
-        }
-      }
-
-      await clockIn.mutateAsync({
-        employeeId: currentEmployee.id,
-        location,
-        workMode: detectedMode,
-      });
-
-      const modeLabel =
-        detectedMode === "wfh" ? "Work From Home" : "Work From Office";
-
-      toast.success(
-        location
-          ? `Clocked in (${modeLabel}) with location`
-          : `Clocked in (${modeLabel})`
-      );
-    } catch (error) {
-      toast.error("Failed to clock in");
-    }
-  };
-
-  const calculateCurrentHoursWorked = (): number => {
-    if (!todayRecord?.clock_in) return 0;
-
-    const clockInTime = new Date(todayRecord.clock_in);
-    const now = new Date();
-
-    return (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
-  };
-
-  const isBeforeEndTime = (): boolean => {
-    if (
-      !currentEmployee?.working_hours_end ||
-      !currentEmployee?.working_hours_start ||
-      !todayRecord?.clock_in
-    ) {
-      return false;
-    }
-
-    const clockInTime = new Date(todayRecord.clock_in);
-    const endTime = getShiftEndTime(
-      clockInTime,
-      currentEmployee.working_hours_start,
-      currentEmployee.working_hours_end
-    );
-
-    return new Date() < endTime;
-  };
-
-  const handleClockOutAttempt = () => {
-    if (!todayRecord || !todayRecord.clock_in) {
-      toast.error("No active clock-in found");
-      return;
-    }
-
-    const hoursWorked = calculateCurrentHoursWorked();
-    const workStart = currentEmployee?.working_hours_start || "09:00:00";
-    const workEnd = currentEmployee?.working_hours_end || "18:00:00";
-    const requiredHours = getExpectedHours(workStart, workEnd);
-
-    const beforeEndTime = isBeforeEndTime();
-    const insufficientHours = hoursWorked < requiredHours;
-
-    if (beforeEndTime || insufficientHours) {
-      setEarlyClockOutReasons({ beforeEndTime, insufficientHours });
-      setShowEarlyClockOutWarning(true);
-    } else {
-      const isAfterEndTime = !isBeforeEndTime();
-
-      if (isAfterEndTime && hoursWorked > requiredHours) {
-        setLateClockOutMode(null);
-        setMissedClockOutTime(workEnd.substring(0, 5));
-        setShowLateClockOutDialog(true);
-      } else {
-        handleClockOut();
-      }
-    }
-  };
-
-  const handleLateClockOutConfirm = async () => {
-    if (!todayRecord || !todayRecord.clock_in) return;
-
-    setShowLateClockOutDialog(false);
-
-    if (lateClockOutMode === "overtime") {
-      handleClockOut();
-      return;
-    }
-
-    if (lateClockOutMode === "missed" && missedClockOutTime) {
-      try {
-        toast.info("Getting your location...");
-
-        const location = await getCurrentLocation();
-
-        const [hours, minutes] = missedClockOutTime.split(":").map(Number);
-        const customTime = new Date(todayRecord.clock_in);
-
-        customTime.setHours(hours, minutes, 0, 0);
-
-        if (customTime <= new Date(todayRecord.clock_in)) {
-          customTime.setDate(customTime.getDate() + 1);
-        }
-
-        await clockOut.mutateAsync({
-          recordId: todayRecord.id,
-          clockIn: todayRecord.clock_in,
-          location,
-          customClockOut: customTime,
-        });
-
-        toast.success("Clocked out with corrected time");
-      } catch (error) {
-        toast.error("Failed to clock out");
-      }
-    }
-  };
-
-  const handleClockOut = async () => {
-    if (!todayRecord || !todayRecord.clock_in) {
-      toast.error("No active clock-in found");
-      return;
-    }
-
-    setShowEarlyClockOutWarning(false);
-
-    try {
-      toast.info("Getting your location...");
-
-      const location = await getCurrentLocation();
-
-      await clockOut.mutateAsync({
-        recordId: todayRecord.id,
-        clockIn: todayRecord.clock_in,
-        location,
-      });
-
-      toast.success(
-        location ? "Clocked out with location" : "Clocked out successfully"
-      );
-    } catch (error) {
-      toast.error("Failed to clock out");
-    }
-  };
-
-  const formatHoursWorked = (hours: number): string => {
-    const h = Math.floor(hours);
-    const m = Math.round((hours - h) * 60);
-
-    return m > 0 ? `${h}h ${m}m` : `${h}h`;
-  };
-
-  const handlePause = async () => {
-    if (!todayRecord) return;
-
-    try {
-      toast.info("Getting your location...");
-
-      const location = await getCurrentLocation();
-
-      if (!location) return;
-
-      await pauseMutation.mutateAsync({
-        attendanceRecordId: todayRecord.id,
-        location,
-      });
-
-      toast.success("Work paused — break started");
-    } catch (error) {
-      toast.error("Failed to pause");
-    }
-  };
-
-  const handleResume = async () => {
-    if (!activeBreak) return;
-
-    try {
-      toast.info("Getting your location...");
-
-      const location = await getCurrentLocation();
-
-      if (!location) return;
-
-      await resumeMutation.mutateAsync({
-        breakId: activeBreak.id,
-        location,
-      });
-
-      toast.success("Work resumed");
-    } catch (error) {
-      toast.error("Failed to resume");
-    }
   };
 
   const selectedMonthLabel = MONTHS[parseInt(selectedMonth)].label;
@@ -836,31 +469,41 @@ const Attendance = () => {
     <DashboardLayout>
       <TooltipProvider>
         <div className="space-y-5">
-          {/* Header */}
-          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="grid gap-0 lg:grid-cols-[1fr_auto]">
-              <div className="relative p-5 sm:p-6">
-                <div className="absolute inset-y-0 left-0 w-1 bg-slate-950" />
+          {/* Hero Header */}
+          <section className="relative overflow-hidden rounded-3xl bg-[#073f78] text-white shadow-lg">
+            <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-[#1B6AB5]/20 blur-3xl" />
+            <div className="pointer-events-none absolute -bottom-10 left-1/4 h-48 w-48 rounded-full bg-[#3BAD49]/10 blur-3xl" />
+            <div className="relative grid gap-0 lg:grid-cols-[1fr_auto]">
+              <div className="p-6 sm:p-7">
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-green-200">
+                  Attendance Management
+                </p>
 
-                <div className="pl-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-400">
-                    Attendance Management
-                  </p>
+                <h1 className="mt-2 text-2xl font-black tracking-tight text-white">
+                  Attendance
+                </h1>
 
-                  <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
-                    Attendance
-                  </h1>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+                  View work mode, breaks, monthly summary and attendance history.
+                </p>
 
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                    Track clock-in, work mode, breaks, monthly summary and
-                    attendance history.
-                  </p>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <div className="rounded-xl border border-white/10 bg-white/[0.08] px-4 py-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Month</p>
+                    <p className="text-sm font-bold text-white">{selectedMonthLabel} {selectedYear}</p>
+                  </div>
+                  {myReportData && (
+                    <div className="rounded-xl border border-white/10 bg-white/[0.08] px-4 py-2">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Present Days</p>
+                      <p className="text-sm font-bold text-[#3BAD49]">{myReportData.presentDays ?? 0}</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 lg:min-w-[360px] lg:border-l lg:border-t-0">
+              <div className="grid gap-3 border-t border-white/10 p-5 sm:grid-cols-2 lg:min-w-[360px] lg:border-l lg:border-t-0 lg:bg-white/5">
                 <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                  <SelectTrigger className="h-10 rounded-xl bg-white text-xs shadow-sm">
+                  <SelectTrigger className="h-10 rounded-xl border-white/20 bg-white/10 text-xs text-white shadow-sm">
                     <SelectValue />
                   </SelectTrigger>
 
@@ -874,7 +517,7 @@ const Attendance = () => {
                 </Select>
 
                 <Select value={selectedYear} onValueChange={setSelectedYear}>
-                  <SelectTrigger className="h-10 rounded-xl bg-white text-xs shadow-sm">
+                  <SelectTrigger className="h-10 rounded-xl border-white/20 bg-white/10 text-xs text-white shadow-sm">
                     <SelectValue />
                   </SelectTrigger>
 
@@ -908,7 +551,7 @@ const Attendance = () => {
 
                 {todayRecord?.work_mode && (
                   <Badge className="w-fit bg-slate-100 text-slate-700 hover:bg-slate-100">
-                    {todayRecord.work_mode === "wfo" ? (
+                    {isOfficeMode(todayRecord.work_mode) ? (
                       <>
                         <Building2 className="mr-1 h-3.5 w-3.5" />
                         Office
@@ -939,9 +582,7 @@ const Attendance = () => {
                       </div>
 
                       <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
-                        {todayRecord?.clock_in
-                          ? format(new Date(todayRecord.clock_in), "hh:mm a")
-                          : "--:--"}
+                        {safeFormatDate(todayRecord?.clock_in, "hh:mm a", "--:--")}
                       </p>
 
                       {isAdminOrHR &&
@@ -963,9 +604,7 @@ const Attendance = () => {
                       </div>
 
                       <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
-                        {todayRecord?.clock_out
-                          ? format(new Date(todayRecord.clock_out), "hh:mm a")
-                          : "--:--"}
+                        {safeFormatDate(todayRecord?.clock_out, "hh:mm a", "--:--")}
                       </p>
                     </div>
 
@@ -990,122 +629,6 @@ const Attendance = () => {
                       )}
                     </div>
                   </div>
-
-                  {!isClockedIn && !todayRecord?.clock_out && (
-                    <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <p className="mb-3 text-xs font-semibold text-slate-950">
-                        Select work mode
-                      </p>
-
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <Button
-                          type="button"
-                          variant={workMode === "wfo" ? "default" : "outline"}
-                          className="h-11 rounded-xl text-xs font-semibold"
-                          onClick={() => setWorkMode("wfo")}
-                        >
-                          <Building2 className="mr-2 h-4 w-4" />
-                          Work From Office
-                        </Button>
-
-                        <Button
-                          type="button"
-                          variant={workMode === "wfh" ? "default" : "outline"}
-                          className="h-11 rounded-xl text-xs font-semibold"
-                          onClick={() => setWorkMode("wfh")}
-                        >
-                          <Home className="mr-2 h-4 w-4" />
-                          Work From Home
-                        </Button>
-                      </div>
-
-                      <Button
-                        className="mt-3 h-11 w-full rounded-xl bg-slate-950 text-xs font-semibold text-white hover:bg-slate-800"
-                        disabled={clockIn.isPending}
-                        onClick={() => handleClockIn(workMode)}
-                      >
-                        {clockIn.isPending ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : (
-                          <LogIn className="mr-2 h-4 w-4" />
-                        )}
-                        Clock In
-                      </Button>
-                    </div>
-                  )}
-
-                  {isClockedIn && (
-                    <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="mb-3 flex flex-wrap items-center gap-2">
-                        {todayRecord?.work_mode && (
-                          <Badge className="bg-white text-slate-700 hover:bg-white">
-                            {todayRecord.work_mode === "wfo" ? (
-                              <>
-                                <Building2 className="mr-1 h-3.5 w-3.5" />
-                                Office
-                              </>
-                            ) : (
-                              <>
-                                <Home className="mr-1 h-3.5 w-3.5" />
-                                Home
-                              </>
-                            )}
-                          </Badge>
-                        )}
-
-                        {isPaused && (
-                          <Badge className="bg-amber-50 text-amber-700 hover:bg-amber-50">
-                            <Coffee className="mr-1 h-3.5 w-3.5" />
-                            On Break
-                          </Badge>
-                        )}
-                      </div>
-
-                      {isPaused ? (
-                        <Button
-                          className="h-11 w-full rounded-xl bg-emerald-600 text-xs font-semibold text-white hover:bg-emerald-700"
-                          disabled={resumeMutation.isPending}
-                          onClick={handleResume}
-                        >
-                          {resumeMutation.isPending ? (
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          ) : (
-                            <Play className="mr-2 h-4 w-4" />
-                          )}
-                          Resume Work
-                        </Button>
-                      ) : (
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <Button
-                            variant="outline"
-                            className="h-11 rounded-xl border-slate-200 bg-white text-xs font-semibold"
-                            disabled={pauseMutation.isPending}
-                            onClick={handlePause}
-                          >
-                            {pauseMutation.isPending ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                              <Pause className="mr-2 h-4 w-4" />
-                            )}
-                            Pause
-                          </Button>
-
-                          <Button
-                            className="h-11 rounded-xl bg-slate-950 text-xs font-semibold text-white hover:bg-slate-800"
-                            disabled={clockOut.isPending}
-                            onClick={handleClockOutAttempt}
-                          >
-                            {clockOut.isPending ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                              <LogOut className="mr-2 h-4 w-4" />
-                            )}
-                            Clock Out
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  )}
 
                   {todayRecord?.clock_out && (
                     <div className="mt-5 flex items-center gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-700">
@@ -1231,6 +754,26 @@ const Attendance = () => {
             )}
           </section>
 
+          {/* Calendar View */}
+          {currentEmployee?.id && (
+            <section className="space-y-4">
+              <div>
+                <h2 className="text-base font-semibold tracking-tight text-slate-950">
+                  Attendance Calendar
+                </h2>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  View your monthly attendance with color-coded status. Click any date for details.
+                </p>
+              </div>
+
+              <AttendanceCalendar
+                employeeId={currentEmployee.id}
+                initialMonth={Number(selectedMonth)}
+                initialYear={Number(selectedYear)}
+              />
+            </section>
+          )}
+
           {/* Monthly Summary */}
           <section className="space-y-4">
             <div>
@@ -1344,7 +887,53 @@ const Attendance = () => {
               )}
             </div>
 
-            {recordsLoading ? (
+            {employeeError ? (
+              <div className="rounded-xl border-2 border-red-200 bg-red-50 p-8 text-center">
+                <AlertTriangle className="mx-auto mb-3 h-12 w-12 text-red-500" />
+                <h3 className="mb-2 text-lg font-semibold text-red-900">
+                  Failed to Load Employee Information
+                </h3>
+                <p className="mb-4 text-sm text-red-700">
+                  We could not load your employee profile. Retry, or contact HR if the issue continues.
+                </p>
+                <Button
+                  onClick={() => window.location.reload()}
+                  variant="outline"
+                  className="border-red-300 text-red-700 hover:bg-red-100"
+                >
+                  <RefreshCcw className="mr-2 h-4 w-4" />
+                  Retry
+                </Button>
+              </div>
+            ) : !currentEmployee ? (
+              <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-8 text-center">
+                <AlertTriangle className="mx-auto mb-3 h-12 w-12 text-amber-500" />
+                <h3 className="mb-2 text-lg font-semibold text-amber-900">
+                  Employee Record Not Found
+                </h3>
+                <p className="mb-4 text-sm text-amber-700">
+                  Your user account is not linked to an employee record. Please contact HR to link your account.
+                </p>
+              </div>
+            ) : recordsError ? (
+              <div className="rounded-xl border-2 border-red-200 bg-red-50 p-8 text-center">
+                <AlertTriangle className="mx-auto mb-3 h-12 w-12 text-red-500" />
+                <h3 className="mb-2 text-lg font-semibold text-red-900">
+                  Failed to Load Attendance History
+                </h3>
+                <p className="mb-4 text-sm text-red-700">
+                  We could not load attendance history for this month. Please retry.
+                </p>
+                <Button
+                  onClick={() => window.location.reload()}
+                  variant="outline"
+                  className="border-red-300 text-red-700 hover:bg-red-100"
+                >
+                  <RefreshCcw className="mr-2 h-4 w-4" />
+                  Retry
+                </Button>
+              </div>
+            ) : recordsLoading || employeeLoading ? (
               <div className="space-y-3">
                 {[1, 2, 3, 4, 5].map((item) => (
                   <Skeleton key={item} className="h-16 rounded-xl" />
@@ -1440,7 +1029,7 @@ const Attendance = () => {
                         return (
                           <TableRow key={record.id} className="hover:bg-slate-50/80 transition-colors duration-150 cursor-pointer">
                             <TableCell className="font-medium text-slate-900">
-                              {format(new Date(record.date), "MMM d, yyyy")}
+                              {safeFormatDate(record.date, "MMM d, yyyy")}
                             </TableCell>
 
                             <TableCell>
@@ -1461,11 +1050,7 @@ const Attendance = () => {
 
                             <TableCell>
                               <div>
-                                <p>
-                                  {record.clock_in
-                                    ? format(new Date(record.clock_in), "hh:mm a")
-                                    : "-"}
-                                </p>
+                                <p>{safeFormatDate(record.clock_in, "hh:mm a")}</p>
 
                                 {isAdminOrHR && lateMinutes > 0 && (
                                   <p className="mt-1 text-xs font-semibold text-amber-700">
@@ -1476,9 +1061,7 @@ const Attendance = () => {
                             </TableCell>
 
                             <TableCell>
-                              {record.clock_out
-                                ? format(new Date(record.clock_out), "hh:mm a")
-                                : "-"}
+                              {safeFormatDate(record.clock_out, "hh:mm a")}
                             </TableCell>
 
                             <TableCell>
@@ -1502,7 +1085,7 @@ const Attendance = () => {
                             <TableCell>
                               {record.work_mode ? (
                                 <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100">
-                                  {record.work_mode === "wfo" ? (
+                                  {isOfficeMode(record.work_mode) ? (
                                     <>
                                       <Building2 className="mr-1 h-3.5 w-3.5" />
                                       Office
@@ -1589,131 +1172,6 @@ const Attendance = () => {
             )}
           </section>
 
-          {/* Early Clock-Out Warning */}
-          <AlertDialog
-            open={showEarlyClockOutWarning}
-            onOpenChange={setShowEarlyClockOutWarning}
-          >
-            <AlertDialogContent className="rounded-2xl">
-              <AlertDialogHeader>
-                <AlertDialogTitle>Early Clock-Out Warning</AlertDialogTitle>
-
-                <AlertDialogDescription className="space-y-3">
-                  {earlyClockOutReasons.insufficientHours && (
-                    <span className="block">
-                      You have only worked{" "}
-                      {formatHoursWorked(calculateCurrentHoursWorked())} today.
-                      Your configured shift requires more working time.
-                    </span>
-                  )}
-
-                  {earlyClockOutReasons.beforeEndTime &&
-                    currentEmployee?.working_hours_end && (
-                      <span className="block">
-                        Your scheduled end time is{" "}
-                        {formatTimeDisplay(currentEmployee.working_hours_end)}.
-                      </span>
-                    )}
-
-                  <span className="block">
-                    Are you sure you want to clock out early?
-                  </span>
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-
-              <AlertDialogFooter>
-                <AlertDialogCancel className="rounded-xl">
-                  Continue Working
-                </AlertDialogCancel>
-
-                <AlertDialogAction
-                  className="rounded-xl bg-amber-600 text-white hover:bg-amber-700"
-                  onClick={handleClockOut}
-                >
-                  Clock Out Anyway
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-
-          {/* Late Clock-Out Dialog */}
-          <AlertDialog
-            open={showLateClockOutDialog}
-            onOpenChange={setShowLateClockOutDialog}
-          >
-            <AlertDialogContent className="rounded-2xl">
-              <AlertDialogHeader>
-                <AlertDialogTitle>Clock Out After End Time</AlertDialogTitle>
-
-                <AlertDialogDescription>
-                  Your scheduled end time was{" "}
-                  {formatTimeDisplay(
-                    currentEmployee?.working_hours_end || "18:00:00"
-                  )}{" "}
-                  and you&apos;ve worked{" "}
-                  {formatHoursWorked(calculateCurrentHoursWorked())}. Was this
-                  overtime or did you forget to clock out?
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-
-              <div className="space-y-3">
-                <Button
-                  type="button"
-                  variant={lateClockOutMode === "overtime" ? "default" : "outline"}
-                  className="h-11 w-full rounded-xl text-xs font-semibold"
-                  onClick={() => setLateClockOutMode("overtime")}
-                >
-                  It was overtime — use current time
-                </Button>
-
-                <Button
-                  type="button"
-                  variant={lateClockOutMode === "missed" ? "default" : "outline"}
-                  className="h-11 w-full rounded-xl text-xs font-semibold"
-                  onClick={() => setLateClockOutMode("missed")}
-                >
-                  I forgot to clock out — enter actual time
-                </Button>
-
-                {lateClockOutMode === "missed" && (
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold text-slate-700">
-                      Actual clock-out time
-                    </label>
-
-                    <Input
-                      type="time"
-                      value={missedClockOutTime}
-                      onChange={(event) =>
-                        setMissedClockOutTime(event.target.value)
-                      }
-                      className="h-11 rounded-xl"
-                    />
-                  </div>
-                )}
-              </div>
-
-              <AlertDialogFooter>
-                <AlertDialogCancel
-                  className="rounded-xl"
-                  onClick={() => setLateClockOutMode(null)}
-                >
-                  Cancel
-                </AlertDialogCancel>
-
-                <AlertDialogAction
-                  className="rounded-xl bg-slate-950 text-white hover:bg-slate-800"
-                  onClick={handleLateClockOutConfirm}
-                  disabled={
-                    !lateClockOutMode ||
-                    (lateClockOutMode === "missed" && !missedClockOutTime)
-                  }
-                >
-                  Confirm Clock Out
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
         </div>
       </TooltipProvider>
     </DashboardLayout>

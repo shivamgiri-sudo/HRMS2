@@ -142,8 +142,9 @@ describe("taxDeclarationService.upsert", () => {
   it("upserts tax declaration and returns record", async () => {
     exec
       .mockResolvedValueOnce([[{ ctc_annual: 600000 }], []])  // salary assignment
-      .mockResolvedValueOnce([[], []])                         // statutory_config tds_slab (no rows)
-      .mockResolvedValueOnce([{ affectedRows: 1 }, []])        // INSERT/ON DUPLICATE
+      .mockResolvedValueOnce([[], []])                         // existing declaration lookup
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])        // INSERT declaration
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])        // INSERT Form 12BB detail
       .mockResolvedValueOnce([[fakeTaxDecl], []]);              // get re-fetch
 
     const result = await taxDeclarationService.upsert(
@@ -158,8 +159,9 @@ describe("taxDeclarationService.upsert", () => {
   it("computes zero TDS when taxable income below threshold", async () => {
     exec
       .mockResolvedValueOnce([[{ ctc_annual: 200000 }], []])  // ctc very low
-      .mockResolvedValueOnce([[], []])                         // no slab config
-      .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+      .mockResolvedValueOnce([[], []])                         // existing declaration lookup
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])        // INSERT declaration
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])        // INSERT Form 12BB detail
       .mockResolvedValueOnce([[{ ...fakeTaxDecl, tds_projected: 0 }], []]);
 
     const result = await taxDeclarationService.upsert(

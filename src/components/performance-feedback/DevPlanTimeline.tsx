@@ -1,7 +1,7 @@
 import { CheckCircle2, Circle, Clock, Calendar } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { cn, normalizeDate } from "@/lib/utils";
 
 interface DevPlanGoal {
   id: string;
@@ -19,7 +19,7 @@ interface DevPlanTimelineProps {
 
 export function DevPlanTimeline({ goals, className }: DevPlanTimelineProps) {
   const sortedGoals = [...goals].sort(
-    (a, b) => new Date(a.target_date).getTime() - new Date(b.target_date).getTime()
+    (a, b) => new Date(normalizeDate(a.target_date)).getTime() - new Date(normalizeDate(b.target_date)).getTime()
   );
 
   const getStatusColor = (status: string) => {
@@ -64,7 +64,7 @@ export function DevPlanTimeline({ goals, className }: DevPlanTimelineProps) {
   };
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
+    const date = new Date(normalizeDate(dateString));
     return date.toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
@@ -74,7 +74,7 @@ export function DevPlanTimeline({ goals, className }: DevPlanTimelineProps) {
 
   const getDaysUntil = (dateString: string) => {
     const today = new Date();
-    const targetDate = new Date(dateString);
+    const targetDate = new Date(normalizeDate(dateString));
     const diffTime = targetDate.getTime() - today.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Loader, RefreshCcw, Save, Settings, Trash2, X } from "lucide-react";
+import { CheckCircle2, Loader, RefreshCcw, Save, Settings, Trash2, X, Target, TrendingUp, Zap } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 
@@ -79,9 +79,9 @@ const DEFAULT_COLORS: Record<string, string> = {
 function Badge({ label, variant }: { label: string; variant: "override" | "default" }) {
   return (
     <span
-      className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+      className={`rounded-full px-2.5 py-1 text-xs font-bold ${
         variant === "override"
-          ? "bg-blue-100 text-blue-700"
+          ? "bg-blue-100 text-blue-700 border border-blue-200"
           : "bg-slate-100 text-slate-500"
       }`}
     >
@@ -102,10 +102,10 @@ function TabButton({
   return (
     <button
       onClick={onClick}
-      className={`cursor-pointer rounded-xl px-5 py-2.5 text-sm font-bold transition-colors ${
+      className={`cursor-pointer rounded-2xl px-6 py-3 text-sm font-bold transition-all ${
         active
-          ? "bg-slate-950 text-white"
-          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+          ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-200/50"
+          : "bg-white text-slate-600 hover:bg-slate-50 border border-slate-200"
       }`}
     >
       {children}
@@ -211,13 +211,11 @@ export default function NativeKPIConfiguration() {
       );
       const all = res.data ?? [];
 
-      // Separate global defaults vs process-specific
       const globals = all.filter((r) => r.process_id === null);
       const processSpecific = all.filter((r) => r.process_id === selectedProcessId);
 
       setGlobalRatings(globals);
 
-      // If process-specific exist, use them; else seed from globals for editing
       const source = processSpecific.length > 0 ? processSpecific : globals;
       setRatingRows(
         source.map((r) => ({
@@ -345,8 +343,6 @@ export default function NativeKPIConfiguration() {
     setEditingRatings(true);
   };
 
-  // ─── Derived ──────────────────────────────────────────────────────────────
-
   const processName =
     processes.find((p) => p.id === selectedProcessId)?.process_name ?? "—";
 
@@ -354,26 +350,30 @@ export default function NativeKPIConfiguration() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">
-              KPI Administration
-            </p>
-            <h1 className="mt-2 text-3xl font-black text-slate-950">KPI Configuration</h1>
-            <p className="mt-2 max-w-3xl text-slate-600">
-              Set per-process metric targets and customize rating bands.
-            </p>
+      <main className="space-y-8 p-6 lg:p-8">
+        {/* Hero Header */}
+        <div className="relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-indigo-600 via-blue-600 to-cyan-600 p-8 text-white shadow-2xl shadow-blue-200/40">
+          <div className="absolute -right-10 -top-10 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
+          <div className="absolute -bottom-10 -left-10 h-48 w-48 rounded-full bg-cyan-400/20 blur-2xl" />
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-white/20 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
+                <Settings className="h-3.5 w-3.5" /> KPI Administration
+              </div>
+              <h1 className="text-4xl font-black tracking-tight">KPI Configuration</h1>
+              <p className="mt-2 max-w-2xl text-blue-100">
+                Set per-process metric targets and customize rating bands.
+              </p>
+            </div>
+            <button
+              onClick={() => (activeTab === "targets" ? loadTargets() : loadRatings())}
+              disabled={loadingTargets || loadingRatings}
+              className="inline-flex items-center gap-2 rounded-2xl bg-white/20 px-4 py-2.5 text-sm font-bold text-white backdrop-blur-sm hover:bg-white/30 transition-all disabled:opacity-50"
+            >
+              <RefreshCcw className="h-4 w-4" />
+              Refresh
+            </button>
           </div>
-          <button
-            onClick={() => (activeTab === "targets" ? loadTargets() : loadRatings())}
-            disabled={loadingTargets || loadingRatings}
-            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCcw className="h-4 w-4" />
-            Refresh
-          </button>
         </div>
 
         {/* Message banner */}
@@ -395,7 +395,7 @@ export default function NativeKPIConfiguration() {
             </div>
             <button
               onClick={() => setMessage(null)}
-              className="cursor-pointer text-current opacity-60 hover:opacity-100"
+              className="cursor-pointer text-current opacity-60 hover:opacity-100 rounded-full hover:bg-black/5 p-1 transition-all"
             >
               <X className="h-4 w-4" />
             </button>
@@ -403,9 +403,11 @@ export default function NativeKPIConfiguration() {
         )}
 
         {/* Process selector */}
-        <div className="rounded-3xl border bg-white p-5 shadow-sm">
+        <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/40">
           <div className="flex flex-wrap items-center gap-4">
-            <Settings className="h-5 w-5 text-slate-400" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-100 text-blue-600">
+              <Target className="h-5 w-5" />
+            </div>
             <label className="text-sm font-bold text-slate-700">Process</label>
             {loadingProcesses ? (
               <Loader className="h-4 w-4 animate-spin text-slate-400" />
@@ -416,7 +418,7 @@ export default function NativeKPIConfiguration() {
                   setSelectedProcessId(e.target.value);
                   setMessage(null);
                 }}
-                className="rounded-xl border px-4 py-2.5 text-sm font-semibold text-slate-700 outline-none focus:border-blue-400 transition-colors min-w-[220px]"
+                className="rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 outline-none focus:border-blue-400 transition-colors min-w-[220px] bg-white"
               >
                 {processes.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -425,30 +427,35 @@ export default function NativeKPIConfiguration() {
                 ))}
               </select>
             )}
-            <span className="rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-500">
+            <span className="rounded-2xl bg-slate-100 px-4 py-2 text-xs font-bold text-slate-600">
               {processName}
             </span>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2">
+        <div className="flex gap-3">
           <TabButton active={activeTab === "targets"} onClick={() => setActiveTab("targets")}>
-            KPI Targets
+            <div className="flex items-center gap-2">
+              <Target className="h-4 w-4" /> KPI Targets
+            </div>
           </TabButton>
           <TabButton active={activeTab === "ratings"} onClick={() => setActiveTab("ratings")}>
-            Rating Config
+            <div className="flex items-center gap-2">
+              <TrendingUp className="h-4 w-4" /> Rating Config
+            </div>
           </TabButton>
         </div>
 
         {/* ── Tab: KPI Targets ── */}
         {activeTab === "targets" && (
-          <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
-            <div className="border-b p-5">
-              <h2 className="font-black text-slate-950">Metric Targets</h2>
-              <p className="text-sm text-slate-500">
-                Set process-level overrides. Rows without a saved override fall back to
-                the template default.
+          <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-lg shadow-slate-200/40">
+            <div className="border-b border-slate-100 p-6">
+              <h2 className="text-xl font-black text-slate-950 flex items-center gap-2">
+                <Zap className="h-5 w-5 text-amber-500" /> Metric Targets
+              </h2>
+              <p className="text-sm text-slate-500 mt-1">
+                Set process-level overrides. Rows without a saved override fall back to the template default.
               </p>
             </div>
 
@@ -477,7 +484,7 @@ export default function NativeKPIConfiguration() {
                         "Status",
                         "Actions",
                       ].map((h) => (
-                        <th key={h} className="p-4 font-semibold whitespace-nowrap">
+                        <th key={h} className="p-4 font-bold whitespace-nowrap">
                           {h}
                         </th>
                       ))}
@@ -487,7 +494,7 @@ export default function NativeKPIConfiguration() {
                     {metricRows.map((row, idx) => (
                       <tr
                         key={row.metric.id}
-                        className="border-t hover:bg-slate-50/80 transition-colors"
+                        className="border-t border-slate-100 hover:bg-slate-50/80 transition-colors"
                       >
                         <td className="p-4">
                           <div className="font-bold text-slate-950">{row.metric.metric_name}</div>
@@ -495,16 +502,16 @@ export default function NativeKPIConfiguration() {
                             {row.metric.metric_code}
                           </div>
                         </td>
-                        <td className="p-4 text-slate-600">{row.metric.unit}</td>
+                        <td className="p-4 text-slate-600 font-medium">{row.metric.unit}</td>
                         <td className="p-4">
                           <span
-                            className={`rounded-lg px-2 py-0.5 text-xs font-semibold ${
+                            className={`rounded-xl px-2.5 py-1 text-xs font-bold ${
                               row.metric.direction === "higher_is_better"
-                                ? "bg-emerald-50 text-emerald-700"
-                                : "bg-amber-50 text-amber-700"
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                : "bg-amber-50 text-amber-700 border border-amber-200"
                             }`}
                           >
-                            {row.metric.direction === "higher_is_better" ? "Higher" : "Lower"}
+                            {row.metric.direction === "higher_is_better" ? "Higher ↑" : "Lower ↓"}
                           </span>
                         </td>
                         <td className="p-4 font-mono text-slate-500">
@@ -518,7 +525,7 @@ export default function NativeKPIConfiguration() {
                             value={row.editTarget}
                             onChange={(e) => updateRow(idx, "editTarget", e.target.value)}
                             placeholder="e.g. 95"
-                            className="w-24 rounded-xl border px-3 py-1.5 text-sm outline-none focus:border-blue-400 transition-colors"
+                            className="w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 transition-colors"
                           />
                         </td>
                         <td className="p-4">
@@ -527,7 +534,7 @@ export default function NativeKPIConfiguration() {
                             value={row.editMinThreshold}
                             onChange={(e) => updateRow(idx, "editMinThreshold", e.target.value)}
                             placeholder="optional"
-                            className="w-24 rounded-xl border px-3 py-1.5 text-sm outline-none focus:border-blue-400 transition-colors"
+                            className="w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 transition-colors"
                           />
                         </td>
                         <td className="p-4">
@@ -538,7 +545,7 @@ export default function NativeKPIConfiguration() {
                               updateRow(idx, "editMaxAchievement", e.target.value)
                             }
                             placeholder="120"
-                            className="w-20 rounded-xl border px-3 py-1.5 text-sm outline-none focus:border-blue-400 transition-colors"
+                            className="w-20 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 transition-colors"
                           />
                         </td>
                         <td className="p-4">
@@ -547,7 +554,7 @@ export default function NativeKPIConfiguration() {
                             value={row.editWeightage}
                             onChange={(e) => updateRow(idx, "editWeightage", e.target.value)}
                             placeholder="100"
-                            className="w-20 rounded-xl border px-3 py-1.5 text-sm outline-none focus:border-blue-400 transition-colors"
+                            className="w-20 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 transition-colors"
                           />
                         </td>
                         <td className="p-4">
@@ -561,7 +568,7 @@ export default function NativeKPIConfiguration() {
                             <button
                               onClick={() => saveRow(idx)}
                               disabled={row.saving || !row.editTarget}
-                              className="inline-flex items-center gap-1.5 cursor-pointer rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition-colors disabled:opacity-40"
+                              className="inline-flex items-center gap-1.5 cursor-pointer rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-3 py-2 text-xs font-bold text-white hover:shadow-lg transition-all disabled:opacity-40"
                             >
                               {row.saving ? (
                                 <Loader className="h-3 w-3 animate-spin" />
@@ -573,7 +580,7 @@ export default function NativeKPIConfiguration() {
                             {row.override && (
                               <button
                                 onClick={() => clearRow(idx)}
-                                className="inline-flex items-center gap-1.5 cursor-pointer rounded-xl border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 transition-colors"
+                                className="inline-flex items-center gap-1.5 cursor-pointer rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-100 transition-colors"
                               >
                                 <Trash2 className="h-3 w-3" />
                                 Clear
@@ -595,7 +602,7 @@ export default function NativeKPIConfiguration() {
           <div className="space-y-4">
             {/* Global defaults reference */}
             {globalRatings.length > 0 && (
-              <div className="rounded-3xl border bg-slate-50 p-5">
+              <div className="rounded-[2rem] border border-slate-200 bg-slate-50 p-6">
                 <p className="mb-3 text-xs font-black uppercase tracking-widest text-slate-400">
                   Global Defaults (read-only reference)
                 </p>
@@ -606,14 +613,14 @@ export default function NativeKPIConfiguration() {
                     .map((r) => (
                       <div
                         key={r.id}
-                        className="flex items-center gap-2 rounded-2xl border bg-white px-4 py-2 shadow-sm"
+                        className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm"
                       >
                         <span
                           className="h-3 w-3 rounded-full flex-shrink-0"
                           style={{ backgroundColor: r.color_code ?? "#6b7280" }}
                         />
                         <span className="font-black text-slate-950">{r.rating_label}</span>
-                        <span className="text-xs text-slate-500">
+                        <span className="text-xs text-slate-500 font-medium">
                           {r.min_score_pct}% – {r.max_score_pct}%
                         </span>
                       </div>
@@ -623,11 +630,13 @@ export default function NativeKPIConfiguration() {
             )}
 
             {/* Process-specific rating editor */}
-            <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
-              <div className="flex items-center justify-between border-b p-5">
+            <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-lg shadow-slate-200/40">
+              <div className="flex items-center justify-between border-b border-slate-100 p-6">
                 <div>
-                  <h2 className="font-black text-slate-950">Rating Bands — {processName}</h2>
-                  <p className="text-sm text-slate-500">
+                  <h2 className="text-xl font-black text-slate-950 flex items-center gap-2">
+                    <TrendingUp className="h-5 w-5 text-blue-600" /> Rating Bands — {processName}
+                  </h2>
+                  <p className="text-sm text-slate-500 mt-1">
                     Process-specific overrides. Leave as global if not customised.
                   </p>
                 </div>
@@ -641,7 +650,7 @@ export default function NativeKPIConfiguration() {
                           setEditingRatings(true);
                         }
                       }}
-                      className="cursor-pointer rounded-2xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition-colors"
+                      className="cursor-pointer rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:shadow-lg transition-all"
                     >
                       Edit
                     </button>
@@ -652,14 +661,14 @@ export default function NativeKPIConfiguration() {
                           setEditingRatings(false);
                           void loadRatings();
                         }}
-                        className="cursor-pointer rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                        className="cursor-pointer rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 transition-colors"
                       >
                         Cancel
                       </button>
                       <button
                         onClick={saveRatings}
                         disabled={savingRatings}
-                        className="inline-flex items-center gap-2 cursor-pointer rounded-2xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
+                        className="inline-flex items-center gap-2 cursor-pointer rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 px-4 py-2.5 text-sm font-bold text-white hover:shadow-lg transition-all disabled:opacity-50"
                       >
                         {savingRatings ? (
                           <Loader className="h-4 w-4 animate-spin" />
@@ -689,7 +698,7 @@ export default function NativeKPIConfiguration() {
                       <tr>
                         {["Rating", "Min Score %", "Max Score %", "Color", "Source"].map(
                           (h) => (
-                            <th key={h} className="p-4 font-semibold">
+                            <th key={h} className="p-4 font-bold">
                               {h}
                             </th>
                           )
@@ -706,10 +715,10 @@ export default function NativeKPIConfiguration() {
                         .map((row, idx) => (
                           <tr
                             key={row.rating_label}
-                            className="border-t hover:bg-slate-50/80 transition-colors"
+                            className="border-t border-slate-100 hover:bg-slate-50/80 transition-colors"
                           >
                             <td className="p-4">
-                              <span className="rounded-xl bg-slate-100 px-3 py-1.5 font-black text-slate-950">
+                              <span className="rounded-2xl bg-slate-100 px-4 py-2 font-black text-slate-950">
                                 {row.rating_label}
                               </span>
                             </td>
@@ -721,10 +730,10 @@ export default function NativeKPIConfiguration() {
                                   onChange={(e) =>
                                     updateRatingRow(idx, "min_score_pct", e.target.value)
                                   }
-                                  className="w-24 rounded-xl border px-3 py-1.5 text-sm outline-none focus:border-blue-400 transition-colors"
+                                  className="w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 transition-colors"
                                 />
                               ) : (
-                                <span className="font-mono text-slate-700">
+                                <span className="font-mono text-slate-700 font-medium">
                                   {row.min_score_pct}%
                                 </span>
                               )}
@@ -737,10 +746,10 @@ export default function NativeKPIConfiguration() {
                                   onChange={(e) =>
                                     updateRatingRow(idx, "max_score_pct", e.target.value)
                                   }
-                                  className="w-24 rounded-xl border px-3 py-1.5 text-sm outline-none focus:border-blue-400 transition-colors"
+                                  className="w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 transition-colors"
                                 />
                               ) : (
-                                <span className="font-mono text-slate-700">
+                                <span className="font-mono text-slate-700 font-medium">
                                   {row.max_score_pct}%
                                 </span>
                               )}
@@ -748,7 +757,7 @@ export default function NativeKPIConfiguration() {
                             <td className="p-4">
                               <div className="flex items-center gap-2">
                                 <span
-                                  className="h-5 w-5 rounded-full flex-shrink-0 border"
+                                  className="h-6 w-6 rounded-full flex-shrink-0 border-2 border-white shadow-md"
                                   style={{ backgroundColor: row.color_code }}
                                 />
                                 {editingRatings ? (
@@ -758,10 +767,10 @@ export default function NativeKPIConfiguration() {
                                     onChange={(e) =>
                                       updateRatingRow(idx, "color_code", e.target.value)
                                     }
-                                    className="h-8 w-12 cursor-pointer rounded-lg border p-0.5"
+                                    className="h-8 w-14 cursor-pointer rounded-lg border border-slate-200 p-0.5"
                                   />
                                 ) : (
-                                  <span className="font-mono text-xs text-slate-500">
+                                  <span className="font-mono text-xs text-slate-500 font-medium">
                                     {row.color_code}
                                   </span>
                                 )}
@@ -769,9 +778,9 @@ export default function NativeKPIConfiguration() {
                             </td>
                             <td className="p-4">
                               <span
-                                className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+                                className={`rounded-full px-3 py-1 text-xs font-bold ${
                                   row.process_id !== null
-                                    ? "bg-blue-100 text-blue-700"
+                                    ? "bg-blue-100 text-blue-700 border border-blue-200"
                                     : "bg-slate-100 text-slate-500"
                                 }`}
                               >
@@ -787,7 +796,7 @@ export default function NativeKPIConfiguration() {
             </div>
           </div>
         )}
-      </div>
+      </main>
     </DashboardLayout>
   );
 }

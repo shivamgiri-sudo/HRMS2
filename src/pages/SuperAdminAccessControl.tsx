@@ -38,6 +38,8 @@ interface PageCatalogEntry {
 interface UserForAccess {
   id: string;
   email: string;
+  employee_code: string | null;
+  full_name: string | null;
 }
 
 interface UserPageAccess {
@@ -89,7 +91,7 @@ export default function SuperAdminAccessControl() {
     queryKey: ["page-catalog"],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: PageCatalogEntry[] }>("/api/access/pages/catalog");
-      return res.data.data ?? [];
+      return res.data ?? [];
     },
   });
 
@@ -98,7 +100,7 @@ export default function SuperAdminAccessControl() {
     queryKey: ["users-for-access"],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: UserForAccess[] }>("/api/access/users-for-access");
-      return res.data.data ?? [];
+      return res.data ?? [];
     },
   });
 
@@ -110,7 +112,7 @@ export default function SuperAdminAccessControl() {
       const res = await hrmsApi.get<{ success: boolean; data: UserPageAccess[] }>(
         `/api/access/user-page-access/${selectedUserId}`
       );
-      return res.data.data ?? [];
+      return res.data ?? [];
     },
     enabled: !!selectedUserId,
   });
@@ -122,7 +124,7 @@ export default function SuperAdminAccessControl() {
       const res = await hrmsApi.get<{ success: boolean; data: PageAccessAssignment[] }>(
         "/api/access/user-page-access-all"
       );
-      return res.data.data ?? [];
+      return res.data ?? [];
     },
   });
 
@@ -280,7 +282,9 @@ export default function SuperAdminAccessControl() {
                   <SelectContent>
                     {users.map(user => (
                       <SelectItem key={user.id} value={user.id}>
-                        {user.email}
+                        {user.full_name?.trim()
+                          ? `${user.full_name}${user.employee_code ? ` (${user.employee_code})` : ""}`
+                          : user.email}
                       </SelectItem>
                     ))}
                   </SelectContent>

@@ -19,6 +19,7 @@ import {
   saveExperienceDetails,
   saveFamilyDetails,
   saveFinalSection,
+  saveProgress,
   submitFullOnboarding,
   uploadOnboardingDocument,
   validateOnboardingToken,
@@ -104,6 +105,13 @@ router.delete("/documents/:documentId", h(async (req, res) => {
   const token = String(req.body.token ?? req.query.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await deleteOnboardingDocument(token, req.params.documentId, meta(req)) });
+}));
+
+router.post("/progress", h(async (req, res) => {
+  const token = String(req.body.token ?? "");
+  if (!token) return res.status(400).json({ success: false, message: "token required" });
+  const stepIdx = Number(req.body.stepIdx ?? req.body.step_idx ?? 0);
+  return res.json({ success: true, data: await saveProgress(token, stepIdx) });
 }));
 
 router.post("/submit", h(async (req, res) => {

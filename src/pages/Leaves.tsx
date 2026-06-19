@@ -23,6 +23,7 @@ import {
   isAfter,
   isBefore,
 } from "date-fns";
+import { normalizeDate } from "@/lib/utils";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {
@@ -31,6 +32,7 @@ import {
 } from "@/components/leaves/LeaveRequestCard";
 import { LeaveRequestForm } from "@/components/profile/LeaveRequestForm";
 import { LeaveCalendarView } from "@/components/leaves/LeaveCalendarView";
+import { LeaveTrends } from "@/components/leaves/LeaveTrends";
 import { DateRangeExportDialog } from "@/components/export/DateRangeExportDialog";
 
 import { usePagination } from "@/hooks/usePagination";
@@ -100,8 +102,8 @@ const metricToneMap = {
     icon: "bg-slate-100 text-slate-700 ring-slate-200",
   },
   sky: {
-    card: "border-sky-100 bg-gradient-to-br from-white via-white to-sky-50",
-    icon: "bg-sky-50 text-sky-700 ring-sky-100",
+    card: "border-[#c4dcf5] bg-gradient-to-br from-white via-white to-[#e8f2fc]",
+    icon: "bg-[#e8f2fc] text-[#1B6AB5] ring-[#c4dcf5]",
   },
 };
 
@@ -321,7 +323,7 @@ const Leaves = () => {
     if (!startDate && !endDate) return items;
 
     return items.filter((request) => {
-      const leaveStartDate = parseISO(request.startDate);
+      const leaveStartDate = parseISO(normalizeDate(request.startDate));
 
       if (startDate && endDate) {
         return isWithinInterval(leaveStartDate, {
@@ -348,7 +350,7 @@ const Leaves = () => {
     });
   };
 
-  const pendingRequests = requests.filter((request) => request.status === "pending");
+  const pendingRequests = requests.filter((request) => request.status.startsWith("pending"));
   const allProcessedRequests = requests.filter(
     (request) => request.status !== "pending"
   );
@@ -359,9 +361,9 @@ const Leaves = () => {
 
   const uniqueYears = [
     ...new Set(
-      allProcessedRequests.map((request) =>
-        parseISO(request.startDate).getFullYear()
-      )
+      allProcessedRequests
+        .map((request) => parseISO(normalizeDate(request.startDate)).getFullYear())
+        .filter((year) => Number.isFinite(year))
     ),
   ].sort((a, b) => b - a);
 
@@ -372,7 +374,7 @@ const Leaves = () => {
     const typeMatch =
       processedTypeFilter === "all" || request.type === processedTypeFilter;
 
-    const leaveDate = parseISO(request.startDate);
+    const leaveDate = parseISO(normalizeDate(request.startDate));
 
     const monthMatch =
       processedMonthFilter === "all" ||
@@ -730,43 +732,52 @@ const Leaves = () => {
   return (
     <DashboardLayout>
       <div className="space-y-5">
-        {/* Header */}
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="grid gap-0 lg:grid-cols-[1fr_auto]">
-            <div className="relative p-5 sm:p-6">
-              <div className="absolute inset-y-0 left-0 w-1 bg-slate-950" />
-
-              <div className="pl-2">
-                <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">
+        {/* Hero Header */}
+        <section className="relative overflow-hidden rounded-2xl bg-slate-950 text-white shadow-lg">
+          <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-[#1B6AB5]/20 blur-3xl" />
+          <div className="pointer-events-none absolute bottom-0 left-1/3 h-48 w-48 rounded-full bg-[#3BAD49]/10 blur-3xl" />
+          <div className="relative p-6 sm:p-8">
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#5aa0dd]">
                   Leave Management
                 </p>
-
-                <h1 className="mt-2 text-3xl font-black text-slate-950">
-                  Leaves
+                <h1 className="mt-2 text-2xl font-black tracking-tight text-white">
+                  Leave Requests
                 </h1>
-
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                  Apply, review, approve and track leave requests from one clean
-                  workspace.
+                <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">
+                  Apply for leave, track approvals and manage team leave requests.
                 </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Pending</p>
+                    <p className="text-lg font-black text-[#f59e0b]">{stats?.pending ?? 0}</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Approved</p>
+                    <p className="text-lg font-black text-[#3BAD49]">{stats?.approved ?? 0}</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Rejected</p>
+                    <p className="text-lg font-black text-[#E8231A]">{stats?.rejected ?? 0}</p>
+                  </div>
+                </div>
               </div>
-            </div>
-
-            <div className="flex flex-col justify-center gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:flex-row sm:items-center lg:border-l lg:border-t-0">
-              <DateRangeExportDialog
-                title="Export Leave Requests"
-                description="Export leave requests with optional date range filter based on start date."
-                onExportCSV={exportToCSV}
-                onExportPDF={exportToPDF}
-              />
-
-              <Button
-                className="bg-slate-950 text-white hover:bg-slate-800 rounded-2xl px-5 py-2.5 font-semibold cursor-pointer transition-colors"
-                onClick={() => setIsNewRequestOpen(true)}
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                New Leave Request
-              </Button>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <Button
+                  onClick={() => setIsNewRequestOpen(true)}
+                  className="rounded-xl bg-[#1B6AB5] px-5 font-bold text-white shadow-lg shadow-[#1B6AB5]/25 hover:bg-[#155e9f]"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  New Request
+                </Button>
+                <DateRangeExportDialog
+                  title="Export Leave Requests"
+                  description="Export leave requests with optional date range filter based on start date."
+                  onExportCSV={exportToCSV}
+                  onExportPDF={exportToPDF}
+                />
+              </div>
             </div>
           </div>
         </section>
@@ -827,8 +838,9 @@ const Leaves = () => {
             </div>
           </div>
 
-          <Tabs defaultValue="pending" className="w-full">
-            <TabsList className="grid w-full grid-cols-3 lg:w-[520px]">
+          <Tabs defaultValue="overview" className="w-full">
+            <TabsList className="grid w-full grid-cols-4 lg:w-[680px]">
+              <TabsTrigger value="overview">My Overview</TabsTrigger>
               <TabsTrigger value="pending">
                 Pending
                 <Badge variant="secondary" className="ml-2">
@@ -840,6 +852,10 @@ const Leaves = () => {
 
               <TabsTrigger value="calendar">Calendar View</TabsTrigger>
             </TabsList>
+
+            <TabsContent value="overview" className="mt-5">
+              <LeaveTrends employeeId={myEmployeeId ?? undefined} />
+            </TabsContent>
 
             <TabsContent value="pending" className="mt-5 space-y-4">
               {isLoading ? (
@@ -875,7 +891,7 @@ const Leaves = () => {
                         myEmployeeId && request.employeeId === myEmployeeId;
 
                       const canApproveThisRequest =
-                        canApproveLeaves && !isOwnRequest;
+                        canApproveLeaves && !isOwnRequest && request.status === "pending";
 
                       return (
                         <LeaveRequestCard
@@ -1077,8 +1093,8 @@ const Leaves = () => {
                   </p>
 
                   <p className="text-sm text-slate-500">
-                    {selectedRequest.startDate ? format(parseISO(selectedRequest.startDate), "PPP") : "—"} -{" "}
-                    {selectedRequest.endDate ? format(parseISO(selectedRequest.endDate), "PPP") : "—"}
+                    {selectedRequest.startDate ? format(parseISO(normalizeDate(selectedRequest.startDate)), "PPP") : "—"} -{" "}
+                    {selectedRequest.endDate ? format(parseISO(normalizeDate(selectedRequest.endDate)), "PPP") : "—"}
                   </p>
 
                   {selectedRequest.reason && (

@@ -33,7 +33,8 @@ export function UpcomingCelebrations() {
       employees.forEach((emp) => {
         // Check birthday
         if (emp.date_of_birth) {
-          const dob = parseISO(emp.date_of_birth);
+          const dobStr = /^\d{4}-\d{2}-\d{2}$/.test(emp.date_of_birth) ? `${emp.date_of_birth}T00:00:00` : emp.date_of_birth;
+          const dob = parseISO(dobStr);
           const birthdayThisYear = new Date(currentYear, dob.getMonth(), dob.getDate());
           
           // If birthday already passed this year, check next year
@@ -54,7 +55,8 @@ export function UpcomingCelebrations() {
 
         // Check work anniversary
         if (emp.hire_date) {
-          const hireDate = parseISO(emp.hire_date);
+          const hireDateStr = /^\d{4}-\d{2}-\d{2}$/.test(emp.hire_date) ? `${emp.hire_date}T00:00:00` : emp.hire_date;
+          const hireDate = parseISO(hireDateStr);
           const anniversaryThisYear = new Date(currentYear, hireDate.getMonth(), hireDate.getDate());
           
           // If anniversary already passed this year, check next year

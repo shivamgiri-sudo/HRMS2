@@ -6,6 +6,7 @@ export interface AuthenticatedRequest extends Request {
     id: string;
     email?: string;
     isDemo?: boolean;
+    isReadOnly?: boolean;
   };
 }
 
@@ -66,7 +67,11 @@ export async function requireAuth(
     // Verify MySQL JWT
     const mysqlUser = authService.verifyAccessToken(token);
     if (mysqlUser) {
-      req.authUser = { id: mysqlUser.id, email: mysqlUser.email };
+      req.authUser = {
+        id: mysqlUser.id,
+        email: mysqlUser.email,
+        isReadOnly: mysqlUser.isReadOnly || false
+      };
       return next();
     }
 
@@ -75,4 +80,22 @@ export async function requireAuth(
   } catch (error) {
     return next(error);
   }
+}
+
+export function requireWriteAccess(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) {
+  const isReadOnly = req.authUser?.isReadOnly || false;
+
+  if (isReadOnly) {
+    return res.status(403).json({
+      success: false,
+      error: 'Write access denied. Your account is in read-only mode.',
+      code: 'READ_ONLY_ACCESS'
+    });
+  }
+
+  next();
 }

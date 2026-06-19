@@ -238,6 +238,7 @@ const Onboarding = () => {
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [requestToAction, setRequestToAction] = useState<OnboardingRequest | null>(null);
+  const [rejectionRemarks, setRejectionRemarks] = useState("");
   
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -617,6 +618,7 @@ const Onboarding = () => {
 
   const handleRejectRequest = (request: OnboardingRequest) => {
     setRequestToAction(request);
+    setRejectionRemarks("");
     setRejectDialogOpen(true);
   };
 
@@ -630,9 +632,22 @@ const Onboarding = () => {
 
   const confirmReject = () => {
     if (requestToAction && user) {
-      rejectRequest.mutate({ requestId: requestToAction.id, userId: user.id });
+      if (!rejectionRemarks.trim()) {
+        toast({
+          title: "Remarks Required",
+          description: "Please provide remarks for rejection.",
+          variant: "destructive",
+        });
+        return;
+      }
+      rejectRequest.mutate({
+        requestId: requestToAction.id,
+        userId: user.id,
+        rejectionReason: rejectionRemarks.trim()
+      });
       setRejectDialogOpen(false);
       setRequestToAction(null);
+      setRejectionRemarks("");
     }
   };
 
@@ -946,20 +961,19 @@ const Onboarding = () => {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="space-y-2">
-                      <Label htmlFor="employeeCode">Employee Number *</Label>
+                      <Label htmlFor="employeeCode">Employee Number</Label>
                       <div className="relative">
                         <Hash className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input 
-                          id="employeeCode" 
-                          placeholder={loadingNextCode ? "Loading..." : nextEmployeeCode || "ACQ001"}
-                          value={formData.employeeCode}
-                          onChange={(e) => handleInputChange('employeeCode', e.target.value.toUpperCase())}
-                          disabled={isSubmitting || loadingNextCode}
-                          className="pl-9 font-mono"
+                        <Input
+                          id="employeeCode"
+                          value={formData.employeeCode || nextEmployeeCode || ''}
+                          readOnly
+                          disabled
+                          className="pl-9 font-mono bg-slate-50 cursor-not-allowed"
                         />
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Next available: {loadingNextCode ? "..." : nextEmployeeCode}. You can customize if needed.
+                        Auto-assigned on employee creation. Format: MAS##### / IDC##### / #####C
                       </p>
                     </div>
                     <div className="space-y-2">
@@ -1254,8 +1268,8 @@ const Onboarding = () => {
                   {onboardingEmployees.map((employee) => {
                     const name = `${employee.first_name} ${employee.last_name}`;
                     const departmentName = employee.departments?.name || 'Unassigned';
-                    const hireDate = employee.hire_date 
-                      ? new Date(employee.hire_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    const hireDate = employee.hire_date
+                      ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(employee.hire_date) ? `${employee.hire_date}T00:00:00` : employee.hire_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
                       : 'TBD';
                     
                     return (
@@ -1527,8 +1541,8 @@ const Onboarding = () => {
                     <div>
                       <p className="text-xs text-muted-foreground">Start Date</p>
                       <p className="text-sm font-medium">
-                        {selectedEmployee.hire_date 
-                          ? new Date(selectedEmployee.hire_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+                        {selectedEmployee.hire_date
+                          ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(selectedEmployee.hire_date) ? `${selectedEmployee.hire_date}T00:00:00` : selectedEmployee.hire_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
                           : 'TBD'}
                       </p>
                     </div>
@@ -2030,7 +2044,10 @@ const Onboarding = () => {
         </AlertDialog>
 
         {/* Reject Request Confirmation Dialog */}
-        <AlertDialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+        <AlertDialog open={rejectDialogOpen} onOpenChange={(open) => {
+          setRejectDialogOpen(open);
+          if (!open) setRejectionRemarks("");
+        }}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Reject Request</AlertDialogTitle>
@@ -2039,8 +2056,21 @@ const Onboarding = () => {
                 <strong>{requestToAction?.full_name}</strong>? This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
+            <div className="my-4">
+              <label htmlFor="rejection-remarks" className="text-sm font-medium text-slate-900">
+                Remarks <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                id="rejection-remarks"
+                className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                rows={4}
+                placeholder="Please provide a reason for rejection..."
+                value={rejectionRemarks}
+                onChange={(e) => setRejectionRemarks(e.target.value)}
+              />
+            </div>
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogCancel onClick={() => setRejectionRemarks("")}>Cancel</AlertDialogCancel>
               <AlertDialogAction
                 onClick={confirmReject}
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"

@@ -68,6 +68,8 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   BRANCH_MASTER: "import_branch_upload_batch",
   LOB_MASTER: "import_lob_upload_batch",
   DESIGNATION_MASTER: "import_designation_upload_batch",
+  OFFICIAL_EMAIL_UPDATE: "import_official_email_update_batch",
+  REPORTING_MANAGER_UPDATE: "import_reporting_manager_update_batch",
 };
 
 function getImportRpc(uploadTypeCode: string) {
@@ -408,6 +410,22 @@ function getFallbackSampleValue(
 
   if (normalizedUploadType === "DESIGNATION_MASTER" && normalizedHeader in designationSamples) {
     return designationSamples[normalizedHeader];
+  }
+
+  const officialEmailSamples: Record<string, string> = {
+    employee_code:  "MAS00001",
+    official_email: "firstname.lastname@teammas.in",
+  };
+  if (normalizedUploadType === "OFFICIAL_EMAIL_UPDATE" && normalizedHeader in officialEmailSamples) {
+    return officialEmailSamples[normalizedHeader];
+  }
+
+  const reportingManagerSamples: Record<string, string> = {
+    employee_code: "MAS00001",
+    manager_code:  "MAS00100",
+  };
+  if (normalizedUploadType === "REPORTING_MANAGER_UPDATE" && normalizedHeader in reportingManagerSamples) {
+    return reportingManagerSamples[normalizedHeader];
   }
 
   if (normalizedHeader.includes("date")) return "16-05-2026";

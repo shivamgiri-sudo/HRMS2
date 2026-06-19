@@ -11,6 +11,7 @@ export interface EmployeeProfile {
   full_name: string;
   email: string | null;
   phone: string | null;
+  alternate_mobile: string | null;
   avatar_url: string | null;
   gender: string | null;
   date_of_birth: string | null;
@@ -30,6 +31,39 @@ export interface EmployeeProfile {
   city: string | null;
   state: string | null;
   pincode: string | null;
+  marital_status: string | null;
+  blood_group: string | null;
+  emergency_contact?: {
+    name: string;
+    relationship: string | null;
+    mobile: string;
+    address: string | null;
+  } | null;
+  nominee?: {
+    nominee_name: string;
+    relationship: string;
+    date_of_birth: string | null;
+    mobile: string | null;
+    address: string | null;
+  } | null;
+  bank_details?: {
+    bank_name: string | null;
+    account_holder_name: string | null;
+    bank_branch: string | null;
+    ifsc_code: string | null;
+    account_type: string | null;
+    masked_account_number: string | null;
+    verification_status: string;
+  } | null;
+  statutory_details?: {
+    masked_pan_number: string | null;
+    masked_aadhaar_number: string | null;
+    masked_pf_number: string | null;
+    masked_uan: string | null;
+    pan_verification_status: string;
+    aadhaar_verification_status: string;
+    pf_uan_verification_status: string;
+  } | null;
 }
 
 export function useEmployeeProfile() {

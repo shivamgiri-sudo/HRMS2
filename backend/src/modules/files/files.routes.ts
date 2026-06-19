@@ -51,13 +51,12 @@ const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
-router.use(requireAuth);
-
 // POST /api/files/upload?category=employee-documents
 // Accepts multipart/form-data with field "file"
 // Admin/HR only for employee docs; any authenticated user for self-service uploads
 router.post(
   "/upload",
+  requireAuth,
   requireRole("admin", "hr"),
   (req: any, res: any, next: any) => {
     upload.single("file")(req, res, (err) => {
@@ -86,9 +85,24 @@ router.post(
   })
 );
 
-// GET /api/files/:category/:filename — serve file (any authenticated user)
+// GET /api/files/employee-photos/:filename — public (img src can't send auth headers)
+// UUIDs as filenames are unguessable, so no auth needed here.
+router.get(
+  "/employee-photos/:filename",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const safeFile = path.basename(req.params.filename);
+    const filePath = path.join(UPLOADS_ROOT, "employee-photos", safeFile);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File not found" });
+    }
+    res.sendFile(filePath);
+  })
+);
+
+// GET /api/files/:category/:filename — serve file (authenticated users only)
 router.get(
   "/:category/:filename",
+  requireAuth,
   h(async (req: AuthenticatedRequest, res: Response) => {
     const safe = (req.params.category.replace(/[^a-zA-Z0-9_-]/g, "")) || "misc";
     const safeFile = path.basename(req.params.filename); // strip any path traversal
@@ -103,6 +117,7 @@ router.get(
 // DELETE /api/files/:category/:filename — delete file (admin/hr only)
 router.delete(
   "/:category/:filename",
+  requireAuth,
   requireRole("admin", "hr"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const safe = (req.params.category.replace(/[^a-zA-Z0-9_-]/g, "")) || "misc";

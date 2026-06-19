@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Check, X, Calendar, Clock, UserCheck } from "lucide-react";
 import { StatusBadge, normalizeStatus } from "@/components/ui/status-badge";
+import { formatDate, formatDateTime } from "@/lib/utils";
 
 export interface LeaveRequest {
   id: string;
@@ -94,14 +95,14 @@ export function LeaveRequestCard({ request, onApprove, onReject }: LeaveRequestC
               <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
                 <Calendar className="h-4 w-4" />
                 <span>
-                  {request.startDate} - {request.endDate}
+                  {formatDate(request.startDate)} - {formatDate(request.endDate)}
                 </span>
                 <span className="text-foreground font-medium">({request.days} days)</span>
               </div>
               {request.submittedAt && (
                 <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                   <Clock className="h-3 w-3" />
-                  <span>Submitted: {request.submittedAt}</span>
+                  <span>Submitted: {formatDateTime(request.submittedAt)}</span>
                 </div>
               )}
               {request.reason && <p className="mt-2 text-sm text-muted-foreground">{request.reason}</p>}
@@ -111,7 +112,7 @@ export function LeaveRequestCard({ request, onApprove, onReject }: LeaveRequestC
                   <span>
                     {request.status === "approved" ? "Approved" : request.status === "rejected" ? "Rejected" : "Reviewed"} by{" "}
                     <span className="font-medium text-foreground">{request.reviewedBy.name}</span>
-                    {request.reviewedAt && <span> on {request.reviewedAt}</span>}
+                    {request.reviewedAt && <span> on {formatDate(request.reviewedAt)}</span>}
                   </span>
                 </div>
               )}

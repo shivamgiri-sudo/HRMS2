@@ -13,7 +13,7 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, mustChangePassword } = useAuth();
   const location = useLocation();
   const { data: employeeStatus, isLoading: isEmployeeLoading } = useEmployeeStatus();
   const { isAdminOrHR, isLoading: isRoleLoading, roleKeys } = useIsAdminOrHR();
@@ -32,9 +32,13 @@ export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
     return <Navigate to="/auth" replace />;
   }
 
+  if (mustChangePassword && location.pathname !== "/change-password") {
+    return <Navigate to="/change-password" replace />;
+  }
+
   // Role-restricted route: user must have one of the required roles
   if (roles && roles.length > 0) {
-    const hasRequiredRole = roles.some((r) => roleKeys.includes(r));
+    const hasRequiredRole = roleKeys.includes("super_admin") || roles.some((r) => roleKeys.includes(r));
     if (!hasRequiredRole) {
       return (
         <div className="flex min-h-screen items-center justify-center bg-background p-4">

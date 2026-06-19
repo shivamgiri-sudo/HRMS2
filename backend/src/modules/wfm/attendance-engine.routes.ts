@@ -12,6 +12,7 @@ import { getEmployeeForUser, hasRole } from '../../shared/accessGuard.js';
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const DB_ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,35}$/;
 
 router.use(requireAuth);
 
@@ -96,17 +97,27 @@ router.post('/process', requireRole('admin', 'hr', 'wfm'), h(async (req, res) =>
 router.get('/daily', h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const isPrivileged = await hasRole(userId, 'admin', 'hr', 'wfm', 'manager');
+  // Validate pagination parameters to prevent NaN/negative values
+  const rawPage = req.query.page ? Number(req.query.page) : 1;
+  const rawLimit = req.query.limit ? Number(req.query.limit) : 50;
+  const safePage = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
+  const safeLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 200) : 50;
+
   const filters: any = {
     processId:        req.query.processId as string | undefined,
+    branchId:         req.query.branchId as string | undefined,
     fromDate:         req.query.fromDate as string | undefined,
     toDate:           req.query.toDate as string | undefined,
     attendanceStatus: req.query.attendanceStatus as string | undefined,
-    page:             req.query.page ? Number(req.query.page) : undefined,
-    limit:            req.query.limit ? Math.min(Number(req.query.limit), 200) : undefined,
+    page:             safePage,
+    limit:            safeLimit,
   };
   if (isPrivileged) {
     const qEmpId = req.query.employeeId as string | undefined;
-    filters.employeeId = qEmpId && /^[0-9a-f-]{36}$/i.test(qEmpId) ? qEmpId : undefined;
+    if (qEmpId && !DB_ID_REGEX.test(qEmpId)) {
+      return res.status(400).json({ success: false, error: 'Invalid employeeId' });
+    }
+    filters.employeeId = qEmpId;
   } else {
     const emp = await getEmployeeForUser(userId);
     if (!emp) return res.status(403).json({ success: false, error: 'No employee record' });
@@ -211,7 +222,11 @@ router.post('/clock-in', h(async (req: AuthenticatedRequest, res: Response) => {
     [id, employee_id, today, now, work_mode ?? 'office', latitude ?? null, longitude ?? null, location_name ?? null]
   );
   const [rows] = await db.execute<RowDataPacket[]>(
-    'SELECT * FROM attendance_daily_record WHERE id = ? LIMIT 1', [id]
+    `SELECT adr.*,
+       adr.record_date AS date, adr.clock_in_time AS clock_in, adr.clock_out_time AS clock_out,
+       ROUND(adr.raw_minutes / 60, 2) AS total_hours, adr.attendance_status AS status,
+       adr.clock_in_location AS clock_in_location_name, adr.clock_out_location AS clock_out_location_name
+     FROM attendance_daily_record adr WHERE adr.id = ? LIMIT 1`, [id]
   );
   res.status(201).json({ success: true, data: (rows as RowDataPacket[])[0] });
 }));
@@ -242,7 +257,11 @@ router.post('/clock-out', h(async (req: AuthenticatedRequest, res: Response) => 
     [now, latitude ?? null, longitude ?? null, location_name ?? null, record_id]
   );
   const [rows] = await db.execute<RowDataPacket[]>(
-    'SELECT * FROM attendance_daily_record WHERE id = ? LIMIT 1', [record_id]
+    `SELECT adr.*,
+       adr.record_date AS date, adr.clock_in_time AS clock_in, adr.clock_out_time AS clock_out,
+       ROUND(adr.raw_minutes / 60, 2) AS total_hours, adr.attendance_status AS status,
+       adr.clock_in_location AS clock_in_location_name, adr.clock_out_location AS clock_out_location_name
+     FROM attendance_daily_record adr WHERE adr.id = ? LIMIT 1`, [record_id]
   );
   res.json({ success: true, data: (rows as RowDataPacket[])[0] });
 }));

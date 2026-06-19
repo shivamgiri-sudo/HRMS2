@@ -4,15 +4,48 @@ import { db } from "../db/mysql.js";
 import type { AuthenticatedRequest } from "../middleware/authMiddleware.js";
 
 /**
- * Resolve Supabase user_id → MySQL employee record.
- * Returns null if no employee mapped to this user.
+ * Resolve user_id → MySQL employee record.
+ * Returns employee if active OR inactive with valid grace period.
+ * Returns null if no employee mapped to this user or grace period expired.
  */
 export async function getEmployeeForUser(userId: string): Promise<{ id: string; employee_code: string } | null> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT id, employee_code FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
-    [userId]
-  );
-  return (rows as RowDataPacket[])[0] as { id: string; employee_code: string } ?? null;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id, e.employee_code
+         FROM employees e
+        WHERE e.user_id = ?
+          AND (e.active_status = 1 OR (e.active_status = 0 AND e.access_end_date >= CURDATE()))
+        ORDER BY
+          EXISTS (
+            SELECT 1
+              FROM employee_salary_assignment esa
+             WHERE esa.employee_id = e.id AND esa.active_status = 1
+          ) DESC,
+          CASE WHEN e.employee_code LIKE 'ADMIN%' THEN 1 ELSE 0 END,
+          e.updated_at DESC
+        LIMIT 1`,
+      [userId]
+    );
+    return (rows as RowDataPacket[])[0] as { id: string; employee_code: string } ?? null;
+  } catch {
+    // Fallback for when migration 215 (access_end_date column) hasn't run yet
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id, e.employee_code
+         FROM employees e
+        WHERE e.user_id = ? AND e.active_status = 1
+        ORDER BY
+          EXISTS (
+            SELECT 1
+              FROM employee_salary_assignment esa
+             WHERE esa.employee_id = e.id AND esa.active_status = 1
+          ) DESC,
+          CASE WHEN e.employee_code LIKE 'ADMIN%' THEN 1 ELSE 0 END,
+          e.updated_at DESC
+        LIMIT 1`,
+      [userId]
+    );
+    return (rows as RowDataPacket[])[0] as { id: string; employee_code: string } ?? null;
+  }
 }
 
 /**
@@ -24,6 +57,7 @@ export async function hasRole(userId: string, ...roles: string[]): Promise<boole
     [userId]
   );
   const userRoles = (rows as { role_key: string }[]).map((r) => r.role_key);
+  if (userRoles.includes("super_admin")) return true;
   return roles.some((r) => userRoles.includes(r));
 }
 

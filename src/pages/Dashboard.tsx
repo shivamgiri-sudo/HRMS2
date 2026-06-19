@@ -53,8 +53,8 @@ const toneMap = {
   },
   blue: {
     card: "from-blue-50 to-white border-blue-100",
-    icon: "bg-[#4361ee] text-white shadow-blue-500/20",
-    text: "text-[#4361ee]",
+    icon: "bg-[#1B6AB5] text-white shadow-blue-500/20",
+    text: "text-[#1B6AB5]",
     bgLight: "bg-blue-50",
   },
   amber: {
@@ -135,8 +135,10 @@ async function getDashboardStats() {
       pendingLeaves: leaveRes.status === 'fulfilled' ? (leaveRes.value.data?.length ?? 0) : 0,
       approvedLeaves: approvedLeaveRes.status === 'fulfilled' ? (approvedLeaveRes.value.data?.length ?? 0) : 0,
       departments: deptRes.status === 'fulfilled' ? (deptRes.value.data?.length ?? 0) : 0,
-      attendanceToday: wfmRes.status === 'fulfilled' ? (wfmRes.value.data?.summary?.logged_in ?? 0) : 0,
-      attendanceRate: wfmRes.status === 'fulfilled' ? (wfmRes.value.data?.summary?.overall_adherence_pct ?? 0) : 0,
+      attendanceToday: wfmRes.status === 'fulfilled' ? (wfmRes.value.data?.summary?.present_count ?? wfmRes.value.data?.summary?.logged_in ?? 0) : 0,
+      attendanceRate: empRes.status === 'fulfilled' && wfmRes.status === 'fulfilled'
+        ? Math.round(((wfmRes.value.data?.summary?.present_count ?? wfmRes.value.data?.summary?.logged_in ?? 0) / Math.max(1, empRes.value.total ?? 1)) * 100)
+        : 0,
       atsCandidates: atsRes.status === 'fulfilled' ? (atsRes.value.data?.total ?? 0) : 0,
       onboarding: 0,
       assets: 0,
@@ -174,8 +176,16 @@ export default function Dashboard() {
     return Math.min(100, Math.round(stats.attendanceRate));
   }, [stats.attendanceRate]);
 
-  const approvalHealth = stats.pendingLeaves > 10 ? 62 : stats.pendingLeaves > 4 ? 78 : 92;
-  const workforceCoverage = stats.departments > 0 ? 86 : 45;
+  const approvalHealth = useMemo(() => {
+    const total = stats.pendingLeaves + stats.approvedLeaves;
+    if (total === 0) return 100;
+    return Math.round((stats.approvedLeaves / total) * 100);
+  }, [stats.pendingLeaves, stats.approvedLeaves]);
+
+  const workforceCoverage = useMemo(() => {
+    if (stats.employees === 0 || stats.departments === 0) return 0;
+    return Math.round((stats.attendanceToday / stats.employees) * 100);
+  }, [stats.attendanceToday, stats.employees, stats.departments]);
 
   const userName =
     user?.email?.split("@")[0] ||
@@ -186,13 +196,13 @@ export default function Dashboard() {
       <div className="space-y-6">
         <section className="overflow-hidden rounded-[28px] border border-slate-100 bg-gradient-to-br from-slate-950 via-slate-900 to-[#172033] p-6 text-white shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
           <div className="relative">
-            <div className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-rose-500/25 blur-3xl" />
-            <div className="pointer-events-none absolute -bottom-20 left-1/3 h-56 w-56 rounded-full bg-cyan-400/15 blur-3xl" />
+            <div className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-[#1B6AB5]/25 blur-3xl" />
+            <div className="pointer-events-none absolute -bottom-20 left-1/3 h-56 w-56 rounded-full bg-[#3BAD49]/15 blur-3xl" />
 
             <div className="relative grid gap-6 xl:grid-cols-[1.4fr_0.6fr]">
               <div>
                 <Badge className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-white hover:bg-white/10">
-                  <Sparkles className="mr-1.5 h-3.5 w-3.5 text-rose-300" />
+                  <Sparkles className="mr-1.5 h-3.5 w-3.5 text-[#5aa0dd]" />
                   MCN HRMS Command Center
                 </Badge>
 
@@ -207,7 +217,7 @@ export default function Dashboard() {
                 <div className="mt-6 flex flex-wrap gap-3">
                   {isAdminOrHR ? (
                     <>
-                      <Button asChild className="rounded-2xl bg-rose-500 px-5 font-black text-white shadow-lg shadow-rose-500/25 hover:bg-rose-600">
+                      <Button asChild className="rounded-2xl bg-[#1B6AB5] px-5 font-black text-white shadow-lg shadow-[#1B6AB5]/30 hover:bg-[#155e9f]">
                         <Link to="/employees">
                           <UserPlus className="mr-2 h-4 w-4" />
                           Add Employee
@@ -223,7 +233,7 @@ export default function Dashboard() {
                     </>
                   ) : (
                     <>
-                      <Button asChild className="rounded-2xl bg-rose-500 px-5 font-black text-white shadow-lg shadow-rose-500/25 hover:bg-rose-600">
+                      <Button asChild className="rounded-2xl bg-[#1B6AB5] px-5 font-black text-white shadow-lg shadow-[#1B6AB5]/30 hover:bg-[#155e9f]">
                         <Link to="/leaves">
                           <Calendar className="mr-2 h-4 w-4" />
                           Apply Leave
@@ -374,7 +384,7 @@ export default function Dashboard() {
                   </p>
                 </div>
 
-                <Badge className="rounded-full bg-rose-50 px-3 py-1 font-black text-rose-700 hover:bg-rose-50">
+                <Badge className="rounded-full bg-[#fde8e7] px-3 py-1 font-black text-[#E8231A] hover:bg-[#fde8e7]">
                   {stats.pendingLeaves + stats.onboarding} Open
                 </Badge>
               </div>
@@ -449,9 +459,9 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          <Card className="rounded-[26px] border-slate-100 bg-gradient-to-br from-rose-50 via-white to-orange-50 shadow-sm">
+          <Card className="rounded-[26px] border-slate-100 bg-gradient-to-br from-[#e8f2fc] via-white to-white shadow-sm">
             <CardHeader>
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-500 text-white shadow-lg shadow-rose-500/25">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#1B6AB5] text-white shadow-lg shadow-[#1B6AB5]/25">
                 <AlertTriangle className="h-5 w-5" />
               </div>
               <CardTitle className="mt-4 text-xl font-black tracking-tight text-slate-950">
@@ -473,7 +483,7 @@ export default function Dashboard() {
                 </p>
               </div>
 
-              <Button asChild className="mt-5 w-full rounded-2xl bg-slate-950 font-black text-white hover:bg-rose-600">
+              <Button asChild className="mt-5 w-full rounded-2xl bg-slate-950 font-black text-white hover:bg-[#1B6AB5]">
                 <Link to="/reports">
                   Open Reports
                   <ArrowUpRight className="ml-2 h-4 w-4" />
@@ -505,7 +515,7 @@ function ActionCard({
   tone: "rose" | "blue" | "emerald";
 }) {
   const toneClass = {
-    rose: "bg-rose-50 text-rose-600 border-rose-100",
+    rose: "bg-[#e8f2fc] text-[#1B6AB5] border-[#c4dcf5]",
     blue: "bg-blue-50 text-blue-600 border-blue-100",
     emerald: "bg-emerald-50 text-emerald-600 border-emerald-100",
   }[tone];
@@ -522,7 +532,7 @@ function ActionCard({
         <p className="truncate text-sm font-black text-slate-950">{title}</p>
         <p className="mt-1 truncate text-xs font-semibold text-slate-500">{desc}</p>
       </div>
-      <ArrowUpRight className="h-4 w-4 text-slate-300 transition group-hover:text-rose-500" />
+      <ArrowUpRight className="h-4 w-4 text-slate-300 transition group-hover:text-[#1B6AB5]" />
     </Link>
   );
 }
@@ -541,7 +551,7 @@ function QuickTile({
   color: "rose" | "emerald" | "amber" | "blue";
 }) {
   const colorClass = {
-    rose: "bg-rose-500 shadow-rose-500/25",
+    rose: "bg-[#E8231A] shadow-[#E8231A]/25",
     emerald: "bg-emerald-500 shadow-emerald-500/25",
     amber: "bg-amber-500 shadow-amber-500/25",
     blue: "bg-blue-500 shadow-blue-500/25",
@@ -557,7 +567,7 @@ function QuickTile({
       </div>
       <p className="mt-5 text-base font-black text-slate-950">{title}</p>
       <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">{desc}</p>
-      <div className="mt-4 flex items-center text-sm font-black text-rose-600">
+      <div className="mt-4 flex items-center text-sm font-black text-[#1B6AB5]">
         Open module
         <ArrowUpRight className="ml-2 h-4 w-4 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
       </div>

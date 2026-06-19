@@ -40,6 +40,12 @@ router.get("/employee/:employeeId", h(async (req: AuthenticatedRequest, res: Res
   res.json({ data: await assetsService.listByEmployee(targetId) });
 }));
 
+router.get("/:id/history", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const asset = await assetsService.getById(req.params.id);
+  if (!asset) return res.status(404).json({ error: "Asset not found" });
+  res.json({ data: await assetsService.getHistory(req.params.id) });
+}));
+
 // Asset detail: admin/hr only
 router.get("/:id", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const asset = await assetsService.getById(req.params.id);

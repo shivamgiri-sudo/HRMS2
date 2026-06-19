@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -7,6 +7,22 @@ type Process = { id: string; process_name?: string; process_code?: string };
 type Shift = { id: string; shift_code: string; shift_name: string; start_time: string; end_time: string; version: number };
 type Cycle = { id: string; week_start_date: string; week_end_date: string; status: string };
 type Row = { id: string; employee_id: string; roster_date: string; shift_template_id: string | null; is_week_off: number; acknowledgement_status: string };
+type ActualRow = {
+  id: string;
+  employee_id: string;
+  process_id: string;
+  employee_code: string;
+  employee_name: string;
+  roster_date: string;
+  roster_status: string;
+  publish_status: string;
+  shift_code: string;
+  shift_name: string;
+  shift_start_time: string | null;
+  shift_end_time: string | null;
+  branch_name: string | null;
+  process_name: string | null;
+};
 const next: Record<string, string> = { draft: "submitted", submitted: "reviewed", reviewed: "published", published: "acknowledged", acknowledged: "active", active: "variance_review", variance_review: "attendance_locked", attendance_locked: "payroll_input_ready", payroll_input_ready: "closed" };
 const today = new Date().toISOString().slice(0, 10);
 
@@ -21,10 +37,31 @@ export default function NativeWFMRoster() {
   const [rowsJson, setRowsJson] = useState("[]");
 
   const processes = useQuery({ queryKey: ["processes"], queryFn: async () => (await hrmsApi.get<{ data: Process[] }>("/api/processes")).data ?? [] });
+  const actualProcess = useQuery({
+    queryKey: ["actual-roster-process"],
+    queryFn: async () =>
+      (await hrmsApi.get<{ data: { process_id: string } | null }>("/api/wfm/roster/actual-process")).data,
+  });
   const shifts = useQuery({ queryKey: ["gov-shifts", processId], enabled: !!processId, queryFn: async () => (await hrmsApi.get<{ data: Shift[] }>(`/api/roster-gov/shifts/templates?process_id=${processId}&active_status=1`)).data ?? [] });
   const cycles = useQuery({ queryKey: ["gov-cycles", processId], enabled: !!processId, queryFn: async () => (await hrmsApi.get<{ data: Cycle[] }>(`/api/roster-gov/cycles?process_id=${processId}`)).data ?? [] });
   const assignments = useQuery({ queryKey: ["gov-rows", cycleId], enabled: !!cycleId, queryFn: async () => (await hrmsApi.get<{ data: Row[] }>(`/api/roster-gov/cycles/${cycleId}/assignments`)).data ?? [] });
+  const actualAssignments = useQuery({
+    queryKey: ["actual-roster-assignments", processId],
+    enabled: !!processId,
+    queryFn: async () =>
+      (await hrmsApi.get<{ data: ActualRow[] }>(
+        `/api/wfm/roster/actual-assignments?processId=${processId}&limit=500`
+      )).data ?? [],
+  });
   const selected = (cycles.data ?? []).find((c) => c.id === cycleId);
+
+  useEffect(() => {
+    if (!processId && actualProcess.data?.process_id) {
+      setProcessId(actualProcess.data.process_id);
+    } else if (!processId && actualProcess.isSuccess && processes.data?.length) {
+      setProcessId(processes.data[0].id);
+    }
+  }, [actualProcess.data?.process_id, actualProcess.isSuccess, processId, processes.data]);
 
   async function run(task: () => Promise<void>, success: string) {
     setNotice("");
@@ -39,9 +76,43 @@ export default function NativeWFMRoster() {
     </header>
     {notice && <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm font-semibold text-blue-800">{notice}</div>}
     <section className="rounded-3xl border bg-white p-5">
-      <label className="text-sm font-bold">Authorised Process<select value={processId} onChange={(e) => { setProcessId(e.target.value); setCycleId(""); }} className="mt-2 block w-full rounded-xl border p-3"><option value="">Select process</option>{(processes.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.process_name ?? p.process_code ?? p.id}</option>)}</select></label>
+      <label className="text-sm font-bold">Authorised Process<select value={processId} onChange={(e) => { setProcessId(e.target.value); setCycleId(""); }} className="mt-2 block w-full rounded-xl border bg-white p-3 text-slate-900"><option value="">Select process</option>{(processes.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.process_name ?? p.process_code ?? p.id}</option>)}</select></label>
     </section>
     {processId && <>
+      <Panel title="Actual Roster Records" hint="Live assignments saved in wfm_roster_assignment for the selected process.">
+        {actualAssignments.isLoading ? (
+          <p className="text-sm text-slate-500">Loading roster records...</p>
+        ) : actualAssignments.error ? (
+          <p className="rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-700">
+            {(actualAssignments.error as Error).message}
+          </p>
+        ) : (actualAssignments.data ?? []).length === 0 ? (
+          <p className="rounded-xl bg-amber-50 p-3 text-sm font-semibold text-amber-800">
+            No roster assignments are stored for this process yet.
+          </p>
+        ) : (
+          <div className="max-h-[420px] overflow-auto rounded-2xl border">
+            <table className="w-full min-w-[900px] text-sm">
+              <thead className="sticky top-0 bg-slate-50 text-left text-slate-600">
+                <tr><th className="p-3">Employee</th><th>Date</th><th>Shift</th><th>Timing</th><th>Branch</th><th>Status</th><th>Publish</th></tr>
+              </thead>
+              <tbody>
+                {(actualAssignments.data ?? []).map((row) => (
+                  <tr key={row.id} className="border-t">
+                    <td className="p-3"><b>{row.employee_name || row.employee_code}</b><div className="text-xs text-slate-500">{row.employee_code}</div></td>
+                    <td>{row.roster_date}</td>
+                    <td>{row.shift_name || row.shift_code || "Assigned shift"}</td>
+                    <td>{[row.shift_start_time, row.shift_end_time].filter(Boolean).join(" - ") || "Not set"}</td>
+                    <td>{row.branch_name || "Not set"}</td>
+                    <td>{row.roster_status}</td>
+                    <td className="capitalize">{row.publish_status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
       <div className="grid gap-5 xl:grid-cols-2">
         <Panel title="Shift Template" hint="Mapped WFM/Admin creates process shift versions.">
           <div className="grid gap-2 sm:grid-cols-2"><Field label="Code" value={shift.code} set={(v) => setShift({ ...shift, code: v })}/><Field label="Name" value={shift.name} set={(v) => setShift({ ...shift, name: v })}/><Field label="Start" type="time" value={shift.start} set={(v) => setShift({ ...shift, start: v })}/><Field label="End" type="time" value={shift.end} set={(v) => setShift({ ...shift, end: v })}/></div>

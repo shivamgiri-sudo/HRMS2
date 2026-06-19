@@ -187,22 +187,100 @@ export const wfmService = {
 
   // ─── Regularization ───────────────────────────────────────────────────────
 
+  async listReasons(allowedFor?: 'employee' | 'manager'): Promise<{ code: string; label: string; allowed_for: string }[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      allowedFor
+        ? `SELECT code, label, allowed_for FROM attendance_reason_master WHERE active = 1 AND (allowed_for = ? OR allowed_for = 'both') ORDER BY label`
+        : `SELECT code, label, allowed_for FROM attendance_reason_master WHERE active = 1 ORDER BY label`,
+      allowedFor ? [allowedFor] : []
+    );
+    return rows as any[];
+  },
+
   async submitRegularization(
-    input: RegularizationInput & { employeeId: string },
+    input: RegularizationInput & { employeeId: string; requestedByType?: 'employee' | 'manager' },
     _userId: string
   ): Promise<AttendanceRegularization> {
+    // Validate reason_code if provided
+    if (input.reasonCode) {
+      const [rr] = await db.execute<RowDataPacket[]>(
+        `SELECT allowed_for FROM attendance_reason_master WHERE code = ? AND active = 1`,
+        [input.reasonCode]
+      );
+      if (!(rr as RowDataPacket[]).length) throw new Error('Invalid reason code');
+      const af = (rr[0] as any).allowed_for;
+      const byType = input.requestedByType ?? 'employee';
+      if (af !== 'both' && af !== byType) {
+        throw new Error(`Reason '${input.reasonCode}' is not allowed for ${byType}`);
+      }
+    }
+
+    // Get branch_id for routing to WFM lead
+    const [empRow] = await db.execute<RowDataPacket[]>(
+      `SELECT branch_id FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
+    );
+    const branchId = (empRow[0] as any)?.branch_id ?? null;
+
     const id = randomUUID();
     await db.execute(
-      `INSERT INTO attendance_regularization (id, employee_id, session_date, reason, supporting_note)
-       VALUES (?, ?, ?, ?, ?)`,
-      [id, input.employeeId, input.sessionDate, input.reason, input.supportingNote ?? null]
+      `INSERT INTO attendance_regularization
+         (id, employee_id, session_date, requested_status, reason, reason_code, requested_by_type, branch_id, supporting_note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, input.employeeId, input.sessionDate,
+       (input as any).requestedStatus ?? null,
+       input.reason,
+       input.reasonCode ?? null,
+       input.requestedByType ?? 'employee',
+       branchId,
+       input.supportingNote ?? null]
     );
+
+    // Notify WFM lead(s) for this branch via work inbox
+    if (branchId) {
+      try {
+        const [wfmRows] = await db.execute<RowDataPacket[]>(
+          `SELECT e.user_id FROM user_assignment_scope uas
+           JOIN employees e ON e.id = uas.manager_employee_id
+           WHERE uas.role_key = 'wfm' AND uas.branch_id = ? AND e.user_id IS NOT NULL`,
+          [branchId]
+        );
+        const [empInfo] = await db.execute<RowDataPacket[]>(
+          `SELECT employee_code, CONCAT(first_name,' ',COALESCE(last_name,'')) AS full_name
+           FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
+        );
+        const emp = (empInfo[0] as any);
+        const { inboxService } = await import('../inbox/inbox.service.js');
+        for (const wfm of wfmRows as any[]) {
+          if (!wfm.user_id) continue;
+          await inboxService.createItem({
+            user_id: wfm.user_id,
+            type: 'attendance_regularization',
+            title: `Attendance Regularization: ${emp?.full_name ?? input.employeeId}`,
+            description: `${emp?.employee_code ?? ''} requested ${(input as any).requestedStatus ?? 'correction'} on ${input.sessionDate}. Reason: ${input.reason}`,
+            entity_type: 'attendance',
+            entity_id: input.employeeId,
+            action_url: `/attendance/regularizations`,
+            priority: 'high',
+          });
+        }
+      } catch {
+        // Non-fatal — notification failure should not block submission
+      }
+    }
+
     return this.getRegularization(id);
   },
 
   async getRegularization(id: string): Promise<AttendanceRegularization> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM attendance_regularization WHERE id = ? LIMIT 1", [id]
+      `SELECT ar.*,
+         CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
+         e.employee_code,
+         arm.label AS reason_label
+       FROM attendance_regularization ar
+       LEFT JOIN employees e ON e.id = ar.employee_id
+       LEFT JOIN attendance_reason_master arm ON arm.code = ar.reason_code
+       WHERE ar.id = ? LIMIT 1`, [id]
     );
     const rec = (rows as AttendanceRegularization[])[0];
     if (!rec) throw new Error("Regularization not found");
@@ -214,24 +292,48 @@ export const wfmService = {
     input: ReviewRegularizationInput,
     reviewerId: string
   ): Promise<AttendanceRegularization> {
-    await this.getRegularization(id);
+    const reg = await this.getRegularization(id);
     await db.execute(
       `UPDATE attendance_regularization
           SET status = ?, reviewed_by = ?, reviewed_at = NOW(), reviewer_note = ?
         WHERE id = ?`,
       [input.status, reviewerId, input.reviewerNote ?? null, id]
     );
+
+    // If approved AND requested_status is set, apply it to attendance_daily_record
+    if (input.status === 'approved' && reg.requested_status) {
+      const lwpMap: Record<string, number> = { present: 0, half_day: 0.5, absent: 1.0 };
+      await db.execute(
+        `UPDATE attendance_daily_record
+         SET attendance_status = ?, lwp_value = ?,
+             override_by = ?, override_reason = ?,
+             regularization_id = ?, is_locked = 1, processed_at = NOW()
+         WHERE employee_id = ? AND record_date = ?`,
+        [reg.requested_status, lwpMap[reg.requested_status] ?? 0,
+         reviewerId, `Regularization approved: ${reg.reason_code ?? reg.reason}`,
+         id, reg.employee_id, reg.session_date]
+      );
+    }
+
     return this.getRegularization(id);
   },
 
   async listRegularizations(filters: RegularizationListFilters): Promise<AttendanceRegularization[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.employeeId) { conds.push("employee_id = ?"); params.push(filters.employeeId); }
-    if (filters.status)     { conds.push("status = ?");      params.push(filters.status); }
+    if (filters.employeeId) { conds.push("ar.employee_id = ?"); params.push(filters.employeeId); }
+    if (filters.status)     { conds.push("ar.status = ?");      params.push(filters.status); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM attendance_regularization ${where} ORDER BY created_at DESC`, params
+      `SELECT ar.*,
+         CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
+         e.employee_code,
+         arm.label AS reason_label
+       FROM attendance_regularization ar
+       LEFT JOIN employees e ON e.id = ar.employee_id
+       LEFT JOIN attendance_reason_master arm ON arm.code = ar.reason_code
+       ${where}
+       ORDER BY ar.created_at DESC`, params
     );
     return rows as AttendanceRegularization[];
   },

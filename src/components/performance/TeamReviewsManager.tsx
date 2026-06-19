@@ -15,7 +15,9 @@ import { Star, FileText, Loader2, Plus, Users, CheckCircle, Edit2, Target, ListC
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCreateReview, useUpdateReview, useDeleteReview } from "@/hooks/usePerformance";
 import { RatingStars } from "./RatingStars";
+import { performanceStatusColors } from "@/lib/statusStyles";
 import { format } from "date-fns";
+import { parseLocalDate } from "@/lib/utils";
 import { toast } from "sonner";
 
 interface TeamReviewsManagerProps {
@@ -60,11 +62,7 @@ interface GoalInfo {
   employee_id: string;
 }
 
-const statusColors: Record<string, string> = {
-  draft: "bg-muted text-muted-foreground",
-  submitted: "bg-primary/10 text-primary border-primary/20",
-  acknowledged: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
-};
+const statusColors = performanceStatusColors;
 
 export function TeamReviewsManager({ managerId, managerName }: TeamReviewsManagerProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -392,7 +390,7 @@ export function TeamReviewsManager({ managerId, managerName }: TeamReviewsManage
                    <div key={review.id} className="flex items-center justify-between p-3 rounded-lg border border-dashed">
                      <div>
                        <p className="font-medium text-sm">{review.employee.first_name} {review.employee.last_name}</p>
-                       <p className="text-xs text-muted-foreground">{review.review_period} • {format(new Date(review.review_date), "MMM d, yyyy")}</p>
+                       <p className="text-xs text-muted-foreground">{review.review_period} • {format(parseLocalDate(review.review_date), "MMM d, yyyy")}</p>
                      </div>
                      <div className="flex items-center gap-2">
                        {review.overall_rating && renderStars(review.overall_rating)}
@@ -414,7 +412,7 @@ export function TeamReviewsManager({ managerId, managerName }: TeamReviewsManage
                   <div key={review.id} className="flex items-center justify-between p-3 rounded-lg border">
                     <div>
                       <p className="font-medium text-sm">{review.employee.first_name} {review.employee.last_name}</p>
-                      <p className="text-xs text-muted-foreground">{review.review_period} • {format(new Date(review.review_date), "MMM d, yyyy")}</p>
+                      <p className="text-xs text-muted-foreground">{review.review_period} • {format(parseLocalDate(review.review_date), "MMM d, yyyy")}</p>
                     </div>
                     <div className="flex items-center gap-2">
                       {review.overall_rating && renderStars(review.overall_rating)}

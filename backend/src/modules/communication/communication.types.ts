@@ -45,11 +45,18 @@ export interface TemplateFilters {
 export interface SendMessageDTO {
   template_id?: string; template_name?: string;
   recipient_employee_ids: string[]; data: Record<string, any>;
-  channel?: Channel; is_critical?: boolean;
+  channel?: Channel; channels?: Channel[]; is_critical?: boolean;
+  portal?: PortalNotificationInput | false;
 }
 export interface BulkSendDTO {
   template_id?: string; template_name?: string;
-  recipient_filter: RecipientFilter; data: Record<string, any>; channel?: Channel;
+  recipient_filter: RecipientFilter; data: Record<string, any>; channel?: Channel; channels?: Channel[];
+  portal?: PortalNotificationInput | false;
+}
+export interface PortalNotificationInput {
+  type?: string; title?: string; message?: string;
+  action_url?: string; entity_type?: string; entity_id?: string;
+  priority?: 'low' | 'normal' | 'high' | 'urgent';
 }
 export interface RecipientFilter {
   department?: string; process_id?: string; designation?: string; status?: string;
@@ -62,7 +69,7 @@ export interface UpdatePreferencesDTO {
   category: NotificationCategory; preferred_channel: Channel; enabled: boolean;
 }
 export interface RenderTemplateDTO {
-  template_id?: string; template_name?: string; data: Record<string, any>;
+  template_id?: string; template_name?: string; data: Record<string, any>; channel?: Channel;
 }
 
 // ========== Provider types ==========
@@ -70,7 +77,7 @@ export interface ProviderResponse { success: boolean; message_id?: string; error
 export interface DeliveryStatus { status: DispatchStatus; delivered_at?: string; error?: string; }
 
 // ========== Response types ==========
-export interface DispatchResult { queued: number; failed: number; dispatch_ids: string[]; }
+export interface DispatchResult { queued: number; failed: number; dispatch_ids: string[]; portal_created?: number; }
 export interface DispatchStats {
   total_sent_today: number; delivery_rate: number; open_rate: number; failed_count: number;
   by_channel: { email: number; sms: number; whatsapp: number };

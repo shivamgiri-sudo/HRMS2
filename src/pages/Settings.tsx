@@ -75,7 +75,7 @@ const Settings = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { isAdminOrHR, isLoading: roleLoading, role } = useIsAdminOrHR();
-  const isAdmin = role === 'admin';
+  const isAdmin = role === 'admin' || role === 'super_admin';
   
   // Department state
   const [deptDialogOpen, setDeptDialogOpen] = useState(false);

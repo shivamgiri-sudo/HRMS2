@@ -43,14 +43,14 @@ export default function NativeCustomizationManager() {
       params.append('isActive', filters.isActive);
       params.append('page', filters.page.toString());
       params.append('limit', filters.limit.toString());
-      const res = await hrmsApi.get(`/customization/rules?${params}`);
+      const res = await hrmsApi.get(`/api/customization/rules?${params}`);
       return res.data;
     },
   });
 
   const toggleMutation = useMutation({
     mutationFn: async (ruleId: string) => {
-      return hrmsApi.post(`/customization/rules/${ruleId}/toggle`);
+      return hrmsApi.post(`/api/customization/rules/${ruleId}/toggle`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['customization-rules'] });
@@ -59,7 +59,7 @@ export default function NativeCustomizationManager() {
 
   const deleteMutation = useMutation({
     mutationFn: async (ruleId: string) => {
-      return hrmsApi.delete(`/customization/rules/${ruleId}`);
+      return hrmsApi.delete(`/api/customization/rules/${ruleId}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['customization-rules'] });

@@ -18,6 +18,7 @@ import { useCompanyEvents, useCreateCompanyEvent, useUpdateCompanyEvent, useDele
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import { toast } from "sonner";
 import { format, addMonths, subMonths, isSameDay, parseISO } from "date-fns";
+import { normalizeDate } from "@/lib/utils";
 const EVENT_TYPES = [{
   value: "holiday",
   label: "Public Holiday",
@@ -157,8 +158,8 @@ const CompanyCalendar = () => {
       setIsSendingNotifications(false);
     }
   };
-  const eventsOnSelectedDate = selectedDate ? events?.filter(e => isSameDay(parseISO(e.event_date), selectedDate)) : [];
-  const eventDates = events?.map(e => parseISO(e.event_date)) || [];
+  const eventsOnSelectedDate = selectedDate ? events?.filter(e => isSameDay(parseISO(normalizeDate(e.event_date)), selectedDate)) : [];
+  const eventDates = events?.map(e => parseISO(normalizeDate(e.event_date))) || [];
   return <DashboardLayout>
       <div className="space-y-6">
         {/* Header */}
@@ -352,7 +353,7 @@ const CompanyCalendar = () => {
                               <div>
                                 <p className="font-medium">{event.title}</p>
                                 <p className="text-sm text-muted-foreground">
-                                  {format(parseISO(event.event_date), "MMM d, yyyy")}
+                                  {format(parseISO(normalizeDate(event.event_date)), "MMM d, yyyy")}
                                 </p>
                                 {event.is_holiday && <Badge variant="destructive" className="mt-1">
                                     Holiday

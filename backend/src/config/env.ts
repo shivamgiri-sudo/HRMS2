@@ -10,13 +10,21 @@ const envSchema = z.object({
 
   ACTIVE_DB_PROVIDER: z.enum(["supabase", "sqlserver", "mysql"]).default("mysql"),
 
-  // MySQL (mas_hrms) — optional, only required when ACTIVE_DB_PROVIDER includes mysql modules
+  // MySQL (mas_hrms)
   DB_HOST:     z.string().default("localhost"),
   DB_PORT:     z.coerce.number().default(3306),
   DB_USER:     z.string().default("root"),
   DB_PASSWORD: z.string().default(""),
   DB_NAME:     z.string().default("mas_hrms"),
-  DB_POOL_MAX: z.coerce.number().default(10),
+  DB_POOL_MAX: z.coerce.number().default(25),
+
+  // Independent MCN LMS MySQL DB. Use dedicated LMS_DB_* credentials in production.
+  LMS_DB_HOST:     z.string().default("192.168.11.225"),
+  LMS_DB_PORT:     z.coerce.number().default(3306),
+  LMS_DB_USER:     z.string().default(""),
+  LMS_DB_PASSWORD: z.string().default(""),
+  LMS_DB_NAME:     z.string().default("lms_mcn"),
+  LMS_DB_POOL_MAX: z.coerce.number().default(10),
 
   // NCOSEC Biometric DB (Matrix Cosec SQL Server)
   NCOSEC_DB_HOST:     z.string().default(""),
@@ -25,20 +33,29 @@ const envSchema = z.object({
   NCOSEC_DB_PASSWORD: z.string().default(""),
   NCOSEC_DB_NAME:     z.string().default("NCOSEC"),
   NCOSEC_DB_ENCRYPT:  z.string().default("false"),
+  NCOSEC_DB_TRUST_CERT: z.string().default("true"),
+  NCOSEC_EVENT_TABLE: z.string().default("dbo.Mx_ATDEventTrn"),
+  NCOSEC_USER_ID_COLUMN: z.string().default("UserID"),
+  NCOSEC_DATETIME_COLUMN: z.string().default("Edatetime"),
+  NCOSEC_SOURCE_MODE: z.enum(["mysql", "mssql"]).default("mysql"),
+  NCOSEC_SYNC_ENABLED: z.string().default("true"),
+  NCOSEC_SYNC_CRON: z.string().default("0 */5 * * * *"),
+  NCOSEC_SYNC_INTERVAL_MS: z.coerce.number().int().min(60000).default(300000),
+  NCOSEC_SYNC_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(31).default(1),
 
   PORTAL_JWT_SECRET: z.string().min(32).default("change-me-in-production-portal-secret-32ch"),
   JWT_SECRET: z.string().min(32).default('change-me-jwt-secret-32characters!!'),
-  // Must be explicitly "true" to enable demo bypass. Production default is disabled.
   PORTAL_DEMO_BYPASS: z.string().default("false"),
-  // Required secret for payroll bank account AES encryption. Must be set in production.
   PAYROLL_BANK_KEY: z.string().min(16).default("hrms-bank-key-dev"),
-  // Dedicated AES-256-GCM key for communication provider secrets. Falls back to PAYROLL_BANK_KEY if not set.
+  ENCRYPTION_KEY: z.string().regex(/^[0-9a-fA-F]{64}$/, 'ENCRYPTION_KEY must be a 64-character hex string').default('0000000000000000000000000000000000000000000000000000000000000000'),
   COMM_SECRET: z.string().min(16).optional(),
-  // Enables mock-token demo bypass. Must NOT be "true" in production.
   INTERNAL_DEMO_BYPASS: z.string().default("false"),
-  // Set to "true" to start tenure, communication, attendance, and legacy sync workers.
   ENABLE_SCHEDULERS: z.string().default("false"),
-  // Set to "true" to run 043_demo_data.sql during migrations (local dev only).
+  INTEGRATION_SCHEDULER_TIMEZONE: z.string().default("Asia/Kolkata"),
+  INTEGRATION_SCHEDULER_POLL_MS: z.coerce.number().int().min(5000).default(30000),
+  INTEGRATION_SCHEDULER_MAX_RETRIES: z.coerce.number().int().min(1).max(5).default(3),
+  INTEGRATION_SCHEDULER_RETRY_DELAY_MS: z.coerce.number().int().min(100).default(5000),
+  OUTBOUND_ALLOW_PRIVATE_URLS: z.string().default("false"),
   SEED_DEMO_DATA: z.string().default("false"),
   SMTP_HOST:   z.string().default("smtp.gmail.com"),
   SMTP_PORT:   z.coerce.number().default(587),
@@ -47,14 +64,12 @@ const envSchema = z.object({
   SMTP_FROM:   z.string().default("noreply@mascallnet.com"),
   SMTP_FROM_NAME: z.string().default("MAS Callnet HRMS"),
 
-  // Legacy MySQL Database
   LEGACY_MYSQL_HOST: z.string().default(""),
   LEGACY_MYSQL_PORT: z.coerce.number().default(3306),
   LEGACY_MYSQL_DATABASE: z.string().default(""),
   LEGACY_MYSQL_USER: z.string().default(""),
   LEGACY_MYSQL_PASSWORD: z.string().default(""),
 
-  // Legacy SQL Server (MSSQL) for historical billing data
   LEGACY_MSSQL_HOST:       z.string().default(""),
   LEGACY_MSSQL_PORT:       z.coerce.number().default(1433),
   LEGACY_MSSQL_DATABASE:   z.string().default(""),
@@ -63,7 +78,6 @@ const envSchema = z.object({
   LEGACY_MSSQL_ENCRYPT:    z.string().default("false"),
   LEGACY_MSSQL_TRUST_CERT: z.string().default("true"),
 
-  // Sync configuration
   LEGACY_SYNC_ENABLED: z.string().default("false"),
   LEGACY_SYNC_INTERVAL_MS: z.coerce.number().default(60000),
   LEGACY_SYNC_BATCH_SIZE: z.coerce.number().default(1000),
@@ -72,40 +86,25 @@ const envSchema = z.object({
   LEGACY_SYNC_RETRY_DELAY_MS: z.coerce.number().default(5000),
   LEGACY_CT_RETENTION_DAYS: z.coerce.number().default(2),
 
-  // Billing DB (db_bill) — READ-ONLY, source of truth for cost centres
-  BILL_DB_HOST:     z.string().default(""),
-  BILL_DB_PORT:     z.coerce.number().default(3306),
-  BILL_DB_USER:     z.string().default(""),
-  BILL_DB_PASSWORD: z.string().default(""),
-  BILL_DB_NAME:     z.string().default("db_bill"),
-
-  // Dialer DB (READ-ONLY for call data integration)
   DIALER_DB_HOST: z.string().default(""),
   DIALER_DB_PORT: z.coerce.number().default(3306),
   DIALER_DB_USER: z.string().default(""),
   DIALER_DB_PASSWORD: z.string().default(""),
   DIALER_DB_NAME: z.string().default(""),
 
-  // BGV webhook signature secret — HMAC-SHA256 of raw request body
   BGV_WEBHOOK_SECRET: z.string().optional(),
-
-  // BGV provider selection: "mock" (default/dev), "infinity_ai", "digio"
   BGV_PROVIDER: z.enum(["mock", "infinity_ai", "digio"]).default("mock"),
-
-  // Infinity AI BGV (https://api.infinityai.in) — set when BGV_PROVIDER=infinity_ai
   INFINITY_AI_API_URL: z.string().url().default("https://api.infinityai.in"),
   INFINITY_AI_API_KEY: z.string().optional(),
   INFINITY_AI_CLIENT_ID: z.string().optional(),
-
-  // Digio BGV / eSign / DigiLocker (https://api.digio.in) — set when BGV_PROVIDER=digio
+  INFINITY_AI_PORTAL_URL: z.string().url().default("http://candidates.theinfiniti.ai"),
   DIGIO_API_URL: z.string().url().default("https://api.digio.in"),
   DIGIO_CLIENT_ID: z.string().optional(),
   DIGIO_CLIENT_SECRET: z.string().optional(),
   DIGIO_WEBHOOK_SECRET: z.string().optional(),
-
-  // Shared HMAC secret for ATS form webhook endpoints (intake, bgv, doc-upload, confirmation, recruiter-devices).
-  // Google App Script sets this as X-ATS-Api-Key. Required in production; warn in dev if absent.
   ATS_FORM_API_KEY: z.string().optional(),
+  COURT_CHECK_API_URL: z.string().url().default("https://api.infinityai.in"),
+  COURT_CHECK_API_KEY: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -134,12 +133,20 @@ if (parsed.data.NODE_ENV === "production") {
     console.error("[FATAL] PAYROLL_BANK_KEY must be set to a secure value in production.");
     process.exit(1);
   }
+  if (parsed.data.ENCRYPTION_KEY === '0000000000000000000000000000000000000000000000000000000000000000') {
+    console.error('[FATAL] ENCRYPTION_KEY must be set to a secure 64-char hex value in production.');
+    process.exit(1);
+  }
   if (parsed.data.INTERNAL_DEMO_BYPASS === "true") {
     console.error("[FATAL] INTERNAL_DEMO_BYPASS must not be 'true' in production.");
     process.exit(1);
   }
   if (parsed.data.PORTAL_DEMO_BYPASS === "true") {
     console.error("[FATAL] PORTAL_DEMO_BYPASS must not be 'true' in production.");
+    process.exit(1);
+  }
+  if (parsed.data.OUTBOUND_ALLOW_PRIVATE_URLS === "true") {
+    console.error("[FATAL] OUTBOUND_ALLOW_PRIVATE_URLS must not be 'true' in production.");
     process.exit(1);
   }
   if (!parsed.data.BGV_WEBHOOK_SECRET) {
@@ -162,9 +169,11 @@ if (parsed.data.NODE_ENV === "production") {
 
 export const env = {
   ...parsed.data,
-  // Convert string boolean env vars to actual booleans
+  LMS_DB_USER: parsed.data.LMS_DB_USER || parsed.data.DB_USER,
+  LMS_DB_PASSWORD: parsed.data.LMS_DB_PASSWORD || parsed.data.DB_PASSWORD,
   LEGACY_SYNC_ENABLED: parsed.data.LEGACY_SYNC_ENABLED === 'true',
   LEGACY_SYNC_PARALLEL_DOMAINS: parsed.data.LEGACY_SYNC_PARALLEL_DOMAINS !== 'false',
   ENABLE_SCHEDULERS: parsed.data.ENABLE_SCHEDULERS === 'true',
+  OUTBOUND_ALLOW_PRIVATE_URLS: parsed.data.OUTBOUND_ALLOW_PRIVATE_URLS === 'true',
   SEED_DEMO_DATA: parsed.data.SEED_DEMO_DATA === 'true',
 };

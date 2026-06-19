@@ -17,21 +17,23 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { 
-  MoreHorizontal, 
-  Eye, 
-  Edit, 
-  FileText, 
+import {
+  MoreHorizontal,
+  Eye,
+  Edit,
+  FileText,
   ChevronDown,
   UserX,
   UserCheck,
   Mail,
   Download,
   UserCog,
-  Trash2
+  Trash2,
+  KeyRound
 } from "lucide-react";
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { SortDirection } from "@/hooks/useSorting";
+import { employeeStatusStyles } from "@/lib/statusStyles";
 
 export interface Employee {
   id: string;
@@ -41,6 +43,11 @@ export interface Employee {
   phone?: string | null;
   avatar?: string;
   department: string;
+  process: string;
+  branch: string;
+  costCentre: string;
+  reportingManager: string;
+  officialEmailCompliant: boolean;
   designation: string;
   joinDate: string;
   status: "active" | "inactive" | "onboarding" | "offboarded";
@@ -50,9 +57,10 @@ interface EmployeeTableProps {
   employees: Employee[];
   onView?: (employee: Employee) => void;
   onEdit?: (employee: Employee) => void;
-  
+  onResetPassword?: (employee: Employee) => void;
   onManageDocuments?: (employee: Employee) => void;
   isAdminOrHR?: boolean;
+  canResetPassword?: boolean;
   sortKey?: keyof Employee | null;
   sortDirection?: SortDirection;
   onSort?: (key: keyof Employee) => void;
@@ -62,20 +70,16 @@ interface EmployeeTableProps {
   onBulkAction?: (action: string, ids: string[]) => void;
 }
 
-const statusStyles = {
-  active: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
-  inactive: "bg-muted text-muted-foreground border-border",
-  onboarding: "bg-primary/10 text-primary border-primary/20",
-  offboarded: "bg-destructive/10 text-destructive border-destructive/20",
-};
+const statusStyles = employeeStatusStyles;
 
-export function EmployeeTable({ 
-  employees, 
-  onView, 
-  onEdit, 
-   
-  onManageDocuments, 
+export function EmployeeTable({
+  employees,
+  onView,
+  onEdit,
+  onResetPassword,
+  onManageDocuments,
   isAdminOrHR = false,
+  canResetPassword = false,
   sortKey,
   sortDirection,
   onSort,
@@ -212,6 +216,22 @@ export function EmployeeTable({
                     Department
                   </SortableTableHead>
                   <SortableTableHead
+                    sortKey="process"
+                    currentSortKey={sortKey ?? null}
+                    direction={sortKey === "process" ? sortDirection ?? null : null}
+                    onSort={handleSort}
+                  >
+                    Process / Cost Centre
+                  </SortableTableHead>
+                  <SortableTableHead
+                    sortKey="reportingManager"
+                    currentSortKey={sortKey ?? null}
+                    direction={sortKey === "reportingManager" ? sortDirection ?? null : null}
+                    onSort={handleSort}
+                  >
+                    Reporting Manager
+                  </SortableTableHead>
+                  <SortableTableHead
                     sortKey="designation"
                     currentSortKey={sortKey ?? null}
                     direction={sortKey === "designation" ? sortDirection ?? null : null}
@@ -241,6 +261,8 @@ export function EmployeeTable({
                   <TableHead className="w-[100px]">Emp. No.</TableHead>
                   <TableHead className="w-[260px]">Employee</TableHead>
                   <TableHead>Department</TableHead>
+                  <TableHead>Process / Cost Centre</TableHead>
+                  <TableHead>Reporting Manager</TableHead>
                   <TableHead>Designation</TableHead>
                   <TableHead>Join Date</TableHead>
                   <TableHead>Status</TableHead>
@@ -282,6 +304,11 @@ export function EmployeeTable({
                   </div>
                 </TableCell>
                 <TableCell className="text-muted-foreground">{employee.department}</TableCell>
+                <TableCell className="text-muted-foreground">
+                  <div className="font-medium text-slate-700">{employee.process}</div>
+                  <div className="text-xs text-slate-500">{employee.costCentre}</div>
+                </TableCell>
+                <TableCell className="text-muted-foreground">{employee.reportingManager}</TableCell>
                 <TableCell className="text-muted-foreground">{employee.designation}</TableCell>
                 <TableCell className="text-muted-foreground">{employee.joinDate}</TableCell>
                 <TableCell>
@@ -292,7 +319,12 @@ export function EmployeeTable({
                 <TableCell className="text-right">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        aria-label={`Open actions for ${employee.name}`}
+                      >
                         <MoreHorizontal className="h-4 w-4" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -310,6 +342,18 @@ export function EmployeeTable({
                           <DropdownMenuItem onClick={() => onManageDocuments?.(employee)}>
                             <FileText className="mr-2 h-4 w-4" />
                             Documents
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                      {canResetPassword && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => onResetPassword?.(employee)}
+                            className="text-amber-600 focus:text-amber-700"
+                          >
+                            <KeyRound className="mr-2 h-4 w-4" />
+                            Reset Password
                           </DropdownMenuItem>
                         </>
                       )}

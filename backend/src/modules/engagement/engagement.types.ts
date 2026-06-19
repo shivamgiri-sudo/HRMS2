@@ -302,6 +302,10 @@ export interface CreateKudosTemplateDTO {
 export interface KudosWithDetailsResponse extends KudosTransaction {
   sender_name?: string;
   receiver_name: string;
+  sender_code?: string;
+  receiver_code: string;
+  sender_full_name?: string;
+  receiver_full_name: string;
   template?: KudosMaster;
 }
 

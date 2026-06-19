@@ -15,18 +15,15 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Target, Plus, Loader2, Trash2, Edit2, Calendar } from "lucide-react";
 import { useGoals, useCreateGoal, useUpdateGoal, useDeleteGoal, Goal } from "@/hooks/usePerformance";
+import { goalStatusColors } from "@/lib/statusStyles";
 import { format } from "date-fns";
+import { parseLocalDate } from "@/lib/utils";
 
 interface GoalsManagerProps {
   employeeId: string;
 }
 
-const statusColors: Record<string, string> = {
-  not_started: "bg-muted text-muted-foreground",
-  in_progress: "bg-primary/10 text-primary border-primary/20",
-  completed: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
-  cancelled: "bg-destructive/10 text-destructive border-destructive/20",
-};
+const statusColors = goalStatusColors;
 
 const priorityColors: Record<string, string> = {
   low: "bg-muted text-muted-foreground",
@@ -124,7 +121,7 @@ export function GoalsManager({ employeeId }: GoalsManagerProps) {
                   <div className="flex flex-wrap gap-2">
                     <Badge variant="outline" className={statusColors[goal.status]}>{goal.status.replace("_", " ")}</Badge>
                     <Badge variant="outline" className={priorityColors[goal.priority]}>{goal.priority} priority</Badge>
-                    {goal.due_date && <Badge variant="outline" className="gap-1"><Calendar className="h-3 w-3" />{format(new Date(goal.due_date), "MMM d, yyyy")}</Badge>}
+                    {goal.due_date && <Badge variant="outline" className="gap-1"><Calendar className="h-3 w-3" />{format(parseLocalDate(goal.due_date), "MMM d, yyyy")}</Badge>}
                   </div>
                 </div>
               ))}

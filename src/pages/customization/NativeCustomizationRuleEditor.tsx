@@ -41,7 +41,7 @@ export default function NativeCustomizationRuleEditor() {
     queryKey: ['customization-rule', id],
     queryFn: async () => {
       if (!id) return null;
-      const res = await hrmsApi.get(`/customization/rules/${id}`);
+      const res = await hrmsApi.get(`/api/customization/rules/${id}`);
       return res.data;
     },
     enabled: isEditMode,
@@ -71,9 +71,9 @@ export default function NativeCustomizationRuleEditor() {
   const saveMutation = useMutation({
     mutationFn: async (data: any) => {
       if (isEditMode) {
-        return hrmsApi.patch(`/customization/rules/${id}`, data);
+        return hrmsApi.patch(`/api/customization/rules/${id}`, data);
       } else {
-        return hrmsApi.post('/customization/rules', data);
+        return hrmsApi.post('/api/customization/rules', data);
       }
     },
     onSuccess: () => {

@@ -8,6 +8,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
+import { parseLocalDate } from "@/lib/utils";
 
 export function LeaveCalendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -28,8 +29,8 @@ export function LeaveCalendar() {
   const handleNextMonth = () => setCurrentDate(addMonths(currentDate, 1));
 
   const formatLeaveDays = (startDate: string, endDate: string) => {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    const start = parseLocalDate(startDate);
+    const end = parseLocalDate(endDate);
     
     if (startDate === endDate) {
       return format(start, "d MMM");

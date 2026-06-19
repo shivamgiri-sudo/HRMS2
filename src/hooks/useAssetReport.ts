@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { format } from "date-fns";
+import { parseLocalDate } from "@/lib/utils";
 
 export interface AssetReportRecord {
   id: string;
@@ -45,9 +46,9 @@ export function useAssetReport() {
         category: asset.category,
         serialNumber: asset.serial_number || "-",
         status: asset.status,
-        purchaseDate: asset.purchase_date ? format(new Date(asset.purchase_date), "MMM d, yyyy") : "-",
+        purchaseDate: asset.purchase_date ? format(parseLocalDate(asset.purchase_date), "MMM d, yyyy") : "-",
         purchaseCost: Number(asset.purchase_cost) || 0,
-        warrantyEndDate: asset.warranty_end_date ? format(new Date(asset.warranty_end_date), "MMM d, yyyy") : "-",
+        warrantyEndDate: asset.warranty_end_date ? format(parseLocalDate(asset.warranty_end_date), "MMM d, yyyy") : "-",
         vendor: asset.vendor || "-",
         assignedTo: asset.assigned_to_name || "-",
       }));

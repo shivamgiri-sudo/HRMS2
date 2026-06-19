@@ -38,9 +38,11 @@ import { db } from "../src/db/mysql.js";
 import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
 import { payrollGapsService } from "../src/modules/payroll/payrollGaps.service.js";
 import { ffService } from "../src/modules/exit/ff.service.js";
+import { logSensitiveAction } from "../src/shared/auditLog.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
+const mockLogSensitiveAction = logSensitiveAction as ReturnType<typeof vi.fn>;
 
 const EMP_TOKEN = { Authorization: "Bearer employee.token" };
 
@@ -152,6 +154,62 @@ describe("e) Employee can view own payslip", () => {
       .set(EMP_TOKEN);
     expect(r.status).toBe(200);
     expect(r.body.data).toBeDefined();
+  });
+});
+
+describe("e2) Employee payslip history", () => {
+  it("rejects an invalid year before querying payroll data", async () => {
+    mockGetUser.mockResolvedValue({
+      data: { user: { id: "user-emp-a", email: "empA@mcn.com" } },
+      error: null,
+    });
+    mockExecute.mockResolvedValueOnce([[{ id: "emp-A", employee_code: "MCN001" }], []]);
+
+    const r = await request(app)
+      .get("/api/payroll/payslip/my?year=%25")
+      .set(EMP_TOKEN);
+
+    expect(r.status).toBe(400);
+    expect(r.body.message).toMatch(/invalid payslip year/i);
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns only the authenticated employee history and audits metadata", async () => {
+    mockGetUser.mockResolvedValue({
+      data: { user: { id: "user-emp-a", email: "empA@mcn.com" } },
+      error: null,
+    });
+    mockExecute
+      .mockResolvedValueOnce([[{ id: "emp-A", employee_code: "MCN001" }], []])
+      .mockResolvedValueOnce([[{
+        id: "line-1",
+        employee_id: "emp-A",
+        run_month: "2026-05",
+        gross_salary: 25000,
+        total_deductions: 2400,
+        net_salary: 22600,
+      }], []])
+      .mockResolvedValueOnce([[{
+        component_code: "BASIC",
+        component_name: "Basic Salary",
+        component_type: "earning",
+        amount: 15000,
+        taxable: 1,
+      }], []]);
+
+    const r = await request(app)
+      .get("/api/payroll/payslip/my?year=2026")
+      .set(EMP_TOKEN);
+
+    expect(r.status).toBe(200);
+    expect(r.body.data).toHaveLength(1);
+    expect(r.body.data[0].earnings).toHaveLength(1);
+    expect(mockLogSensitiveAction).toHaveBeenCalledWith(expect.objectContaining({
+      actor_user_id: "user-1",
+      action_type: "PAYSLIP_HISTORY_VIEWED",
+      entity_id: "emp-A",
+      change_summary: { year: "2026", statement_count: 1 },
+    }));
   });
 });
 

@@ -175,6 +175,7 @@ describe("POST /api/access/roles/assign", () => {
   it("assigns role and writes audit log for admin", async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: "u-admin", email: "admin@test.com" } }, error: null });
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);  // requireRole
+    mockExecute.mockResolvedValueOnce([[{ id: "u-target" }], []]);     // active user check
     mockExecute.mockResolvedValueOnce([[{ role_key: "tl" }], []]);     // catalog check
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);      // insert user_roles
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);      // audit log insert
@@ -188,6 +189,13 @@ describe("POST /api/access/roles/assign", () => {
       typeof sql === "string" && sql.includes("sensitive_action_log")
     );
     expect(auditCall).toBeDefined();
+  });
+
+  it("prevents a normal admin from assigning super_admin", async () => {
+    authAs("u-admin", ["admin"]);
+    const r = await request(app).post("/api/access/roles/assign").set(ADMIN_TOKEN)
+      .send({ user_id: "u-target", role_key: "super_admin" });
+    expect(r.status).toBe(403);
   });
 });
 
@@ -205,6 +213,13 @@ describe("POST /api/access/roles/revoke", () => {
       typeof sql === "string" && sql.includes("sensitive_action_log")
     );
     expect(auditCall).toBeDefined();
+  });
+
+  it("prevents an administrator from revoking their own role", async () => {
+    authAs("u-admin", ["admin"]);
+    const r = await request(app).post("/api/access/roles/revoke").set(ADMIN_TOKEN)
+      .send({ user_id: "user-1", role_key: "admin" });
+    expect(r.status).toBe(400);
   });
 });
 

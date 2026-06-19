@@ -72,6 +72,8 @@ export interface SalaryPrepLine {
   lwp_days: number;
   late_marks: number;
   dialer_hours: number | null;
+  overtime_hours: number | null;
+  overtime_amount: number | null;
   gross_salary: number;
   total_deductions: number;
   net_salary: number;

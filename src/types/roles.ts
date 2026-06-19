@@ -1,4 +1,5 @@
 export type AppRole =
+  | "super_admin"
   | "admin"
   | "hr"
   | "ceo"

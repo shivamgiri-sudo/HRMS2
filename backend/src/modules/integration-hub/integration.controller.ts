@@ -6,6 +6,7 @@ import {
   createIntegrationSchema,
   runFiltersSchema,
   updateIntegrationSchema,
+  upsertTableMapSchema,
   upsertScheduleSchema,
 } from "./integration.validation.js";
 
@@ -39,9 +40,28 @@ function parseConfigJson(value: unknown): Record<string, unknown> | null | undef
   }
 }
 
+const SENSITIVE_CONFIG_KEY = /(password|passphrase|private[_-]?key|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization)/i;
+
+function sanitizeConfig(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeConfig);
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !SENSITIVE_CONFIG_KEY.test(key))
+      .map(([key, item]) => [key, sanitizeConfig(item)])
+  );
+}
+
 function connectorDto(record: any) {
+  const {
+    encrypted_credentials: _encryptedCredentials,
+    config_json: configJson,
+    ...safeRecord
+  } = record;
   return {
-    ...record,
+    ...safeRecord,
+    config_json: sanitizeConfig(configJson),
     key: record.integration_key,
     name: record.integration_name,
     type: integrationTypeToUi(record.integration_type),
@@ -115,7 +135,14 @@ export const integrationController = {
       connector_key: run.integration_key,
       connector_name: run.integration_name ?? run.integration_key,
       type: integrationTypeToUi(run.integration_type),
-      records_synced: Number(run.rows_promoted ?? run.rows_staged ?? run.rows_fetched ?? 0),
+      status: run.status === "complete"
+        ? (Number(run.rows_failed ?? 0) > 0 ? "partial" : "success")
+        : run.status,
+      records_synced: Math.max(
+        Number(run.rows_promoted ?? 0),
+        Number(run.rows_staged ?? 0),
+        Number(run.rows_fetched ?? 0),
+      ),
       errors: Number(run.rows_failed ?? 0),
       created_at: run.started_at,
     }));
@@ -141,6 +168,36 @@ export const integrationController = {
         is_active: Boolean(map.active_status),
       })),
     });
+  },
+
+  async listTableMaps(req: AuthenticatedRequest, res: Response) {
+    const data = await integrationService.listTableMaps(req.params.key);
+    return res.json({
+      success: true,
+      data: data.map((map) => ({
+        ...map,
+        is_active: Boolean(map.active_status),
+      })),
+    });
+  },
+
+  async upsertTableMap(req: AuthenticatedRequest, res: Response) {
+    const input = upsertTableMapSchema.parse({
+      sourceTable: req.body?.sourceTable ?? req.body?.source_table,
+      targetTable: req.body?.targetTable ?? req.body?.target_table,
+      syncMode: req.body?.syncMode ?? req.body?.sync_mode,
+    });
+    const data = await integrationService.upsertTableMap(req.params.key, input, req.authUser!.id);
+    return res.json({ success: true, data, message: "Table mapping saved" });
+  },
+
+  async mappingCatalog(_req: AuthenticatedRequest, res: Response) {
+    return res.json({ success: true, data: integrationService.getMappingCatalog() });
+  },
+
+  async sourceSchema(req: AuthenticatedRequest, res: Response) {
+    const data = await integrationService.inspectSourceSchema(req.params.key);
+    return res.json({ success: true, data });
   },
 
   async confirmFieldMap(req: AuthenticatedRequest, res: Response) {

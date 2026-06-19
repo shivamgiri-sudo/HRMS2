@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { leaveTypeColors, getLeaveColor } from "@/lib/leaveColors";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -8,23 +9,30 @@ import { Calendar } from "@/components/ui/calendar";
 import { ChevronLeft, ChevronRight, CalendarDays, Users } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
-import { 
-  format, 
-  startOfMonth, 
-  endOfMonth, 
-  addMonths, 
-  subMonths, 
-  eachDayOfInterval, 
-  parseISO, 
+import {
+  format,
+  startOfMonth,
+  endOfMonth,
+  addMonths,
+  subMonths,
+  eachDayOfInterval,
+  parseISO,
   isWithinInterval,
-  isSameDay
+  isSameDay,
 } from "date-fns";
+import { normalizeDate } from "@/lib/utils";
 
 interface LeaveData {
   id: string;
-  start_date: string;
-  end_date: string;
-  days_count: number;
+  start_date?: string;
+  end_date?: string;
+  from_date?: string;
+  to_date?: string;
+  days_count?: number;
+  total_days?: number;
+  employee_name?: string;
+  avatar_url?: string | null;
+  leave_type_name?: string;
   employee: {
     first_name: string;
     last_name: string;
@@ -35,26 +43,56 @@ interface LeaveData {
   } | null;
 }
 
-const leaveTypeColors: Record<string, string> = {
-  Annual: "bg-emerald-500",
-  Sick: "bg-rose-500",
-  Casual: "bg-sky-500",
-  Unpaid: "bg-slate-500",
-  Maternity: "bg-pink-500",
-  Paternity: "bg-indigo-500",
-  Bereavement: "bg-violet-500",
-  Compensatory: "bg-amber-500",
-  "Work From Home": "bg-cyan-500",
-  Marriage: "bg-fuchsia-500",
-};
+function normalizeLeave(row: any): LeaveData {
+  if (row.start_date && row.end_date && row.employee && row.leave_type) return row as LeaveData;
+  const employeeName = String(row.employee_name ?? "Unknown").trim();
+  const [firstName = "Unknown", ...rest] = employeeName.split(/\s+/);
+  return {
+    ...row,
+    start_date: row.from_date ?? row.start_date,
+    end_date: row.to_date ?? row.end_date,
+    days_count: Number(row.total_days ?? row.days_count ?? 0),
+    employee: {
+      first_name: firstName,
+      last_name: rest.join(" "),
+      avatar_url: row.avatar_url ?? null,
+    },
+    leave_type: {
+      name: row.leave_type_name ?? row.leave_type?.name ?? "Leave",
+    },
+  };
+}
 
-const fallbackColors = ["bg-teal-500", "bg-orange-500", "bg-lime-500", "bg-purple-500"];
+async function fetchApprovedLeavesForYear(year: number): Promise<LeaveData[]> {
+  const limit = 100;
+  const first = await hrmsApi.get<{success:boolean;data:any[];total?:number}>(
+    `/api/leave/requests?status=approved&year=${year}&page=1&limit=${limit}`
+  );
+  const rows = first.data ?? [];
+  const total = Number(first.total ?? rows.length);
+  const totalPages = Math.ceil(total / limit);
 
-const getLeaveColor = (type: string): string => {
-  if (leaveTypeColors[type]) return leaveTypeColors[type];
-  const hash = type.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  return fallbackColors[hash % fallbackColors.length];
-};
+  const remaining = totalPages > 1
+    ? await Promise.all(
+        Array.from({ length: totalPages - 1 }, (_, index) =>
+          hrmsApi.get<{success:boolean;data:any[]}>(
+            `/api/leave/requests?status=approved&year=${year}&page=${index + 2}&limit=${limit}`
+          )
+        )
+      )
+    : [];
+
+  const byId = new Map<string, LeaveData>();
+  for (const raw of rows.concat(...remaining.map((page) => page.data ?? []))) {
+    const leave = normalizeLeave(raw);
+    const key = String(leave.id ?? "");
+    if (!key || byId.has(key) || !leave.start_date || !leave.end_date) continue;
+    byId.set(key, leave);
+  }
+  return Array.from(byId.values());
+}
+
+// leaveTypeColors, leaveColorFallbacks, getLeaveColor imported from @/lib/leaveColors
 
 export function LeaveCalendarView() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -67,23 +105,24 @@ export function LeaveCalendarView() {
   const { data: leaves = [], isLoading } = useQuery({
     queryKey: ["leave-calendar-view", format(monthStart, "yyyy-MM-dd")],
     queryFn: async () => {
-      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/leave/requests");
-      return (res.data ?? []) as LeaveData[];
+      return fetchApprovedLeavesForYear(currentDate.getFullYear());
     },
   });
 
   // Generate all dates that have leaves
   const leaveDates = leaves.flatMap((leave) => {
-    const start = parseISO(leave.start_date);
-    const end = parseISO(leave.end_date);
+    const start = parseISO(normalizeDate(leave.start_date ?? ""));
+    const end = parseISO(normalizeDate(leave.end_date ?? ""));
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [];
     return eachDayOfInterval({ start, end });
   });
 
   // Get leaves for selected date
   const selectedDateLeaves = selectedDate
     ? leaves.filter((leave) => {
-        const start = parseISO(leave.start_date);
-        const end = parseISO(leave.end_date);
+        const start = parseISO(normalizeDate(leave.start_date ?? ""));
+        const end = parseISO(normalizeDate(leave.end_date ?? ""));
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
         return isWithinInterval(selectedDate, { start, end });
       })
     : [];
@@ -203,10 +242,10 @@ export function LeaveCalendarView() {
               </p>
               {selectedDateLeaves.map((leave) => {
                 const fullName = leave.employee 
-                  ? `${leave.employee.first_name} ${leave.employee.last_name}` 
+                  ? `${leave.employee.first_name} ${leave.employee.last_name ?? ""}`.trim()
                   : "Unknown";
                 const initials = leave.employee 
-                  ? `${leave.employee.first_name[0]}${leave.employee.last_name[0]}`.toUpperCase()
+                  ? `${leave.employee.first_name?.[0] ?? ""}${leave.employee.last_name?.[0] ?? ""}`.toUpperCase() || "?"
                   : "??";
                 const leaveType = leave.leave_type?.name || "Leave";
                 
@@ -229,8 +268,8 @@ export function LeaveCalendarView() {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{fullName}</p>
                       <p className="text-xs text-muted-foreground">
-                        {format(parseISO(leave.start_date), "MMM d")} - {format(parseISO(leave.end_date), "MMM d")}
-                        <span className="ml-1">({leave.days_count} day{leave.days_count > 1 ? "s" : ""})</span>
+                        {format(parseISO(normalizeDate(leave.start_date ?? "")), "MMM d")} - {format(parseISO(normalizeDate(leave.end_date ?? "")), "MMM d")}
+                        <span className="ml-1">({leave.days_count ?? 0} day{Number(leave.days_count ?? 0) > 1 ? "s" : ""})</span>
                       </p>
                     </div>
                     <Badge 

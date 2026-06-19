@@ -10,11 +10,15 @@ import {
   Trophy,
   Users,
   X,
+  TrendingUp,
+  Activity,
+  Target,
+  Zap,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 type KpiFamily = "operations" | "quality" | "performance" | "custom";
 
@@ -44,14 +48,6 @@ interface LeaderboardEntry {
   rating: string;
 }
 
-interface EmployeeScore {
-  employee_id: string;
-  employee_code: string;
-  full_name: string;
-  scores: Record<string, number | null>;
-  overall: number;
-}
-
 interface Process {
   id: string;
   process_name: string;
@@ -63,10 +59,6 @@ interface TniCreated {
   need_type: string;
   status: string;
 }
-
-type ScoreRow = LeaderboardEntry & {
-  metric_scores?: Record<string, number>;
-};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -99,46 +91,7 @@ function scoreBadge(pct: number): string {
   return "bg-red-50 text-red-700 border border-red-200";
 }
 
-function vsTargetBadge(actual: number | null, target: number, direction: string): string {
-  if (actual === null) return "bg-slate-100 text-slate-500";
-  const achievement = direction === "lower_is_better"
-    ? (target / actual) * 100
-    : (actual / target) * 100;
-  if (achievement >= 90) return "bg-emerald-50 text-emerald-700";
-  if (achievement >= 75) return "bg-amber-50 text-amber-700";
-  return "bg-red-50 text-red-700";
-}
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function StatCard({
-  title,
-  value,
-  sub,
-  icon,
-  tone,
-}: {
-  title: string;
-  value: string | number;
-  sub?: string;
-  icon: React.ReactNode;
-  tone: string;
-}) {
-  return (
-    <div className="rounded-3xl border bg-white p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm font-semibold text-slate-500">{title}</p>
-          <p className="mt-2 text-3xl font-black tracking-tight text-slate-950">{value}</p>
-          {sub && <p className="mt-1 text-xs font-semibold text-slate-400">{sub}</p>}
-        </div>
-        <div className={`rounded-2xl p-3 ${tone}`}>{icon}</div>
-      </div>
-    </div>
-  );
-}
-
-// ─── TNI Modal ────────────────────────────────────────────────────────────────
+// ─── TNI Modal ──────────────────────────────────────────────────────────────
 
 interface TniModalProps {
   employeeId: string;
@@ -180,29 +133,29 @@ function TniModal({ employeeId, employeeName, metrics, onClose, onCreated }: Tni
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-md rounded-3xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b p-6">
+      <div className="w-full max-w-md rounded-[2rem] bg-white shadow-2xl shadow-slate-900/20">
+        <div className="flex items-center justify-between border-b border-slate-100 p-6">
           <div>
             <h2 className="text-lg font-black text-slate-950">Create TNI</h2>
             <p className="text-sm text-slate-500">{employeeName}</p>
           </div>
-          <button onClick={onClose} className="cursor-pointer text-slate-400 hover:text-slate-700 transition-colors">
+          <button onClick={onClose} className="cursor-pointer text-slate-400 hover:text-slate-700 transition-colors rounded-full hover:bg-slate-100 p-1">
             <X className="h-5 w-5" />
           </button>
         </div>
         <div className="space-y-4 p-6">
           {error && (
-            <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <div className="flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
               <AlertTriangle className="h-4 w-4 flex-shrink-0" />
               {error}
             </div>
           )}
           <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Need Type</label>
+            <label className="block text-sm font-bold text-slate-700 mb-1.5">Need Type</label>
             <select
               value={form.need_type}
               onChange={(e) => setForm({ ...form, need_type: e.target.value })}
-              className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400"
+              className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors bg-white"
             >
               <option value="product_knowledge">Product Knowledge</option>
               <option value="soft_skills">Soft Skills</option>
@@ -212,11 +165,11 @@ function TniModal({ employeeId, employeeName, metrics, onClose, onCreated }: Tni
             </select>
           </div>
           <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Linked KPI Metric</label>
+            <label className="block text-sm font-bold text-slate-700 mb-1.5">Linked KPI Metric</label>
             <select
               value={form.metric_id}
               onChange={(e) => setForm({ ...form, metric_id: e.target.value })}
-              className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400"
+              className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors bg-white"
             >
               <option value="">None</option>
               {metrics.map((m) => (
@@ -225,11 +178,11 @@ function TniModal({ employeeId, employeeName, metrics, onClose, onCreated }: Tni
             </select>
           </div>
           <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Priority</label>
+            <label className="block text-sm font-bold text-slate-700 mb-1.5">Priority</label>
             <select
               value={form.priority}
               onChange={(e) => setForm({ ...form, priority: e.target.value })}
-              className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400"
+              className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors bg-white"
             >
               <option value="low">Low</option>
               <option value="medium">Medium</option>
@@ -238,27 +191,27 @@ function TniModal({ employeeId, employeeName, metrics, onClose, onCreated }: Tni
             </select>
           </div>
           <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Description</label>
+            <label className="block text-sm font-bold text-slate-700 mb-1.5">Description</label>
             <textarea
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               rows={3}
               placeholder="Describe the training need…"
-              className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 resize-none transition-colors"
+              className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-blue-400 resize-none transition-colors"
             />
           </div>
         </div>
-        <div className="flex gap-3 border-t p-6">
+        <div className="flex gap-3 border-t border-slate-100 p-6">
           <button
             onClick={onClose}
-            className="flex-1 cursor-pointer rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+            className="flex-1 cursor-pointer rounded-2xl border border-slate-200 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={submit}
             disabled={saving}
-            className="flex-1 cursor-pointer rounded-2xl bg-amber-600 py-3 text-sm font-bold text-white hover:bg-amber-700 transition-colors disabled:opacity-50"
+            className="flex-1 cursor-pointer rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 py-3 text-sm font-bold text-white hover:shadow-lg transition-all disabled:opacity-50"
           >
             {saving ? "Creating…" : "Create TNI"}
           </button>
@@ -268,9 +221,20 @@ function TniModal({ employeeId, employeeName, metrics, onClose, onCreated }: Tni
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// ─── Main Page ──────────────────────────────────────────────────────────────
 
-const OPS_DISPLAY_CODES = ["AHT", "ADHERENCE", "SHRINKAGE", "FCR", "OCCUPANCY"];
+const OPS_DISPLAY_CODES = [
+  "TALK_TIME",      // Talk Time - Average talk duration per call
+  "NET_LOGIN",      // Net Login - Total logged-in time
+  "DIALS",          // HD (Handling/Dials) - Total calls handled
+  "TOTAL_CALLS",    // Total Calls - Total calls (inbound + outbound)
+  "QUALITY_SCORE",  // Overall Quality Score - Call quality assessment
+  "AHT",            // Average Handle Time
+  "ADHERENCE",      // Schedule Adherence
+  "SHRINKAGE",      // Workforce Shrinkage
+  "FCR",            // First Call Resolution
+  "OCCUPANCY"       // Agent Occupancy
+];
 
 const TNI_THRESHOLD = 75;
 
@@ -292,8 +256,6 @@ export default function NativeOperationsKPI() {
   const [tniTarget, setTniTarget] = useState<{ employee_id: string; full_name: string } | null>(null);
   const [createdTnis, setCreatedTnis] = useState<Set<string>>(new Set());
 
-  // ─── Loaders ───────────────────────────────────────────────────────────────
-
   const loadProcesses = useCallback(async () => {
     try {
       const res = await hrmsApi.get<{ success: boolean; data: Process[] }>("/api/processes");
@@ -302,7 +264,7 @@ export default function NativeOperationsKPI() {
         setSelectedProcess((res.data ?? [])[0].id);
       }
     } catch {
-      // Processes are optional — continue without them
+      // Processes are optional
     }
   }, [selectedProcess]);
 
@@ -316,7 +278,7 @@ export default function NativeOperationsKPI() {
       );
       setMetrics(metricsRes.data ?? []);
 
-      const leaderboardParams = new URLSearchParams({ period, family: "operations" });
+      const leaderboardParams = new URLSearchParams({ period, family: "operations", limit: "500" });
       if (selectedProcess) leaderboardParams.set("process_id", selectedProcess);
 
       const lbRes = await hrmsApi.get<{ data: LeaderboardEntry[] }>(
@@ -346,8 +308,6 @@ export default function NativeOperationsKPI() {
   useEffect(() => { void loadProcesses(); }, []);
   useEffect(() => { void loadData(); }, [loadData]);
 
-  // ─── Derived ───────────────────────────────────────────────────────────────
-
   const displayMetrics = metrics.filter((m) => OPS_DISPLAY_CODES.includes(m.metric_code));
 
   const configMap = new Map<string, ProcessConfig>(
@@ -367,36 +327,49 @@ export default function NativeOperationsKPI() {
     setCreatedTnis((prev) => new Set(prev).add(tni.employee_id));
   };
 
-  // ─── Render ────────────────────────────────────────────────────────────────
-
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        {/* Header */}
-        <div>
-          <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">KPI</p>
-          <h1 className="mt-2 text-3xl font-black text-slate-950">Operations KPI Dashboard</h1>
-          <p className="mt-2 max-w-4xl text-slate-600">
-            AHT, Adherence, Shrinkage, FCR and other operations metrics — scored by process managers and WFM.
-          </p>
+      <main className="space-y-8 p-6 lg:p-8">
+        {/* Hero */}
+        <div className="relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-700 p-8 text-white shadow-2xl shadow-indigo-200/40">
+          <div className="absolute -right-10 -top-10 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
+          <div className="absolute -bottom-10 -left-10 h-48 w-48 rounded-full bg-pink-400/20 blur-2xl" />
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-white/20 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
+                <Target className="h-3.5 w-3.5" /> Operations
+              </div>
+              <h1 className="text-4xl font-black tracking-tight">Operations KPI Dashboard</h1>
+              <p className="mt-2 max-w-2xl text-blue-100">
+                AHT, Adherence, Shrinkage, FCR and other operations metrics — scored by process managers and WFM.
+              </p>
+            </div>
+            <button
+              onClick={() => void loadData()}
+              disabled={loading}
+              className="inline-flex items-center gap-2 rounded-2xl bg-white/20 px-4 py-2.5 text-sm font-bold text-white backdrop-blur-sm hover:bg-white/30 transition-all disabled:opacity-50"
+            >
+              <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          </div>
         </div>
 
         {message && (
-          <div className="flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800">
-            <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-            {message}
+          <div className="flex items-center gap-3 rounded-2xl bg-red-50 border border-red-100 p-4 text-sm font-bold text-red-800">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0" /> {message}
           </div>
         )}
 
         {/* Filters */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-4 rounded-2xl bg-white border border-slate-200 p-4 shadow-sm">
           {processes.length > 0 && (
             <div className="flex items-center gap-2">
-              <label className="text-sm font-semibold text-slate-600">Process:</label>
+              <label className="text-sm font-bold text-slate-700">Process:</label>
               <select
                 value={selectedProcess}
                 onChange={(e) => setSelectedProcess(e.target.value)}
-                className="rounded-xl border px-3 py-2 text-sm outline-none focus:border-blue-400 bg-white"
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 bg-white transition-colors"
               >
                 <option value="">All Processes</option>
                 {processes.map((p) => (
@@ -406,86 +379,80 @@ export default function NativeOperationsKPI() {
             </div>
           )}
           <div className="flex items-center gap-2">
-            <label className="text-sm font-semibold text-slate-600">Period:</label>
+            <label className="text-sm font-bold text-slate-700">Period:</label>
             <input
               type="month"
               value={period}
               onChange={(e) => setPeriod(e.target.value)}
-              className="rounded-xl border px-3 py-2 text-sm outline-none focus:border-blue-400"
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 transition-colors"
             />
           </div>
-          <div className="flex-1" />
-          <button
-            onClick={() => void loadData()}
-            disabled={loading}
-            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
         </div>
 
-        {/* Summary stat cards */}
+        {/* Stat Cards */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
             title="Employees Scored"
             value={leaderboard.length}
             sub={`Period: ${period}`}
             icon={<Users className="h-5 w-5" />}
-            tone="bg-blue-50 text-blue-700"
+            color="from-blue-400 to-indigo-500"
           />
           <StatCard
             title="Avg Ops Score"
             value={`${avgScore}%`}
             sub="Weighted across metrics"
             icon={<Trophy className="h-5 w-5" />}
-            tone="bg-amber-50 text-amber-700"
+            color="from-amber-400 to-orange-500"
           />
           <StatCard
             title="Top Performer"
             value={topPerformer ? topPerformer.full_name.split(" ")[0] : "—"}
             sub={topPerformer ? `${topPerformer.weighted_score_pct}%` : undefined}
             icon={<CheckCircle2 className="h-5 w-5" />}
-            tone="bg-emerald-50 text-emerald-700"
+            color="from-emerald-400 to-teal-500"
           />
           <StatCard
             title="Flagged for TNI"
             value={flagged.length}
             sub={`Below ${TNI_THRESHOLD}% threshold`}
             icon={<AlertTriangle className="h-5 w-5" />}
-            tone="bg-red-50 text-red-700"
+            color="from-rose-400 to-pink-500"
           />
         </div>
 
-        {/* Process summary bar — per-metric averages vs targets */}
+        {/* Process Metric Targets */}
         {processConfig.length > 0 && (
-          <div className="rounded-3xl border bg-white p-6 shadow-sm">
-            <h2 className="mb-4 font-black text-slate-950">Process Metric Targets</h2>
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/40">
+            <h2 className="text-xl font-black text-slate-950 mb-4 flex items-center gap-2">
+              <Target className="h-5 w-5 text-blue-600" /> Process Metric Targets
+            </h2>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {processConfig.map((cfg) => {
                 const metric = metrics.find((m) => m.id === cfg.metric_id);
                 return (
-                  <div key={cfg.metric_id} className="rounded-2xl border bg-slate-50 p-4">
-                    <p className="text-xs font-black uppercase tracking-wider text-slate-400 mb-1">
-                      {cfg.metric_code}
-                    </p>
-                    <p className="font-bold text-slate-800">{cfg.metric_name}</p>
-                    <div className="mt-2 flex items-center gap-2">
-                      <span className="text-xs text-slate-500">Target:</span>
-                      <span className="text-sm font-bold text-blue-700">
+                  <div key={cfg.metric_id} className="rounded-2xl border border-slate-100 bg-slate-50 p-5 hover:shadow-md transition-all hover:-translate-y-0.5">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="h-2 w-2 rounded-full bg-blue-500" />
+                      <p className="text-xs font-black uppercase tracking-wider text-slate-400">{cfg.metric_code}</p>
+                    </div>
+                    <p className="font-bold text-slate-900 text-lg">{cfg.metric_name}</p>
+                    <div className="mt-3 flex items-center gap-2">
+                      <span className="text-xs text-slate-500 font-medium">Target:</span>
+                      <span className="text-sm font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-lg">
                         {formatMetricValue(cfg.target_value, cfg.unit, cfg.metric_code)}
                       </span>
                     </div>
                     {cfg.min_threshold !== null && (
                       <div className="mt-1 flex items-center gap-2">
-                        <span className="text-xs text-slate-500">Min threshold:</span>
+                        <span className="text-xs text-slate-500 font-medium">Min threshold:</span>
                         <span className="text-sm font-semibold text-slate-600">
                           {formatMetricValue(cfg.min_threshold, cfg.unit, cfg.metric_code)}
                         </span>
                       </div>
                     )}
                     {metric && (
-                      <p className="mt-1 text-xs text-slate-400 capitalize">
+                      <p className="mt-2 text-xs text-slate-400 capitalize font-medium">
                         {metric.direction.replace(/_/g, " ")}
                       </p>
                     )}
@@ -496,24 +463,26 @@ export default function NativeOperationsKPI() {
           </div>
         )}
 
-        {/* Key Metrics Display — AHT / Adherence / Shrinkage / FCR / Occupancy */}
+        {/* Key Operations Metrics */}
         {displayMetrics.length > 0 && (
-          <div className="rounded-3xl border bg-white p-6 shadow-sm">
-            <h2 className="mb-4 font-black text-slate-950">Key Operations Metrics</h2>
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/40">
+            <h2 className="text-xl font-black text-slate-950 mb-4 flex items-center gap-2">
+              <Activity className="h-5 w-5 text-violet-600" /> Key Operations Metrics
+            </h2>
             <div className="flex flex-wrap gap-3">
               {displayMetrics.map((m) => {
                 const cfg = configMap.get(m.metric_code);
                 return (
                   <div
                     key={m.id}
-                    className="flex items-center gap-3 rounded-2xl border bg-slate-50 px-5 py-3"
+                    className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-5 py-3 hover:bg-blue-50 transition-colors"
                   >
                     <Clock className="h-4 w-4 text-blue-500 flex-shrink-0" />
                     <div>
                       <p className="text-xs font-black uppercase tracking-wider text-slate-400">{m.metric_code}</p>
-                      <p className="text-sm font-bold text-slate-800">{m.metric_name}</p>
+                      <p className="text-sm font-bold text-slate-900">{m.metric_name}</p>
                       {cfg && (
-                        <p className="text-xs text-slate-500">
+                        <p className="text-xs text-slate-500 mt-0.5">
                           Target: {formatMetricValue(cfg.target_value, cfg.unit, m.metric_code)}
                         </p>
                       )}
@@ -525,11 +494,13 @@ export default function NativeOperationsKPI() {
           </div>
         )}
 
-        {/* Team Leaderboard Table */}
-        <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
-          <div className="border-b p-5">
-            <h2 className="font-black text-slate-950">Team Operations Leaderboard</h2>
-            <p className="text-sm text-slate-500">
+        {/* Leaderboard */}
+        <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-lg shadow-slate-200/40">
+          <div className="border-b border-slate-100 p-6">
+            <h2 className="text-xl font-black text-slate-950 flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-blue-600" /> Team Operations Leaderboard
+            </h2>
+            <p className="text-sm text-slate-500 mt-1">
               {leaderboard.length} employee(s) scored — {period}
             </p>
           </div>
@@ -551,18 +522,25 @@ export default function NativeOperationsKPI() {
               <table className="w-full min-w-[600px] text-sm">
                 <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                   <tr>
-                    <th className="p-4 font-semibold">Rank</th>
-                    <th className="p-4 font-semibold">Employee</th>
-                    <th className="p-4 font-semibold">Ops Score</th>
-                    <th className="p-4 font-semibold">Rating</th>
-                    <th className="p-4 font-semibold">vs Target</th>
+                    <th className="p-4 font-bold">Rank</th>
+                    <th className="p-4 font-bold">Employee</th>
+                    <th className="p-4 font-bold">Ops Score</th>
+                    <th className="p-4 font-bold">Rating</th>
+                    <th className="p-4 font-bold">vs Target</th>
                   </tr>
                 </thead>
                 <tbody>
                   {leaderboard.map((entry, idx) => (
-                    <tr key={entry.employee_id} className="border-t hover:bg-slate-50/80 transition-colors">
+                    <tr key={entry.employee_id} className="border-t border-slate-100 hover:bg-slate-50/80 transition-colors">
                       <td className="p-4">
-                        <span className="text-sm font-black text-slate-400">#{idx + 1}</span>
+                        <span className={`inline-flex h-8 w-8 items-center justify-center rounded-lg text-xs font-black ${
+                          idx === 0 ? "bg-amber-100 text-amber-700" :
+                          idx === 1 ? "bg-slate-200 text-slate-700" :
+                          idx === 2 ? "bg-orange-100 text-orange-700" :
+                          "bg-slate-100 text-slate-500"
+                        }`}>
+                          #{idx + 1}
+                        </span>
                       </td>
                       <td className="p-4">
                         <div className="font-bold text-slate-950">{entry.full_name}</div>
@@ -581,16 +559,12 @@ export default function NativeOperationsKPI() {
                       <td className="p-4">
                         <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
                           entry.weighted_score_pct >= 90
-                            ? "bg-emerald-50 text-emerald-700"
+                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                             : entry.weighted_score_pct >= 75
-                            ? "bg-amber-50 text-amber-700"
-                            : "bg-red-50 text-red-700"
+                            ? "bg-amber-50 text-amber-700 border border-amber-200"
+                            : "bg-red-50 text-red-700 border border-red-200"
                         }`}>
-                          {entry.weighted_score_pct >= 90
-                            ? "On Target"
-                            : entry.weighted_score_pct >= 75
-                            ? "Near Target"
-                            : "Below Target"}
+                          {entry.weighted_score_pct >= 90 ? "On Target" : entry.weighted_score_pct >= 75 ? "Near Target" : "Below Target"}
                         </span>
                       </td>
                     </tr>
@@ -601,13 +575,15 @@ export default function NativeOperationsKPI() {
           )}
         </div>
 
-        {/* TNI Section — employees below threshold */}
-        <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
-          <div className="border-b p-5">
+        {/* TNI Section */}
+        <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-lg shadow-slate-200/40">
+          <div className="border-b border-slate-100 p-6">
             <div className="flex items-center gap-3">
-              <BookOpen className="h-5 w-5 text-amber-600" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-100 text-amber-600">
+                <BookOpen className="h-5 w-5" />
+              </div>
               <div>
-                <h2 className="font-black text-slate-950">Training Needs (TNI)</h2>
+                <h2 className="text-xl font-black text-slate-950">Training Needs (TNI)</h2>
                 <p className="text-sm text-slate-500">
                   Employees with Operations KPI below {TNI_THRESHOLD}% — {flagged.length} flagged
                 </p>
@@ -617,19 +593,19 @@ export default function NativeOperationsKPI() {
 
           {flagged.length === 0 ? (
             <div className="py-10 text-center text-slate-400">
-              <CheckCircle2 className="mx-auto mb-3 h-9 w-9 text-emerald-400 opacity-80" />
-              <p className="font-semibold text-emerald-700">
+              <CheckCircle2 className="mx-auto mb-3 h-9 w-9 text-emerald-400" />
+              <p className="font-bold text-emerald-700">
                 All employees are above the {TNI_THRESHOLD}% threshold.
               </p>
             </div>
           ) : (
-            <div className="divide-y">
+            <div className="divide-y divide-slate-100">
               {flagged.map((entry) => {
                 const alreadyCreated = createdTnis.has(entry.employee_id);
                 return (
                   <div
                     key={entry.employee_id}
-                    className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center"
+                    className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center hover:bg-slate-50/50 transition-colors"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
@@ -647,7 +623,7 @@ export default function NativeOperationsKPI() {
                     </div>
                     <div className="flex items-center gap-2 self-start sm:self-auto">
                       {alreadyCreated ? (
-                        <span className="inline-flex items-center gap-1.5 rounded-2xl bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-700">
+                        <span className="inline-flex items-center gap-1.5 rounded-2xl bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-700 border border-emerald-200">
                           <CheckCircle2 className="h-3.5 w-3.5" />
                           TNI Created
                         </span>
@@ -656,7 +632,7 @@ export default function NativeOperationsKPI() {
                           onClick={() =>
                             setTniTarget({ employee_id: entry.employee_id, full_name: entry.full_name })
                           }
-                          className="inline-flex cursor-pointer items-center gap-2 rounded-2xl bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-700 transition-colors"
+                          className="inline-flex cursor-pointer items-center gap-2 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 px-4 py-2 text-xs font-bold text-white hover:shadow-lg transition-all"
                         >
                           <Plus className="h-3.5 w-3.5" />
                           Create TNI
@@ -669,7 +645,7 @@ export default function NativeOperationsKPI() {
             </div>
           )}
         </div>
-      </div>
+      </main>
 
       {/* TNI Modal */}
       {tniTarget && (
@@ -682,5 +658,36 @@ export default function NativeOperationsKPI() {
         />
       )}
     </DashboardLayout>
+  );
+}
+
+// ─── Stat Card ───────────────────────────────────────────────────────────────
+
+function StatCard({
+  title,
+  value,
+  sub,
+  icon,
+  color,
+}: {
+  title: string;
+  value: string | number;
+  sub?: string;
+  icon: React.ReactNode;
+  color: string;
+}) {
+  return (
+    <div className="group relative overflow-hidden rounded-[2rem] border-0 bg-white p-5 shadow-lg shadow-slate-200/30 hover:shadow-xl hover:shadow-slate-300/40 transition-all duration-300 hover:-translate-y-1">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-bold text-slate-500">{title}</p>
+          <p className="mt-2 text-3xl font-black tracking-tight text-slate-950">{value}</p>
+          {sub && <p className="mt-1 text-xs font-semibold text-slate-400">{sub}</p>}
+        </div>
+        <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${color} text-white shadow-lg shadow-current/30 transition-transform duration-300 group-hover:scale-110`}>
+          {icon}
+        </div>
+      </div>
+    </div>
   );
 }

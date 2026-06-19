@@ -87,6 +87,64 @@ const MIGRATION_MANIFEST: string[] = [
   "099_ats_candidate_uploads.sql",
   "100_user_page_access.sql",
   "125_kpi_process_role_engine.sql",
+  "134_external_db_credentials.sql",
+  "135_payroll_masters.sql",
+  "137_schema_gaps.sql",
+  "141_branch_head_approval.sql",
+  "142_offer_letter_system.sql",
+  "143_report_builder.sql",
+  "150_leave_policy_engine.sql",
+  "160_kpi_master_config.sql",
+  "170_access_improvements.sql",
+  "171_attendance_regularization_v2.sql",
+  "172_employee_photo.sql",
+  "173_employees_ctc_column.sql",
+  "174_apr_attendance_rule.sql",
+  "176_employee_work_schedule.sql",
+  "177_employee_profile_sensitive_details.sql",
+  "178_tax_declaration_form12bb.sql",
+  "179_super_admin_access.sql",
+  "180_ats_registration_onboarding_repair.sql",
+  "181_careers_super_admin.sql",
+  "181_integration_hub_last_run.sql",
+  "182_user_notification_preferences.sql",
+  "183_launch_data_repairs.sql",
+  "184_master_data_integrity.sql",
+  "185_integration_run_integrity.sql",
+  "186_runtime_configuration_integrity.sql",
+  "187_employee_official_email.sql",
+  "188_integration_table_header_mapping.sql",
+  "189_integration_call_daily.sql",
+  "190_integration_biometric_daily.sql",
+  "191_attendance_source_lineage.sql",
+  "192_seed_current_leave_balances.sql",
+  "193_kpi_live_data_bridge.sql",
+  "194_kpi_process_reconciliation.sql",
+  "195_reporting_manager_role_alignment.sql",
+  "196_seed_call_master_header_mappings.sql",
+  "197_salary_increment_governance.sql",
+  "198_cosec_punch_evidence.sql",
+  "198_it_provisioning.sql",
+  "199_employee_directory_indexes.sql",
+  "199_process_branch_dept_cleanup.sql",
+  "200_employee_directory_process_index.sql",
+  "200_onboarding_empcode_bgv_gaps.sql",
+  "201_bgv_portal_initiation.sql",
+  "202_onboarding_v2_court_check.sql",
+  "203_bgv_missing_tables.sql",
+  "204_people_experience_command_center.sql",
+  "204_leave_type_master_fix.sql",
+  "205_leave_policy_config_fix.sql",
+  "206_leave_el_accrual_ledger.sql",
+  "207_leave_2026_balance_correction.sql",
+  "208_leave_2026_ml_el_accrual_seed.sql",
+  "209_sync_2026_used_days_from_db_bill.sql",
+  "210_fix_el_accrual_ledger_collation.sql",
+  "211_employee_personal_contact_fields.sql",
+  "212_reporting_manager_bulk_template.sql",
+  "213_salary_prep_line_component_columns.sql",
+  "214_performance_indexes.sql",
+  "217_people_experience_support_hardening.sql",
 ];
 
 export type MigrationHealth = {
@@ -117,11 +175,45 @@ export function getMigrationHealth(): MigrationHealth {
 }
 
 function isIdempotentMigrationError(error: any): boolean {
+  const code = error?.code;
+  const errno = Number(error?.errno ?? 0);
+  const msg = String(error?.message ?? "").toLowerCase();
   return (
-    error?.code === "ER_TABLE_EXISTS_ERROR" ||
-    error?.code === "ER_DUP_FIELDNAME" ||
-    error?.code === "ER_DUP_KEYNAME" ||
-    String(error?.message ?? "").includes("Duplicate column")
+    // Named codes (mysql2 preferred)
+    code === "ER_TABLE_EXISTS_ERROR" ||   // 1050
+    code === "ER_DUP_FIELDNAME" ||        // 1060
+    code === "ER_DUP_KEYNAME" ||          // 1061
+    code === "ER_CANT_DROP_FIELD_OR_KEY" ||// 1091
+    // Numeric codes as fallback (in case mysql2 version differs)
+    errno === 1050 ||  // table already exists
+    errno === 1060 ||  // duplicate column name
+    errno === 1061 ||  // duplicate key name
+    errno === 1091 ||  // can't drop non-existent field/key
+    // Message-based fallback
+    msg.includes("duplicate column") ||
+    msg.includes("already exists") ||
+    msg.includes("duplicate key") ||
+    msg.includes("can't drop")
+  );
+}
+
+/**
+ * Pre-process SQL from a MySQL CLI file:
+ * Strips DELIMITER directives and replaces the custom delimiter (// or $$)
+ * with the standard semicolon so that splitSql can handle the file normally.
+ * mysql2/promise does not understand DELIMITER — it is a CLI-only command.
+ */
+function normaliseDelimiters(raw: string): string {
+  // Match: DELIMITER <delim> ... DELIMITER ; blocks
+  // Replaces custom delimiters (e.g. // or $$) with ; and removes DELIMITER lines.
+  return raw.replace(
+    /DELIMITER\s+(\S+)([\s\S]*?)DELIMITER\s*;/gi,
+    (_match, delim: string, body: string) => {
+      // Escape the custom delimiter for use in a regex
+      const escaped = delim.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // Replace all occurrences of the custom delimiter with ;
+      return body.replace(new RegExp(escaped, "g"), ";");
+    }
   );
 }
 
@@ -132,25 +224,35 @@ function isIdempotentMigrationError(error: any): boolean {
  *  - backtick-quoted identifiers (with `` escapes)
  *  - line comments (-- ...)
  *  - block comments (/* ... *\/)
+ *  - DELIMITER directives (pre-processed by normaliseDelimiters)
+ *  - BEGIN...END compound statement nesting (stored procedures / functions)
+ *    Semicolons inside a BEGIN...END body are NOT statement terminators.
+ *    END IF / END LOOP / END WHILE / END CASE / END REPEAT do NOT close
+ *    the compound block; only a bare END does.
  *
  * Returns non-empty, trimmed statement strings.
  */
 export function splitSql(raw: string): string[] {
+  raw = normaliseDelimiters(raw);
   const statements: string[] = [];
   let current = "";
   let i = 0;
   const len = raw.length;
+  let beginDepth = 0; // tracks BEGIN...END nesting depth
+
+  const isWordChar = (c: string | undefined): boolean =>
+    c !== undefined && /\w/.test(c);
 
   while (i < len) {
     const ch = raw[i];
 
-    // Line comment: consume to end of line
+    // Line comment: consume to end of line (do not add to current)
     if (ch === "-" && raw[i + 1] === "-") {
       while (i < len && raw[i] !== "\n") i++;
       continue;
     }
 
-    // Block comment: consume until */
+    // Block comment: consume until */ (do not add to current)
     if (ch === "/" && raw[i + 1] === "*") {
       i += 2;
       while (i < len) {
@@ -194,11 +296,59 @@ export function splitSql(raw: string): string[] {
       continue;
     }
 
-    // Statement terminator
+    // Keyword detection at a word boundary (not mid-identifier)
+    const prevIsWord = i > 0 && isWordChar(raw[i - 1]);
+    if (!prevIsWord && /[A-Za-z_]/.test(ch)) {
+      // Read the full identifier/keyword
+      let j = i;
+      while (j < len && isWordChar(raw[j])) j++;
+      const word = raw.slice(i, j).toUpperCase();
+
+      if (word === "BEGIN") {
+        beginDepth++;
+        current += raw.slice(i, j);
+        i = j;
+        continue;
+      }
+
+      if (word === "END") {
+        // Peek past whitespace to find the next word
+        let k = j;
+        while (k < len && (raw[k] === " " || raw[k] === "\t" || raw[k] === "\r" || raw[k] === "\n")) k++;
+        let m = k;
+        while (m < len && isWordChar(raw[m])) m++;
+        const followWord = raw.slice(k, m).toUpperCase();
+        // END IF / END LOOP / END WHILE / END CASE / END REPEAT are
+        // control-flow terminators — they do NOT close a BEGIN...END block
+        const isControlEnd =
+          followWord === "IF" ||
+          followWord === "LOOP" ||
+          followWord === "WHILE" ||
+          followWord === "CASE" ||
+          followWord === "REPEAT";
+        if (!isControlEnd && beginDepth > 0) {
+          beginDepth--;
+        }
+        current += raw.slice(i, j);
+        i = j;
+        continue;
+      }
+
+      // Any other identifier: add in full and advance
+      current += raw.slice(i, j);
+      i = j;
+      continue;
+    }
+
+    // Statement terminator: only split when outside a BEGIN...END block
     if (ch === ";") {
-      const stmt = current.trim();
-      if (stmt) statements.push(stmt);
-      current = "";
+      if (beginDepth === 0) {
+        const stmt = current.trim();
+        if (stmt) statements.push(stmt);
+        current = "";
+      } else {
+        current += ch;
+      }
       i++;
       continue;
     }
@@ -270,6 +420,11 @@ async function runFileOnConnection(
  * - Production startup is blocked when any migration fails.
  */
 export async function runPendingMigrations(): Promise<MigrationHealth> {
+  if (process.env.SKIP_MIGRATIONS === 'true') {
+    migrationHealth = { status: "ok", applied: [], skipped: [], failed: [], startedAt: new Date().toISOString(), completedAt: new Date().toISOString() };
+    return migrationHealth;
+  }
+
   migrationHealth = {
     status: "running",
     applied: [],

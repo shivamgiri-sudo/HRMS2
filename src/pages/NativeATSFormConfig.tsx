@@ -18,6 +18,7 @@ interface FieldDef {
 }
 interface Recruiter { id: string; name: string; active_status: number; sort_order: number; }
 interface ConfigRow  { config_key: string; config_label: string; config_type: string; config_value: any; }
+interface BranchAlias { id: string; canonical_key: string; display_name: string; alias_text: string; active_status: number; }
 
 const OPTION_GROUPS = [
   { key: 'roleOptions',             label: 'Role / Designation Options' },
@@ -34,12 +35,17 @@ export default function NativeATSFormConfig() {
 
   const { data: configData, isLoading: configLoading } = useQuery({
     queryKey: ['ats-form-config'],
-    queryFn: () => hrmsApi.get('/ats/form-config').then(r => r.data.data as ConfigRow[]),
+    queryFn: () => hrmsApi.get('/api/ats/form-config').then(r => r.data.data as ConfigRow[]),
   });
 
   const { data: recruiters, isLoading: recruiterLoading } = useQuery({
     queryKey: ['ats-recruiters'],
-    queryFn: () => hrmsApi.get('/ats/recruiters').then(r => r.data.data as Recruiter[]),
+    queryFn: () => hrmsApi.get('/api/ats/recruiters').then(r => r.data.data as Recruiter[]),
+  });
+
+  const { data: branchAliases, isLoading: aliasesLoading } = useQuery({
+    queryKey: ['ats-branch-aliases'],
+    queryFn: () => hrmsApi.get('/api/ats/branch-aliases').then(r => r.data.data as BranchAlias[]),
   });
 
   const optionMap: Record<string, string[]> = {};
@@ -65,10 +71,11 @@ export default function NativeATSFormConfig() {
           </p>
         </div>
         <Tabs defaultValue="fields">
-          <TabsList className="grid w-full grid-cols-3 max-w-lg">
+          <TabsList className="grid w-full grid-cols-4 max-w-2xl">
             <TabsTrigger value="fields">Fields</TabsTrigger>
             <TabsTrigger value="options">Dropdown Options</TabsTrigger>
             <TabsTrigger value="recruiters">Recruiters</TabsTrigger>
+            <TabsTrigger value="branches">Branch Aliases</TabsTrigger>
           </TabsList>
 
           <TabsContent value="fields">
@@ -76,7 +83,7 @@ export default function NativeATSFormConfig() {
               fields={initialFields}
               loading={configLoading}
               onSave={async (fields) => {
-                await hrmsApi.put('/ats/form-config/fields', { fields });
+                await hrmsApi.put('/api/ats/form-config/fields', { fields });
                 qc.invalidateQueries({ queryKey: ['ats-form-config'] });
                 toast({ title: 'Fields saved', description: 'Form field configuration updated.' });
               }}
@@ -88,7 +95,7 @@ export default function NativeATSFormConfig() {
               optionMap={optionMap}
               loading={configLoading}
               onSave={async (key, values) => {
-                await hrmsApi.put(`/ats/form-config/${key}`, { values });
+                await hrmsApi.put(`/api/ats/form-config/${key}`, { values });
                 qc.invalidateQueries({ queryKey: ['ats-form-config'] });
                 toast({ title: 'Options saved', description: `${key} updated.` });
               }}
@@ -100,6 +107,14 @@ export default function NativeATSFormConfig() {
               recruiters={recruiters ?? []}
               loading={recruiterLoading}
               onRefresh={() => qc.invalidateQueries({ queryKey: ['ats-recruiters'] })}
+            />
+          </TabsContent>
+
+          <TabsContent value="branches">
+            <BranchAliasesTab
+              aliases={branchAliases ?? []}
+              loading={aliasesLoading}
+              onRefresh={() => qc.invalidateQueries({ queryKey: ['ats-branch-aliases'] })}
             />
           </TabsContent>
         </Tabs>
@@ -304,7 +319,7 @@ function RecruitersTab({ recruiters, loading, onRefresh }: {
     if (!newName.trim()) return;
     setAdding(true);
     try {
-      await hrmsApi.post('/ats/recruiters', { name: newName.trim() });
+      await hrmsApi.post('/api/ats/recruiters', { name: newName.trim() });
       setNewName(''); setShowAdd(false); onRefresh();
       toast({ title: 'Recruiter added' });
     } catch { toast({ title: 'Error', description: 'Could not add recruiter', variant: 'destructive' }); }
@@ -312,12 +327,12 @@ function RecruitersTab({ recruiters, loading, onRefresh }: {
   };
 
   const toggle = async (id: string, current: number) => {
-    await hrmsApi.patch(`/ats/recruiters/${id}`, { active_status: current === 1 ? 0 : 1 });
+    await hrmsApi.patch(`/api/ats/recruiters/${id}`, { active_status: current === 1 ? 0 : 1 });
     onRefresh();
   };
 
   const remove = async (id: string) => {
-    await hrmsApi.delete(`/ats/recruiters/${id}`);
+    await hrmsApi.delete(`/api/ats/recruiters/${id}`);
     onRefresh();
     toast({ title: 'Recruiter removed' });
   };
@@ -345,8 +360,8 @@ function RecruitersTab({ recruiters, loading, onRefresh }: {
           {recruiters.map((r, i) => (
             <div key={r.id} className="flex items-center gap-3 py-2.5">
               <div className="flex gap-1">
-                <button onClick={async () => { await hrmsApi.patch(`/ats/recruiters/${r.id}`, { sort_order: r.sort_order - 1 }); onRefresh(); }} disabled={i === 0} className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"><ChevronUp className="h-3.5 w-3.5" /></button>
-                <button onClick={async () => { await hrmsApi.patch(`/ats/recruiters/${r.id}`, { sort_order: r.sort_order + 1 }); onRefresh(); }} disabled={i === recruiters.length - 1} className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"><ChevronDown className="h-3.5 w-3.5" /></button>
+                <button onClick={async () => { await hrmsApi.patch(`/api/ats/recruiters/${r.id}`, { sort_order: r.sort_order - 1 }); onRefresh(); }} disabled={i === 0} className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"><ChevronUp className="h-3.5 w-3.5" /></button>
+                <button onClick={async () => { await hrmsApi.patch(`/api/ats/recruiters/${r.id}`, { sort_order: r.sort_order + 1 }); onRefresh(); }} disabled={i === recruiters.length - 1} className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"><ChevronDown className="h-3.5 w-3.5" /></button>
               </div>
               <span className={`flex-1 text-sm ${r.active_status !== 1 ? 'line-through text-slate-400' : ''}`}>{r.name}</span>
               <Switch checked={r.active_status === 1} onCheckedChange={() => toggle(r.id, r.active_status)} />
@@ -354,6 +369,210 @@ function RecruitersTab({ recruiters, loading, onRefresh }: {
                 {r.active_status === 1 ? 'Active' : 'Inactive'}
               </Badge>
               <button onClick={() => remove(r.id)} className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function BranchAliasesTab({ aliases: initialAliases, loading, onRefresh }: {
+  aliases: BranchAlias[]; loading: boolean; onRefresh: () => void;
+}) {
+  const { toast } = useToast();
+  const [showAdd, setShowAdd] = useState(false);
+  const [newCanonical, setNewCanonical] = useState('');
+  const [newDisplay, setNewDisplay] = useState('');
+  const [newAliasText, setNewAliasText] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editValues, setEditValues] = useState<{ display: string; alias: string }>({ display: '', alias: '' });
+
+  const aliases = initialAliases.sort((a, b) => {
+    if (a.active_status !== b.active_status) return b.active_status - a.active_status;
+    return a.display_name.localeCompare(b.display_name);
+  });
+
+  const add = async () => {
+    if (!newCanonical.trim() || !newDisplay.trim()) return;
+    setAdding(true);
+    try {
+      await hrmsApi.post('/api/ats/branch-aliases', {
+        canonical_key: newCanonical.trim(),
+        display_name: newDisplay.trim(),
+        alias_text: newAliasText.trim() || null,
+      });
+      toast({ title: 'Branch alias added', description: `"${newDisplay}" added successfully.` });
+      setNewCanonical('');
+      setNewDisplay('');
+      setNewAliasText('');
+      setShowAdd(false);
+      onRefresh();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message || 'Failed to add alias', variant: 'destructive' });
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const startEdit = (alias: BranchAlias) => {
+    setEditing(alias.id);
+    setEditValues({ display: alias.display_name, alias: alias.alias_text || '' });
+  };
+
+  const saveEdit = async (id: string) => {
+    try {
+      await hrmsApi.patch(`/api/ats/branch-aliases/${id}`, {
+        display_name: editValues.display,
+        alias_text: editValues.alias || null,
+      });
+      toast({ title: 'Updated', description: 'Branch alias updated successfully.' });
+      setEditing(null);
+      onRefresh();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message || 'Failed to update', variant: 'destructive' });
+    }
+  };
+
+  const toggle = async (id: string, currentStatus: number) => {
+    try {
+      await hrmsApi.patch(`/api/ats/branch-aliases/${id}`, { active_status: currentStatus === 1 ? 0 : 1 });
+      onRefresh();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const remove = async (id: string) => {
+    if (!confirm('Delete this branch alias permanently?')) return;
+    try {
+      await hrmsApi.delete(`/api/ats/branch-aliases/${id}`);
+      toast({ title: 'Deleted', description: 'Branch alias removed.' });
+      onRefresh();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  if (loading) return <div className="p-8 text-center text-slate-400">Loading...</div>;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <div>
+          <CardTitle className="text-base">Branch Display Names</CardTitle>
+          <p className="text-sm text-slate-500 mt-1">
+            Configure user-friendly names shown to candidates. Database stores canonical names.
+          </p>
+        </div>
+        {!showAdd && (
+          <Button onClick={() => setShowAdd(true)} size="sm" className="flex items-center gap-1">
+            <Plus className="h-4 w-4" /> Add Alias
+          </Button>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {showAdd && (
+          <div className="space-y-3 p-4 bg-blue-50 rounded-lg border border-blue-100">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-slate-700 block mb-1">Official Branch Name (Database)</label>
+                <Input
+                  value={newCanonical}
+                  onChange={e => setNewCanonical(e.target.value)}
+                  placeholder="e.g., AHMEDABAD-JALDARSHAN"
+                  className="text-sm"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-700 block mb-1">Display Name (Candidates See)</label>
+                <Input
+                  value={newDisplay}
+                  onChange={e => setNewDisplay(e.target.value)}
+                  placeholder="e.g., Jaldarshan - Ahmedabad"
+                  className="text-sm"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-700 block mb-1">Search Keywords (Optional)</label>
+              <Input
+                value={newAliasText}
+                onChange={e => setNewAliasText(e.target.value)}
+                placeholder="e.g., Ahmedabad Gujarat Jaldarshan"
+                className="text-sm"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={add} disabled={adding || !newCanonical.trim() || !newDisplay.trim()} size="sm">
+                {adding ? 'Adding...' : 'Save'}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setShowAdd(false)}>Cancel</Button>
+            </div>
+          </div>
+        )}
+        {aliases.length === 0 && !showAdd && (
+          <p className="text-slate-400 text-sm text-center py-6">No branch aliases configured. Click "Add Alias" to start.</p>
+        )}
+        <div className="divide-y">
+          {aliases.map((alias) => (
+            <div key={alias.id} className={`py-3 ${alias.active_status !== 1 ? 'opacity-50' : ''}`}>
+              {editing === alias.id ? (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs text-slate-600 block mb-1">Display Name</label>
+                      <Input
+                        value={editValues.display}
+                        onChange={e => setEditValues({ ...editValues, display: e.target.value })}
+                        className="text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-600 block mb-1">Search Keywords</label>
+                      <Input
+                        value={editValues.alias}
+                        onChange={e => setEditValues({ ...editValues, alias: e.target.value })}
+                        className="text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button onClick={() => saveEdit(alias.id)} size="sm" variant="default">
+                      <Save className="h-3 w-3 mr-1" /> Save
+                    </Button>
+                    <Button onClick={() => setEditing(null)} size="sm" variant="ghost">Cancel</Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                        {alias.canonical_key}
+                      </span>
+                      <span className="text-lg">→</span>
+                      <span className="font-medium text-sm">{alias.display_name}</span>
+                    </div>
+                    {alias.alias_text && (
+                      <div className="text-xs text-slate-500 mt-1">
+                        Keywords: {alias.alias_text}
+                      </div>
+                    )}
+                  </div>
+                  <Button onClick={() => startEdit(alias)} size="sm" variant="outline" className="h-7">
+                    Edit
+                  </Button>
+                  <Switch checked={alias.active_status === 1} onCheckedChange={() => toggle(alias.id, alias.active_status)} />
+                  <Badge variant={alias.active_status === 1 ? 'default' : 'secondary'} className="text-xs w-16 justify-center">
+                    {alias.active_status === 1 ? 'Active' : 'Inactive'}
+                  </Badge>
+                  <button onClick={() => remove(alias.id)} className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-500">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>

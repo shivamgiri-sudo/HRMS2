@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { integrationService } from "./integration.service.js";
 import { analyzeSchema } from "./schemaAnalyzer.js";
 import { promoteRows } from "./promotionEngine.js";
+import { encryptSecretPayload } from "../external-db/external-db.service.js";
 
 export interface ConnectorRunSummary {
   run_id: string;
@@ -16,20 +17,22 @@ export interface ConnectorRunSummary {
 export async function runConnector(
   integrationKey: string,
   rawRows: Record<string, unknown>[],
-  userId: string
+  userId: string | null,
+  triggeredBy = "manual",
 ): Promise<ConnectorRunSummary> {
-  const run = await integrationService.createRun(integrationKey, "manual", userId);
+  const run = await integrationService.createRun(integrationKey, triggeredBy, userId);
   const runId = run.id;
   const startedAt = Date.now();
 
   try {
     // 1. Store raw payload
     const payloadJson = JSON.stringify(rawRows);
+    const encryptedPayload = encryptSecretPayload({ rows: rawRows });
     const hash = createHash("sha256").update(payloadJson).digest("hex");
     await db.execute(
       `INSERT INTO integration_raw_payload (id, run_id, integration_key, payload, payload_hash, row_count)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [randomUUID(), runId, integrationKey, payloadJson, hash, rawRows.length]
+      [randomUUID(), runId, integrationKey, encryptedPayload, hash, rawRows.length]
     );
 
     // 2. Analyze schema

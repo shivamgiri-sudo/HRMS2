@@ -188,17 +188,16 @@ async function upsertAttendanceDailyRecord(
   return wasInsert ? 'inserted' : 'updated';
 }
 
-async function main() {
+export async function runNcosecBiometricSync(): Promise<Summary> {
   console.log('\n=================================================');
-  console.log('  NCOSEC → HRMS Biometric Migration');
+  console.log('  NCOSEC → HRMS Biometric Sync');
   console.log('  NCOSEC Server: 172.10.10.146');
   console.log('=================================================\n');
 
   console.log('[1/5] Testing NCOSEC connection...');
   const test = await testNcosecConnection();
   if (!test.ok) {
-    console.error(`\n❌ Cannot connect to NCOSEC: ${test.error}`);
-    process.exit(1);
+    throw new Error(`Cannot connect to NCOSEC: ${test.error}`);
   }
   console.log('   ✓ NCOSEC connected\n');
 
@@ -288,7 +287,7 @@ async function main() {
 
   console.log('\n[5/5] Done.\n');
   console.log('=================================================');
-  console.log('  MIGRATION SUMMARY');
+  console.log('  SYNC SUMMARY');
   console.log('=================================================');
   console.log(`  NCOSEC rows read       : ${summary.total_ncosec_rows}`);
   console.log(`  Attendance inserted    : ${summary.attendance_inserted}`);
@@ -308,7 +307,12 @@ async function main() {
   }
   console.log('=================================================\n');
 
-  process.exit(summary.errors.length > 0 ? 1 : 0);
+  return summary;
 }
 
-main().catch(err => { console.error('Fatal:', err); process.exit(1); });
+// Standalone run support
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runNcosecBiometricSync()
+    .then(summary => process.exit(summary.errors.length > 0 ? 1 : 0))
+    .catch(err => { console.error('Fatal:', err); process.exit(1); });
+}

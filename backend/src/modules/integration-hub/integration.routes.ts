@@ -4,6 +4,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { integrationController } from "./integration.controller.js";
 import { integrationService } from "./integration.service.js";
 import { syncDatabaseConnector } from "./adapters/dbSyncService.js";
+import { executeConnector } from "./connectorRunner.js";
 
 export const integrationRouter = Router();
 
@@ -13,6 +14,10 @@ integrationRouter.use(requireRole("admin"));
 // Static routes must always be declared before /:key routes.
 integrationRouter.get("/runs", (req, res, next) => {
   integrationController.listRuns(req as any, res).catch(next);
+});
+
+integrationRouter.get("/mapping-catalog", (req, res, next) => {
+  integrationController.mappingCatalog(req as any, res).catch(next);
 });
 
 integrationRouter.post("/field-maps/confirm", (req, res, next) => {
@@ -46,12 +51,36 @@ integrationRouter.put("/:key", (req, res, next) => {
   integrationController.update(req as any, res).catch(next);
 });
 
-integrationRouter.post("/:key/run", (req, res, next) => {
-  integrationController.createRun(req as any, res).catch(next);
+integrationRouter.post("/:key/run", async (req: any, res: any, next: any) => {
+  try {
+    const connector = await integrationService.getByKey(req.params.key);
+    const result = await executeConnector(connector, req.authUser!.id, req.body ?? {});
+    return res.status(result.status === "failed" ? 502 : 200).json({
+      success: result.status === "complete",
+      data: result,
+      message: result.status === "complete"
+        ? `Fetched ${result.rows_fetched} row(s); promoted ${result.rows_promoted}`
+        : "Connector run failed",
+    });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 integrationRouter.get("/:key/field-maps", (req, res, next) => {
   integrationController.listFieldMaps(req as any, res).catch(next);
+});
+
+integrationRouter.get("/:key/table-maps", (req, res, next) => {
+  integrationController.listTableMaps(req as any, res).catch(next);
+});
+
+integrationRouter.put("/:key/table-maps", (req, res, next) => {
+  integrationController.upsertTableMap(req as any, res).catch(next);
+});
+
+integrationRouter.get("/:key/source-schema", (req, res, next) => {
+  integrationController.sourceSchema(req as any, res).catch(next);
 });
 
 integrationRouter.get("/:key/suggestions", (req, res, next) => {
@@ -75,6 +104,20 @@ integrationRouter.post("/:key/db-sync", async (req: any, res: any, next: any) =>
     }
 
     const { fromDate, toDate } = req.body ?? {};
+    if (connector.integration_key === "cosec_biometric") {
+      const run = await executeConnector(
+        connector,
+        req.authUser?.id ?? null,
+        { fromDate, toDate },
+      );
+      return res.status(run.status === "complete" ? 200 : 502).json({
+        success: run.status === "complete",
+        data: run,
+        message: run.status === "complete"
+          ? `Synced ${run.rows_promoted} COSEC attendance day(s)`
+          : "COSEC attendance sync failed",
+      });
+    }
     const result = await syncDatabaseConnector(connector, {
       fromDate,
       toDate,

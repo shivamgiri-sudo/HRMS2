@@ -2,11 +2,11 @@ import { Router } from "express";
 import type { Request, Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { getUserAssignmentScopes } from "../../shared/scopeAccess.js";
+import { db } from "../../db/mysql.js";
 import {
   branchService, departmentService, lobService, designationService,
   campaignService, costCentreService, gradeBandService,
-  locationService, policyService,
+  locationService, policyService, processService,
 } from "./org.service.js";
 
 const router = Router();
@@ -44,111 +44,39 @@ function buildCrud(
   }));
 }
 
-// Static sub-routes must be registered BEFORE buildCrud to avoid /:id swallowing them
+// Canonical filter source for all pages. Use this instead of building filters from employee/report rows.
+router.get("/filter-options", h(async (_req: Request, res: Response) => {
+  const [managers] = await db.execute<any[]>(
+    `SELECT e.id, e.employee_code,
+            COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS full_name
+       FROM employees e
+      WHERE e.active_status = 1
+        AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+        AND EXISTS (SELECT 1 FROM employees team WHERE team.reporting_manager_id = e.id OR team.manager_id = e.id)
+      ORDER BY full_name ASC`
+  );
+  res.json({
+    success: true,
+    data: {
+      branches: await branchService.list(),
+      departments: await departmentService.list(),
+      processes: await processService.list(),
+      costCentres: await costCentreService.list(),
+      designations: await designationService.list(),
+      locations: await locationService.list(),
+      managers,
+    },
+    meta: { activeOnly: true },
+  });
+}));
 
-// GET /api/org/branches/cc-code-map
+// Call Centre Code: register GET before buildCrud to avoid /:id swallowing the static segment
 router.get("/branches/cc-code-map",
+  requireAuth,
   requireRole("admin", "hr"),
   h(async (_req: any, res: any) => {
     const data = await branchService.getCallCentreCodeMap();
     res.json({ data });
-  })
-);
-
-// GET /api/org/cost-centres/by-branch
-// Returns active cost centres scoped to the caller's assigned branch(es).
-// Branch-scoped HR sees only their branch; admin/global-HR sees all active.
-router.get(
-  "/cost-centres/by-branch",
-  requireRole("admin", "hr"),
-  h(async (req: any, res: Response) => {
-    const scopes = await getUserAssignmentScopes(req.authUser!.id);
-    const branchIds = [...new Set(
-      scopes
-        .map((s: any) => s.branch_id)
-        .filter((id: string | null) => id != null)
-    )] as string[];
-
-    if (branchIds.length === 0) {
-      // No branch restriction — admin or global HR: return all active cost centres
-      const { db } = await import("../../db/mysql.js");
-      const [rows] = await db.execute(
-        `SELECT id, cost_centre_code, cost_centre_name, branch_id
-           FROM cost_centre_master
-          WHERE active_status = 1
-          ORDER BY cost_centre_code`
-      );
-      return res.json({ data: rows });
-    }
-
-    // Branch-scoped HR: only cost centres belonging to their branch(es)
-    const { db } = await import("../../db/mysql.js");
-    const placeholders = branchIds.map(() => "?").join(", ");
-    const [rows] = await db.execute(
-      `SELECT id, cost_centre_code, cost_centre_name, branch_id
-         FROM cost_centre_master
-        WHERE active_status = 1
-          AND branch_id IN (${placeholders})
-        ORDER BY cost_centre_code`,
-      branchIds
-    );
-    return res.json({ data: rows });
-  })
-);
-
-// POST /api/org/cost-centres/sync-from-billing  (admin only)
-// Pulls active cost_master records from db_bill and deactivates any stale
-// entries in mas_hrms that no longer exist in db_bill.
-router.post(
-  "/cost-centres/sync-from-billing",
-  requireRole("admin"),
-  h(async (_req: any, res: Response) => {
-    const { db } = await import("../../db/mysql.js");
-    const { billDb } = await import("../../db/mysql.js");
-
-    // 1. Fetch active codes from db_bill
-    const [billRows] = await billDb.execute<any[]>(
-      "SELECT cost_center, CostCenterName, branch FROM cost_master WHERE active = 1 AND (close = 0 OR close IS NULL)"
-    );
-    const billActive = new Map<string, { name: string; branch: string }>();
-    for (const r of billRows) {
-      const code = r.cost_center?.trim();
-      if (code) billActive.set(code, { name: r.CostCenterName ?? code, branch: r.branch ?? "" });
-    }
-
-    // 2. Fetch all from mas_hrms
-    const [hrmsRows] = await db.execute<any[]>(
-      "SELECT id, cost_centre_code, active_status FROM cost_centre_master"
-    );
-
-    const toDeactivate: string[] = [];
-    const toReactivate: string[] = [];
-
-    for (const r of hrmsRows) {
-      const inBill = billActive.has(r.cost_centre_code);
-      if (inBill && r.active_status === 0) toReactivate.push(r.id);
-      if (!inBill && r.active_status === 1) toDeactivate.push(r.id);
-    }
-
-    // 3. Apply changes
-    if (toDeactivate.length > 0) {
-      const ph = toDeactivate.map(() => "?").join(",");
-      await db.execute(`UPDATE cost_centre_master SET active_status = 0, updated_at = NOW() WHERE id IN (${ph})`, toDeactivate);
-    }
-    if (toReactivate.length > 0) {
-      const ph = toReactivate.map(() => "?").join(",");
-      await db.execute(`UPDATE cost_centre_master SET active_status = 1, updated_at = NOW() WHERE id IN (${ph})`, toReactivate);
-    }
-
-    // 4. Count result
-    const [after] = await db.execute<any[]>("SELECT COUNT(*) AS cnt FROM cost_centre_master WHERE active_status = 1");
-
-    return res.json({
-      success: true,
-      deactivated: toDeactivate.length,
-      reactivated: toReactivate.length,
-      active_after_sync: (after as any)[0].cnt,
-    });
   })
 );
 
@@ -161,6 +89,7 @@ buildCrud("/cost-centres",  costCentreService);
 buildCrud("/grade-bands",   gradeBandService);
 buildCrud("/locations",     locationService);
 buildCrud("/policies",      policyService);
+buildCrud("/processes",     processService);
 
 // Call Centre Code: PATCH can safely follow buildCrud (different HTTP method, no collision)
 router.patch("/branches/:id/call-centre-code",

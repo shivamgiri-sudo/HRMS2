@@ -61,7 +61,7 @@ export const leaderboardFiltersSchema = z.object({
   branchId: z.string().uuid().optional(),
   processId: z.string().uuid().optional(),
   family: KPI_FAMILY.optional(),
-  limit: z.coerce.number().int().min(1).max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(1000).optional(),
 });
 
 export type CreateMetricInput = z.infer<typeof createMetricSchema>;

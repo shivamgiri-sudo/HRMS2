@@ -7,6 +7,7 @@ import type {
   IntegrationFieldMap,
   IntegrationFieldMapSuggestion,
   IntegrationListFilters,
+  IntegrationTableMap,
   PaginatedResult,
 } from "./integration.types.js";
 import type {
@@ -14,9 +15,66 @@ import type {
   CreateIntegrationInput,
   RunFilters,
   UpdateIntegrationInput,
+  UpsertTableMapInput,
   UpsertScheduleInput,
 } from "./integration.validation.js";
 import type { IntegrationSchedule } from "./integration.types.js";
+import { DEFAULT_INTEGRATION_CRON, nextCronRun } from "./cronSchedule.js";
+import { env } from "../../config/env.js";
+import { getCredentialsForKey } from "../external-db/external-db.service.js";
+import {
+  fetchFromDatabase,
+  quoteIdentifier,
+  type DbDialect,
+} from "./adapters/databaseAdapter.js";
+
+const APPROVED_MAPPING_TARGETS = {
+  dialer_session_log: [
+    "employee_code",
+    "session_date",
+    "login_minutes",
+    "process_name",
+    "branch_name",
+  ],
+  integration_call_daily: [
+    "employee_code",
+    "activity_date",
+    "total_calls",
+    "talk_minutes",
+    "process_name",
+  ],
+  integration_biometric_daily: [
+    "employee_code",
+    "activity_date",
+    "punch_time",
+    "first_punch",
+    "last_punch",
+    "total_punches",
+    "biometric_minutes",
+  ],
+} as const;
+
+function configObject(value: IntegrationConfig["config_json"]): Record<string, unknown> {
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+  return (value ?? {}) as Record<string, unknown>;
+}
+
+function configuredSourceTables(config: Record<string, unknown>, credentialTables: string[] = []): string[] {
+  const candidates = [
+    config.source_tables,
+    config.tables,
+    config.syncTables,
+    credentialTables,
+  ];
+  const tables = candidates.find((value) => Array.isArray(value)) as unknown[] | undefined;
+  return [...new Set((tables ?? []).map(String).map((value) => value.trim()).filter(Boolean))];
+}
 
 export const integrationService = {
   async list(filters?: IntegrationListFilters): Promise<IntegrationConfig[]> {
@@ -157,7 +215,7 @@ export const integrationService = {
   async createRun(
     integrationKey: string,
     triggeredBy: string,
-    triggeredUser: string,
+    triggeredUser: string | null,
   ): Promise<IntegrationConnectorRun> {
     const connector = await this.getByKey(integrationKey);
     if (!connector.active_status) {
@@ -191,8 +249,8 @@ export const integrationService = {
     await this.getByKey(input.integrationKey);
     await db.execute(
       `INSERT INTO integration_field_map
-         (id, integration_key, source_field, target_table, target_column, transform, confirmed_by, confirmed_at)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?, NOW())
+         (id, integration_key, source_table, source_field, target_table, target_column, transform, confirmed_by, confirmed_at)
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, NOW())
        ON DUPLICATE KEY UPDATE
          target_table = VALUES(target_table),
          target_column = VALUES(target_column),
@@ -202,6 +260,7 @@ export const integrationService = {
          active_status = 1`,
       [
         input.integrationKey,
+        input.sourceTable,
         input.sourceField,
         input.targetTable,
         input.targetColumn,
@@ -211,8 +270,8 @@ export const integrationService = {
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM integration_field_map WHERE integration_key = ? AND source_field = ? LIMIT 1",
-      [input.integrationKey, input.sourceField],
+      "SELECT * FROM integration_field_map WHERE integration_key = ? AND source_table = ? AND source_field = ? LIMIT 1",
+      [input.integrationKey, input.sourceTable, input.sourceField],
     );
     return (rows as IntegrationFieldMap[])[0];
   },
@@ -234,6 +293,7 @@ export const integrationService = {
 
     const mapping = await this.confirmFieldMap({
       integrationKey: suggestion.integration_key,
+      sourceTable: suggestion.source_table ?? "*",
       sourceField: suggestion.source_field,
       targetTable: suggestion.suggested_table,
       targetColumn: suggestion.suggested_column,
@@ -256,6 +316,162 @@ export const integrationService = {
     return rows as IntegrationFieldMapSuggestion[];
   },
 
+  async listTableMaps(integrationKey: string): Promise<IntegrationTableMap[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT *
+         FROM integration_table_map
+        WHERE integration_key = ? AND active_status = 1
+        ORDER BY source_table`,
+      [integrationKey],
+    );
+    return rows as IntegrationTableMap[];
+  },
+
+  async upsertTableMap(
+    integrationKey: string,
+    input: UpsertTableMapInput,
+    userId: string,
+  ): Promise<IntegrationTableMap> {
+    const connector = await this.getByKey(integrationKey);
+    const config = configObject(connector.config_json);
+    const currentSources = configuredSourceTables(config);
+    const sourceTables = [...new Set([...currentSources, input.sourceTable])];
+
+    await db.execute(
+      `INSERT INTO integration_table_map
+         (id, integration_key, source_table, target_table, sync_mode, confirmed_by, confirmed_at)
+       VALUES (UUID(), ?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE
+         target_table = VALUES(target_table),
+         sync_mode = VALUES(sync_mode),
+         confirmed_by = VALUES(confirmed_by),
+         confirmed_at = NOW(),
+         active_status = 1`,
+      [
+        integrationKey,
+        input.sourceTable,
+        input.targetTable,
+        input.syncMode,
+        userId,
+      ],
+    );
+    await db.execute(
+      "UPDATE integration_config SET config_json = ?, updated_at = NOW() WHERE integration_key = ?",
+      [JSON.stringify({ ...config, source_tables: sourceTables, tables: sourceTables }), integrationKey],
+    );
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT *
+         FROM integration_table_map
+        WHERE integration_key = ? AND source_table = ?
+        LIMIT 1`,
+      [integrationKey, input.sourceTable],
+    );
+    return (rows as IntegrationTableMap[])[0];
+  },
+
+  getMappingCatalog() {
+    return Object.entries(APPROVED_MAPPING_TARGETS).map(([table, columns]) => ({
+      table,
+      columns: [...columns],
+      sync_modes: ["daily_aggregate"],
+    }));
+  },
+
+  async inspectSourceSchema(integrationKey: string) {
+    const connector = await this.getByKey(integrationKey);
+    if (connector.integration_type !== "database") {
+      const [snapshots] = await db.execute<RowDataPacket[]>(
+        `SELECT detected_fields
+           FROM integration_schema_snapshot
+          WHERE integration_key = ?
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [integrationKey],
+      );
+      const fields = (snapshots[0]?.detected_fields ?? []) as Array<{ name?: string; type?: string }>;
+      return [{
+        table: "*",
+        columns: fields.map((field) => ({ name: String(field.name ?? ""), type: String(field.type ?? "unknown") })),
+      }];
+    }
+
+    const config = configObject(connector.config_json);
+    if (
+      integrationKey === "cosec_biometric"
+      && String(config.source_mode ?? process.env.NCOSEC_SOURCE_MODE ?? "mysql") !== "mssql"
+    ) {
+      const tables = [
+        "integration_biometric_daily",
+        "wfm_external_punch_staging",
+        "stg_legacy_attendance",
+        "attendance_daily_record",
+      ];
+      const result: Array<{ table: string; columns: Array<{ name: string; type: string }> }> = [];
+      for (const table of tables) {
+        const [columns] = await db.execute<RowDataPacket[]>(
+          `SELECT COLUMN_NAME AS name, COLUMN_TYPE AS type
+             FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+            ORDER BY ORDINAL_POSITION`,
+          [table],
+        );
+        if (columns.length > 0) {
+          result.push({
+            table: `mas_hrms.${table}`,
+            columns: columns.map((column) => ({
+              name: String(column.name ?? ""),
+              type: String(column.type ?? "unknown"),
+            })),
+          });
+        }
+      }
+      return result;
+    }
+
+    const credentials = await getCredentialsForKey(integrationKey);
+    if (!credentials) throw Object.assign(new Error("Database credentials are not configured"), { statusCode: 400 });
+    const tables = configuredSourceTables(config, credentials.tables ?? []);
+    if (tables.length === 0) {
+      throw Object.assign(new Error("No source tables are configured for this connector"), { statusCode: 400 });
+    }
+
+    const dialect: DbDialect = credentials.db_type === "mssql" ? "mssql" : "mysql";
+    const result: Array<{ table: string; columns: Array<{ name: string; type: string }> }> = [];
+    for (const table of tables) {
+      const parts = table.split(".");
+      if (parts.some((part) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(part))) continue;
+      const tableName = parts.at(-1)!;
+      const schemaName = parts.length > 1 ? parts.at(-2)! : null;
+      const query = dialect === "mssql"
+        ? `SELECT COLUMN_NAME AS name, DATA_TYPE AS type
+             FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = '${tableName}'
+              ${schemaName ? `AND TABLE_SCHEMA = '${schemaName}'` : ""}
+            ORDER BY ORDINAL_POSITION`
+        : `SHOW COLUMNS FROM ${quoteIdentifier(table, dialect)}`;
+      const fetched = await fetchFromDatabase({
+        host: credentials.host,
+        port: credentials.port,
+        database: credentials.database,
+        user: credentials.username,
+        password: credentials.password,
+        db_type: dialect,
+        encrypt: credentials.encrypt,
+        trustServerCertificate: credentials.trust_server_certificate,
+      }, query);
+      result.push({
+        table,
+        columns: fetched.rows.map((row) => ({
+          name: String(row.name ?? row.Field ?? ""),
+          type: String(row.type ?? row.Type ?? "unknown"),
+        })).filter((column) => column.name),
+      });
+    }
+    return result;
+  },
+
   async getSchedule(integrationKey: string): Promise<IntegrationSchedule> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM integration_schedule WHERE integration_key = ? LIMIT 1",
@@ -267,7 +483,7 @@ export const integrationService = {
     return {
       id: "",
       integration_key: integrationKey,
-      cron_expression: "0 * * * *",
+      cron_expression: DEFAULT_INTEGRATION_CRON,
       enabled: 0,
       last_run_at: null,
       next_run_at: null,
@@ -276,13 +492,22 @@ export const integrationService = {
 
   async upsertSchedule(integrationKey: string, input: UpsertScheduleInput): Promise<IntegrationSchedule> {
     await this.getByKey(integrationKey);
+    const current = await this.getSchedule(integrationKey);
+    const cronExpression = input.cronExpression ?? current.cron_expression;
+    const enabled = input.enabled !== undefined ? input.enabled : Boolean(current.enabled);
+    const nextRunAt = enabled
+      ? nextCronRun(cronExpression, new Date(), env.INTEGRATION_SCHEDULER_TIMEZONE)
+      : null;
+
     await db.execute(
-      `INSERT INTO integration_schedule (id, integration_key, cron_expression, enabled)
-       VALUES (UUID(), ?, ?, ?)
+      `INSERT INTO integration_schedule
+         (id, integration_key, cron_expression, enabled, next_run_at)
+       VALUES (UUID(), ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          cron_expression = VALUES(cron_expression),
-         enabled = VALUES(enabled)`,
-      [integrationKey, input.cronExpression, input.enabled !== undefined ? (input.enabled ? 1 : 0) : 0],
+         enabled = VALUES(enabled),
+         next_run_at = VALUES(next_run_at)`,
+      [integrationKey, cronExpression, enabled ? 1 : 0, nextRunAt],
     );
     return this.getSchedule(integrationKey);
   },

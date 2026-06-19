@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { eachDayOfInterval, isWeekend, parseISO, isSameDay } from "date-fns";
+import { normalizeDate } from "@/lib/utils";
 import { toast } from "sonner";
 
 export interface LeaveType {
@@ -53,7 +54,7 @@ export function useSubmitLeaveRequest() {
         const holidayRes = await hrmsApi.get<{ success: boolean; data: any[] }>(
           `/api/org/events?is_holiday=true&start=${year}-01-01&end=${year}-12-31`
         );
-        holidayDates = (holidayRes.data || []).map((h: any) => parseISO(h.event_date));
+        holidayDates = (holidayRes.data || []).map((h: any) => parseISO(normalizeDate(h.event_date)));
       } catch {
         // Non-fatal — proceed without holiday exclusion
       }

@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { atsService } from "./ats.service.js";
 
 export interface AtsQueueToken {
   id: string;
@@ -21,12 +22,9 @@ const WAIT_ALERT_MINUTES = 20;
 
 export const atsQueueService = {
   async createToken(candidateId: string, arrivalTime: string): Promise<AtsQueueToken> {
-    // Verify candidate exists
-    const [cRows] = await db.execute<RowDataPacket[]>(
-      "SELECT id FROM ats_candidate WHERE id = ? AND active_status = 1 LIMIT 1",
-      [candidateId]
-    );
-    if (!(cRows as RowDataPacket[]).length) {
+    // Verify candidate exists and is active
+    const candidate = await atsService.getCandidate(candidateId);
+    if (!candidate.active_status) {
       const err = new Error("Candidate not found");
       (err as any).statusCode = 404;
       throw err;

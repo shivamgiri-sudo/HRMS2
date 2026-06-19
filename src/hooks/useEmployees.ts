@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { format } from "date-fns";
 
+const EMPLOYEE_PAGE_SIZE = 200;
+
 export interface Employee {
   id: string;
   employeeCode: string;
@@ -10,6 +12,11 @@ export interface Employee {
   phone?: string | null;
   avatar?: string;
   department: string;
+  process: string;
+  branch: string;
+  costCentre: string;
+  reportingManager: string;
+  officialEmailCompliant: boolean;
   designation: string;
   joinDate: string;
   status: "active" | "inactive" | "onboarding" | "offboarded";
@@ -29,73 +36,223 @@ export interface EmployeeWithDetails {
   department: { name: string } | null;
 }
 
-export function useEmployees() {
-  return useQuery({
-    queryKey: ["employees"],
-    queryFn: async () => {
-      // Local demo mode bypass
-      if (localStorage.getItem("hrms_demo_session")) {
-        return [
-          {
-            id: "demo-employee-id",
-            employeeCode: "EMP-DEMO-001",
-            name: "Demo Admin",
-            email: "demo@mascallnet.com",
-            phone: "+91 98765 43210",
-            department: "HR & Operations",
-            designation: "General Manager",
-            joinDate: "Jan 10, 2024",
-            status: "active",
-          },
-          {
-            id: "emp-2",
-            employeeCode: "EMP-MCN-002",
-            name: "Ananya Sharma",
-            email: "ananya.sharma@mascallnet.com",
-            phone: "+91 99999 88888",
-            department: "Operations",
-            designation: "Operations Manager",
-            joinDate: "Feb 15, 2024",
-            status: "active",
-          },
-          {
-            id: "emp-3",
-            employeeCode: "EMP-MCN-003",
-            name: "Rajesh Kumar",
-            email: "rajesh.kumar@mascallnet.com",
-            phone: "+91 88888 77777",
-            department: "Technical Support",
-            designation: "Tech Lead",
-            joinDate: "Mar 01, 2024",
-            status: "active",
-          },
-          {
-            id: "emp-4",
-            employeeCode: "EMP-MCN-004",
-            name: "Siddharth Verma",
-            email: "siddharth.verma@mascallnet.com",
-            phone: "+91 77777 66666",
-            department: "Human Resources",
-            designation: "HR Specialist",
-            joinDate: "Apr 20, 2024",
-            status: "active",
-          }
-        ];
-      }
+interface EmployeePage {
+  data: RawEmployee[];
+  total: number;
+  page: number;
+  limit: number;
+  stats?: EmployeeStatsResponse;
+  process_breakdown?: EmployeeProcessBreakdown[];
+}
 
-      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/employees");
-      return (res.data || []).map((emp: any): Employee => ({
-        id: emp.id,
-        employeeCode: emp.employee_code,
-        name: `${emp.first_name} ${emp.last_name ?? ""}`.trim(),
-        email: emp.email,
-        phone: emp.mobile ?? null,
-        department: emp.department_name || "Unassigned",
-        designation: emp.designation_name || emp.designation || "",
-        joinDate: emp.date_of_joining ? format(new Date(emp.date_of_joining), "MMM d, yyyy") : "",
-        status: emp.employment_status as Employee["status"],
-      }));
+export interface RawEmployee {
+  id: string;
+  employee_code: string;
+  first_name: string;
+  last_name?: string | null;
+  email?: string | null;
+  mobile?: string | null;
+  avatar_url?: string | null;
+  photo_url?: string | null;
+  department_name?: string | null;
+  designation_name?: string | null;
+  designation?: string | null;
+  date_of_joining?: string | null;
+  employment_status?: string | null;
+  reporting_manager_id?: string | null;
+  reporting_manager_name?: string | null;
+  process_name?: string | null;
+  branch_name?: string | null;
+  cost_centre_name?: string | null;
+}
+
+export interface EmployeeDirectoryFilters {
+  page: number;
+  limit: number;
+  recordStatus: "active" | "inactive" | "all";
+  status?: string;
+  search?: string;
+  departmentId?: string;
+  processId?: string;
+  branchId?: string;
+}
+
+interface EmployeeStatsResponse {
+  total_employees?: number;
+  active_employees?: number;
+  onboarding_employees?: number;
+  inactive_employees?: number;
+  department_count?: number;
+}
+
+export interface EmployeeProcessBreakdown {
+  process_id?: string | null;
+  process_name: string;
+  active_count: number;
+  inactive_count: number;
+  total_count: number;
+}
+
+export interface EmployeeSearchOption {
+  id: string;
+  employee_code: string;
+  name: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  full_name?: string | null;
+}
+
+interface DepartmentRow {
+  id: string;
+  dept_name: string;
+  dept_code: string;
+  description?: string | null;
+  manager_id?: string | null;
+}
+
+interface NamedMasterRow {
+  id: string;
+  process_name?: string;
+  branch_name?: string;
+  employee_count?: number;
+}
+
+export async function fetchAllEmployeeRows(recordStatus: "active" | "inactive" | "all" = "active"): Promise<RawEmployee[]> {
+  const firstPage = await hrmsApi.get<EmployeePage>(
+    `/api/employees?page=1&limit=${EMPLOYEE_PAGE_SIZE}&recordStatus=${recordStatus}`
+  );
+  const rows = firstPage.data ?? [];
+  const totalPages = Math.ceil((firstPage.total ?? rows.length) / EMPLOYEE_PAGE_SIZE);
+
+  if (totalPages <= 1) return rows;
+
+  const remainingPages = await Promise.all(
+    Array.from({ length: totalPages - 1 }, (_, index) =>
+      hrmsApi.get<EmployeePage>(
+        `/api/employees?page=${index + 2}&limit=${EMPLOYEE_PAGE_SIZE}`
+          + `&recordStatus=${recordStatus}`
+      )
+    )
+  );
+
+  return rows.concat(...remainingPages.map((page) => page.data ?? []));
+}
+
+function formatEmployeeDate(value: unknown): string {
+  if (!value) return "";
+  const datePart = String(value).match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+  if (!datePart) return "";
+  const parsed = new Date(`${datePart}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? "" : format(parsed, "MMM d, yyyy");
+}
+
+function normalizeEmployeeStatus(value: unknown): Employee["status"] {
+  const status = String(value ?? "").trim().toLowerCase();
+  if (status === "active" || status === "on notice") return "active";
+  if (status === "onboarding") return "onboarding";
+  if (["terminated", "offboarded", "absconded"].includes(status)) return "offboarded";
+  return "inactive";
+}
+
+function mapEmployee(emp: RawEmployee): Employee {
+  return {
+    id: emp.id,
+    employeeCode: emp.employee_code,
+    name: `${emp.first_name} ${emp.last_name ?? ""}`.trim(),
+    email: emp.email ?? "",
+    phone: emp.mobile ?? null,
+    avatar: emp.avatar_url ?? emp.photo_url ?? undefined,
+    department: emp.department_name || "Unassigned",
+    process: emp.process_name || "Unassigned",
+    branch: emp.branch_name || "Unassigned",
+    costCentre: emp.cost_centre_name || "Unassigned",
+    reportingManager: emp.reporting_manager_name || "Unassigned",
+    officialEmailCompliant: /@(teammas\.in|teammas\.co\.in)$/i.test(emp.email ?? ""),
+    designation: emp.designation_name || emp.designation || "",
+    joinDate: formatEmployeeDate(emp.date_of_joining),
+    status: normalizeEmployeeStatus(emp.employment_status),
+  };
+}
+
+export function useEmployeeDirectory(filters: EmployeeDirectoryFilters) {
+  return useQuery({
+    queryKey: ["employee-directory", filters],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        page: String(filters.page),
+        limit: String(filters.limit),
+        recordStatus: filters.recordStatus,
+      });
+      if (filters.status) params.set("status", filters.status);
+      if (filters.search) params.set("search", filters.search);
+      if (filters.departmentId) params.set("departmentId", filters.departmentId);
+      if (filters.processId) params.set("processId", filters.processId);
+      if (filters.branchId) params.set("branchId", filters.branchId);
+
+      const response = await hrmsApi.get<EmployeePage>(`/api/employees?${params.toString()}`);
+      return {
+        employees: (response.data ?? []).map(mapEmployee),
+        total: Number(response.total ?? 0),
+        stats: response.stats,
+        processBreakdown: response.process_breakdown ?? [],
+      };
     },
+    placeholderData: (previous) => previous,
+    staleTime: 30_000,
+  });
+}
+
+export function useEmployeeDirectoryAnalytics(filters: EmployeeDirectoryFilters) {
+  return useQuery({
+    queryKey: ["employee-directory-analytics", filters],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        page: "1",
+        limit: "1",
+        recordStatus: filters.recordStatus,
+        includeAnalytics: "true",
+      });
+      if (filters.status) params.set("status", filters.status);
+      if (filters.search) params.set("search", filters.search);
+      if (filters.departmentId) params.set("departmentId", filters.departmentId);
+      if (filters.processId) params.set("processId", filters.processId);
+      if (filters.branchId) params.set("branchId", filters.branchId);
+
+      const response = await hrmsApi.get<EmployeePage>(`/api/employees?${params.toString()}`);
+      return {
+        stats: response.stats,
+        processBreakdown: response.process_breakdown ?? [],
+      };
+    },
+    placeholderData: (previous) => previous,
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+  });
+}
+
+export function useEmployeeSearchOptions(query: string) {
+  const q = query.trim();
+  return useQuery({
+    queryKey: ["employee-search-options", q],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: EmployeeSearchOption[] }>(
+        `/api/employees/options/search?q=${encodeURIComponent(q)}&limit=8`
+      );
+      return res.data ?? [];
+    },
+    enabled: q.length >= 1,
+    staleTime: 30_000,
+  });
+}
+
+export function useEmployees(recordStatus: "active" | "inactive" | "all" = "active") {
+  return useQuery({
+    queryKey: ["employees", recordStatus],
+    queryFn: async () => {
+      const rows = await fetchAllEmployeeRows(recordStatus);
+      return rows.map(mapEmployee);
+    },
+    staleTime: 60_000,
   });
 }
 
@@ -103,12 +260,7 @@ export function useEmployeeStats() {
   return useQuery({
     queryKey: ["employee-stats"],
     queryFn: async () => {
-      // Local demo mode bypass
-      if (localStorage.getItem("hrms_demo_session")) {
-        return { total: 4, active: 4, onboarding: 0 };
-      }
-
-      const res = await hrmsApi.get<{ data: any }>("/api/employees/stats");
+      const res = await hrmsApi.get<{ data: EmployeeStatsResponse }>("/api/employees/stats");
       const stats = res.data ?? {};
       return {
         total: stats.total_employees ?? 0,
@@ -123,24 +275,41 @@ export function useDepartments() {
   return useQuery({
     queryKey: ["departments"],
     queryFn: async () => {
-      // Local demo mode bypass
-      if (localStorage.getItem("hrms_demo_session")) {
-        return [
-          { id: "dept-1", name: "HR & Operations", description: "Core HR and facilities operations" },
-          { id: "dept-2", name: "Operations", description: "Operational execution and workforce" },
-          { id: "dept-3", name: "Technical Support", description: "Product tech support and systems" },
-          { id: "dept-4", name: "Human Resources", description: "Talent acquisition and engagement" }
-        ];
-      }
-
-      const res = await hrmsApi.get<{ data: any[] }>("/api/org/departments");
-      return (res.data ?? []).map((d: any) => ({
+      const res = await hrmsApi.get<{ data: DepartmentRow[] }>("/api/org/departments");
+      return (res.data ?? []).map((d) => ({
         id: d.id,
         name: d.dept_name,
         code: d.dept_code,
         description: d.description ?? "",
       }));
     },
+  });
+}
+
+export function useEmployeeDirectoryMasters() {
+  return useQuery({
+    queryKey: ["employee-directory-masters"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{
+        data: {
+          processes?: NamedMasterRow[];
+          branches?: NamedMasterRow[];
+        };
+      }>("/api/employees/directory-masters");
+      return {
+        processes: (res.data?.processes ?? []).map((row) => ({
+          id: row.id,
+          name: row.process_name ?? "",
+          employeeCount: Number(row.employee_count ?? 0),
+        })).filter((row) => row.name),
+        branches: (res.data?.branches ?? []).map((row) => ({
+          id: row.id,
+          name: row.branch_name ?? "",
+          employeeCount: Number(row.employee_count ?? 0),
+        })).filter((row) => row.name),
+      };
+    },
+    staleTime: 5 * 60_000,
   });
 }
 
@@ -156,8 +325,8 @@ export function useBulkDeleteEmployees() {
         employeeIds.map(async (id) => {
           try {
             await hrmsApi.delete(`/api/employees/${id}`);
-          } catch (err: any) {
-            errors.push(`Failed to delete employee ${id}: ${err.message}`);
+          } catch (err: unknown) {
+            errors.push(`Failed to delete employee ${id}: ${err instanceof Error ? err.message : "Unknown error"}`);
           }
         })
       );
@@ -171,6 +340,7 @@ export function useBulkDeleteEmployees() {
     onSuccess: () => {
       // Invalidate related queries
       queryClient.invalidateQueries({ queryKey: ["employees"] });
+      queryClient.invalidateQueries({ queryKey: ["employee-directory"] });
       queryClient.invalidateQueries({ queryKey: ["employee-stats"] });
       queryClient.invalidateQueries({ queryKey: ["attendance"] });
       queryClient.invalidateQueries({ queryKey: ["leave-requests"] });
@@ -191,6 +361,7 @@ export function useBulkUpdateEmployeeStatus() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["employees"] });
+      queryClient.invalidateQueries({ queryKey: ["employee-directory"] });
       queryClient.invalidateQueries({ queryKey: ["employee-stats"] });
     },
   });

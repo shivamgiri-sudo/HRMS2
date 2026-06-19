@@ -8,7 +8,7 @@ import { ChevronLeft, ChevronRight, Users, CalendarDays } from "lucide-react";
 import { useTeamLeaves, useIsManager } from "@/hooks/useTeamLeaves";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, isSameDay, isWithinInterval, parseISO, addMonths, subMonths } from "date-fns";
-import { cn } from "@/lib/utils";
+import { cn, normalizeDate } from "@/lib/utils";
 
 export function TeamLeaveCalendar() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -41,8 +41,8 @@ export function TeamLeaveCalendar() {
   // Get leaves that overlap with selected date
   const selectedDateLeaves = selectedDate
     ? teamLeaves.filter((leave) => {
-        const start = parseISO(leave.start_date);
-        const end = parseISO(leave.end_date);
+        const start = parseISO(normalizeDate(leave.start_date));
+        const end = parseISO(normalizeDate(leave.end_date));
         return isWithinInterval(selectedDate, { start, end }) || 
                isSameDay(selectedDate, start) || 
                isSameDay(selectedDate, end);
@@ -52,8 +52,8 @@ export function TeamLeaveCalendar() {
   // Get all dates that have leaves
   const leaveDates = teamLeaves.flatMap((leave) => {
     const dates: Date[] = [];
-    const start = parseISO(leave.start_date);
-    const end = parseISO(leave.end_date);
+    const start = parseISO(normalizeDate(leave.start_date));
+    const end = parseISO(normalizeDate(leave.end_date));
     const current = new Date(start);
     while (current <= end) {
       dates.push(new Date(current));
@@ -148,7 +148,7 @@ export function TeamLeaveCalendar() {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">{leave.employee_name}</p>
                         <p className="text-xs text-muted-foreground">
-                          {format(parseISO(leave.start_date), "MMM d")} - {format(parseISO(leave.end_date), "MMM d")}
+                          {format(parseISO(normalizeDate(leave.start_date)), "MMM d")} - {format(parseISO(normalizeDate(leave.end_date)), "MMM d")}
                         </p>
                       </div>
                       <Badge variant="secondary" className="text-xs shrink-0">

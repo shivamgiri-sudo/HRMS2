@@ -109,22 +109,22 @@ export const mobilityService = {
 
       if (transfer_type === "branch") {
         await db.execute(
-          `UPDATE employees SET branch_id = (SELECT id FROM branch_master WHERE branch_name = ? LIMIT 1) WHERE id = ?`,
+          `UPDATE employees SET branch_id = (SELECT id FROM branch_master WHERE branch_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1) WHERE id = ?`,
           [to_value, employee_id]
         );
       } else if (transfer_type === "department") {
         await db.execute(
-          `UPDATE employees SET department_id = (SELECT id FROM department_master WHERE dept_name = ? LIMIT 1) WHERE id = ?`,
+          `UPDATE employees SET department_id = (SELECT id FROM department_master WHERE dept_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1) WHERE id = ?`,
           [to_value, employee_id]
         );
       } else if (transfer_type === "designation") {
         await db.execute(
-          `UPDATE employees SET designation_id = (SELECT id FROM designation_master WHERE designation_name = ? LIMIT 1) WHERE id = ?`,
+          `UPDATE employees SET designation_id = (SELECT id FROM designation_master WHERE designation_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1) WHERE id = ?`,
           [to_value, employee_id]
         );
       } else if (transfer_type === "process") {
         await db.execute(
-          `UPDATE employees SET process_id = (SELECT id FROM process_master WHERE process_name = ? LIMIT 1) WHERE id = ?`,
+          `UPDATE employees SET process_id = (SELECT id FROM process_master WHERE process_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1) WHERE id = ?`,
           [to_value, employee_id]
         );
       }
@@ -230,7 +230,7 @@ export const mobilityService = {
 
       await db.execute(
         `UPDATE employees
-         SET designation_id = (SELECT id FROM designation_master WHERE designation_name = ? LIMIT 1)
+         SET designation_id = (SELECT id FROM designation_master WHERE designation_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1)
          WHERE id = ?`,
         [to_designation, employee_id]
       );

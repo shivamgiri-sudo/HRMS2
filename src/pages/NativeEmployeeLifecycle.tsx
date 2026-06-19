@@ -366,7 +366,7 @@ export default function NativeEmployeeLifecycle() {
   const overdue    = probationList.filter((e) => e.days_on_probation >= 90);
   const earlyWarn  = probationList.filter((e) => e.days_on_probation >= 60 && e.days_on_probation < 90);
   const thisMonth  = probationList.filter((e) => {
-    const doj = new Date(e.date_of_joining);
+    const doj = new Date(/^\d{4}-\d{2}-\d{2}$/.test(e.date_of_joining) ? `${e.date_of_joining}T00:00:00` : e.date_of_joining);
     const now = new Date();
     const target = new Date(doj);
     target.setDate(target.getDate() + 90);

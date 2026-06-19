@@ -16,14 +16,14 @@ interface MyAttendanceHistoryProps {
 
 interface AttendanceRecord {
   id: string;
-  date: string;
-  clock_in: string | null;
-  clock_out: string | null;
-  total_hours: number | null;
-  status: string;
+  record_date: string;
+  clock_in_time: string | null;
+  clock_out_time: string | null;
+  raw_minutes: number | null;
+  attendance_status: string;
   work_mode: string | null;
-  clock_in_location_name: string | null;
-  clock_out_location_name: string | null;
+  clock_in_location: string | null;
+  clock_out_location: string | null;
 }
 
 const statusStyles: Record<string, string> = {
@@ -34,16 +34,20 @@ const statusStyles: Record<string, string> = {
 };
 
 export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
+  const today = new Date();
+  const fromDate = new Date(today);
+  fromDate.setDate(today.getDate() - 30);
+  const fromStr = fromDate.toISOString().slice(0, 10);
+  const toStr = today.toISOString().slice(0, 10);
+
   const { data: records, isLoading, error } = useQuery({
-    queryKey: ["my-attendance-history", employeeId],
+    queryKey: ["my-attendance-history", employeeId, fromStr, toStr],
     queryFn: async () => {
       try {
-        console.log("[MyAttendanceHistory] Fetching attendance for employee:", employeeId);
-        const res = await hrmsApi.get<{success:boolean;data:any}>("/api/wfm/attendance/daily");
-        console.log("[MyAttendanceHistory] Response:", res);
+        const params = new URLSearchParams({ employeeId, fromDate: fromStr, toDate: toStr, limit: "60" });
+        const res = await hrmsApi.get<{success:boolean;data:any}>(`/api/wfm/attendance/daily?${params}`);
         return (res.data ?? []) as AttendanceRecord[];
       } catch (err: any) {
-        console.error("[MyAttendanceHistory] Error fetching attendance:", err);
         throw new Error(err.response?.data?.error || err.message || "Failed to load attendance records");
       }
     },
@@ -56,7 +60,8 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
     queryKey: ["my-attendance-breaks", recordIds],
     queryFn: async () => {
       if (recordIds.length === 0) return [];
-      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/wfm/attendance/daily");
+      const ids = recordIds.join(",");
+      const res = await hrmsApi.get<{success:boolean;data:any}>(`/api/wfm/attendance/breaks?recordIds=${ids}`);
       return (res.data ?? []) as unknown as AttendanceBreak[];
     },
     enabled: recordIds.length > 0,
@@ -148,14 +153,16 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
                         <CalendarDays className="h-4 w-4 text-muted-foreground" />
-                        {format(new Date(record.date), "MMM d, yyyy")}
+                        {record.date
+                          ? format(new Date(record.date + "T00:00:00"), "MMM d, yyyy")
+                          : format(new Date(record.record_date + "T00:00:00"), "MMM d, yyyy")}
                       </div>
                     </TableCell>
                     <TableCell>
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger className="flex items-center gap-1">
-                            {formatTime(record.clock_in)}
+                            {formatTime(record.clock_in_time)}
                             {record.clock_in_location_name && (
                               <MapPin className="h-3 w-3 text-muted-foreground" />
                             )}
@@ -172,7 +179,7 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger className="flex items-center gap-1">
-                            {formatTime(record.clock_out)}
+                            {formatTime(record.clock_out_time)}
                             {record.clock_out_location_name && (
                               <MapPin className="h-3 w-3 text-muted-foreground" />
                             )}
@@ -207,7 +214,7 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                         );
                       })()}
                     </TableCell>
-                    <TableCell>{formatHours(record.total_hours)}</TableCell>
+                    <TableCell>{formatHours(record.raw_minutes ? record.raw_minutes / 60 : null)}</TableCell>
                     <TableCell>
                       {record.work_mode ? (
                         <Badge variant="outline" className="text-xs">
@@ -218,8 +225,8 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={statusStyles[record.status] || ""}>
-                        {record.status}
+                      <Badge variant="outline" className={statusStyles[record.attendance_status] || ""}>
+                        {record.attendance_status}
                       </Badge>
                     </TableCell>
                   </TableRow>

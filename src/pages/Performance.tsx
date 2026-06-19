@@ -1,8 +1,9 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
-import { Target, FileText, Loader2, User, BarChart3, Users, TrendingUp } from "lucide-react";
+import { Target, FileText, Loader2, User, BarChart3, Users, TrendingUp, Activity } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
 import { GoalsManager } from "@/components/performance/GoalsManager";
@@ -11,27 +12,61 @@ import { PerformanceAnalytics } from "@/components/performance/PerformanceAnalyt
 import { TeamGoalsView } from "@/components/performance/TeamGoalsView";
 import { TeamReviewsManager } from "@/components/performance/TeamReviewsManager";
 import { TeamAnalytics } from "@/components/performance/TeamAnalytics";
+import { AprSection } from "@/components/performance/AprSection";
+import { TeamKpiView } from "@/components/performance/TeamKpiView";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+
+export interface TeamMember {
+  id: string;
+  employee_code: string;
+  full_name: string;
+  department_id: string | null;
+  designation_id: string | null;
+  process_id: string | null;
+  cost_centre_id: string | null;
+  dept_name: string | null;
+  designation_name: string | null;
+  process_name: string | null;
+}
+
+function employeeDisplayName(employee: any): string {
+  return String(employee?.full_name ?? "").trim()
+    || `${employee?.first_name ?? ""} ${employee?.last_name ?? ""}`.trim()
+    || "Employee";
+}
 
 const Performance = () => {
   const { user } = useAuth();
+  const { roleKeys } = useWorkforceAccess();
 
-  // Get current employee ID, name, and check if they're a manager
-  const { data: employeeData, isLoading } = useQuery({
-    queryKey: ["my-employee-with-team", user?.id],
+  // Fetch employee record
+  const { data: employeeData, isLoading: empLoading } = useQuery({
+    queryKey: ["my-employee", user?.id],
     queryFn: async () => {
       if (!user?.id) return null;
-
-      const empRes = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
-      const employee = empRes.data;
-      if (!employee) return null;
-
-      return {
-        ...employee,
-        isManager: false,
-      };
+      const res = await hrmsApi.get<{ success: boolean; data: any }>("/api/employees/me");
+      return res.data ?? null;
     },
     enabled: !!user?.id,
   });
+
+  // Fetch direct reports to determine manager status — empty array = not a manager
+  const { data: teamMembers = [], isLoading: teamLoading } = useQuery<TeamMember[]>({
+    queryKey: ["my-team", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return [];
+      try {
+        const res = await hrmsApi.get<{ success: boolean; data: TeamMember[] }>("/api/employees/my-team");
+        return res.data ?? [];
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!user?.id,
+  });
+
+  const isLoading = empLoading || teamLoading;
+  const isManager = teamMembers.length > 0;
 
   if (isLoading) {
     return (
@@ -65,7 +100,7 @@ const Performance = () => {
     );
   }
 
-  const employeeName = `${employeeData.first_name} ${employeeData.last_name}`;
+  const employeeName = employeeDisplayName(employeeData);
 
   return (
     <DashboardLayout>
@@ -81,19 +116,25 @@ const Performance = () => {
                 Performance
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                {employeeData.isManager
-                  ? "Track your KPIs, view reviews, and manage your team's performance."
+                {isManager
+                  ? `Track your KPIs, view reviews, and manage your team's performance. (${teamMembers.length} direct reports)`
                   : "Track your KPIs and view performance reviews."}
               </p>
             </div>
           </div>
         </section>
 
-        <Tabs defaultValue="kpis" className="space-y-4">
-          <TabsList>
+        <RoleInsightsPanel roles={roleKeys} title="Performance control insights" />
+
+        <Tabs defaultValue="live-performance" className="space-y-4">
+          <TabsList className="flex-wrap h-auto gap-1">
+            <TabsTrigger value="live-performance" className="gap-2">
+              <Activity className="h-4 w-4" />
+              My Performance
+            </TabsTrigger>
             <TabsTrigger value="kpis" className="gap-2">
               <Target className="h-4 w-4" />
-              KPIs
+              Goals & KPIs
             </TabsTrigger>
             <TabsTrigger value="reviews" className="gap-2">
               <FileText className="h-4 w-4" />
@@ -103,28 +144,42 @@ const Performance = () => {
               <BarChart3 className="h-4 w-4" />
               Analytics
             </TabsTrigger>
-            {employeeData.isManager && (
+            {isManager && (
+              <TabsTrigger value="team-kpis" className="gap-2">
+                <Activity className="h-4 w-4" />
+                Team Performance
+              </TabsTrigger>
+            )}
+            {isManager && (
               <TabsTrigger value="team" className="gap-2">
                 <Users className="h-4 w-4" />
                 Team
               </TabsTrigger>
             )}
-            {employeeData.isManager && (
+            {isManager && (
               <TabsTrigger value="team-analytics" className="gap-2">
                 <TrendingUp className="h-4 w-4" />
                 Team Analytics
               </TabsTrigger>
             )}
+            <TabsTrigger value="apr" className="gap-2">
+              <BarChart3 className="h-4 w-4" />
+              APR
+            </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="live-performance">
+            <MyLiveKpiView />
+          </TabsContent>
 
           <TabsContent value="kpis">
             <GoalsManager employeeId={employeeData.id} />
           </TabsContent>
 
           <TabsContent value="reviews">
-            <PerformanceReviews 
-              employeeId={employeeData.id} 
-              employeeName={employeeName} 
+            <PerformanceReviews
+              employeeId={employeeData.id}
+              employeeName={employeeName}
             />
           </TabsContent>
 
@@ -132,17 +187,23 @@ const Performance = () => {
             <PerformanceAnalytics employeeId={employeeData.id} />
           </TabsContent>
 
-          {employeeData.isManager && (
+          {isManager && (
+            <TabsContent value="team-kpis">
+              <TeamKpiView teamMembers={teamMembers} />
+            </TabsContent>
+          )}
+
+          {isManager && (
             <TabsContent value="team" className="space-y-6">
               <TeamGoalsView managerId={employeeData.id} />
-              <TeamReviewsManager 
-                managerId={employeeData.id} 
+              <TeamReviewsManager
+                managerId={employeeData.id}
                 managerName={employeeName}
               />
             </TabsContent>
           )}
 
-          {employeeData.isManager && (
+          {isManager && (
             <TabsContent value="team-analytics">
               <TeamAnalytics
                 isManager={true}
@@ -150,6 +211,10 @@ const Performance = () => {
               />
             </TabsContent>
           )}
+
+          <TabsContent value="apr">
+            <AprSection isManager={isManager} employeeId={employeeData.id} />
+          </TabsContent>
         </Tabs>
       </div>
     </DashboardLayout>

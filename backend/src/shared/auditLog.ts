@@ -10,6 +10,8 @@ export interface AuditLogEntry {
   entity_id?: string;
   change_summary?: Record<string, unknown>;
   req?: Request;
+  ip_address?: string;
+  user_agent?: string | string[];
 }
 
 /**
@@ -30,8 +32,8 @@ export async function logSensitiveAction(entry: AuditLogEntry): Promise<void> {
         entry.module_key,
         entry.entity_type ?? null,
         entry.entity_id ?? null,
-        entry.req?.ip ?? null,
-        entry.req?.headers["user-agent"]?.slice(0, 512) ?? null,
+        entry.ip_address ?? entry.req?.ip ?? null,
+        String(entry.user_agent ?? entry.req?.headers["user-agent"] ?? "").slice(0, 512) || null,
         entry.change_summary ? JSON.stringify(entry.change_summary) : null,
       ]
     );

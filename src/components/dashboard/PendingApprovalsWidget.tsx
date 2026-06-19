@@ -6,6 +6,7 @@ import { usePendingApprovals } from "@/hooks/usePendingApprovals";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
+import { normalizeDate } from "@/lib/utils";
 
 export function PendingApprovalsWidget() {
   const { data, isLoading } = usePendingApprovals();
@@ -51,7 +52,7 @@ export function PendingApprovalsWidget() {
                   </p>
                 </div>
                 <span className="text-xs text-muted-foreground whitespace-nowrap ml-2">
-                  {format(new Date(request.start_date), "MMM d")}
+                  {format(new Date(normalizeDate(request.start_date)), "MMM d")}
                 </span>
               </div>
             ))}

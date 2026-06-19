@@ -37,6 +37,27 @@ export const assetsService = {
     return (rows as RowDataPacket[])[0] ?? null;
   },
 
+  async getHistory(assetId: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT aa.id,
+              aa.assigned_date,
+              aa.returned_date,
+              aa.return_condition,
+              aa.notes,
+              aa.assigned_by,
+              COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
+              e.avatar_url,
+              e.photo_url,
+              e.employee_code
+         FROM asset_assignment aa
+         LEFT JOIN employees e ON e.id = aa.employee_id
+        WHERE aa.asset_id = ?
+        ORDER BY aa.assigned_date DESC, aa.created_at DESC`,
+      [assetId],
+    );
+    return rows as RowDataPacket[];
+  },
+
   async create(data: Record<string, unknown>) {
     const id = randomUUID();
     const code = (data.asset_code as string) || `AST-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
@@ -66,7 +87,6 @@ export const assetsService = {
   },
 
   async assign(assetId: string, employeeId: string, assignedBy: string, notes?: string, req?: Request) {
-    // Mark any open assignment as returned
     await db.execute(
       "UPDATE asset_assignment SET returned_date = CURDATE() WHERE asset_id = ? AND returned_date IS NULL",
       [assetId]

@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getBgvProviderAdapter } from "./bgv-provider.adapter.js";
+import { getBgvProviderAdapter, type AddressDocInput, type EducationVerificationInput } from "./bgv-provider.adapter.js";
 import { validateOnboardingToken } from "./onboarding-full.service.js";
 
 const hashValue = (value: unknown) => {
@@ -336,6 +336,149 @@ export async function waiveCheck(candidateId: string, input: { checkId?: string;
     await db.execute(`UPDATE candidate_bgv_check SET status = 'waived', reviewed_by = ?, reviewed_at = NOW(), review_remarks = ?, updated_at = NOW() WHERE id = ? AND candidate_id = ?`, [actorUserId, input.reason, input.checkId, candidateId]);
   }
   await logEvent(candidateId, "BGV_EXCEPTION_APPROVED", input, input.checkId ?? null, { actorType: "hr", actorId: actorUserId });
+  return getBgvStatusForCandidate(candidateId);
+}
+
+export async function verifyAddressDocByToken(
+  token: string,
+  input: { docType: AddressDocInput['docType']; documentNumber: string },
+  meta?: { ip?: string; userAgent?: string }
+) {
+  const tokenData = await validateOnboardingToken(token);
+  const candidateId = tokenData.candidate_id as string;
+  await ensureConsent(candidateId);
+  const candidate = await getCandidateIdentity(candidateId);
+  const adapter = getBgvProviderAdapter();
+  const started = Date.now();
+  const result = await adapter.verifyAddressDoc({
+    docType: input.docType,
+    documentNumber: input.documentNumber,
+    candidateName: candidate.employee_name ?? candidate.full_name,
+    dateOfBirth: candidate.date_of_birth ?? null,
+  });
+  const checkId = await createOrUpdateCheck(candidateId, 'address_doc', result.status, {
+    providerKey: result.providerKey,
+    providerRequestId: result.providerRequestId,
+    providerReferenceId: result.providerReferenceId,
+    matchScore: result.matchScore,
+    matchedName: result.matchedName,
+    matchedDob: result.matchedDob,
+    resultSummary: result.resultSummary,
+    resultJson: result.raw,
+    riskFlags: result.riskFlags,
+  });
+  await db.execute(
+    `INSERT INTO candidate_bgv_api_request_log
+       (id, candidate_id, check_id, provider_key, endpoint_key, request_ref, request_payload_hash, response_status_code, response_payload, duration_ms, success_flag)
+     VALUES (?, ?, ?, ?, 'ADDRESS_DOC_VERIFY', ?, ?, 200, ?, ?, ?)`,
+    [randomUUID(), candidateId, checkId, result.providerKey, result.providerRequestId, hashValue(input.documentNumber), JSON.stringify(result.raw ?? result), Date.now() - started, result.status === 'verified' ? 1 : 0]
+  );
+  await db.execute(
+    `UPDATE candidate_bgv_report SET address_doc_type = ?, updated_at = NOW() WHERE candidate_id = ?`,
+    [input.docType, candidateId]
+  );
+  await logEvent(candidateId, 'ADDRESS_DOC_VERIFICATION_COMPLETED', result, checkId, { actorType: 'candidate', ip: meta?.ip, userAgent: meta?.userAgent });
+  return getBgvStatusForCandidate(candidateId);
+}
+
+export async function verifyEducationByToken(
+  token: string,
+  input: { boardType: EducationVerificationInput['boardType']; rollNumber?: string; certificateNumber?: string; yearOfPassing: number; institutionName?: string },
+  meta?: { ip?: string; userAgent?: string }
+) {
+  const tokenData = await validateOnboardingToken(token);
+  const candidateId = tokenData.candidate_id as string;
+  await ensureConsent(candidateId);
+  const candidate = await getCandidateIdentity(candidateId);
+  const adapter = getBgvProviderAdapter();
+  const started = Date.now();
+  const result = await adapter.verifyEducation({
+    boardType: input.boardType,
+    rollNumber: input.rollNumber ?? null,
+    certificateNumber: input.certificateNumber ?? null,
+    yearOfPassing: input.yearOfPassing,
+    candidateName: candidate.employee_name ?? candidate.full_name,
+    institutionName: input.institutionName ?? null,
+  });
+  const checkId = await createOrUpdateCheck(candidateId, 'education_doc', result.status, {
+    providerKey: result.providerKey,
+    providerRequestId: result.providerRequestId,
+    providerReferenceId: result.providerReferenceId,
+    matchScore: result.matchScore,
+    matchedName: result.matchedName,
+    resultSummary: result.resultSummary,
+    resultJson: result.raw,
+    riskFlags: result.riskFlags,
+  });
+  await db.execute(
+    `INSERT INTO candidate_bgv_api_request_log
+       (id, candidate_id, check_id, provider_key, endpoint_key, request_ref, request_payload_hash, response_status_code, response_payload, duration_ms, success_flag)
+     VALUES (?, ?, ?, ?, 'EDUCATION_VERIFY', ?, ?, 200, ?, ?, ?)`,
+    [randomUUID(), candidateId, checkId, result.providerKey, result.providerRequestId, hashValue(input.rollNumber ?? input.certificateNumber ?? ''), JSON.stringify(result.raw ?? result), Date.now() - started, result.status === 'verified' ? 1 : 0]
+  );
+  await db.execute(
+    `UPDATE candidate_bgv_report SET education_board_type = ?, updated_at = NOW() WHERE candidate_id = ?`,
+    [input.boardType, candidateId]
+  );
+  await logEvent(candidateId, 'EDUCATION_VERIFICATION_COMPLETED', result, checkId, { actorType: 'candidate', ip: meta?.ip, userAgent: meta?.userAgent });
+  return getBgvStatusForCandidate(candidateId);
+}
+
+export async function verifyCourtByToken(
+  token: string,
+  meta?: { ip?: string; userAgent?: string }
+) {
+  const tokenData = await validateOnboardingToken(token);
+  const candidateId = tokenData.candidate_id as string;
+  await ensureConsent(candidateId);
+  const candidate = await getCandidateIdentity(candidateId);
+  // Fetch profile for court check fields
+  const [profileRows] = await db.execute<RowDataPacket[]>(
+    `SELECT father_husband_name, permanent_address, permanent_state, permanent_pincode FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
+    [candidateId]
+  );
+  const profile = profileRows[0];
+  const candidateName = String(candidate.employee_name ?? candidate.full_name ?? '');
+  if (!candidateName) throw Object.assign(new Error("Candidate name required for court check"), { statusCode: 400 });
+  const dob = String(candidate.date_of_birth ?? '');
+  if (!dob) throw Object.assign(new Error("Date of birth required for court check"), { statusCode: 400 });
+  const adapter = getBgvProviderAdapter();
+  const started = Date.now();
+  const result = await adapter.verifyCourt({
+    candidateName,
+    dateOfBirth: dob,
+    fatherName: profile?.father_husband_name ?? null,
+    address: profile?.permanent_address ?? null,
+    state: profile?.permanent_state ?? null,
+    pincode: profile?.permanent_pincode ?? null,
+  });
+  const checkId = await createOrUpdateCheck(candidateId, 'court', result.status, {
+    providerKey: result.providerKey,
+    providerRequestId: result.providerRequestId,
+    providerReferenceId: result.providerReferenceId,
+    matchScore: result.matchScore,
+    matchedName: result.matchedName,
+    resultSummary: result.resultSummary,
+    resultJson: result.raw,
+    riskFlags: result.riskFlags,
+  });
+  await db.execute(
+    `INSERT INTO candidate_bgv_api_request_log
+       (id, candidate_id, check_id, provider_key, endpoint_key, request_ref, request_payload_hash, response_status_code, response_payload, duration_ms, success_flag)
+     VALUES (?, ?, ?, ?, 'COURT_VERIFY', ?, ?, 200, ?, ?, ?)`,
+    [randomUUID(), candidateId, checkId, result.providerKey, result.providerRequestId, hashValue(candidateName + dob), JSON.stringify(result.raw ?? result), Date.now() - started, result.status === 'verified' ? 1 : 0]
+  );
+  // Update court_status in bgv_report
+  const courtDbStatus =
+    result.status === 'verified' ? 'passed'
+    : result.status === 'failed' ? 'failed'
+    : result.status === 'manual_review' ? 'manual_review'
+    : 'queued';
+  await db.execute(
+    `UPDATE candidate_bgv_report SET court_status = ?, court_remarks = ?, updated_at = NOW() WHERE candidate_id = ?`,
+    [courtDbStatus, result.resultSummary, candidateId]
+  );
+  await logEvent(candidateId, 'COURT_VERIFICATION_COMPLETED', result, checkId, { actorType: 'candidate', ip: meta?.ip, userAgent: meta?.userAgent });
   return getBgvStatusForCandidate(candidateId);
 }
 

@@ -24,6 +24,15 @@ interface PendingOffer {
   offer_status: string;
 }
 
+function offersFrom(payload: unknown): PendingOffer[] {
+  if (Array.isArray(payload)) return payload as PendingOffer[];
+  if (payload && typeof payload === 'object') {
+    const data = (payload as { data?: unknown }).data;
+    if (Array.isArray(data)) return data as PendingOffer[];
+  }
+  return [];
+}
+
 export default function NativeBranchHeadApproval() {
   const [offers, setOffers] = useState<PendingOffer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,10 +42,10 @@ export default function NativeBranchHeadApproval() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await hrmsApi.get('/ats/onboarding/pending-approval');
-      setOffers(r.data.data ?? []);
-    } catch {
-      // silent — show empty state
+      const r = await hrmsApi.get<unknown>('/api/ats/onboarding/pending-approval');
+      setOffers(offersFrom(r));
+    } catch (error: any) {
+      alert(error?.message ?? 'Failed to load pending approvals');
     } finally {
       setLoading(false);
     }
@@ -53,12 +62,12 @@ export default function NativeBranchHeadApproval() {
     }
     setActing(offerId);
     try {
-      await hrmsApi.post(`/ats/onboarding/offers/${offerId}/${action}`, {
+      await hrmsApi.post(`/api/ats/onboarding/offers/${offerId}/${action}`, {
         remarks: remarks[offerId] ?? '',
       });
       await load();
     } catch (e: any) {
-      alert(e?.response?.data?.error ?? `Failed to ${action} the offer.`);
+      alert(e?.message ?? `Failed to ${action} the offer.`);
     } finally {
       setActing(null);
     }

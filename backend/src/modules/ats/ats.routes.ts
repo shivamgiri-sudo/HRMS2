@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { db } from "../../db/mysql.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
@@ -11,6 +12,15 @@ import { convertCandidateToEmployee } from "./ats.convert.service.js";
 import onboardingRouter from "./ats.onboarding.routes.js";
 import onboardingFullRouter from "./onboarding-full.routes.js";
 import bgvVerificationRouter from "./bgv-verification.routes.js";
+import { registrationEnhancedRouter } from "./registration.enhanced.routes.js";
+import { payrollHRRouter } from "./payroll-hr.routes.js";
+import { interviewRouter } from "./interview.routes.js";
+import { queueRouter } from "./queue.routes.js";
+import { candidatePortalRouter } from "./candidate-portal.routes.js";
+import { branchHeadApprovalRouter } from "./branch-head-approval.routes.js";
+import { superAdminRouter } from "./super-admin.routes.js";
+import { commandCentreRouter } from "./command-centre.routes.js";
+import { bgvEnhancedRouter } from "./bgv.enhanced.routes.js";
 import { atsQueueService } from "./ats.queue.service.js";
 import { verifyRecruiter, getMyPendingCandidates, getSubmissionHistory, resolveRecruiterForActor } from "../ats-full-parity/recruiterInterview.service.js";
 import multer from "multer";
@@ -25,6 +35,12 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 
 // ── PUBLIC — candidate self-registration (no auth required) ──────────────────
 atsRouter.post("/candidates",                    h(c.createCandidate.bind(c)));
+
+// ── PUBLIC — enhanced registration routes (branch aliases, recruiters, tokens)
+atsRouter.use("/registration", registrationEnhancedRouter);
+
+// ── PUBLIC — candidate portal (no auth, uses custom JWT) ─────────────────────
+atsRouter.use("/candidate-portal", candidatePortalRouter);
 
 // ── PUBLIC — candidate onboarding with token (no auth required) ──────────────
 atsRouter.use("/onboarding-full", onboardingFullRouter);
@@ -75,17 +91,12 @@ atsRouter.post(
       return res.status(400).json({ success: false, message: "mobile is required to verify upload ownership" });
     }
 
-    const { db } = await import("../../db/mysql.js");
-    const [rows] = await db.execute(
-      `SELECT id, mobile, created_at FROM ats_candidate WHERE id = ?`,
-      [id]
-    ) as any[];
-
-    if (!rows.length) {
+    let candidate: Awaited<ReturnType<typeof atsService.getCandidate>>;
+    try {
+      candidate = await atsService.getCandidate(id);
+    } catch {
       return res.status(404).json({ success: false, message: "Candidate not found" });
     }
-
-    const candidate = rows[0];
 
     if (String(candidate.mobile).trim() !== String(mobile).trim()) {
       return res.status(403).json({ success: false, message: "Mobile number does not match" });
@@ -124,6 +135,27 @@ atsRouter.post(
 
 // ── PROTECTED — all remaining routes require a logged-in HR/recruiter ────────
 atsRouter.use(requireAuth);
+
+// Payroll HR validation routes (with salary_start_date support)
+atsRouter.use("/payroll-hr", payrollHRRouter);
+
+// Interview routes (recruiter portal)
+atsRouter.use("/interview", interviewRouter);
+
+// Queue routes (live queue management)
+atsRouter.use("/queue", queueRouter);
+
+// Branch Head Approval routes
+atsRouter.use("/branch-head-approval", branchHeadApprovalRouter);
+
+// Super Admin routes (module access control)
+atsRouter.use("/super-admin", superAdminRouter);
+
+// Command Centre routes (analytics and metrics)
+atsRouter.use("/command-centre", commandCentreRouter);
+
+// BGV Enhanced routes (digital verification)
+atsRouter.use("/bgv-enhanced", bgvEnhancedRouter);
 
 // Candidates (HR/recruiter facing) - Scoped
 atsRouter.get("/candidates", requireRole("admin", "hr", "recruiter", "manager"), h(async (req, res) => {

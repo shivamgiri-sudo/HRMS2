@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { Fragment, type ReactNode, useEffect, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -27,8 +27,22 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { Download, FileText, Wallet, ChevronDown, ChevronUp, Plus, Minus } from "lucide-react";
-import { downloadMasCallnetPayslip } from "@/lib/masCallnetPayslipGenerator";
+import {
+  CalendarCheck,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  Eye,
+  EyeOff,
+  FileText,
+  Minus,
+  Plus,
+  ShieldCheck,
+  TrendingUp,
+  Wallet,
+} from "lucide-react";
+import { downloadMasCallnetPayslip } from "@/lib/masCallnetPayslipGeneratorV2";
+import { numberToWords } from "@/lib/numberToWords";
 
 interface PayslipViewerProps {
   employeeId: string;
@@ -44,6 +58,43 @@ interface SalaryStructure {
   other_allowances: number | null;
   tax_deduction: number | null;
   other_deductions: number | null;
+}
+
+interface PayslipComponent {
+  component_code: string;
+  component_name: string;
+  component_type: string;
+  amount: number | string;
+  taxable?: number;
+}
+
+interface PayslipRecord {
+  id: string;
+  run_month: string;
+  run_status?: string;
+  status?: string;
+  gross_salary: number | string;
+  total_deductions: number | string;
+  net_salary: number | string;
+  basic?: number | string;
+  basic_salary?: number | string;
+  hra?: number | string;
+  special_allowance?: number | string;
+  pf_employee?: number | string;
+  esic_employee?: number | string;
+  professional_tax?: number | string;
+  tds?: number | string;
+  working_days?: number | string;
+  present_days?: number | string;
+  designation_name?: string | null;
+  dept_name?: string | null;
+  branch_name?: string | null;
+  location_name?: string | null;
+  epf_number?: string | null;
+  esi_number?: string | null;
+  payslip_ref?: string | null;
+  earnings?: PayslipComponent[];
+  deductions?: PayslipComponent[];
 }
 
 const MONTHS = [
@@ -76,13 +127,21 @@ const formatCurrency = (amount: number) => {
 };
 
 const getStatusBadge = (status: string) => {
-  switch (status) {
+  const normalizedStatus = (status || "").toLowerCase().trim();
+  switch (normalizedStatus) {
     case "paid":
+    case "credited":
+    case "disbursed":
       return <Badge className="bg-green-500/10 text-green-600 border-green-500/20">Paid</Badge>;
     case "processed":
+    case "approved":
       return <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/20">Processed</Badge>;
-    default:
+    case "draft":
+    case "pending":
       return <Badge variant="secondary">Draft</Badge>;
+    default:
+      // If status is not recognized but payslip has data, show as Processed
+      return <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/20">Processed</Badge>;
   }
 };
 
@@ -91,13 +150,46 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
   const [selectedYear, setSelectedYear] = useState(String(currentDate.getFullYear()));
   const [expandedRecord, setExpandedRecord] = useState<string | null>(null);
   const [showNewPayslipAlert, setShowNewPayslipAlert] = useState(false);
+  const [salaryVisible, setSalaryVisible] = useState(false);
+
+  // Fetch employee CTC
+  const { data: employeeData } = useQuery<{ ctc: number | null }>({
+    queryKey: ["employee-ctc", employeeId],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: { ctc: number | null } }>(
+        `/api/employees/${employeeId}/ctc`
+      );
+      return res.data ?? { ctc: null };
+    },
+    enabled: !!employeeId,
+  });
+
+  const renderSensitive = (value: ReactNode, className = "") => (
+    <>
+      <span
+        aria-hidden={!salaryVisible}
+        className={`${className} inline-block ${
+          salaryVisible ? "" : "select-none blur-[6px]"
+        }`}
+      >
+        {salaryVisible ? value : "₹ 00,000.00"}
+      </span>
+      {!salaryVisible && <span className="sr-only">Salary amount hidden</span>}
+    </>
+  );
+
+  const handleYearChange = (year: string) => {
+    setSelectedYear(year);
+    setSalaryVisible(false);
+    setExpandedRecord(null);
+  };
 
   // Fetch payroll records for the employee
-  const { data: payrollRecords, isLoading } = useQuery({
+  const { data: payrollRecords, isLoading, isError } = useQuery<PayslipRecord[]>({
     queryKey: ["my-payslips", employeeId, selectedYear],
     queryFn: async () => {
       if (!employeeId) return [];
-      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+      const res = await hrmsApi.get<{ success: boolean; data: PayslipRecord[] }>(
         `/api/payroll/payslip/my?year=${selectedYear}`
       );
       return res.data ?? [];
@@ -148,10 +240,12 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
 
     // Use component breakdown if available, otherwise fall back to aggregated columns
     if (latestRecord.earnings && latestRecord.earnings.length > 0) {
-      return latestRecord.earnings.map((e: any) => ({
-        label: e.component_name,
-        amount: Number(e.amount ?? 0),
-      }));
+      return latestRecord.earnings
+        .filter((component) => component.component_code !== "BASIC")
+        .map((component) => ({
+          label: component.component_name,
+          amount: Number(component.amount ?? 0),
+        }));
     }
 
     // Fallback to old structure
@@ -169,9 +263,9 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
 
     // Use component breakdown if available
     if (latestRecord.deductions && latestRecord.deductions.length > 0) {
-      return latestRecord.deductions.map((d: any) => ({
-        label: d.component_name,
-        amount: Number(d.amount ?? 0),
+      return latestRecord.deductions.map((component) => ({
+        label: component.component_name,
+        amount: Number(component.amount ?? 0),
       }));
     }
 
@@ -182,26 +276,26 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     return items;
   };
 
-  const handleDownloadPayslip = (record: any) => {
+  const handleDownloadPayslip = async (record: PayslipRecord) => {
     // run_month is "YYYY-MM" format
     const [recYear, recMonthNum] = (record.run_month || "").split("-");
     const monthName = MONTHS.find((m) => m.value === String(Number(recMonthNum)))?.label || record.run_month || "";
 
     // Helper to get component amount by code from earnings array
     const getEarning = (code: string) => {
-      const comp = (record.earnings || []).find((e: any) => e.component_code === code);
+      const comp = (record.earnings || []).find((earning) => earning.component_code === code);
       return Number(comp?.amount ?? 0);
     };
 
     // Helper to get deduction amount by code
     const getDeduction = (code: string) => {
-      const comp = (record.deductions || []).find((d: any) => d.component_code === code);
+      const comp = (record.deductions || []).find((deduction) => deduction.component_code === code);
       return Number(comp?.amount ?? 0);
     };
 
-    downloadMasCallnetPayslip({
+    await downloadMasCallnetPayslip({
       // Header
-      companyName: "Mas Callnet India Pvt. Ltd",
+      companyName: "Mas Callnet India Pvt Ltd",
       monthYear: `${monthName} - ${recYear}`,
 
       // Employee details - now from actual database
@@ -232,7 +326,9 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       esic: getDeduction('ESIC_EMP') || getDeduction('ESIC_EMPLOYEE'),
       loan: getDeduction('LOAN') || getDeduction('LOAN_RECOVERY'),
       adDed: getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY'),
-      otherDed: getDeduction('PT') || getDeduction('PROFESSIONAL_TAX') + (getDeduction('TDS') || 0),
+      otherDed:
+        (getDeduction('PT') || getDeduction('PROFESSIONAL_TAX')) +
+        getDeduction('TDS'),
 
       // Form 16 Summary (optional - set to 0 for now)
       grossSalary: Number(record.gross_salary ?? 0),
@@ -247,60 +343,160 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       incomeTax: getDeduction('TDS'),
 
       // Payment details
-      chequeNo: record.cheque_number || `S${Date.now().toString().slice(-8)}`,
+      chequeNo: record.payslip_ref || "N/A",
       netSalary: Number(record.net_salary ?? 0),
+      netSalaryWords: numberToWords(Math.floor(Number(record.net_salary ?? 0))),
     }, `Payslip_${employeeCode}_${monthName}_${recYear}.pdf`);
   };
 
   const allowanceBreakdown = getAllowanceBreakdown();
   const deductionBreakdown = getDeductionBreakdown();
+  const latestRecord = payrollRecords?.[0];
+  const latestGross = Number(latestRecord?.gross_salary ?? 0);
+  const latestDeductions = Number(latestRecord?.total_deductions ?? 0);
+  const latestNet = Number(latestRecord?.net_salary ?? 0);
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className="overflow-hidden border-0 bg-transparent shadow-none">
+      <CardHeader className="rounded-3xl bg-[#073f78] px-6 py-6 text-white shadow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
-            <Wallet className="h-5 w-5 text-primary" />
+          <div className="flex items-center gap-4">
+            <div className="flex size-12 items-center justify-center rounded-2xl bg-white/15">
+              <Wallet className="size-6 text-green-200" />
+            </div>
             <div>
-              <CardTitle>My Payslips</CardTitle>
-              <CardDescription>View and download your salary statements</CardDescription>
+              <CardTitle className="text-2xl font-black text-white">My Payslips</CardTitle>
+              <CardDescription className="mt-1 text-sm text-blue-100">
+                Salary summary, statutory deductions and downloadable statements
+              </CardDescription>
             </div>
           </div>
-          <Select value={selectedYear} onValueChange={setSelectedYear}>
-            <SelectTrigger className="w-[120px]">
-              <SelectValue placeholder="Year" />
-            </SelectTrigger>
-            <SelectContent>
-              {YEARS.map((year) => (
-                <SelectItem key={year.value} value={year.value}>
-                  {year.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className="rounded-xl border border-white/20 bg-white/15 font-bold text-white hover:bg-white/25 hover:text-white"
+              onClick={() => setSalaryVisible((visible) => !visible)}
+              aria-pressed={salaryVisible}
+            >
+              {salaryVisible ? <EyeOff className="mr-2 size-4" /> : <Eye className="mr-2 size-4" />}
+              {salaryVisible ? "Hide salary" : "View salary"}
+            </Button>
+            <Select value={selectedYear} onValueChange={handleYearChange}>
+              <SelectTrigger className="w-[140px] rounded-xl border-white/20 bg-white text-slate-900">
+                <SelectValue placeholder="Year" />
+              </SelectTrigger>
+              <SelectContent>
+                {YEARS.map((year) => (
+                  <SelectItem key={year.value} value={year.value}>
+                    {year.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="space-y-6 px-0 pt-6">
+        {/* CTC Card - Prominent Display */}
+        {employeeData?.ctc && (
+          <Card className="rounded-3xl border-2 border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 shadow-md">
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-amber-800">
+                    <TrendingUp className="size-4" />
+                    Annual CTC (Cost to Company)
+                  </div>
+                  <p className="mt-2 text-3xl font-black tabular-nums text-amber-900">
+                    {renderSensitive(formatCurrency(employeeData.ctc))}
+                  </p>
+                  <p className="mt-1 text-xs text-amber-700">
+                    Monthly: {renderSensitive(formatCurrency(employeeData.ctc / 12))}
+                  </p>
+                </div>
+                <div className="flex size-16 items-center justify-center rounded-2xl bg-amber-200/50">
+                  <Wallet className="size-8 text-amber-700" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <section className="grid gap-4 sm:grid-cols-3">
+          {[
+            {
+              label: "Latest gross salary",
+              value: latestRecord ? formatCurrency(latestGross) : "Not available",
+              icon: Plus,
+              tone: "border-emerald-200 bg-emerald-50 text-emerald-800",
+            },
+            {
+              label: "Total deductions",
+              value: latestRecord ? formatCurrency(latestDeductions) : "Not available",
+              icon: Minus,
+              tone: "border-rose-200 bg-rose-50 text-rose-800",
+            },
+            {
+              label: "Net salary",
+              value: latestRecord ? formatCurrency(latestNet) : "Not available",
+              icon: Wallet,
+              tone: "border-blue-200 bg-blue-50 text-[#073f78]",
+            },
+          ].map(({ label, value, icon: Icon, tone }) => (
+            <div key={label} className={`rounded-2xl border p-5 shadow-sm ${tone}`}>
+              <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider">
+                <Icon className="size-4" />
+                {label}
+              </div>
+              <p className="mt-3 text-xl font-black tabular-nums">{renderSensitive(value)}</p>
+            </div>
+          ))}
+        </section>
+
+        <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <ShieldCheck className="size-5 shrink-0 text-[#1B6AB5]" />
+            <p className="text-pretty">
+              Salary values are hidden by default for shoulder-surfing protection. Use View salary only in a private setting.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 font-bold text-slate-700">
+            <CalendarCheck className="size-4 text-[#3BAD49]" />
+            {payrollRecords?.length ?? 0} statement{payrollRecords?.length === 1 ? "" : "s"} in {selectedYear}
+          </div>
+        </div>
+
+        {isError && (
+          <Alert variant="destructive" className="rounded-2xl">
+            <FileText className="h-4 w-4" />
+            <AlertTitle>Payslips could not be loaded</AlertTitle>
+            <AlertDescription>
+              Please retry. Contact payroll support if the issue continues.
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* New Payslip Alert */}
         {showNewPayslipAlert && payrollRecords && payrollRecords.length > 0 && (
-          <Alert className="bg-primary/10 border-primary">
+          <Alert className="rounded-2xl border-blue-200 bg-blue-50">
             <Download className="h-4 w-4" />
             <AlertTitle>New Payslip Available!</AlertTitle>
-            <AlertDescription className="flex items-center justify-between">
+            <AlertDescription className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <span>
                 Your salary for {(() => {
                   const [, monthNum] = (payrollRecords[0].run_month || "").split("-");
                   return MONTHS.find((m) => m.value === String(Number(monthNum)))?.label || "";
                 })()} has been disbursed.
               </span>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button
                   onClick={() => {
                     handleDownloadPayslip(payrollRecords[0]);
                     handleDismissAlert(payrollRecords[0].id);
                   }}
                   size="sm"
-                  className="ml-4"
+                  className="rounded-xl bg-[#073f78] hover:bg-[#0a4d90]"
                 >
                   <Download className="h-4 w-4 mr-1" />
                   Download Now
@@ -319,10 +515,10 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
 
         {/* Salary Structure Breakdown Card */}
         {salaryStructure && (
-          <Card className="bg-muted/30">
+          <Card className="rounded-3xl border-slate-200 bg-white shadow-sm">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Salary Structure Breakdown</CardTitle>
-              <CardDescription>Your current salary components</CardDescription>
+              <CardTitle className="text-lg font-black text-slate-950">Current salary breakdown</CardTitle>
+              <CardDescription>Earnings and deductions from your latest processed statement</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid gap-6 md:grid-cols-2">
@@ -332,31 +528,34 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                     <Plus className="h-4 w-4" />
                     <span className="font-semibold">Earnings</span>
                   </div>
-                  <div className="space-y-2 rounded-lg border bg-background p-4">
+                  <div className="space-y-2 rounded-2xl border border-emerald-100 bg-emerald-50/50 p-4">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Basic Salary</span>
-                      <span className="font-medium">{formatCurrency(salaryStructure.basic_salary)}</span>
+                      <span className="font-medium">{renderSensitive(formatCurrency(salaryStructure.basic_salary))}</span>
                     </div>
                     {allowanceBreakdown.map((item) => (
                       <div key={item.label} className="flex justify-between">
                         <span className="text-muted-foreground">{item.label}</span>
-                        <span className="font-medium text-green-600">+{formatCurrency(item.amount)}</span>
+                        <span className="font-medium text-green-600">
+                          {renderSensitive(`+${formatCurrency(item.amount)}`)}
+                        </span>
                       </div>
                     ))}
                     <Separator />
                     <div className="flex justify-between font-semibold">
                       <span>Gross Salary</span>
                       <span>
-                        {payrollRecords && payrollRecords.length > 0
-                          ? formatCurrency(Number(payrollRecords[0].gross_salary ?? 0))
-                          : formatCurrency(
-                              salaryStructure.basic_salary +
-                                (salaryStructure.hra || 0) +
-                                (salaryStructure.transport_allowance || 0) +
-                                (salaryStructure.medical_allowance || 0) +
-                                (salaryStructure.other_allowances || 0)
-                            )
-                        }
+                        {renderSensitive(
+                          payrollRecords && payrollRecords.length > 0
+                            ? formatCurrency(Number(payrollRecords[0].gross_salary ?? 0))
+                            : formatCurrency(
+                                salaryStructure.basic_salary +
+                                  (salaryStructure.hra || 0) +
+                                  (salaryStructure.transport_allowance || 0) +
+                                  (salaryStructure.medical_allowance || 0) +
+                                  (salaryStructure.other_allowances || 0)
+                              )
+                        )}
                       </span>
                     </div>
                   </div>
@@ -368,22 +567,23 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                     <Minus className="h-4 w-4" />
                     <span className="font-semibold">Deductions</span>
                   </div>
-                  <div className="space-y-2 rounded-lg border bg-background p-4">
+                  <div className="space-y-2 rounded-2xl border border-rose-100 bg-rose-50/50 p-4">
                     {deductionBreakdown.length > 0 ? (
                       <>
                         {deductionBreakdown.map((item) => (
                           <div key={item.label} className="flex justify-between">
                             <span className="text-muted-foreground">{item.label}</span>
-                            <span className="font-medium text-red-600">-{formatCurrency(item.amount)}</span>
+                            <span className="font-medium text-red-600">
+                              {renderSensitive(`-${formatCurrency(item.amount)}`)}
+                            </span>
                           </div>
                         ))}
                         <Separator />
                         <div className="flex justify-between font-semibold">
                           <span>Total Deductions</span>
                           <span className="text-red-600">
-                            -{formatCurrency(
-                              (salaryStructure.tax_deduction || 0) +
-                                (salaryStructure.other_deductions || 0)
+                            {renderSensitive(
+                              `-${formatCurrency(Number(payrollRecords?.[0]?.total_deductions ?? 0))}`
                             )}
                           </span>
                         </div>
@@ -396,22 +596,23 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
               </div>
 
               {/* Net Salary */}
-              <div className="mt-4 rounded-lg border-2 border-primary/20 bg-primary/5 p-4">
+              <div className="mt-5 rounded-2xl border-2 border-blue-200 bg-blue-50 p-5">
                 <div className="flex justify-between items-center">
                   <span className="font-semibold text-lg">Net Salary (Monthly)</span>
-                  <span className="font-bold text-xl text-primary">
-                    {payrollRecords && payrollRecords.length > 0
-                      ? formatCurrency(Number(payrollRecords[0].net_salary ?? 0))
-                      : formatCurrency(
-                          salaryStructure.basic_salary +
-                            (salaryStructure.hra || 0) +
-                            (salaryStructure.transport_allowance || 0) +
-                            (salaryStructure.medical_allowance || 0) +
-                            (salaryStructure.other_allowances || 0) -
-                            (salaryStructure.tax_deduction || 0) -
-                            (salaryStructure.other_deductions || 0)
-                        )
-                    }
+                  <span className="text-2xl font-black tabular-nums text-[#073f78]">
+                    {renderSensitive(
+                      payrollRecords && payrollRecords.length > 0
+                        ? formatCurrency(Number(payrollRecords[0].net_salary ?? 0))
+                        : formatCurrency(
+                            salaryStructure.basic_salary +
+                              (salaryStructure.hra || 0) +
+                              (salaryStructure.transport_allowance || 0) +
+                              (salaryStructure.medical_allowance || 0) +
+                              (salaryStructure.other_allowances || 0) -
+                              (salaryStructure.tax_deduction || 0) -
+                              (salaryStructure.other_deductions || 0)
+                          )
+                    )}
                   </span>
                 </div>
               </div>
@@ -428,8 +629,13 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
           </div>
         ) : payrollRecords && payrollRecords.length > 0 ? (
           <div className="space-y-3">
-            <h3 className="font-semibold">Payslip History</h3>
-            <div className="rounded-md border">
+            <div>
+              <h3 className="text-lg font-black text-slate-950">Payslip history</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Select a month to inspect earnings and deductions before downloading.
+              </p>
+            </div>
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -451,20 +657,24 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                     const totalAllowances = Number(record.gross_salary ?? 0) - basicSal;
                     const isExpanded = expandedRecord === record.id;
                     return (
-                      <>
-                        <TableRow key={record.id} className="cursor-pointer" onClick={() => setExpandedRecord(isExpanded ? null : record.id)}>
+                      <Fragment key={record.id}>
+                        <TableRow className="cursor-pointer hover:bg-blue-50/50" onClick={() => setExpandedRecord(isExpanded ? null : record.id)}>
                           <TableCell>
                             {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                           </TableCell>
                           <TableCell className="font-medium">{monthName}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(basicSal)}</TableCell>
+                          <TableCell className="text-right">
+                            {renderSensitive(formatCurrency(basicSal))}
+                          </TableCell>
                           <TableCell className="text-right text-green-600">
-                            +{formatCurrency(totalAllowances > 0 ? totalAllowances : 0)}
+                            {renderSensitive(`+${formatCurrency(totalAllowances > 0 ? totalAllowances : 0)}`)}
                           </TableCell>
                           <TableCell className="text-right text-red-600">
-                            -{formatCurrency(Number(record.total_deductions) || 0)}
+                            {renderSensitive(`-${formatCurrency(Number(record.total_deductions) || 0)}`)}
                           </TableCell>
-                          <TableCell className="text-right font-semibold">{formatCurrency(Number(record.net_salary) || 0)}</TableCell>
+                          <TableCell className="text-right font-semibold">
+                            {renderSensitive(formatCurrency(Number(record.net_salary) || 0))}
+                          </TableCell>
                           <TableCell>{getStatusBadge(record.run_status || record.status || "processed")}</TableCell>
                           <TableCell className="text-right">
                             <Button
@@ -474,7 +684,8 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                                 e.stopPropagation();
                                 handleDownloadPayslip(record);
                               }}
-                              disabled={record.run_status === "draft"}
+                              disabled={!record.net_salary || Number(record.net_salary) === 0}
+                              title={!record.net_salary || Number(record.net_salary) === 0 ? "Payslip not yet processed" : "Download PDF"}
                             >
                               <Download className="h-4 w-4 mr-1" />
                               PDF
@@ -483,7 +694,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                         </TableRow>
                         {isExpanded && (
                           <TableRow>
-                            <TableCell colSpan={8} className="bg-muted/30 p-4">
+                            <TableCell colSpan={8} className="bg-slate-50 p-5">
                               <div className="grid gap-4 md:grid-cols-2">
                                 <div className="space-y-2">
                                   <p className="font-medium text-green-600 flex items-center gap-1">
@@ -491,28 +702,36 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                                   </p>
                                   <div className="space-y-1 text-sm">
                                     {record.earnings && record.earnings.length > 0 ? (
-                                      record.earnings.map((earning: any) => (
+                                      record.earnings.map((earning) => (
                                         <div key={earning.component_code} className="flex justify-between">
                                           <span className="text-muted-foreground">{earning.component_name}</span>
-                                          <span className="text-green-600">+{formatCurrency(Number(earning.amount))}</span>
+                                          <span className="text-green-600">
+                                            {renderSensitive(`+${formatCurrency(Number(earning.amount))}`)}
+                                          </span>
                                         </div>
                                       ))
                                     ) : (
                                       <>
                                         <div className="flex justify-between">
                                           <span className="text-muted-foreground">Basic Salary</span>
-                                          <span>{formatCurrency(Number(record.basic ?? record.basic_salary ?? 0))}</span>
+                                          <span>
+                                            {renderSensitive(formatCurrency(Number(record.basic ?? record.basic_salary ?? 0)))}
+                                          </span>
                                         </div>
-                                        {record.hra > 0 && (
+                                        {Number(record.hra ?? 0) > 0 && (
                                           <div className="flex justify-between">
                                             <span className="text-muted-foreground">HRA</span>
-                                            <span className="text-green-600">+{formatCurrency(Number(record.hra))}</span>
+                                            <span className="text-green-600">
+                                              {renderSensitive(`+${formatCurrency(Number(record.hra))}`)}
+                                            </span>
                                           </div>
                                         )}
-                                        {record.special_allowance > 0 && (
+                                        {Number(record.special_allowance ?? 0) > 0 && (
                                           <div className="flex justify-between">
                                             <span className="text-muted-foreground">Special Allowance</span>
-                                            <span className="text-green-600">+{formatCurrency(Number(record.special_allowance))}</span>
+                                            <span className="text-green-600">
+                                              {renderSensitive(`+${formatCurrency(Number(record.special_allowance))}`)}
+                                            </span>
                                           </div>
                                         )}
                                       </>
@@ -525,36 +744,46 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                                   </p>
                                   <div className="space-y-1 text-sm">
                                     {record.deductions && record.deductions.length > 0 ? (
-                                      record.deductions.map((deduction: any) => (
+                                      record.deductions.map((deduction) => (
                                         <div key={deduction.component_code} className="flex justify-between">
                                           <span className="text-muted-foreground">{deduction.component_name}</span>
-                                          <span className="text-red-600">-{formatCurrency(Number(deduction.amount))}</span>
+                                          <span className="text-red-600">
+                                            {renderSensitive(`-${formatCurrency(Number(deduction.amount))}`)}
+                                          </span>
                                         </div>
                                       ))
                                     ) : (
                                       <>
-                                        {record.pf_employee > 0 && (
+                                        {Number(record.pf_employee ?? 0) > 0 && (
                                           <div className="flex justify-between">
                                             <span className="text-muted-foreground">PF (Employee)</span>
-                                            <span className="text-red-600">-{formatCurrency(Number(record.pf_employee))}</span>
+                                            <span className="text-red-600">
+                                              {renderSensitive(`-${formatCurrency(Number(record.pf_employee))}`)}
+                                            </span>
                                           </div>
                                         )}
-                                        {record.esic_employee > 0 && (
+                                        {Number(record.esic_employee ?? 0) > 0 && (
                                           <div className="flex justify-between">
                                             <span className="text-muted-foreground">ESIC</span>
-                                            <span className="text-red-600">-{formatCurrency(Number(record.esic_employee))}</span>
+                                            <span className="text-red-600">
+                                              {renderSensitive(`-${formatCurrency(Number(record.esic_employee))}`)}
+                                            </span>
                                           </div>
                                         )}
-                                        {record.professional_tax > 0 && (
+                                        {Number(record.professional_tax ?? 0) > 0 && (
                                           <div className="flex justify-between">
                                             <span className="text-muted-foreground">Professional Tax</span>
-                                            <span className="text-red-600">-{formatCurrency(Number(record.professional_tax))}</span>
+                                            <span className="text-red-600">
+                                              {renderSensitive(`-${formatCurrency(Number(record.professional_tax))}`)}
+                                            </span>
                                           </div>
                                         )}
-                                        {record.tds > 0 && (
+                                        {Number(record.tds ?? 0) > 0 && (
                                           <div className="flex justify-between">
                                             <span className="text-muted-foreground">TDS</span>
-                                            <span className="text-red-600">-{formatCurrency(Number(record.tds))}</span>
+                                            <span className="text-red-600">
+                                              {renderSensitive(`-${formatCurrency(Number(record.tds))}`)}
+                                            </span>
                                           </div>
                                         )}
                                         {Number(record.total_deductions) === 0 && (
@@ -568,19 +797,22 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                             </TableCell>
                           </TableRow>
                         )}
-                      </>
+                      </Fragment>
                     );
                   })}
                 </TableBody>
               </Table>
             </div>
           </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <FileText className="h-12 w-12 text-muted-foreground mb-4" />
-            <p className="text-lg font-medium">No Payslips Found</p>
+        ) : isError ? null : (
+          <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-white py-14 text-center">
+            <FileText className="mb-4 h-12 w-12 text-slate-300" />
+            <p className="text-lg font-bold text-slate-800">No payslips found</p>
             <p className="text-sm text-muted-foreground">
-              There are no payroll records for {selectedYear}
+              There are no processed payroll records for {selectedYear}.
+            </p>
+            <p className="text-xs text-muted-foreground mt-2">
+              Note: Payslips in draft status are not available for download until they are finalized by HR/Payroll team.
             </p>
           </div>
         )}

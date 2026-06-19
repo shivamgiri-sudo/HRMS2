@@ -6,11 +6,27 @@ import {
   listExitRequestsSchema,
   updateExitStatusSchema,
 } from "./exit.validation.js";
+import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 
 export const exitController = {
   async listExitRequests(req: AuthenticatedRequest, res: Response) {
-    const filters = listExitRequestsSchema.parse(req.query);
-    const result = await exitService.listExitRequests(filters);
+    const userId = req.authUser!.id;
+    const isAdminHr = await hasRole(userId, "admin", "hr");
+    const isFinancePayroll = await hasRole(userId, "finance", "payroll");
+    const isManager = await hasRole(userId, "manager");
+    const baseFilters = listExitRequestsSchema.parse(req.query);
+
+    if (!isAdminHr && !isFinancePayroll) {
+      const emp = await getEmployeeForUser(userId);
+      if (!emp) return res.status(403).json({ success: false, message: "Forbidden: no employee record linked to your account" });
+      if (isManager) {
+        baseFilters.managerEmployeeId = emp.id;
+      } else {
+        baseFilters.employeeId = emp.id;
+      }
+    }
+
+    const result = await exitService.listExitRequests(baseFilters);
     return res.json({ success: true, ...result });
   },
 
@@ -24,7 +40,12 @@ export const exitController = {
   },
 
   async createExitRequest(req: AuthenticatedRequest, res: Response) {
-    const input = createExitRequestSchema.parse(req.body);
+    const body = {
+      ...req.body,
+      exitDate: req.body?.exitDate ?? req.body?.lastWorkingDayProposed,
+      reason: req.body?.reason ?? req.body?.resignationReason,
+    };
+    const input = createExitRequestSchema.parse(body);
     const data = await exitService.createExitRequest(
       {
         employeeId: input.employeeId!,

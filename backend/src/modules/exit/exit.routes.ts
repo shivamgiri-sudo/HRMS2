@@ -142,7 +142,17 @@ exitRouter.post(
   })
 );
 
-exitRouter.patch(
+const updateExitStatus = [
+  requireRole("admin", "hr", "manager"),
+  h(exitController.updateExitStatus.bind(exitController)),
+] as const;
+
+exitRouter.patch("/:id/status", ...updateExitStatus);
+// Compatibility for the original Exit Management screen and older clients.
+exitRouter.post("/:id/status", ...updateExitStatus);
+
+// POST endpoint for frontend compatibility
+exitRouter.post(
   "/:id/status",
   requireRole("admin", "hr", "manager"),
   h(exitController.updateExitStatus.bind(exitController))

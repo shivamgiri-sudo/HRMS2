@@ -16,9 +16,11 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Target, Loader2, Calendar, Users, Plus, Trash2, Edit2 } from "lucide-react";
+import { goalStatusColors } from "@/lib/statusStyles";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCreateGoal, useUpdateGoal, useDeleteGoal } from "@/hooks/usePerformance";
 import { format } from "date-fns";
+import { parseLocalDate } from "@/lib/utils";
 
 interface TeamGoalsViewProps {
   managerId: string;
@@ -41,12 +43,7 @@ interface TeamMemberWithGoals {
   }[];
 }
 
-const statusColors: Record<string, string> = {
-  not_started: "bg-muted text-muted-foreground",
-  in_progress: "bg-primary/10 text-primary border-primary/20",
-  completed: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
-  cancelled: "bg-destructive/10 text-destructive border-destructive/20",
-};
+const statusColors = goalStatusColors;
 
 const priorityColors: Record<string, string> = {
   low: "bg-muted text-muted-foreground",
@@ -214,7 +211,7 @@ export function TeamGoalsView({ managerId }: TeamGoalsViewProps) {
                         <div className="flex flex-wrap gap-1.5">
                           <Badge variant="outline" className={`text-xs ${statusColors[goal.status]}`}>{goal.status.replace("_", " ")}</Badge>
                           <Badge variant="outline" className={`text-xs ${priorityColors[goal.priority]}`}>{goal.priority}</Badge>
-                          {goal.due_date && <Badge variant="outline" className="text-xs gap-1"><Calendar className="h-3 w-3" />{format(new Date(goal.due_date), "MMM d")}</Badge>}
+                          {goal.due_date && <Badge variant="outline" className="text-xs gap-1"><Calendar className="h-3 w-3" />{format(parseLocalDate(goal.due_date), "MMM d")}</Badge>}
                         </div>
                       </div>
                     ))}

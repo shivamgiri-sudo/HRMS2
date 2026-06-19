@@ -127,13 +127,14 @@ describe("POST /api/ats/candidates", () => {
     expect(res.status).toBe(400);
   });
 
-  it("returns 400 when email missing", async () => {
+  it("allows walk-in registration when email is missing", async () => {
     const { email: _omit, ...body } = validCandidateBody as any;
+    svc.createCandidate.mockResolvedValueOnce({ ...fakeCandidate, email: null });
     const res = await request(app)
       .post("/api/ats/candidates")
       .set(AUTH)
       .send(body);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(201);
   });
 
   it("returns 400 when education missing", async () => {

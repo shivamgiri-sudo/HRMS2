@@ -7,6 +7,8 @@ export interface Employee {
   full_name: string;
   email: string | null;
   mobile: string | null;
+  personal_email: string | null;
+  personal_phone: string | null;
   gender: "Male" | "Female" | "Other" | null;
   date_of_birth: string | null;
   date_of_joining: string;
@@ -30,4 +32,17 @@ export interface PaginatedResult<T> {
   total: number;
   page: number;
   limit: number;
+  stats?: {
+    total_employees: number;
+    active_employees: number;
+    inactive_employees: number;
+    department_count: number;
+  };
+  process_breakdown?: Array<{
+    process_id: string | null;
+    process_name: string;
+    active_count: number;
+    inactive_count: number;
+    total_count: number;
+  }>;
 }

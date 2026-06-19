@@ -464,7 +464,7 @@ export const atsFullParityService = {
       orgName: cfg.Org_Name || cfg.orgName || "ATS Command Center",
       refreshTime: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
       todayISO: formatDateKey(new Date()),
-      options: buildOptions(candidateRows, queueRows),
+      options: buildOptions(allRows, queueRows),
       summary: summarizeRows(candidateRows),
       trends: {
         today: summarizeRows(allRows.filter((r) => inPeriod(r, "FTD"))),
@@ -480,7 +480,7 @@ export const atsFullParityService = {
       sourceTable: dimensionTable(candidateRows, "_source"),
       recruiterTable: recruiterProductivity(candidateRows),
       slotTable: dimensionTable(candidateRows, "_slot"),
-      reusablePool: candidateRows.filter((r) => r._reusableReason && !r._selected).slice(0, 100),
+      reusablePool: candidateRows.filter((r) => r._reusableReason).slice(0, 100),
     };
   },
 

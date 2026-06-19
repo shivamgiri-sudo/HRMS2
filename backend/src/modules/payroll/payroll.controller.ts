@@ -9,6 +9,7 @@ import {
   runFiltersSchema,
   updatePrepLineSchema,
   updateRunStatusSchema,
+  updateOvertimeSchema,
 } from "./payroll.validation.js";
 import { payrollService } from "./payroll.service.js";
 
@@ -46,12 +47,17 @@ export const payrollController = {
   async assignSalary(req: Request, res: Response) {
     const parsed = assignSalarySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const data = await payrollService.assignSalary(parsed.data, (req as any).userId ?? "system");
+    const data = await payrollService.assignSalary(parsed.data, (req as any).authUser?.id ?? "system");
     res.status(201).json({ data });
   },
 
   async getEmployeeSalary(req: Request, res: Response) {
     const data = await payrollService.getEmployeeSalary(req.params.employeeId);
+    res.json({ data });
+  },
+
+  async getEmployeeSalaryHistory(req: Request, res: Response) {
+    const data = await payrollService.getEmployeeSalaryHistory(req.params.employeeId);
     res.json({ data });
   },
 
@@ -67,10 +73,35 @@ export const payrollController = {
   async listRuns(req: Request, res: Response) {
     const parsed = runFiltersSchema.safeParse(req.query);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    // Pass scopeFilter from middleware
     const filtersWithScope = { ...parsed.data, scopeFilter: (req as any).scopeFilter };
     const result = await payrollService.listRuns(filtersWithScope);
-    res.json({ data: result.data, total: result.total, page: result.page, limit: result.limit });
+    // Parse run_month (YYYY-MM) into numeric month/year for frontend consumption
+    const enriched = result.data.map((r: any) => {
+      const [yr, mo] = (r.run_month ?? '').split('-').map(Number);
+      return { ...r, month: mo || 0, year: yr || 0 };
+    });
+    res.json({ success: true, data: enriched, total: result.total, page: result.page, limit: result.limit });
+  },
+
+  async listPayrollRecords(req: Request, res: Response) {
+    const parsed = runFiltersSchema.safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const result = await payrollService.listPayrollRecords({
+      ...parsed.data,
+      scopeFilter: (req as any).scopeFilter,
+    });
+    res.json({ success: true, data: result.data, total: result.total, page: result.page, limit: result.limit });
+  },
+
+  async getPayrollOverview(req: Request, res: Response) {
+    const runMonth = typeof req.query.runMonth === "string"
+      ? req.query.runMonth
+      : new Date().toISOString().slice(0, 7);
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(runMonth)) {
+      return res.status(400).json({ success: false, message: "runMonth must be YYYY-MM" });
+    }
+    const data = await payrollService.getPayrollOverview(runMonth);
+    res.json({ success: true, data });
   },
 
   async getRun(req: Request, res: Response) {
@@ -97,6 +128,17 @@ export const payrollController = {
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const data = await payrollService.updateLine(req.params.id, parsed.data, (req as any).userId ?? "system");
     res.json({ data });
+  },
+
+  async updateOvertime(req: Request, res: Response) {
+    const parsed = updateOvertimeSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const data = await payrollService.updateOvertime(
+      req.params.lineId,
+      parsed.data,
+      (req as any).authUser?.id ?? "system"
+    );
+    res.json({ success: true, data });
   },
 
   // ─── Advances ──────────────────────────────────────────────────────────────

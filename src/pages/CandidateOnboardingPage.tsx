@@ -36,7 +36,7 @@ export default function CandidateOnboardingPage() {
 
   useEffect(() => {
     if (!token) { setTokenError('No onboarding token provided.'); setLoading(false); return; }
-    hrmsApi.get(`/ats/onboarding/validate-token?token=${token}`)
+    hrmsApi.get(`/api/ats/onboarding/validate-token?token=${token}`)
       .then(r => { setPrefill(r.data.data); setLoading(false); })
       .catch((e: any) => { setTokenError(e?.response?.data?.error ?? 'Invalid or expired token.'); setLoading(false); });
   }, [token]);
@@ -46,7 +46,7 @@ export default function CandidateOnboardingPage() {
   const handleSubmit = async () => {
     setLoading(true);
     try {
-      await hrmsApi.post('/ats/onboarding/submit-profile', { token, ...form });
+      await hrmsApi.post('/api/ats/onboarding/submit-profile', { token, ...form });
       setSubmitted(true);
     } catch (e: any) {
       alert(e?.response?.data?.error ?? 'Submission failed. Please try again.');

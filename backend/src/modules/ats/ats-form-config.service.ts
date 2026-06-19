@@ -43,19 +43,79 @@ export const atsFormConfigService = {
     }
 
     const [branchRows] = await db.execute<RowDataPacket[]>(
-      'SELECT branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name ASC'
+      'SELECT DISTINCT branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name ASC'
     );
     const branchOptions = (branchRows as RowDataPacket[]).map((r: any) => r.branch_name as string);
+
+    // Get branch aliases (display names like Trapezoid, Okaya, etc.)
+    const [aliasRows] = await db.execute<RowDataPacket[]>(
+      `SELECT canonical_key, MAX(display_name) AS display_name, MIN(alias_text) AS alias_text
+       FROM ats_branch_alias_master
+       WHERE active_status = 1
+       GROUP BY canonical_key
+       ORDER BY display_name ASC`
+    );
+    const branchAliases = (aliasRows as RowDataPacket[]).map((r: any) => ({
+      canonical: r.canonical_key,
+      display: r.display_name,
+      alias: r.alias_text
+    }));
 
     const [recruiterRows] = await db.execute<RowDataPacket[]>(
       'SELECT name FROM ats_recruiter WHERE active_status = 1 ORDER BY sort_order ASC, name ASC'
     );
-    const recruiterOptions = (recruiterRows as RowDataPacket[]).map((r: any) => r.name as string);
+    let recruiterOptions = (recruiterRows as RowDataPacket[]).map((r: any) => r.name as string);
+
+    // Try to fetch contact details from ats_recruiter_roster (if available)
+    const [rosterRows] = await db.execute<RowDataPacket[]>(
+      'SELECT name, email, mobile FROM ats_recruiter_roster WHERE active_status = 1'
+    ).catch(() => [[]]);
+    const recruiterDetails = recruiterOptions.map(name => {
+      const roster = (rosterRows as RowDataPacket[]).find((r: any) => r.name === name);
+      return {
+        name,
+        email: roster?.email || null,
+        mobile: roster?.mobile || null,
+      };
+    });
+    if (recruiterOptions.length === 0) {
+      const [employeeRecruiters] = await db.execute<RowDataPacket[]>(
+        `SELECT DISTINCT
+           TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
+           COALESCE(e.office_email, e.official_email, e.email) AS email,
+           e.mobile
+         FROM employees e
+         JOIN department_master d ON d.id = e.department_id
+         JOIN designation_master des ON des.id = e.designation_id
+         WHERE e.active_status = 1
+           AND LOWER(d.dept_name) LIKE '%human resource%'
+           AND (
+             LOWER(des.designation_name) LIKE '%executive%'
+             OR LOWER(des.designation_name) LIKE '%recruiter%'
+             OR LOWER(des.designation_name) LIKE '%hr manager%'
+             OR LOWER(des.designation_name) LIKE '%hr%'
+           )
+         ORDER BY name`
+      );
+      const empRows = employeeRecruiters as RowDataPacket[];
+      recruiterOptions = empRows.map((r: any) => String(r.name));
+      // Populate recruiterDetails from employees when ats_recruiter table is empty
+      recruiterDetails.length = 0;
+      for (const r of empRows) {
+        recruiterDetails.push({
+          name:   String(r.name),
+          email:  r.email  || null,
+          mobile: r.mobile || null,
+        });
+      }
+    }
 
     return {
       fields:                   configMap['formFields']             ?? DEFAULT_FIELDS,
       recruiterOptions,
+      recruiterDetails,         // NEW: Full recruiter contact details
       branchOptions:            branchOptions.length > 0 ? branchOptions : ['Mumbai','Delhi','Bangalore'],
+      branchAliases,            // NEW: Branch display names
       roleOptions:              configMap['roleOptions']             ?? DEFAULT_OPTIONS.roleOptions,
       educationOptions:         configMap['educationOptions']        ?? DEFAULT_OPTIONS.educationOptions,
       experienceOptions:        configMap['experienceOptions']       ?? DEFAULT_OPTIONS.experienceOptions,
@@ -63,6 +123,7 @@ export const atsFormConfigService = {
       nightShiftComfortOptions: configMap['nightShiftComfortOptions'] ?? DEFAULT_OPTIONS.nightShiftComfortOptions,
       genderOptions:            configMap['genderOptions']           ?? DEFAULT_OPTIONS.genderOptions,
       yesNoOptions:             ['Yes','No'],
+      companyName:              'Mas Callnet India Pvt Ltd',
     };
   },
 
@@ -128,5 +189,41 @@ export const atsFormConfigService = {
 
   async deleteRecruiter(id: string) {
     await db.execute('UPDATE ats_recruiter SET active_status = 0, updated_at = NOW() WHERE id = ?', [id]);
+  },
+
+  async listBranchAliases() {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, canonical_key, display_name, alias_text, active_status, created_at, updated_at
+       FROM ats_branch_alias_master
+       ORDER BY display_name ASC`
+    );
+    return rows as RowDataPacket[];
+  },
+
+  async createBranchAlias(canonical: string, display: string, alias: string | null) {
+    await db.execute<ResultSetHeader>(
+      'INSERT INTO ats_branch_alias_master (id, canonical_key, display_name, alias_text) VALUES (UUID(), ?, ?, ?)',
+      [canonical.trim(), display.trim(), alias?.trim() || null]
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(
+      'SELECT id, canonical_key, display_name, alias_text, active_status FROM ats_branch_alias_master ORDER BY created_at DESC LIMIT 1'
+    );
+    return (rows as RowDataPacket[])[0];
+  },
+
+  async updateBranchAlias(id: string, data: { canonical_key?: string; display_name?: string; alias_text?: string; active_status?: number }) {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (data.canonical_key !== undefined) { sets.push('canonical_key = ?'); params.push(data.canonical_key.trim()); }
+    if (data.display_name  !== undefined) { sets.push('display_name = ?');  params.push(data.display_name.trim()); }
+    if (data.alias_text    !== undefined) { sets.push('alias_text = ?');    params.push(data.alias_text?.trim() || null); }
+    if (data.active_status !== undefined) { sets.push('active_status = ?'); params.push(data.active_status); }
+    if (sets.length === 0) return;
+    params.push(id);
+    await db.execute(`UPDATE ats_branch_alias_master SET ${sets.join(', ')}, updated_at = NOW() WHERE id = ?`, params);
+  },
+
+  async deleteBranchAlias(id: string) {
+    await db.execute('DELETE FROM ats_branch_alias_master WHERE id = ?', [id]);
   },
 };

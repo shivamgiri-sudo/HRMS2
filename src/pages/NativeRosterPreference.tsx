@@ -194,7 +194,7 @@ export default function NativeRosterPreference() {
 
   const approveMutation = useMutation({
     mutationFn: (id: string) =>
-      hrmsApi.patch(`/wfm/roster-preferences/${id}/approve`, {}),
+      hrmsApi.patch(`/api/wfm/roster-preferences/${id}/approve`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["roster-prefs-pending"] });
       toast({ title: "Preference approved." });
@@ -210,7 +210,7 @@ export default function NativeRosterPreference() {
 
   const rejectMutation = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
-      hrmsApi.patch(`/wfm/roster-preferences/${id}/reject`, { reason }),
+      hrmsApi.patch(`/api/wfm/roster-preferences/${id}/reject`, { reason }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["roster-prefs-pending"] });
       setRejectId(null);

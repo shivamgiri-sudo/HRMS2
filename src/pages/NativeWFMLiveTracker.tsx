@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Coffee, LogIn, LogOut, Plus, RefreshCcw, Search,
+  Coffee, LogOut, Plus, RefreshCcw, Search,
   UserCheck, Users, Activity,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -89,12 +89,20 @@ export default function NativeWFMLiveTracker() {
     setLoading(true);
     setMessage("");
     try {
-      const [liveRes, empsRes] = await Promise.all([
+      const [liveRes, firstPage] = await Promise.all([
         hrmsApi.get<{ success: boolean; data: any }>(`/api/wfm/live?date=${date}`),
-        hrmsApi.get<{ success: boolean; data: AnyRow[] }>("/api/employees?limit=500"),
+        hrmsApi.get<{ success: boolean; data: AnyRow[]; total?: number }>("/api/employees?limit=200&page=1"),
       ]);
+      const allEmployees = [...(firstPage.data ?? [])];
+      const pages = Math.ceil(Number(firstPage.total ?? allEmployees.length) / 200);
+      for (let page = 2; page <= pages; page += 1) {
+        const next = await hrmsApi.get<{ success: boolean; data: AnyRow[] }>(
+          `/api/employees?limit=200&page=${page}`
+        );
+        allEmployees.push(...(next.data ?? []));
+      }
       setLiveData(liveRes.data);
-      setEmployees(empsRes.data ?? []);
+      setEmployees(allEmployees);
     } catch (err: any) {
       setMessage(err.message || "Unable to load WFM live tracker.");
     } finally {
@@ -193,30 +201,6 @@ export default function NativeWFMLiveTracker() {
     });
   }, [sessions, search, processFilter, branchFilter]);
 
-  const clockIn = async (s: AnyRow) => {
-    if (s.login_time) return setMessage("Already clocked in.");
-    try {
-      await hrmsApi.post("/api/wfm/sessions/clock-in", {
-        employeeId: s.employee_id,
-        sessionDate: date,
-        punchSource: "MANUAL",
-        branchName: s.branch_name ?? null,
-        processName: s.process_name ?? null,
-      });
-      setMessage("Manual login captured."); await load();
-    } catch (err: any) { setMessage(err.message || "Clock-in failed."); }
-  };
-
-  const clockOut = async (s: AnyRow) => {
-    if (!s.login_time) return setMessage("Employee not clocked in.");
-    if (s.logout_time) return setMessage("Already clocked out.");
-    const sessionId = s.session_id ?? s.id;
-    try {
-      await hrmsApi.post("/api/wfm/sessions/clock-out", { sessionId });
-      setMessage("Logout captured."); await load();
-    } catch (err: any) { setMessage(err.message || "Clock-out failed."); }
-  };
-
   const logBreak = async (s: AnyRow) => {
     if (!s.login_time) return setMessage("Login required before break.");
     const sessionId = s.session_id ?? s.id;
@@ -253,7 +237,7 @@ export default function NativeWFMLiveTracker() {
             <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">Native WFM</p>
             <h1 className="mt-2 text-3xl font-black text-slate-950">Live Shift & Break Tracker</h1>
             <p className="mt-2 max-w-5xl text-slate-600">
-              Real-time attendance from MySQL backend — manual clock-in/out, break logging, adherence tracking.
+              Real-time attendance from MySQL backend — break logging, adherence tracking.
             </p>
           </div>
           <button
@@ -396,25 +380,11 @@ export default function NativeWFMLiveTracker() {
                         <td className="p-4">
                           <div className="flex flex-wrap gap-2">
                             <button
-                              onClick={() => clockIn(s)}
-                              disabled={!!s.login_time}
-                              className="cursor-pointer rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed hover:bg-emerald-700 transition-colors"
-                            >
-                              <LogIn className="inline h-3 w-3 mr-1" />In
-                            </button>
-                            <button
                               onClick={() => logBreak(s)}
                               disabled={!s.login_time || !!s.logout_time}
                               className="cursor-pointer rounded-xl bg-amber-600 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed hover:bg-amber-700 transition-colors"
                             >
                               <Coffee className="inline h-3 w-3 mr-1" />Break
-                            </button>
-                            <button
-                              onClick={() => clockOut(s)}
-                              disabled={!s.login_time || !!s.logout_time}
-                              className="cursor-pointer rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed hover:bg-slate-700 transition-colors"
-                            >
-                              <LogOut className="inline h-3 w-3 mr-1" />Out
                             </button>
                           </div>
                         </td>

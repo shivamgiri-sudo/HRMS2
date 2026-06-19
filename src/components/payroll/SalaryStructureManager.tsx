@@ -91,7 +91,8 @@ export function SalaryStructureManager() {
   const filteredStructures = structures.filter(
     (s) =>
       s.employeeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.employeeEmail.toLowerCase().includes(searchQuery.toLowerCase())
+      s.employeeEmail.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (s.employeeCode ?? "").toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const resetForm = () => {
@@ -389,7 +390,7 @@ export function SalaryStructureManager() {
                         </Avatar>
                         <div>
                           <p className="font-medium text-foreground">{structure.employeeName}</p>
-                          <p className="text-xs text-muted-foreground">{structure.employeeEmail}</p>
+                          <p className="text-xs text-muted-foreground">{structure.employeeCode || structure.employeeEmail}</p>
                         </div>
                       </div>
                     </TableCell>
@@ -397,13 +398,13 @@ export function SalaryStructureManager() {
                       {formatCurrency(structure.basicSalary)}
                     </TableCell>
                     <TableCell className="text-right text-emerald-600">
-                      +{formatCurrency(structure.totalAllowances)}
+                      +{formatCurrency(structure.hra + structure.otherAllowances)}
                     </TableCell>
-                    <TableCell className="text-right text-destructive">
-                      -{formatCurrency(structure.totalDeductions)}
+                    <TableCell className="text-right text-slate-400 text-xs">
+                      At run time
                     </TableCell>
                     <TableCell className="text-right font-semibold text-primary">
-                      {formatCurrency(structure.netSalary)}
+                      {formatCurrency(structure.basicSalary + structure.hra + structure.otherAllowances)}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">

@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, parseISO, isSameDay, addDays, startOfDay } from "date-fns";
+import { normalizeDate } from "@/lib/utils";
 
 interface Holiday {
   id: string;
@@ -34,7 +35,7 @@ export function UpcomingHolidays() {
   });
 
   const formatHolidayDate = (dateStr: string) => {
-    const date = parseISO(dateStr);
+    const date = parseISO(normalizeDate(dateStr));
     if (isSameDay(date, today)) return "Today";
     if (isSameDay(date, addDays(today, 1))) return "Tomorrow";
     return format(date, "EEE, MMM d");

@@ -102,6 +102,14 @@ describe("engagement kudos service", () => {
     await listKudos();
     expect(mockExecute.mock.calls[0][0]).toContain("sender.id = kt.sender_id");
     expect(mockExecute.mock.calls[0][0]).toContain("receiver.id = kt.receiver_id");
+    expect(mockExecute.mock.calls[0][0]).toContain("LIMIT 50");
+    expect(mockExecute.mock.calls[0][1]).toEqual([]);
+  });
+
+  it("bounds the kudos result limit before interpolating it", async () => {
+    mockExecute.mockResolvedValueOnce([[], []]);
+    await listKudos({}, 500);
+    expect(mockExecute.mock.calls[0][0]).toContain("LIMIT 100");
   });
 });
 

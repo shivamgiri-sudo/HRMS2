@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
-import { isValidEmployeeCode } from "@/hooks/useNextEmployeeCode";
 import {
   Dialog,
   DialogContent,
@@ -23,8 +22,9 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Employee } from "./EmployeeTable";
-import { Loader2, Hash, IndianRupee, History, ChevronDown, ChevronUp } from "lucide-react";
+import { Loader2, Hash, IndianRupee, History, ChevronDown, ChevronUp, Eye, EyeOff } from "lucide-react";
 import { format } from "date-fns";
+import { parseLocalDate } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -33,6 +33,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { EmployeeLeaveEligibility, type EmployeeLeaveEligibilityHandle } from "./EmployeeLeaveEligibility";
+import { fetchAllEmployeeRows } from "@/hooks/useEmployees";
 
 const WEEKDAYS = [
   { value: 0, label: 'Sun' },
@@ -55,7 +56,10 @@ interface EditFormData {
   first_name: string;
   last_name: string;
   email: string;
+  official_email: string;
   phone: string;
+  personal_email: string;
+  personal_mobile: string;
   address: string;
   city: string;
   country: string;
@@ -98,7 +102,10 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     first_name: "",
     last_name: "",
     email: "",
+    official_email: "",
     phone: "",
+    personal_email: "",
+    personal_mobile: "",
     address: "",
     city: "",
     country: "",
@@ -125,24 +132,34 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     other_deductions: "",
     effective_from: new Date().toISOString().split("T")[0],
   });
+  const [selectedSalaryStructureId, setSelectedSalaryStructureId] = useState("");
+  const [salaryVisible, setSalaryVisible] = useState(false);
 
   // Fetch salary structure for this employee
-  const { data: salaryStructure, isLoading: isLoadingSalary } = useQuery({
+  const { data: salaryContext, isLoading: isLoadingSalary } = useQuery({
     queryKey: ["employee-salary-structure", employee?.id],
     queryFn: async () => {
       if (!employee?.id) return null;
-      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/payroll/structures");
-      return res.data ?? null;
+      const [assignmentResponse, structuresResponse] = await Promise.all([
+        hrmsApi.get<{ data: any }>(`/api/payroll/salary-assignments/${employee.id}`),
+        hrmsApi.get<{ data: any[] }>("/api/payroll/structures"),
+      ]);
+      return {
+        assignment: assignmentResponse.data ?? null,
+        structures: structuresResponse.data ?? [],
+      };
     },
     enabled: open && !!employee?.id,
   });
+  const salaryStructure = salaryContext?.assignment ?? null;
+  const salaryStructures = salaryContext?.structures ?? [];
 
   // Fetch salary history for this employee
   const { data: salaryHistory = [], isLoading: isLoadingHistory } = useQuery({
     queryKey: ["employee-salary-history", employee?.id],
     queryFn: async () => {
       if (!employee?.id) return [];
-      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/payroll/structures");
+      const res = await hrmsApi.get<{data:any[]}>(`/api/payroll/salary-assignments/${employee.id}/history`);
       return res.data ?? [];
     },
     enabled: open && !!employee?.id,
@@ -155,17 +172,22 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
   // Update salary data when structure is loaded
   useEffect(() => {
     if (salaryStructure) {
+      const monthlyCtc = Number(salaryStructure.ctc_annual ?? 0) / 12;
+      const basic = monthlyCtc * Number(salaryStructure.basic_pct ?? 40) / 100;
+      const hra = monthlyCtc * Number(salaryStructure.hra_pct ?? 20) / 100;
+      setSelectedSalaryStructureId(salaryStructure.structure_id ?? "");
       setSalaryData({
-        basic_salary: salaryStructure.basic_salary?.toString() || "",
-        hra: salaryStructure.hra?.toString() || "",
-        transport_allowance: salaryStructure.transport_allowance?.toString() || "",
-        medical_allowance: salaryStructure.medical_allowance?.toString() || "",
-        other_allowances: salaryStructure.other_allowances?.toString() || "",
-        tax_deduction: salaryStructure.tax_deduction?.toString() || "",
-        other_deductions: salaryStructure.other_deductions?.toString() || "",
+        basic_salary: basic.toFixed(2),
+        hra: hra.toFixed(2),
+        transport_allowance: "0",
+        medical_allowance: "0",
+        other_allowances: Math.max(0, monthlyCtc - basic - hra).toFixed(2),
+        tax_deduction: "0",
+        other_deductions: "0",
         effective_from: salaryStructure.effective_from || new Date().toISOString().split("T")[0],
       });
     } else {
+      setSelectedSalaryStructureId(salaryStructures[0]?.id ?? "");
       setSalaryData({
         basic_salary: "",
         hra: "",
@@ -177,14 +199,14 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         effective_from: new Date().toISOString().split("T")[0],
       });
     }
-  }, [salaryStructure]);
+  }, [salaryStructure, salaryStructures]);
 
   // Fetch full employee details when dialog opens
   const { data: employeeDetails, isLoading: isLoadingDetails } = useQuery({
     queryKey: ["employee-details", employee?.id],
     queryFn: async () => {
       if (!employee?.id) return null;
-      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      const res = await hrmsApi.get<{success:boolean;data:any}>(`/api/employees/${employee.id}`);
       return res.data ?? null;
     },
     enabled: open && !!employee?.id,
@@ -193,10 +215,8 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
   // Fetch managers (active employees who can be managers)
   const { data: managers = [] } = useQuery({
     queryKey: ["managers"],
-    queryFn: async () => {
-      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
-      return res.data ?? [];
-    },
+    queryFn: () => fetchAllEmployeeRows("active"),
+    staleTime: 60_000,
   });
 
   // Fetch departments
@@ -204,7 +224,11 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     queryKey: ["departments"],
     queryFn: async () => {
       const res = await hrmsApi.get<{success:boolean;data:any}>("/api/org/departments");
-      return res.data ?? [];
+      // Map dept_name to name for consistent interface
+      return (res.data ?? []).map((dept: any) => ({
+        ...dept,
+        name: dept.dept_name || dept.name
+      }));
     },
   });
 
@@ -228,42 +252,68 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         first_name: employeeDetails.first_name || "",
         last_name: employeeDetails.last_name || "",
         email: employeeDetails.email || "",
-        phone: employeeDetails.phone || "",
-        address: employeeDetails.address || "",
+        official_email: employeeDetails.official_email || "",
+        phone: employeeDetails.mobile || employeeDetails.phone || "",
+        personal_email: employeeDetails.personal_email || "",
+        personal_mobile: employeeDetails.personal_mobile || "",
+        address: employeeDetails.address1 || employeeDetails.address || "",
         city: employeeDetails.city || "",
         country: employeeDetails.country || "",
-        date_of_birth: employeeDetails.date_of_birth || "",
+        date_of_birth: employeeDetails.date_of_birth?.slice?.(0, 10) || "",
         gender: employeeDetails.gender || "",
-        designation: employeeDetails.designation || "",
+        designation: employeeDetails.designation_name || employeeDetails.designation || "",
         department_id: employeeDetails.department_id || "",
-        manager_id: employeeDetails.manager_id || "",
-        hire_date: employeeDetails.hire_date || "",
+        manager_id: employeeDetails.reporting_manager_id || employeeDetails.manager_id || "",
+        hire_date: employeeDetails.date_of_joining?.slice?.(0, 10) || employeeDetails.hire_date?.slice?.(0, 10) || "",
         employment_type: employeeDetails.employment_type || "full-time",
         working_hours_start: parseTime(employeeDetails.working_hours_start),
         working_hours_end: parseTime(employeeDetails.working_hours_end),
         working_days: employeeDetails.working_days || [1, 2, 3, 4, 5],
-        status: employeeDetails.status || "active",
+        status: String(employeeDetails.employment_status || employeeDetails.status || "active").toLowerCase(),
       });
     }
   }, [employeeDetails]);
 
   const updateMutation = useMutation({
     mutationFn: async ({ data, isDeptManager }: { data: EditFormData; isDeptManager: boolean }) => {
-      await hrmsApi.patch(`/api/employees/${employee.id}`, data);
+      await hrmsApi.patch(`/api/employees/${employee.id}`, {
+        // Note: employeeCode, firstName, and lastName are protected and cannot be updated
+        email: data.email,
+        officialEmail: data.official_email || null,
+        mobile: data.phone || null,
+        personalEmail: data.personal_email || null,
+        personalMobile: data.personal_mobile || null,
+        address1: data.address || null,
+        city: data.city || null,
+        country: data.country || null,
+        dateOfBirth: data.date_of_birth || undefined,
+        gender: data.gender,
+        designationName: data.designation,
+        departmentId: data.department_id || null,
+        reportingManagerId: data.manager_id || null,
+        dateOfJoining: data.hire_date,
+        employmentType: data.employment_type,
+        workingHoursStart: data.working_hours_start,
+        workingHoursEnd: data.working_hours_end,
+        workingDays: data.working_days,
+        employmentStatus: data.status,
+      });
 
       // Update department manager status if employee has a department
       if (data.department_id) {
+        const department = departments.find((item) => item.id === data.department_id);
         if (isDeptManager) {
           // Set this employee as the department manager
           await hrmsApi.put(`/api/org/departments/${data.department_id}`, { manager_id: employee.id });
-        } else {
-          // Remove this employee as department manager if they were previously set
+        } else if (department?.manager_id === employee.id) {
+          // Only clear the department head when this employee currently owns that role.
           await hrmsApi.put(`/api/org/departments/${data.department_id}`, { manager_id: null });
         }
       }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["employees"] });
+      queryClient.invalidateQueries({ queryKey: ["employee-directory"] });
       queryClient.invalidateQueries({ queryKey: ["departments"] });
     },
     onError: (error) => {
@@ -274,24 +324,27 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
   const salaryMutation = useMutation({
     mutationFn: async (data: SalaryFormData) => {
       if (!employee?.id) throw new Error("Employee ID is required");
+      if (!selectedSalaryStructureId) throw new Error("Select a salary structure");
 
-      const salaryPayload = {
-        employee_id: employee.id,
-        basic_salary: parseFloat(data.basic_salary) || 0,
-        hra: parseFloat(data.hra) || 0,
-        transport_allowance: parseFloat(data.transport_allowance) || 0,
-        medical_allowance: parseFloat(data.medical_allowance) || 0,
-        other_allowances: parseFloat(data.other_allowances) || 0,
-        tax_deduction: parseFloat(data.tax_deduction) || 0,
-        other_deductions: parseFloat(data.other_deductions) || 0,
-        effective_from: data.effective_from,
-      };
+      const grossMonthly =
+        (parseFloat(data.basic_salary) || 0) +
+        (parseFloat(data.hra) || 0) +
+        (parseFloat(data.transport_allowance) || 0) +
+        (parseFloat(data.medical_allowance) || 0) +
+        (parseFloat(data.other_allowances) || 0);
 
-      await hrmsApi.patch(`/api/employees/${employee.id}`, { salary_info: salaryPayload });
+      await hrmsApi.post("/api/payroll/salary-assignments", {
+        employeeId: employee.id,
+        structureId: selectedSalaryStructureId,
+        ctcAnnual: Math.round(grossMonthly * 12 * 100) / 100,
+        effectiveFrom: data.effective_from,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["salary-structures"] });
       queryClient.invalidateQueries({ queryKey: ["employee-salary-structure", employee?.id] });
+      queryClient.invalidateQueries({ queryKey: ["employee-salary-history", employee?.id] });
+      queryClient.invalidateQueries({ queryKey: ["employee-stat-card", employee?.id] });
     },
     onError: (error) => {
       toast.error(`Failed to update salary structure: ${error.message}`);
@@ -300,19 +353,20 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.employee_code || !isValidEmployeeCode(formData.employee_code)) {
-      toast.error("Employee code must be in format ACQ001");
+    if (!formData.employee_code.trim()) {
+      toast.error("Employee code is required");
       return;
     }
-    if (!formData.first_name || !formData.last_name || !formData.email || !formData.designation) {
-      toast.error("Please fill in all required fields");
+    // Validate official email format if provided
+    if (formData.official_email && !/^[a-zA-Z0-9._%+\-]+@(teammas\.in|teammas\.co\.in)$/.test(formData.official_email)) {
+      toast.error("Official email must be @teammas.in or @teammas.co.in");
       return;
     }
-    if (!isDepartmentManager && !formData.manager_id) {
-      toast.error("Reporting manager is required for employees who are not department managers");
+    // Note: first_name, last_name, and employee_code are protected fields and cannot be updated
+    if (!formData.email || !formData.designation) {
+      toast.error("Please fill in all required fields (email, designation)");
       return;
     }
-
     try {
       // Update employee details and department manager status
       await updateMutation.mutateAsync({ data: formData, isDeptManager: isDepartmentManager });
@@ -353,11 +407,9 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
 
   const salaryTotals = calculateSalaryTotals();
 
-  if (!employee) return null;
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      {employee && <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit Employee</DialogTitle>
         </DialogHeader>
@@ -385,10 +437,13 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                       id="employee_code"
                       value={formData.employee_code}
                       onChange={(e) => setFormData({ ...formData, employee_code: e.target.value.toUpperCase() })}
-                      className="pl-9 font-mono"
+                      className="pl-9 font-mono bg-slate-50"
                       required
+                      disabled
+                      title="Employee code cannot be changed"
                     />
                   </div>
+                  <p className="text-xs text-muted-foreground">Employee code cannot be modified</p>
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4">
@@ -398,7 +453,10 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                       id="first_name"
                       value={formData.first_name}
                       onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
+                      className="bg-slate-50"
                       required
+                      disabled
+                      title="Name cannot be changed"
                     />
                   </div>
                   <div className="space-y-2">
@@ -407,10 +465,14 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                       id="last_name"
                       value={formData.last_name}
                       onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
+                      className="bg-slate-50"
                       required
+                      disabled
+                      title="Name cannot be changed"
                     />
                   </div>
                 </div>
+                <p className="text-xs text-muted-foreground -mt-2">Employee name cannot be modified</p>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -430,6 +492,44 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                       value={formData.phone}
                       onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                     />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="official_email">Official Email</Label>
+                  <Input
+                    id="official_email"
+                    type="email"
+                    placeholder="firstname.lastname@teammas.in"
+                    value={formData.official_email}
+                    onChange={(e) => setFormData({ ...formData, official_email: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Must be @teammas.in or @teammas.co.in</p>
+                </div>
+
+                {/* Personal Contact Section */}
+                <div className="pt-2 border-t">
+                  <h4 className="text-sm font-medium mb-3">Personal Contact Information</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="personal_email">Personal Email</Label>
+                      <Input
+                        id="personal_email"
+                        type="email"
+                        placeholder="personal@gmail.com"
+                        value={formData.personal_email}
+                        onChange={(e) => setFormData({ ...formData, personal_email: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="personal_mobile">Personal Mobile</Label>
+                      <Input
+                        id="personal_mobile"
+                        placeholder="+91 98765 43210"
+                        value={formData.personal_mobile}
+                        onChange={(e) => setFormData({ ...formData, personal_mobile: e.target.value })}
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -683,8 +783,35 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                   </div>
+                ) : !salaryVisible ? (
+                  <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-8 text-center">
+                    <IndianRupee className="mx-auto h-8 w-8 text-[#1B6AB5]" />
+                    <h3 className="mt-3 font-black text-slate-900">Salary details are protected</h3>
+                    <p className="mt-1 text-sm text-slate-500">Reveal only when you are ready to review or revise compensation.</p>
+                    <Button type="button" className="mt-4" onClick={() => setSalaryVisible(true)}>
+                      <Eye className="mr-2 h-4 w-4" /> View salary
+                    </Button>
+                  </div>
                 ) : (
                   <>
+                    <div className="flex items-end justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+                      <div className="flex-1 space-y-2">
+                        <Label>Salary Structure *</Label>
+                        <Select value={selectedSalaryStructureId} onValueChange={setSelectedSalaryStructureId}>
+                          <SelectTrigger><SelectValue placeholder="Select salary structure" /></SelectTrigger>
+                          <SelectContent>
+                            {salaryStructures.map((structure: any) => (
+                              <SelectItem key={structure.id} value={structure.id}>
+                                {structure.structure_name} ({structure.structure_code})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button type="button" variant="outline" onClick={() => setSalaryVisible(false)}>
+                        <EyeOff className="mr-2 h-4 w-4" /> Hide
+                      </Button>
+                    </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="basic_salary">Basic Salary *</Label>
@@ -867,9 +994,9 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                                     >
                                       <div className="flex items-center justify-between">
                                         <span className="text-xs font-medium text-muted-foreground">
-                                          {format(new Date(history.effective_from), "MMM d, yyyy")}
+                                          {format(parseLocalDate(history.effective_from), "MMM d, yyyy")}
                                           {history.effective_to && (
-                                            <> → {format(new Date(history.effective_to), "MMM d, yyyy")}</>
+                                            <> → {format(parseLocalDate(history.effective_to), "MMM d, yyyy")}</>
                                           )}
                                         </span>
                                       </div>
@@ -930,7 +1057,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
             </DialogFooter>
           </form>
         )}
-      </DialogContent>
+      </DialogContent>}
     </Dialog>
   );
 }

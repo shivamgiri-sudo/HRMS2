@@ -5,6 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Package, Calendar, Tag, AlertCircle } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
+import { parseLocalDate } from "@/lib/utils";
 
 interface MyAssetsProps {
   employeeId: string;
@@ -92,7 +93,7 @@ export function MyAssets({ employeeId }: MyAssetsProps) {
                   )}
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <Calendar className="h-3 w-3" />
-                    <span>Assigned: {format(new Date(assignment.assigned_date), "MMM d, yyyy")}</span>
+                    <span>Assigned: {format(parseLocalDate(assignment.assigned_date), "MMM d, yyyy")}</span>
                   </div>
                   {assignment.notes && (
                     <p className="text-xs text-muted-foreground italic">{assignment.notes}</p>
@@ -133,7 +134,7 @@ export function MyAssets({ employeeId }: MyAssetsProps) {
                   </div>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <Calendar className="h-3 w-3" />
-                    <span>Returned: {format(new Date(assignment.returned_date!), "MMM d, yyyy")}</span>
+                    <span>Returned: {format(parseLocalDate(assignment.returned_date!), "MMM d, yyyy")}</span>
                   </div>
                 </div>
               ))}

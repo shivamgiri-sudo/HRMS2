@@ -31,6 +31,7 @@ import { useToast } from "@/hooks/use-toast";
 
 export interface PayrollRecord {
   id: string;
+  runId: string;
   employeeId: string;
   employeeCode: string;
   employee: {
@@ -120,7 +121,7 @@ export function PayrollTable({
   const canRevert = selectedRecords.some((r) => r.status === "processing" || r.status === "paid");
 
   const handleBulkProcessed = () => {
-    const eligibleIds = selectedRecords.filter((r) => r.status === "pending").map((r) => r.id);
+    const eligibleIds = selectedRecords.filter((r) => r.status === "pending").map((r) => r.runId);
     if (eligibleIds.length > 0) {
       onBulkMarkProcessed?.(eligibleIds);
       clearSelection();
@@ -128,7 +129,7 @@ export function PayrollTable({
   };
 
   const handleBulkPaid = () => {
-    const eligibleIds = selectedRecords.filter((r) => r.status === "pending" || r.status === "processing").map((r) => r.id);
+    const eligibleIds = selectedRecords.filter((r) => r.status === "pending" || r.status === "processing").map((r) => r.runId);
     if (eligibleIds.length > 0) {
       onBulkMarkPaid?.(eligibleIds);
       clearSelection();
@@ -136,7 +137,7 @@ export function PayrollTable({
   };
 
   const handleBulkRevert = () => {
-    const eligibleIds = selectedRecords.filter((r) => r.status === "processing" || r.status === "paid").map((r) => r.id);
+    const eligibleIds = selectedRecords.filter((r) => r.status === "processing" || r.status === "paid").map((r) => r.runId);
     if (eligibleIds.length > 0) {
       onBulkRevertToPending?.(eligibleIds);
       clearSelection();

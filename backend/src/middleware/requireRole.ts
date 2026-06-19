@@ -3,8 +3,13 @@ import type { NextFunction, Response } from "express";
 import { db } from "../db/mysql.js";
 import type { AuthenticatedRequest } from "./authMiddleware.js";
 
-// Role aliases: canonical ↔ legacy (both directions)
-// Allows routes using either 'manager' or 'process_manager' to work transparently.
+/**
+ * Role aliases — bidirectional:
+ * - "manager" ↔ "process_manager": same authority, different naming conventions across modules.
+ *   A route protected with requireRole("manager") accepts users with either role key.
+ * - "tl" ↔ "team_leader": legacy short form and canonical form.
+ *   Expansion runs on BOTH the allowed list and the user's actual roles so both orderings match.
+ */
 const ROLE_ALIASES: Record<string, string[]> = {
   "process_manager": ["manager"],
   "manager":         ["process_manager"],
@@ -36,6 +41,11 @@ export function requireRole(...allowedRoles: string[]) {
       );
 
       const userRoles = (rows as { role_key: string }[]).map((r) => r.role_key);
+      if (userRoles.includes("super_admin")) {
+        (req as AuthenticatedRequest & { userRoles: string[] }).userRoles = userRoles;
+        return next();
+      }
+
       // Expand both sides with aliases so manager↔process_manager are interchangeable
       const expandedUserRoles = expandRoles(userRoles);
       const expandedAllowed   = expandRoles(allowedRoles);

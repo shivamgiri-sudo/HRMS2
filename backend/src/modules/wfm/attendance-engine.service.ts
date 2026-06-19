@@ -57,6 +57,9 @@ export interface EngineResult {
   processId: string | null;
   branchId: string | null;
   source: AttendanceSource;
+  sourceSystem: string;
+  sourceRecordDate: string;
+  sourceReference: string | null;
   diallerMinutes: number | null;
   biometricMinutes: number | null;
   rawMinutes: number;
@@ -92,6 +95,29 @@ export interface BatchResult {
   skipped: number;
   failed: number;
   errors: string[];
+}
+
+export function isOperationsExecutive(departmentName: string, designationName: string): boolean {
+  const department = departmentName.trim().toLowerCase();
+  const designation = designationName.trim().toLowerCase();
+  return (department === 'operations' || department === 'operation')
+    && /^executive(?:\s*-\s*.+)?$/.test(designation);
+}
+
+export function classifyOperationsNetLogin(
+  netLoginMinutes: number
+): { status: 'present' | 'half_day' | 'absent'; lwpValue: number } {
+  if (netLoginMinutes >= 480) return { status: 'present', lwpValue: 0.0 };
+  if (netLoginMinutes > 240) return { status: 'half_day', lwpValue: 0.5 };
+  return { status: 'absent', lwpValue: 1.0 };
+}
+
+export function classifyCosecMinutes(
+  biometricMinutes: number
+): { status: 'present' | 'half_day' | 'absent'; lwpValue: number } {
+  if (biometricMinutes >= 540) return { status: 'present', lwpValue: 0.0 };
+  if (biometricMinutes > 240) return { status: 'half_day', lwpValue: 0.5 };
+  return { status: 'absent', lwpValue: 1.0 };
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -168,6 +194,19 @@ export const attendanceEngineService = {
     return null;
   },
 
+  // APR Net_Login minutes for Operations+Executive employees (direct from mas_hrms.apr)
+  async getAprNetMinutes(employeeCode: string, date: string): Promise<number> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT Net_Login FROM apr WHERE UserID = ? AND ReportDate = ? LIMIT 1`,
+      [employeeCode, date]
+    );
+    if (!rows[0]) return 0;
+    const netLogin = (rows[0] as any).Net_Login as string; // 'HH:MM:SS'
+    if (!netLogin) return 0;
+    const [h, m, s] = String(netLogin).split(':').map(Number);
+    return (h * 60) + (m || 0) + Math.round((s || 0) / 60);
+  },
+
   // Sum dialler login minutes — fallback join on employee_code if employee_id is null
   async getDiallerMinutes(employeeId: string, date: string): Promise<number> {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -193,13 +232,42 @@ export const attendanceEngineService = {
 
   // Sum biometric login minutes
   async getBiometricMinutes(employeeId: string, date: string): Promise<number> {
+    return (await this.getBiometricEvidence(employeeId, date)).minutes;
+  },
+
+  async getBiometricEvidence(
+    employeeId: string,
+    date: string
+  ): Promise<{ minutes: number; sourceSystem: string; sourceReference: string | null }> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(total_login_minutes), 0) AS total
-       FROM wfm_attendance_session
-       WHERE employee_id = ? AND session_date = ?`,
-      [employeeId, date]
+      `SELECT evidence.minutes, evidence.source_system, evidence.source_reference
+       FROM (
+         SELECT COALESCE(SUM(was.total_login_minutes), 0) AS minutes,
+                'wfm_attendance_session' AS source_system,
+                CAST(MAX(was.id) AS CHAR) AS source_reference
+         FROM wfm_attendance_session was
+         WHERE was.employee_id = ? AND was.session_date = ?
+         UNION ALL
+         SELECT COALESCE(MAX(ibd.biometric_minutes), 0) AS minutes,
+                CONCAT('integration:', MAX(ibd.integration_key)) AS source_system,
+                CAST(MAX(ibd.id) AS CHAR) AS source_reference
+         FROM integration_biometric_daily ibd
+         JOIN employees e
+           ON e.id = ?
+          AND (ibd.employee_code = e.employee_code OR ibd.employee_code = e.biometric_code)
+         WHERE ibd.activity_date = ?
+       ) evidence
+       ORDER BY evidence.minutes DESC
+       LIMIT 1`,
+      [employeeId, date, employeeId, date]
     );
-    return Number((rows[0] as any).total ?? 0);
+    const row = rows[0] as any;
+    const minutes = Number(row?.minutes ?? 0);
+    return {
+      minutes,
+      sourceSystem: minutes > 0 ? String(row?.source_system ?? 'cosec') : 'cosec_policy_absence',
+      sourceReference: minutes > 0 ? String(row?.source_reference ?? '') || null : null,
+    };
   },
 
   // Pure classification — no DB
@@ -254,11 +322,87 @@ export const attendanceEngineService = {
     return { lateMark: 0, lateByMinutes: Math.max(0, lateByMinutes) };
   },
 
+  // Review alert when COSEC shows a full shift but net login is below eight hours.
+  async checkAndNotifyBiometricMismatch(
+    employeeId: string,
+    date: string,
+    result: EngineResult
+  ): Promise<void> {
+    if (result.source !== 'dialler') return;
+    if ((result.diallerMinutes ?? 0) >= 480) return;
+    const bioMinutes = result.biometricMinutes ?? 0;
+    if (bioMinutes < 540) return;
+
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT user_id, reporting_manager_id, employee_code,
+         CONCAT(first_name,' ',COALESCE(last_name,'')) AS full_name
+       FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId]
+    );
+    const emp = empRows[0] as any;
+    if (!emp) return;
+
+    let managerUserId: string | null = null;
+    if (emp.reporting_manager_id) {
+      const [managerRows] = await db.execute<RowDataPacket[]>(
+        `SELECT user_id FROM employees WHERE id = ? LIMIT 1`, [emp.reporting_manager_id]
+      );
+      managerUserId = (managerRows[0] as any)?.user_id ?? null;
+    }
+
+    const recipients = Array.from(new Set(
+      [emp.user_id, managerUserId].filter((userId): userId is string => Boolean(userId))
+    ));
+    if (recipients.length === 0) return;
+
+    try {
+      const { inboxService } = await import('../inbox/inbox.service.js');
+      const actionUrl = `/attendance/regularizations?employeeId=${employeeId}&date=${date}`;
+      const description =
+        `${emp.employee_code} COSEC time is ${(bioMinutes / 60).toFixed(1)} hours on ${date}, `
+        + `but net login is ${((result.diallerMinutes ?? 0) / 60).toFixed(1)} hours. `
+        + `Attendance is marked ${result.status.replace('_', ' ')} and requires review.`;
+
+      for (const userId of recipients) {
+        const [existing] = await db.execute<RowDataPacket[]>(
+          `SELECT id FROM work_inbox_item
+           WHERE user_id = ? AND type = 'attendance_validation'
+             AND entity_id = ? AND action_url = ?
+           LIMIT 1`,
+          [userId, employeeId, actionUrl]
+        );
+        if (existing.length > 0) continue;
+
+        await inboxService.createItem({
+          user_id: userId,
+          type: 'attendance_validation',
+          title: userId === emp.user_id
+            ? 'Attendance review required'
+            : `Attendance mismatch: ${emp.full_name}`,
+          description,
+          entity_type: 'attendance',
+          entity_id: employeeId,
+          action_url: actionUrl,
+          priority: 'high',
+        });
+      }
+    } catch {
+      // Non-fatal
+    }
+  },
+
   // Per-employee orchestrator
   async processEmployee(employeeId: string, date: string): Promise<EngineResult> {
-    // Fetch employee info
+    // Fetch employee info including dept/designation for APR determination
     const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT designation_id, process_id, branch_id FROM employees WHERE id = ? LIMIT 1`,
+      `SELECT e.employee_code, e.designation_id, e.process_id, e.branch_id,
+         e.reporting_manager_id,
+         LOWER(COALESCE(dept.dept_name,'')) AS dept_name,
+         LOWER(COALESCE(desig.designation_name,'')) AS designation_name
+       FROM employees e
+       LEFT JOIN department_master dept ON dept.id = e.department_id
+       LEFT JOIN designation_master desig ON desig.id = e.designation_id
+       WHERE e.id = ? LIMIT 1`,
       [employeeId]
     );
     if (!(empRows as RowDataPacket[]).length) {
@@ -270,14 +414,20 @@ export const attendanceEngineService = {
     const branchId: string | null = emp.branch_id ?? null;
 
     // Resolve rule
-    const rule = await this.resolveRule(designationId, processId, branchId, date);
+    let rule = await this.resolveRule(designationId, processId, branchId, date);
 
-    // Check overrides
+    // Only Operations Executive variants use net login. All other roles use COSEC.
+    const isAprEmployee = isOperationsExecutive(emp.dept_name, emp.designation_name);
+
+    // Check overrides (leave/holiday/week-off)
     const override = await this.resolveOverridePriority(employeeId, date, branchId);
     if (override) {
       return {
         employeeId, date, processId, branchId,
-        source: rule.attendance_source,
+        source: isAprEmployee ? 'dialler' : 'biometric',
+        sourceSystem: 'attendance_override',
+        sourceRecordDate: date,
+        sourceReference: null,
         diallerMinutes: null, biometricMinutes: null, rawMinutes: 0,
         status: override.status, lwpValue: 0.0,
         lateMark: 0, lateByMinutes: 0,
@@ -285,21 +435,35 @@ export const attendanceEngineService = {
       };
     }
 
-    // Fetch source minutes
+    // Always fetch biometric minutes (needed for mismatch check even for dialler employees)
+    const biometricEvidence = await this.getBiometricEvidence(employeeId, date);
+    const biometricMinutes = biometricEvidence.minutes;
     let diallerMinutes: number | null = null;
-    let biometricMinutes: number | null = null;
     let rawMinutes: number;
+    let sourceSystem = biometricEvidence.sourceSystem;
+    let sourceReference = biometricEvidence.sourceReference;
 
-    if (rule.attendance_source === 'dialler') {
-      diallerMinutes = await this.getDiallerMinutes(employeeId, date);
+    if (isAprEmployee) {
+      // APR is primary for Operations Executives. Imported dialler aggregates
+      // are the fallback when APR has no usable row for the employee/date.
+      // Thresholds: >=8h present, >4h and <8h half day, <=4h absent.
+      const aprMinutes = await this.getAprNetMinutes(emp.employee_code, date);
+      diallerMinutes = aprMinutes > 0
+        ? aprMinutes
+        : await this.getDiallerMinutes(employeeId, date);
+      sourceSystem = aprMinutes > 0 ? 'apr.ReportDate' : 'dialer_session_log.session_date';
+      sourceReference = emp.employee_code;
       rawMinutes = diallerMinutes;
+      rule = { ...rule, attendance_source: 'dialler', full_day_minutes: 480, half_day_minutes: 240 };
     } else {
-      biometricMinutes = await this.getBiometricMinutes(employeeId, date);
+      rule = { ...rule, attendance_source: 'biometric', full_day_minutes: 540, half_day_minutes: 240 };
       rawMinutes = biometricMinutes;
     }
 
     // Classify
-    const classification = this.classifyMinutes(rawMinutes, rule);
+    const classification = isAprEmployee
+      ? classifyOperationsNetLogin(rawMinutes)
+      : classifyCosecMinutes(rawMinutes);
 
     // Late arrival
     const lateResult = await this.calculateLateArrival(employeeId, date, rule);
@@ -307,7 +471,12 @@ export const attendanceEngineService = {
     return {
       employeeId, date, processId, branchId,
       source: rule.attendance_source,
-      diallerMinutes, biometricMinutes, rawMinutes,
+      sourceSystem,
+      sourceRecordDate: date,
+      sourceReference,
+      diallerMinutes,
+      biometricMinutes: biometricMinutes > 0 ? biometricMinutes : null,
+      rawMinutes,
       status: classification.status,
       lwpValue: classification.lwpValue,
       lateMark: lateResult.lateMark,
@@ -322,13 +491,17 @@ export const attendanceEngineService = {
     createdBy: string
   ): Promise<AttendanceDailyRecord> {
     await db.execute(
-      `INSERT INTO attendance_daily_record
+       `INSERT INTO attendance_daily_record
          (id, employee_id, record_date, process_id, branch_id, attendance_source,
+          source_system, source_record_date, source_reference,
           dialler_minutes, biometric_minutes, raw_minutes, attendance_status,
           lwp_value, late_mark, late_by_minutes, rule_config_id, processed_at, created_by)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
        ON DUPLICATE KEY UPDATE
          attendance_source  = IF(is_locked = 0, VALUES(attendance_source),  attendance_source),
+         source_system      = IF(is_locked = 0, VALUES(source_system),      source_system),
+         source_record_date = IF(is_locked = 0, VALUES(source_record_date), source_record_date),
+         source_reference   = IF(is_locked = 0, VALUES(source_reference),   source_reference),
          dialler_minutes    = IF(is_locked = 0, VALUES(dialler_minutes),    dialler_minutes),
          biometric_minutes  = IF(is_locked = 0, VALUES(biometric_minutes),  biometric_minutes),
          raw_minutes        = IF(is_locked = 0, VALUES(raw_minutes),        raw_minutes),
@@ -341,7 +514,8 @@ export const attendanceEngineService = {
          created_by         = IF(is_locked = 0, VALUES(created_by),         created_by)`,
       [
         result.employeeId, result.date, result.processId, result.branchId,
-        result.source, result.diallerMinutes, result.biometricMinutes, result.rawMinutes,
+        result.source, result.sourceSystem, result.sourceRecordDate, result.sourceReference,
+        result.diallerMinutes, result.biometricMinutes, result.rawMinutes,
         result.status, result.lwpValue, result.lateMark, result.lateByMinutes,
         result.ruleConfigId, createdBy
       ]
@@ -419,6 +593,8 @@ export const attendanceEngineService = {
           if (lockedSet.has(emp.employee_id)) { skipped++; return; }
           const result = await this.processEmployee(emp.employee_id, date);
           await this.upsertDailyRecord(result, 'system');
+          // Fire biometric mismatch notification (non-blocking)
+          this.checkAndNotifyBiometricMismatch(emp.employee_id, date, result).catch(() => {});
           processed++;
         })
       );
@@ -437,7 +613,17 @@ export const attendanceEngineService = {
   // Read helpers
   async getRecord(employeeId: string, date: string): Promise<AttendanceDailyRecord | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM attendance_daily_record WHERE employee_id = ? AND record_date = ? LIMIT 1`,
+      `SELECT adr.*,
+         DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
+         DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS date,
+         adr.clock_in_time     AS clock_in,
+         adr.clock_out_time    AS clock_out,
+         ROUND(adr.raw_minutes / 60, 2) AS total_hours,
+         adr.attendance_status AS status,
+         adr.clock_in_location  AS clock_in_location_name,
+         adr.clock_out_location AS clock_out_location_name
+       FROM attendance_daily_record adr
+       WHERE adr.employee_id = ? AND adr.record_date = ? LIMIT 1`,
       [employeeId, date]
     );
     return (rows[0] as AttendanceDailyRecord) ?? null;
@@ -446,6 +632,7 @@ export const attendanceEngineService = {
   async listRecords(filters: {
     employeeId?: string;
     processId?: string;
+    branchId?: string;
     fromDate?: string;
     toDate?: string;
     attendanceStatus?: string;
@@ -455,18 +642,55 @@ export const attendanceEngineService = {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 50;
     const offset = (page - 1) * limit;
-    let q = 'SELECT * FROM attendance_daily_record WHERE 1=1';
+    // Return aliased fields that match the frontend's AttendanceRecord shape,
+    // plus an employee sub-object for name/code display.
+    let q = `SELECT
+        adr.*,
+        DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
+        DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS date,
+        adr.clock_in_time        AS clock_in,
+        adr.clock_out_time       AS clock_out,
+        ROUND(adr.raw_minutes / 60, 2) AS total_hours,
+        adr.attendance_status    AS status,
+        adr.clock_in_location    AS clock_in_location_name,
+        adr.clock_out_location   AS clock_out_location_name,
+        e.first_name, e.last_name, e.employee_code,
+        CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+        e.working_hours_start, e.working_hours_end,
+        dm.dept_name AS department_name
+      FROM attendance_daily_record adr
+      LEFT JOIN employees e ON e.id = adr.employee_id
+      LEFT JOIN department_master dm ON dm.id = e.department_id
+      WHERE 1=1`;
     const p: unknown[] = [];
-    if (filters.employeeId) { q += ' AND employee_id = ?'; p.push(filters.employeeId); }
-    if (filters.processId)  { q += ' AND process_id = ?';  p.push(filters.processId); }
-    if (filters.fromDate)   { q += ' AND record_date >= ?'; p.push(filters.fromDate); }
-    if (filters.toDate)     { q += ' AND record_date <= ?'; p.push(filters.toDate); }
-    if (filters.attendanceStatus) { q += ' AND attendance_status = ?'; p.push(filters.attendanceStatus); }
-    const cq = q.replace('SELECT *', 'SELECT COUNT(*) AS total');
+    if (filters.employeeId) { q += ' AND adr.employee_id = ?'; p.push(filters.employeeId); }
+    if (filters.processId)  { q += ' AND adr.process_id = ?';  p.push(filters.processId); }
+    if (filters.branchId)   { q += ' AND adr.branch_id = ?';   p.push(filters.branchId); }
+    if (filters.fromDate)   { q += ' AND adr.record_date >= ?'; p.push(filters.fromDate); }
+    if (filters.toDate)     { q += ' AND adr.record_date <= ?'; p.push(filters.toDate); }
+    if (filters.attendanceStatus) { q += ' AND adr.attendance_status = ?'; p.push(filters.attendanceStatus); }
+    const cq = `SELECT COUNT(*) AS total FROM attendance_daily_record adr WHERE 1=1` +
+      (filters.employeeId    ? ` AND adr.employee_id = ?`       : '') +
+      (filters.processId     ? ` AND adr.process_id = ?`        : '') +
+      (filters.branchId      ? ` AND adr.branch_id = ?`         : '') +
+      (filters.fromDate      ? ` AND adr.record_date >= ?`      : '') +
+      (filters.toDate        ? ` AND adr.record_date <= ?`      : '') +
+      (filters.attendanceStatus ? ` AND adr.attendance_status = ?` : '');
     const [countRows] = await db.execute<RowDataPacket[]>(cq, p);
-    q += ` ORDER BY record_date DESC LIMIT ${limit} OFFSET ${offset}`;
+    q += ` ORDER BY adr.record_date DESC LIMIT ${limit} OFFSET ${offset}`;
     const [rows] = await db.execute<RowDataPacket[]>(q, p);
-    return { data: rows as AttendanceDailyRecord[], total: (countRows[0] as any).total, page, limit };
+    // Nest employee fields into sub-object to match frontend expectations
+    const mapped = (rows as any[]).map(r => ({
+      ...r,
+      employee: {
+        first_name: r.first_name ?? '',
+        last_name:  r.last_name  ?? '',
+        employee_code: r.employee_code ?? '',
+        working_hours_start: r.working_hours_start ?? null,
+        working_hours_end:   r.working_hours_end   ?? null,
+      },
+    }));
+    return { data: mapped as AttendanceDailyRecord[], total: (countRows[0] as any).total, page, limit };
   },
 
   async getMonthlySummary(employeeId: string, month: string): Promise<MonthlySummary> {

@@ -10,11 +10,6 @@ export function useEmployeeStatus() {
     queryFn: async () => {
       if (!user?.id) return { isEmployee: false, employeeId: null };
 
-      // Local demo mode bypass
-      if (user.id === "demo-user-id") {
-        return { isEmployee: true, employeeId: "demo-employee-id" };
-      }
-
       try {
         const res = await hrmsApi.get<{ data: any }>("/api/employees/me");
         const emp = res.data;

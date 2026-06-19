@@ -76,3 +76,20 @@ controlTowerRouter.get(
     res.json({ success: true, data });
   })
 );
+
+controlTowerRouter.get(
+  "/my-team",
+  h(async (req, res) => {
+    const data = await svc.getManagerTeamHierarchy(req.authUser!.id);
+    res.json({ success: true, data });
+  })
+);
+
+controlTowerRouter.get(
+  "/team/:managerId",
+  requireRole("admin", "hr", "ceo", "wfm", "process_manager", "branch_head"),
+  h(async (req, res) => {
+    const data = await svc.getManagerTeamHierarchy(req.authUser!.id, req.params.managerId);
+    res.json({ success: true, data });
+  })
+);

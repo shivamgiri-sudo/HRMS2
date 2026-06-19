@@ -636,8 +636,9 @@ export default function NativeOperationsDashboard() {
       const res = await hrmsApi.get<ManagementDashboard | { data: ManagementDashboard }>(
         "/api/management/dashboard"
       );
+      if (!res) throw new Error("No response from server");
       const payload =
-        "headcount" in res
+        res && "headcount" in res
           ? (res as ManagementDashboard)
           : (res as { data: ManagementDashboard }).data;
       setMgmt(payload);

@@ -144,23 +144,33 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   await db.execute(
     `INSERT INTO candidate_onboarding_profile
        (id, candidate_id, onboarding_token_hash, title, employee_name, relation, father_husband_name,
-        gender, marital_status, date_of_birth, blood_group, nominee_name, nominee_relation,
-        nominee_date_of_birth, permanent_address, permanent_state, permanent_city, permanent_pincode,
+        gender, marital_status, date_of_birth, blood_group,
+        nominee_name, nominee_relation, nominee_date_of_birth, nominee1_share_pct,
+        nominee2_name, nominee2_relation, nominee2_dob, nominee2_share_pct,
+        permanent_address, permanent_state, permanent_city, permanent_pincode,
         present_address, present_state, present_city, present_pincode, mobile_number, alt_mobile_number,
         personal_email_id, official_email_id, pan_number_masked, pan_number_hash, aadhaar_number_masked,
-        aadhaar_number_hash, source_type, source, profile_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'employee_details_saved')
+        aadhaar_number_hash, passport_no, driving_license_no,
+        uan_number, epf_number, esic_number,
+        source_type, source, profile_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'employee_details_saved')
      ON DUPLICATE KEY UPDATE
         title = VALUES(title), employee_name = VALUES(employee_name), relation = VALUES(relation),
         father_husband_name = VALUES(father_husband_name), gender = VALUES(gender), marital_status = VALUES(marital_status),
-        date_of_birth = VALUES(date_of_birth), blood_group = VALUES(blood_group), nominee_name = VALUES(nominee_name),
-        nominee_relation = VALUES(nominee_relation), nominee_date_of_birth = VALUES(nominee_date_of_birth),
+        date_of_birth = VALUES(date_of_birth), blood_group = VALUES(blood_group),
+        nominee_name = VALUES(nominee_name), nominee_relation = VALUES(nominee_relation),
+        nominee_date_of_birth = VALUES(nominee_date_of_birth), nominee1_share_pct = VALUES(nominee1_share_pct),
+        nominee2_name = VALUES(nominee2_name), nominee2_relation = VALUES(nominee2_relation),
+        nominee2_dob = VALUES(nominee2_dob), nominee2_share_pct = VALUES(nominee2_share_pct),
         permanent_address = VALUES(permanent_address), permanent_state = VALUES(permanent_state), permanent_city = VALUES(permanent_city),
         permanent_pincode = VALUES(permanent_pincode), present_address = VALUES(present_address), present_state = VALUES(present_state),
         present_city = VALUES(present_city), present_pincode = VALUES(present_pincode), mobile_number = VALUES(mobile_number),
         alt_mobile_number = VALUES(alt_mobile_number), personal_email_id = VALUES(personal_email_id), official_email_id = VALUES(official_email_id),
-        pan_number_masked = VALUES(pan_number_masked), pan_number_hash = VALUES(pan_number_hash), aadhaar_number_masked = VALUES(aadhaar_number_masked),
-        aadhaar_number_hash = VALUES(aadhaar_number_hash), source_type = VALUES(source_type), source = VALUES(source),
+        pan_number_masked = VALUES(pan_number_masked), pan_number_hash = VALUES(pan_number_hash),
+        aadhaar_number_masked = VALUES(aadhaar_number_masked), aadhaar_number_hash = VALUES(aadhaar_number_hash),
+        passport_no = VALUES(passport_no), driving_license_no = VALUES(driving_license_no),
+        uan_number = VALUES(uan_number), epf_number = VALUES(epf_number), esic_number = VALUES(esic_number),
+        source_type = VALUES(source_type), source = VALUES(source),
         profile_status = IF(profile_status='submitted', profile_status, 'employee_details_saved'), updated_at = NOW()`,
     [
       id,
@@ -177,6 +187,11 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       input.nominee ?? input.nomineeName ?? null,
       input.nomineeRelation ?? null,
       input.nomineeDateOfBirth ?? null,
+      input.nominee1SharePct ?? null,
+      input.nominee2Name ?? null,
+      input.nominee2Relation ?? null,
+      input.nominee2Dob ?? null,
+      input.nominee2SharePct ?? null,
       input.permanentAddress ?? null,
       input.permanentState ?? null,
       input.permanentCity ?? null,
@@ -193,6 +208,11 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       panHash,
       aadhaarMasked,
       aadhaarHash,
+      input.passportNo ?? (input as any).passportNumber ?? (input as any).passport_number ?? null,
+      input.drivingLicenseNo ?? (input as any).dlNumber ?? (input as any).dl_number ?? null,
+      input.uanNumber ?? null,
+      input.epfNumber ?? null,
+      input.esicNumber ?? null,
       input.sourceType ?? tokenData.source_type ?? null,
       input.source ?? tokenData.source ?? null,
     ]
@@ -204,7 +224,9 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
        date_of_birth = ?, blood_group = ?, nominee_name = ?, nominee_relation = ?, nominee_date_of_birth = ?,
        permanent_address = ?, permanent_state = ?, permanent_city = ?, permanent_pincode = ?,
        current_address = ?, present_state = ?, present_city = ?, present_pincode = ?, alt_mobile_number = ?,
-       personal_email_id = ?, official_email_id = ?, pan_number = COALESCE(?, pan_number), aadhar_number = COALESCE(?, aadhar_number),
+       personal_email_id = ?, official_email_id = ?,
+       pan_number = COALESCE(?, pan_number), pan_number_hash = COALESCE(?, pan_number_hash),
+       aadhar_number = COALESCE(?, aadhar_number), aadhar_number_hash = COALESCE(?, aadhar_number_hash),
        source_type = ?, source = ?, profile_status = 'profile_in_progress', updated_at = NOW()
      WHERE id = ?`,
     [
@@ -230,13 +252,35 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       input.altMobileNumber ?? null,
       input.personalEmailId ?? tokenData.email ?? null,
       input.officialEmailId ?? null,
-      input.panNumber ?? input.pan_number ?? null,
-      input.aadhaarNumber ?? input.aadhar_number ?? null,
+      panMasked,
+      panHash,
+      aadhaarMasked,
+      aadhaarHash,
       input.sourceType ?? tokenData.source_type ?? null,
       input.source ?? tokenData.source ?? null,
       candidateId,
     ]
   );
+  // Update extra identity/statutory fields on ats_candidate if columns exist
+  // These are safe UPDATE SET with COALESCE to not overwrite non-null existing values
+  await db.execute(
+    `UPDATE ats_candidate SET
+       passport_no = COALESCE(?, passport_no),
+       driving_license_no = COALESCE(?, driving_license_no),
+       uan_number = COALESCE(?, uan_number),
+       epf_number = COALESCE(?, epf_number),
+       esic_number = COALESCE(?, esic_number),
+       updated_at = NOW()
+     WHERE id = ?`,
+    [
+      input.passportNo ?? (input as any).passportNumber ?? (input as any).passport_number ?? null,
+      input.drivingLicenseNo ?? (input as any).dlNumber ?? (input as any).dl_number ?? null,
+      input.uanNumber ?? null,
+      input.epfNumber ?? null,
+      input.esicNumber ?? null,
+      candidateId,
+    ]
+  ).catch(() => { /* columns may not exist on older schema — safe to ignore */ });
 
   await logCandidateAction(candidateId, "SAVE_EMPLOYEE_DETAILS", { fields: Object.keys(input) }, meta);
   return getFullOnboardingStatus(token);
@@ -278,8 +322,20 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
     [candidateId]
   );
   await db.execute(
-    `UPDATE ats_candidate SET bank_name = ?, bank_ifsc = ?, bank_account_no = COALESCE(?, bank_account_no), updated_at = NOW() WHERE id = ?`,
-    [input.bankName ?? input.bank_name ?? null, input.ifscCode ?? input.bank_ifsc ?? null, accountNo ?? null, candidateId]
+    `UPDATE ats_candidate SET
+       bank_name = ?,
+       bank_ifsc = ?,
+       bank_account_no = COALESCE(?, bank_account_no),
+       bank_account_no_hash = COALESCE(?, bank_account_no_hash),
+       updated_at = NOW()
+     WHERE id = ?`,
+    [
+      input.bankName ?? input.bank_name ?? null,
+      input.ifscCode ?? input.bank_ifsc ?? null,
+      maskAccount(accountNo),
+      hashValue(accountNo),
+      candidateId,
+    ]
   );
 
   await logCandidateAction(candidateId, "SAVE_BANK_DETAILS", { bankName: input.bankName ?? input.bank_name, ifsc: input.ifscCode ?? input.bank_ifsc }, meta);
@@ -386,14 +442,16 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
       WHERE candidate_id = ?`,
     [candidateId]
   );
+  // Keep all three status tables in sync via syncOnboardingStatus
+  await syncOnboardingStatus(candidateId, 'submitted', 'profile_submitted', 'profile_submitted');
   await db.execute(
-    `UPDATE ats_candidate SET profile_status = 'profile_submitted', profile_submitted_at = NOW(), updated_at = NOW()
-      WHERE id = ?`,
+    `UPDATE ats_candidate SET profile_submitted_at = NOW() WHERE id = ?`,
     [candidateId]
   );
   await db.execute(
-    `UPDATE ats_onboarding_request SET status = 'profile_submitted', updated_at = NOW()
-      WHERE candidate_id = ?`,
+    `INSERT INTO ats_candidate_stage_log
+       (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+     VALUES (UUID(), ?, 'Onboarding Link Sent', 'Profile Submitted', 'Candidate completed onboarding profile', NULL)`,
     [candidateId]
   );
   await logCandidateAction(candidateId, "SUBMIT_ONBOARDING", null, meta);
@@ -481,3 +539,37 @@ export async function reviewFullOnboarding(candidateId: string, input: { status:
   await logCandidateAction(candidateId, "HR_REVIEW", input, { actorType: "hr", actorId: reviewedBy });
   return getFullOnboardingByCandidate(candidateId);
 }
+
+// Single source-of-truth sync: keeps ats_candidate, ats_onboarding_request, and
+// candidate_onboarding_profile aligned after each major status transition.
+export async function syncOnboardingStatus(
+  candidateId: string,
+  profileStatus: string,
+  requestStatus: string,
+  candidateProfileStatus: string
+) {
+  await db.execute(
+    `UPDATE ats_candidate SET profile_status = ?, updated_at = NOW() WHERE id = ?`,
+    [candidateProfileStatus, candidateId]
+  );
+  await db.execute(
+    `UPDATE ats_onboarding_request SET status = ?, updated_at = NOW() WHERE candidate_id = ?`,
+    [requestStatus, candidateId]
+  );
+  await db.execute(
+    `UPDATE candidate_onboarding_profile SET profile_status = ?, updated_at = NOW() WHERE candidate_id = ?`,
+    [profileStatus, candidateId]
+  );
+}
+
+export async function saveProgress(token: string, stepIdx: number) {
+  const tokenData = await validateOnboardingToken(token);
+  const candidateId = tokenData.candidate_id as string;
+  const idx = Math.max(0, Math.min(10, Math.floor(stepIdx)));
+  await db.execute(
+    `UPDATE candidate_onboarding_profile SET current_step_idx = ?, updated_at = NOW() WHERE candidate_id = ?`,
+    [idx, candidateId]
+  );
+  return { candidateId, currentStepIdx: idx };
+}
+

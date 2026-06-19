@@ -33,6 +33,7 @@ import { AttendanceReport } from "@/components/reports/AttendanceReport";
 import { EmployeeReport } from "@/components/reports/EmployeeReport";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
+import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import {
   useEmployeeGrowthData,
   useDepartmentDistribution,
@@ -62,15 +63,14 @@ const reportCards = [
 const Reports = () => {
   const [selectedYear, setSelectedYear] = useState(String(currentYear));
   const year = parseInt(selectedYear);
-  const { isAdminOrHR, isLoading: roleLoading } = useIsAdminOrHR();
+  const { isAdminOrHR, isLoading: roleLoading, roleKeys } = useIsAdminOrHR();
 
   const { data: employeeGrowthData, isLoading: isLoadingGrowth } = useEmployeeGrowthData(year);
-  const { data: departmentData, isLoading: isLoadingDept } = useDepartmentDistribution();
-  const { data: leaveStats, isLoading: isLoadingLeave } = useLeaveStatistics(year);
+  const { data: departmentData, isLoading: isLoadingDept } = useDepartmentDistribution(year);
+  const { data: leaveStats, monthlyData: leaveMonthlyData, leaveTypeKeys, leaveTypeLabels, isLoading: isLoadingLeave } = useLeaveStatistics(year);
   const { data: payrollTrendData, isLoading: isLoadingPayroll } = usePayrollTrend(year);
   const { data: headcountData, isLoading: isLoadingHeadcount } = useHeadcountSummary(year);
 
-  // Show loading while checking role
   if (roleLoading) {
     return (
       <DashboardLayout>
@@ -81,7 +81,6 @@ const Reports = () => {
     );
   }
 
-  // Redirect non-admin/HR users
   if (!isAdminOrHR) {
     return (
       <DashboardLayout>
@@ -98,12 +97,13 @@ const Reports = () => {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        {/* Header */}
         <div>
           <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">Analytics</p>
           <h2 className="mt-1 text-3xl font-black text-slate-950">Reports & Analytics</h2>
           <p className="text-slate-600">Insights and data visualization</p>
         </div>
+
+        <RoleInsightsPanel roles={roleKeys} title="Report control insights" />
 
         <Tabs defaultValue="overview" className="space-y-6">
           <TabsList>
@@ -120,10 +120,10 @@ const Reports = () => {
           <TabsContent value="overview" className="space-y-6">
             <div className="flex justify-end">
               <Select value={selectedYear} onValueChange={setSelectedYear}>
-                <SelectTrigger className="w-[140px]">
+                <SelectTrigger className="w-[140px] bg-white !text-slate-900 [&>span]:!text-slate-900">
                   <SelectValue placeholder="Year" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="bg-white !text-slate-900">
                   {YEARS.map((y) => (
                     <SelectItem key={y} value={y}>
                       {y}
@@ -133,335 +133,268 @@ const Reports = () => {
               </Select>
             </div>
 
-        {/* Quick Reports */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {reportCards.map((report) => (
             <Card
               key={report.title}
-              className="rounded-3xl border bg-white p-5 shadow-sm hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 cursor-pointer"
-              onClick={() => {
-                document.getElementById(report.sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }}
+              className="cursor-pointer hover:shadow-md transition-shadow"
+              onClick={() => document.getElementById(report.sectionId)?.scrollIntoView({ behavior: "smooth" })}
             >
-              <CardContent className="p-6">
-                <div className="flex items-start justify-between">
-                  <div className="rounded-xl bg-primary/10 p-3 text-primary">{report.icon}</div>
-                </div>
-                <div className="mt-4">
-                  <p className="font-semibold text-foreground">{report.title}</p>
-                  <p className="text-sm text-muted-foreground">{report.description}</p>
-                </div>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">{report.title}</CardTitle>
+                {report.icon}
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-muted-foreground">{report.description}</p>
+                <Button variant="ghost" size="sm" className="mt-4 w-full">
+                  View Report
+                </Button>
               </CardContent>
             </Card>
           ))}
         </div>
 
-        {/* Headcount Summary Widget */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5" />
-              Headcount Summary
-            </CardTitle>
-            <CardDescription>New hires, terminations, and net change for {selectedYear}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {isLoadingHeadcount ? (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <Skeleton key={i} className="h-24" />
-                ))}
-              </div>
-            ) : headcountData ? (
-              <div className="space-y-6">
-                {/* Summary Stats */}
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-                  <div className="rounded-lg border bg-muted/50 p-4">
-                    <div className="flex items-center gap-2">
-                      <Users className="h-4 w-4 text-muted-foreground" />
-                      <p className="text-sm text-muted-foreground">Current Headcount</p>
-                    </div>
-                    <p className="mt-2 text-3xl font-bold">{headcountData.currentHeadcount}</p>
-                  </div>
-                  <div className="rounded-lg border bg-muted/50 p-4">
-                    <div className="flex items-center gap-2">
-                      <Users className="h-4 w-4 text-muted-foreground" />
-                      <p className="text-sm text-muted-foreground">Start of Year</p>
-                    </div>
-                    <p className="mt-2 text-3xl font-bold">{headcountData.startOfYearHeadcount}</p>
-                  </div>
-                  <div className="rounded-lg border bg-green-500/10 p-4">
-                    <div className="flex items-center gap-2">
-                      <UserPlus className="h-4 w-4 text-green-600" />
-                      <p className="text-sm text-green-600">New Hires</p>
-                    </div>
-                    <p className="mt-2 text-3xl font-bold text-green-600">+{headcountData.newHires}</p>
-                  </div>
-                  <div className="rounded-lg border bg-red-500/10 p-4">
-                    <div className="flex items-center gap-2">
-                      <UserMinus className="h-4 w-4 text-red-600" />
-                      <p className="text-sm text-red-600">Terminations</p>
-                    </div>
-                    <p className="mt-2 text-3xl font-bold text-red-600">-{headcountData.terminations}</p>
-                  </div>
-                  <div className={`rounded-lg border p-4 ${headcountData.netChange >= 0 ? 'bg-primary/10' : 'bg-orange-500/10'}`}>
-                    <div className="flex items-center gap-2">
-                      {headcountData.netChange >= 0 ? (
-                        <TrendingUp className="h-4 w-4 text-primary" />
-                      ) : (
-                        <TrendingDown className="h-4 w-4 text-orange-600" />
-                      )}
-                      <p className={`text-sm ${headcountData.netChange >= 0 ? 'text-primary' : 'text-orange-600'}`}>
-                        Net Change
-                      </p>
-                    </div>
-                    <p className={`mt-2 text-3xl font-bold ${headcountData.netChange >= 0 ? 'text-primary' : 'text-orange-600'}`}>
-                      {headcountData.netChange >= 0 ? '+' : ''}{headcountData.netChange}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Monthly Breakdown Chart */}
-                <div className="h-[250px]">
-                  {headcountData.monthlyBreakdown.some((m) => m.hires > 0 || m.terminations > 0) ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={headcountData.monthlyBreakdown}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                        <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                        <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: "hsl(var(--card))",
-                            border: "1px solid hsl(var(--border))",
-                            borderRadius: "8px",
-                          }}
-                        />
-                        <Legend />
-                        <Bar dataKey="hires" name="New Hires" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} />
-                        <Bar dataKey="terminations" name="Terminations" fill="hsl(var(--chart-8))" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="flex h-full items-center justify-center">
-                      <p className="text-muted-foreground">No headcount changes recorded for {selectedYear}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
-
-        {/* Charts Grid */}
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Employee Growth */}
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <Card>
-            <CardHeader>
-              <CardTitle>Employee Growth</CardTitle>
-              <CardDescription>Monthly headcount trend for {selectedYear}</CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Start of Year</CardTitle>
+              <Users className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="h-[300px]">
-                {isLoadingGrowth ? (
-                  <Skeleton className="h-full w-full" />
-                ) : employeeGrowthData && employeeGrowthData.some((d) => d.employees > 0) ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={employeeGrowthData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                      <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "hsl(var(--card))",
-                          border: "1px solid hsl(var(--border))",
-                          borderRadius: "8px",
-                        }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="employees"
-                        stroke="hsl(var(--primary))"
-                        strokeWidth={3}
-                        dot={{ fill: "hsl(var(--primary))", strokeWidth: 2, r: 4 }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="flex h-full items-center justify-center">
-                    <p className="text-muted-foreground">No employee data available</p>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Department Distribution */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Department Distribution</CardTitle>
-              <CardDescription>Active employees by department</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[300px]">
-                {isLoadingDept ? (
-                  <Skeleton className="h-full w-full" />
-                ) : departmentData && departmentData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={departmentData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={100}
-                        paddingAngle={4}
-                        dataKey="value"
-                      >
-                        {departmentData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "hsl(var(--card))",
-                          border: "1px solid hsl(var(--border))",
-                          borderRadius: "8px",
-                        }}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="flex h-full items-center justify-center">
-                    <p className="text-muted-foreground">No department data available</p>
-                  </div>
-                )}
-              </div>
-              {departmentData && departmentData.length > 0 && (
-                <div className="mt-4 flex flex-wrap justify-center gap-4">
-                  {departmentData.map((dept) => (
-                    <div key={dept.name} className="flex items-center gap-2">
-                      <div
-                        className="h-3 w-3 rounded-full"
-                        style={{ backgroundColor: dept.color }}
-                      />
-                      <span className="text-sm text-muted-foreground">
-                        {dept.name} ({dept.value})
-                      </span>
-                    </div>
-                  ))}
-                </div>
+              {isLoadingHeadcount ? <Skeleton className="h-8 w-20" /> : (
+                <>
+                  <div className="text-2xl font-bold">{headcountData?.startOfYear ?? 0}</div>
+                  <p className="text-xs text-muted-foreground">Employees on Jan 1</p>
+                </>
               )}
             </CardContent>
           </Card>
 
-          {/* Leave Statistics */}
           <Card>
-            <CardHeader>
-              <CardTitle>Leave Statistics</CardTitle>
-              <CardDescription>Leave days taken by month for {selectedYear}</CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Current Headcount</CardTitle>
+              <UserPlus className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="h-[300px]">
-                {isLoadingLeave ? (
-                  <Skeleton className="h-full w-full" />
-                ) : leaveStats && leaveStats.monthlyData.some((d) => 
-                    leaveStats.leaveTypeKeys.some((k) => (d[k] as number) > 0)
-                  ) ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={leaveStats.monthlyData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                      <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
+              {isLoadingHeadcount ? <Skeleton className="h-8 w-20" /> : (
+                <>
+                  <div className="text-2xl font-bold">{headcountData?.currentHeadcount ?? 0}</div>
+                  <p className="text-xs text-muted-foreground">Active employees</p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">New Joiners</CardTitle>
+              <TrendingUp className="h-4 w-4 text-green-600" />
+            </CardHeader>
+            <CardContent>
+              {isLoadingHeadcount ? <Skeleton className="h-8 w-20" /> : (
+                <>
+                  <div className="text-2xl font-bold text-green-600">+{headcountData?.newJoiners ?? 0}</div>
+                  <p className="text-xs text-muted-foreground">This year</p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Terminations</CardTitle>
+              <TrendingDown className="h-4 w-4 text-red-600" />
+            </CardHeader>
+            <CardContent>
+              {isLoadingHeadcount ? <Skeleton className="h-8 w-20" /> : (
+                <>
+                  <div className="text-2xl font-bold text-red-600">-{headcountData?.terminations ?? 0}</div>
+                  <p className="text-xs text-muted-foreground">This year</p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Employee Growth Trend</CardTitle>
+            <CardDescription>Monthly headcount changes</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoadingGrowth ? (
+              <div className="h-[300px] flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin" /></div>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={employeeGrowthData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Line type="monotone" dataKey="headcount" stroke="hsl(var(--primary))" strokeWidth={2} name="Headcount" />
+                  <Line type="monotone" dataKey="joiners" stroke="hsl(var(--chart-2))" strokeWidth={2} name="Joiners" />
+                  <Line type="monotone" dataKey="exits" stroke="hsl(var(--chart-3))" strokeWidth={2} name="Exits" />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>Department Distribution</CardTitle>
+              <CardDescription>Employee distribution by department</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {isLoadingDept ? (
+                <div className="h-[300px] flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin" /></div>
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie data={departmentData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} label>
+                      {departmentData?.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={`hsl(var(--chart-${(index % 5) + 1}))`} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="flex flex-col">
+            <CardHeader>
+              <CardTitle>Leave Statistics</CardTitle>
+              <CardDescription>
+                Approved leave days by type — {selectedYear} · Company-wide
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex-1 space-y-4">
+              {isLoadingLeave ? (
+                <div className="h-[300px] flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin" /></div>
+              ) : !leaveStats?.length ? (
+                <div className="flex h-[300px] items-center justify-center text-sm text-muted-foreground">
+                  No approved leave records for {selectedYear}
+                </div>
+              ) : (
+                <>
+                  {/* Stacked monthly trend */}
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={leaveMonthlyData} margin={{ left: 0, right: 8, top: 4, bottom: 4 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
                       <Tooltip
-                        contentStyle={{
-                          backgroundColor: "hsl(var(--card))",
-                          border: "1px solid hsl(var(--border))",
-                          borderRadius: "8px",
-                        }}
+                        formatter={(value: number, key: string) => [
+                          `${value} day${value !== 1 ? "s" : ""}`,
+                          leaveTypeLabels[key] ?? key,
+                        ]}
+                        contentStyle={{ borderRadius: 8, fontSize: 12 }}
                       />
-                      <Legend />
-                      {leaveStats.leaveTypeKeys.map((key, index) => (
-                        <Bar 
-                          key={key} 
-                          dataKey={key} 
-                          fill={LEAVE_COLORS[index % LEAVE_COLORS.length]} 
-                          radius={[4, 4, 0, 0]} 
+                      <Legend
+                        formatter={(key) => leaveTypeLabels[key] ?? key}
+                        wrapperStyle={{ fontSize: 11 }}
+                      />
+                      {leaveTypeKeys.map((key, i) => (
+                        <Bar
+                          key={key}
+                          dataKey={key}
+                          stackId="a"
+                          fill={LEAVE_COLORS[i % LEAVE_COLORS.length]}
+                          radius={i === leaveTypeKeys.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]}
                         />
                       ))}
                     </BarChart>
                   </ResponsiveContainer>
-                ) : (
-                  <div className="flex h-full items-center justify-center">
-                    <p className="text-muted-foreground">No leave data available for {selectedYear}</p>
+
+                  {/* Summary table */}
+                  <div className="rounded-md border text-sm">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b bg-muted/50 text-xs font-semibold text-muted-foreground">
+                          <th className="px-3 py-2 text-left">Leave Type</th>
+                          <th className="px-3 py-2 text-right">Days Taken</th>
+                          <th className="px-3 py-2 text-right">Employees</th>
+                          <th className="px-3 py-2 text-right">Requests</th>
+                          <th className="px-3 py-2 text-right">Avg Days/Emp</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {leaveStats.map((row, i) => (
+                          <tr key={row.name} className="border-b last:border-0">
+                            <td className="px-3 py-2 flex items-center gap-2">
+                              <span
+                                className="inline-block h-2.5 w-2.5 rounded-sm flex-shrink-0"
+                                style={{ background: LEAVE_COLORS[i % LEAVE_COLORS.length] }}
+                              />
+                              {row.name}
+                            </td>
+                            <td className="px-3 py-2 text-right font-medium tabular-nums">{row.days}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{row.employees}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{row.requests}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                              {row.employees > 0 ? (row.days / row.employees).toFixed(1) : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className="bg-muted/30 font-semibold text-xs">
+                          <td className="px-3 py-2">Total</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{leaveStats.reduce((s, r) => s + r.days, 0)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                            {leaveStats.reduce((s, r) => s + r.employees, 0)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                            {leaveStats.reduce((s, r) => s + r.requests, 0)}
+                          </td>
+                          <td className="px-3 py-2" />
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
-                )}
-              </div>
+                </>
+              )}
             </CardContent>
           </Card>
-
-          {/* Payroll Trend */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Payroll Trend</CardTitle>
-              <CardDescription>Monthly payroll expenses for {selectedYear}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[300px]">
-                {isLoadingPayroll ? (
-                  <Skeleton className="h-full w-full" />
-                ) : payrollTrendData && payrollTrendData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={payrollTrendData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                      <YAxis
-                        stroke="hsl(var(--muted-foreground))"
-                        fontSize={12}
-                        tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "hsl(var(--card))",
-                          border: "1px solid hsl(var(--border))",
-                          borderRadius: "8px",
-                        }}
-                        formatter={(value: number) => [`₹${value.toLocaleString('en-IN')}`, "Amount"]}
-                      />
-                      <Bar dataKey="amount" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="flex h-full items-center justify-center">
-                    <p className="text-muted-foreground">No payroll data available for {selectedYear}</p>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
         </div>
 
-        {/* Payroll Summary Report */}
-        <div id="report-payroll">
-          <PayrollSummaryReport />
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Payroll Trend</CardTitle>
+            <CardDescription>Monthly payroll expenses</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoadingPayroll ? (
+              <div className="h-[300px] flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin" /></div>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={payrollTrendData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" />
+                  <YAxis tickFormatter={(value) => `${(Number(value) / 100000).toFixed(1)}L`} />
+                  <Tooltip
+                    formatter={(value) => {
+                      const lakhs = (Number(value) / 100000).toFixed(2);
+                      return [`₹${lakhs}L (${Number(value).toLocaleString('en-IN')})`, 'Payroll Amount'];
+                    }}
+                  />
+                  <Line type="monotone" dataKey="amount" stroke="hsl(var(--primary))" strokeWidth={2} name="Payroll Amount" />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
 
-        {/* Leave Balance Report */}
-        <div id="report-leave">
-          <LeaveBalanceReport />
-        </div>
-
-        {/* Asset Inventory Report */}
-        <div id="report-asset">
-          <AssetInventoryReport />
-        </div>
-
-        {/* Attendance Report */}
-        <div id="report-attendance">
-          <AttendanceReport />
-        </div>
+            <div id="report-attendance"><AttendanceReport /></div>
+            <div id="report-leave"><LeaveBalanceReport /></div>
+            <div id="report-payroll"><PayrollSummaryReport /></div>
+            <div id="report-asset"><AssetInventoryReport /></div>
           </TabsContent>
 
-          <TabsContent value="employee">
+          <TabsContent value="employee" className="space-y-6">
             <EmployeeReport />
           </TabsContent>
         </Tabs>

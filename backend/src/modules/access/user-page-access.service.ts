@@ -41,11 +41,17 @@ export async function listPageCatalog(): Promise<PageCatalogEntry[]> {
 /**
  * Get all users with their email for assignment UI
  */
-export async function listUsersForAccess(): Promise<Array<{ id: string; email: string }>> {
+export async function listUsersForAccess(): Promise<Array<{ id: string; email: string; employee_code: string | null; full_name: string | null }>> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, email FROM users WHERE active_status = 1 ORDER BY email`
+    `SELECT u.id, u.email,
+            e.employee_code,
+            TRIM(CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,''))) AS full_name
+       FROM auth_user u
+       LEFT JOIN employees e ON e.user_id = u.id AND e.active_status = 1
+      WHERE u.is_blocked = 0
+      ORDER BY full_name, u.email`
   );
-  return rows as Array<{ id: string; email: string }>;
+  return rows as Array<{ id: string; email: string; employee_code: string | null; full_name: string | null }>;
 }
 
 /**
@@ -102,14 +108,16 @@ export async function getUserEffectivePageAccess(userId: string): Promise<Array<
 }
 
 /**
- * Assign page access to a user (admin only)
+ * Assign page access to a user (admin only).
+ * Pass expires_at (ISO string) for time-bounded access; omit or pass null for permanent.
  */
 export async function assignUserPageAccess(
   userId: string,
   pageCode: string,
   permissions: PageAccessPermissions,
   assignedBy: string,
-  notes?: string
+  notes?: string,
+  expiresAt?: string | null
 ): Promise<void> {
   const conn = await db.getConnection();
   try {
@@ -129,7 +137,8 @@ export async function assignUserPageAccess(
       await conn.execute(
         `UPDATE user_page_access
          SET can_view = ?, can_create = ?, can_edit = ?, can_delete = ?, can_export = ?,
-             active_status = 1, assigned_by = ?, assigned_at = NOW(), notes = ?
+             active_status = 1, assigned_by = ?, assigned_at = NOW(), notes = ?,
+             expires_at = ?
          WHERE user_id = ? AND page_code = ?`,
         [
           permissions.can_view ? 1 : 0,
@@ -139,6 +148,7 @@ export async function assignUserPageAccess(
           permissions.can_export ? 1 : 0,
           assignedBy,
           notes || null,
+          expiresAt ?? null,
           userId,
           pageCode
         ]
@@ -160,8 +170,8 @@ export async function assignUserPageAccess(
     } else {
       // Insert new assignment
       await conn.execute(
-        `INSERT INTO user_page_access (user_id, page_code, can_view, can_create, can_edit, can_delete, can_export, assigned_by, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO user_page_access (user_id, page_code, can_view, can_create, can_edit, can_delete, can_export, assigned_by, notes, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           userId,
           pageCode,
@@ -171,7 +181,8 @@ export async function assignUserPageAccess(
           permissions.can_delete ? 1 : 0,
           permissions.can_export ? 1 : 0,
           assignedBy,
-          notes || null
+          notes || null,
+          expiresAt ?? null
         ]
       );
 
@@ -242,28 +253,24 @@ export async function revokeUserPageAccess(
 }
 
 /**
- * Bulk assign multiple pages to a user (admin only)
+ * Bulk assign multiple pages to a user (admin only).
+ * Each assignment may optionally specify expires_at for time-bounded access.
  */
 export async function bulkAssignUserPageAccess(
   userId: string,
-  assignments: Array<{ page_code: string; permissions: PageAccessPermissions }>,
+  assignments: Array<{ page_code: string; permissions: PageAccessPermissions; expires_at?: string | null }>,
   assignedBy: string,
   notes?: string
 ): Promise<void> {
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
-
-    for (const assignment of assignments) {
-      await assignUserPageAccess(userId, assignment.page_code, assignment.permissions, assignedBy, notes);
-    }
-
-    await conn.commit();
-  } catch (error) {
-    await conn.rollback();
-    throw error;
-  } finally {
-    conn.release();
+  for (const assignment of assignments) {
+    await assignUserPageAccess(
+      userId,
+      assignment.page_code,
+      assignment.permissions,
+      assignedBy,
+      notes,
+      assignment.expires_at ?? null
+    );
   }
 }
 
@@ -278,8 +285,8 @@ export async function getUserPageAccessAuditLog(userId?: string, pageCode?: stri
       upa.action, upa.actor_user_id, actor.email AS actor_email,
       upa.old_permissions, upa.new_permissions, upa.notes, upa.created_at
     FROM user_page_access_audit upa
-    LEFT JOIN users u ON u.id = upa.user_id
-    LEFT JOIN users actor ON actor.id = upa.actor_user_id
+    LEFT JOIN auth_user u ON u.id = upa.user_id
+    LEFT JOIN auth_user actor ON actor.id = upa.actor_user_id
     LEFT JOIN page_catalog pc ON pc.page_code = upa.page_code
     WHERE 1=1
   `;
@@ -314,8 +321,8 @@ export async function listAllUserPageAccess(): Promise<any[]> {
       upa.assigned_by, admin.email AS assigned_by_email,
       upa.assigned_at, upa.notes
      FROM user_page_access upa
-     LEFT JOIN users u ON u.id = upa.user_id
-     LEFT JOIN users admin ON admin.id = upa.assigned_by
+     LEFT JOIN auth_user u ON u.id = upa.user_id
+     LEFT JOIN auth_user admin ON admin.id = upa.assigned_by
      LEFT JOIN page_catalog pc ON pc.page_code = upa.page_code
      WHERE upa.active_status = 1
      ORDER BY u.email, pc.module, pc.page_name`

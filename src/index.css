@@ -1,6 +1,7 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
 @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
 @import "./styles/smarthr-tokens.css";
+@import "./styles/hrms-design-system.css";
 
 @tailwind base;
 @tailwind components;
@@ -27,7 +28,7 @@
     --popover: 0 0% 100%;
     --popover-foreground: 222 47% 11%;
 
-    --primary: 223 81% 61%;   /* SmartHR Blue #4361ee */
+    --primary: 212 74% 41%;   /* MAS Blue #1B6AB5 */
     --primary-foreground: 0 0% 100%;
 
     --secondary: 214 32% 95%;
@@ -36,29 +37,29 @@
     --muted: 214 32% 95%;
     --muted-foreground: 215 20% 35%;
 
-    --accent: 199 89% 95%;
-    --accent-foreground: 198 93% 31%;
+    --accent: 212 74% 95%;
+    --accent-foreground: 212 74% 30%;
 
-    --destructive: 32 95% 50%;
+    --destructive: 2 82% 51%;   /* MAS Red #E8231A */
     --destructive-foreground: 0 0% 100%;
 
     --border: 214 32% 89%;
     --input: 214 32% 89%;
-    --ring: 199 89% 48%;
+    --ring: 212 74% 41%;
 
     --radius: 0.9rem;
 
-    --sidebar-background: 222 47% 11%;
+    --sidebar-background: 214 80% 10%;   /* MAS deep navy */
     --sidebar-foreground: 210 40% 98%;
-    --sidebar-primary: 199 89% 48%;
+    --sidebar-primary: 212 74% 41%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 217 33% 17%;
+    --sidebar-accent: 214 60% 17%;
     --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 217 33% 17%;
-    --sidebar-ring: 199 89% 48%;
+    --sidebar-border: 214 60% 17%;
+    --sidebar-ring: 212 74% 41%;
 
-    /* SmartHR Chart Colors */
-    --chart-1: 223 81% 61%;   /* Blue */
+    /* MAS Chart Colors */
+    --chart-1: 212 74% 41%;   /* MAS Blue */
     --chart-2: 142 76% 36%;   /* Green */
     --chart-3: 262 83% 58%;   /* Purple */
     --chart-4: 38 92% 50%;    /* Orange */
@@ -78,7 +79,7 @@
     --popover: 217 33% 17%;
     --popover-foreground: 210 40% 98%;
 
-    --primary: 213 94% 68%;   /* SmartHR Blue Light (Dark Mode) */
+    --primary: 212 74% 55%;   /* MAS Blue lighter for dark mode */
     --primary-foreground: 222 47% 11%;
 
     --secondary: 217 33% 17%;

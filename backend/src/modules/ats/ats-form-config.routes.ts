@@ -57,4 +57,30 @@ router.delete('/recruiters/:id', requireAuth, requireRole('admin', 'hr'), h(asyn
   res.json({ success: true });
 }));
 
+// Branch Alias Management
+router.get('/branch-aliases', requireAuth, requireRole('admin', 'hr'), h(async (_req: any, res: any) => {
+  const data = await svc.listBranchAliases();
+  res.json({ success: true, data });
+}));
+
+router.post('/branch-aliases', requireAuth, requireRole('admin', 'hr'), h(async (req: any, res: any) => {
+  const { canonical_key, display_name, alias_text } = req.body;
+  if (!canonical_key?.trim() || !display_name?.trim()) {
+    return res.status(400).json({ error: 'canonical_key and display_name are required' });
+  }
+  const alias = await svc.createBranchAlias(canonical_key, display_name, alias_text);
+  res.status(201).json({ success: true, data: alias });
+}));
+
+router.patch('/branch-aliases/:id', requireAuth, requireRole('admin', 'hr'), h(async (req: any, res: any) => {
+  const { canonical_key, display_name, alias_text, active_status } = req.body;
+  await svc.updateBranchAlias(req.params.id, { canonical_key, display_name, alias_text, active_status });
+  res.json({ success: true });
+}));
+
+router.delete('/branch-aliases/:id', requireAuth, requireRole('admin', 'hr'), h(async (req: any, res: any) => {
+  await svc.deleteBranchAlias(req.params.id);
+  res.json({ success: true });
+}));
+
 export { router as atsFormConfigRouter };
