@@ -7,8 +7,8 @@ import { attendanceEngineService } from "./attendance-engine.service.js";
 type PunchGroup = {
   cosecUserId: string;
   punchDate: string;
-  firstPunch: Date;
-  lastPunch: Date;
+  firstPunch: string;
+  lastPunch: string;
   totalPunches: number;
   workingMinutes: number;
   sourceSystem: string;
@@ -69,17 +69,6 @@ function toIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-// Format Date as 'YYYY-MM-DD HH:mm:ss' string preserving the raw value
-// (prevents mysql2 from applying timezone conversion on Date objects)
-function toMySQLDatetime(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  const h = String(date.getHours()).padStart(2, "0");
-  const min = String(date.getMinutes()).padStart(2, "0");
-  const s = String(date.getSeconds()).padStart(2, "0");
-  return `${y}-${m}-${d} ${h}:${min}:${s}`;
-}
 
 function defaultFromDate(): string {
   const date = new Date();
@@ -126,8 +115,8 @@ async function pullCosecAttendance(from: string, to: string): Promise<PunchGroup
       SELECT
         CAST(${userColumn} AS NVARCHAR(100)) AS user_id,
         CONVERT(CHAR(10), CAST(${datetimeColumn} AS DATE), 23) AS attendance_date,
-        MIN(${datetimeColumn}) AS first_punch,
-        MAX(${datetimeColumn}) AS last_punch,
+        CONVERT(CHAR(19), MIN(${datetimeColumn}), 120) AS first_punch,
+        CONVERT(CHAR(19), MAX(${datetimeColumn}), 120) AS last_punch,
         COUNT_BIG(*) AS total_punches,
         DATEDIFF(MINUTE, MIN(${datetimeColumn}), MAX(${datetimeColumn})) AS working_minutes
       FROM ${table}
@@ -141,8 +130,8 @@ async function pullCosecAttendance(from: string, to: string): Promise<PunchGroup
     .map((row: any) => ({
       cosecUserId: String(row.user_id ?? "").trim(),
       punchDate: String(row.attendance_date ?? "").trim(),
-      firstPunch: new Date(row.first_punch),
-      lastPunch: new Date(row.last_punch),
+      firstPunch: String(row.first_punch ?? "").trim(),
+      lastPunch: String(row.last_punch ?? "").trim(),
       totalPunches: Math.max(0, Number(row.total_punches ?? 0)),
       workingMinutes: Math.max(0, Number(row.working_minutes ?? 0)),
       sourceSystem: "cosec_sqlserver",
@@ -151,8 +140,8 @@ async function pullCosecAttendance(from: string, to: string): Promise<PunchGroup
     .filter((row: PunchGroup) =>
       row.cosecUserId
       && /^\d{4}-\d{2}-\d{2}$/.test(row.punchDate)
-      && !Number.isNaN(row.firstPunch.getTime())
-      && !Number.isNaN(row.lastPunch.getTime())
+      && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(row.firstPunch)
+      && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(row.lastPunch)
       && Number.isFinite(row.totalPunches)
       && Number.isFinite(row.workingMinutes)
     );
@@ -175,15 +164,21 @@ async function pullMysqlAttendance(from: string, to: string): Promise<PunchGroup
   const add = (row: any, sourceSystem: string, sourceTable: string) => {
     const cosecUserId = String(row.user_id ?? "").trim();
     const punchDate = String(row.attendance_date ?? "").trim();
-    const firstPunch = new Date(row.first_punch);
-    const lastPunch = new Date(row.last_punch);
+    const rawFirst = row.first_punch;
+    const rawLast = row.last_punch;
+    const firstPunch = rawFirst instanceof Date
+      ? `${rawFirst.getFullYear()}-${String(rawFirst.getMonth()+1).padStart(2,"0")}-${String(rawFirst.getDate()).padStart(2,"0")} ${String(rawFirst.getHours()).padStart(2,"0")}:${String(rawFirst.getMinutes()).padStart(2,"0")}:${String(rawFirst.getSeconds()).padStart(2,"0")}`
+      : String(rawFirst ?? "").trim();
+    const lastPunch = rawLast instanceof Date
+      ? `${rawLast.getFullYear()}-${String(rawLast.getMonth()+1).padStart(2,"0")}-${String(rawLast.getDate()).padStart(2,"0")} ${String(rawLast.getHours()).padStart(2,"0")}:${String(rawLast.getMinutes()).padStart(2,"0")}:${String(rawLast.getSeconds()).padStart(2,"0")}`
+      : String(rawLast ?? "").trim();
     const totalPunches = Math.max(0, Number(row.total_punches ?? 0));
     const workingMinutes = Math.max(0, Number(row.working_minutes ?? 0));
     if (
       !cosecUserId
       || !/^\d{4}-\d{2}-\d{2}$/.test(punchDate)
-      || Number.isNaN(firstPunch.getTime())
-      || Number.isNaN(lastPunch.getTime())
+      || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(firstPunch)
+      || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(lastPunch)
     ) return;
     const key = `${cosecUserId}__${punchDate}`;
     if (!groups.has(key)) {
@@ -312,7 +307,7 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
        total_punches = VALUES(total_punches),
        raw_minutes = VALUES(raw_minutes),
        migrated_at = NOW()`,
-    [employee.employee_id, group.cosecUserId, group.punchDate, toMySQLDatetime(group.firstPunch), toMySQLDatetime(group.lastPunch), group.totalPunches, rawMinutes, group.sourceSystem],
+    [employee.employee_id, group.cosecUserId, group.punchDate, group.firstPunch, group.lastPunch, group.totalPunches, rawMinutes, group.sourceSystem],
   );
 
   await db.execute(
@@ -326,7 +321,7 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
        total_punches = VALUES(total_punches),
        biometric_minutes = VALUES(biometric_minutes),
        updated_at = NOW()`,
-    [group.sourceSystem, group.sourceTable, employee.employee_code, group.punchDate, toMySQLDatetime(group.firstPunch), toMySQLDatetime(group.lastPunch), group.totalPunches, rawMinutes],
+    [group.sourceSystem, group.sourceTable, employee.employee_code, group.punchDate, group.firstPunch, group.lastPunch, group.totalPunches, rawMinutes],
   );
 
   await db.execute(
@@ -343,8 +338,8 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
     [
       employee.employee_id,
       group.punchDate,
-      toMySQLDatetime(group.firstPunch),
-      toMySQLDatetime(group.lastPunch),
+      group.firstPunch,
+      group.lastPunch,
       rawMinutes,
       rawMinutes >= 540 ? "Logged Out" : "Partial",
       employee.branch_name ?? null,
@@ -363,7 +358,7 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
     `UPDATE attendance_daily_record
         SET clock_in_time = ?, clock_out_time = ?
       WHERE employee_id = ? AND record_date = ? AND is_locked = 0`,
-    [toMySQLDatetime(group.firstPunch), toMySQLDatetime(group.lastPunch), employee.employee_id, group.punchDate],
+    [group.firstPunch, group.lastPunch, employee.employee_id, group.punchDate],
   );
   await attendanceEngineService.checkAndNotifyBiometricMismatch(employee.employee_id, group.punchDate, attendance);
 
