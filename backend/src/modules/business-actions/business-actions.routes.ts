@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Response, NextFunction } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { businessActionsService } from "./business-actions.service.js";
+import { businessActionSignalSync } from "./business-actions.signal-sync.js";
 
 export const businessActionsRouter = Router();
 businessActionsRouter.use(requireAuth);
@@ -11,6 +12,26 @@ const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =
 
 businessActionsRouter.get("/summary", h(async (req, res) => {
   res.json({ success: true, data: await businessActionsService.summary(req.query as Record<string, unknown>) });
+}));
+
+businessActionsRouter.post("/sync-signals", h(async (req, res) => {
+  const data = await businessActionSignalSync.syncAll(req.authUser!.id);
+  res.json({ success: true, data });
+}));
+
+businessActionsRouter.post("/sync-signals/people-experience", h(async (req, res) => {
+  const data = await businessActionSignalSync.syncPeopleExperience(req.authUser!.id);
+  res.json({ success: true, data });
+}));
+
+businessActionsRouter.post("/sync-signals/support", h(async (req, res) => {
+  const data = await businessActionSignalSync.syncSupportSla(req.authUser!.id);
+  res.json({ success: true, data });
+}));
+
+businessActionsRouter.post("/sync-signals/grievance", h(async (req, res) => {
+  const data = await businessActionSignalSync.syncGrievances(req.authUser!.id);
+  res.json({ success: true, data });
 }));
 
 businessActionsRouter.get("/", h(async (req, res) => {
