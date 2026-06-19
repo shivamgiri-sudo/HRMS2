@@ -1,0 +1,55 @@
+-- Revenue at Risk foundation
+-- Safe migration: additive only, no destructive changes.
+
+CREATE TABLE IF NOT EXISTS client_contract_master (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  client_id CHAR(36) NULL,
+  process_id CHAR(36) NULL,
+  contract_name VARCHAR(255) NOT NULL,
+  billing_type ENUM('per_seat','per_hour','per_transaction','fixed_monthly','hybrid') NOT NULL DEFAULT 'per_seat',
+  billing_rate DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+  currency VARCHAR(8) NOT NULL DEFAULT 'INR',
+  monthly_minimum_commitment DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+  sla_target_percentage DECIMAL(6,2) NULL,
+  penalty_rule_json JSON NULL,
+  effective_from DATE NOT NULL,
+  effective_to DATE NULL,
+  status ENUM('active','inactive','draft') NOT NULL DEFAULT 'active',
+  created_by CHAR(36) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_ccm_client (client_id),
+  INDEX idx_ccm_process (process_id),
+  INDEX idx_ccm_status (status),
+  INDEX idx_ccm_effective (effective_from, effective_to)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS process_revenue_daily (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  revenue_date DATE NOT NULL,
+  client_id CHAR(36) NULL,
+  process_id CHAR(36) NULL,
+  contract_id CHAR(36) NULL,
+  required_hc INT NOT NULL DEFAULT 0,
+  planned_hc INT NOT NULL DEFAULT 0,
+  available_hc INT NOT NULL DEFAULT 0,
+  shortage_hc INT NOT NULL DEFAULT 0,
+  productive_hours DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  billable_hours DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  expected_revenue DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+  actual_revenue_estimate DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+  revenue_at_risk DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+  risk_level ENUM('critical','high','medium','low','none') NOT NULL DEFAULT 'none',
+  reason_json JSON NULL,
+  data_confidence_score INT NOT NULL DEFAULT 30,
+  generated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_prd_date_process (revenue_date, client_id, process_id),
+  INDEX idx_prd_date (revenue_date),
+  INDEX idx_prd_client (client_id),
+  INDEX idx_prd_process (process_id),
+  INDEX idx_prd_contract (contract_id),
+  INDEX idx_prd_risk (risk_level),
+  CONSTRAINT fk_prd_contract FOREIGN KEY (contract_id) REFERENCES client_contract_master(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
