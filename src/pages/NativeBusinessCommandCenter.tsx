@@ -29,6 +29,8 @@ type RevenueRiskRow = {
 type ContractRow = {
   id: string;
   contract_name: string;
+  client_id?: string;
+  process_id?: string;
   client_name?: string;
   process_name?: string;
   billing_type: string;
@@ -38,6 +40,8 @@ type ContractRow = {
   effective_to?: string;
   status: string;
 };
+
+type OptionRow = { id: string; name: string; client_id?: string; client_name?: string };
 
 type Overview = {
   generated_at: string;
@@ -67,27 +71,41 @@ type Overview = {
 export default function NativeBusinessCommandCenter() {
   const [data, setData] = useState<Overview | null>(null);
   const [contracts, setContracts] = useState<ContractRow[]>([]);
+  const [clients, setClients] = useState<OptionRow[]>([]);
+  const [processes, setProcesses] = useState<OptionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingContract, setSavingContract] = useState(false);
   const [message, setMessage] = useState("");
   const [contractForm, setContractForm] = useState({
     contract_name: "",
+    client_id: "none",
+    process_id: "none",
     billing_type: "per_seat",
     billing_rate: "",
     monthly_minimum_commitment: "",
+    sla_target_percentage: "",
     effective_from: new Date().toISOString().slice(0, 10),
+    effective_to: "",
   });
+
+  const filteredProcesses = useMemo(() => {
+    if (!contractForm.client_id || contractForm.client_id === "none") return processes;
+    return processes.filter((process) => !process.client_id || process.client_id === contractForm.client_id);
+  }, [processes, contractForm.client_id]);
 
   const load = async () => {
     setLoading(true);
     setMessage("");
     try {
-      const [overviewRes, contractRes] = await Promise.all([
+      const [overviewRes, contractRes, optionRes] = await Promise.all([
         hrmsApi.get<{ success: boolean; data: Overview }>("/api/business-command/overview"),
         hrmsApi.get<{ success: boolean; data: ContractRow[] }>("/api/business-command/revenue-risk/contracts"),
+        hrmsApi.get<{ success: boolean; data: { clients: OptionRow[]; processes: OptionRow[] } }>("/api/business-command/revenue-risk/options"),
       ]);
       setData(overviewRes.data);
       setContracts(contractRes.data ?? []);
+      setClients(optionRes.data?.clients ?? []);
+      setProcesses(optionRes.data?.processes ?? []);
     } catch (error: any) {
       setMessage(error?.message || "Unable to load Business Command Center");
     } finally {
@@ -113,19 +131,27 @@ export default function NativeBusinessCommandCenter() {
       setMessage("Contract name is required.");
       return;
     }
+    if (contractForm.client_id === "none" && contractForm.process_id === "none") {
+      setMessage("Select at least a client or a process for accurate revenue risk mapping.");
+      return;
+    }
     setSavingContract(true);
     setMessage("");
     try {
       await hrmsApi.post("/api/business-command/revenue-risk/contracts", {
         contract_name: contractForm.contract_name,
+        client_id: contractForm.client_id === "none" ? null : contractForm.client_id,
+        process_id: contractForm.process_id === "none" ? null : contractForm.process_id,
         billing_type: contractForm.billing_type,
         billing_rate: Number(contractForm.billing_rate || 0),
         monthly_minimum_commitment: Number(contractForm.monthly_minimum_commitment || 0),
+        sla_target_percentage: contractForm.sla_target_percentage ? Number(contractForm.sla_target_percentage) : null,
         effective_from: contractForm.effective_from,
+        effective_to: contractForm.effective_to || null,
         status: "active",
       });
-      setMessage("Contract created. Map client/process IDs later from master setup for precise risk calculation.");
-      setContractForm({ contract_name: "", billing_type: "per_seat", billing_rate: "", monthly_minimum_commitment: "", effective_from: new Date().toISOString().slice(0, 10) });
+      setMessage("Mapped contract created. Generate Revenue Risk to recalculate exposure using the new rate.");
+      setContractForm({ contract_name: "", client_id: "none", process_id: "none", billing_type: "per_seat", billing_rate: "", monthly_minimum_commitment: "", sla_target_percentage: "", effective_from: new Date().toISOString().slice(0, 10), effective_to: "" });
       await load();
     } catch (error: any) {
       setMessage(error?.message || "Unable to create contract");
@@ -211,9 +237,23 @@ export default function NativeBusinessCommandCenter() {
             </div>
           </Panel>
 
-          <Panel title="Contract Quick Setup" subtitle="Create a basic INR billing contract; map client/process later for precision">
+          <Panel title="Mapped Contract Setup" subtitle="Map INR billing contract to client/process for precise revenue-risk calculation">
             <div className="space-y-3">
               <Input placeholder="Contract name" value={contractForm.contract_name} onChange={(e) => setContractForm((p) => ({ ...p, contract_name: e.target.value }))} />
+              <Select value={contractForm.client_id} onValueChange={(value) => setContractForm((p) => ({ ...p, client_id: value, process_id: p.process_id !== "none" && value !== "none" && !processes.find((process) => process.id === p.process_id && process.client_id === value) ? "none" : p.process_id }))}>
+                <SelectTrigger><SelectValue placeholder="Select client" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">All clients / not mapped</SelectItem>
+                  {clients.map((client) => <SelectItem key={client.id} value={client.id}>{client.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={contractForm.process_id} onValueChange={(value) => setContractForm((p) => ({ ...p, process_id: value }))}>
+                <SelectTrigger><SelectValue placeholder="Select process" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">All processes for selected client</SelectItem>
+                  {filteredProcesses.map((process) => <SelectItem key={process.id} value={process.id}>{process.client_name ? `${process.client_name} · ` : ""}{process.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
               <Select value={contractForm.billing_type} onValueChange={(value) => setContractForm((p) => ({ ...p, billing_type: value }))}>
                 <SelectTrigger><SelectValue placeholder="Billing type" /></SelectTrigger>
                 <SelectContent>
@@ -226,15 +266,19 @@ export default function NativeBusinessCommandCenter() {
               </Select>
               <Input type="number" placeholder="Billing rate INR" value={contractForm.billing_rate} onChange={(e) => setContractForm((p) => ({ ...p, billing_rate: e.target.value }))} />
               <Input type="number" placeholder="Monthly minimum commitment INR" value={contractForm.monthly_minimum_commitment} onChange={(e) => setContractForm((p) => ({ ...p, monthly_minimum_commitment: e.target.value }))} />
-              <Input type="date" value={contractForm.effective_from} onChange={(e) => setContractForm((p) => ({ ...p, effective_from: e.target.value }))} />
+              <Input type="number" placeholder="SLA target % optional" value={contractForm.sla_target_percentage} onChange={(e) => setContractForm((p) => ({ ...p, sla_target_percentage: e.target.value }))} />
+              <div className="grid gap-2 md:grid-cols-2">
+                <Input type="date" value={contractForm.effective_from} onChange={(e) => setContractForm((p) => ({ ...p, effective_from: e.target.value }))} />
+                <Input type="date" value={contractForm.effective_to} onChange={(e) => setContractForm((p) => ({ ...p, effective_to: e.target.value }))} />
+              </div>
               <Button onClick={createContract} disabled={savingContract} className="w-full">
                 <Plus className="mr-2 h-4 w-4" />
-                Create Contract
+                Create Mapped Contract
               </Button>
             </div>
             <div className="mt-5 space-y-2">
               <div className="text-sm font-black text-slate-700">Recent contracts</div>
-              {contracts.slice(0, 5).map((contract) => <Mini key={contract.id} label={contract.contract_name} value={`${contract.billing_type} · ${formatInr(contract.billing_rate)}`} />)}
+              {contracts.slice(0, 5).map((contract) => <Mini key={contract.id} label={`${contract.contract_name}${contract.process_name ? ` · ${contract.process_name}` : contract.client_name ? ` · ${contract.client_name}` : ""}`} value={`${contract.billing_type} · ${formatInr(contract.billing_rate)}`} />)}
               {contracts.length === 0 ? <Empty /> : null}
             </div>
           </Panel>
