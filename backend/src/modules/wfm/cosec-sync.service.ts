@@ -365,6 +365,65 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
   return "migrated";
 }
 
+/**
+ * Night shift rollover: when an employee's first punch is after 18:00 on day N
+ * and they have punches before 10:00 on day N+1, merge day N+1 into day N.
+ * This attributes the full shift to the roster start date for payroll purposes.
+ */
+function mergeNightShiftRollover(groups: PunchGroup[]): PunchGroup[] {
+  const byUser = new Map<string, PunchGroup[]>();
+  for (const g of groups) {
+    const arr = byUser.get(g.cosecUserId) ?? [];
+    arr.push(g);
+    byUser.set(g.cosecUserId, arr);
+  }
+
+  const merged: PunchGroup[] = [];
+  for (const [, userGroups] of byUser) {
+    userGroups.sort((a, b) => a.punchDate.localeCompare(b.punchDate));
+    const consumed = new Set<number>();
+
+    for (let i = 0; i < userGroups.length; i++) {
+      if (consumed.has(i)) continue;
+      const current = userGroups[i];
+      const firstHour = parseInt(current.firstPunch.substring(11, 13), 10);
+
+      // If first punch is after 18:00, check if next day has early punches to merge
+      if (firstHour >= 18 && i + 1 < userGroups.length) {
+        const next = userGroups[i + 1];
+        const nextDate = new Date(current.punchDate);
+        nextDate.setDate(nextDate.getDate() + 1);
+        const expectedNextDate = nextDate.toISOString().slice(0, 10);
+
+        if (next.punchDate === expectedNextDate) {
+          const nextLastHour = parseInt(next.lastPunch.substring(11, 13), 10);
+          // Merge if next day's last punch is before 10:00 (shift ended by morning)
+          if (nextLastHour < 10) {
+            consumed.add(i + 1);
+            const totalMinutes = current.workingMinutes + next.workingMinutes +
+              diffMinutes(current.lastPunch, next.firstPunch);
+            merged.push({
+              ...current,
+              lastPunch: next.lastPunch,
+              totalPunches: current.totalPunches + next.totalPunches,
+              workingMinutes: totalMinutes,
+            });
+            continue;
+          }
+        }
+      }
+      merged.push(current);
+    }
+  }
+  return merged;
+}
+
+function diffMinutes(a: string, b: string): number {
+  const da = new Date(a.replace(" ", "T") + "+05:30");
+  const db = new Date(b.replace(" ", "T") + "+05:30");
+  return Math.max(0, Math.round((db.getTime() - da.getTime()) / 60000));
+}
+
 export const cosecSyncService = {
   getLastSyncResult() {
     return lastSyncResult;
@@ -397,9 +456,10 @@ export const cosecSyncService = {
     };
 
     try {
-      const groups = config.sourceMode === "mysql"
+      const rawGroups = config.sourceMode === "mysql"
         ? await pullMysqlAttendance(from, to)
         : await pullCosecAttendance(from, to);
+      const groups = mergeNightShiftRollover(rawGroups);
       result.pulledEvents = groups.reduce((total, group) => total + group.totalPunches, 0);
       result.groupedDays = groups.length;
 
