@@ -1,8 +1,43 @@
-import { useEffect, useState } from "react";
-import { AlertTriangle, BarChart3, BriefcaseBusiness, CheckCircle2, Clock, IndianRupee, RefreshCcw, ShieldAlert, TicketCheck, Users } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, BriefcaseBusiness, CheckCircle2, Clock, IndianRupee, Plus, RefreshCcw, ShieldAlert, TicketCheck, Users } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { hrmsApi } from "@/lib/hrmsApi";
+
+type RevenueRiskRow = {
+  revenue_date: string;
+  client_id?: string;
+  client_name?: string;
+  process_id?: string;
+  process_name?: string;
+  billing_type?: string;
+  billing_rate?: number;
+  required_hc: number;
+  planned_hc: number;
+  available_hc: number;
+  shortage_hc: number;
+  expected_revenue: number;
+  actual_revenue_estimate: number;
+  revenue_at_risk: number;
+  risk_level: string;
+  reason_json?: string[];
+  data_confidence_score: number;
+};
+
+type ContractRow = {
+  id: string;
+  contract_name: string;
+  client_name?: string;
+  process_name?: string;
+  billing_type: string;
+  billing_rate: number;
+  monthly_minimum_commitment: number;
+  effective_from: string;
+  effective_to?: string;
+  status: string;
+};
 
 type Overview = {
   generated_at: string;
@@ -15,12 +50,15 @@ type Overview = {
     people_attrition_risk: number;
     open_grievances: number;
     latest_payroll_gross_inr: number;
+    revenue_at_risk_inr: number;
+    shortage_hc: number;
   };
   attendance: { present: number; absent: number; late: number };
   support: { open: number; breached: number; urgent: number };
   people_risk: { watchlist: number; attrition_risk: number; average_score: number };
   grievances: { open: number; critical: number };
   payroll: { latest_gross: number; latest_net: number };
+  revenue_risk?: { totals: any; rows: RevenueRiskRow[] };
   action_summary: { by_source: Array<{ label: string; value: number }>; by_owner: Array<{ label: string; value: number }> };
   health_signals: Array<{ label: string; value: number; status: string }>;
   data_confidence: Record<string, number>;
@@ -28,15 +66,28 @@ type Overview = {
 
 export default function NativeBusinessCommandCenter() {
   const [data, setData] = useState<Overview | null>(null);
+  const [contracts, setContracts] = useState<ContractRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [savingContract, setSavingContract] = useState(false);
   const [message, setMessage] = useState("");
+  const [contractForm, setContractForm] = useState({
+    contract_name: "",
+    billing_type: "per_seat",
+    billing_rate: "",
+    monthly_minimum_commitment: "",
+    effective_from: new Date().toISOString().slice(0, 10),
+  });
 
   const load = async () => {
     setLoading(true);
     setMessage("");
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: Overview }>("/api/business-command/overview");
-      setData(res.data);
+      const [overviewRes, contractRes] = await Promise.all([
+        hrmsApi.get<{ success: boolean; data: Overview }>("/api/business-command/overview"),
+        hrmsApi.get<{ success: boolean; data: ContractRow[] }>("/api/business-command/revenue-risk/contracts"),
+      ]);
+      setData(overviewRes.data);
+      setContracts(contractRes.data ?? []);
     } catch (error: any) {
       setMessage(error?.message || "Unable to load Business Command Center");
     } finally {
@@ -44,9 +95,49 @@ export default function NativeBusinessCommandCenter() {
     }
   };
 
+  const generateRevenueRisk = async () => {
+    setLoading(true);
+    setMessage("");
+    try {
+      await hrmsApi.post("/api/business-command/revenue-risk/generate-daily", { date: new Date().toISOString().slice(0, 10) });
+      setMessage("Revenue-at-risk snapshot generated for today.");
+      await load();
+    } catch (error: any) {
+      setMessage(error?.message || "Revenue-at-risk generation failed");
+      setLoading(false);
+    }
+  };
+
+  const createContract = async () => {
+    if (!contractForm.contract_name.trim()) {
+      setMessage("Contract name is required.");
+      return;
+    }
+    setSavingContract(true);
+    setMessage("");
+    try {
+      await hrmsApi.post("/api/business-command/revenue-risk/contracts", {
+        contract_name: contractForm.contract_name,
+        billing_type: contractForm.billing_type,
+        billing_rate: Number(contractForm.billing_rate || 0),
+        monthly_minimum_commitment: Number(contractForm.monthly_minimum_commitment || 0),
+        effective_from: contractForm.effective_from,
+        status: "active",
+      });
+      setMessage("Contract created. Map client/process IDs later from master setup for precise risk calculation.");
+      setContractForm({ contract_name: "", billing_type: "per_seat", billing_rate: "", monthly_minimum_commitment: "", effective_from: new Date().toISOString().slice(0, 10) });
+      await load();
+    } catch (error: any) {
+      setMessage(error?.message || "Unable to create contract");
+    } finally {
+      setSavingContract(false);
+    }
+  };
+
   useEffect(() => { void load(); }, []);
 
   const summary = data?.executive_summary;
+  const revenueRows = useMemo(() => data?.revenue_risk?.rows?.slice(0, 10) ?? [], [data]);
 
   return (
     <DashboardLayout>
@@ -63,27 +154,90 @@ export default function NativeBusinessCommandCenter() {
                 Where are we losing money, manpower, quality, or people stability today?
               </h1>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-emerald-100">
-                CEO-level operating cockpit connecting employees, attendance, support SLA, people risk, grievance risk, payroll exposure and action ownership.
+                CEO-level operating cockpit connecting employees, attendance, support SLA, people risk, grievance risk, revenue leakage, payroll exposure and action ownership.
               </p>
             </div>
-            <Button onClick={load} disabled={loading} className="bg-white text-slate-950 hover:bg-emerald-50">
-              <RefreshCcw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-              Refresh
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={generateRevenueRisk} disabled={loading} className="bg-white/15 text-white hover:bg-white/25">
+                <IndianRupee className="mr-2 h-4 w-4" />
+                Generate Revenue Risk
+              </Button>
+              <Button onClick={load} disabled={loading} className="bg-white text-slate-950 hover:bg-emerald-50">
+                <RefreshCcw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            </div>
           </div>
         </section>
 
-        {message ? <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800">{message}</div> : null}
+        {message ? <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-bold text-blue-800">{message}</div> : null}
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <Metric title="Active employees" value={summary?.active_employees ?? 0} icon={<Users />} />
-          <Metric title="Open business actions" value={summary?.open_actions ?? 0} icon={<ShieldAlert />} intent={(summary?.critical_actions ?? 0) > 0 ? "danger" : "default"} />
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <Metric title="Revenue at risk" value={formatInr(summary?.revenue_at_risk_inr ?? 0)} icon={<IndianRupee />} intent={(summary?.revenue_at_risk_inr ?? 0) > 0 ? "danger" : "success"} />
+          <Metric title="Shortage HC" value={summary?.shortage_hc ?? 0} icon={<Users />} intent={(summary?.shortage_hc ?? 0) > 0 ? "warning" : "success"} />
+          <Metric title="Open actions" value={summary?.open_actions ?? 0} icon={<ShieldAlert />} intent={(summary?.critical_actions ?? 0) > 0 ? "danger" : "default"} />
           <Metric title="Overdue actions" value={summary?.overdue_actions ?? 0} icon={<Clock />} intent={(summary?.overdue_actions ?? 0) > 0 ? "danger" : "default"} />
           <Metric title="Payroll gross INR" value={formatInr(summary?.latest_payroll_gross_inr ?? 0)} icon={<IndianRupee />} />
+          <Metric title="Active employees" value={summary?.active_employees ?? 0} icon={<Users />} />
           <Metric title="Support SLA breached" value={summary?.support_sla_breached ?? 0} icon={<TicketCheck />} intent={(summary?.support_sla_breached ?? 0) > 0 ? "danger" : "success"} />
           <Metric title="People attrition risk" value={summary?.people_attrition_risk ?? 0} icon={<AlertTriangle />} intent={(summary?.people_attrition_risk ?? 0) > 0 ? "warning" : "success"} />
           <Metric title="Open grievances" value={summary?.open_grievances ?? 0} icon={<ShieldAlert />} intent={(data?.grievances?.critical ?? 0) > 0 ? "danger" : "default"} />
           <Metric title="Critical actions" value={summary?.critical_actions ?? 0} icon={<AlertTriangle />} intent={(summary?.critical_actions ?? 0) > 0 ? "danger" : "success"} />
+        </section>
+
+        <section className="grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
+          <Panel title="Revenue-at-Risk by Process" subtitle="Daily estimate from contract rate, mandate, roster and attendance signals">
+            <div className="max-h-[430px] overflow-auto">
+              <table className="w-full min-w-[980px] text-sm">
+                <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                  <tr>{["Risk", "Client / Process", "Required", "Available", "Short", "At Risk", "Confidence", "Reason"].map((h) => <th key={h} className="px-3 py-3 font-black">{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {revenueRows.map((row, index) => (
+                    <tr key={`${row.process_id ?? index}-${row.revenue_date}`} className="border-t hover:bg-slate-50">
+                      <td className="px-3 py-3"><RiskPill label={row.risk_level} /></td>
+                      <td className="px-3 py-3"><div className="font-black text-slate-950">{row.process_name || "Unknown process"}</div><div className="text-xs text-slate-500">{row.client_name || "Unknown client"}</div></td>
+                      <td className="px-3 py-3 font-bold">{row.required_hc}</td>
+                      <td className="px-3 py-3 font-bold">{row.available_hc}</td>
+                      <td className="px-3 py-3 font-bold text-amber-700">{row.shortage_hc}</td>
+                      <td className="px-3 py-3 font-black text-red-700">{formatInr(row.revenue_at_risk)}</td>
+                      <td className="px-3 py-3">{row.data_confidence_score}%</td>
+                      <td className="px-3 py-3 max-w-[280px] truncate text-xs text-slate-500">{(row.reason_json ?? []).join(" | ") || "No risk reason"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!loading && revenueRows.length === 0 ? <Empty /> : null}
+            </div>
+          </Panel>
+
+          <Panel title="Contract Quick Setup" subtitle="Create a basic INR billing contract; map client/process later for precision">
+            <div className="space-y-3">
+              <Input placeholder="Contract name" value={contractForm.contract_name} onChange={(e) => setContractForm((p) => ({ ...p, contract_name: e.target.value }))} />
+              <Select value={contractForm.billing_type} onValueChange={(value) => setContractForm((p) => ({ ...p, billing_type: value }))}>
+                <SelectTrigger><SelectValue placeholder="Billing type" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="per_seat">Per seat</SelectItem>
+                  <SelectItem value="per_hour">Per hour</SelectItem>
+                  <SelectItem value="per_transaction">Per transaction</SelectItem>
+                  <SelectItem value="fixed_monthly">Fixed monthly</SelectItem>
+                  <SelectItem value="hybrid">Hybrid</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input type="number" placeholder="Billing rate INR" value={contractForm.billing_rate} onChange={(e) => setContractForm((p) => ({ ...p, billing_rate: e.target.value }))} />
+              <Input type="number" placeholder="Monthly minimum commitment INR" value={contractForm.monthly_minimum_commitment} onChange={(e) => setContractForm((p) => ({ ...p, monthly_minimum_commitment: e.target.value }))} />
+              <Input type="date" value={contractForm.effective_from} onChange={(e) => setContractForm((p) => ({ ...p, effective_from: e.target.value }))} />
+              <Button onClick={createContract} disabled={savingContract} className="w-full">
+                <Plus className="mr-2 h-4 w-4" />
+                Create Contract
+              </Button>
+            </div>
+            <div className="mt-5 space-y-2">
+              <div className="text-sm font-black text-slate-700">Recent contracts</div>
+              {contracts.slice(0, 5).map((contract) => <Mini key={contract.id} label={contract.contract_name} value={`${contract.billing_type} · ${formatInr(contract.billing_rate)}`} />)}
+              {contracts.length === 0 ? <Empty /> : null}
+            </div>
+          </Panel>
         </section>
 
         <section className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
@@ -145,12 +299,17 @@ function Panel({ title, subtitle, children }: { title: string; subtitle: string;
 function Signal({ label, value, status }: { label: string; value: number; status: string }) {
   const cls = status === "critical" ? "bg-red-50 text-red-800" : status === "warning" ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-800";
   const icon = status === "critical" ? <AlertTriangle className="h-4 w-4" /> : status === "warning" ? <ShieldAlert className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />;
-  return <div className={`flex items-center justify-between rounded-2xl p-4 ${cls}`}><div className="flex items-center gap-2 font-black">{icon}{label}</div><div className="text-2xl font-black">{value}</div></div>;
+  return <div className={`flex items-center justify-between rounded-2xl p-4 ${cls}`}><div className="flex items-center gap-2 font-black">{icon}{label}</div><div className="text-2xl font-black">{typeof value === "number" && label.toLowerCase().includes("revenue") ? formatInr(value) : value}</div></div>;
 }
 
 function Mini({ label, value, intent = "default" }: { label: string; value: React.ReactNode; intent?: "default" | "danger" | "warning" }) {
   const cls = intent === "danger" ? "bg-red-50 text-red-800" : intent === "warning" ? "bg-amber-50 text-amber-800" : "bg-slate-50 text-slate-800";
-  return <div className={`mb-2 flex items-center justify-between rounded-xl px-3 py-2 ${cls}`}><span className="text-sm font-bold">{label}</span><span className="text-lg font-black">{value}</span></div>;
+  return <div className={`mb-2 flex items-center justify-between gap-3 rounded-xl px-3 py-2 ${cls}`}><span className="text-sm font-bold">{label}</span><span className="text-right text-lg font-black">{value}</span></div>;
+}
+
+function RiskPill({ label }: { label: string }) {
+  const cls = label === "critical" ? "bg-red-50 text-red-800 border-red-200" : label === "high" ? "bg-orange-50 text-orange-800 border-orange-200" : label === "medium" ? "bg-amber-50 text-amber-800 border-amber-200" : "bg-emerald-50 text-emerald-800 border-emerald-200";
+  return <span className={`rounded-full border px-2.5 py-1 text-xs font-black capitalize ${cls}`}>{label || "none"}</span>;
 }
 
 function Confidence({ label, value }: { label: string; value: number }) {
