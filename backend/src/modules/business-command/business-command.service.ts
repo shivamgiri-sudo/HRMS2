@@ -25,7 +25,7 @@ async function scalar(sql: string, params: unknown[] = [], fallback = 0): Promis
 
 export const businessCommandService = {
   async overview() {
-    const actions = await businessActionsService.summary();
+    const actions = await businessActionsService.summary() as any;
     const revenueRisk = await revenueRiskService.snapshot();
 
     const activeEmployees = await scalar(

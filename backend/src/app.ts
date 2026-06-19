@@ -131,7 +131,7 @@ function isAllowedOrigin(origin: string): boolean {
 app.use(compression({
   level: 6,
   threshold: 1024,
-  filter: (req, res) => {
+  filter: (req: any, res: any) => {
     if (req.path.includes("/stream") || req.path.includes("/biometric-punch")) return false;
     return compression.filter(req, res);
   },
