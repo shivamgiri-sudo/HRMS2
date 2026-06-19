@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock, Filter, RefreshCcw, ShieldAlert, TrendingUp, Users } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Filter, RefreshCcw, ShieldAlert, Sparkles, TrendingUp, Users } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +45,7 @@ export default function NativeBusinessActionQueue() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [rows, setRows] = useState<ActionRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState("");
   const [filters, setFilters] = useState({ source_module: "all", severity: "all", status: "all", due: "all", search: "" });
 
@@ -66,6 +67,21 @@ export default function NativeBusinessActionQueue() {
       setMessage(error?.message || "Unable to load Business Action Queue");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const syncSignals = async () => {
+    setSyncing(true);
+    setMessage("");
+    try {
+      const res = await hrmsApi.post<{ success: boolean; data: any }>("/api/business-actions/sync-signals", {});
+      const created = Number(res.data?.people_experience?.created ?? 0) + Number(res.data?.support?.created ?? 0) + Number(res.data?.grievance?.created ?? 0);
+      setMessage(`Signal sync completed. ${created} new business action(s) created.`);
+      await load();
+    } catch (error: any) {
+      setMessage(error?.message || "Signal sync failed");
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -97,14 +113,20 @@ export default function NativeBusinessActionQueue() {
                 Central command queue for people risk, SLA breach, roster shortage, payroll readiness, quality fatal, client escalation, security and data-sync issues.
               </p>
             </div>
-            <Button onClick={load} disabled={loading} className="bg-white text-slate-950 hover:bg-blue-50">
-              <RefreshCcw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-              Refresh
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={syncSignals} disabled={syncing || loading} className="bg-white/15 text-white hover:bg-white/25">
+                <Sparkles className={`mr-2 h-4 w-4 ${syncing ? "animate-pulse" : ""}`} />
+                Sync Risk Signals
+              </Button>
+              <Button onClick={load} disabled={loading} className="bg-white text-slate-950 hover:bg-blue-50">
+                <RefreshCcw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            </div>
           </div>
         </section>
 
-        {message ? <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800">{message}</div> : null}
+        {message ? <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-bold text-blue-800">{message}</div> : null}
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
           <Metric title="Open" value={summary?.open_count ?? 0} icon={<TrendingUp />} />
