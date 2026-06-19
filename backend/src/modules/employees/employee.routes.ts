@@ -91,6 +91,47 @@ router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req
   res.json({ data: rows[0] });
 }));
 
+// GET /api/employees/directory-masters — process/branch master lists with counts
+router.get("/directory-masters", requireRole("admin", "hr", "manager"), h(async (_req: any, res: any) => {
+  const [processes] = await db.execute<RowDataPacket[]>(
+    `SELECT p.id, p.process_name, COUNT(e.id) AS employee_count
+       FROM process_master p
+       LEFT JOIN employees e ON e.process_id = p.id AND e.active_status = 1
+      WHERE p.active_status = 1
+      GROUP BY p.id, p.process_name
+      ORDER BY p.process_name`
+  );
+  const [branches] = await db.execute<RowDataPacket[]>(
+    `SELECT b.id, b.branch_name, COUNT(e.id) AS employee_count
+       FROM branch_master b
+       LEFT JOIN employees e ON e.branch_id = b.id AND e.active_status = 1
+      WHERE b.active_status = 1
+      GROUP BY b.id, b.branch_name
+      ORDER BY b.branch_name`
+  );
+  return res.json({ data: { processes, branches } });
+}));
+
+// GET /api/employees/options/search — lightweight search for autocomplete
+router.get("/options/search", requireAuth, h(async (req: any, res: any) => {
+  const q = String(req.query.q || "").trim();
+  const limit = Math.min(Number(req.query.limit) || 8, 50);
+  if (q.length < 2) return res.json({ success: true, data: [] });
+  const pattern = `%${q}%`;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code,
+            CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS name,
+            e.first_name, e.last_name
+       FROM employees e
+      WHERE e.active_status = 1
+        AND (CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) LIKE ? OR e.employee_code LIKE ?)
+      ORDER BY e.first_name
+      LIMIT ?`,
+    [pattern, pattern, limit]
+  );
+  return res.json({ success: true, data: rows });
+}));
+
 router.get("/", requireRole("admin", "hr", "manager"), h(async (req, res) => {
   // Apply scope filtering
   const scoped = await buildScopeWhereClause(

@@ -13,7 +13,7 @@ import ScrollToTop from "@/components/layout/ScrollToTop";
 import { PortalRoute } from "./components/portal/PortalRoute";
 
 // ── Core (eager — needed before auth resolves) ────────────────────────────────
-import Auth from "./pages/Auth";
+import Auth from "./pages/AuthClean";
 import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
 
@@ -55,7 +55,7 @@ const NativeBGVVerificationCenter   = lazy(() => import("./pages/NativeBGVVerifi
 // ATS
 const NativeATSDashboardReplica     = lazy(() => import("./pages/NativeATSDashboardReplica"));
 const NativeATSCandidateRegistration = lazy(() => import("./pages/NativeATSCandidateRegistration"));
-const NativeATSRecruiterDashboard   = lazy(() => import("./pages/NativeATSRecruiterDashboard"));
+const NativeATSRecruiterDashboard   = lazy(() => import("./pages/NativeATSRecruiterWorkspace"));
 const NativeATSOnboardingBridge     = lazy(() => import("./pages/NativeATSOnboardingBridge"));
 const NativeATSWaitingQueue         = lazy(() => import("./pages/NativeATSWaitingQueue"));
 const NativeATSCandidateMaster      = lazy(() => import("./pages/NativeATSCandidateMaster"));
