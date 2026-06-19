@@ -75,7 +75,7 @@ export default function NativeBusinessActionQueue() {
     setMessage("");
     try {
       const res = await hrmsApi.post<{ success: boolean; data: any }>("/api/business-actions/sync-signals", {});
-      const created = Number(res.data?.people_experience?.created ?? 0) + Number(res.data?.support?.created ?? 0) + Number(res.data?.grievance?.created ?? 0);
+      const created = ["people_experience", "support", "grievance", "revenue_risk"].reduce((sum, key) => sum + Number(res.data?.[key]?.created ?? 0), 0);
       setMessage(`Signal sync completed. ${created} new business action(s) created.`);
       await load();
     } catch (error: any) {
