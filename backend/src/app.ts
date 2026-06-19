@@ -107,6 +107,8 @@ import taskRouter from "./modules/tasks/task.routes.js";
 import { payrollMastersRouter } from "./modules/payroll-masters/payrollMasters.routes.js";
 import { incentivesRouter } from "./modules/incentives/incentives.routes.js";
 import { expenseRouter } from "./modules/expenses/expense.routes.js";
+import { businessActionsRouter } from "./modules/business-actions/business-actions.routes.js";
+import { businessCommandRouter } from "./modules/business-command/business-command.routes.js";
 
 export const app = express();
 
@@ -228,6 +230,8 @@ app.use("/api/performance-feedback", performanceFeedbackRouter);
 app.use("/api/engagement", engagementRouter);
 app.use("/api/engagement-intelligence", engagementIntelligenceRouter);
 app.use("/api/people-experience", peopleExperienceRouter);
+app.use("/api/business-actions", businessActionsRouter);
+app.use("/api/business-command", businessCommandRouter);
 app.use("/api/communication", communicationRouter);
 app.use("/api/security-center", securityCenterRouter);
 app.use("/api/external-db", externalDbRouter);

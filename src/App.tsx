@@ -84,6 +84,9 @@ const SuperAdminAccessControl       = lazy(() => import("./pages/SuperAdminAcces
 const NativeManagementDashboard     = lazy(() => import("./pages/NativeManagementDashboard"));
 const NativeQualityDashboard        = lazy(() => import("./pages/NativeQualityDashboard"));
 const NativeOperationsDashboard     = lazy(() => import("./pages/NativeOperationsDashboard"));
+const NativeSecurityCenter          = lazy(() => import("./pages/NativeSecurityCenter"));
+const NativeBusinessActionQueue     = lazy(() => import("./pages/NativeBusinessActionQueue"));
+const NativeBusinessCommandCenter   = lazy(() => import("./pages/NativeBusinessCommandCenter"));
 
 // Performance Feedback
 const NativePerformanceFeedbackMyReports = lazy(() => import("./pages/NativePerformanceFeedbackMyReports"));
@@ -276,6 +279,8 @@ const App = () => (
               {/* Quality / Ops */}
               <Route path="/quality/dashboard" element={<ProtectedRoute><Gate pageCode="QUALITY_DASHBOARD"><NativeQualityDashboard /></Gate></ProtectedRoute>} />
               <Route path="/operations/dashboard" element={<ProtectedRoute><Gate pageCode="OPERATIONS_DASHBOARD"><NativeOperationsDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/business-command-center" element={<ProtectedRoute roles={['admin', 'ceo', 'hr', 'manager', 'process_manager']}><NativeBusinessCommandCenter /></ProtectedRoute>} />
+              <Route path="/business-actions" element={<ProtectedRoute roles={['admin', 'ceo', 'hr', 'manager', 'process_manager', 'team_leader', 'tl']}><NativeBusinessActionQueue /></ProtectedRoute>} />
 
               {/* Performance */}
               <Route path="/performance/command-center" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><UnifiedPerformanceCommandCenter /></Gate></ProtectedRoute>} />
