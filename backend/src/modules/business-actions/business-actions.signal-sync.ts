@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { revenueRiskService } from "../revenue-risk/revenue-risk.service.js";
 
 async function tableExists(tableName: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -71,6 +72,7 @@ export const businessActionSignalSync = {
       people_experience: await this.syncPeopleExperience(actorUserId),
       support: await this.syncSupportSla(actorUserId),
       grievance: await this.syncGrievances(actorUserId),
+      revenue_risk: await this.syncRevenueRisk(actorUserId),
       generated_at: new Date().toISOString(),
     };
     return results;
@@ -198,5 +200,27 @@ export const businessActionSignalSync = {
       if (result.created) created += 1;
     }
     return { scanned: rows.length, created, skipped: rows.length - created };
+  },
+
+  async syncRevenueRisk(actorUserId: string) {
+    const snapshot = await revenueRiskService.snapshot();
+    const rows = Array.isArray(snapshot.rows) ? snapshot.rows : [];
+    const riskRows = rows.filter((row: any) => ["critical", "high"].includes(String(row.risk_level)) || Number(row.revenue_at_risk ?? 0) > 0 || Number(row.shortage_hc ?? 0) > 0).slice(0, 100);
+    let created = 0;
+    for (const row of riskRows as any[]) {
+      const severity = row.risk_level === "critical" ? "critical" : row.risk_level === "high" ? "high" : "medium";
+      const result = await ensureAction({
+        source_module: "revenue",
+        source_id: `${row.revenue_date ?? snapshot.date}:${row.process_id ?? row.process_name ?? "unknown"}`,
+        risk_type: "revenue_leakage",
+        severity,
+        title: `Revenue at risk in ${row.process_name ?? "process"}: ₹${Math.round(Number(row.revenue_at_risk ?? 0)).toLocaleString("en-IN")}`,
+        description: `Client ${row.client_name ?? "unknown"}; shortage HC ${row.shortage_hc ?? 0}; confidence ${row.data_confidence_score ?? 0}%; reasons ${(row.reason_json ?? []).join(" | ")}`,
+        owner_role: "operations",
+        due_date: dueDate(severity === "critical" ? 1 : 2),
+      }, actorUserId);
+      if (result.created) created += 1;
+    }
+    return { scanned: riskRows.length, created, skipped: riskRows.length - created };
   },
 };
