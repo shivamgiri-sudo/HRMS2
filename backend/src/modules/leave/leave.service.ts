@@ -82,64 +82,96 @@ export const leaveService = {
   async reviewRequest(id: string, input: ReviewLeaveInput, reviewerId: string): Promise<LeaveRequest> {
     const request = await this.getRequest(id);
     
-    // Handle approval - deduct leave balance
+    // Handle approval - deduct leave balance, split across calendar years if needed
     if (input.status === 'approved') {
-      // Validate leave_type_id exists
       if (!request.leave_type_id) {
         throw new Error("Leave type is required for approval");
       }
-      
-      const duration = request.total_days;
+
       const employeeId = request.employee_id;
       const leaveTypeId = request.leave_type_id;
-      const year = new Date(request.from_date).getFullYear();
-      
-      // Check current balance
-      const [balanceRows] = await db.execute<RowDataPacket[]>(
-        `SELECT * FROM leave_balance_ledger 
-         WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-        [employeeId, leaveTypeId, year]
-      );
-      
-      if (balanceRows.length === 0) {
-        // No ledger row exists - create one with used_days = duration and allocated_days = 0
-        await db.execute(
-          `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
-           VALUES (UUID(), ?, ?, ?, 0, ?, 0)`,
-          [employeeId, leaveTypeId, year, duration]
-        );
+      const fromYear = new Date(request.from_date).getFullYear();
+      const toYear = new Date(request.to_date).getFullYear();
+
+      // Build per-year deduction map to handle cross-year spans
+      const deductionByYear: Record<number, number> = {};
+      if (fromYear === toYear) {
+        deductionByYear[fromYear] = request.total_days;
       } else {
-        const balance = balanceRows[0];
-        const availableBalance = (balance.allocated_days || 0) + (balance.adjusted_days || 0) - (balance.used_days || 0);
-        
-        // Validate sufficient balance
-        if (duration > availableBalance) {
-          throw new Error(`Insufficient leave balance. Available: ${availableBalance}, Requested: ${duration}`);
-        }
-        
-        // Update used_days
-        await db.execute(
-          `UPDATE leave_balance_ledger 
-           SET used_days = used_days + ? 
-           WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-          [duration, employeeId, leaveTypeId, year]
+        // Count days in each calendar year
+        const yearEnd = new Date(fromYear, 11, 31);
+        const fromDate = new Date(request.from_date);
+        const toDate = new Date(request.to_date);
+        const daysInFromYear = Math.round((yearEnd.getTime() - fromDate.getTime()) / 86400000) + 1;
+        const daysInToYear = request.total_days - daysInFromYear;
+        if (daysInFromYear > 0) deductionByYear[fromYear] = daysInFromYear;
+        if (daysInToYear > 0) deductionByYear[toYear] = daysInToYear;
+      }
+
+      // Total available check across all affected years
+      let totalAvailable = 0;
+      for (const [yearStr, deduction] of Object.entries(deductionByYear)) {
+        const year = Number(yearStr);
+        const [balRows] = await db.execute<RowDataPacket[]>(
+          `SELECT * FROM leave_balance_ledger WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+          [employeeId, leaveTypeId, year]
         );
+        if (balRows.length > 0) {
+          const b = balRows[0] as any;
+          totalAvailable += (b.allocated_days || 0) + (b.adjusted_days || 0) - (b.used_days || 0);
+        }
+        void deduction; // used in next loop
+      }
+      if (totalAvailable < request.total_days) {
+        throw new Error(`Insufficient leave balance. Available: ${totalAvailable}, Requested: ${request.total_days}`);
+      }
+
+      // Apply deductions per year
+      for (const [yearStr, deduction] of Object.entries(deductionByYear)) {
+        const year = Number(yearStr);
+        const [balRows] = await db.execute<RowDataPacket[]>(
+          `SELECT * FROM leave_balance_ledger WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+          [employeeId, leaveTypeId, year]
+        );
+        if (balRows.length === 0) {
+          await db.execute(
+            `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
+             VALUES (UUID(), ?, ?, ?, 0, ?, 0)`,
+            [employeeId, leaveTypeId, year, deduction]
+          );
+        } else {
+          await db.execute(
+            `UPDATE leave_balance_ledger SET used_days = used_days + ? WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+            [deduction, employeeId, leaveTypeId, year]
+          );
+        }
       }
     }
-    
-    // Restore leave balance when an approved request is rejected
+
+    // Restore leave balance when an approved request is rejected (reverse the deduction)
     if (input.status === 'rejected' && request.status === 'approved') {
-      const duration = request.total_days;
       const employeeId = request.employee_id;
       const leaveTypeId = request.leave_type_id;
-      if (leaveTypeId && duration > 0) {
-        const year = new Date(request.from_date).getFullYear();
-        await db.execute(
-          `UPDATE leave_balance_ledger
-           SET used_days = GREATEST(0, used_days - ?)
-           WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-          [duration, employeeId, leaveTypeId, year]
-        );
+      if (leaveTypeId && request.total_days > 0) {
+        const fromYear = new Date(request.from_date).getFullYear();
+        const toYear = new Date(request.to_date).getFullYear();
+        const deductionByYear: Record<number, number> = {};
+        if (fromYear === toYear) {
+          deductionByYear[fromYear] = request.total_days;
+        } else {
+          const yearEnd = new Date(fromYear, 11, 31);
+          const fromDate = new Date(request.from_date);
+          const daysInFromYear = Math.round((yearEnd.getTime() - fromDate.getTime()) / 86400000) + 1;
+          const daysInToYear = request.total_days - daysInFromYear;
+          if (daysInFromYear > 0) deductionByYear[fromYear] = daysInFromYear;
+          if (daysInToYear > 0) deductionByYear[toYear] = daysInToYear;
+        }
+        for (const [yearStr, days] of Object.entries(deductionByYear)) {
+          await db.execute(
+            `UPDATE leave_balance_ledger SET used_days = GREATEST(0, used_days - ?) WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+            [days, employeeId, leaveTypeId, Number(yearStr)]
+          );
+        }
       }
     }
     

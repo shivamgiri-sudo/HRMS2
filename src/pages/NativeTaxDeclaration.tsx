@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle, CheckCircle2, ChevronDown, Clock,
-  Loader, RefreshCcw, Search, ShieldCheck,
+  Download, FileText, Loader, RefreshCcw, Search, ShieldCheck, Trash2, Upload,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -31,6 +31,16 @@ type TaxDeclaration = {
 
 type DeclarationHistory = TaxDeclaration & {
   created_at?: string;
+};
+
+type TaxDocument = {
+  id: string;
+  employee_id: string;
+  document_type: string;
+  document_name: string;
+  file_url: string;
+  verified: boolean;
+  uploaded_at: string;
 };
 
 type FormState = {
@@ -74,12 +84,17 @@ export default function NativeTaxDeclaration() {
   const [declaration, setDeclaration] = useState<TaxDeclaration | null>(null);
   const [history, setHistory] = useState<DeclarationHistory[]>([]);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [documents, setDocuments] = useState<TaxDocument[]>([]);
 
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [loadingDeclaration, setLoadingDeclaration] = useState(false);
+  const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"info" | "success" | "error">("info");
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Load employees (admin mode) ──────────────────────────────────────────────
   const loadEmployees = async () => {
@@ -143,8 +158,30 @@ export default function NativeTaxDeclaration() {
     }
   };
 
+  // ── Load documents ───────────────────────────────────────────────────────────
+  const loadDocuments = async () => {
+    const empId = mode === "self" ? "me" : selectedEmployeeId;
+    if (!empId || (mode === "admin" && !selectedEmployeeId)) return;
+
+    setLoadingDocuments(true);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: TaxDocument[] }>(
+        `/api/payroll/tax-declaration/${empId}/${selectedFY}/documents`
+      );
+      setDocuments(res.data ?? []);
+    } catch (err: unknown) {
+      const e = err as Error;
+      if (!e.message?.includes("404") && !e.message?.includes("not found")) {
+        console.error("Failed to load tax documents:", e);
+      }
+    } finally {
+      setLoadingDocuments(false);
+    }
+  };
+
   useEffect(() => {
     void loadDeclaration();
+    void loadDocuments();
   }, [mode === "self" ? selectedFY : `${selectedEmployeeId}-${selectedFY}`]);
 
   // ── Submit ───────────────────────────────────────────────────────────────────
@@ -173,6 +210,104 @@ export default function NativeTaxDeclaration() {
       showMessage(e.message || "Submission failed.", "error");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // ── Upload document ──────────────────────────────────────────────────────────
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const empId = mode === "self" ? "me" : selectedEmployeeId;
+    if (!empId || (mode === "admin" && !selectedEmployeeId)) {
+      showMessage("Please select an employee.", "error");
+      return;
+    }
+
+    setUploading(true);
+    setMessage("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("document_type", "tax_declaration");
+      formData.append("document_name", file.name);
+
+      const token = localStorage.getItem("hrms_access_token");
+      const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
+      const resp = await fetch(
+        `${HRMS_API}/api/payroll/tax-declaration/${empId}/${selectedFY}/document`,
+        {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: formData,
+        }
+      );
+
+      if (!resp.ok) {
+        const errorData = await resp.json().catch(() => ({ message: `Server returned ${resp.status}` }));
+        throw new Error(errorData.message || `Upload failed: ${resp.status}`);
+      }
+
+      showMessage("Document uploaded successfully.", "success");
+      await loadDocuments();
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    } catch (err: unknown) {
+      const e = err as Error;
+      showMessage(e.message || "Document upload failed.", "error");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // ── Delete document ──────────────────────────────────────────────────────────
+  const handleDeleteDocument = async (docId: string) => {
+    if (!confirm("Are you sure you want to delete this document?")) return;
+
+    try {
+      // We'll just delete it from employee_documents table via a generic endpoint if available
+      // For now, show a message that deletion is not yet implemented
+      showMessage("Document deletion is not yet implemented.", "info");
+    } catch (err: unknown) {
+      const e = err as Error;
+      showMessage(e.message || "Delete failed.", "error");
+    }
+  };
+
+  // ── Download document ────────────────────────────────────────────────────────
+  const handleDownloadDocument = async (fileUrl: string, fileName: string) => {
+    if (!fileUrl) {
+      showMessage("Document URL is missing.", "error");
+      return;
+    }
+
+    const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
+    const url = fileUrl.startsWith("http") ? fileUrl
+      : fileUrl.startsWith("/api/") ? `${HRMS_API}${fileUrl}`
+      : `${HRMS_API}/api/files/tax-documents/${fileUrl}`;
+
+    try {
+      const token = localStorage.getItem("hrms_access_token");
+      const resp = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err: unknown) {
+      const e = err as Error;
+      showMessage(e.message || "Download failed.", "error");
     }
   };
 
@@ -450,6 +585,94 @@ export default function NativeTaxDeclaration() {
                   Reset
                 </button>
               </div>
+            </div>
+          )}
+        </div>
+
+        {/* Supporting Documents */}
+        <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
+          <div className="border-b p-5 flex items-center justify-between">
+            <div>
+              <h2 className="font-black text-slate-950 flex items-center gap-2">
+                <FileText className="h-5 w-5 text-slate-600" />
+                Supporting Documents
+              </h2>
+              <p className="text-sm text-slate-500">Upload proof for HRA, 80C, 80D investments</p>
+            </div>
+            <label className="cursor-pointer inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors">
+              {uploading ? <Loader className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              {uploading ? "Uploading..." : "Upload Document"}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png,.webp"
+                onChange={handleFileUpload}
+                disabled={uploading || (mode === "admin" && !selectedEmployeeId)}
+                className="sr-only"
+              />
+            </label>
+          </div>
+
+          {loadingDocuments ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader className="h-8 w-8 animate-spin text-slate-400" />
+            </div>
+          ) : documents.length === 0 ? (
+            <div className="py-12 text-center">
+              <FileText className="mx-auto mb-3 h-10 w-10 text-slate-300" />
+              <p className="font-semibold text-slate-400">No documents uploaded yet.</p>
+              <p className="text-xs text-slate-400 mt-1">Upload rent receipts, investment proofs, insurance policies</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[600px] text-sm">
+                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                  <tr>
+                    {["Document Name", "Type", "Uploaded", "Actions"].map((h) => (
+                      <th key={h} className="p-4 font-semibold">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {documents.map((doc) => (
+                    <tr key={doc.id} className="border-t hover:bg-slate-50/80 transition-colors">
+                      <td className="p-4">
+                        <div className="flex items-center gap-2">
+                          <FileText className="h-4 w-4 text-slate-400 flex-shrink-0" />
+                          <span className="font-medium text-slate-950">{doc.document_name}</span>
+                        </div>
+                      </td>
+                      <td className="p-4">
+                        <span className="rounded-full bg-blue-50 text-blue-700 px-2.5 py-1 text-xs font-semibold capitalize">
+                          {doc.document_type.replace(/_/g, " ")}
+                        </span>
+                      </td>
+                      <td className="p-4 text-xs text-slate-500 font-mono">
+                        {new Date(doc.uploaded_at).toLocaleDateString("en-IN")}
+                      </td>
+                      <td className="p-4">
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleDownloadDocument(doc.file_url, doc.document_name)}
+                            className="cursor-pointer inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition-colors"
+                            title="Download"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                            Download
+                          </button>
+                          <button
+                            onClick={() => handleDeleteDocument(doc.id)}
+                            className="cursor-pointer inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 transition-colors"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>

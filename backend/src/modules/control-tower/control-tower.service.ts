@@ -86,15 +86,23 @@ async function canSeeScope(userId: string, scope: { branch_id?: string | null; p
   if (emp && scope.assigned_employee_id && scope.assigned_employee_id === emp.id) return true;
   if (emp && scope.target_employee_id && scope.target_employee_id === emp.id) return true;
   const targetRole = scope.assigned_role ?? scope.target_role ?? null;
+  // If item has assigned_role but user doesn't have that role, deny (unless already matched above)
   if (targetRole && !roles.includes(targetRole)) return false;
+
+  // If item has assigned_role but no specific user/employee, allow users with that role
+  if (targetRole && roles.includes(targetRole) && !scope.assigned_user_id && !scope.assigned_employee_id) return true;
+
   const scopes = await getUserAssignmentScopes(userId, targetRole ? [targetRole] : roles);
-  // TODO: implement scope record matching
+  // Scope record matching: "all", "branch", "process", "branch_process", "team", "department"
   return scopes.some((s: any) => {
     const type = String(s.scope_type ?? "").toLowerCase();
     if (type === "all") return true;
     if (type === "branch" && s.branch_id && scope.branch_id) return s.branch_id === scope.branch_id;
     if (type === "process" && s.process_id && scope.process_id) return s.process_id === scope.process_id;
     if (type === "branch_process" && s.branch_id && s.process_id) return s.branch_id === scope.branch_id && s.process_id === scope.process_id;
+    // Team and department scopes require employee context (safely check with optional chaining)
+    if (emp && type === "team" && s.team_id && (emp as any).team_id) return s.team_id === (emp as any).team_id;
+    if (emp && type === "department" && s.department_id && (emp as any).department_id) return s.department_id === (emp as any).department_id;
     return false;
   });
 }

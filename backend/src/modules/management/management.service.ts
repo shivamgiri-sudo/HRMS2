@@ -164,13 +164,43 @@ export const managementService = {
   async getDashboardSummary(processId?: string) {
     const proc = processId ? "AND e.process_id = ?" : "";
     const params: unknown[] = processId ? [processId] : [];
-    const [kpiRows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS employees_with_kpi, AVG(overall_score) AS avg_score FROM management_kpi_summary mks JOIN employees e ON e.id = mks.employee_id WHERE 1=1 ${proc}`, params);
-    const [coachRows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS pending_sessions FROM coaching_session cs JOIN employees e ON e.id = cs.employee_id WHERE cs.status = 'scheduled' ${proc}`, params);
-    const [alertRows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS unacked_critical FROM performance_alert pa JOIN employees e ON e.id = pa.employee_id WHERE pa.acknowledged = 0 AND pa.severity IN ('high','critical') ${proc}`, params);
+
+    const [headcountRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS headcount FROM employees e WHERE e.active_status = 1 ${proc}`, params
+    );
+    const [attritionRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS exits FROM employees e WHERE e.active_status = 0 AND e.date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR) ${proc}`, params
+    );
+    const [kpiRows] = await db.execute<RowDataPacket[]>(
+      `SELECT AVG(mks.overall_score) AS avg_kpi_score FROM management_kpi_summary mks JOIN employees e ON e.id = mks.employee_id WHERE 1=1 ${proc}`, params
+    );
+    const [ticketRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS open_tickets FROM performance_alert pa JOIN employees e ON e.id = pa.employee_id WHERE pa.acknowledged = 0 ${proc}`, params
+    );
+    const [leaveRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS pending_leaves FROM leave_request lr JOIN employees e ON e.id = lr.employee_id WHERE lr.status = 'pending' ${proc}`, params
+    );
+    const [attendanceRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total, SUM(CASE WHEN s.current_status = 'Logged In' THEN 1 ELSE 0 END) AS present FROM wfm_attendance_session s JOIN employees e ON e.id = s.employee_id WHERE s.session_date = CURDATE() ${proc}`, params
+    );
+
+    const headcount = Number((headcountRows as any)[0]?.headcount) || 0;
+    const exits = Number((attritionRows as any)[0]?.exits) || 0;
+    const attrition_rate = headcount > 0 ? Math.round((exits / headcount) * 100 * 10) / 10 : 0;
+    const avg_kpi_score = Math.round((Number((kpiRows as any)[0]?.avg_kpi_score) || 0) * 10) / 10;
+    const open_tickets = Number((ticketRows as any)[0]?.open_tickets) || 0;
+    const pending_leaves = Number((leaveRows as any)[0]?.pending_leaves) || 0;
+    const total_att = Number((attendanceRows as any)[0]?.total) || 0;
+    const present_att = Number((attendanceRows as any)[0]?.present) || 0;
+    const attendance_rate = total_att > 0 ? Math.round((present_att / total_att) * 100 * 10) / 10 : 0;
+
     return {
-      kpi: (kpiRows as RowDataPacket[])[0],
-      coaching: (coachRows as RowDataPacket[])[0],
-      alerts: (alertRows as RowDataPacket[])[0],
+      headcount,
+      attrition_rate,
+      avg_kpi_score,
+      open_tickets,
+      pending_leaves,
+      attendance_rate,
     };
   },
 };

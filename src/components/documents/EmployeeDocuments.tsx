@@ -80,9 +80,17 @@ export function EmployeeDocuments({ employeeId, canUpload = true, canDelete = tr
       return;
     }
     const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
-    const url = fileUrl.startsWith("https://") ? fileUrl : `${HRMS_API}/api/files/documents/${fileUrl}`;
+    // file_url already contains the correct path like /api/files/employee-documents/<filename>
+    // Fall back to constructing the URL only if it's a bare filename (legacy records)
+    const url = fileUrl.startsWith("http") ? fileUrl
+      : fileUrl.startsWith("/api/") ? `${HRMS_API}${fileUrl}`
+      : `${HRMS_API}/api/files/employee-documents/${fileUrl}`;
     try {
-      const resp = await fetch(url);
+      const token = localStorage.getItem("hrms_access_token");
+      const resp = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
       const data = await resp.blob();
       const blobUrl = URL.createObjectURL(data);
       const a = document.createElement("a");

@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, User, Mail, Phone, MapPin, Building2, Calendar, Briefcase, Save, Shield, FileText, Clock, Wallet, Files, Package, Star } from "lucide-react";
+import { Loader2, User, Mail, Phone, MapPin, Building2, Calendar, Briefcase, Save, Shield, FileText, Clock, Wallet, Files, Package, Star, Camera, Upload } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -131,7 +131,7 @@ const Profile = () => {
         address: employee.address || '',
         city: employee.city || '',
         country: employee.country || '',
-        date_of_birth: employee.date_of_birth || '',
+        date_of_birth: employee.date_of_birth ? String(employee.date_of_birth).slice(0, 10) : '',
         gender: employee.gender || '',
         working_hours_start: formatTimeForInput(employee.working_hours_start) || '09:00',
         working_hours_end: formatTimeForInput(employee.working_hours_end) || '18:00',
@@ -153,6 +153,51 @@ const Profile = () => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     },
   });
+
+  const uploadPhotoMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append('photo', file);
+      const token = localStorage.getItem("hrms_access_token");
+      const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
+      const resp = await fetch(`${HRMS_API}/api/employees/me/photo`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      if (!resp.ok) {
+        const error = await resp.json().catch(() => ({ message: `Upload failed: ${resp.status}` }));
+        throw new Error(error.message || 'Upload failed');
+      }
+      return resp.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['my-profile'] });
+      toast({ title: "Success", description: "Profile photo updated successfully." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(file.type)) {
+      toast({ title: "Error", description: "Please upload a JPG, PNG, or WebP image.", variant: "destructive" });
+      return;
+    }
+
+    // Validate file size (5MB max)
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: "Error", description: "Image must be less than 5MB.", variant: "destructive" });
+      return;
+    }
+
+    uploadPhotoMutation.mutate(file);
+  };
 
   const handleSave = () => {
     updateProfileMutation.mutate(formData);
@@ -243,10 +288,31 @@ const Profile = () => {
                 <Card className="md:col-span-1">
                   <CardContent className="pt-6">
                     <div className="flex flex-col items-center text-center">
-                      <Avatar className="h-24 w-24">
-                        <AvatarImage src={userProfile?.avatar_url || undefined} />
-                        <AvatarFallback className="text-2xl">{getUserInitials()}</AvatarFallback>
-                      </Avatar>
+                      <div className="relative">
+                        <Avatar className="h-24 w-24">
+                          <AvatarImage src={userProfile?.avatar_url || undefined} />
+                          <AvatarFallback className="text-2xl">{getUserInitials()}</AvatarFallback>
+                        </Avatar>
+                        <label
+                          htmlFor="photo-upload"
+                          className="absolute bottom-0 right-0 cursor-pointer rounded-full bg-primary p-2 text-primary-foreground shadow-lg hover:bg-primary/90 transition-colors"
+                          title="Upload profile photo"
+                        >
+                          {uploadPhotoMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Camera className="h-4 w-4" />
+                          )}
+                        </label>
+                        <input
+                          id="photo-upload"
+                          type="file"
+                          accept="image/jpeg,image/jpg,image/png,image/webp"
+                          onChange={handlePhotoUpload}
+                          disabled={uploadPhotoMutation.isPending}
+                          className="sr-only"
+                        />
+                      </div>
                       <h3 className="mt-4 text-xl font-semibold">
                         {employee.first_name} {employee.last_name}
                       </h3>
@@ -301,7 +367,7 @@ const Profile = () => {
                             address: employee.address || '',
                             city: employee.city || '',
                             country: employee.country || '',
-                            date_of_birth: employee.date_of_birth || '',
+                            date_of_birth: employee.date_of_birth ? String(employee.date_of_birth).slice(0, 10) : '',
                             gender: employee.gender || '',
                             working_hours_start: formatTimeForInput(employee.working_hours_start) || '09:00',
                             working_hours_end: formatTimeForInput(employee.working_hours_end) || '18:00',

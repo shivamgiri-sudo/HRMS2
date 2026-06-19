@@ -45,12 +45,47 @@ export const employeeController = {
     if (!rows.length) return res.status(404).json({ success: false, error: 'No employee record' });
     const empId = rows[0].id;
 
-    // Whitelist: only these fields may be self-edited
-    const allowed = ['mobile', 'address1', 'address2', 'city', 'state', 'pincode',
-                     'date_of_birth', 'gender', 'blood_group', 'nominee_name', 'nominee_relation'];
+    // Whitelist: only these fields may be self-edited.
+    // Maps frontend field name -> DB column name where they differ.
+    const fieldMap: Record<string, string> = {
+      phone:               'mobile',
+      mobile:              'mobile',
+      address:             'address1',
+      address1:            'address1',
+      address2:            'address2',
+      city:                'city',
+      state:               'state',
+      pincode:             'pincode',
+      country:             'country',
+      date_of_birth:       'date_of_birth',
+      gender:              'gender',
+      blood_group:         'blood_group',
+      nominee_name:        'nominee_name',
+      nominee_relation:    'nominee_relation',
+      working_hours_start: 'working_hours_start',
+      working_hours_end:   'working_hours_end',
+      working_days:        'working_days',
+    };
     const updates: Record<string, unknown> = {};
-    for (const key of allowed) {
-      if (key in req.body) updates[key] = req.body[key];
+    for (const [bodyKey, dbCol] of Object.entries(fieldMap)) {
+      if (bodyKey in req.body) {
+        // Normalize date_of_birth to YYYY-MM-DD, reject invalid/future dates
+        if (bodyKey === 'date_of_birth' && req.body[bodyKey]) {
+          const raw = String(req.body[bodyKey]).slice(0, 10);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+            return res.status(400).json({ success: false, error: 'Invalid date_of_birth format, expected YYYY-MM-DD' });
+          }
+          const dob = new Date(raw);
+          if (isNaN(dob.getTime()) || dob > new Date()) {
+            return res.status(400).json({ success: false, error: 'date_of_birth must be a valid past date' });
+          }
+          updates[dbCol] = raw;
+        } else if (bodyKey === 'working_days') {
+          updates[dbCol] = JSON.stringify(req.body[bodyKey]);
+        } else {
+          updates[dbCol] = req.body[bodyKey];
+        }
+      }
     }
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ success: false, error: 'No editable fields provided' });

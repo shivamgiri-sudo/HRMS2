@@ -214,6 +214,7 @@ export class EmployeeSyncHandler {
 
       try {
         // Upsert: try insert, on duplicate key update
+        // For bank/statutory fields, only overwrite if HRMS value is NULL (protect user-updated data)
         const [result] = await mysqlDb.execute<any>(`
           INSERT INTO employees (
             id, employee_code, biometric_code, first_name, last_name, title, gender,
@@ -248,23 +249,23 @@ export class EmployeeSyncHandler {
             mobile = VALUES(mobile),
             email = VALUES(email),
             official_email = VALUES(official_email),
-            pan_number = VALUES(pan_number),
-            aadhaar_last4 = VALUES(aadhaar_last4),
+            pan_number = IF(pan_number IS NULL, VALUES(pan_number), pan_number),
+            aadhaar_last4 = IF(aadhaar_last4 IS NULL, VALUES(aadhaar_last4), aadhaar_last4),
             passport_number = VALUES(passport_number),
-            epf_number = VALUES(epf_number),
-            esic_number = VALUES(esic_number),
-            uan = VALUES(uan),
+            epf_number = IF(epf_number IS NULL, VALUES(epf_number), epf_number),
+            esic_number = IF(esic_number IS NULL, VALUES(esic_number), esic_number),
+            uan = IF(uan IS NULL, VALUES(uan), uan),
             department = VALUES(department),
             designation = VALUES(designation),
             branch = VALUES(branch),
             client_name = VALUES(client_name),
             process = VALUES(process),
             cost_center = VALUES(cost_center),
-            bank_account_number = VALUES(bank_account_number),
-            bank_name = VALUES(bank_name),
-            bank_branch = VALUES(bank_branch),
-            ifsc_code = VALUES(ifsc_code),
-            account_holder_name = VALUES(account_holder_name),
+            bank_account_number = IF(bank_account_number IS NULL, VALUES(bank_account_number), bank_account_number),
+            bank_name = IF(bank_name IS NULL, VALUES(bank_name), bank_name),
+            bank_branch = IF(bank_branch IS NULL, VALUES(bank_branch), bank_branch),
+            ifsc_code = IF(ifsc_code IS NULL, VALUES(ifsc_code), ifsc_code),
+            account_holder_name = IF(account_holder_name IS NULL, VALUES(account_holder_name), account_holder_name),
             marital_status = VALUES(marital_status),
             blood_group = VALUES(blood_group),
             qualification = VALUES(qualification),

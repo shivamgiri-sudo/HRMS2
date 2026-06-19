@@ -89,6 +89,9 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  optimizeDeps: {
+    include: ["lucide-react"],
+  },
   build: {
     rollupOptions: {
       output: {
@@ -96,7 +99,8 @@ export default defineConfig(({ mode }) => ({
           "vendor-react":   ["react", "react-dom", "react-router-dom"],
           "vendor-query":   ["@tanstack/react-query"],
           "vendor-ui":      ["@radix-ui/react-dialog", "@radix-ui/react-dropdown-menu", "@radix-ui/react-select", "@radix-ui/react-tabs", "@radix-ui/react-tooltip"],
-"vendor-utils":   ["date-fns", "clsx", "tailwind-merge", "class-variance-authority"],
+          "vendor-utils":   ["date-fns", "clsx", "tailwind-merge", "class-variance-authority"],
+          "vendor-icons":   ["lucide-react"],
         },
       },
     },

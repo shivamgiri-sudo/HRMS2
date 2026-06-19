@@ -18,14 +18,11 @@ import { hrmsApi } from "@/lib/hrmsApi";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface LeaderboardEntry {
-  rank: number;
   employee_id: string;
-  employee_name: string;
   employee_code: string;
-  department: string;
-  kpi_score: number;
-  kpi_template: string;
-  period: string;
+  full_name: string;
+  weighted_score_pct: number;
+  rating: string;
 }
 
 interface Alert {
@@ -53,6 +50,20 @@ interface CoachingSession {
 }
 
 type Period = "monthly" | "quarterly" | "yearly";
+
+function periodToYYYYMM(p: Period): string {
+  const now = new Date();
+  if (p === "monthly") {
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  }
+  if (p === "quarterly") {
+    // Use start month of current quarter
+    const startMonth = Math.floor(now.getMonth() / 3) * 3 + 1;
+    return `${now.getFullYear()}-${String(startMonth).padStart(2, "0")}`;
+  }
+  // yearly → January of current year
+  return `${now.getFullYear()}-01`;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -141,7 +152,7 @@ export default function NativeQualityDashboard() {
     try {
       const [lbRes, alertsRes, coachRes] = await Promise.all([
         hrmsApi.get<{ success: boolean; data: LeaderboardEntry[] }>(
-          `/api/kpi/leaderboard?period=${period}&family=quality`
+          `/api/kpi/leaderboard?period=${encodeURIComponent(periodToYYYYMM(period))}&family=quality`
         ),
         hrmsApi.get<{ success: boolean; data: Alert[] }>("/api/management/alerts"),
         hrmsApi.get<{ success: boolean; data: CoachingSession[] }>(
@@ -183,7 +194,7 @@ export default function NativeQualityDashboard() {
   const avgScore =
     totalTracked > 0
       ? Math.round(
-          (leaderboard.reduce((sum, e) => sum + (e.kpi_score || 0), 0) / totalTracked) * 10
+          (leaderboard.reduce((sum, e) => sum + (e.weighted_score_pct || 0), 0) / totalTracked) * 10
         ) / 10
       : 0;
 
@@ -317,7 +328,7 @@ export default function NativeQualityDashboard() {
               <table className="w-full min-w-[700px] text-sm">
                 <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                   <tr>
-                    {["Rank", "Employee", "Department", "KPI Template", "Score"].map((h) => (
+                    {["Rank", "Employee", "Score", "Rating"].map((h) => (
                       <th key={h} className="p-4 font-semibold">
                         {h}
                       </th>
@@ -325,35 +336,40 @@ export default function NativeQualityDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {leaderboard.map((entry) => (
+                  {leaderboard.map((entry, idx) => {
+                    const rank = idx + 1;
+                    const score = Number(entry.weighted_score_pct) || 0;
+                    return (
                     <tr
                       key={entry.employee_id}
                       className="border-t hover:bg-slate-50/80 transition-colors"
                     >
                       <td className="p-4">
                         <span className="text-lg">
-                          {RANK_ICONS[entry.rank] ?? (
-                            <span className="font-bold text-slate-500">#{entry.rank}</span>
+                          {RANK_ICONS[rank] ?? (
+                            <span className="font-bold text-slate-500">#{rank}</span>
                           )}
                         </span>
                       </td>
                       <td className="p-4">
-                        <div className="font-bold text-slate-950">{entry.employee_name}</div>
+                        <div className="font-bold text-slate-950">{entry.full_name}</div>
                         <div className="font-mono text-xs text-slate-400">
                           {entry.employee_code}
                         </div>
                       </td>
-                      <td className="p-4 text-slate-600">{entry.department || "–"}</td>
-                      <td className="p-4 text-slate-500">{entry.kpi_template || "–"}</td>
                       <td className="p-4">
                         <span
-                          className={`inline-block rounded-full px-3 py-1 text-sm font-black ${SCORE_BG(entry.kpi_score)}`}
+                          className={`inline-block rounded-full px-3 py-1 text-sm font-black ${SCORE_BG(score)}`}
                         >
-                          {entry.kpi_score}%
+                          {score}%
                         </span>
                       </td>
+                      <td className="p-4">
+                        <span className={`text-sm font-semibold ${SCORE_COLOR(score)}`}>{entry.rating || "–"}</span>
+                      </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

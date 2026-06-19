@@ -378,13 +378,15 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
          (id, run_id, employee_id, employee_code,
           working_days, present_days, leave_days, lwp_days, late_marks, dialer_hours,
           gross_salary, total_deductions, net_salary,
+          basic, hra, special_allowance,
           pf_employee, pf_employer, esic_employee, esic_employer,
           professional_tax, tds, tds_amount, lwp_deduction, advance_recovery, status)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
        ON DUPLICATE KEY UPDATE
          working_days = VALUES(working_days), present_days = VALUES(present_days),
          lwp_days = VALUES(lwp_days), gross_salary = VALUES(gross_salary),
          total_deductions = VALUES(total_deductions), net_salary = VALUES(net_salary),
+         basic = VALUES(basic), hra = VALUES(hra), special_allowance = VALUES(special_allowance),
          pf_employee = VALUES(pf_employee), pf_employer = VALUES(pf_employer),
          esic_employee = VALUES(esic_employee), esic_employer = VALUES(esic_employer),
          professional_tax = VALUES(professional_tax),
@@ -395,6 +397,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         runId, emp.employee_id, emp.employee_code,
         att.working_days, att.present_days, att.leave_days, att.lwp_days, att.late_marks, att.dialer_hours,
         calc.gross_salary, totalDedFinal, netPayFinal,
+        calc.basic, calc.hra, calc.special_allowance,
         calc.pf_employee, calc.pf_employer, calc.esic_employee, calc.esic_employer,
         calc.professional_tax, tdsMonthly, tdsMonthly, lwpDeduction, advanceRecovery,
       ]

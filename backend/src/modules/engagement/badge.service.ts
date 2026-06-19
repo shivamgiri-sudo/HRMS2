@@ -246,7 +246,7 @@ export async function awardBadge(data: AwardBadgeDTO): Promise<EmployeeBadgeEarn
   const now = new Date().toISOString();
 
   const sql = `
-    INSERT INTO employee_badge_earned (
+    INSERT IGNORE INTO employee_badge_earned (
       earned_id, employee_id, badge_id, earned_at,
       reason, awarded_by, metadata_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -615,7 +615,9 @@ async function checkKpiBadges(employeeId: string): Promise<EmployeeBadgeEarned[]
     areConsecutiveMonthlyPeriods(rows) &&
     rows.every((row) => Number(row.weighted_score_pct) >= 100)
   ) {
-    const badge = await findBadgeByName('Top Performer');
+    // Use "KPI Overachiever" for the KPI path to avoid collision with "Top Performer"
+    // awarded via the performance-review path in checkPerformanceBadges.
+    const badge = await findBadgeByName('KPI Overachiever') || await findBadgeByName('Top Performer');
     if (badge) {
       try {
         const earned = await awardBadge({

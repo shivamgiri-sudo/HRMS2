@@ -80,12 +80,14 @@ export function DocumentViewerDialog({
         setFileType("other");
       }
 
-      // Get signed URL for the file
+      // Build the correct URL — file_url already contains the correct /api/files/... path
       if (!documentInfo.file_url) {
         throw new Error("Document file URL is missing");
       }
       const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
-      const fileUrl = documentInfo.file_url.startsWith("https://") ? documentInfo.file_url : `${HRMS_API}/api/files/documents/${documentInfo.file_url}`;
+      const fileUrl = documentInfo.file_url.startsWith("http") ? documentInfo.file_url
+        : documentInfo.file_url.startsWith("/api/") ? `${HRMS_API}${documentInfo.file_url}`
+        : `${HRMS_API}/api/files/employee-documents/${documentInfo.file_url}`;
       setPreviewUrl(fileUrl);
     } catch (error) {
       console.error("Error loading preview:", error);
@@ -100,8 +102,14 @@ export function DocumentViewerDialog({
 
     try {
       const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
-      const fileUrl = documentInfo.file_url.startsWith("https://") ? documentInfo.file_url : `${HRMS_API}/api/files/documents/${documentInfo.file_url}`;
-      const resp = await fetch(fileUrl);
+      const fileUrl = documentInfo.file_url.startsWith("http") ? documentInfo.file_url
+        : documentInfo.file_url.startsWith("/api/") ? `${HRMS_API}${documentInfo.file_url}`
+        : `${HRMS_API}/api/files/employee-documents/${documentInfo.file_url}`;
+      const token = localStorage.getItem("hrms_access_token");
+      const resp = await fetch(fileUrl, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
       const data = await resp.blob();
 
       const blobUrl = URL.createObjectURL(data);

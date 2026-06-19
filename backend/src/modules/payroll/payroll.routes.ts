@@ -1,4 +1,9 @@
 import { Router } from "express";
+import { randomUUID } from "crypto";
+import path from "path";
+import fs from "fs";
+import multer from "multer";
+import { fileURLToPath } from "url";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
@@ -14,6 +19,9 @@ import { env } from "../../config/env.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const UPLOADS_ROOT = path.resolve(__dirname, "../../../uploads");
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -305,6 +313,94 @@ router.post("/tax-declaration/:employeeId/:year", h(async (req: AuthenticatedReq
 
   const data = await taxDeclarationService.upsert(employeeId, year, req.body, req.authUser!.id);
   return res.json({ success: true, data, message: "Tax declaration saved" });
+}));
+
+// POST /api/payroll/tax-declaration/:employeeId/:year/document — upload tax proof document
+const taxDocUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      const dir = path.join(UPLOADS_ROOT, "tax-documents");
+      fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, `${randomUUID()}${ext}`);
+    },
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = [".pdf", ".jpg", ".jpeg", ".png", ".webp"];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.includes(ext)) cb(null, true);
+    else cb(new Error(`File type ${ext} not allowed for tax documents`));
+  },
+});
+
+router.post("/tax-declaration/:employeeId/:year/document", (req: any, res: any, next: any) => {
+  taxDocUpload.single("file")(req, res, (err) => {
+    if (err instanceof multer.MulterError) return res.status(400).json({ success: false, message: `Upload error: ${err.message}` });
+    if (err) return res.status(400).json({ success: false, message: err.message });
+    next();
+  });
+}, h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
+
+  let { employeeId } = req.params;
+  const { year } = req.params;
+  const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
+
+  if (!isPayrollRole) {
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (!callerEmp || callerEmp.id !== employeeId) {
+      return res.status(403).json({ success: false, message: "Forbidden: you may only upload your own tax documents" });
+    }
+    employeeId = callerEmp.id;
+  }
+
+  const documentType = (req.body?.document_type as string) || "tax_declaration";
+  const documentName = (req.body?.document_name as string) || req.file.originalname;
+  const fileUrl = `/api/files/tax-documents/${req.file.filename}`;
+  const id = randomUUID();
+
+  await db.execute(
+    `INSERT INTO employee_documents (id, employee_id, doc_type, doc_name, file_url, uploaded_by, metadata_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, employeeId, documentType, documentName, fileUrl, req.authUser!.id, JSON.stringify({ financial_year: year })]
+  );
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, employee_id, doc_type AS document_type, doc_name AS document_name, file_url, verified, created_at AS uploaded_at
+     FROM employee_documents WHERE id = ? LIMIT 1`,
+    [id]
+  );
+
+  res.status(201).json({ success: true, data: (rows as RowDataPacket[])[0] });
+}));
+
+// GET /api/payroll/tax-declaration/:employeeId/:year/documents — list tax docs for employee+year
+router.get("/tax-declaration/:employeeId/:year/documents", h(async (req: AuthenticatedRequest, res: Response) => {
+  let { employeeId } = req.params;
+  const { year } = req.params;
+  const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
+
+  if (!isPayrollRole) {
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (!callerEmp || callerEmp.id !== employeeId) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    employeeId = callerEmp.id;
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, employee_id, doc_type AS document_type, doc_name AS document_name, file_url, verified, created_at AS uploaded_at
+     FROM employee_documents
+     WHERE employee_id = ? AND doc_type LIKE 'tax_%' AND (metadata_json IS NULL OR metadata_json LIKE ?)
+     ORDER BY created_at DESC`,
+    [employeeId, `%${year}%`]
+  );
+
+  res.json({ success: true, data: rows });
 }));
 
 // ─── UAN ─────────────────────────────────────────────────────────────────────

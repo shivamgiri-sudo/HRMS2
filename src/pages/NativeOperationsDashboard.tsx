@@ -45,6 +45,21 @@ interface LiveAttendance {
   employees: LiveEmployee[];
 }
 
+interface LiveTrackerApiResponse {
+  success: boolean;
+  data: {
+    date: string;
+    sessions: LiveEmployee[];
+    summary: {
+      total: number;
+      logged_in: number;
+      logged_out: number;
+      absent: number;
+      overall_adherence_pct: number;
+    };
+  };
+}
+
 interface Process {
   id: string | number;
   name: string;
@@ -174,8 +189,18 @@ function LiveWorkforceSection() {
     setLoading(true);
     setError("");
     try {
-      const res = await hrmsApi.get<LiveAttendance>("/api/wfm/live");
-      setData(res);
+      const res = await hrmsApi.get<LiveTrackerApiResponse>("/api/wfm/live");
+      const summary = res?.data?.summary;
+      if (summary) {
+        setData({
+          total: summary.total ?? 0,
+          logged_in: summary.logged_in ?? 0,
+          logged_out: summary.logged_out ?? 0,
+          absent: summary.absent ?? 0,
+          adherence_pct: summary.overall_adherence_pct ?? 0,
+          employees: res.data.sessions ?? [],
+        });
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Unable to load live attendance");
     } finally {

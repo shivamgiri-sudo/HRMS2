@@ -82,6 +82,8 @@ const UnifiedPerformanceCommandCenter = lazy(() => import("./pages/UnifiedPerfor
 const UnifiedAccessControl          = lazy(() => import("./pages/UnifiedAccessControl"));
 const SuperAdminAccessControl       = lazy(() => import("./pages/SuperAdminAccessControl"));
 const NativeManagementDashboard     = lazy(() => import("./pages/NativeManagementDashboard"));
+const NativeQualityDashboard        = lazy(() => import("./pages/NativeQualityDashboard"));
+const NativeOperationsDashboard     = lazy(() => import("./pages/NativeOperationsDashboard"));
 
 // Performance Feedback
 const NativePerformanceFeedbackMyReports = lazy(() => import("./pages/NativePerformanceFeedbackMyReports"));
@@ -272,8 +274,8 @@ const App = () => (
               <Route path="/roster-preference" element={<ProtectedRoute><NativeRosterPreference /></ProtectedRoute>} />
 
               {/* Quality / Ops */}
-              <Route path="/quality/dashboard" element={<ProtectedRoute><Gate pageCode="QUALITY_DASHBOARD"><NativePlaceholderPage title="Quality Dashboard" module="Quality" /></Gate></ProtectedRoute>} />
-              <Route path="/operations/dashboard" element={<ProtectedRoute><Gate pageCode="OPERATIONS_DASHBOARD"><NativePlaceholderPage title="Operations Dashboard" module="Operations" /></Gate></ProtectedRoute>} />
+              <Route path="/quality/dashboard" element={<ProtectedRoute><Gate pageCode="QUALITY_DASHBOARD"><NativeQualityDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/operations/dashboard" element={<ProtectedRoute><Gate pageCode="OPERATIONS_DASHBOARD"><NativeOperationsDashboard /></Gate></ProtectedRoute>} />
 
               {/* Performance */}
               <Route path="/performance/command-center" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><UnifiedPerformanceCommandCenter /></Gate></ProtectedRoute>} />

@@ -1,5 +1,9 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
+import path from "path";
+import fs from "fs";
+import multer from "multer";
+import { fileURLToPath } from "url";
 import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
@@ -7,6 +11,33 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { selfOrAdminHr } from "../../shared/accessGuard.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const UPLOADS_ROOT = path.resolve(__dirname, "../../../uploads");
+
+const ALLOWED_EXT = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx"]);
+
+const empDocStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    const dir = path.join(UPLOADS_ROOT, "employee-documents");
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `${randomUUID()}${ext}`);
+  },
+});
+
+const empDocUpload = multer({
+  storage: empDocStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ALLOWED_EXT.has(ext)) cb(null, true);
+    else cb(new Error(`File type ${ext} not allowed`));
+  },
+});
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -20,6 +51,31 @@ router.get("/:employeeId", selfOrAdminHr("employeeId"), h(async (req: Authentica
     [req.params.employeeId]
   );
   res.json({ success: true, data: rows });
+}));
+
+// POST /api/employee-docs/:employeeId/upload — multipart upload (admin/hr or self-service)
+router.post("/:employeeId/upload", (req: any, res: any, next: any) => {
+  empDocUpload.single("file")(req, res, (err) => {
+    if (err instanceof multer.MulterError) return res.status(400).json({ success: false, message: `Upload error: ${err.message}` });
+    if (err) return res.status(400).json({ success: false, message: err.message });
+    next();
+  });
+}, h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
+  const { employeeId } = req.params;
+  const documentType = (req.body?.document_type as string) || "other";
+  const documentName = (req.body?.document_name as string) || req.file.originalname;
+  const fileUrl = `/api/files/employee-documents/${req.file.filename}`;
+  const id = randomUUID();
+  await db.execute(
+    "INSERT INTO employee_documents (id, employee_id, doc_type, doc_name, file_url, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)",
+    [id, employeeId, documentType, documentName, fileUrl, req.authUser!.id]
+  );
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT id, employee_id, doc_type AS document_type, doc_name AS document_name, file_url, verified, created_at AS uploaded_at FROM employee_documents WHERE id = ? LIMIT 1",
+    [id]
+  );
+  res.status(201).json({ success: true, data: (rows as RowDataPacket[])[0] });
 }));
 
 // POST /api/employee-docs/:employeeId — register document metadata (file URL from caller)

@@ -1,4 +1,9 @@
 import { Router } from "express";
+import { randomUUID } from "crypto";
+import path from "path";
+import fs from "fs";
+import multer from "multer";
+import { fileURLToPath } from "url";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
@@ -8,6 +13,9 @@ import { db } from "../../db/mysql.js";
 import { employeeController as c } from "./employee.controller.js";
 import { appendJourneyEvent, listJourneyEvents } from "./journeyLog.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const UPLOADS_ROOT = path.resolve(__dirname, "../../../uploads");
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -39,7 +47,9 @@ router.get("/me", h(async (req: any, res: any) => {
             e.blood_group, e.father_name, e.office_email,
             e.bank_account_number, e.bank_name, e.bank_branch, e.ifsc_code,
             e.account_holder_name, e.account_type,
-            e.uan_number, e.epf_number, e.esic_number,
+            e.nominee_name, e.nominee_relation,
+            COALESCE(e.uan_number, e.uan) AS uan_number,
+            e.epf_number, e.esic_number,
             e.ctc, e.gross_salary, e.net_inhand,
             e.aadhaar_number, e.aadhaar_last4,
             e.emp_type, e.billable_status, e.cost_center_code,
@@ -123,6 +133,68 @@ router.get("/:id", h(async (req: any, res: any) => {
 
 // PATCH /api/employees/me — employee self-service (whitelisted fields only)
 router.patch("/me", h((req: any, res: any) => c.updateMyProfile(req, res)));
+
+// POST /api/employees/me/photo — upload profile photo
+const profilePhotoUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      const dir = path.join(UPLOADS_ROOT, "profile-photos");
+      fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, `${randomUUID()}${ext}`);
+    },
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit for profile photos
+  fileFilter: (_req, file, cb) => {
+    const allowed = [".jpg", ".jpeg", ".png", ".webp"];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.includes(ext)) cb(null, true);
+    else cb(new Error(`File type ${ext} not allowed. Use JPG, PNG, or WebP.`));
+  },
+});
+
+router.post("/me/photo", (req: any, res: any, next: any) => {
+  profilePhotoUpload.single("photo")(req, res, (err) => {
+    if (err instanceof multer.MulterError) return res.status(400).json({ success: false, message: `Upload error: ${err.message}` });
+    if (err) return res.status(400).json({ success: false, message: err.message });
+    next();
+  });
+}, h(async (req: any, res: any) => {
+  if (!req.file) return res.status(400).json({ success: false, message: "No photo uploaded" });
+
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT id, photo_url FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    [userId]
+  );
+  if (!rows.length) return res.status(404).json({ success: false, error: "No employee record" });
+
+  const empId = rows[0].id;
+  const oldPhotoUrl = rows[0].photo_url;
+
+  // Delete old photo file if it exists
+  if (oldPhotoUrl) {
+    try {
+      const oldFilename = oldPhotoUrl.split("/").pop();
+      if (oldFilename) {
+        const oldPath = path.join(UPLOADS_ROOT, "profile-photos", oldFilename);
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      }
+    } catch (err) {
+      console.warn("Failed to delete old profile photo:", err);
+    }
+  }
+
+  const photoUrl = `/api/files/profile-photos/${req.file.filename}`;
+  await db.execute("UPDATE employees SET photo_url = ?, updated_at = NOW() WHERE id = ?", [photoUrl, empId]);
+
+  res.json({ success: true, photo_url: photoUrl, message: "Profile photo updated successfully" });
+}));
 
 router.patch("/:id",
   requireRole("admin", "hr"),
