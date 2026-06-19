@@ -44,6 +44,7 @@ const CompanyCalendar               = lazy(() => import("./pages/CompanyCalendar
 const NotificationPreferences       = lazy(() => import("./pages/NotificationPreferences"));
 const Changelog                     = lazy(() => import("./pages/Changelog"));
 const ModuleLauncher                = lazy(() => import("./pages/ModuleLauncher"));
+const Notifications                 = lazy(() => import("./pages/Notifications"));
 
 // ATS Onboarding
 const CandidateOnboardingPage       = lazy(() => import("./pages/CandidateOnboardingPage"));
@@ -53,6 +54,7 @@ const NativeBranchHeadApproval      = lazy(() => import("./pages/NativeBranchHea
 const NativeBGVVerificationCenter   = lazy(() => import("./pages/NativeBGVVerificationCenter"));
 
 // ATS
+const NativeBGVReport               = lazy(() => import("./pages/NativeBGVReport"));
 const NativeATSDashboardReplica     = lazy(() => import("./pages/NativeATSDashboardReplica"));
 const NativeATSCandidateRegistration = lazy(() => import("./pages/NativeATSCandidateRegistration"));
 const NativeATSRecruiterDashboard   = lazy(() => import("./pages/NativeATSRecruiterWorkspace"));
@@ -242,9 +244,11 @@ const App = () => (
               <Route path="/reviews-management" element={<ProtectedRoute><ReviewsManagement /></ProtectedRoute>} />
               <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />
               <Route path="/attendance-regularization" element={<ProtectedRoute><AttendanceRegularization /></ProtectedRoute>} />
+              <Route path="/attendance/regularizations" element={<ProtectedRoute><AttendanceRegularization /></ProtectedRoute>} />
               <Route path="/bulk-upload" element={<ProtectedRoute><BulkUploadHub /></ProtectedRoute>} />
               <Route path="/departments" element={<ProtectedRoute><Departments /></ProtectedRoute>} />
               <Route path="/calendar" element={<ProtectedRoute><CompanyCalendar /></ProtectedRoute>} />
+              <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
               <Route path="/notification-preferences" element={<ProtectedRoute><NotificationPreferences /></ProtectedRoute>} />
 
               <Route path="/modules" element={<ProtectedRoute><ModuleLauncher /></ProtectedRoute>} />
@@ -266,6 +270,7 @@ const App = () => (
               <Route path="/ats/offer-approvals" element={<ProtectedRoute><NativeBranchHeadApproval /></ProtectedRoute>} />
               <Route path="/onboard-full" element={<CandidateOnboardingFullPage />} />
               <Route path="/ats/bgv" element={<ProtectedRoute><Gate pageCode="ATS_BGV"><NativeBGVVerificationCenter /></Gate></ProtectedRoute>} />
+              <Route path="/ats/bgv-report" element={<ProtectedRoute><Gate pageCode="ATS_BGV"><NativeBGVReport /></Gate></ProtectedRoute>} />
 
               {/* LMS */}
               <Route path="/lms/my-learning" element={<ProtectedRoute><Gate pageCode="LMS_MY_LEARNING"><NativeLMSMyLearning /></Gate></ProtectedRoute>} />

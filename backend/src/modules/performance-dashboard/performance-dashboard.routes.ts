@@ -129,90 +129,120 @@ function aprScopeCond(scope: Awaited<ReturnType<typeof resolveScope>>, params: a
 // GET /api/performance-dashboard/summary
 router.get("/summary", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   const { from, to } = dateDefaults(req.query);
-  const pool = getCiPool();
-  const scope = await resolveScope(req);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const aprParams: any[] = [from, to];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const auditParams: any[] = [from, to];
-  const aprSql = aprScopeCond(scope, aprParams);
-  const auditSql = auditScopeCond(scope, auditParams);
-  const data = await getPerfSummary(pool, from, to, aprSql, auditSql, aprParams, auditParams);
-  return res.json({
-    success: true,
-    summary: data,
-    scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
-  });
+  try {
+    const pool = getCiPool();
+    const scope = await resolveScope(req);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const aprParams: any[] = [from, to];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const auditParams: any[] = [from, to];
+    const aprSql = aprScopeCond(scope, aprParams);
+    const auditSql = auditScopeCond(scope, auditParams);
+    const data = await getPerfSummary(pool, from, to, aprSql, auditSql, aprParams, auditParams);
+    return res.json({
+      success: true,
+      summary: data,
+      scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[performance-dashboard/summary]", msg);
+    return res.json({ success: true, summary: { total_agents: 0, avg_calls_per_agent: 0, avg_quality: 0, avg_shrinkage: 0, avg_conversion_rate: 0, total_sales: 0, calls_per_hour_avg: 0 }, scope_label: "All", _error: msg });
+  }
 }));
 
 // GET /api/performance-dashboard/agent-matrix
 router.get("/agent-matrix", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   const { from, to } = dateDefaults(req.query);
-  const pool = getCiPool();
-  const scope = await resolveScope(req);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const aprParams: any[] = [from, to];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const auditParams: any[] = [from, to];
-  const aprSql = aprScopeCond(scope, aprParams);
-  const auditSql = auditScopeCond(scope, auditParams);
-  const rows = await getAgentMatrix(pool, from, to, aprSql, auditSql, aprParams, auditParams);
-  return res.json({
-    success: true,
-    matrix: rows,
-    scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
-  });
+  try {
+    const pool = getCiPool();
+    const scope = await resolveScope(req);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const aprParams: any[] = [from, to];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const auditParams: any[] = [from, to];
+    const aprSql = aprScopeCond(scope, aprParams);
+    const auditSql = auditScopeCond(scope, auditParams);
+    const rows = await getAgentMatrix(pool, from, to, aprSql, auditSql, aprParams, auditParams);
+    return res.json({
+      success: true,
+      matrix: rows,
+      scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[performance-dashboard/agent-matrix]", msg);
+    return res.json({ success: true, matrix: [], scope_label: "All", _error: msg });
+  }
 }));
 
 // GET /api/performance-dashboard/trend
 router.get("/trend", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   const { from, to } = dateDefaults(req.query);
-  const pool = getCiPool();
-  const scope = await resolveScope(req);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const aprParams: any[] = [from, to];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const auditParams: any[] = [from, to];
-  const aprSql = aprScopeCond(scope, aprParams);
-  const auditSql = auditScopeCond(scope, auditParams);
-  const data = await getPerfTrend(pool, from, to, aprSql, auditSql, aprParams, auditParams);
-  return res.json({
-    success: true,
-    ...data,
-    scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
-  });
+  try {
+    const pool = getCiPool();
+    const scope = await resolveScope(req);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const aprParams: any[] = [from, to];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const auditParams: any[] = [from, to];
+    const aprSql = aprScopeCond(scope, aprParams);
+    const auditSql = auditScopeCond(scope, auditParams);
+    const data = await getPerfTrend(pool, from, to, aprSql, auditSql, aprParams, auditParams);
+    return res.json({
+      success: true,
+      ...data,
+      scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[performance-dashboard/trend]", msg);
+    return res.json({ success: true, apr_trend: [], audit_trend: [], sales_trend: [], scope_label: "All", _error: msg });
+  }
 }));
 
 // GET /api/performance-dashboard/process-comparison
 router.get("/process-comparison", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   const { from, to } = dateDefaults(req.query);
-  const pool = getCiPool();
-  const scope = await resolveScope(req);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const aprParams: any[] = [from, to];
-  const aprSql = aprScopeCond(scope, aprParams);
-  const rows = await getProcessComparison(pool, from, to, aprSql, aprParams);
-  return res.json({
-    success: true,
-    processes: rows,
-    scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
-  });
+  try {
+    const pool = getCiPool();
+    const scope = await resolveScope(req);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const aprParams: any[] = [from, to];
+    const aprSql = aprScopeCond(scope, aprParams);
+    const rows = await getProcessComparison(pool, from, to, aprSql, aprParams);
+    return res.json({
+      success: true,
+      processes: rows,
+      scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[performance-dashboard/process-comparison]", msg);
+    return res.json({ success: true, processes: [], scope_label: "All", _error: msg });
+  }
 }));
 
 // GET /api/performance-dashboard/utilization
 router.get("/utilization", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   const { from, to } = dateDefaults(req.query);
-  const pool = getCiPool();
-  const scope = await resolveScope(req);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const aprParams: any[] = [from, to];
-  const aprSql = aprScopeCond(scope, aprParams);
-  const rows = await getUtilization(pool, from, to, aprSql, aprParams);
-  return res.json({
-    success: true,
-    utilization: rows,
-    scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
-  });
+  try {
+    const pool = getCiPool();
+    const scope = await resolveScope(req);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const aprParams: any[] = [from, to];
+    const aprSql = aprScopeCond(scope, aprParams);
+    const rows = await getUtilization(pool, from, to, aprSql, aprParams);
+    return res.json({
+      success: true,
+      utilization: rows,
+      scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[performance-dashboard/utilization]", msg);
+    return res.json({ success: true, utilization: [], scope_label: "All", _error: msg });
+  }
 }));
 
 export const performanceDashboardRouter = router;

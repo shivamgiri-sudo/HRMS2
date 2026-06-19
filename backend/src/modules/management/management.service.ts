@@ -260,7 +260,7 @@ export const managementService = {
       `SELECT COUNT(*) AS active FROM employees WHERE active_status = 1`
     );
     const [userRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total_users FROM users`
+      `SELECT COUNT(*) AS total_users FROM auth_user`
     );
     const [leaveRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS pending FROM leave_request WHERE status = 'pending'`

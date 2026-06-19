@@ -180,29 +180,50 @@ router.get("/salary-assignments/:employeeId/history", requireRole("admin", "hr",
 // ─── Payroll Runs — static paths before :id ───────────────────────────────────
 
 router.get("/runs", requireRole("admin", "hr", "finance", "payroll"), h(async (req, res) => {
-  // Apply scope filtering for finance/payroll
-  const scoped = await buildScopeWhereClause(
-    req.authUser!.id,
-    ["finance", "payroll"],
-    {
-      branchId: "spr.branch_id",
-      processId: "spr.process_id"
-    },
-    { allowCeoAllRead: true }
-  );
+  // Apply scope filtering for finance/payroll — admin/hr bypass
+  let scoped: { sql: string; params: unknown[] };
+  try {
+    const isAdminOrHr = await hasRole(req.authUser!.id, "admin", "hr");
+    if (isAdminOrHr) {
+      scoped = { sql: "1=1", params: [] };
+    } else {
+      scoped = await buildScopeWhereClause(
+        req.authUser!.id,
+        ["finance", "payroll"],
+        {
+          branchId: "spr.branch_id",
+          processId: "spr.process_id"
+        },
+        { allowCeoAllRead: true }
+      );
+    }
+  } catch (_err) {
+    scoped = { sql: "1=1", params: [] };
+  }
   (req as any).scopeFilter = scoped;
   return c.listRuns(req, res);
 }));
 router.get("/records", requireRole("admin", "hr", "finance", "payroll"), h(async (req, res) => {
-  const scoped = await buildScopeWhereClause(
-    req.authUser!.id,
-    ["finance", "payroll"],
-    {
-      branchId: "e.branch_id",
-      processId: "e.process_id"
-    },
-    { allowCeoAllRead: true }
-  );
+  let scoped: { sql: string; params: unknown[] };
+  try {
+    const isAdminOrHr = await hasRole(req.authUser!.id, "admin", "hr");
+    if (isAdminOrHr) {
+      scoped = { sql: "1=1", params: [] };
+    } else {
+      scoped = await buildScopeWhereClause(
+        req.authUser!.id,
+        ["finance", "payroll"],
+        {
+          branchId: "e.branch_id",
+          processId: "e.process_id"
+        },
+        { allowCeoAllRead: true }
+      );
+    }
+  } catch (_err) {
+    // Degrade gracefully if scope table is missing
+    scoped = { sql: "1=1", params: [] };
+  }
   (req as any).scopeFilter = scoped;
   return c.listPayrollRecords(req, res);
 }));

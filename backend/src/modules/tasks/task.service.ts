@@ -386,7 +386,7 @@ export const taskService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT c.*, u.full_name as user_name
        FROM employee_task_comment c
-       LEFT JOIN users u ON u.id = c.user_id
+       LEFT JOIN auth_user u ON u.id = c.user_id
        WHERE c.task_id = ?
        ORDER BY c.created_at ASC`,
       [taskId]

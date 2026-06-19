@@ -204,7 +204,7 @@ export const controlTowerService = {
          END AS escalation_level,
          NULL AS decision_required_from
        FROM work_inbox_item wii
-       LEFT JOIN users u ON u.id = wii.user_id
+       LEFT JOIN auth_user u ON u.id = wii.user_id
        LEFT JOIN employees e ON e.user_id = u.id
        WHERE ${conds.join(" AND ")}
        ORDER BY FIELD(wii.priority,'urgent','high','normal','low'), COALESCE(wii.created_at, '2999-12-31'), wii.created_at DESC

@@ -64,7 +64,7 @@ async function readCounts() {
     `SELECT
        SUM(CASE WHEN active_status = 1 THEN 1 ELSE 0 END) AS active_users,
        SUM(CASE WHEN active_status = 0 THEN 1 ELSE 0 END) AS inactive_users
-     FROM users`
+     FROM auth_user`
   ).catch(async () => [[{ active_users: 0, inactive_users: 0 }]] as any);
   return { ...(todayRows[0] ?? {}), ...(userRows[0] ?? {}) };
 }

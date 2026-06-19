@@ -14,8 +14,11 @@ export const employeeController = {
   async listEmployees(req: Request, res: Response) {
     const parsed = employeeFiltersSchema.safeParse(req.query);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const result = await employeeService.listEmployees(parsed.data);
-    res.json({ data: result.data, total: result.total, page: result.page, limit: result.limit });
+    const result = await employeeService.listEmployees({
+      ...parsed.data,
+      scopeFilter: (req as any).scopeFilter,
+    });
+    res.json({ data: result.data, total: result.total, page: result.page, limit: result.limit, stats: result.stats, process_breakdown: result.process_breakdown });
   },
 
   async getEmployee(req: Request, res: Response) {

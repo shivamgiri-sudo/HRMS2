@@ -138,7 +138,7 @@ export async function getOwnerWorkload() {
             ROUND(AVG(CASE WHEN t.resolved_at IS NOT NULL
                            THEN TIMESTAMPDIFF(MINUTE, t.created_at, t.resolved_at) END), 0) AS avg_resolution_minutes
        FROM helpdesk_ticket t
-       LEFT JOIN users u ON u.id = t.assigned_to
+       LEFT JOIN auth_user u ON u.id = t.assigned_to
       WHERE t.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
       GROUP BY t.assigned_to
       ORDER BY open DESC

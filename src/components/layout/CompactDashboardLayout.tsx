@@ -399,6 +399,7 @@ export function DashboardLayout({ children }: Props) {
 
       {/* Main content area */}
       <div
+        id="main-content-area"
         className="flex min-h-dvh min-w-0 flex-col pb-16 lg:pb-0 lg:pl-[var(--sidebar-width)]"
       >
         {/* Topbar */}

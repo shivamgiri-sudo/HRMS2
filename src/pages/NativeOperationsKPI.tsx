@@ -125,7 +125,7 @@ function TniModal({ employeeId, employeeName, metrics, onClose, onCreated }: Tni
       onCreated(res.data);
       onClose();
     } catch (err: unknown) {
-      setError((err as Error).message ?? "Failed to create TNI");
+      setError(err instanceof Error ? err.message : "Failed to create TNI");
     } finally {
       setSaving(false);
     }
@@ -258,10 +258,11 @@ export default function NativeOperationsKPI() {
 
   const loadProcesses = useCallback(async () => {
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: Process[] }>("/api/processes");
-      setProcesses(res.data ?? []);
-      if ((res.data ?? []).length > 0 && !selectedProcess) {
-        setSelectedProcess((res.data ?? [])[0].id);
+      const res = await hrmsApi.get<Process[] | { data: Process[] }>("/api/processes");
+      const list = Array.isArray(res) ? res : (res as { data: Process[] }).data ?? [];
+      setProcesses(list);
+      if (list.length > 0 && !selectedProcess) {
+        setSelectedProcess(list[0].id);
       }
     } catch {
       // Processes are optional
@@ -273,25 +274,34 @@ export default function NativeOperationsKPI() {
     setLoading(true);
     setMessage("");
     try {
-      const metricsRes = await hrmsApi.get<{ data: KpiMetric[] }>(
+      const metricsRes = await hrmsApi.get<KpiMetric[] | { data: KpiMetric[] }>(
         "/api/kpi/metrics?family=operations"
       );
-      setMetrics(metricsRes.data ?? []);
+      const metricsList = Array.isArray(metricsRes)
+        ? metricsRes
+        : (metricsRes as { data: KpiMetric[] }).data ?? [];
+      setMetrics(metricsList);
 
       const leaderboardParams = new URLSearchParams({ period, family: "operations", limit: "500" });
       if (selectedProcess) leaderboardParams.set("process_id", selectedProcess);
 
-      const lbRes = await hrmsApi.get<{ data: LeaderboardEntry[] }>(
+      const lbRes = await hrmsApi.get<LeaderboardEntry[] | { data: LeaderboardEntry[] }>(
         `/api/kpi/leaderboard?${leaderboardParams.toString()}`
       );
-      setLeaderboard(lbRes.data ?? []);
+      const lbList = Array.isArray(lbRes)
+        ? lbRes
+        : (lbRes as { data: LeaderboardEntry[] }).data ?? [];
+      setLeaderboard(lbList);
 
       if (selectedProcess) {
-        const cfgRes = await hrmsApi.get<{ success: boolean; data: ProcessConfig[] }>(
+        const cfgRes = await hrmsApi.get<ProcessConfig[] | { success: boolean; data: ProcessConfig[] }>(
           `/api/kpi/process-config/${selectedProcess}`
         );
-        const opsConfigs = (cfgRes.data ?? []).filter((c) => {
-          const found = (metricsRes.data ?? []).find((m) => m.id === c.metric_id);
+        const cfgList = Array.isArray(cfgRes)
+          ? cfgRes
+          : (cfgRes as { data: ProcessConfig[] }).data ?? [];
+        const opsConfigs = cfgList.filter((c) => {
+          const found = metricsList.find((m) => m.id === c.metric_id);
           return found?.family === "operations";
         });
         setProcessConfig(opsConfigs);
@@ -299,7 +309,7 @@ export default function NativeOperationsKPI() {
         setProcessConfig([]);
       }
     } catch (err: unknown) {
-      setMessage((err as Error).message ?? "Failed to load Operations KPI data");
+      setMessage(err instanceof Error ? err.message : "Failed to load Operations KPI data");
     } finally {
       setLoading(false);
     }

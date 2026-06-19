@@ -43,7 +43,7 @@ export const businessActionsService = {
               COALESCE(NULLIF(u.full_name, ''), u.email, a.owner_role, 'Unassigned') AS owner_name,
               CASE WHEN a.due_date < CURDATE() AND a.status NOT IN ('completed','cancelled') THEN 1 ELSE 0 END AS is_overdue
          FROM business_action_queue a
-         LEFT JOIN users u ON u.id = a.owner_user_id
+         LEFT JOIN auth_user u ON u.id = a.owner_user_id
          ${where.sql}
         ORDER BY FIELD(a.severity, 'critical','high','medium','low'), a.due_date ASC, a.created_at DESC
         LIMIT 300`,
@@ -81,7 +81,7 @@ export const businessActionsService = {
     const [byOwner] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(NULLIF(u.full_name, ''), u.email, a.owner_role, 'Unassigned') AS label, COUNT(*) AS value
          FROM business_action_queue a
-         LEFT JOIN users u ON u.id = a.owner_user_id
+         LEFT JOIN auth_user u ON u.id = a.owner_user_id
         WHERE a.status IN (${OPEN_STATUSES.map(() => "?").join(",")})
         GROUP BY label
         ORDER BY value DESC
@@ -96,7 +96,7 @@ export const businessActionsService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT a.*, COALESCE(NULLIF(u.full_name, ''), u.email, a.owner_role, 'Unassigned') AS owner_name
          FROM business_action_queue a
-         LEFT JOIN users u ON u.id = a.owner_user_id
+         LEFT JOIN auth_user u ON u.id = a.owner_user_id
         WHERE a.id = ? LIMIT 1`,
       [id]
     );
@@ -105,7 +105,7 @@ export const businessActionsService = {
     const [comments] = await db.execute<RowDataPacket[]>(
       `SELECT c.*, COALESCE(NULLIF(u.full_name, ''), u.email, 'System') AS author_name
          FROM business_action_comment c
-         LEFT JOIN users u ON u.id = c.author_user_id
+         LEFT JOIN auth_user u ON u.id = c.author_user_id
         WHERE c.action_id = ?
         ORDER BY c.created_at ASC`,
       [id]

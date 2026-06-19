@@ -53,7 +53,7 @@ const TICKET_SELECT = `SELECT t.*,
   JOIN employees e ON e.id = t.employee_id
   LEFT JOIN branch_master b ON b.id = e.branch_id
   LEFT JOIN process_master p ON p.id = e.process_id
-  LEFT JOIN users u ON u.id = t.assigned_to`;
+  LEFT JOIN auth_user u ON u.id = t.assigned_to`;
 
 export const helpdeskService = {
   async listTickets(filters: {
@@ -102,7 +102,7 @@ export const helpdeskService = {
               COALESCE(NULLIF(u.full_name, ''), u.email, 'Agent') AS author_name,
               c.created_at
          FROM helpdesk_ticket_comment c
-         LEFT JOIN users u ON u.id = c.author_user_id
+         LEFT JOIN auth_user u ON u.id = c.author_user_id
         WHERE c.ticket_id = ?
         ORDER BY c.created_at ASC`, [id]
     );
@@ -238,7 +238,7 @@ export const helpdeskService = {
               COUNT(*) AS open_count,
               SUM(t.priority = 'urgent') AS urgent_count
          FROM helpdesk_ticket t
-         LEFT JOIN users u ON u.id = t.assigned_to
+         LEFT JOIN auth_user u ON u.id = t.assigned_to
         WHERE t.status NOT IN ('resolved','closed','cancelled')
         GROUP BY COALESCE(t.assigned_to, 'unassigned'), owner_name
         ORDER BY open_count DESC

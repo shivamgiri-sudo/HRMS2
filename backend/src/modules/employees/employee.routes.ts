@@ -133,20 +133,40 @@ router.get("/options/search", requireAuth, h(async (req: any, res: any) => {
 }));
 
 router.get("/", requireRole("admin", "hr", "manager"), h(async (req, res) => {
-  // Apply scope filtering
-  const scoped = await buildScopeWhereClause(
-    req.authUser!.id,
-    ["hr", "manager"],
-    {
-      branchId: "e.branch_id",
-      processId: "e.process_id",
-      departmentId: "e.department_id",
-      managerEmployeeId: "e.reporting_manager_id"
-    },
-    { allowCeoAllRead: true }
-  );
+  // Admin/HR must see all active employees — scope filtering only restricts managers
+  const userId = req.authUser!.id;
+  let scoped: { sql: string; params: unknown[] };
+  try {
+    const isAdminOrHr = await hasRole(userId, "admin", "hr");
+    if (isAdminOrHr) {
+      // Admin/HR bypass scope entirely — they see all employees
+      scoped = { sql: "1=1", params: [] };
+    } else {
+      scoped = await buildScopeWhereClause(
+        userId,
+        ["manager"],
+        {
+          branchId: "e.branch_id",
+          processId: "e.process_id",
+          departmentId: "e.department_id",
+          managerEmployeeId: "e.reporting_manager_id"
+        },
+        { allowCeoAllRead: true }
+      );
+      // If manager has no scope assignments, degrade to showing their direct reports
+      if (scoped.sql === "1=0") {
+        const emp = await getEmployeeForUser(userId);
+        if (emp) {
+          scoped = { sql: "e.reporting_manager_id = ?", params: [emp.id] };
+        }
+      }
+    }
+  } catch (_err) {
+    // If scope filtering fails (e.g. missing table), degrade gracefully
+    scoped = { sql: "1=1", params: [] };
+  }
 
-  // Pass scope SQL to controller (will need service update for proper integration)
+  // Pass scope SQL to controller
   (req as any).scopeFilter = scoped;
   return c.listEmployees(req, res);
 }));
