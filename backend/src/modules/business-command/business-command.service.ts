@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { businessActionsService } from "../business-actions/business-actions.service.js";
+import { revenueRiskService } from "../revenue-risk/revenue-risk.service.js";
 
 async function tableExists(tableName: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -25,6 +26,7 @@ async function scalar(sql: string, params: unknown[] = [], fallback = 0): Promis
 export const businessCommandService = {
   async overview() {
     const actions = await businessActionsService.summary();
+    const revenueRisk = await revenueRiskService.snapshot();
 
     const activeEmployees = await scalar(
       "SELECT COUNT(*) FROM employees WHERE active_status = 1 AND LOWER(COALESCE(employment_status, 'active')) = 'active'"
@@ -68,7 +70,11 @@ export const businessCommandService = {
         }
       : { latest_gross: 0, latest_net: 0 };
 
+    const revenueAtRisk = Number(revenueRisk?.totals?.revenue_at_risk ?? 0);
+    const shortageHc = Number(revenueRisk?.totals?.shortage_hc ?? 0);
+
     const healthSignals = [
+      { label: "Revenue at risk", value: Math.round(revenueAtRisk), status: revenueAtRisk >= 100000 || shortageHc >= 20 ? "critical" : revenueAtRisk > 0 || shortageHc > 0 ? "warning" : "healthy" },
       { label: "Business actions", value: Number(actions.open_count ?? 0), status: Number(actions.critical_open ?? 0) > 0 ? "critical" : Number(actions.overdue ?? 0) > 0 ? "warning" : "healthy" },
       { label: "Attendance", value: todayAttendance.absent, status: todayAttendance.absent > Math.max(5, activeEmployees * 0.08) ? "warning" : "healthy" },
       { label: "Support SLA", value: support.breached, status: support.breached > 0 ? "critical" : "healthy" },
@@ -87,12 +93,15 @@ export const businessCommandService = {
         people_attrition_risk: peopleRisk.attrition_risk,
         open_grievances: grievances.open,
         latest_payroll_gross_inr: payroll.latest_gross,
+        revenue_at_risk_inr: revenueAtRisk,
+        shortage_hc: shortageHc,
       },
       attendance: todayAttendance,
       support,
       people_risk: peopleRisk,
       grievances,
       payroll,
+      revenue_risk: revenueRisk,
       action_summary: actions,
       health_signals: healthSignals,
       data_confidence: {
@@ -100,6 +109,7 @@ export const businessCommandService = {
         support: await tableExists("helpdesk_ticket") ? 85 : 20,
         people_experience: await tableExists("people_experience_health_snapshot") ? 75 : 20,
         payroll: await tableExists("salary_prep_run") ? 65 : 20,
+        revenue_risk: await tableExists("client_contract_master") ? 65 : 25,
       },
     };
   },
