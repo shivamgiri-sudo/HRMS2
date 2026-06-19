@@ -87,6 +87,10 @@ const NativeOperationsDashboard     = lazy(() => import("./pages/NativeOperation
 const NativeSecurityCenter          = lazy(() => import("./pages/NativeSecurityCenter"));
 const NativeBusinessActionQueue     = lazy(() => import("./pages/NativeBusinessActionQueue"));
 const NativeBusinessCommandCenter   = lazy(() => import("./pages/NativeBusinessCommandCenter"));
+const NativeAgentPerformanceDashboard = lazy(() => import("./pages/NativeAgentPerformanceDashboard"));
+const NativePeopleExperienceCommandCenter = lazy(() => import("./pages/NativePeopleExperienceCommandCenter"));
+const NativeSupportCommandCenter    = lazy(() => import("./pages/NativeSupportCommandCenter"));
+const NativeGrievanceCommandCenter  = lazy(() => import("./pages/NativeGrievanceCommandCenter"));
 
 // Performance Feedback
 const NativePerformanceFeedbackMyReports = lazy(() => import("./pages/NativePerformanceFeedbackMyReports"));
@@ -281,6 +285,14 @@ const App = () => (
               <Route path="/operations/dashboard" element={<ProtectedRoute><Gate pageCode="OPERATIONS_DASHBOARD"><NativeOperationsDashboard /></Gate></ProtectedRoute>} />
               <Route path="/business-command-center" element={<ProtectedRoute roles={['admin', 'ceo', 'hr', 'manager', 'process_manager']}><NativeBusinessCommandCenter /></ProtectedRoute>} />
               <Route path="/business-actions" element={<ProtectedRoute roles={['admin', 'ceo', 'hr', 'manager', 'process_manager', 'team_leader', 'tl']}><NativeBusinessActionQueue /></ProtectedRoute>} />
+
+              {/* Agent Performance */}
+              <Route path="/agent-performance" element={<ProtectedRoute><Gate pageCode="AGENT_PERFORMANCE"><NativeAgentPerformanceDashboard /></Gate></ProtectedRoute>} />
+
+              {/* People Experience / Support */}
+              <Route path="/people-experience/command-center" element={<ProtectedRoute><Gate pageCode="PEOPLE_EXPERIENCE"><NativePeopleExperienceCommandCenter /></Gate></ProtectedRoute>} />
+              <Route path="/support/command-center" element={<ProtectedRoute><Gate pageCode="SUPPORT_COMMAND_CENTER"><NativeSupportCommandCenter /></Gate></ProtectedRoute>} />
+              <Route path="/support/grievance-command-center" element={<ProtectedRoute><Gate pageCode="GRIEVANCE_COMMAND_CENTER"><NativeGrievanceCommandCenter /></Gate></ProtectedRoute>} />
 
               {/* Performance */}
               <Route path="/performance/command-center" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><UnifiedPerformanceCommandCenter /></Gate></ProtectedRoute>} />
