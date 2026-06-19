@@ -14,7 +14,6 @@ export const integrationFlags = {
   avatarFallback: readBooleanFlag("VITE_ENABLE_AVATAR_FALLBACK", true),
   weatherGreeting: readBooleanFlag("VITE_ENABLE_WEATHER_GREETING", true),
   quoteWidget: readBooleanFlag("VITE_ENABLE_QUOTE_WIDGET", true),
-  pincodeAutoFill: readBooleanFlag("VITE_ENABLE_PINCODE_AUTOFILL", true),
   holidayCalendar: readBooleanFlag("VITE_ENABLE_HOLIDAY_CALENDAR", false),
 };
 

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { MapPin, Loader2, CheckCircle2 } from "lucide-react";
-import { integrationFlags } from "@/integrations/config/integrationFlags";
 import { fetchPincodeDetails } from "@/integrations/apis/pincode.api";
 import type { PincodeDetails } from "@/integrations/types/integrations.types";
 
@@ -15,7 +14,6 @@ export function PincodeAutoFill({ className = "", onApply }: PincodeAutoFillProp
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [message, setMessage] = useState("Enter 6-digit Indian PIN code to auto-fill city/state.");
 
-  if (!integrationFlags.pincodeAutoFill) return null;
 
   const handleLookup = async () => {
     const cleanPincode = pincode.trim();

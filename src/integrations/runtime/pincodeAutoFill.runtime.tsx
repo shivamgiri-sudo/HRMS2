@@ -1,6 +1,5 @@
 import { createRoot, type Root } from "react-dom/client";
 import { PincodeAutoFill } from "@/components/integrations/PincodeAutoFill";
-import { integrationFlags } from "@/integrations/config/integrationFlags";
 import type { PincodeDetails } from "@/integrations/types/integrations.types";
 
 type TextControl = HTMLInputElement | HTMLTextAreaElement;
@@ -122,7 +121,7 @@ const mountWidget = (control: TextControl) => {
 };
 
 const scanAndMount = () => {
-  if (!integrationFlags.pincodeAutoFill || typeof document === "undefined") return;
+  if (typeof document === "undefined") return;
 
   const controls = Array.from(document.querySelectorAll("textarea, input")).filter(isAddressControl);
   controls.forEach(mountWidget);
@@ -134,7 +133,7 @@ const scheduleScan = () => {
 };
 
 export function installPincodeAutoFillRuntime() {
-  if (installed || !integrationFlags.pincodeAutoFill || typeof window === "undefined") return;
+  if (installed || typeof window === "undefined") return;
   installed = true;
 
   scanAndMount();

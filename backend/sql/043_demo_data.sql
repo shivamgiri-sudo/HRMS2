@@ -220,23 +220,21 @@ ON DUPLICATE KEY UPDATE current_stage=VALUES(current_stage);
 -- ═══════════════════════════════════════════════════════════════════
 -- SECTION 13: Badges + Points
 -- ═══════════════════════════════════════════════════════════════════
-INSERT INTO gamification_badge_master (id, badge_code, badge_name, badge_description, category, point_value, active_status)
+INSERT IGNORE INTO gamification_badge_master (badge_id, badge_name, badge_description, badge_icon, badge_category, points_value, is_active)
 VALUES
-  ('badge-star-001',  'STAR_PERFORMER_DEMO','Star Performer',    'Consistently exceeded targets',    'performance',100,1),
-  ('badge-team-001',  'TEAM_PLAYER_DEMO',   'Team Player',       'Always helps teammates',            'teamwork',   50, 1),
-  ('badge-attend-001','PERFECT_ATTEND_DEMO','Perfect Attendance','100% attendance for a month',       'attendance', 75, 1),
-  ('badge-learn-001', 'FAST_LEARNER_DEMO',  'Fast Learner',      'Completed 5 courses in 30 days',   'learning',   60, 1),
-  ('badge-year1-001', 'YEAR_1_DEMO',        '1 Year Milestone',  'Completed 1 year at MAS CallNet',  'tenure',     150,1)
-ON DUPLICATE KEY UPDATE badge_name=VALUES(badge_name);
+  ('badge-star-001',  'Star Performer',     'Consistently exceeded targets',    '🏆', 'performance',100,1),
+  ('badge-team-001',  'Team Player',        'Always helps teammates',            '🤝', 'social',     50, 1),
+  ('badge-attend-001','Perfect Attendance',  '100% attendance for a month',       '📅', 'activity',   75, 1),
+  ('badge-learn-001', 'Fast Learner',       'Completed 5 courses in 30 days',   '📚', 'activity',   60, 1),
+  ('badge-year1-001', '1 Year Milestone',   'Completed 1 year at MAS CallNet',  '🎂', 'tenure',     150,1);
 
-INSERT INTO employee_badge_earned (id, employee_id, badge_id, earned_date, awarded_by, reason)
+INSERT IGNORE INTO employee_badge_earned (earned_id, employee_id, badge_id, earned_at, awarded_by, reason)
 VALUES
   (UUID(),'emp-employee-001','badge-attend-001','2026-05-31','emp-manager-001','Perfect attendance May 2026'),
   (UUID(),'emp-tl-001',      'badge-star-001', '2026-05-31','emp-manager-001','Exceeded KPI targets'),
   (UUID(),'emp-manager-001', 'badge-team-001', '2026-05-15','emp-admin-001',  'Great team coordination'),
   (UUID(),'emp-trainer-001', 'badge-learn-001','2026-05-20','emp-hr-001',     'Fast LMS curriculum completion'),
-  (UUID(),'emp-hr-001',      'badge-year1-001','2026-05-01','emp-admin-001',  '5 years at MAS CallNet')
-ON DUPLICATE KEY UPDATE reason=VALUES(reason);
+  (UUID(),'emp-hr-001',      'badge-year1-001','2026-05-01','emp-admin-001',  '5 years at MAS CallNet');
 
 INSERT INTO gamification_point_log (id, employee_id, points_earned, points_source, source_ref_id, awarded_date, awarded_by, notes)
 VALUES
