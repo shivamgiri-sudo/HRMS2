@@ -315,38 +315,42 @@ wfmRouter.get(
                 COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                 e.working_hours_start,
                 e.working_hours_end,
-                bal.first_punch,
-                bal.last_punch,
-                bal.biometric_minutes AS bio_minutes_log
+                DATE_FORMAT(bal.first_punch_in, '%Y-%m-%d %H:%i:%s') AS first_punch,
+                DATE_FORMAT(bal.last_punch_out, '%Y-%m-%d %H:%i:%s') AS last_punch,
+                bal.raw_minutes AS bio_minutes_log
            FROM attendance_daily_record adr
            JOIN employees e ON e.id = adr.employee_id
            LEFT JOIN biometric_attendance_log bal
-             ON bal.employee_id = adr.employee_id AND DATE(bal.attendance_date) = adr.record_date
+             ON bal.employee_id = adr.employee_id AND bal.punch_date = adr.record_date
           WHERE adr.employee_id = ? AND adr.record_date = ?
           LIMIT 1`,
         [employeeId, date]
       ),
       // 2. COSEC daily aggregate (authoritative work minutes)
       dbConn.execute(
-        `SELECT *
-           FROM cosec_daily_agg
-          WHERE employee_id = ? AND work_date = ?
+        `SELECT cda.user_id, DATE_FORMAT(cda.first_punch_in, '%Y-%m-%d %H:%i:%s') AS first_punch_in,
+                DATE_FORMAT(cda.last_punch_out, '%Y-%m-%d %H:%i:%s') AS last_punch_out,
+                cda.work_minutes, cda.shift_date
+           FROM cosec_daily_agg cda
+           JOIN employees e ON (e.employee_code = cda.user_id OR e.biometric_code = cda.user_id)
+          WHERE e.id = ? AND cda.shift_date = ?
           LIMIT 1`,
         [employeeId, date]
       ),
       // 3. Individual punch events — handle night shift (prev-day punches before 06:00)
       dbConn.execute(
-        `SELECT punch_time, io_type,
-                CASE io_type WHEN 'I' THEN 'In' WHEN 'O' THEN 'Out' ELSE io_type END AS io_label,
-                device_id
-           FROM cosec_punch_sync
-          WHERE employee_id = ?
+        `SELECT DATE_FORMAT(cps.punch_time, '%Y-%m-%d %H:%i:%s') AS punch_time,
+                cps.io_type,
+                CASE cps.io_type WHEN 1 THEN 'In' WHEN 2 THEN 'Out' ELSE CAST(cps.io_type AS CHAR) END AS io_label,
+                cps.device_id
+           FROM cosec_punch_sync cps
+           JOIN employees e ON (e.employee_code = cps.user_id OR e.biometric_code = cps.user_id)
+          WHERE e.id = ?
             AND (
-              DATE(punch_time) = ?
-              -- include early-morning tail-end punches: prev calendar day midnight–06:00 that belong to prior night shift
-              OR (DATE(punch_time) = DATE_SUB(?, INTERVAL 1 DAY) AND TIME(punch_time) < '06:00:00')
+              DATE(cps.punch_time) = ?
+              OR (DATE(cps.punch_time) = DATE_ADD(?, INTERVAL 1 DAY) AND TIME(cps.punch_time) < '06:00:00')
             )
-          ORDER BY punch_time ASC`,
+          ORDER BY cps.punch_time ASC`,
         [employeeId, date, date]
       ),
     ]);
