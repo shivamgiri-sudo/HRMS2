@@ -126,16 +126,24 @@ async function pullCosecAttendance(from: string, to: string): Promise<PunchGroup
       ORDER BY ${userColumn}, attendance_date
     `);
   return result.recordset
-    .map((row: any) => ({
-      cosecUserId: String(row.user_id ?? "").trim(),
-      punchDate: String(row.attendance_date ?? "").trim(),
-      firstPunch: new Date(row.first_punch),
-      lastPunch: new Date(row.last_punch),
-      totalPunches: Math.max(0, Number(row.total_punches ?? 0)),
-      workingMinutes: Math.max(0, Number(row.working_minutes ?? 0)),
-      sourceSystem: "cosec_sqlserver",
-      sourceTable: cfg.table,
-    }))
+    .map((row: any) => {
+      // Convert IST timestamps to UTC by subtracting 5 hours 30 minutes
+      const firstPunchIST = new Date(row.first_punch);
+      const lastPunchIST = new Date(row.last_punch);
+      const firstPunchUTC = new Date(firstPunchIST.getTime() - (5.5 * 60 * 60 * 1000));
+      const lastPunchUTC = new Date(lastPunchIST.getTime() - (5.5 * 60 * 60 * 1000));
+
+      return {
+        cosecUserId: String(row.user_id ?? "").trim(),
+        punchDate: String(row.attendance_date ?? "").trim(),
+        firstPunch: firstPunchUTC,
+        lastPunch: lastPunchUTC,
+        totalPunches: Math.max(0, Number(row.total_punches ?? 0)),
+        workingMinutes: Math.max(0, Number(row.working_minutes ?? 0)),
+        sourceSystem: "cosec_sqlserver",
+        sourceTable: cfg.table,
+      };
+    })
     .filter((row: PunchGroup) =>
       row.cosecUserId
       && /^\d{4}-\d{2}-\d{2}$/.test(row.punchDate)
@@ -163,8 +171,11 @@ async function pullMysqlAttendance(from: string, to: string): Promise<PunchGroup
   const add = (row: any, sourceSystem: string, sourceTable: string) => {
     const cosecUserId = String(row.user_id ?? "").trim();
     const punchDate = String(row.attendance_date ?? "").trim();
-    const firstPunch = new Date(row.first_punch);
-    const lastPunch = new Date(row.last_punch);
+    // Convert IST timestamps to UTC by subtracting 5 hours 30 minutes
+    const firstPunchIST = new Date(row.first_punch);
+    const lastPunchIST = new Date(row.last_punch);
+    const firstPunch = new Date(firstPunchIST.getTime() - (5.5 * 60 * 60 * 1000));
+    const lastPunch = new Date(lastPunchIST.getTime() - (5.5 * 60 * 60 * 1000));
     const totalPunches = Math.max(0, Number(row.total_punches ?? 0));
     const workingMinutes = Math.max(0, Number(row.working_minutes ?? 0));
     if (
