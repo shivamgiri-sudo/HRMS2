@@ -105,6 +105,13 @@ const envSchema = z.object({
   ATS_FORM_API_KEY: z.string().optional(),
   COURT_CHECK_API_URL: z.string().url().default("https://api.infinityai.in"),
   COURT_CHECK_API_KEY: z.string().optional(),
+
+  // Billing DB (db_bill) — optional, only needed when billing features are used
+  BILL_DB_HOST:     z.string().default(""),
+  BILL_DB_PORT:     z.coerce.number().default(3306),
+  BILL_DB_USER:     z.string().default(""),
+  BILL_DB_PASSWORD: z.string().default(""),
+  BILL_DB_NAME:     z.string().default("db_bill"),
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -24,10 +24,24 @@ export const managementService = {
     return rows as RowDataPacket[];
   },
 
-  async listCoachingSessions(filters: { employee_id?: string; coach_user_id?: string; status?: string }) {
+  async getDirectReportIds(managerId: string): Promise<string[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM employees
+        WHERE (reporting_manager_id = ? OR manager_id = ?)
+          AND active_status = 1`,
+      [managerId, managerId]
+    );
+    return (rows as RowDataPacket[]).map((r) => String(r.id));
+  },
+
+  async listCoachingSessions(filters: { employee_id?: string; employee_ids?: string[]; coach_user_id?: string; status?: string }) {
     const conds: string[] = ["1=1"];
     const params: unknown[] = [];
     if (filters.employee_id)   { conds.push("cs.employee_id = ?");   params.push(filters.employee_id); }
+    if (filters.employee_ids && filters.employee_ids.length > 0) {
+      conds.push(`cs.employee_id IN (${filters.employee_ids.map(() => "?").join(",")})`);
+      params.push(...filters.employee_ids);
+    }
     if (filters.coach_user_id) { conds.push("cs.coach_user_id = ?"); params.push(filters.coach_user_id); }
     if (filters.status)        { conds.push("cs.status = ?");        params.push(filters.status); }
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -161,27 +175,30 @@ export const managementService = {
     );
   },
 
-  async getDashboardSummary(processId?: string) {
+  async getDashboardSummary(processId?: string, employeeIds?: string[]) {
     const proc = processId ? "AND e.process_id = ?" : "";
     const params: unknown[] = processId ? [processId] : [];
+    const empFilter = employeeIds && employeeIds.length > 0
+      ? `AND e.id IN (${employeeIds.map(() => "?").join(",")})` : "";
+    const empParams: unknown[] = employeeIds && employeeIds.length > 0 ? employeeIds : [];
 
     const [headcountRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS headcount FROM employees e WHERE e.active_status = 1 ${proc}`, params
+      `SELECT COUNT(*) AS headcount FROM employees e WHERE e.active_status = 1 ${proc} ${empFilter}`, [...params, ...empParams]
     );
     const [attritionRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS exits FROM employees e WHERE e.active_status = 0 AND e.date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR) ${proc}`, params
+      `SELECT COUNT(*) AS exits FROM employees e WHERE e.active_status = 0 AND e.date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR) ${proc} ${empFilter}`, [...params, ...empParams]
     );
     const [kpiRows] = await db.execute<RowDataPacket[]>(
-      `SELECT AVG(mks.overall_score) AS avg_kpi_score FROM management_kpi_summary mks JOIN employees e ON e.id = mks.employee_id WHERE 1=1 ${proc}`, params
+      `SELECT AVG(mks.overall_score) AS avg_kpi_score FROM management_kpi_summary mks JOIN employees e ON e.id = mks.employee_id WHERE 1=1 ${proc} ${empFilter}`, [...params, ...empParams]
     );
     const [ticketRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS open_tickets FROM performance_alert pa JOIN employees e ON e.id = pa.employee_id WHERE pa.acknowledged = 0 ${proc}`, params
+      `SELECT COUNT(*) AS open_tickets FROM performance_alert pa JOIN employees e ON e.id = pa.employee_id WHERE pa.acknowledged = 0 ${proc} ${empFilter}`, [...params, ...empParams]
     );
     const [leaveRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS pending_leaves FROM leave_request lr JOIN employees e ON e.id = lr.employee_id WHERE lr.status = 'pending' ${proc}`, params
+      `SELECT COUNT(*) AS pending_leaves FROM leave_request lr JOIN employees e ON e.id = lr.employee_id WHERE lr.status = 'pending' ${proc} ${empFilter}`, [...params, ...empParams]
     );
     const [attendanceRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total, SUM(CASE WHEN s.current_status = 'Logged In' THEN 1 ELSE 0 END) AS present FROM wfm_attendance_session s JOIN employees e ON e.id = s.employee_id WHERE s.session_date = CURDATE() ${proc}`, params
+      `SELECT COUNT(*) AS total, SUM(CASE WHEN s.current_status = 'Logged In' THEN 1 ELSE 0 END) AS present FROM wfm_attendance_session s JOIN employees e ON e.id = s.employee_id WHERE s.session_date = CURDATE() ${proc} ${empFilter}`, [...params, ...empParams]
     );
 
     const headcount = Number((headcountRows as any)[0]?.headcount) || 0;
@@ -201,6 +218,91 @@ export const managementService = {
       open_tickets,
       pending_leaves,
       attendance_rate,
+    };
+  },
+
+  async getWorkforceDashboard() {
+    const [headcountRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total_active FROM employees WHERE active_status = 1`
+    );
+    const [deptRows] = await db.execute<RowDataPacket[]>(
+      `SELECT dept.dept_name, COUNT(e.id) AS headcount
+         FROM employees e
+         JOIN department_master dept ON dept.id = e.department_id
+        WHERE e.active_status = 1
+        GROUP BY dept.id, dept.dept_name ORDER BY headcount DESC LIMIT 20`
+    );
+    const [joiningRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(date_of_joining, '%Y-%m') AS month, COUNT(*) AS joinings
+         FROM employees
+        WHERE date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+        GROUP BY month ORDER BY month ASC`
+    );
+    const [exitRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(date_of_exit, '%Y-%m') AS month, COUNT(*) AS exits
+         FROM employees
+        WHERE date_of_exit >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+        GROUP BY month ORDER BY month ASC`
+    );
+    return {
+      total_active: Number((headcountRows as any)[0]?.total_active) || 0,
+      department_breakdown: deptRows,
+      joining_trend: joiningRows,
+      exit_trend: exitRows,
+    };
+  },
+
+  async getSystemDashboard() {
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM employees`
+    );
+    const [activeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS active FROM employees WHERE active_status = 1`
+    );
+    const [userRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total_users FROM users`
+    );
+    const [leaveRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS pending FROM leave_request WHERE status = 'pending'`
+    );
+    const [alertRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS unacked FROM performance_alert WHERE acknowledged = 0`
+    );
+    return {
+      total_employees: Number((empRows as any)[0]?.total) || 0,
+      active_employees: Number((activeRows as any)[0]?.active) || 0,
+      total_users: Number((userRows as any)[0]?.total_users) || 0,
+      pending_leaves: Number((leaveRows as any)[0]?.pending) || 0,
+      unacknowledged_alerts: Number((alertRows as any)[0]?.unacked) || 0,
+    };
+  },
+
+  async getCeoMetrics() {
+    const [headcountRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS headcount FROM employees WHERE active_status = 1`
+    );
+    const [kpiRows] = await db.execute<RowDataPacket[]>(
+      `SELECT AVG(overall_score) AS avg_score FROM management_kpi_summary`
+    );
+    const [attendanceRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN current_status = 'Logged In' THEN 1 ELSE 0 END) AS present
+         FROM wfm_attendance_session WHERE session_date = CURDATE()`
+    );
+    const [branchRows] = await db.execute<RowDataPacket[]>(
+      `SELECT b.branch_name, COUNT(e.id) AS headcount
+         FROM employees e
+         JOIN branch_master b ON b.id = e.branch_id
+        WHERE e.active_status = 1
+        GROUP BY b.id, b.branch_name ORDER BY headcount DESC`
+    );
+    const total_att = Number((attendanceRows as any)[0]?.total) || 0;
+    const present_att = Number((attendanceRows as any)[0]?.present) || 0;
+    return {
+      headcount: Number((headcountRows as any)[0]?.headcount) || 0,
+      avg_kpi_score: Math.round((Number((kpiRows as any)[0]?.avg_score) || 0) * 10) / 10,
+      attendance_rate: total_att > 0 ? Math.round((present_att / total_att) * 100 * 10) / 10 : 0,
+      branch_breakdown: branchRows,
     };
   },
 };
