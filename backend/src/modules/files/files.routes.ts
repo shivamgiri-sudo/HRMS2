@@ -93,7 +93,9 @@ router.get(
     const safeFile = path.basename(req.params.filename);
     const filePath = path.join(UPLOADS_ROOT, "employee-photos", safeFile);
     if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: "File not found" });
+      // Return 204 No Content instead of 404 to avoid broken image icons
+      // Frontend can show a default placeholder
+      return res.status(204).send();
     }
     res.sendFile(filePath);
   })
