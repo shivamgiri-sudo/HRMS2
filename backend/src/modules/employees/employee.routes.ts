@@ -199,7 +199,7 @@ router.patch("/me", h((req: any, res: any) => c.updateMyProfile(req, res)));
 const profilePhotoUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => {
-      const dir = path.join(UPLOADS_ROOT, "profile-photos");
+      const dir = path.join(UPLOADS_ROOT, "employee-photos");
       fs.mkdirSync(dir, { recursive: true });
       cb(null, dir);
     },
@@ -243,7 +243,7 @@ router.post("/me/photo", (req: any, res: any, next: any) => {
     try {
       const oldFilename = oldPhotoUrl.split("/").pop();
       if (oldFilename) {
-        const oldPath = path.join(UPLOADS_ROOT, "profile-photos", oldFilename);
+        const oldPath = path.join(UPLOADS_ROOT, "employee-photos", oldFilename);
         if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
       }
     } catch (err) {
@@ -251,7 +251,7 @@ router.post("/me/photo", (req: any, res: any, next: any) => {
     }
   }
 
-  const photoUrl = `/api/files/profile-photos/${req.file.filename}`;
+  const photoUrl = `/api/files/employee-photos/${req.file.filename}`;
   await db.execute("UPDATE employees SET photo_url = ?, updated_at = NOW() WHERE id = ?", [photoUrl, empId]);
 
   res.json({ success: true, photo_url: photoUrl, message: "Profile photo updated successfully" });

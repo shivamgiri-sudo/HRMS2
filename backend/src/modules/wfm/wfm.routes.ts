@@ -109,7 +109,7 @@ wfmRouter.get("/regularizations",               requireRole("admin", "wfm", "man
 wfmRouter.patch("/regularizations/:id/review",  requireRole("admin", "wfm", "manager"), h(wfmController.reviewRegularization.bind(wfmController)));
 
 // Live tracker
-wfmRouter.get("/live", requireRole("admin", "wfm", "manager"), async (req: any, res: any, next: any) => {
+wfmRouter.get("/live", requireRole("admin", "wfm", "manager", "branch_head", "process_manager", "tl"), async (req: any, res: any, next: any) => {
   try {
     const schema = z.object({
       date:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),

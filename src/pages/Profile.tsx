@@ -548,17 +548,6 @@ const Profile = () => {
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Personal Email</Label>
-                            <Input
-                              type="email"
-                              value={formData.personal_email}
-                              onChange={(e) => setFormData(p => ({ ...p, personal_email: e.target.value.toLowerCase() }))}
-                              disabled={!isEditing}
-                              placeholder="personal@example.com"
-                              className="rounded-xl"
-                            />
-                          </div>
-                          <div className="space-y-1.5">
                             <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Personal Mobile</Label>
                             <Input
                               type="tel"

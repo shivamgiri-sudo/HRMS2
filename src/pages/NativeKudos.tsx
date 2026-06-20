@@ -104,6 +104,14 @@ export default function NativeKudos() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (!receiverId) {
+      toast.error("Please select a recipient");
+      return;
+    }
+    if (!message && !templateId) {
+      toast.error("Please enter a message or select a template");
+      return;
+    }
     setSending(true);
     try {
       await hrmsApi.post("/api/engagement/kudos", {
