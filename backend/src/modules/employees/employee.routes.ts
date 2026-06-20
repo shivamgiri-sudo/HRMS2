@@ -254,7 +254,7 @@ router.post("/me/photo", (req: any, res: any, next: any) => {
   const photoUrl = `/api/files/employee-photos/${req.file.filename}`;
   await db.execute("UPDATE employees SET photo_url = ?, updated_at = NOW() WHERE id = ?", [photoUrl, empId]);
 
-  res.json({ success: true, photo_url: photoUrl, message: "Profile photo updated successfully" });
+  res.json({ success: true, photoUrl, photo_url: photoUrl, url: photoUrl, message: "Profile photo updated successfully" });
 }));
 
 router.patch("/:id",

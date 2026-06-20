@@ -97,6 +97,18 @@ router.get(
       // Frontend can show a default placeholder
       return res.status(204).send();
     }
+    // Set correct content-type and cache headers for images
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeTypes: Record<string, string> = {
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".gif": "image/gif",
+      ".webp": "image/webp",
+    };
+    res.set("Content-Type", mimeTypes[ext] || "image/png");
+    res.set("Cache-Control", "public, max-age=86400");
+    res.set("Access-Control-Allow-Origin", "*");
     res.sendFile(filePath);
   })
 );
