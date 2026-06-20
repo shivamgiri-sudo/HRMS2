@@ -298,13 +298,12 @@ router.post("/roles/revoke", requireRole("admin"), h(async (req: AuthenticatedRe
 }));
 
 // Sensitive action log query (admin only)
-router.get("/audit-log", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { actor_user_id, module_key, action_type, entity_type, entity_id, limit } = req.query as Record<string, string>;
-  const logs = await querySensitiveActionLog({
-    actor_user_id, module_key, action_type, entity_type, entity_id,
-    limit: limit ? parseInt(limit, 10) : undefined,
-  });
-  res.json({ data: logs });
+// Import getAuditLogExtended from audit.log.routes
+// This endpoint now supports rich filtering via audit.log.routes.getAuditLogExtended
+router.get("/audit-log", requireAuth, h(async (req: AuthenticatedRequest, res: Response) => {
+  // Delegate to extended audit log function with role-based filtering
+  const { getAuditLogExtended: getAuditFn } = await import("../../modules/audit/audit.log.routes.js");
+  return getAuditFn(req, res);
 }));
 
 // GET /api/access/page-access — all role_page_access entries (admin only)
