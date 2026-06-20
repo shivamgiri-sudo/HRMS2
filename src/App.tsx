@@ -198,6 +198,7 @@ const NativePayrollReadiness        = lazy(() => import("./pages/NativePayrollRe
 const NativeWorkforcePlanning       = lazy(() => import("./pages/NativeWorkforcePlanning"));
 const NativeITProvisioningTracker   = lazy(() => import("./pages/NativeITProvisioningTracker"));
 const NativeControlTower            = lazy(() => import("./pages/NativeControlTower"));
+const NativeBiometricCommandCenter  = lazy(() => import("./pages/NativeBiometricCommandCenter"));
 const NativeRTABoard                = lazy(() => import("./pages/NativeRTABoard"));
 const NativeWalkinQueue             = lazy(() => import("./pages/NativeWalkinQueueEnhanced"));
 const NativeAttendanceRulesMaster   = lazy(() => import("./pages/NativeAttendanceRulesMaster"));
