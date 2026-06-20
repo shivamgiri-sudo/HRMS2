@@ -1,9 +1,11 @@
-# MVP Final Validation Runbook
+# MVP Final Validation Runbook — Comprehensive Server/CI Release Gate
 
 **Date:** 2026-06-20  
-**Status:** ⛔ **NO-GO — LOCAL ENVIRONMENT VALIDATION BLOCKER**  
-**Reason:** Backend npm install stuck on @types packages on local machine  
-**Validation Environment:** Server/CI only (where npm works)
+**Status:** 🚫 **NO-GO — LOCAL ENVIRONMENT VALIDATION BLOCKER**  
+**Reason:** Backend npm install stuck on @types packages on local system  
+**Validation Environment:** Server/CI execution required  
+**Repository:** https://github.com/shivamgiri-sudo/HRMS1.git  
+**Branch:** main (commit 7a347a6)
 
 ---
 

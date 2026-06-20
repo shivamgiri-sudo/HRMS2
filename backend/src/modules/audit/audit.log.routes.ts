@@ -293,10 +293,10 @@ auditLogRouter.post("/export", h(async (req: any, res: any) => {
   const csv = `${csvHeader}\n${csvRows}`;
 
   // Audit the export action itself
-  const actorRole = await resolveActorRole(req.authUser.id);
+  const exportActorRole = await resolveActorRole(req.authUser.id);
   void logSensitiveAction({
     actor_user_id: req.authUser.id,
-    actor_role: actorRole,
+    actor_role: exportActorRole,
     action_type: "AUDIT_LOG_EXPORTED",
     module_key: "audit",
     entity_type: "audit_log",

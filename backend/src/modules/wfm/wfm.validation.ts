@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const TIME_REGEX = /^\d{2}:\d{2}$/;
+const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 export const createShiftSchema = z.object({
@@ -94,8 +94,6 @@ export const DISPUTE_TYPES = [
 ] as const;
 
 export type DisputeType = typeof DISPUTE_TYPES[number];
-
-const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 export const regularizationSchema = z.object({
   // employeeId removed - derived from auth token for security
