@@ -357,63 +357,47 @@ attendanceManualOverrideRouter.post("/manual-overrides/:id/approve", h(async (re
   // Re-fetch current attendance state at approval time (may have changed since create)
   const current = await getCurrentAttendance(override.employee_id, override.attendance_date);
 
+  // Safety check: attendance_daily_record MUST exist at approval time
+  if (!current) {
+    return res.status(404).json({
+      success: false,
+      error: `Attendance record for employee ${override.employee_code} on ${override.attendance_date} no longer exists or was deleted. Manual override cannot be applied. Contact system administrator.`,
+    });
+  }
+
   // Apply override to attendance_daily_record
   const lwpMap: Record<string, number> = { present: 0, half_day: 0.5, absent: 1.0 };
   const newLwp = override.new_lwp ?? lwpMap[override.new_status] ?? null;
+  const appliedRecordId = current.id;
 
-  let appliedRecordId: string | null = current?.id ?? null;
-
-  if (current) {
-    // Update existing record — preserve old state in the record's own audit columns
-    await db.execute(
-      `UPDATE attendance_daily_record
-          SET attendance_status      = ?,
-              lwp_value              = ?,
-              override_by            = ?,
-              override_reason        = ?,
-              is_locked              = 1,
-              processed_at           = NOW(),
-              old_attendance_status  = ?,
-              old_lwp_value          = ?,
-              status_change_reason   = ?,
-              status_changed_by      = ?,
-              status_changed_at      = NOW()
-        WHERE employee_id = ? AND record_date = ?`,
-      [
-        override.new_status,
-        newLwp,
-        req.authUser.id,
-        `Manual override approved: ${override.reason}`,
-        current.attendance_status,
-        current.lwp_value ?? null,
-        `Manual override approved by ${access.actorRole}: ${override.reason}`,
-        req.authUser.id,
-        override.employee_id,
-        override.attendance_date,
-      ],
-    );
-  } else {
-    // No existing record — insert a minimal one (rare edge case)
-    appliedRecordId = randomUUID();
-    await db.execute(
-      `INSERT INTO attendance_daily_record
-         (id, employee_id, record_date, attendance_status, lwp_value,
-          override_by, override_reason, is_locked, processed_at,
-          status_change_reason, status_changed_by, status_changed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW(), ?, ?, NOW())`,
-      [
-        appliedRecordId,
-        override.employee_id,
-        override.attendance_date,
-        override.new_status,
-        newLwp,
-        req.authUser.id,
-        `Manual override (new record): ${override.reason}`,
-        `Manual override approved by ${access.actorRole}`,
-        req.authUser.id,
-      ],
-    );
-  }
+  // Update existing record — preserve old state in the record's own audit columns
+  await db.execute(
+    `UPDATE attendance_daily_record
+        SET attendance_status      = ?,
+            lwp_value              = ?,
+            override_by            = ?,
+            override_reason        = ?,
+            is_locked              = 1,
+            processed_at           = NOW(),
+            old_attendance_status  = ?,
+            old_lwp_value          = ?,
+            status_change_reason   = ?,
+            status_changed_by      = ?,
+            status_changed_at      = NOW()
+      WHERE employee_id = ? AND record_date = ?`,
+    [
+      override.new_status,
+      newLwp,
+      req.authUser.id,
+      `Manual override approved: ${override.reason}`,
+      current.attendance_status,
+      current.lwp_value ?? null,
+      `Manual override approved by ${access.actorRole}: ${override.reason}`,
+      req.authUser.id,
+      override.employee_id,
+      override.attendance_date,
+    ],
+  );
 
   // Stamp override as approved + applied
   await db.execute(
