@@ -1,5 +1,5 @@
 import React from 'react';
-import ReactApexChart from 'react-apexcharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface SubMetric {
   name: string;
@@ -51,56 +51,11 @@ export const WeaknessPanel: React.FC<WeaknessPanelProps> = ({
   const topWeaknesses = weaknessAreas.slice(0, 3);
 
   // Prepare chart data for comparison
-  const chartOptions = {
-    chart: {
-      type: 'radar',
-      sparkline: {
-        enabled: false,
-      },
-    },
-    plotOptions: {
-      radar: {
-        size: 140,
-        polygons: {
-          strokeColors: '#e0e0e0',
-          fill: {
-            colors: ['#f0f0f0', '#ffffff'],
-          },
-        },
-      },
-    },
-    xaxis: {
-      categories: topWeaknesses.map((w) => w.category),
-    },
-    yaxis: {
-      stepSize: 20,
-    },
-    stroke: {
-      show: true,
-      width: 2,
-      colors: ['#1f2937', '#9ca3af'],
-      dashArray: 0,
-    },
-    fill: {
-      opacity: [0.4, 0.15],
-    },
-    legend: {
-      show: true,
-      fontSize: '12px',
-      offsetX: 0,
-    },
-  };
-
-  const chartSeries = [
-    {
-      name: 'Your Score',
-      data: topWeaknesses.map((w) => w.score),
-    },
-    {
-      name: 'Peer Average',
-      data: topWeaknesses.map((w) => w.peer_avg),
-    },
-  ];
+  const chartData = topWeaknesses.map((w) => ({
+    category: w.category.substring(0, 10),
+    'Your Score': Math.round(w.score),
+    'Peer Avg': Math.round(w.peer_avg),
+  }));
 
   return (
     <div className="bg-white rounded-lg shadow p-6 md:p-8">
@@ -223,12 +178,16 @@ export const WeaknessPanel: React.FC<WeaknessPanelProps> = ({
           <div className="lg:col-span-1 flex items-center justify-center bg-gray-50 rounded-lg p-4">
             <div className="w-full" style={{ maxHeight: '400px' }}>
               {topWeaknesses.length > 0 ? (
-                <ReactApexChart
-                  options={chartOptions}
-                  series={chartSeries}
-                  type="radar"
-                  height={300}
-                />
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="category" angle={-45} textAnchor="end" height={80} />
+                    <YAxis domain={[0, 100]} />
+                    <Tooltip formatter={(value) => `${value}%`} />
+                    <Bar dataKey="Your Score" fill="#3b82f6" />
+                    <Bar dataKey="Peer Avg" fill="#9ca3af" />
+                  </BarChart>
+                </ResponsiveContainer>
               ) : (
                 <div className="flex items-center justify-center h-full">
                   <p className="text-gray-500 text-sm">No comparison data</p>

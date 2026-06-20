@@ -1,5 +1,4 @@
 import React from 'react';
-import ReactApexChart from 'react-apexcharts';
 
 interface CQScoreData {
   cq_score_current: number;
@@ -51,68 +50,58 @@ export const HeroCard: React.FC<HeroCardProps> = ({ data, isLoading = false }) =
     return '#ef4444';
   };
 
-  const chartOptions = {
-    chart: {
-      type: 'radialBar',
-      sparkline: {
-        enabled: false,
-      },
-    },
-    plotOptions: {
-      radialBar: {
-        startAngle: -135,
-        endAngle: 135,
-        hollow: {
-          margin: 0,
-          size: '70%',
-          background: '#fff',
-          image: undefined,
-          imageOffsetX: 0,
-          imageOffsetY: 0,
-          position: 'front',
-          dropShadow: {
-            enabled: false,
-          },
-        },
-        track: {
-          background: '#f0f0f0',
-          strokeWidth: '97%',
-          margin: 5,
-          dropShadow: {
-            enabled: false,
-          },
-        },
-        dataLabels: {
-          name: {
-            offsetY: -10,
-            color: '#000',
-            fontSize: '16px',
-            fontWeight: 600,
-          },
-          value: {
-            offsetY: 16,
-            color: '#111',
-            fontSize: '32px',
-            fontWeight: 700,
-            show: true,
-          },
-        },
-      },
-    },
-    fill: {
-      type: 'gradient',
-      gradient: {
-        shade: 'dark',
-        type: 'vertical',
-        gradientToColors: [getGaugeColor(data.cq_score_current)],
-        stops: [0, 100],
-      },
-    },
-    stroke: {
-      lineCap: 'round',
-    },
-    series: [Math.round(data.cq_score_current)],
-    labels: ['CQ Score'],
+  // Simple circular gauge component
+  const GaugeChart = ({ value, max = 100, size = 280 }: { value: number; max?: number; size?: number }) => {
+    const percentage = Math.min(value / max, 1);
+    const radius = (size - 20) / 2;
+    const circumference = 2 * Math.PI * radius;
+    const strokeDashoffset = circumference - percentage * circumference;
+    const gaugeColor = getGaugeColor(value);
+
+    return (
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="transform -rotate-90">
+        {/* Background circle */}
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#f0f0f0" strokeWidth="20" />
+        {/* Progress circle */}
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={gaugeColor}
+          strokeWidth="20"
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+          style={{ transition: 'stroke-dashoffset 0.5s ease' }}
+        />
+        {/* Center text */}
+        <text
+          x={size / 2}
+          y={size / 2 - 20}
+          textAnchor="middle"
+          fontSize="48"
+          fontWeight="bold"
+          fill="#111"
+          className="transform rotate-90"
+          style={{ transformOrigin: `${size / 2}px ${size / 2}px` }}
+        >
+          {Math.round(value)}
+        </text>
+        <text
+          x={size / 2}
+          y={size / 2 + 25}
+          textAnchor="middle"
+          fontSize="16"
+          fontWeight="600"
+          fill="#666"
+          className="transform rotate-90"
+          style={{ transformOrigin: `${size / 2}px ${size / 2}px` }}
+        >
+          CQ Score
+        </text>
+      </svg>
+    );
   };
 
   return (
@@ -121,12 +110,7 @@ export const HeroCard: React.FC<HeroCardProps> = ({ data, isLoading = false }) =
         {/* Gauge Section */}
         <div className="md:w-1/3 flex items-center justify-center">
           <div className="w-full" style={{ maxWidth: '280px' }}>
-            <ReactApexChart
-              options={chartOptions}
-              series={chartOptions.series}
-              type="radialBar"
-              height={280}
-            />
+            <GaugeChart value={data.cq_score_current} max={100} size={280} />
           </div>
         </div>
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import ReactApexChart from 'react-apexcharts';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 interface WeeklyData {
   day: string;
@@ -38,123 +38,17 @@ export const TrendPanel: React.FC<TrendPanelProps> = ({
   }
 
   // Prepare 7-day line chart data
-  const lineChartOptions = {
-    chart: {
-      type: 'line',
-      toolbar: {
-        show: true,
-      },
-      zoom: {
-        enabled: true,
-      },
-    },
-    stroke: {
-      curve: 'smooth',
-      width: 3,
-      colors: ['#3b82f6'],
-    },
-    xaxis: {
-      categories: weekly.map((w) => w.day.substring(0, 3)) || [],
-      title: {
-        text: 'Day of Week',
-      },
-    },
-    yaxis: {
-      title: {
-        text: 'CQ Score (%)',
-      },
-      min: 0,
-      max: 100,
-    },
-    dataLabels: {
-      enabled: false,
-    },
-    grid: {
-      borderColor: '#e5e7eb',
-    },
-    markers: {
-      size: 5,
-      colors: '#3b82f6',
-      hover: {
-        size: 7,
-      },
-    },
-    tooltip: {
-      theme: 'light',
-      x: {
-        format: 'dddd',
-      },
-      y: {
-        formatter: (val: number) => `${val.toFixed(1)}%`,
-      },
-    },
-  };
-
-  const lineChartSeries = [
-    {
-      name: 'CQ Score',
-      data: weekly.map((w) => w.avg) || [],
-    },
-  ];
+  const lineChartData = weekly.map((w) => ({
+    day: w.day.substring(0, 3),
+    score: w.avg,
+    calls: w.calls,
+  }));
 
   // Prepare 30-day comparison bar chart
-  const barChartOptions = {
-    chart: {
-      type: 'bar',
-      toolbar: {
-        show: true,
-      },
-    },
-    plotOptions: {
-      bar: {
-        borderRadius: 4,
-        columnWidth: '55%',
-        dataLabels: {
-          position: 'top',
-        },
-      },
-    },
-    dataLabels: {
-      enabled: true,
-      formatter: (val: number) => `${Math.round(val)}%`,
-      offsetY: -25,
-      style: {
-        fontSize: '12px',
-        fontWeight: 600,
-      },
-    },
-    stroke: {
-      show: true,
-      width: 2,
-      colors: ['transparent'],
-    },
-    xaxis: {
-      categories: ['7-Day Avg', '30-Day Avg', 'Target'],
-    },
-    yaxis: {
-      title: {
-        text: 'Score (%)',
-      },
-      min: 0,
-      max: 100,
-    },
-    fill: {
-      opacity: 1,
-      colors: ['#3b82f6', '#8b5cf6', '#10b981'],
-    },
-    tooltip: {
-      theme: 'light',
-      y: {
-        formatter: (val: number) => `${val.toFixed(1)}%`,
-      },
-    },
-  };
-
-  const barChartSeries = [
-    {
-      name: 'Score',
-      data: [cq_7day_avg, cq_30day_avg, 90],
-    },
+  const barChartData = [
+    { label: '7-Day Avg', score: cq_7day_avg, fill: '#3b82f6' },
+    { label: '30-Day Avg', score: cq_30day_avg, fill: '#8b5cf6' },
+    { label: 'Target', score: 90, fill: '#10b981' },
   ];
 
   // Calculate trend statistics
@@ -205,13 +99,16 @@ export const TrendPanel: React.FC<TrendPanelProps> = ({
               </div>
             </div>
 
-            <div style={{ maxHeight: '350px' }}>
-              <ReactApexChart
-                options={lineChartOptions}
-                series={lineChartSeries}
-                type="line"
-                height={300}
-              />
+            <div style={{ maxHeight: '350px', width: '100%' }}>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={lineChartData} margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis dataKey="day" />
+                  <YAxis domain={[0, 100]} label={{ value: 'Score (%)', angle: -90, position: 'insideLeft' }} />
+                  <Tooltip formatter={(value) => `${value.toFixed(1)}%`} />
+                  <Line type="monotone" dataKey="score" stroke="#3b82f6" strokeWidth={2} dot={{ r: 5 }} activeDot={{ r: 7 }} />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
 
             {/* Weekly Breakdown Table */}
@@ -272,13 +169,16 @@ export const TrendPanel: React.FC<TrendPanelProps> = ({
               </div>
             </div>
 
-            <div style={{ maxHeight: '350px' }}>
-              <ReactApexChart
-                options={barChartOptions}
-                series={barChartSeries}
-                type="bar"
-                height={300}
-              />
+            <div style={{ maxHeight: '350px', width: '100%' }}>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={barChartData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis dataKey="label" />
+                  <YAxis domain={[0, 100]} label={{ value: 'Score (%)', angle: -90, position: 'insideLeft' }} />
+                  <Tooltip formatter={(value) => `${value.toFixed(1)}%`} />
+                  <Bar dataKey="score" radius={[8, 8, 0, 0]} fill="#3b82f6" />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
 
             {/* Summary Card */}

@@ -1,5 +1,5 @@
 import React from 'react';
-import ReactApexChart from 'react-apexcharts';
+import { BarChart, Bar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { X, Play, Volume2 } from 'lucide-react';
 
 interface SubScores {
@@ -45,58 +45,45 @@ export const CallDetailModal: React.FC<CallDetailModalProps> = ({
 }) => {
   if (!isOpen || !call) return null;
 
-  const gaugeChartOptions = (title: string, value: number) => ({
-    chart: {
-      type: 'radialBar',
-      sparkline: {
-        enabled: false,
-      },
-    },
-    plotOptions: {
-      radialBar: {
-        startAngle: -135,
-        endAngle: 135,
-        hollow: {
-          margin: 0,
-          size: '70%',
-          background: '#fff',
-          position: 'front',
-        },
-        track: {
-          background: '#f0f0f0',
-          strokeWidth: '97%',
-          margin: 2,
-        },
-        dataLabels: {
-          name: {
-            offsetY: -15,
-            color: '#666',
-            fontSize: '12px',
-          },
-          value: {
-            offsetY: 5,
-            color: '#111',
-            fontSize: '20px',
-            fontWeight: 700,
-          },
-        },
-      },
-    },
-    fill: {
-      type: 'gradient',
-      gradient: {
-        shade: 'dark',
-        type: 'vertical',
-        gradientToColors: [value >= 70 ? '#10b981' : value >= 50 ? '#f59e0b' : '#ef4444'],
-        stops: [0, 100],
-      },
-    },
-    stroke: {
-      lineCap: 'round',
-    },
-    series: [value],
-    labels: [title],
-  });
+  const MiniGauge = ({ title, value }: { title: string; value: number }) => {
+    const gaugeColor = value >= 70 ? '#10b981' : value >= 50 ? '#f59e0b' : '#ef4444';
+    const radius = 55;
+    const circumference = 2 * Math.PI * radius;
+    const strokeDashoffset = circumference - (Math.min(value / 100, 1) * circumference);
+
+    return (
+      <div className="flex flex-col items-center">
+        <svg width={140} height={140} viewBox="0 0 140 140" className="transform -rotate-90">
+          <circle cx={70} cy={70} r={radius} fill="none" stroke="#f0f0f0" strokeWidth="15" />
+          <circle
+            cx={70}
+            cy={70}
+            r={radius}
+            fill="none"
+            stroke={gaugeColor}
+            strokeWidth="15"
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            strokeLinecap="round"
+            style={{ transition: 'stroke-dashoffset 0.5s ease' }}
+          />
+          <text
+            x={70}
+            y={75}
+            textAnchor="middle"
+            fontSize="24"
+            fontWeight="bold"
+            fill="#111"
+            className="transform rotate-90"
+            style={{ transformOrigin: '70px 70px' }}
+          >
+            {Math.round(value)}
+          </text>
+        </svg>
+        <p className="text-sm font-semibold text-gray-900 mt-2">{title}</p>
+      </div>
+    );
+  };
 
   const getStatusColor = (hasFatal: boolean, cq: number) => {
     if (hasFatal) return 'text-red-600 bg-red-50';
@@ -105,51 +92,10 @@ export const CallDetailModal: React.FC<CallDetailModalProps> = ({
     return 'text-orange-600 bg-orange-50';
   };
 
-  const comparisonChartOptions = {
-    chart: {
-      type: 'bar',
-      toolbar: {
-        show: false,
-      },
-    },
-    plotOptions: {
-      bar: {
-        borderRadius: 4,
-        columnWidth: '60%',
-        dataLabels: {
-          position: 'top',
-        },
-      },
-    },
-    dataLabels: {
-      enabled: true,
-      formatter: (val: number) => `${Math.round(val)}%`,
-      offsetY: -20,
-      style: {
-        fontSize: '12px',
-        fontWeight: 600,
-      },
-    },
-    xaxis: {
-      categories: ['Your Score', 'Peer Avg', 'Target'],
-    },
-    yaxis: {
-      max: 100,
-    },
-    fill: {
-      colors: ['#3b82f6', '#8b5cf6', '#10b981'],
-      opacity: 0.8,
-    },
-    grid: {
-      borderColor: '#e5e7eb',
-    },
-  };
-
-  const comparisonChartSeries = [
-    {
-      name: 'Score',
-      data: [call.cq_pct, call.peer_comparison.same_scenario_avg, 90],
-    },
+  const comparisonChartData = [
+    { label: 'Your Score', score: call.cq_pct, fill: '#3b82f6' },
+    { label: 'Peer Avg', score: call.peer_comparison.same_scenario_avg, fill: '#8b5cf6' },
+    { label: 'Target', score: 90, fill: '#10b981' },
   ];
 
   return (
@@ -248,13 +194,8 @@ export const CallDetailModal: React.FC<CallDetailModalProps> = ({
                     { title: 'Resolution', value: call.sub_scores.resolution },
                     { title: 'Closing', value: call.sub_scores.closing },
                   ].map((score, idx) => (
-                    <div key={idx} style={{ maxHeight: '200px' }}>
-                      <ReactApexChart
-                        options={gaugeChartOptions(score.title, score.value)}
-                        series={[score.value]}
-                        type="radialBar"
-                        height={180}
-                      />
+                    <div key={idx} className="flex justify-center">
+                      <MiniGauge title={score.title} value={score.value} />
                     </div>
                   ))}
                 </div>
@@ -289,13 +230,16 @@ export const CallDetailModal: React.FC<CallDetailModalProps> = ({
               <div className="p-6 border-b border-gray-200">
                 <h3 className="text-lg font-semibold text-gray-900 mb-6">Peer Comparison</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div style={{ maxHeight: '300px' }}>
-                    <ReactApexChart
-                      options={comparisonChartOptions}
-                      series={comparisonChartSeries}
-                      type="bar"
-                      height={280}
-                    />
+                  <div style={{ maxHeight: '300px', width: '100%' }}>
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart data={comparisonChartData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                        <XAxis dataKey="label" />
+                        <YAxis domain={[0, 100]} />
+                        <Tooltip formatter={(value) => `${value}%`} />
+                        <Bar dataKey="score" fill="#3b82f6" radius={[8, 8, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
                   </div>
                   <div className="space-y-4">
                     <div className="bg-blue-50 p-4 rounded-lg">
