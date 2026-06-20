@@ -79,6 +79,7 @@ import { securityCenterRouter } from "./modules/security/security-center.routes.
 import { attendanceEngineRouter } from "./modules/wfm/attendance-engine.routes.js";
 import { attendanceDailyScopedRouter } from "./modules/wfm/attendance-daily-scoped.routes.js";
 import { attendanceDisputeRouter } from "./modules/attendance/attendance.dispute.routes.js";
+import { attendanceManualOverrideRouter } from "./modules/attendance/attendance.manual-override.routes.js";
 import { biometricPunchRouter } from "./modules/wfm/biometric-punch.routes.js";
 import { cosecSyncRouter } from "./modules/wfm/cosec-sync.routes.js";
 import { biometricSummaryRouter } from "./modules/wfm/biometric-summary.routes.js";
@@ -261,6 +262,7 @@ app.use('/api/wfm/cosec-sync', cosecSyncRouter);
 app.use('/api/wfm/biometric-summary', biometricSummaryRouter);
 app.use("/api/attendance/exception-engine", attendanceExceptionRouter);
 app.use("/api/attendance", attendanceDisputeRouter);
+app.use("/api/attendance", attendanceManualOverrideRouter);
 app.use("/api/integrations/cosec", cosecMonitoringRouter);
 app.use("/api/workforce-planning", workforcePlanningRouter);
 app.use("/api/customization", customizationRouter);
