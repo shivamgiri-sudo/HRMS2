@@ -189,6 +189,9 @@ const NativeWFMAutoRoster           = lazy(() => import("./pages/NativeWFMAutoRo
 const NativeWFMPlanningRules        = lazy(() => import("./pages/NativeWFMPlanningRules"));
 const NativeSlotRequirementBuilder  = lazy(() => import("./pages/NativeSlotRequirementBuilder"));
 const NativeWeekOffDayRuleConfig    = lazy(() => import("./pages/NativeWeekOffDayRuleConfig"));
+const NativeAttendanceDisputes       = lazy(() => import("./pages/NativeAttendanceDisputes"));
+const NativePayrollAttendanceOverrides = lazy(() => import("./pages/NativePayrollAttendanceOverrides"));
+const NativeAuditLog                 = lazy(() => import("./pages/NativeAuditLog"));
 const NativeAttendanceExceptionEngine = lazy(() => import("./pages/NativeAttendanceExceptionEngine"));
 const NativeCosecSyncMonitoring     = lazy(() => import("./pages/NativeCosecSyncMonitoring"));
 const NativePayrollReadiness        = lazy(() => import("./pages/NativePayrollReadiness"));
@@ -424,6 +427,9 @@ const App = () => (
               <Route path="/wfm/roster-dispute-queue" element={<ProtectedRoute roles={['admin','hr','wfm','manager','branch_head','super_admin']}><NativeRosterManagerQueue /></ProtectedRoute>} />
               <Route path="/roster-master-builder" element={<ProtectedRoute><Gate pageCode="ROSTER_MASTER"><NativeRosterMasterBuilder /></Gate></ProtectedRoute>} />
               <Route path="/week-off-preferences" element={<ProtectedRoute><NativeWeekOffPreferences /></ProtectedRoute>} />
+              <Route path="/attendance/disputes" element={<ProtectedRoute><NativeAttendanceDisputes /></ProtectedRoute>} />
+              <Route path="/payroll/attendance-overrides" element={<ProtectedRoute roles={['admin','super_admin','payroll_head','payroll_admin']}><NativePayrollAttendanceOverrides /></ProtectedRoute>} />
+              <Route path="/audit-log" element={<ProtectedRoute roles={['admin','super_admin','payroll_head','hr','wfm']}><NativeAuditLog /></ProtectedRoute>} />
               <Route path="/roster-capacity-config" element={<ProtectedRoute><Gate pageCode="ROSTER_MASTER"><NativeRosterCapacityConfig /></Gate></ProtectedRoute>} />
               <Route path="/wfm/auto-roster" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWFMAutoRoster /></Gate></ProtectedRoute>} />
               <Route path="/wfm/planning-rules" element={<ProtectedRoute roles={['admin','hr','wfm','manager','super_admin']}><NativeWFMPlanningRules /></ProtectedRoute>} />
