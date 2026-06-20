@@ -172,7 +172,15 @@ router.post("/coaching/:coachingId/create-tni", requireRole("admin", "hr"), h(as
 }));
 
 router.get("/ceo-metrics", requireRole("admin", "hr", "ceo", "finance"), h(async (_req: AuthenticatedRequest, res: Response) => {
-  res.json({ data: await managementService.getCeoMetrics() });
+  try {
+    const data = await managementService.getCeoMetrics();
+    res.json({ success: true, data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to load CEO metrics";
+    console.error("[ceo-metrics]", msg);
+    // Return partial data or fallback to avoid complete failure
+    res.status(500).json({ success: false, error: "CEO metrics temporarily unavailable", _details: msg });
+  }
 }));
 
 export { router as managementRouter };
