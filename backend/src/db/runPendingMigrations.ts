@@ -151,6 +151,7 @@ const MIGRATION_MANIFEST: string[] = [
   "219_agent_performance_page_access.sql",
   "220_enterprise_foundation_helpers.sql",
   "221_peopleos_foundation_read_models.sql",
+  "222_ensure_bulk_upload_templates.sql",
 ];
 
 export type MigrationHealth = {

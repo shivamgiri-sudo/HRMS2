@@ -454,9 +454,21 @@ function buildTemplateRow(template: UploadTemplate, includeSampleValues: boolean
   const isBranchMaster = uploadTypeCode === "BRANCH_MASTER";
   const isLobMaster = uploadTypeCode === "LOB_MASTER";
   const isDesignationMaster = uploadTypeCode === "DESIGNATION_MASTER";
+  const isOfficialEmailUpdate = uploadTypeCode === "OFFICIAL_EMAIL_UPDATE";
+  const isReportingManagerUpdate = uploadTypeCode === "REPORTING_MANAGER_UPDATE";
 
   return getTemplateHeaders(template).map((header) => {
     if (!includeSampleValues) return "";
+
+    if (isOfficialEmailUpdate) {
+      const samples: Record<string, string> = { employee_code: "MAS00001", official_email: "firstname.lastname@teammas.in" };
+      return samples[header.toLowerCase()] ?? "";
+    }
+
+    if (isReportingManagerUpdate) {
+      const samples: Record<string, string> = { employee_code: "MAS00001", manager_code: "MAS00100" };
+      return samples[header.toLowerCase()] ?? "";
+    }
 
     // Core HRMS master imports must always use frontend-safe sample values first.
     // This prevents unsafe database sample values from causing avoidable upload errors when the sample is uploaded directly.
