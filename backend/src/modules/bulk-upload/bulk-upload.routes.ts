@@ -114,6 +114,30 @@ router.post("/batches/:id/import", requireRole("admin", "hr"), h(async (req: Aut
     return res.json({ success: true, data });
   }
 
+  if (rpc_name === "import_roster_assignment_batch") {
+    const { importRosterAssignmentBatch } = await import(
+      "../bulk-upload/roster-assignment-bulk.service.js"
+    );
+    const data = await importRosterAssignmentBatch(id, req.authUser!.id);
+    return res.json({ success: true, data });
+  }
+
+  if (rpc_name === "import_weekoff_preference_batch") {
+    const { importWeekOffPreferenceBatch } = await import(
+      "../bulk-upload/weekoff-preference-bulk.service.js"
+    );
+    const data = await importWeekOffPreferenceBatch(id, req.authUser!.id);
+    return res.json({ success: true, data });
+  }
+
+  if (rpc_name === "import_shift_rotation_type_batch") {
+    const { importShiftRotationTypeBatch } = await import(
+      "../bulk-upload/shift-rotation-type-bulk.service.js"
+    );
+    const data = await importShiftRotationTypeBatch(id, req.authUser!.id);
+    return res.json({ success: true, data });
+  }
+
   return res.status(501).json({
     success: false,
     error: `Import function '${rpc_name || "unknown"}' for batch ${id} is not yet implemented in the MySQL backend.`,

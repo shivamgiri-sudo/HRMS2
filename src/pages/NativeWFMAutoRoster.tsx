@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Bell,
@@ -9,6 +10,7 @@ import {
   Lock,
   Play,
   RefreshCcw,
+  RotateCcw,
   Send,
   ShieldCheck,
   Users,
@@ -52,6 +54,252 @@ function Pill({ children, tone = "slate" }: { children: React.ReactNode; tone?: 
     blue: "bg-blue-50 text-blue-700",
   }[tone];
   return <span className={`rounded-full px-2.5 py-1 text-xs font-black ${cls}`}>{children}</span>;
+}
+
+// ── Rotation Types Badge ───────────────────────────────────────────────────────
+
+const ROTATION_LABELS: Record<string, { label: string; color: string }> = {
+  frozen:   { label: "Frozen",   color: "bg-blue-100 text-blue-700" },
+  weekly:   { label: "Weekly",   color: "bg-violet-100 text-violet-700" },
+  daily:    { label: "Daily",    color: "bg-amber-100 text-amber-700" },
+  rotating: { label: "Rotating", color: "bg-emerald-100 text-emerald-700" },
+};
+
+export function RotationTypeBadge({ type }: { type: string }) {
+  const cfg = ROTATION_LABELS[type] ?? { label: type, color: "bg-slate-100 text-slate-700" };
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold ${cfg.color}`}>
+      <RotateCcw className="h-3 w-3" />
+      {cfg.label}
+    </span>
+  );
+}
+
+// ── Rotation Types Tab ─────────────────────────────────────────────────────────
+
+function RotationTypesTab({ processId, branchId }: { processId: string; branchId: string }) {
+  const qc = useQueryClient();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [newType, setNewType] = useState("frozen");
+  const [notice, setNotice] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+
+  const summaryQ = useQuery({
+    queryKey: ["rotation-summary", processId, branchId],
+    enabled: !!processId,
+    queryFn: async () => {
+      const params = new URLSearchParams({ processId });
+      if (branchId) params.set("branchId", branchId);
+      const res = await hrmsApi.get<{ success: boolean; data: { summary: AnyRow[]; employees: AnyRow[] } }>(
+        `/api/wfm/rotation-summary?${params}`
+      );
+      return res.data;
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, shift_rotation_type }: { id: string; shift_rotation_type: string }) =>
+      hrmsApi.patch<{ success: boolean }>(`/api/wfm/employees/${id}/shift-rotation`, { shift_rotation_type }),
+    onSuccess: () => {
+      setEditingId(null);
+      setNotice({ type: "success", msg: "Rotation type updated." });
+      void qc.invalidateQueries({ queryKey: ["rotation-summary"] });
+    },
+    onError: (err: Error) => {
+      setNotice({ type: "error", msg: err.message ?? "Update failed." });
+    },
+  });
+
+  if (!processId) {
+    return (
+      <div className="rounded-3xl border bg-white p-5 shadow-sm text-center text-sm text-slate-400 py-12">
+        Select a process in the Planner tab to manage rotation types.
+      </div>
+    );
+  }
+
+  const summary: AnyRow[] = summaryQ.data?.summary ?? [];
+  const employees: AnyRow[] = summaryQ.data?.employees ?? [];
+
+  return (
+    <div className="rounded-3xl border bg-white p-5 shadow-sm space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 font-black text-slate-950">
+            <RotateCcw className="h-5 w-5" /> Rotation Types
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Controls how the auto-roster engine assigns shifts per employee.
+            Frozen = same shift always. Weekly/Daily/Rotating = auto-rotated.
+          </p>
+        </div>
+        <button
+          onClick={() => void qc.invalidateQueries({ queryKey: ["rotation-summary"] })}
+          className="rounded-xl border p-2 text-slate-500 hover:bg-slate-100"
+        >
+          <RefreshCcw className="h-4 w-4" />
+        </button>
+      </div>
+
+      {notice && (
+        <div className={`rounded-xl border p-3 text-sm font-semibold ${
+          notice.type === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"
+        }`}>
+          {notice.msg}
+        </div>
+      )}
+
+      {/* Summary row */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {["frozen", "weekly", "daily", "rotating"].map((rt) => {
+          const row = summary.find((s: AnyRow) => s.rotation_type === rt);
+          return (
+            <div key={rt} className="rounded-2xl border bg-slate-50 p-4 text-center">
+              <RotationTypeBadge type={rt} />
+              <p className="mt-2 text-2xl font-black text-slate-900">{row?.employee_count ?? 0}</p>
+              <p className="text-xs text-slate-500">employees</p>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Per-employee table */}
+      {summaryQ.isLoading ? (
+        <div className="text-center py-8 text-sm text-slate-400">Loading...</div>
+      ) : employees.length === 0 ? (
+        <div className="text-center py-8 text-sm text-slate-400">No active employees found for this process.</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-slate-50 text-xs font-black uppercase tracking-wider text-slate-500 text-left">
+                <th className="px-4 py-3">Employee</th>
+                <th className="px-4 py-3">Designation</th>
+                <th className="px-4 py-3">Rotation Type</th>
+                <th className="px-4 py-3">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {employees.map((emp: AnyRow) => (
+                <tr key={emp.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-3">
+                    <p className="font-bold text-slate-900">{emp.full_name}</p>
+                    <p className="text-xs text-slate-500">{emp.employee_code}</p>
+                  </td>
+                  <td className="px-4 py-3 text-slate-600 text-xs">{emp.designation ?? "—"}</td>
+                  <td className="px-4 py-3">
+                    {editingId === emp.id ? (
+                      <select
+                        value={newType}
+                        onChange={(e) => setNewType(e.target.value)}
+                        className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none"
+                      >
+                        {["frozen", "weekly", "daily", "rotating"].map((rt) => (
+                          <option key={rt} value={rt}>{ROTATION_LABELS[rt].label}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <RotationTypeBadge type={emp.shift_rotation_type ?? "frozen"} />
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {editingId === emp.id ? (
+                      <div className="flex gap-2">
+                        <button
+                          disabled={updateMutation.isPending}
+                          onClick={() => updateMutation.mutate({ id: emp.id, shift_rotation_type: newType })}
+                          className="rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-700 disabled:opacity-50"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingId(null)}
+                          className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setEditingId(emp.id); setNewType(emp.shift_rotation_type ?? "frozen"); }}
+                        className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                      >
+                        Change
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Planning Rules Embed ──────────────────────────────────────────────────────
+function PlanningRulesEmbed({ processId }: { processId: string }) {
+  const rulesQ = useQuery({
+    queryKey: ["planning-rules-embed", processId],
+    enabled: !!processId,
+    queryFn: async () => (await hrmsApi.get<{ success: boolean; data: AnyRow[] }>(`/api/wfm/planning-rules?processId=${processId}`)).data ?? [],
+  });
+  if (!processId) return <p className="text-sm text-slate-400 py-4">Select a process above.</p>;
+  if (rulesQ.isLoading) return <div className="flex justify-center py-8"><div className="h-6 w-6 animate-spin rounded-full border-4 border-slate-200 border-t-slate-950" /></div>;
+  if (rulesQ.error) return <p className="text-sm text-rose-600">Failed to load planning rules.</p>;
+  const rules: AnyRow[] = rulesQ.data ?? [];
+  if (!rules.length) return <p className="text-sm text-slate-500 bg-slate-50 rounded-xl p-4">No planning rules configured for this process. <a href="/wfm/planning-rules" className="text-blue-600 underline">Add one →</a></p>;
+  return (
+    <div className="overflow-x-auto rounded-2xl border">
+      <table className="w-full text-sm">
+        <thead className="bg-slate-50 text-left text-xs font-black uppercase text-slate-500">
+          <tr><th className="px-3 py-2">Workload Type</th><th className="px-3 py-2">Effective</th><th className="px-3 py-2">AHT</th><th className="px-3 py-2">Shrinkage</th><th className="px-3 py-2">Key Param</th></tr>
+        </thead>
+        <tbody className="divide-y">
+          {rules.map((r) => (
+            <tr key={r.id} className="hover:bg-slate-50">
+              <td className="px-3 py-2 capitalize font-semibold">{String(r.workload_type).replace("_", " ")}</td>
+              <td className="px-3 py-2 text-slate-600">{r.effective_from}{r.effective_to ? ` → ${r.effective_to}` : " → ongoing"}</td>
+              <td className="px-3 py-2">{r.aht_seconds ?? "—"}</td>
+              <td className="px-3 py-2">{r.shrinkage_pct ?? 0}%</td>
+              <td className="px-3 py-2 text-slate-500 text-xs">{r.dials_per_agent_hour ? `${r.dials_per_agent_hour} dials/hr` : r.chat_concurrency ? `${r.chat_concurrency}× conc` : r.cases_per_agent_hour ? `${r.cases_per_agent_hour} cases/hr` : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Week-Off Rules Embed ──────────────────────────────────────────────────────
+function WeekOffRulesEmbed({ processId }: { processId: string }) {
+  const gridQ = useQuery({
+    queryKey: ["weekoff-rules-embed", processId],
+    enabled: !!processId,
+    queryFn: async () => {
+      const d = new Date(); const day = d.getDay(); const add = day === 1 ? 0 : (8 - day) % 7 || 7;
+      d.setDate(d.getDate() + add); const ws = d.toISOString().slice(0, 10);
+      const qs = new URLSearchParams({ processId, weekStartDate: ws });
+      return (await hrmsApi.get<{ success: boolean; data: AnyRow[] }>(`/api/wfm/weekoff/day-rules/capacity-grid?${qs}`)).data ?? [];
+    },
+  });
+  if (!processId) return <p className="text-sm text-slate-400 py-4">Select a process above.</p>;
+  if (gridQ.isLoading) return <div className="flex justify-center py-8"><div className="h-6 w-6 animate-spin rounded-full border-4 border-slate-200 border-t-slate-950" /></div>;
+  if (gridQ.error) return <p className="text-sm text-rose-600">Failed to load capacity grid.</p>;
+  const grid: AnyRow[] = gridQ.data ?? [];
+  if (!grid.length) return <p className="text-sm text-slate-500 bg-slate-50 rounded-xl p-4">No week-off day rules configured. <a href="/wfm/weekoff-day-rules" className="text-blue-600 underline">Configure →</a></p>;
+  return (
+    <div className="grid grid-cols-7 gap-2">
+      {grid.map((g: any) => (
+        <div key={g.day_of_week} className={`rounded-2xl border p-3 text-center ${g.is_safe ? "border-emerald-200" : "border-rose-300 bg-rose-50"}`}>
+          <div className="text-xs font-black uppercase text-slate-500">{String(g.day_name ?? "").slice(0, 3)}</div>
+          <div className={`mt-1 text-lg font-black ${g.is_safe ? "text-emerald-700" : "text-rose-600"}`}>{g.is_safe ? "✓" : "⚠"}</div>
+          <div className="mt-1 text-xs text-slate-500">Min: {g.min_hc_required ?? 0}</div>
+          <div className="text-xs text-slate-500">WO: {g.current_allocated ?? 0}/{g.max_weekoff_allowed ?? "∞"}</div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function NativeWFMAutoRoster() {
@@ -287,7 +535,10 @@ export default function NativeWFMAutoRoster() {
             ["planner", "Planner"],
             ["requirements", "Slot Requirements"],
             ["coverage", "Coverage"],
+            ["planning_rules", "Planning Rules"],
+            ["weekoff_rules", "Week-Off Rules"],
             ["assignments", "Assignments"],
+            ["rotation", "Rotation Types"],
             ["change", "PM Change Control"],
             ["events", "Events"],
             ["sync", "Table Sync Audit"],
@@ -416,6 +667,22 @@ export default function NativeWFMAutoRoster() {
           </div>
         )}
 
+        {tab === "planning_rules" && (
+          <div className="rounded-3xl border bg-white p-5 shadow-sm space-y-4">
+            <h2 className="font-black text-slate-950">Process Planning Rules</h2>
+            <p className="text-sm text-slate-500">View and manage HC calculation parameters. For full CRUD, use the dedicated <a href="/wfm/planning-rules" className="text-blue-600 underline font-semibold">Planning Rules page</a>.</p>
+            <PlanningRulesEmbed processId={planForm.process_id} />
+          </div>
+        )}
+
+        {tab === "weekoff_rules" && (
+          <div className="rounded-3xl border bg-white p-5 shadow-sm space-y-4">
+            <h2 className="font-black text-slate-950">Week-Off Day Rules</h2>
+            <p className="text-sm text-slate-500">Set per-day minimum HC and max week-off limits. For full configuration, use the dedicated <a href="/wfm/weekoff-day-rules" className="text-blue-600 underline font-semibold">Day Rules page</a>.</p>
+            <WeekOffRulesEmbed processId={planForm.process_id} />
+          </div>
+        )}
+
         {tab === "assignments" && (
           <div className="rounded-3xl border bg-white p-5 shadow-sm">
             <h2 className="font-black text-slate-950">Roster assignments using existing wfm_roster_assignment</h2>
@@ -474,6 +741,10 @@ export default function NativeWFMAutoRoster() {
               <div className="mt-4 max-h-[520px] space-y-2 overflow-auto">{approvalLog.map((a) => <div key={a.id} className="rounded-2xl border p-3"><b>{a.action}</b><p className="mt-1 text-sm text-slate-600">{a.remarks}</p><p className="mt-1 text-xs text-slate-400">{a.created_at}</p></div>)}</div>
             </div>
           </div>
+        )}
+
+        {tab === "rotation" && (
+          <RotationTypesTab processId={planForm.process_id} branchId={planForm.branch_id} />
         )}
 
         {tab === "sync" && (

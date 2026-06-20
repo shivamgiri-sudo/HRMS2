@@ -304,3 +304,55 @@ rtaRouter.get("/live-stream", (req, res) => {
     res.end();
   });
 });
+
+// ─── Final Roster State for RTA ──────────────────────────────────────────────
+// GET /api/rta/final-roster-state?processId=&date=
+// Returns per-employee RTA state from wfm_roster_assignment.
+// Only returns records with final_roster_status suitable for live tracking.
+rtaRouter.get("/final-roster-state", requireRole("admin", "wfm", "hr", "manager", "operations"), h(async (req: any, res: any) => {
+  const { processId, date } = req.query;
+  if (!date || !DATE_RE.test(date)) return res.status(400).json({ error: "date (YYYY-MM-DD) is required" });
+
+  const params: unknown[] = [date];
+  let processCond = "";
+  if (processId) { processCond = " AND pm.id = ?"; params.push(processId); }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT wra.id, wra.employee_id, wra.roster_date, wra.is_week_off,
+            wra.final_roster_status, wra.employee_ack_status,
+            wra.manager_action_status, wra.system_decision_reason,
+            wst.shift_name, wst.start_time, wst.end_time,
+            CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
+            e.employee_code, pm.process_name, bm.branch_name,
+            CASE
+              WHEN wra.is_week_off = 1 AND wra.final_roster_status IN
+                ('approved_final','force_approved_by_manager','realigned_by_manager','published_to_rta')
+                THEN 'Week Off'
+              WHEN wra.final_roster_status = 'pending_manager_action'
+                THEN 'Pending Manager Action'
+              WHEN wra.final_roster_status = 'escalated_to_hr'
+                THEN 'Roster Dispute'
+              WHEN wra.final_roster_status = 'pending_employee_ack'
+                THEN 'Pending Acknowledgement'
+              WHEN wra.final_roster_status IN ('acknowledged','approved_final','published_to_rta',
+                'force_approved_by_manager','realigned_by_manager')
+                THEN 'Scheduled'
+              ELSE wra.final_roster_status
+            END AS rta_exception_label
+       FROM wfm_roster_assignment wra
+       JOIN employees e ON e.id = wra.employee_id
+       LEFT JOIN process_master pm ON pm.process_name = wra.process_name
+       LEFT JOIN branch_master bm ON bm.branch_name = wra.branch_name
+       LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
+      WHERE wra.roster_date = ?
+        AND wra.final_roster_status IN (
+          'approved_final',
+          'force_approved_by_manager',
+          'realigned_by_manager',
+          'published_to_rta'
+        )${processCond}
+      ORDER BY e.employee_code ASC`,
+    params
+  );
+  return res.json({ success: true, data: rows });
+}));

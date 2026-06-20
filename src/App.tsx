@@ -181,10 +181,14 @@ const MyKpiDashboard                = lazy(() => import("./pages/MyKpiDashboard"
 const NativePortalDataManager       = lazy(() => import("./pages/NativePortalDataManager"));
 const NativeLeaveTypeConfig         = lazy(() => import("./pages/NativeLeaveTypeConfig"));
 const NativeMyRoster                = lazy(() => import("./pages/NativeMyRoster"));
+const NativeRosterManagerQueue      = lazy(() => import("./pages/NativeRosterManagerQueue"));
 const NativeRosterMasterBuilder     = lazy(() => import("./pages/NativeRosterMasterBuilder"));
 const NativeWeekOffPreferences      = lazy(() => import("./pages/NativeWeekOffPreferences"));
 const NativeRosterCapacityConfig    = lazy(() => import("./pages/NativeRosterCapacityConfig"));
 const NativeWFMAutoRoster           = lazy(() => import("./pages/NativeWFMAutoRoster"));
+const NativeWFMPlanningRules        = lazy(() => import("./pages/NativeWFMPlanningRules"));
+const NativeSlotRequirementBuilder  = lazy(() => import("./pages/NativeSlotRequirementBuilder"));
+const NativeWeekOffDayRuleConfig    = lazy(() => import("./pages/NativeWeekOffDayRuleConfig"));
 const NativeAttendanceExceptionEngine = lazy(() => import("./pages/NativeAttendanceExceptionEngine"));
 const NativeCosecSyncMonitoring     = lazy(() => import("./pages/NativeCosecSyncMonitoring"));
 const NativePayrollReadiness        = lazy(() => import("./pages/NativePayrollReadiness"));
@@ -417,10 +421,14 @@ const App = () => (
               <Route path="/process-config" element={<ProtectedRoute><Gate pageCode="PROCESS_CONFIG"><NativeProcessConfig /></Gate></ProtectedRoute>} />
               <Route path="/leave-types" element={<ProtectedRoute><Gate pageCode="LEAVE_TYPES"><NativeLeaveTypeConfig /></Gate></ProtectedRoute>} />
               <Route path="/my-roster" element={<ProtectedRoute><NativeMyRoster /></ProtectedRoute>} />
+              <Route path="/wfm/roster-dispute-queue" element={<ProtectedRoute roles={['admin','hr','wfm','manager','branch_head','super_admin']}><NativeRosterManagerQueue /></ProtectedRoute>} />
               <Route path="/roster-master-builder" element={<ProtectedRoute><Gate pageCode="ROSTER_MASTER"><NativeRosterMasterBuilder /></Gate></ProtectedRoute>} />
               <Route path="/week-off-preferences" element={<ProtectedRoute><NativeWeekOffPreferences /></ProtectedRoute>} />
               <Route path="/roster-capacity-config" element={<ProtectedRoute><Gate pageCode="ROSTER_MASTER"><NativeRosterCapacityConfig /></Gate></ProtectedRoute>} />
               <Route path="/wfm/auto-roster" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWFMAutoRoster /></Gate></ProtectedRoute>} />
+              <Route path="/wfm/planning-rules" element={<ProtectedRoute roles={['admin','hr','wfm','manager','super_admin']}><NativeWFMPlanningRules /></ProtectedRoute>} />
+              <Route path="/wfm/slot-requirements" element={<ProtectedRoute roles={['admin','hr','wfm','manager','super_admin']}><NativeSlotRequirementBuilder /></ProtectedRoute>} />
+              <Route path="/wfm/weekoff-day-rules" element={<ProtectedRoute roles={['admin','hr','wfm','manager','super_admin']}><NativeWeekOffDayRuleConfig /></ProtectedRoute>} />
               <Route path="/workforce-planning" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWorkforcePlanning /></Gate></ProtectedRoute>} />
               <Route path="/control-tower" element={<ProtectedRoute><Gate pageCode="CONTROL_TOWER"><NativeControlTower /></Gate></ProtectedRoute>} />
               <Route path="/rta-board" element={<ProtectedRoute><Gate pageCode="RTA_BOARD"><NativeRTABoard /></Gate></ProtectedRoute>} />

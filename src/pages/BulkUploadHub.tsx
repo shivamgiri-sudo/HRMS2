@@ -70,6 +70,9 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   DESIGNATION_MASTER: "import_designation_upload_batch",
   OFFICIAL_EMAIL_UPDATE: "import_official_email_update_batch",
   REPORTING_MANAGER_UPDATE: "import_reporting_manager_update_batch",
+  ROSTER_ASSIGNMENT_BULK: "import_roster_assignment_batch",
+  WEEK_OFF_PREFERENCE_BULK: "import_weekoff_preference_batch",
+  SHIFT_ROTATION_TYPE_UPDATE: "import_shift_rotation_type_batch",
 };
 
 function getImportRpc(uploadTypeCode: string) {

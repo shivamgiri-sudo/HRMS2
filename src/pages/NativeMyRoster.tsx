@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, CalendarDays, CheckCircle2, Clock, Coffee,
-  RefreshCcw, Umbrella,
+  Flag, MessageSquare, RefreshCcw, ThumbsUp, Umbrella, X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -77,6 +77,68 @@ function isOnLeave(date: string, leaves: LeaveRequest[]): LeaveRequest | undefin
   );
 }
 
+// ── Dispute Modal ─────────────────────────────────────────────────────────────
+
+function DisputeModal({
+  assignment,
+  onClose,
+  onSubmit,
+  isPending,
+}: {
+  assignment: DailyAssignment;
+  onClose: () => void;
+  onSubmit: (assignmentId: string, reason: string) => void;
+  isPending: boolean;
+}) {
+  const [reason, setReason] = useState("");
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-xl">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Flag className="h-5 w-5 text-rose-600" />
+            <h3 className="font-black text-slate-900">Raise Dispute</h3>
+          </div>
+          <button onClick={onClose} className="rounded-xl p-1.5 hover:bg-slate-100">
+            <X className="h-4 w-4 text-slate-500" />
+          </button>
+        </div>
+        <p className="text-sm text-slate-600 mb-1">
+          Date: <strong>{fmtDate(assignment.roster_date)}</strong>
+        </p>
+        {assignment.shift_name && (
+          <p className="text-sm text-slate-600 mb-4">
+            Shift: <strong>{assignment.shift_name} ({fmtTime(assignment.start_time)} – {fmtTime(assignment.end_time)})</strong>
+          </p>
+        )}
+        <label className="block text-xs font-bold text-slate-700 mb-1">Reason for dispute *</label>
+        <textarea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          rows={3}
+          placeholder="Explain why this assignment needs to be reviewed..."
+          className="w-full rounded-xl border border-slate-200 p-3 text-sm focus:border-blue-500 focus:outline-none resize-none"
+        />
+        <div className="mt-4 flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 rounded-xl border border-slate-200 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            disabled={!reason.trim() || isPending}
+            onClick={() => onSubmit(assignment.id, reason.trim())}
+            className="flex-1 rounded-xl bg-rose-600 py-2 text-sm font-bold text-white hover:bg-rose-700 disabled:opacity-50"
+          >
+            {isPending ? "Submitting..." : "Submit Dispute"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function DayCell({
@@ -84,15 +146,26 @@ function DayCell({
   date,
   assignment,
   leave,
+  cyclePublished,
+  onAck,
+  onDispute,
+  ackPending,
 }: {
   label: string;
   date: string;
   assignment: DailyAssignment | undefined;
   leave: LeaveRequest | undefined;
+  cyclePublished: boolean;
+  onAck: (id: string) => void;
+  onDispute: (a: DailyAssignment) => void;
+  ackPending: boolean;
 }) {
   const isOff = assignment?.is_week_off === 1;
   const isHoliday = assignment?.is_holiday === 1;
   const isToday = date === new Date().toISOString().slice(0, 10);
+  const ackStatus = assignment?.acknowledgement_status;
+  const isAcked = ackStatus === "acknowledged";
+  const isDisputed = ackStatus === "disputed";
 
   let bg = "bg-white";
   let borderColor = "border-slate-200";
@@ -100,9 +173,13 @@ function DayCell({
   if (isOff) { bg = "bg-slate-100"; borderColor = "border-slate-300"; }
   if (isHoliday) { bg = "bg-violet-50"; borderColor = "border-violet-300"; }
   if (leave) { bg = "bg-amber-50"; borderColor = "border-amber-300"; }
+  if (isDisputed) { bg = "bg-rose-50"; borderColor = "border-rose-400"; }
+  if (isAcked && !isOff && !isHoliday && !leave) { borderColor = "border-emerald-400"; }
+
+  const showActions = cyclePublished && assignment && !isOff && !isHoliday && !leave;
 
   return (
-    <div className={`rounded-2xl border-2 ${borderColor} ${bg} p-3 flex flex-col gap-1 min-h-[110px]`}>
+    <div className={`rounded-2xl border-2 ${borderColor} ${bg} p-3 flex flex-col gap-1 min-h-[130px]`}>
       <div className="flex items-center justify-between">
         <span className={`text-xs font-black uppercase ${isToday ? "text-blue-600" : "text-slate-500"}`}>{label}</span>
         <span className="text-xs text-slate-400">{new Date(date).getDate()}</span>
@@ -143,6 +220,39 @@ function DayCell({
 
       {!assignment && !leave && (
         <span className="text-xs text-slate-400 italic">Not assigned</span>
+      )}
+
+      {/* Ack status badge */}
+      {isAcked && (
+        <div className="mt-auto flex items-center gap-1">
+          <CheckCircle2 className="h-3 w-3 text-emerald-600 shrink-0" />
+          <span className="text-xs font-bold text-emerald-700">Acknowledged</span>
+        </div>
+      )}
+      {isDisputed && (
+        <div className="mt-auto flex items-center gap-1">
+          <Flag className="h-3 w-3 text-rose-600 shrink-0" />
+          <span className="text-xs font-bold text-rose-700">Disputed</span>
+        </div>
+      )}
+
+      {/* Per-day action buttons */}
+      {showActions && !isAcked && !isDisputed && (
+        <div className="mt-auto flex gap-1 pt-1">
+          <button
+            disabled={ackPending}
+            onClick={() => onAck(assignment.id)}
+            className="flex-1 rounded-lg bg-emerald-600 py-1 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50 flex items-center justify-center gap-0.5"
+          >
+            <ThumbsUp className="h-3 w-3" /> OK
+          </button>
+          <button
+            onClick={() => onDispute(assignment)}
+            className="flex-1 rounded-lg border border-rose-300 py-1 text-xs font-bold text-rose-600 hover:bg-rose-50 flex items-center justify-center gap-0.5"
+          >
+            <MessageSquare className="h-3 w-3" /> ?
+          </button>
+        </div>
       )}
     </div>
   );
@@ -191,6 +301,7 @@ export default function NativeMyRoster() {
   const qc = useQueryClient();
   const [selectedCycleId, setSelectedCycleId] = useState<string>("");
   const [notice, setNotice] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+  const [disputeTarget, setDisputeTarget] = useState<DailyAssignment | null>(null);
 
   // Fetch published/active cycles for the employee's process
   const cyclesQ = useQuery({
@@ -242,7 +353,7 @@ export default function NativeMyRoster() {
 
   const leaves: LeaveRequest[] = leavesQ.data ?? [];
 
-  // Acknowledge mutation
+  // Bulk-acknowledge entire week
   const ackMutation = useMutation({
     mutationFn: (cycleId: string) =>
       hrmsApi.post<{ data: { acknowledged: number } }>(
@@ -262,6 +373,32 @@ export default function NativeMyRoster() {
     },
   });
 
+  // Per-assignment acknowledge
+  const perDayAckMutation = useMutation({
+    mutationFn: (assignmentId: string) =>
+      hrmsApi.post<{ success: boolean }>(`/api/roster-gov/assignments/${assignmentId}/acknowledge`, {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["my-roster-assignments", selectedCycle?.id] });
+    },
+    onError: (err: Error) => {
+      setNotice({ type: "error", msg: err.message ?? "Acknowledgement failed." });
+    },
+  });
+
+  // Per-assignment dispute
+  const disputeMutation = useMutation({
+    mutationFn: ({ assignmentId, dispute_reason }: { assignmentId: string; dispute_reason: string }) =>
+      hrmsApi.post<{ success: boolean }>(`/api/roster-gov/assignments/${assignmentId}/dispute`, { dispute_reason }),
+    onSuccess: () => {
+      setDisputeTarget(null);
+      setNotice({ type: "success", msg: "Dispute raised. Your manager will review." });
+      void qc.invalidateQueries({ queryKey: ["my-roster-assignments", selectedCycle?.id] });
+    },
+    onError: (err: Error) => {
+      setNotice({ type: "error", msg: err.message ?? "Dispute submission failed." });
+    },
+  });
+
   // Derived state
   const dates = selectedCycle ? weekDates(selectedCycle.week_start_date) : [];
 
@@ -275,9 +412,18 @@ export default function NativeMyRoster() {
     assignments.every((a) => a.acknowledgement_status === "acknowledged");
 
   const isLoading = cyclesQ.isLoading || assignmentsQ.isFetching;
+  const cyclePublished = selectedCycle ? ["published", "acknowledged", "active"].includes(selectedCycle.status) : false;
 
   return (
     <DashboardLayout>
+      {disputeTarget && (
+        <DisputeModal
+          assignment={disputeTarget}
+          onClose={() => setDisputeTarget(null)}
+          onSubmit={(id, reason) => disputeMutation.mutate({ assignmentId: id, dispute_reason: reason })}
+          isPending={disputeMutation.isPending}
+        />
+      )}
       <div className="space-y-6">
 
         {/* Header */}
@@ -403,6 +549,10 @@ export default function NativeMyRoster() {
                           date={date}
                           assignment={asgn}
                           leave={leave}
+                          cyclePublished={cyclePublished}
+                          onAck={(id) => perDayAckMutation.mutate(id)}
+                          onDispute={(a) => setDisputeTarget(a)}
+                          ackPending={perDayAckMutation.isPending}
                         />
                       );
                     })}

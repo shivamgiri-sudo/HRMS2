@@ -152,6 +152,20 @@ const MIGRATION_MANIFEST: string[] = [
   "220_enterprise_foundation_helpers.sql",
   "221_peopleos_foundation_read_models.sql",
   "222_ensure_bulk_upload_templates.sql",
+  "223_wfm_roster_decision_engine.sql",
+  "224_wfm_notification_templates.sql",
+  "225_employee_shift_rotation_type.sql",
+  "226_wfm_bulk_upload_templates.sql",
+  "227_week_off_preference_schema_fix.sql",
+  "228_wfm_roster_assignment_lifecycle.sql",
+  "229_roster_decision_audit_extension.sql",
+  "230_attendance_reconciliation_rta_linkage.sql",
+  "231_process_master_workload_type.sql",
+  "232_wfm_process_planning_rule.sql",
+  "233_wfm_slot_requirement.sql",
+  "234_process_weekoff_day_rule.sql",
+  "235_soft_delete_wfm_planning_tables.sql",
+  "236_add_rejected_request_decision_type.sql",
 ];
 
 export type MigrationHealth = {
