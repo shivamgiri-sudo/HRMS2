@@ -285,6 +285,7 @@ export default function NativeExitManagement() {
                           <span className="text-slate-400">—</span>
                         )}
                       </td>
+                      <td className="p-4"><ClearanceProgress request={r} /></td>
                       <td className="p-4">
                         {r.escalation_status === "overdue" ? (
                           <span className="rounded-full bg-red-50 px-2 py-1 text-xs font-bold text-red-700 border border-red-200">Overdue</span>
@@ -294,7 +295,6 @@ export default function NativeExitManagement() {
                           <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">On Track</span>
                         )}
                       </td>
-                      <td className="p-4"><ClearanceProgress request={r} /></td>
                       <td className="p-4"><RiskBadge request={r} /></td>
                       <td className="p-4"><Badge status={status} /></td>
                       <td className="p-4"><div className="flex flex-wrap gap-1">
