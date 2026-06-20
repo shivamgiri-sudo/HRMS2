@@ -51,6 +51,31 @@ const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
+// Allow public access to employee photos (no auth required)
+// Must come BEFORE other routes that use requireAuth
+router.get(
+  "/employee-photos/:filename",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const safeFile = path.basename(req.params.filename);
+    const filePath = path.join(UPLOADS_ROOT, "employee-photos", safeFile);
+    if (!fs.existsSync(filePath)) {
+      return res.status(204).send();
+    }
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeTypes: Record<string, string> = {
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".gif": "image/gif",
+      ".webp": "image/webp",
+    };
+    res.set("Content-Type", mimeTypes[ext] || "image/png");
+    res.set("Cache-Control", "public, max-age=86400");
+    res.set("Access-Control-Allow-Origin", "*");
+    res.sendFile(filePath);
+  })
+);
+
 // POST /api/files/upload?category=employee-documents
 // Accepts multipart/form-data with field "file"
 // Admin/HR only for employee docs; any authenticated user for self-service uploads
@@ -82,34 +107,6 @@ router.post(
       size: req.file.size,
       mimetype: req.file.mimetype,
     });
-  })
-);
-
-// GET /api/files/employee-photos/:filename — public (img src can't send auth headers)
-// UUIDs as filenames are unguessable, so no auth needed here.
-router.get(
-  "/employee-photos/:filename",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const safeFile = path.basename(req.params.filename);
-    const filePath = path.join(UPLOADS_ROOT, "employee-photos", safeFile);
-    if (!fs.existsSync(filePath)) {
-      // Return 204 No Content instead of 404 to avoid broken image icons
-      // Frontend can show a default placeholder
-      return res.status(204).send();
-    }
-    // Set correct content-type and cache headers for images
-    const ext = path.extname(filePath).toLowerCase();
-    const mimeTypes: Record<string, string> = {
-      ".png": "image/png",
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".gif": "image/gif",
-      ".webp": "image/webp",
-    };
-    res.set("Content-Type", mimeTypes[ext] || "image/png");
-    res.set("Cache-Control", "public, max-age=86400");
-    res.set("Access-Control-Allow-Origin", "*");
-    res.sendFile(filePath);
   })
 );
 
