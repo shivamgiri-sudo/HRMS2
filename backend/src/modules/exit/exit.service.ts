@@ -79,7 +79,17 @@ export const exitService = {
               hs.regrettable_exit,
               hs.risk_label,
               COALESCE(clearance.total_tasks, 0) AS clearance_total,
-              COALESCE(clearance.cleared_tasks, 0) AS clearance_cleared
+              COALESCE(clearance.cleared_tasks, 0) AS clearance_cleared,
+              er.initiated_by AS submitted_by,
+              er.created_at AS submitted_at,
+              CASE WHEN er.status != 'draft' THEN 1 ELSE 0 END AS notification_sent,
+              COALESCE(mgr.email, '') AS notification_recipient,
+              COALESCE(pending_clearance.owner_role, '') AS pending_with,
+              CASE
+                WHEN er.status IN ('exited','revoked','rejected') THEN 'closed'
+                WHEN DATEDIFF(NOW(), er.created_at) > 7 THEN 'overdue'
+                ELSE 'on_track'
+              END AS escalation_status
          FROM exit_request er
          LEFT JOIN employees e ON e.id = er.employee_id
          LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -91,6 +101,14 @@ export const exitService = {
                   SUM(CASE WHEN status IN ('cleared','waived') THEN 1 ELSE 0 END) AS cleared_tasks
              FROM exit_clearance_task GROUP BY exit_request_id
          ) clearance ON clearance.exit_request_id = er.id
+         LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
+         LEFT JOIN (
+           SELECT exit_request_id, owner_role
+             FROM exit_clearance_task
+            WHERE status NOT IN ('cleared','waived')
+            ORDER BY created_at ASC
+            LIMIT 1
+         ) pending_clearance ON pending_clearance.exit_request_id = er.id
          ${where}
         ORDER BY er.created_at DESC
         LIMIT ${limit} OFFSET ${offset}`,
