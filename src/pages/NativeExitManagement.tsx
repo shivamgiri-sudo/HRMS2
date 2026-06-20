@@ -35,6 +35,13 @@ type ExitRequest = {
   clearance_cleared?: number;
   risk_label?: string | null;
   regrettable_exit?: number | boolean | null;
+  // Issue 45 — clearance visibility fields
+  submitted_by?: string | null;
+  submitted_at?: string | null;
+  notification_sent?: number | null;
+  notification_recipient?: string | null;
+  pending_with?: string | null;
+  escalation_status?: string | null;
 };
 
 type Stats = { total: number; pending: number; accepted: number; completed: number; active_notice?: number };
@@ -247,17 +254,46 @@ export default function NativeExitManagement() {
           <div className="border-b p-5"><h2 className="font-black text-slate-950">Exit Requests</h2><p className="text-sm text-slate-500">{filtered.length} records</p></div>
           {loading ? <div className="flex items-center justify-center py-16"><Loader className="h-8 w-8 animate-spin text-slate-400" /></div> : filtered.length === 0 ? <div className="py-16 text-center text-slate-400"><UserMinus className="mx-auto mb-3 h-10 w-10 opacity-30" /><p className="font-semibold">No exit requests found.</p></div> : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1120px] text-sm">
-                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>{["Employee", "Type", "Reason", "Proposed LWD", "Aging", "Clearance", "Risk", "Status", "Actions"].map((h) => <th key={h} className="p-4 font-semibold">{h}</th>)}</tr></thead>
+              <table className="w-full min-w-[1480px] text-sm">
+                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>{["Employee", "Submitted By", "Type", "Reason", "Proposed LWD", "Aging", "Pending With", "Clearance", "Escalation", "Risk", "Status", "Actions"].map((h) => <th key={h} className="p-4 font-semibold">{h}</th>)}</tr></thead>
                 <tbody>{filtered.map((r) => {
                   const status = normalizeStatus(r.status);
                   return (
                     <tr key={r.id} className="border-t hover:bg-slate-50/80">
                       <td className="p-4"><div className="font-bold text-slate-950">{r.employee_name ?? r.employee_id}</div><div className="text-xs text-slate-500 font-mono">{r.employee_code ?? r.employee_id.slice(0, 8)}</div></td>
+                      <td className="p-4 text-xs text-slate-600">
+                        <div>{r.submitted_by ?? r.initiated_by ?? "—"}</div>
+                        {r.submitted_at && (
+                          <div className="text-slate-400">{new Date(r.submitted_at).toLocaleDateString()}</div>
+                        )}
+                        {r.notification_sent ? (
+                          <span className="mt-0.5 inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-xs text-emerald-700">Notified</span>
+                        ) : (
+                          <span className="mt-0.5 inline-block rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">Not sent</span>
+                        )}
+                      </td>
                       <td className="p-4 capitalize text-slate-700"><div>{label(r.exit_type)}</div><div className="text-xs text-slate-500">{label(r.exit_sub_type)}</div></td>
                       <td className="p-4 text-slate-600"><div className="capitalize font-semibold">{label(r.exit_reason_category)}</div><div className="max-w-[220px] truncate text-xs text-slate-500">{r.resignation_reason ?? "—"}</div></td>
                       <td className="p-4 font-mono text-slate-600">{r.last_working_day_proposed ?? "–"}</td>
                       <td className="p-4"><span className={ageDays(r.created_at) > 7 && !["exited", "rejected", "revoked"].includes(status) ? "font-black text-red-700" : "font-bold text-slate-600"}>{ageDays(r.created_at)}d</span></td>
+                      <td className="p-4 text-xs text-slate-600">
+                        {r.pending_with ? (
+                          <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700 font-semibold border border-amber-200">
+                            {r.pending_with}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+                      <td className="p-4">
+                        {r.escalation_status === "overdue" ? (
+                          <span className="rounded-full bg-red-50 px-2 py-1 text-xs font-bold text-red-700 border border-red-200">Overdue</span>
+                        ) : r.escalation_status === "closed" ? (
+                          <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-500">Closed</span>
+                        ) : (
+                          <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">On Track</span>
+                        )}
+                      </td>
                       <td className="p-4"><ClearanceProgress request={r} /></td>
                       <td className="p-4"><RiskBadge request={r} /></td>
                       <td className="p-4"><Badge status={status} /></td>
