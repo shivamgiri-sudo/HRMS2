@@ -77,10 +77,17 @@ router.get("/native/coordinator", h(async (req: AuthenticatedRequest, res: Respo
 }));
 
 router.get("/native/admin", h(async (req: AuthenticatedRequest, res: Response) => {
-  const ctx = await currentLmsContext(req, res);
-  if (!ctx) return;
-  if (!ctx.access.access.admin) return res.status(403).json({ success: false, message: "Admin LMS access is not assigned to this HRMS user" });
-  res.json({ success: true, data: { ...(await lmsService.getNativeAdminDashboard()), access: ctx.access } });
+  try {
+    const ctx = await currentLmsContext(req, res);
+    if (!ctx) return;
+    if (!ctx.access.access.admin) return res.status(403).json({ success: false, message: "Admin LMS access is not assigned to this HRMS user" });
+    const dashboard = await lmsService.getNativeAdminDashboard();
+    res.json({ success: true, data: { ...dashboard, access: ctx.access } });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "LMS service error";
+    console.error("[lms/native/admin]", msg);
+    res.status(500).json({ success: false, error: "LMS dashboard unavailable", _details: msg });
+  }
 }));
 
 // Legacy aliases retained for existing pages.

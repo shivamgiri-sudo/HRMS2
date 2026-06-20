@@ -268,7 +268,7 @@ router.get("/agents", requireRole(...ALLOWED_ROLES), h(async (req: Authenticated
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "External DB unavailable";
     console.error("[quality-dashboard/agents]", msg);
-    return res.json({ success: true, agents: [], _error: msg });
+    return res.status(500).json({ success: false, error: "Quality dashboard data unavailable", _details: msg });
   }
 }));
 

@@ -56,7 +56,7 @@ export const metricsFiltersSchema = z.object({
 });
 
 export const leaderboardFiltersSchema = z.object({
-  period: z.string().regex(MONTH_REGEX, "period must be YYYY-MM"),
+  period: z.union([z.string(), z.number()]).pipe(z.coerce.string()).regex(MONTH_REGEX, "period must be YYYY-MM"),
   templateId: z.string().uuid().optional(),
   branchId: z.string().uuid().optional(),
   processId: z.string().uuid().optional(),
