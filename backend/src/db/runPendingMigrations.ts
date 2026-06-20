@@ -149,6 +149,8 @@ const MIGRATION_MANIFEST: string[] = [
   "217_people_experience_support_hardening.sql",
   "218_deduplicate_badges.sql",
   "219_agent_performance_page_access.sql",
+  "220_enterprise_foundation_helpers.sql",
+  "221_peopleos_foundation_read_models.sql",
 ];
 
 export type MigrationHealth = {

@@ -105,6 +105,16 @@ import { performanceDashboardRouter } from "./modules/performance-dashboard/perf
 import { kpiMasterRouter } from "./modules/kpi/kpi-master.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
 import { payrollMastersRouter } from "./modules/payroll-masters/payrollMasters.routes.js";
+import {
+  assistantContextRouter,
+  attendanceExceptionRouter,
+  cosecMonitoringRouter,
+  employee360Router,
+  enterpriseReportsRouter,
+  managementCommandCenterRouter,
+  payrollReadinessRouter,
+  workforcePlanningRouter,
+} from "./modules/peopleos/peopleos.routes.js";
 import { incentivesRouter } from "./modules/incentives/incentives.routes.js";
 import { expenseRouter } from "./modules/expenses/expense.routes.js";
 import { businessActionsRouter } from "./modules/business-actions/business-actions.routes.js";
@@ -169,6 +179,7 @@ app.use("/api/leave", leaveSecureRouter);
 app.use("/api/leave", leaveRouter);
 app.use("/api/payroll", payrollStatutoryConfigCompatRouter);
 app.use("/api/payroll", payrollLinesCompatRouter);
+app.use("/api/payroll/readiness", payrollReadinessRouter);
 app.use("/api/payroll", payrollRunLimiter, payrollSecureRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollExtendedRouter);
@@ -178,6 +189,7 @@ app.use("/api/employees", listEndpointLimiter, employeeReportMasterRouter);
 app.use("/api/employees", listEndpointLimiter, employeeSecureRouter);
 app.use("/api/employees", listEndpointLimiter, employeeGovernanceRouter);
 app.use("/api/employees", employeePhotoCompatRouter);
+app.use("/api/employees", listEndpointLimiter, employee360Router);
 app.use("/api/employees", listEndpointLimiter, employeeRouter);
 app.use("/api/rm-change", rmChangeRouter);
 app.use("/api/kpi/process-role", kpiProcessRoleRouter);
@@ -209,6 +221,7 @@ app.use("/api/letters", lettersRouter);
 app.use("/api/ats-ext", atsExtRouter);
 app.use("/api/wfm-ext", wfmExtRouter);
 app.use("/api/management", managementRouter);
+app.use("/api/management", managementCommandCenterRouter);
 app.use("/api/roster-gov", rosterSelfSecureRouter);
 app.use("/api/roster-gov", weekoffPreferenceRouter);
 app.use("/api/roster-gov", rosterGovRouter);
@@ -245,11 +258,16 @@ app.use("/api/tasks", taskRouter);
 app.use('/api/wfm/biometric-punch', biometricPunchRouter);
 app.use('/api/wfm/cosec-sync', cosecSyncRouter);
 app.use('/api/wfm/biometric-summary', biometricSummaryRouter);
+app.use("/api/attendance/exception-engine", attendanceExceptionRouter);
+app.use("/api/integrations/cosec", cosecMonitoringRouter);
+app.use("/api/workforce-planning", workforcePlanningRouter);
 app.use("/api/customization", customizationRouter);
 app.use("/api/roster-master", rosterMasterRouter);
 app.use("/api/roster-capacity", rosterCapacityRouter);
 app.use('/api/reports', reportLimiter, reportingLeaveBalanceRouter);
+app.use('/api/reports', reportLimiter, enterpriseReportsRouter);
 app.use('/api/reports', reportLimiter, reportingRouter);
+app.use("/api/assistant/context", assistantContextRouter);
 app.use('/api/control-tower', controlTowerRouter);
 app.use("/api/quality-dashboard", qualityDashboardRouter);
 app.use("/api/performance-dashboard", performanceDashboardRouter);

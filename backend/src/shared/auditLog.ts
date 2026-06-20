@@ -9,22 +9,44 @@ export interface AuditLogEntry {
   entity_type?: string;
   entity_id?: string;
   change_summary?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  request_id?: string;
   req?: Request;
   ip_address?: string;
   user_agent?: string | string[];
 }
 
+function requestIdFrom(entry: AuditLogEntry): string | null {
+  const headerValue = entry.req?.headers["x-request-id"];
+  if (entry.request_id) return entry.request_id;
+  if (typeof headerValue === "string") return headerValue.slice(0, 100);
+  if (Array.isArray(headerValue)) return String(headerValue[0] ?? "").slice(0, 100) || null;
+  return null;
+}
+
+function userAgentFrom(entry: AuditLogEntry): string | null {
+  return String(entry.user_agent ?? entry.req?.headers["user-agent"] ?? "").slice(0, 512) || null;
+}
+
+function ipAddressFrom(entry: AuditLogEntry): string | null {
+  return entry.ip_address ?? entry.req?.ip ?? null;
+}
+
+function jsonOrNull(value: Record<string, unknown> | undefined): string | null {
+  return value ? JSON.stringify(value) : null;
+}
+
 /**
- * Write a sensitive action to sensitive_action_log.
+ * Write a standard enterprise audit event to audit_action_log.
  * Non-throwing — audit failures must never break the primary operation.
  */
-export async function logSensitiveAction(entry: AuditLogEntry): Promise<void> {
+export async function writeAuditLog(entry: AuditLogEntry): Promise<void> {
   try {
     await db.execute(
-      `INSERT INTO sensitive_action_log
+      `INSERT INTO audit_action_log
          (id, actor_user_id, action_type, module_key, entity_type, entity_id,
-          ip_address, user_agent, change_summary)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          request_id, ip_address, user_agent, metadata_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         randomUUID(),
         entry.actor_user_id,
@@ -32,12 +54,44 @@ export async function logSensitiveAction(entry: AuditLogEntry): Promise<void> {
         entry.module_key,
         entry.entity_type ?? null,
         entry.entity_id ?? null,
-        entry.ip_address ?? entry.req?.ip ?? null,
-        String(entry.user_agent ?? entry.req?.headers["user-agent"] ?? "").slice(0, 512) || null,
-        entry.change_summary ? JSON.stringify(entry.change_summary) : null,
+        requestIdFrom(entry),
+        ipAddressFrom(entry),
+        userAgentFrom(entry),
+        jsonOrNull(entry.metadata ?? entry.change_summary),
+      ]
+    );
+  } catch (err) {
+    console.error("[audit] Failed to write audit_action_log:", err);
+  }
+}
+
+/**
+ * Write a sensitive action to sensitive_action_log.
+ * Non-throwing — audit failures must never break the primary operation.
+ */
+export async function writeSensitiveActionLog(entry: AuditLogEntry): Promise<void> {
+  try {
+    await db.execute(
+      `INSERT INTO sensitive_action_log
+         (id, actor_user_id, action_type, module_key, entity_type, entity_id,
+          ip_address, user_agent, change_summary, request_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        randomUUID(),
+        entry.actor_user_id,
+        entry.action_type,
+        entry.module_key,
+        entry.entity_type ?? null,
+        entry.entity_id ?? null,
+        ipAddressFrom(entry),
+        userAgentFrom(entry),
+        jsonOrNull(entry.change_summary ?? entry.metadata),
+        requestIdFrom(entry),
       ]
     );
   } catch (err) {
     console.error("[audit] Failed to write sensitive_action_log:", err);
   }
 }
+
+export const logSensitiveAction = writeSensitiveActionLog;

@@ -30,6 +30,8 @@ export function calculateSlaDueAt(
   return due;
 }
 
+export const calculateTicketSlaDueAt = calculateSlaDueAt;
+
 // ── Dashboard stats ───────────────────────────────────────────────────────────
 export async function getHelpdeskDashboard(filters: {
   branch_id?: string;
