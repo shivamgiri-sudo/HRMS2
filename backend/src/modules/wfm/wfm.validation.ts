@@ -79,6 +79,24 @@ export const breakSchema = z.object({
   breakType: z.enum(["Break", "Lunch", "Bio", "Training"]),
 });
 
+export const DISPUTE_TYPES = [
+  'missing_punch',
+  'wrong_punch',
+  'late_mark_dispute',
+  'early_logout_dispute',
+  'half_day_dispute',
+  'absent_wrongly_marked',
+  'week_off_worked',
+  'holiday_worked',
+  'shift_mismatch',
+  'cosec_sync_issue',
+  'manual_punch_correction',
+] as const;
+
+export type DisputeType = typeof DISPUTE_TYPES[number];
+
+const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
 export const regularizationSchema = z.object({
   // employeeId removed - derived from auth token for security
   sessionDate:     z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
@@ -86,6 +104,15 @@ export const regularizationSchema = z.object({
   reasonCode:      z.string().min(1).max(50).optional(),
   requestedStatus: z.enum(['present', 'half_day', 'absent']).optional(),
   supportingNote:  z.string().trim().nullable().optional(),
+  // Dispute extension fields (optional — null = plain regularization)
+  disputeType:     z.enum(DISPUTE_TYPES).nullable().optional(),
+  oldStatus:       z.string().trim().nullable().optional(),
+  newStatus:       z.string().trim().nullable().optional(),
+  oldPunchIn:      z.string().regex(TIME_REGEX, "Time must be HH:MM").nullable().optional(),
+  oldPunchOut:     z.string().regex(TIME_REGEX, "Time must be HH:MM").nullable().optional(),
+  newPunchIn:      z.string().regex(TIME_REGEX, "Time must be HH:MM").nullable().optional(),
+  newPunchOut:     z.string().regex(TIME_REGEX, "Time must be HH:MM").nullable().optional(),
+  supportingDocId: z.string().trim().nullable().optional(),
 }).refine(d => {
   const today = new Date();
   today.setHours(23, 59, 59, 999);

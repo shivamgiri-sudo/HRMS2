@@ -6,6 +6,7 @@ import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { buildScopeWhereClause, hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
 import { regularizationSchema } from "./wfm.validation.js";
 import { wfmService } from "./wfm.service.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 
 export const wfmRegularizationSecureRouter = Router();
 wfmRegularizationSecureRouter.use(requireAuth);
@@ -116,6 +117,32 @@ wfmRegularizationSecureRouter.post("/regularizations", h(async (req: any, res: a
     { ...input, employeeId: requestedEmployeeId, requestedByType } as any,
     req.authUser.id,
   );
+
+  // Audit: regularization submitted
+  void logSensitiveAction({
+    actor_user_id: req.authUser.id,
+    actor_role: requestedByType,
+    action_type: "REGULARIZATION_SUBMITTED",
+    module_key: "attendance",
+    entity_type: "attendance_regularization",
+    entity_id: data.id,
+    employee_id: requestedEmployeeId,
+    reason: input.reason,
+    new_value_json: {
+      session_date: input.sessionDate,
+      requested_status: (input as any).requestedStatus ?? null,
+      reason_code: input.reasonCode ?? null,
+      dispute_type: (input as any).disputeType ?? null,
+      old_status: (input as any).oldStatus ?? null,
+      new_status: (input as any).newStatus ?? null,
+      old_punch_in: (input as any).oldPunchIn ?? null,
+      old_punch_out: (input as any).oldPunchOut ?? null,
+      new_punch_in: (input as any).newPunchIn ?? null,
+      new_punch_out: (input as any).newPunchOut ?? null,
+    },
+    req,
+  });
+
   return res.status(201).json({ success: true, data, message: "Regularization submitted" });
 }));
 
@@ -161,9 +188,88 @@ wfmRegularizationSecureRouter.patch("/regularizations/:id/review", h(async (req:
   }
   const status = String(req.body.status ?? "");
   if (!["approved", "rejected"].includes(status)) return res.status(400).json({ success: false, message: "Invalid review status" });
+
+  // Capture before-state for audit
+  const [preRows] = await db.execute<RowDataPacket[]>(
+    `SELECT ar.status AS reg_status, ar.requested_status, ar.employee_id, ar.session_date,
+            ar.old_status, ar.new_status, ar.dispute_type,
+            adr.attendance_status AS current_attendance_status, adr.lwp_value AS current_lwp
+       FROM attendance_regularization ar
+       LEFT JOIN attendance_daily_record adr
+              ON adr.employee_id = ar.employee_id AND adr.record_date = ar.session_date
+      WHERE ar.id = ? LIMIT 1`,
+    [req.params.id]
+  );
+  const pre = (preRows as RowDataPacket[])[0] as any;
+
+  const reviewerNote = req.body.reviewerNote ?? req.body.remarks ?? null;
   const data = await wfmService.reviewRegularization(req.params.id, {
     status: status as any,
-    reviewerNote: req.body.reviewerNote ?? req.body.remarks ?? null,
+    reviewerNote,
   }, req.authUser.id);
+
+  // Determine actor role
+  const actorRole = (await hasAnyRole(req.authUser.id, "admin")) ? "admin"
+    : (await hasAnyRole(req.authUser.id, "hr")) ? "hr"
+    : (await hasAnyRole(req.authUser.id, "wfm")) ? "wfm"
+    : "manager";
+
+  const actionType = status === "approved"
+    ? "REGULARIZATION_APPROVED"
+    : "REGULARIZATION_REJECTED";
+
+  // Audit: regularization reviewed (approved or rejected)
+  void logSensitiveAction({
+    actor_user_id: req.authUser.id,
+    actor_role: actorRole,
+    action_type: actionType,
+    module_key: "attendance",
+    entity_type: "attendance_regularization",
+    entity_id: req.params.id,
+    employee_id: pre?.employee_id ?? null,
+    reason: reviewerNote ?? undefined,
+    old_value_json: {
+      reg_status: pre?.reg_status ?? null,
+      attendance_status: pre?.current_attendance_status ?? null,
+      lwp_value: pre?.current_lwp ?? null,
+    },
+    new_value_json: {
+      reg_status: status,
+      attendance_status: status === "approved" ? (pre?.requested_status ?? null) : pre?.current_attendance_status ?? null,
+      lwp_value: status === "approved"
+        ? ({ present: 0, half_day: 0.5, absent: 1.0 }[pre?.requested_status as string] ?? null)
+        : pre?.current_lwp ?? null,
+      reviewer_note: reviewerNote,
+      session_date: pre?.session_date ?? null,
+      dispute_type: pre?.dispute_type ?? null,
+    },
+    req,
+  });
+
+  // If approved and attendance_daily_record was updated, write a second audit event
+  if (status === "approved" && pre?.requested_status) {
+    void logSensitiveAction({
+      actor_user_id: req.authUser.id,
+      actor_role: actorRole,
+      action_type: "ATTENDANCE_RECORD_CORRECTED",
+      module_key: "attendance",
+      entity_type: "attendance_daily_record",
+      entity_id: `${pre.employee_id}:${pre.session_date}`,
+      employee_id: pre.employee_id,
+      reason: `Regularization approved: ${reviewerNote ?? ""}`,
+      old_value_json: {
+        attendance_status: pre.current_attendance_status ?? null,
+        lwp_value: pre.current_lwp ?? null,
+      },
+      new_value_json: {
+        attendance_status: pre.requested_status,
+        lwp_value: { present: 0, half_day: 0.5, absent: 1.0 }[pre.requested_status as string] ?? 0,
+        corrected_by: req.authUser.id,
+        regularization_id: req.params.id,
+      },
+      req,
+    });
+  }
+
   return res.json({ success: true, data, message: `Regularization ${status}` });
 }));

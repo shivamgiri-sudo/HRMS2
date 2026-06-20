@@ -166,6 +166,8 @@ const MIGRATION_MANIFEST: string[] = [
   "234_process_weekoff_day_rule.sql",
   "235_soft_delete_wfm_planning_tables.sql",
   "236_add_rejected_request_decision_type.sql",
+  "237_attendance_dispute_schema.sql",
+  "238_attendance_manual_override.sql",
 ];
 
 export type MigrationHealth = {

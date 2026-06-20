@@ -222,17 +222,30 @@ export const wfmService = {
     const branchId = (empRow[0] as any)?.branch_id ?? null;
 
     const id = randomUUID();
+    const inp = input as any;
     await db.execute(
       `INSERT INTO attendance_regularization
-         (id, employee_id, session_date, requested_status, reason, reason_code, requested_by_type, branch_id, supporting_note)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, employee_id, session_date, requested_status, reason, reason_code,
+          requested_by_type, branch_id, supporting_note,
+          dispute_type, old_status, new_status,
+          old_punch_in, old_punch_out, new_punch_in, new_punch_out,
+          supporting_doc_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, input.employeeId, input.sessionDate,
-       (input as any).requestedStatus ?? null,
+       inp.requestedStatus ?? null,
        input.reason,
        input.reasonCode ?? null,
        input.requestedByType ?? 'employee',
        branchId,
-       input.supportingNote ?? null]
+       input.supportingNote ?? null,
+       inp.disputeType ?? null,
+       inp.oldStatus ?? null,
+       inp.newStatus ?? inp.requestedStatus ?? null,
+       inp.oldPunchIn ?? null,
+       inp.oldPunchOut ?? null,
+       inp.newPunchIn ?? null,
+       inp.newPunchOut ?? null,
+       inp.supportingDocId ?? null]
     );
 
     // Notify WFM lead(s) for this branch via work inbox
@@ -303,15 +316,32 @@ export const wfmService = {
     // If approved AND requested_status is set, apply it to attendance_daily_record
     if (input.status === 'approved' && reg.requested_status) {
       const lwpMap: Record<string, number> = { present: 0, half_day: 0.5, absent: 1.0 };
+
+      // Capture before-state for audit trail before overwriting
+      const [existingRows] = await db.execute<RowDataPacket[]>(
+        `SELECT attendance_status, lwp_value
+           FROM attendance_daily_record
+          WHERE employee_id = ? AND record_date = ? LIMIT 1`,
+        [reg.employee_id, reg.session_date]
+      );
+      const existing = (existingRows as RowDataPacket[])[0] as any;
+
       await db.execute(
         `UPDATE attendance_daily_record
-         SET attendance_status = ?, lwp_value = ?,
-             override_by = ?, override_reason = ?,
-             regularization_id = ?, is_locked = 1, processed_at = NOW()
-         WHERE employee_id = ? AND record_date = ?`,
+            SET attendance_status = ?, lwp_value = ?,
+                override_by = ?, override_reason = ?,
+                regularization_id = ?, is_locked = 1, processed_at = NOW(),
+                old_attendance_status = ?, old_lwp_value = ?,
+                status_change_reason = ?, status_changed_by = ?, status_changed_at = NOW()
+          WHERE employee_id = ? AND record_date = ?`,
         [reg.requested_status, lwpMap[reg.requested_status] ?? 0,
          reviewerId, `Regularization approved: ${reg.reason_code ?? reg.reason}`,
-         id, reg.employee_id, reg.session_date]
+         id,
+         existing?.attendance_status ?? null,
+         existing?.lwp_value ?? null,
+         `Regularization approved: ${reg.reason_code ?? reg.reason}`,
+         reviewerId,
+         reg.employee_id, reg.session_date]
       );
     }
 

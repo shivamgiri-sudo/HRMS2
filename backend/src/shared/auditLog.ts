@@ -8,8 +8,18 @@ export interface AuditLogEntry {
   module_key: string;
   entity_type?: string;
   entity_id?: string;
+  // Structured before/after values (preferred over change_summary for new code)
+  old_value_json?: Record<string, unknown>;
+  new_value_json?: Record<string, unknown>;
+  // Legacy generic summary (still supported; merged when old/new not set)
   change_summary?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  // Subject of the action (the employee affected, not necessarily the actor)
+  employee_id?: string;
+  // Role of the actor at the time of action
+  actor_role?: string;
+  // Mandatory reason for sensitive/override actions
+  reason?: string;
   request_id?: string;
   req?: Request;
   ip_address?: string;
@@ -67,6 +77,7 @@ export async function writeAuditLog(entry: AuditLogEntry): Promise<void> {
 
 /**
  * Write a sensitive action to sensitive_action_log.
+ * Supports both legacy change_summary and structured old_value_json/new_value_json.
  * Non-throwing — audit failures must never break the primary operation.
  */
 export async function writeSensitiveActionLog(entry: AuditLogEntry): Promise<void> {
@@ -74,8 +85,9 @@ export async function writeSensitiveActionLog(entry: AuditLogEntry): Promise<voi
     await db.execute(
       `INSERT INTO sensitive_action_log
          (id, actor_user_id, action_type, module_key, entity_type, entity_id,
-          ip_address, user_agent, change_summary, request_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ip_address, user_agent, change_summary, request_id,
+          old_value_json, new_value_json, employee_id, actor_role, reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         randomUUID(),
         entry.actor_user_id,
@@ -85,8 +97,20 @@ export async function writeSensitiveActionLog(entry: AuditLogEntry): Promise<voi
         entry.entity_id ?? null,
         ipAddressFrom(entry),
         userAgentFrom(entry),
-        jsonOrNull(entry.change_summary ?? entry.metadata),
+        // Legacy: change_summary = old+new merged, or metadata fallback
+        jsonOrNull(
+          entry.change_summary ?? entry.metadata ??
+          (entry.old_value_json || entry.new_value_json
+            ? { before: entry.old_value_json, after: entry.new_value_json }
+            : undefined)
+        ),
         requestIdFrom(entry),
+        // New structured fields (written to dedicated columns via migration 237)
+        entry.old_value_json ? JSON.stringify(entry.old_value_json) : null,
+        entry.new_value_json ? JSON.stringify(entry.new_value_json) : null,
+        entry.employee_id ?? null,
+        entry.actor_role ?? null,
+        entry.reason ?? null,
       ]
     );
   } catch (err) {
