@@ -13,6 +13,7 @@ import {
   Package,
   Sparkles,
   Target,
+  Upload,
   UserCircle,
   UserPlus,
   Users,
@@ -278,6 +279,12 @@ const Index = () => {
         description: "Complete pending HR actions",
         path: "/work-inbox",
         icon: <ClipboardCheck className="h-4 w-4" />,
+      },
+      {
+        title: "Bulk Upload",
+        description: "Mass import employee data",
+        path: "/bulk-upload",
+        icon: <Upload className="h-4 w-4" />,
       },
       ]
     : [
