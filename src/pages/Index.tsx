@@ -286,6 +286,12 @@ const Index = () => {
         path: "/bulk-upload",
         icon: <Upload className="h-4 w-4" />,
       },
+      {
+        title: "All Modules",
+        description: "Explore all system features",
+        path: "/modules",
+        icon: <Zap className="h-4 w-4" />,
+      },
       ]
     : [
         {
@@ -323,6 +329,12 @@ const Index = () => {
           description: "See milestones and recognition",
           path: "/profile?tab=journey",
           icon: <GitBranch className="h-4 w-4" />,
+        },
+        {
+          title: "My Modules",
+          description: "Access all available features",
+          path: "/modules",
+          icon: <Zap className="h-4 w-4" />,
         },
       ];
 
