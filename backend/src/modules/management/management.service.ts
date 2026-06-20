@@ -4,48 +4,171 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { Request } from "express";
 
-export const managementService = {
-  async getTeamKpiSummary(filters: { process_id?: string; period?: string; branch_id?: string }) {
-    const conds: string[] = ["e.active_status = 1"];
-    const params: unknown[] = [];
-    if (filters.process_id) { conds.push("e.process_id = ?"); params.push(filters.process_id); }
-    if (filters.branch_id)  { conds.push("e.branch_id = ?");  params.push(filters.branch_id); }
-    const period = filters.period ?? "2026-05";
-    conds.push("mks.period = ?"); params.push(period);
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT mks.*, e.employee_code, e.full_name, p.process_name
-         FROM management_kpi_summary mks
-         JOIN employees e ON e.id = mks.employee_id
-         LEFT JOIN process_master p ON p.id = e.process_id
-        WHERE ${conds.join(" AND ")}
-        ORDER BY mks.rank_position ASC, mks.overall_score DESC LIMIT 200`,
-      params
-    );
-    return rows as RowDataPacket[];
-  },
+function numberValue(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
-  async getDirectReportIds(managerId: string): Promise<string[]> {
+function monthKeys(monthCount: number): string[] {
+  const now = new Date();
+  const months: string[] = [];
+
+  for (let offset = monthCount - 1; offset >= 0; offset -= 1) {
+    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - offset, 1));
+    months.push(`${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`);
+  }
+
+  return months;
+}
+
+export const managementService = {
+  /**
+   * Resolve a list of employee IDs that are direct reports of the given manager employee ID.
+   * Falls back to an empty array if no reports found (not an error).
+   */
+  async getDirectReportIds(managerEmployeeId: string): Promise<string[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM employees
         WHERE (reporting_manager_id = ? OR manager_id = ?)
-          AND active_status = 1`,
-      [managerId, managerId]
+          AND active_status = 1
+        LIMIT 500`,
+      [managerEmployeeId, managerEmployeeId]
     );
     return (rows as RowDataPacket[]).map((r) => String(r.id));
   },
 
-  async listCoachingSessions(filters: { employee_id?: string; employee_ids?: string[]; coach_user_id?: string; status?: string }) {
+  async getTeamKpiSummary(filters: {
+    process_id?: string;
+    period?: string;
+    branch_id?: string;
+    /** When provided, restricts results to employees in this list */
+    employee_ids?: string[];
+  }) {
+    const conds: string[] = ["e.active_status = 1"];
+    const params: unknown[] = [];
+    if (filters.process_id) { conds.push("e.process_id = ?"); params.push(filters.process_id); }
+    if (filters.branch_id)  { conds.push("e.branch_id = ?");  params.push(filters.branch_id); }
+    if (filters.employee_ids && filters.employee_ids.length > 0) {
+      const placeholders = filters.employee_ids.map(() => "?").join(",");
+      conds.push(`e.id IN (${placeholders})`);
+      params.push(...filters.employee_ids);
+    }
+    const period = filters.period ?? new Date().toISOString().slice(0, 7);
+    conds.push("DATE_FORMAT(kda.score_date, '%Y-%m') = ?"); params.push(period);
+
+    // Previous period for trend calculation
+    const prevDate = new Date(period + "-01");
+    prevDate.setUTCMonth(prevDate.getUTCMonth() - 1);
+    const prevPeriod = `${prevDate.getUTCFullYear()}-${String(prevDate.getUTCMonth() + 1).padStart(2, "0")}`;
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         e.id AS employee_id,
+         e.employee_code,
+         e.full_name AS employee_name,
+         ? AS period,
+         ROUND(
+           SUM((
+             CASE WHEN kmm.direction = 'lower_is_better'
+                  THEN LEAST(kpc.target_value / NULLIF(kda.actual_value, 0), 1.2)
+                  ELSE LEAST(kda.actual_value / NULLIF(kpc.target_value, 0), 1.2)
+             END * 100
+           ) * kpc.weightage) / NULLIF(SUM(kpc.weightage), 0),
+           2
+         ) AS overall_score,
+         DENSE_RANK() OVER (
+           ORDER BY
+             SUM((
+               CASE WHEN kmm.direction = 'lower_is_better'
+                    THEN LEAST(kpc.target_value / NULLIF(kda.actual_value, 0), 1.2)
+                    ELSE LEAST(kda.actual_value / NULLIF(kpc.target_value, 0), 1.2)
+               END * 100
+             ) * kpc.weightage) / NULLIF(SUM(kpc.weightage), 0) DESC
+         ) AS rank_position,
+         p.process_name
+         FROM kpi_daily_actual kda
+         JOIN employees e ON e.id = kda.employee_id
+         JOIN kpi_process_config kpc
+           ON kpc.process_id = e.process_id
+          AND kpc.metric_id = kda.metric_id
+         JOIN kpi_metric_master kmm ON kmm.id = kda.metric_id
+         LEFT JOIN process_master p ON p.id = e.process_id
+        WHERE ${conds.join(" AND ")}
+        GROUP BY e.id, e.employee_code, e.full_name, p.process_name
+        ORDER BY rank_position ASC, overall_score DESC
+        LIMIT 200`,
+      [period, ...params]
+    );
+
+    // Build trend by comparing current period score to previous period score
+    const empIds = (rows as RowDataPacket[]).map((r) => String(r.employee_id));
+    const prevScoreMap: Record<string, number> = {};
+
+    if (empIds.length > 0) {
+      const prevConds: string[] = ["e.active_status = 1", "DATE_FORMAT(kda.score_date, '%Y-%m') = ?"];
+      const prevParams: unknown[] = [prevPeriod];
+      const prevPlaceholders = empIds.map(() => "?").join(",");
+      prevConds.push(`e.id IN (${prevPlaceholders})`);
+      prevParams.push(...empIds);
+
+      const [prevRows] = await db.execute<RowDataPacket[]>(
+        `SELECT
+           e.id AS employee_id,
+           ROUND(
+             SUM((
+               CASE WHEN kmm.direction = 'lower_is_better'
+                    THEN LEAST(kpc.target_value / NULLIF(kda.actual_value, 0), 1.2)
+                    ELSE LEAST(kda.actual_value / NULLIF(kpc.target_value, 0), 1.2)
+               END * 100
+             ) * kpc.weightage) / NULLIF(SUM(kpc.weightage), 0),
+             2
+           ) AS overall_score
+           FROM kpi_daily_actual kda
+           JOIN employees e ON e.id = kda.employee_id
+           JOIN kpi_process_config kpc ON kpc.process_id = e.process_id AND kpc.metric_id = kda.metric_id
+           JOIN kpi_metric_master kmm ON kmm.id = kda.metric_id
+          WHERE ${prevConds.join(" AND ")}
+          GROUP BY e.id`,
+        prevParams
+      );
+
+      for (const prev of prevRows as RowDataPacket[]) {
+        prevScoreMap[String(prev.employee_id)] = numberValue(prev.overall_score);
+      }
+    }
+
+    return (rows as RowDataPacket[]).map((row) => {
+      const empId = String(row.employee_id);
+      const curr = numberValue(row.overall_score);
+      let trend: "up" | "down" | "stable" = "stable";
+      if (empId in prevScoreMap) {
+        const prev = prevScoreMap[empId];
+        if (curr > prev + 1) trend = "up";
+        else if (curr < prev - 1) trend = "down";
+      }
+      return { ...row, trend };
+    });
+  },
+
+  async listCoachingSessions(filters: {
+    employee_id?: string;
+    coach_user_id?: string;
+    status?: string;
+    /** When provided, restricts to sessions for employees in this list */
+    employee_ids?: string[];
+  }) {
     const conds: string[] = ["1=1"];
     const params: unknown[] = [];
     if (filters.employee_id)   { conds.push("cs.employee_id = ?");   params.push(filters.employee_id); }
-    if (filters.employee_ids && filters.employee_ids.length > 0) {
-      conds.push(`cs.employee_id IN (${filters.employee_ids.map(() => "?").join(",")})`);
-      params.push(...filters.employee_ids);
-    }
     if (filters.coach_user_id) { conds.push("cs.coach_user_id = ?"); params.push(filters.coach_user_id); }
     if (filters.status)        { conds.push("cs.status = ?");        params.push(filters.status); }
+    if (filters.employee_ids && filters.employee_ids.length > 0) {
+      const placeholders = filters.employee_ids.map(() => "?").join(",");
+      conds.push(`cs.employee_id IN (${placeholders})`);
+      params.push(...filters.employee_ids);
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT cs.*, e.employee_code, e.full_name FROM coaching_session cs
+      `SELECT cs.*, e.employee_code, e.full_name AS employee_name FROM coaching_session cs
          JOIN employees e ON e.id = cs.employee_id
         WHERE ${conds.join(" AND ")} ORDER BY cs.session_date DESC LIMIT 200`,
       params
@@ -67,14 +190,25 @@ export const managementService = {
     return (rows as RowDataPacket[])[0];
   },
 
-  async listAlerts(filters: { employee_id?: string; severity?: string; acknowledged?: boolean }) {
+  async listAlerts(filters: {
+    employee_id?: string;
+    severity?: string;
+    acknowledged?: boolean;
+    /** When provided, restricts to alerts for employees in this list */
+    employee_ids?: string[];
+  }) {
     const conds: string[] = ["1=1"];
     const params: unknown[] = [];
     if (filters.employee_id)                { conds.push("pa.employee_id = ?"); params.push(filters.employee_id); }
     if (filters.severity)                   { conds.push("pa.severity = ?");    params.push(filters.severity); }
     if (filters.acknowledged !== undefined) { conds.push("pa.acknowledged = ?"); params.push(filters.acknowledged ? 1 : 0); }
+    if (filters.employee_ids && filters.employee_ids.length > 0) {
+      const placeholders = filters.employee_ids.map(() => "?").join(",");
+      conds.push(`pa.employee_id IN (${placeholders})`);
+      params.push(...filters.employee_ids);
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT pa.*, e.employee_code, e.full_name FROM performance_alert pa
+      `SELECT pa.*, e.employee_code, e.full_name AS employee_name FROM performance_alert pa
          JOIN employees e ON e.id = pa.employee_id
         WHERE ${conds.join(" AND ")} ORDER BY pa.created_at DESC LIMIT 200`,
       params
@@ -176,133 +310,645 @@ export const managementService = {
   },
 
   async getDashboardSummary(processId?: string, employeeIds?: string[]) {
-    const proc = processId ? "AND e.process_id = ?" : "";
-    const params: unknown[] = processId ? [processId] : [];
-    const empFilter = employeeIds && employeeIds.length > 0
-      ? `AND e.id IN (${employeeIds.map(() => "?").join(",")})` : "";
-    const empParams: unknown[] = employeeIds && employeeIds.length > 0 ? employeeIds : [];
+    // Build scope conditions
+    const hasEmpScope = employeeIds && employeeIds.length > 0;
+    const processClause = processId ? "AND e.process_id = ?" : "";
+    const processParams: unknown[] = processId ? [processId] : [];
 
-    const [headcountRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS headcount FROM employees e WHERE e.active_status = 1 ${proc} ${empFilter}`, [...params, ...empParams]
-    );
-    const [attritionRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS exits FROM employees e WHERE e.active_status = 0 AND e.date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR) ${proc} ${empFilter}`, [...params, ...empParams]
-    );
-    const [kpiRows] = await db.execute<RowDataPacket[]>(
-      `SELECT AVG(mks.overall_score) AS avg_kpi_score FROM management_kpi_summary mks JOIN employees e ON e.id = mks.employee_id WHERE 1=1 ${proc} ${empFilter}`, [...params, ...empParams]
-    );
-    const [ticketRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS open_tickets FROM performance_alert pa JOIN employees e ON e.id = pa.employee_id WHERE pa.acknowledged = 0 ${proc} ${empFilter}`, [...params, ...empParams]
-    );
-    const [leaveRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS pending_leaves FROM leave_request lr JOIN employees e ON e.id = lr.employee_id WHERE lr.status = 'pending' ${proc} ${empFilter}`, [...params, ...empParams]
-    );
-    const [attendanceRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total, SUM(CASE WHEN s.current_status = 'Logged In' THEN 1 ELSE 0 END) AS present FROM wfm_attendance_session s JOIN employees e ON e.id = s.employee_id WHERE s.session_date = CURDATE() ${proc} ${empFilter}`, [...params, ...empParams]
-    );
+    // When we have an explicit employee list, use IN clause; otherwise fall back to process filter
+    const buildEmpConds = (alias: string) => {
+      if (hasEmpScope) {
+        const placeholders = employeeIds!.map(() => "?").join(",");
+        return { clause: `AND ${alias}.id IN (${placeholders})`, params: [...employeeIds!] };
+      }
+      return { clause: processClause, params: [...processParams] };
+    };
 
-    const headcount = Number((headcountRows as any)[0]?.headcount) || 0;
-    const exits = Number((attritionRows as any)[0]?.exits) || 0;
-    const attrition_rate = headcount > 0 ? Math.round((exits / headcount) * 100 * 10) / 10 : 0;
-    const avg_kpi_score = Math.round((Number((kpiRows as any)[0]?.avg_kpi_score) || 0) * 10) / 10;
-    const open_tickets = Number((ticketRows as any)[0]?.open_tickets) || 0;
-    const pending_leaves = Number((leaveRows as any)[0]?.pending_leaves) || 0;
-    const total_att = Number((attendanceRows as any)[0]?.total) || 0;
-    const present_att = Number((attendanceRows as any)[0]?.present) || 0;
-    const attendance_rate = total_att > 0 ? Math.round((present_att / total_att) * 100 * 10) / 10 : 0;
+    const empConds = buildEmpConds("e");
+
+    const [
+      workforceRows,
+      leaveRows,
+      ticketRows,
+      attendanceRows,
+      kpiRows,
+    ] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           SUM(e.active_status = 1 AND e.date_of_joining <= CURDATE()) AS headcount,
+           SUM(
+             COALESCE(e.date_of_leaving, e.resignation_date, e.date_of_exit)
+             BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()
+           ) AS exits_30d
+         FROM employees e
+         WHERE 1=1 ${empConds.clause}`,
+        empConds.params
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS pending_leaves
+           FROM leave_request lr
+           JOIN employees e ON e.id = lr.employee_id
+          WHERE LOWER(lr.status) = 'pending' ${empConds.clause}`,
+        empConds.params
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS open_tickets
+           FROM helpdesk_ticket ht
+           JOIN employees e ON e.id = ht.employee_id
+          WHERE ht.status IN ('open', 'in_progress') ${empConds.clause}`,
+        empConds.params
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(*) AS total,
+           SUM(adr.attendance_status = 'present') AS present,
+           SUM(adr.attendance_status = 'half_day') AS half_day
+         FROM attendance_daily_record adr
+         JOIN employees e ON e.id = adr.employee_id
+         WHERE adr.record_date = (
+           SELECT MAX(record_date) FROM attendance_daily_record WHERE record_date <= CURDATE()
+         ) ${empConds.clause}`,
+        empConds.params
+      ),
+      this.getTeamKpiSummary({
+        process_id: hasEmpScope ? undefined : processId,
+        period: new Date().toISOString().slice(0, 7),
+        employee_ids: employeeIds,
+      }),
+    ]);
+
+    const workforce = workforceRows[0][0] ?? {};
+    const attendance = attendanceRows[0][0] ?? {};
+    const headcount = numberValue(workforce.headcount);
+    const exits = numberValue(workforce.exits_30d);
+    const attendanceTotal = numberValue(attendance.total);
+    const averageKpi = kpiRows.length
+      ? (kpiRows as any[]).reduce((sum, row) => sum + numberValue(row.overall_score), 0) / kpiRows.length
+      : 0;
 
     return {
       headcount,
-      attrition_rate,
-      avg_kpi_score,
-      open_tickets,
-      pending_leaves,
-      attendance_rate,
-    };
-  },
-
-  async getWorkforceDashboard() {
-    const [headcountRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total_active FROM employees WHERE active_status = 1`
-    );
-    const [deptRows] = await db.execute<RowDataPacket[]>(
-      `SELECT dept.dept_name, COUNT(e.id) AS headcount
-         FROM employees e
-         JOIN department_master dept ON dept.id = e.department_id
-        WHERE e.active_status = 1
-        GROUP BY dept.id, dept.dept_name ORDER BY headcount DESC LIMIT 20`
-    );
-    const [joiningRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(date_of_joining, '%Y-%m') AS month, COUNT(*) AS joinings
-         FROM employees
-        WHERE date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
-        GROUP BY month ORDER BY month ASC`
-    );
-    const [exitRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(date_of_exit, '%Y-%m') AS month, COUNT(*) AS exits
-         FROM employees
-        WHERE date_of_exit >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
-        GROUP BY month ORDER BY month ASC`
-    );
-    return {
-      total_active: Number((headcountRows as any)[0]?.total_active) || 0,
-      department_breakdown: deptRows,
-      joining_trend: joiningRows,
-      exit_trend: exitRows,
+      attrition_rate: headcount + exits > 0
+        ? Number(((exits / (headcount + exits / 2)) * 100).toFixed(2))
+        : 0,
+      avg_kpi_score: Number(averageKpi.toFixed(2)),
+      open_tickets: numberValue(ticketRows[0][0]?.open_tickets),
+      pending_leaves: numberValue(leaveRows[0][0]?.pending_leaves),
+      attendance_rate: attendanceTotal > 0
+        ? Number(
+            ((
+              (numberValue(attendance.present) + numberValue(attendance.half_day) * 0.5)
+              / attendanceTotal
+            ) * 100).toFixed(2)
+          )
+        : 0,
     };
   },
 
   async getSystemDashboard() {
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM employees`
-    );
-    const [activeRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS active FROM employees WHERE active_status = 1`
-    );
-    const [userRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total_users FROM auth_user`
-    );
-    const [leaveRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS pending FROM leave_request WHERE status = 'pending'`
-    );
-    const [alertRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS unacked FROM performance_alert WHERE acknowledged = 0`
-    );
+    const [
+      usersRows,
+      employeeRows,
+      roleRows,
+      pageRows,
+      integrationRows,
+      moduleRows,
+      activityRows,
+    ] = await Promise.all([
+      db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM auth_user"),
+      db.execute<RowDataPacket[]>(
+        "SELECT COUNT(*) AS total FROM employees WHERE active_status = 1 AND date_of_joining <= CURDATE()"
+      ),
+      db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM workforce_role_catalog WHERE active_status = 1"),
+      db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM page_catalog"),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(*) AS configured,
+           SUM(active_status = 1) AS active
+         FROM integration_config`
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT 'ATS' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity, 0 AS error_count
+           FROM ats_candidate
+         UNION ALL
+         SELECT 'Payroll', COUNT(*), MAX(updated_at), SUM(status = 'failed')
+           FROM salary_prep_run
+         UNION ALL
+         SELECT 'Leave', COUNT(*), MAX(COALESCE(applied_at, created_at)), 0
+           FROM leave_request
+         UNION ALL
+         SELECT 'Attendance', COUNT(*), MAX(updated_at), 0
+           FROM attendance_daily_record
+         UNION ALL
+         SELECT 'Integration Hub', COUNT(*), MAX(completed_at),
+                SUM(status = 'failed' AND started_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR))
+           FROM integration_connector_run
+         UNION ALL
+         SELECT 'KPI', COUNT(*), MAX(created_at), 0
+           FROM kpi_daily_actual`
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           sal.id,
+           LOWER(sal.module_key) AS type,
+           COALESCE(au.email, 'System') AS user,
+           REPLACE(LOWER(sal.action_type), '_', ' ') AS action,
+           sal.acted_at AS timestamp,
+           'success' AS status
+         FROM sensitive_action_log sal
+         LEFT JOIN auth_user au ON au.id = sal.actor_user_id
+         ORDER BY sal.acted_at DESC
+         LIMIT 12`
+      ),
+    ]);
+
+    const modules = moduleRows[0].map((row) => {
+      const recordCount = numberValue(row.record_count);
+      const errorCount = numberValue(row.error_count);
+      return {
+        module: String(row.module_name),
+        status: errorCount > 0 ? "degraded" : recordCount > 0 ? "operational" : "degraded",
+        lastActivity: row.last_activity ?? null,
+        errorCount,
+        recordCount,
+      };
+    });
+
     return {
-      total_employees: Number((empRows as any)[0]?.total) || 0,
-      active_employees: Number((activeRows as any)[0]?.active) || 0,
-      total_users: Number((userRows as any)[0]?.total_users) || 0,
-      pending_leaves: Number((leaveRows as any)[0]?.pending) || 0,
-      unacknowledged_alerts: Number((alertRows as any)[0]?.unacked) || 0,
+      metrics: {
+        totalUsers: numberValue(usersRows[0][0]?.total),
+        activeEmployees: numberValue(employeeRows[0][0]?.total),
+        totalRoles: numberValue(roleRows[0][0]?.total),
+        totalPages: numberValue(pageRows[0][0]?.total),
+        activeIntegrations: numberValue(integrationRows[0][0]?.active),
+        configuredIntegrations: numberValue(integrationRows[0][0]?.configured),
+        systemHealth: modules.some((module) => module.status === "degraded") ? "warning" : "healthy",
+      },
+      modules,
+      activities: activityRows[0],
+    };
+  },
+
+  async getWorkforceDashboard() {
+    const [
+      workforceResult,
+      departmentResult,
+      branchResult,
+      employmentResult,
+      joinerResult,
+      leaverResult,
+      pipelineResult,
+      attendanceResult,
+      trainingResult,
+      approvalResult,
+      mandateResult,
+    ] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           SUM(active_status = 1 AND date_of_joining <= CURDATE()) AS active_headcount,
+           SUM(active_status = 1 AND date_of_joining BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()) AS new_joiners_30d,
+           SUM(
+             COALESCE(date_of_leaving, resignation_date, date_of_exit)
+             BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()
+           ) AS exits_30d,
+           SUM(active_status = 1 AND COALESCE(reporting_manager_id, manager_id) IS NULL) AS missing_manager,
+           SUM(active_status = 1 AND department_id IS NULL) AS missing_department,
+           SUM(active_status = 1 AND process_id IS NULL) AS missing_process,
+           SUM(active_status = 1 AND (bank_account_number IS NULL OR bank_account_number = '')) AS missing_bank_details
+         FROM employees`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(d.dept_name, 'Unassigned') AS label, COUNT(*) AS value
+           FROM employees e
+           LEFT JOIN department_master d ON d.id = e.department_id
+          WHERE e.active_status = 1 AND e.date_of_joining <= CURDATE()
+          GROUP BY d.dept_name
+          ORDER BY value DESC
+          LIMIT 10`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(b.branch_name, 'Unassigned') AS label, COUNT(*) AS value
+           FROM employees e
+           LEFT JOIN branch_master b ON b.id = e.branch_id
+          WHERE e.active_status = 1 AND e.date_of_joining <= CURDATE()
+          GROUP BY b.branch_name
+          ORDER BY value DESC
+          LIMIT 8`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COALESCE(NULLIF(employee_category, ''), NULLIF(employment_type, ''), 'Unspecified') AS label,
+           COUNT(*) AS value
+         FROM employees
+         WHERE active_status = 1 AND date_of_joining <= CURDATE()
+         GROUP BY COALESCE(NULLIF(employee_category, ''), NULLIF(employment_type, ''), 'Unspecified')
+         ORDER BY value DESC`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT DATE_FORMAT(date_of_joining, '%Y-%m') AS period, COUNT(*) AS value
+           FROM employees
+          WHERE date_of_joining BETWEEN DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01') AND CURDATE()
+          GROUP BY DATE_FORMAT(date_of_joining, '%Y-%m')`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           DATE_FORMAT(COALESCE(date_of_leaving, resignation_date, date_of_exit), '%Y-%m') AS period,
+           COUNT(*) AS value
+         FROM employees
+         WHERE COALESCE(date_of_leaving, resignation_date, date_of_exit)
+           BETWEEN DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01') AND CURDATE()
+         GROUP BY DATE_FORMAT(COALESCE(date_of_leaving, resignation_date, date_of_exit), '%Y-%m')`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(NULLIF(current_stage, ''), 'Unspecified') AS stage, COUNT(*) AS value
+           FROM ats_candidate
+          WHERE active_status = 1
+          GROUP BY COALESCE(NULLIF(current_stage, ''), 'Unspecified')
+          ORDER BY value DESC`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           record_date,
+           attendance_status AS status,
+           COUNT(*) AS value
+         FROM attendance_daily_record
+         WHERE record_date = (
+           SELECT MAX(record_date)
+           FROM attendance_daily_record
+           WHERE record_date <= CURDATE()
+         )
+         GROUP BY record_date, attendance_status`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           (SELECT COUNT(DISTINCT candidate_id)
+              FROM ats_payroll_hr_validation
+             WHERE validation_status = 'approved'
+               AND training_period_days > 0
+               AND joining_date <= CURDATE()
+               AND COALESCE(training_end_date, DATE_ADD(joining_date, INTERVAL training_period_days DAY)) >= CURDATE()
+           ) AS ats_training,
+           (SELECT COUNT(DISTINCT id)
+              FROM ats_candidate
+             WHERE active_status = 1 AND LOWER(current_stage) LIKE '%train%'
+           ) AS training_stage_candidates,
+           (SELECT COUNT(DISTINCT employee_id)
+              FROM training_need
+             WHERE status = 'in_training'
+           ) AS training_needs_in_progress,
+           (SELECT COUNT(DISTINCT employee_id)
+              FROM lms_learning_progress_snapshot
+             WHERE status = 'in_progress'
+           ) AS lms_in_progress,
+           (SELECT COUNT(*)
+              FROM ats_onboarding_request
+             WHERE status IN ('pending', 'in_progress', 'offer_submitted')
+           ) AS onboarding_in_progress`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           (SELECT COUNT(*) FROM leave_request WHERE LOWER(status) = 'pending') AS pending_leave_approvals,
+           (SELECT COUNT(*) FROM performance_alert
+             WHERE acknowledged = 0 AND severity IN ('high', 'critical')) AS critical_performance_alerts`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(*) AS active_mandates,
+           COALESCE(SUM(mandated_hc), 0) AS mandated_hc,
+           COALESCE(SUM(
+             CEIL(mandated_hc * (1 + (buffer_pct + shrinkage_pct + attrition_buffer_pct + training_buffer_pct) / 100))
+           ), 0) AS required_hc
+         FROM workforce_mandate
+         WHERE active_status = 1
+           AND effective_from <= CURDATE()
+           AND (effective_to IS NULL OR effective_to >= CURDATE())`,
+      ),
+    ]);
+
+    const workforce = workforceResult[0][0] ?? {};
+    const training = trainingResult[0][0] ?? {};
+    const approvals = approvalResult[0][0] ?? {};
+    const mandate = mandateResult[0][0] ?? {};
+    const activeHeadcount = numberValue(workforce.active_headcount);
+    const exits30d = numberValue(workforce.exits_30d);
+    const attritionDenominator = activeHeadcount + exits30d / 2;
+    const attritionRate30d = attritionDenominator > 0
+      ? Number(((exits30d / attritionDenominator) * 100).toFixed(2))
+      : 0;
+
+    const attendanceRows = attendanceResult[0];
+    const attendanceByStatus = Object.fromEntries(
+      attendanceRows.map((row) => [String(row.status), numberValue(row.value)]),
+    );
+    const attendanceTotal = Object.values(attendanceByStatus).reduce((sum, value) => sum + value, 0);
+    const absentEquivalent =
+      numberValue(attendanceByStatus.absent)
+      + numberValue(attendanceByStatus.leave_approved)
+      + numberValue(attendanceByStatus.unreconciled)
+      + numberValue(attendanceByStatus.half_day) * 0.5;
+    const productiveEquivalent =
+      numberValue(attendanceByStatus.present)
+      + numberValue(attendanceByStatus.half_day) * 0.5;
+    const attendanceDate = attendanceRows[0]?.record_date
+      ? new Date(attendanceRows[0].record_date as string | Date).toISOString().slice(0, 10)
+      : null;
+    const attendanceDataAgeDays = attendanceDate
+      ? Math.max(0, Math.floor((Date.now() - new Date(`${attendanceDate}T00:00:00Z`).getTime()) / 86_400_000))
+      : null;
+
+    const months = monthKeys(6);
+    const joinsByMonth = new Map(
+      joinerResult[0].map((row) => [String(row.period), numberValue(row.value)]),
+    );
+    const exitsByMonth = new Map(
+      leaverResult[0].map((row) => [String(row.period), numberValue(row.value)]),
+    );
+    let runningHeadcount = activeHeadcount;
+    const movement = [...months].reverse().map((period) => {
+      const joins = joinsByMonth.get(period) ?? 0;
+      const exits = exitsByMonth.get(period) ?? 0;
+      const point = { period, headcount: runningHeadcount, joins, exits };
+      runningHeadcount = runningHeadcount - joins + exits;
+      return point;
+    }).reverse();
+
+    const pipeline = pipelineResult[0].map((row) => ({
+      stage: String(row.stage),
+      value: numberValue(row.value),
+    }));
+    const terminalStages = new Set(["onboarded", "converted", "rejected", "declined", "withdrawn"]);
+    const openPipeline = pipeline.reduce(
+      (sum, item) => terminalStages.has(item.stage.toLowerCase()) ? sum : sum + item.value,
+      0,
+    );
+    const analystsInTraining =
+      numberValue(training.ats_training) + numberValue(training.training_stage_candidates);
+
+    return {
+      generated_at: new Date().toISOString(),
+      summary: {
+        active_headcount: activeHeadcount,
+        new_joiners_30d: numberValue(workforce.new_joiners_30d),
+        exits_30d: exits30d,
+        attrition_rate_30d: attritionRate30d,
+        open_pipeline: openPipeline,
+        analysts_in_training: analystsInTraining,
+        shrinkage_pct: attendanceTotal > 0
+          ? Number(((absentEquivalent / attendanceTotal) * 100).toFixed(2))
+          : null,
+        attendance_pct: attendanceTotal > 0
+          ? Number(((productiveEquivalent / attendanceTotal) * 100).toFixed(2))
+          : null,
+      },
+      movement,
+      headcount_by_department: departmentResult[0].map((row) => ({
+        label: String(row.label),
+        value: numberValue(row.value),
+      })),
+      headcount_by_branch: branchResult[0].map((row) => ({
+        label: String(row.label),
+        value: numberValue(row.value),
+      })),
+      employment_mix: employmentResult[0].map((row) => ({
+        label: String(row.label),
+        value: numberValue(row.value),
+      })),
+      pipeline,
+      attendance: {
+        record_date: attendanceDate,
+        data_age_days: attendanceDataAgeDays,
+        total: attendanceTotal,
+        statuses: attendanceRows.map((row) => ({
+          label: String(row.status),
+          value: numberValue(row.value),
+        })),
+      },
+      training: {
+        analysts_in_training: analystsInTraining,
+        ats_training: numberValue(training.ats_training),
+        training_stage_candidates: numberValue(training.training_stage_candidates),
+        training_needs_in_progress: numberValue(training.training_needs_in_progress),
+        lms_in_progress: numberValue(training.lms_in_progress),
+        onboarding_in_progress: numberValue(training.onboarding_in_progress),
+      },
+      actions: {
+        pending_leave_approvals: numberValue(approvals.pending_leave_approvals),
+        critical_performance_alerts: numberValue(approvals.critical_performance_alerts),
+        missing_manager: numberValue(workforce.missing_manager),
+        missing_department: numberValue(workforce.missing_department),
+        missing_process: numberValue(workforce.missing_process),
+        missing_bank_details: numberValue(workforce.missing_bank_details),
+      },
+      mandate: {
+        active_mandates: numberValue(mandate.active_mandates),
+        mandated_hc: numberValue(mandate.mandated_hc),
+        required_hc: numberValue(mandate.required_hc),
+        gap: numberValue(mandate.required_hc) - activeHeadcount,
+      },
+      data_readiness: {
+        attendance_available: attendanceTotal > 0,
+        attendance_fresh: attendanceDataAgeDays !== null && attendanceDataAgeDays <= 1,
+        training_records_available:
+          analystsInTraining
+          + numberValue(training.training_needs_in_progress)
+          + numberValue(training.lms_in_progress) > 0,
+        workforce_mandates_available: numberValue(mandate.active_mandates) > 0,
+      },
     };
   },
 
   async getCeoMetrics() {
-    const [headcountRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS headcount FROM employees WHERE active_status = 1`
+    const [
+      payrollResult,
+      mandateGapResult,
+      shrinkageResult,
+      billingResult,
+      attritionCostResult,
+      hiringGapResult,
+      ffLiabilityResult,
+    ] = await Promise.all([
+      // 1. Payroll liability — latest run (any status)
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COALESCE(SUM(spl.gross_salary), 0)  AS total_gross,
+           COALESCE(SUM(spl.net_salary), 0)    AS total_net,
+           COALESCE(SUM(spl.pf_employer), 0)   AS total_pf_employer,
+           COALESCE(SUM(spl.esic_employer), 0) AS total_esic_employer,
+           COUNT(DISTINCT spl.employee_id)     AS employee_count,
+           spr.run_month
+         FROM salary_prep_run spr
+         JOIN salary_prep_line spl ON spl.run_id = spr.id
+         WHERE spr.run_month = (
+           SELECT MAX(run_month) FROM salary_prep_run
+           WHERE status IN ('draft','processing','completed')
+         )
+         GROUP BY spr.run_month
+         LIMIT 1`
+      ),
+      // 2. HC gap by process: mandated vs active
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           p.process_name,
+           wm.mandated_hc,
+           CEIL(wm.mandated_hc * (1 + (wm.buffer_pct + wm.shrinkage_pct + wm.attrition_buffer_pct + wm.training_buffer_pct) / 100)) AS required_hc,
+           COALESCE(ec.active_hc, 0) AS active_hc,
+           CEIL(wm.mandated_hc * (1 + (wm.buffer_pct + wm.shrinkage_pct + wm.attrition_buffer_pct + wm.training_buffer_pct) / 100))
+             - COALESCE(ec.active_hc, 0) AS hc_gap
+         FROM workforce_mandate wm
+         JOIN process_master p ON p.id = wm.process_id
+         LEFT JOIN (
+           SELECT process_id, COUNT(*) AS active_hc
+           FROM employees WHERE active_status = 1
+           GROUP BY process_id
+         ) ec ON ec.process_id = wm.process_id
+         WHERE wm.active_status = 1
+           AND wm.effective_from <= CURDATE()
+           AND (wm.effective_to IS NULL OR wm.effective_to >= CURDATE())
+         ORDER BY hc_gap DESC
+         LIMIT 10`
+      ),
+      // 3. Shrinkage cost from latest snapshot
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           sds.process_id,
+           COALESCE(p.process_name, 'Unknown') AS process_name,
+           sds.rostered_hc,
+           sds.absent_hc,
+           sds.total_shrinkage_pct,
+           sds.snapshot_date,
+           ROUND(
+             COALESCE(sds.absent_hc, 0) * COALESCE(
+               (SELECT AVG(esa.ctc_annual / 365 / 8)
+                FROM employee_salary_assignment esa
+                JOIN employees e ON e.id = esa.employee_id
+                WHERE e.process_id = sds.process_id
+                  AND esa.effective_from <= CURDATE()
+                  AND (esa.effective_to IS NULL OR esa.effective_to >= CURDATE())
+               ), 0
+             ), 2
+           ) AS estimated_daily_revenue_at_risk
+         FROM shrinkage_daily_snapshot sds
+         LEFT JOIN process_master p ON p.id = sds.process_id
+         WHERE sds.snapshot_date = (
+           SELECT MAX(snapshot_date) FROM shrinkage_daily_snapshot WHERE snapshot_date <= CURDATE()
+         )
+         ORDER BY sds.total_shrinkage_pct DESC
+         LIMIT 8`
+      ),
+      // 4. Last billing cycle
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COALESCE(SUM(bi.net_amount), 0)   AS total_billed,
+           COALESCE(SUM(bi.gross_amount), 0) AS total_gross_billed,
+           COUNT(DISTINCT bi.process_id)     AS process_count,
+           DATE_FORMAT(bi.period_from, '%Y-%m') AS billing_month
+         FROM billing_invoice bi
+         WHERE bi.status IN ('approved', 'paid')
+           AND bi.period_from >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
+         GROUP BY DATE_FORMAT(bi.period_from, '%Y-%m')
+         ORDER BY billing_month DESC
+         LIMIT 1`
+      ),
+      // 5. Attrition replacement cost (exits last 30d × avg CTC/12)
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(*) AS exits_30d,
+           ROUND(
+             COUNT(*) * COALESCE(
+               (SELECT AVG(esa.ctc_annual)
+                FROM employee_salary_assignment esa
+                WHERE esa.effective_from <= CURDATE()
+                  AND (esa.effective_to IS NULL OR esa.effective_to >= CURDATE())
+               ), 0
+             ) / 12, 0
+           ) AS replacement_cost_estimate
+         FROM employees
+         WHERE COALESCE(date_of_leaving, resignation_date, date_of_exit)
+           BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND CURDATE()`
+      ),
+      // 6. Open hiring pipeline
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(*) AS open_candidates,
+           SUM(CASE WHEN current_stage IN ('offer_sent','offer_accepted') THEN 1 ELSE 0 END) AS offers_pending_joining,
+           SUM(CASE WHEN current_stage IN ('screened','interview_scheduled','interview_done') THEN 1 ELSE 0 END) AS in_pipeline
+         FROM ats_candidate
+         WHERE active_status = 1
+           AND current_stage NOT IN ('joined','rejected','declined','withdrawn','absconded')`
+      ),
+      // 7. F&F pending liability
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(*) AS pending_ff_count,
+           COALESCE(SUM(ffc.net_payable), 0) AS pending_ff_liability
+         FROM full_final_calculation ffc
+         JOIN exit_request er ON er.id = ffc.exit_request_id
+         WHERE er.status NOT IN ('completed','cancelled')
+           AND ffc.is_ff_provisional = 1`
+      ),
+    ]);
+
+    const payroll = payrollResult[0][0] ?? {};
+    const mandateGaps = mandateGapResult[0] as RowDataPacket[];
+    const shrinkageByProcess = shrinkageResult[0] as RowDataPacket[];
+    const billing = billingResult[0][0] ?? {};
+    const attrition = attritionCostResult[0][0] ?? {};
+    const hiring = hiringGapResult[0][0] ?? {};
+    const ff = ffLiabilityResult[0][0] ?? {};
+
+    const totalHcGap = mandateGaps.reduce((s, r) => s + Math.max(0, numberValue(r.hc_gap)), 0);
+    const totalRevenueAtRisk = shrinkageByProcess.reduce(
+      (s, r) => s + numberValue(r.estimated_daily_revenue_at_risk), 0
     );
-    const [kpiRows] = await db.execute<RowDataPacket[]>(
-      `SELECT AVG(overall_score) AS avg_score FROM management_kpi_summary`
-    );
-    const [attendanceRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total,
-              SUM(CASE WHEN current_status = 'Logged In' THEN 1 ELSE 0 END) AS present
-         FROM wfm_attendance_session WHERE session_date = CURDATE()`
-    );
-    const [branchRows] = await db.execute<RowDataPacket[]>(
-      `SELECT b.branch_name, COUNT(e.id) AS headcount
-         FROM employees e
-         JOIN branch_master b ON b.id = e.branch_id
-        WHERE e.active_status = 1
-        GROUP BY b.id, b.branch_name ORDER BY headcount DESC`
-    );
-    const total_att = Number((attendanceRows as any)[0]?.total) || 0;
-    const present_att = Number((attendanceRows as any)[0]?.present) || 0;
+    const processesUnderstaffed = mandateGaps.filter(r => numberValue(r.hc_gap) > 0).length;
+
     return {
-      headcount: Number((headcountRows as any)[0]?.headcount) || 0,
-      avg_kpi_score: Math.round((Number((kpiRows as any)[0]?.avg_score) || 0) * 10) / 10,
-      attendance_rate: total_att > 0 ? Math.round((present_att / total_att) * 100 * 10) / 10 : 0,
-      branch_breakdown: branchRows,
+      payroll_liability: {
+        run_month: payroll.run_month ?? null,
+        total_gross: numberValue(payroll.total_gross),
+        total_net: numberValue(payroll.total_net),
+        employer_statutory: numberValue(payroll.total_pf_employer) + numberValue(payroll.total_esic_employer),
+        employee_count: numberValue(payroll.employee_count),
+      },
+      hc_gap: {
+        total_gap: totalHcGap,
+        processes_understaffed: processesUnderstaffed,
+        by_process: mandateGaps.map(r => ({
+          process_name: String(r.process_name),
+          mandated_hc: numberValue(r.mandated_hc),
+          required_hc: numberValue(r.required_hc),
+          active_hc: numberValue(r.active_hc),
+          gap: Math.max(0, numberValue(r.hc_gap)),
+        })),
+      },
+      revenue_at_risk: {
+        total_daily_estimate: totalRevenueAtRisk,
+        by_process: shrinkageByProcess.map(r => ({
+          process_name: String(r.process_name),
+          shrinkage_pct: numberValue(r.total_shrinkage_pct),
+          absent_hc: numberValue(r.absent_hc),
+          daily_revenue_at_risk: numberValue(r.estimated_daily_revenue_at_risk),
+          snapshot_date: r.snapshot_date ?? null,
+        })),
+      },
+      billing: {
+        last_month_billed: numberValue(billing.total_billed),
+        billing_month: billing.billing_month ?? null,
+        process_count: numberValue(billing.process_count),
+      },
+      attrition_cost: {
+        exits_30d: numberValue(attrition.exits_30d),
+        replacement_cost_estimate: numberValue(attrition.replacement_cost_estimate),
+      },
+      hiring_pipeline: {
+        open_candidates: numberValue(hiring.open_candidates),
+        offers_pending_joining: numberValue(hiring.offers_pending_joining),
+        in_pipeline: numberValue(hiring.in_pipeline),
+      },
+      ff_liability: {
+        pending_count: numberValue(ff.pending_ff_count),
+        pending_amount: numberValue(ff.pending_ff_liability),
+      },
     };
   },
 };
