@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useSearchParams } from "react-router-dom";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
@@ -113,6 +114,9 @@ export default function AttendanceRegularization() {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  const [searchParams] = useSearchParams();
+  const linkedEmployeeId = searchParams.get("employeeId");
+
   const filteredRequests = useMemo(() => {
     if (filterStatus === "all") return requests;
     return requests.filter((item) => item.current_status === filterStatus);
@@ -143,6 +147,11 @@ export default function AttendanceRegularization() {
 
   useEffect(() => {
     loadRequests();
+    const dateParam = searchParams.get("date");
+    if (dateParam) {
+      setForm((prev) => ({ ...prev, attendanceDate: dateParam }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function submitRequest() {
@@ -254,6 +263,13 @@ export default function AttendanceRegularization() {
             <p className="mt-1 text-sm text-slate-500">
               Use this form when attendance is wrong, missing, or needs correction.
             </p>
+
+            {linkedEmployeeId && (
+              <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                Deep-linked from notification — Employee ID: <span className="font-mono font-bold">{linkedEmployeeId}</span>.
+                The date below has been pre-filled. Submit to regularize your own attendance for that date.
+              </div>
+            )}
 
             <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <Field label="Attendance Date">
