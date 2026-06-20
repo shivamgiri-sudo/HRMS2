@@ -104,10 +104,13 @@ export const exitService = {
          LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
          LEFT JOIN (
            SELECT exit_request_id, owner_role
-             FROM exit_clearance_task
-            WHERE status NOT IN ('cleared','waived')
-            ORDER BY created_at ASC
-            LIMIT 1
+             FROM (
+               SELECT exit_request_id, owner_role,
+                      ROW_NUMBER() OVER (PARTITION BY exit_request_id ORDER BY created_at ASC) AS rn
+                 FROM exit_clearance_task
+                WHERE status NOT IN ('cleared','waived')
+             ) ranked
+            WHERE rn = 1
          ) pending_clearance ON pending_clearance.exit_request_id = er.id
          ${where}
         ORDER BY er.created_at DESC
