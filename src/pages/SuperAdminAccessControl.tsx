@@ -283,7 +283,7 @@ export default function SuperAdminAccessControl() {
                     {users.map(user => (
                       <SelectItem key={user.id} value={user.id}>
                         {user.full_name?.trim()
-                          ? `${user.full_name}${user.employee_code ? ` (${user.employee_code})` : ""}`
+                          ? `${user.full_name}${user.employee_code ? ` (${user.employee_code})` : ""} — ${user.email}`
                           : user.email}
                       </SelectItem>
                     ))}
