@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
+import { ReportingManagerChangeDialog } from "@/components/profile/ReportingManagerChangeDialog";
+import { ChangePasswordDialog } from "@/components/profile/ChangePasswordDialog";
+import { useMyRMChangeRequests } from "@/hooks/useReportingManagerChange";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -18,10 +19,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, User, Mail, Phone, MapPin, Building2, Calendar, Briefcase, Save, Shield, FileText, Clock, Wallet, Files, Package, Star, Camera, Upload } from "lucide-react";
+import {
+  Loader2, User, Mail, Phone, MapPin, Building2, Calendar,
+    Briefcase, Save, Clock, Wallet, Files, Package, Star,
+    Users, Cake, Edit3, X, ChevronRight, GitBranch, Landmark,
+    HeartHandshake,
+} from "lucide-react";
+import { PhotoUpload } from "@/components/employee/PhotoUpload";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth, useIsReadOnly } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import { EmployeeDocuments } from "@/components/documents/EmployeeDocuments";
 import { LeaveBalanceCard } from "@/components/profile/LeaveBalanceCard";
 import { LeaveRequestForm } from "@/components/profile/LeaveRequestForm";
@@ -32,38 +40,83 @@ import { MyAttendanceHistory } from "@/components/profile/MyAttendanceHistory";
 import { AttendanceCalendar } from "@/components/attendance/AttendanceCalendar";
 import { MyAssets } from "@/components/profile/MyAssets";
 import { MyPerformanceReviews } from "@/components/profile/MyPerformanceReviews";
-
-interface EmployeeProfile {
-  id: string;
-  employee_code: string;
-  first_name: string;
-  last_name: string;
-  email: string;
-  phone: string | null;
-  address: string | null;
-  city: string | null;
-  country: string | null;
-  designation: string;
-  hire_date: string;
-  date_of_birth: string | null;
-  gender: string | null;
-  status: string;
-  department: { name: string } | null;
-  working_hours_start: string | null;
-  working_hours_end: string | null;
-  working_days: number[] | null;
-}
+import { EmployeeJourneyTimeline } from "@/components/employees/EmployeeJourneyTimeline";
+import {
+  BankStatutoryDetails,
+  EmergencyNomineeDetails,
+} from "@/components/profile/ProfileSensitiveDetails";
 
 interface ProfileForm {
+  email: string;
   phone: string;
+  personal_email: string;
+  personal_phone: string;
+  alternate_mobile: string;
+  personal_mobile: string;
   address: string;
   city: string;
   country: string;
   date_of_birth: string;
   gender: string;
+  marital_status: string;
+  blood_group: string;
   working_hours_start: string;
   working_hours_end: string;
   working_days: number[];
+}
+
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const formatDate = (dateStr: string | null) => {
+  if (!dateStr) return "—";
+  const datePart = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/)?.slice(1);
+  if (!datePart) return "—";
+  const [year, month, day] = datePart.map(Number);
+  // Use UTC to avoid timezone offset issues
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return "—";
+  }
+  return date.toLocaleDateString("en-IN", {
+    year: "numeric", month: "long", day: "numeric",
+    timeZone: "UTC",
+  });
+};
+
+const formatTime = (time: string | null) => {
+  if (!time) return "—";
+  const [h, m] = time.split(":").map(Number);
+  const ampm = h >= 12 ? "PM" : "AM";
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
+};
+
+function InfoRow({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string | null | undefined }) {
+  return (
+    <div className="flex items-start gap-3 py-3">
+      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-100">
+        <Icon className="h-4 w-4 text-slate-700" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">{label}</p>
+        <p className="mt-1 break-words text-base font-extrabold leading-6 text-slate-950 uppercase">{value || "—"}</p>
+      </div>
+    </div>
+  );
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-4 flex items-center gap-2">
+      <span className="h-px flex-1 bg-slate-100" />
+      <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{children}</span>
+      <span className="h-px flex-1 bg-slate-100" />
+    </div>
+  );
 }
 
 const Profile = () => {
@@ -71,159 +124,127 @@ const Profile = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { isAdminOrHR } = useIsAdminOrHR();
+  const isReadOnly = useIsReadOnly();
 
   const tabParam = (searchParams.get("tab") || "").toLowerCase();
-  const allowedTabs = ["profile", "leaves", "attendance", "assets", "reviews", "payslips", "documents"] as const;
+  const allowedTabs = ["profile", "statutory", "emergency", "journey", "leaves", "attendance", "assets", "reviews", "payslips", "documents"] as const;
   const initialTab = allowedTabs.includes(tabParam as (typeof allowedTabs)[number]) ? tabParam : "profile";
 
   const [activeTab, setActiveTab] = useState<string>(initialTab);
   const [isEditing, setIsEditing] = useState(false);
+  const [rmChangeOpen, setRmChangeOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [formData, setFormData] = useState<ProfileForm>({
-    phone: '',
-    address: '',
-    city: '',
-    country: '',
-    date_of_birth: '',
-    gender: '',
-    working_hours_start: '09:00',
-    working_hours_end: '18:00',
-    working_days: [1, 2, 3, 4, 5],
+    email: "", phone: "", personal_email: "", personal_mobile: "", personal_phone: "", alternate_mobile: "", address: "", city: "", country: "",
+    date_of_birth: "", gender: "", marital_status: "", blood_group: "",
+    working_hours_start: "09:00", working_hours_end: "18:00",
+    working_days: [1, 2, 3, 4, 5, 6], // Default: Mon-Sat (Sunday off)
   });
 
   useEffect(() => {
     if (allowedTabs.includes(tabParam as (typeof allowedTabs)[number]) && tabParam !== activeTab) {
       setActiveTab(tabParam);
     }
-  }, [tabParam, activeTab]);
+  }, [tabParam]);
 
   const handleTabChange = (value: string) => {
     setActiveTab(value);
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      next.set("tab", value);
-      return next;
-    });
+    setSearchParams((prev) => { const n = new URLSearchParams(prev); n.set("tab", value); return n; });
   };
 
-  // Fetch employee profile linked to current user
+  const { data: myRMRequests } = useMyRMChangeRequests();
+  const hasPendingRMRequest = myRMRequests?.some(r => r.status === "pending") ?? false;
+
   const { data: employee, isLoading } = useQuery({
-    queryKey: ['my-profile', user?.id],
+    queryKey: ["my-profile", user?.id],
     queryFn: async () => {
       if (!user?.id) return null;
-      const res = await hrmsApi.get<{ success: boolean; data: any }>('/api/employees/me');
+      const res = await hrmsApi.get<{ success: boolean; data: any }>("/api/employees/me");
       return res.data ?? null;
     },
     enabled: !!user?.id,
   });
 
-  const userProfile = employee;
-
   useEffect(() => {
     if (employee) {
-      // Format time from "HH:MM:SS" to "HH:MM" for input
-      const formatTimeForInput = (time: string | null) => {
-        if (!time) return '';
-        return time.slice(0, 5);
-      };
-      
+      if (!avatarUrl) setAvatarUrl(employee.avatar_url ?? null);
+      const fmt = (t: string | null) => (t ? t.slice(0, 5) : "");
       setFormData({
-        phone: employee.phone || '',
-        address: employee.address || '',
-        city: employee.city || '',
-        country: employee.country || '',
-        date_of_birth: employee.date_of_birth ? String(employee.date_of_birth).slice(0, 10) : '',
-        gender: employee.gender || '',
-        working_hours_start: formatTimeForInput(employee.working_hours_start) || '09:00',
-        working_hours_end: formatTimeForInput(employee.working_hours_end) || '18:00',
-        working_days: employee.working_days || [1, 2, 3, 4, 5],
+        email: employee.email || "",
+        phone: employee.phone || "",
+        personal_email: employee.personal_email || "",
+        personal_phone: employee.personal_phone || "",
+        alternate_mobile: employee.alternate_mobile || "",
+        personal_mobile: employee.personal_mobile || "",
+        address: employee.address || "",
+        city: employee.city || "",
+        country: employee.country || "",
+        date_of_birth: employee.date_of_birth
+          ? employee.date_of_birth.slice(0, 10)
+          : "",
+        gender: employee.gender || "",
+        marital_status: employee.marital_status || "",
+        blood_group: employee.blood_group || "",
+        working_hours_start: fmt(employee.working_hours_start) || "09:00",
+        working_hours_end: fmt(employee.working_hours_end) || "18:00",
+        working_days: employee.working_days || [1, 2, 3, 4, 5, 6], // Default: Mon-Sat
       });
     }
   }, [employee]);
 
-  const updateProfileMutation = useMutation({
-    mutationFn: async (data: ProfileForm) => {
-      await hrmsApi.patch('/api/employees/me', data);
+  const { data: journeyEvents = [], isLoading: journeyLoading } = useQuery({
+    queryKey: ["my-journey", employee?.id],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/employees/me/journey");
+      return res.data ?? [];
     },
+    enabled: !!employee?.id,
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (data: ProfileForm) => hrmsApi.patch("/api/employees/me", data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['my-profile'] });
+      queryClient.invalidateQueries({ queryKey: ["my-profile"] });
       setIsEditing(false);
       toast({ title: "Profile updated", description: "Your information has been saved." });
     },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
-  const uploadPhotoMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const formData = new FormData();
-      formData.append('photo', file);
-      const token = localStorage.getItem("hrms_access_token");
-      const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
-      const resp = await fetch(`${HRMS_API}/api/employees/me/photo`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: formData,
-      });
-      if (!resp.ok) {
-        const error = await resp.json().catch(() => ({ message: `Upload failed: ${resp.status}` }));
-        throw new Error(error.message || 'Upload failed');
-      }
-      return resp.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['my-profile'] });
-      toast({ title: "Success", description: "Profile photo updated successfully." });
-    },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    },
-  });
-
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Validate file type
-    if (!['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(file.type)) {
-      toast({ title: "Error", description: "Please upload a JPG, PNG, or WebP image.", variant: "destructive" });
-      return;
-    }
-
-    // Validate file size (5MB max)
-    if (file.size > 5 * 1024 * 1024) {
-      toast({ title: "Error", description: "Image must be less than 5MB.", variant: "destructive" });
-      return;
-    }
-
-    uploadPhotoMutation.mutate(file);
-  };
-
-  const handleSave = () => {
-    updateProfileMutation.mutate(formData);
-  };
-
-  const getUserInitials = () => {
-    if (employee) {
-      return `${employee.first_name[0]}${employee.last_name[0]}`.toUpperCase();
-    }
-    return user?.email?.slice(0, 2).toUpperCase() || "U";
-  };
-
-  const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
+  const cancelEdit = () => {
+    setIsEditing(false);
+    const fmt = (t: string | null) => (t ? t.slice(0, 5) : "");
+    if (employee) setFormData({
+      email: employee.email || "",
+      phone: employee.phone || "",
+      personal_email: employee.personal_email || "",
+      personal_phone: employee.personal_phone || "",
+      alternate_mobile: employee.alternate_mobile || "",
+      personal_mobile: employee.personal_mobile || "",
+      address: employee.address || "",
+      city: employee.city || "",
+      country: employee.country || "",
+      date_of_birth: employee.date_of_birth ? employee.date_of_birth.slice(0, 10) : "",
+      gender: employee.gender || "",
+      marital_status: employee.marital_status || "",
+      blood_group: employee.blood_group || "",
+      working_hours_start: fmt(employee.working_hours_start) || "09:00",
+      working_hours_end: fmt(employee.working_hours_end) || "18:00",
+      working_days: employee.working_days || [1, 2, 3, 4, 5, 6],
     });
   };
+
+  const initials = employee
+    ? `${employee.first_name?.[0] ?? ""}${employee.last_name?.[0] ?? ""}`.toUpperCase()
+    : user?.email?.slice(0, 2).toUpperCase() ?? "U";
 
   if (isLoading) {
     return (
       <DashboardLayout>
         <div className="flex min-h-[400px] items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
         </div>
       </DashboardLayout>
     );
@@ -232,375 +253,576 @@ const Profile = () => {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div>
-          <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">Account</p>
-          <h2 className="mt-1 text-3xl font-black text-slate-950">My Profile</h2>
-          <p className="text-slate-600">View and manage your personal information</p>
-        </div>
 
         {!employee ? (
-          <Card className="rounded-3xl border bg-white p-5 shadow-sm">
-            <CardContent className="py-12 text-center">
-              <User className="mx-auto h-12 w-12 text-slate-400" />
-              <h3 className="mt-4 text-lg font-semibold">No Employee Profile</h3>
-              <p className="mt-2 text-muted-foreground">
-                Your account is not linked to an employee profile yet. Please contact HR.
-              </p>
-            </CardContent>
-          </Card>
+          <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-16 text-center">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100">
+              <User className="h-8 w-8 text-slate-400" />
+            </div>
+            <h3 className="mt-4 text-lg font-bold text-slate-900">No Employee Profile</h3>
+            <p className="mt-2 text-sm text-slate-500">
+              Your account is not linked to an employee profile. Please contact HR.
+            </p>
+          </div>
         ) : (
-          <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-            <TabsList className="flex flex-wrap h-auto gap-1 w-full lg:w-auto lg:inline-flex">
-              <TabsTrigger value="profile" className="gap-2">
-                <User className="h-4 w-4" />
-                <span className="hidden sm:inline">Profile</span>
-              </TabsTrigger>
-              <TabsTrigger value="leaves" className="gap-2">
-                <Calendar className="h-4 w-4" />
-                <span className="hidden sm:inline">Leaves</span>
-              </TabsTrigger>
-              <TabsTrigger value="attendance" className="gap-2">
-                <Clock className="h-4 w-4" />
-                <span className="hidden sm:inline">Attendance</span>
-              </TabsTrigger>
-              <TabsTrigger value="assets" className="gap-2">
-                <Package className="h-4 w-4" />
-                <span className="hidden sm:inline">Assets</span>
-              </TabsTrigger>
-              <TabsTrigger value="reviews" className="gap-2">
-                <Star className="h-4 w-4" />
-                <span className="hidden sm:inline">Reviews</span>
-              </TabsTrigger>
-              <TabsTrigger value="payslips" className="gap-2">
-                <Wallet className="h-4 w-4" />
-                <span className="hidden sm:inline">Payslips</span>
-              </TabsTrigger>
-              <TabsTrigger value="documents" className="gap-2">
-                <Files className="h-4 w-4" />
-                <span className="hidden sm:inline">Documents</span>
-              </TabsTrigger>
-            </TabsList>
+          <>
+            {/* ── Hero Banner ─────────────────────────────────────────── */}
+            <div className="relative overflow-hidden rounded-3xl bg-[#073f78] px-6 py-8 text-white shadow-lg">
+              {/* decorative blobs */}
+              <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-[#1B6AB5]/20 blur-3xl" />
+              <div className="pointer-events-none absolute -bottom-10 left-1/3 h-48 w-48 rounded-full bg-[#3BAD49]/15 blur-3xl" />
 
-            {/* Profile Tab */}
-            <TabsContent value="profile" className="space-y-6">
-              <div className="grid gap-6 md:grid-cols-3">
-                {/* Profile Card */}
-                <Card className="md:col-span-1">
-                  <CardContent className="pt-6">
-                    <div className="flex flex-col items-center text-center">
-                      <div className="relative">
-                        <Avatar className="h-24 w-24">
-                          <AvatarImage src={userProfile?.avatar_url || undefined} />
-                          <AvatarFallback className="text-2xl">{getUserInitials()}</AvatarFallback>
-                        </Avatar>
-                        <label
-                          htmlFor="photo-upload"
-                          className="absolute bottom-0 right-0 cursor-pointer rounded-full bg-primary p-2 text-primary-foreground shadow-lg hover:bg-primary/90 transition-colors"
-                          title="Upload profile photo"
-                        >
-                          {uploadPhotoMutation.isPending ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Camera className="h-4 w-4" />
-                          )}
-                        </label>
-                        <input
-                          id="photo-upload"
-                          type="file"
-                          accept="image/jpeg,image/jpg,image/png,image/webp"
-                          onChange={handlePhotoUpload}
-                          disabled={uploadPhotoMutation.isPending}
-                          className="sr-only"
-                        />
-                      </div>
-                      <h3 className="mt-4 text-xl font-semibold">
-                        {employee.first_name} {employee.last_name}
-                      </h3>
-                      <p className="text-muted-foreground">{employee.designation}</p>
-                      <Badge className="mt-2" variant={employee.status === 'active' ? 'default' : 'secondary'}>
-                        {employee.status}
+              <div className="relative flex flex-col gap-7 lg:flex-row lg:items-center">
+                {/* Avatar */}
+                <div className="shrink-0">
+                  <PhotoUpload
+                    currentUrl={avatarUrl}
+                    displayName={`${employee.first_name} ${employee.last_name}`}
+                    onSuccess={(url) => {
+                      setAvatarUrl(url || null);
+                      queryClient.invalidateQueries({ queryKey: ["my-profile"] });
+                      queryClient.invalidateQueries({ queryKey: ["employee-profile"] });
+                    }}
+                    size="2xl"
+                  />
+                </div>
+
+                {/* Identity */}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-black uppercase tracking-[0.2em] text-green-200">
+                    Employee Profile
+                  </p>
+                  <h1 className="mt-2 text-balance text-4xl font-black tracking-tight">
+                    {employee.first_name} {employee.last_name}
+                  </h1>
+                  <p className="mt-2 text-lg font-bold text-blue-100">
+                    {employee.designation || "—"}
+                  </p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Badge className={`rounded-full px-3 py-0.5 text-xs font-bold ${
+                      employee.status === "active"
+                        ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+                        : "bg-slate-500/20 text-slate-300 border-slate-500/30"
+                    }`}>
+                      {employee.status === "active" ? "Active" : employee.status}
+                    </Badge>
+                    <Badge className="rounded-full bg-white/10 px-3 py-0.5 text-xs font-bold text-white border-white/20">
+                      {employee.employee_code}
+                    </Badge>
+                    {employee.department?.name && (
+                      <Badge className="rounded-full border px-4 py-1 text-sm font-extrabold" style={{ background: "rgba(27,106,181,0.3)", color: "#d9ecff", borderColor: "rgba(139,189,233,0.55)" }}>
+                        {employee.department.name}
                       </Badge>
-                      <Separator className="my-4 w-full" />
-                      <div className="w-full space-y-3 text-left text-sm">
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <Mail className="h-4 w-4" />
-                          <span className="truncate">{employee.email}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <Building2 className="h-4 w-4" />
-                          <span>{employee.department?.name || "No Department"}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <Briefcase className="h-4 w-4" />
-                          <span>{employee.employee_code}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <Calendar className="h-4 w-4" />
-                          <span>Joined {formatDate(employee.hire_date)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Details Card */}
-                <Card className="md:col-span-2">
-                  <CardHeader className="flex flex-row items-center justify-between">
-                    <div>
-                      <CardTitle>Personal Information</CardTitle>
-                      <CardDescription>Update your contact details</CardDescription>
-                    </div>
-                    {!isEditing ? (
-                      <Button variant="outline" className="cursor-pointer rounded-2xl" onClick={() => setIsEditing(true)}>
-                        Edit
-                      </Button>
-                    ) : (
-                      <div className="flex gap-2">
-                        <Button variant="outline" className="cursor-pointer rounded-2xl" onClick={() => {
-                          setIsEditing(false);
-                          const formatTimeForInput = (time: string | null) => {
-                            if (!time) return '';
-                            return time.slice(0, 5);
-                          };
-                          setFormData({
-                            phone: employee.phone || '',
-                            address: employee.address || '',
-                            city: employee.city || '',
-                            country: employee.country || '',
-                            date_of_birth: employee.date_of_birth ? String(employee.date_of_birth).slice(0, 10) : '',
-                            gender: employee.gender || '',
-                            working_hours_start: formatTimeForInput(employee.working_hours_start) || '09:00',
-                            working_hours_end: formatTimeForInput(employee.working_hours_end) || '18:00',
-                            working_days: employee.working_days || [1, 2, 3, 4, 5],
-                          });
-                        }}>
-                          Cancel
-                        </Button>
-                        <Button onClick={handleSave} disabled={updateProfileMutation.isPending} className="bg-slate-950 text-white hover:bg-slate-800 rounded-2xl px-5 py-2.5 font-semibold cursor-pointer transition-colors">
-                          {updateProfileMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                          <Save className="mr-2 h-4 w-4" />
-                          Save
-                        </Button>
-                      </div>
                     )}
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label>First Name</Label>
-                        <Input value={employee.first_name} disabled />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Last Name</Label>
-                        <Input value={employee.last_name} disabled />
+                  </div>
+                </div>
+
+                {/* Quick stats */}
+                <div className="grid shrink-0 grid-cols-2 gap-3 lg:w-[420px]">
+                  {[
+                    { label: "Joined", value: formatDate(employee.hire_date) },
+                    { label: "DOB", value: formatDate(employee.date_of_birth) },
+                    { label: "Email", value: employee.email },
+                    { label: "Phone", value: employee.phone || "—" },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="rounded-2xl border border-white/20 bg-white/10 px-4 py-4">
+                      <p className="text-xs font-black uppercase tracking-widest text-blue-200">{label}</p>
+                      <p className="mt-1 truncate text-sm font-bold text-white">{value}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* ── Tabs ─────────────────────────────────────────────────── */}
+            <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
+              <div className="overflow-x-auto pb-px">
+                <TabsList className="inline-flex h-auto gap-1 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
+                  {[
+                    { value: "profile",    icon: User,       label: "Profile" },
+                    { value: "statutory",  icon: Landmark,   label: "Bank & Statutory" },
+                    { value: "emergency",  icon: HeartHandshake, label: "Emergency & Nominee" },
+                    { value: "journey",    icon: GitBranch,  label: "Journey" },
+                    { value: "leaves",     icon: Calendar,   label: "Leaves" },
+                    { value: "attendance", icon: Clock,     label: "Attendance" },
+                    { value: "assets",     icon: Package,  label: "Assets" },
+                    { value: "reviews",    icon: Star,     label: "Reviews" },
+                    { value: "payslips",   icon: Wallet,   label: "Payslips" },
+                    { value: "documents",  icon: Files,    label: "Documents" },
+                  ].map(({ value, icon: Icon, label }) => (
+                    <TabsTrigger
+                      key={value}
+                      value={value}
+                      className="gap-2 rounded-xl px-4 py-3 text-sm font-extrabold text-slate-600 data-[state=active]:bg-[#e8f2fc] data-[state=active]:text-[#073f78] data-[state=active]:shadow-sm"
+                    >
+                      <Icon className="h-4 w-4" />
+                      <span>{label}</span>
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </div>
+
+              {/* ── Profile Tab ─────────────────────────────────────── */}
+              <TabsContent value="profile" className="space-y-6">
+                <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
+
+                  {/* Left — identity card */}
+                  <div className="space-y-4">
+                    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                      <SectionTitle>Contact Info</SectionTitle>
+                      <div className="divide-y divide-slate-50">
+                        <InfoRow icon={Mail}      label="Email"      value={employee.email} />
+                        <InfoRow icon={Phone}     label="Phone"      value={employee.phone} />
+                        <InfoRow icon={Phone}     label="Alternate"  value={employee.alternate_mobile} />
+                        <InfoRow icon={MapPin}    label="City"       value={employee.city} />
+                        <InfoRow icon={MapPin}    label="Country"    value={employee.country} />
                       </div>
                     </div>
 
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label>Email</Label>
-                        <Input value={employee.email} disabled />
+                    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                      <SectionTitle>Work Info</SectionTitle>
+                      <div className="divide-y divide-slate-50">
+                        <InfoRow icon={Briefcase}  label="Designation"        value={employee.designation} />
+                        <InfoRow icon={Building2}  label="Department"         value={employee.department?.name} />
+                        <InfoRow icon={Users}      label="Reporting Manager"  value={employee.reporting_manager_name} />
+                        <InfoRow icon={Calendar}   label="Date of Joining"    value={formatDate(employee.hire_date)} />
                       </div>
-                      <div className="space-y-2">
-                        <Label>Phone</Label>
-                        <Input 
-                          value={formData.phone}
-                          onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
-                          disabled={!isEditing}
-                          placeholder="Enter phone number"
-                        />
-                      </div>
-                    </div>
-
-                    <Separator />
-
-                    <div className="space-y-2">
-                      <Label>Address</Label>
-                      <Input 
-                        value={formData.address}
-                        onChange={(e) => setFormData(prev => ({ ...prev, address: e.target.value }))}
-                        disabled={!isEditing}
-                        placeholder="Enter your address"
-                      />
-                    </div>
-
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label>City</Label>
-                        <Input 
-                          value={formData.city}
-                          onChange={(e) => setFormData(prev => ({ ...prev, city: e.target.value }))}
-                          disabled={!isEditing}
-                          placeholder="Enter city"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Country</Label>
-                        <Input 
-                          value={formData.country}
-                          onChange={(e) => setFormData(prev => ({ ...prev, country: e.target.value }))}
-                          disabled={!isEditing}
-                          placeholder="Enter country"
-                        />
-                      </div>
-                    </div>
-
-                    <Separator />
-
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label>Date of Birth</Label>
-                        <Input 
-                          type="date"
-                          value={formData.date_of_birth}
-                          onChange={(e) => setFormData(prev => ({ ...prev, date_of_birth: e.target.value }))}
-                          disabled={!isEditing}
-                          max={new Date(new Date().getFullYear() - 18, new Date().getMonth(), new Date().getDate()).toISOString().split('T')[0]}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Gender</Label>
-                        <Select
-                          value={formData.gender}
-                          onValueChange={(value) => setFormData(prev => ({ ...prev, gender: value }))}
-                          disabled={!isEditing}
+                      <div className="mt-4">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={hasPendingRMRequest}
+                          onClick={() => setRmChangeOpen(true)}
+                          className="w-full rounded-xl text-xs font-bold"
                         >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select gender" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="male">Male</SelectItem>
-                            <SelectItem value="female">Female</SelectItem>
-                            <SelectItem value="other">Other</SelectItem>
-                            <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem>
-                          </SelectContent>
-                        </Select>
+                          {hasPendingRMRequest ? (
+                            <span className="text-amber-600">Manager Change Pending</span>
+                          ) : (
+                            <>Request Manager Change <ChevronRight className="ml-1 h-3 w-3" /></>
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setChangePasswordOpen(true)}
+                          className="w-full rounded-xl text-xs font-bold"
+                        >
+                          Change Password
+                        </Button>
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <Label>Department</Label>
-                      <Input value={employee.department?.name || "Not Assigned"} disabled />
-                      <p className="text-xs text-muted-foreground">Contact HR to change department assignment</p>
+                    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                      <SectionTitle>Personal</SectionTitle>
+                      <div className="divide-y divide-slate-50">
+                        <InfoRow icon={Cake}      label="Date of Birth"  value={formatDate(employee.date_of_birth)} />
+                        <InfoRow icon={User}      label="Gender"         value={employee.gender} />
+                        <InfoRow icon={HeartHandshake} label="Marital Status" value={employee.marital_status} />
+                        <InfoRow icon={User} label="Blood Group" value={employee.blood_group} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right — editable form */}
+                  <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+                    {/* form header */}
+                    <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
+                      <div>
+                        <h2 className="text-base font-black text-slate-950">Personal Information</h2>
+                        <p className="mt-0.5 text-xs text-slate-500">Update your editable contact & schedule details</p>
+                      </div>
+                      {!isEditing ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setIsEditing(true)}
+                          disabled={isReadOnly}
+                          className="gap-1.5 rounded-xl text-xs font-bold"
+                          title={isReadOnly ? "Cannot edit in read-only mode" : ""}
+                        >
+                          <Edit3 className="h-3.5 w-3.5" /> {isReadOnly ? "Read-Only" : "Edit"}
+                        </Button>
+                      ) : (
+                        <div className="flex gap-2">
+                          <Button variant="ghost" size="sm" onClick={cancelEdit} className="rounded-xl text-xs font-bold">
+                            <X className="mr-1 h-3.5 w-3.5" /> Cancel
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => updateMutation.mutate(formData)}
+                            disabled={updateMutation.isPending}
+                            className="gap-1.5 rounded-xl bg-slate-950 text-xs font-bold text-white hover:bg-slate-800"
+                          >
+                            {updateMutation.isPending
+                              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              : <Save className="h-3.5 w-3.5" />}
+                            Save
+                          </Button>
+                        </div>
+                      )}
                     </div>
 
-                    <Separator />
-
-                    {/* Working Schedule Section */}
-                    <div className="space-y-4">
-                      <div className="flex items-center gap-2">
-                        <Clock className="h-4 w-4 text-muted-foreground" />
-                        <Label className="text-base font-medium">Working Schedule</Label>
-                      </div>
-                      <p className="text-sm text-muted-foreground">Set your working hours and days for attendance reminders</p>
-                      
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <div className="space-y-2">
-                          <Label>Work Start Time</Label>
-                          <Input 
-                            type="time"
-                            value={formData.working_hours_start}
-                            onChange={(e) => setFormData(prev => ({ ...prev, working_hours_start: e.target.value }))}
-                            disabled={!isEditing}
-                          />
+                    <div className="space-y-6 p-6">
+                      {/* Names — read-only */}
+                      <div>
+                        <SectionTitle>Identity</SectionTitle>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">First Name</Label>
+                            <Input value={employee.first_name} disabled className="rounded-xl bg-slate-50" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Last Name</Label>
+                            <Input value={employee.last_name} disabled className="rounded-xl bg-slate-50" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Official Email</Label>
+                            <Input
+                              type="email"
+                              value={formData.email}
+                              onChange={(e) => setFormData(p => ({ ...p, email: e.target.value.toLowerCase() }))}
+                              disabled={!isEditing}
+                              placeholder="name@teammas.in"
+                              className="rounded-xl"
+                            />
+                            <p className={`text-xs font-semibold ${employee.official_email_compliant ? "text-emerald-600" : "text-amber-600"}`}>
+                              {employee.official_email_compliant
+                                ? "Official email verified"
+                                : "Use @teammas.in or @teammas.co.in"}
+                            </p>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Employee Code</Label>
+                            <Input value={employee.employee_code} disabled className="rounded-xl bg-slate-50 font-mono" />
+                          </div>
                         </div>
-                        <div className="space-y-2">
-                          <Label>Work End Time</Label>
-                          <Input 
-                            type="time"
-                            value={formData.working_hours_end}
-                            onChange={(e) => setFormData(prev => ({ ...prev, working_hours_end: e.target.value }))}
-                            disabled={!isEditing}
-                          />
+                      </div>
+
+                      <Separator />
+
+                      {/* Contact — editable */}
+                      <div>
+                        <SectionTitle>Contact & Location</SectionTitle>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Phone</Label>
+                            <Input
+                              value={formData.phone}
+                              onChange={(e) => setFormData(p => ({ ...p, phone: e.target.value }))}
+                              disabled={!isEditing}
+                              placeholder="e.g. +91 98765 43210"
+                              className="rounded-xl"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Personal Email</Label>
+                            <Input
+                              type="email"
+                              value={formData.personal_email}
+                              onChange={(e) => setFormData(p => ({ ...p, personal_email: e.target.value.toLowerCase() }))}
+                              disabled={!isEditing}
+                              placeholder="personal@gmail.com"
+                              className="rounded-xl"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Personal Phone</Label>
+                            <Input
+                              type="tel"
+                              value={formData.personal_phone}
+                              onChange={(e) => setFormData(p => ({ ...p, personal_phone: e.target.value }))}
+                              disabled={!isEditing}
+                              placeholder="Personal mobile number"
+                              className="rounded-xl"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Alternate Number</Label>
+                            <Input
+                              type="tel"
+                              value={formData.alternate_mobile}
+                              onChange={(e) => setFormData(p => ({ ...p, alternate_mobile: e.target.value }))}
+                              disabled={!isEditing}
+                              placeholder="Alternate contact number"
+                              className="rounded-xl"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Personal Email</Label>
+                            <Input
+                              type="email"
+                              value={formData.personal_email}
+                              onChange={(e) => setFormData(p => ({ ...p, personal_email: e.target.value.toLowerCase() }))}
+                              disabled={!isEditing}
+                              placeholder="personal@example.com"
+                              className="rounded-xl"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Personal Mobile</Label>
+                            <Input
+                              type="tel"
+                              value={formData.personal_mobile}
+                              onChange={(e) => setFormData(p => ({ ...p, personal_mobile: e.target.value }))}
+                              disabled={!isEditing}
+                              placeholder="+91 98765 43210"
+                              className="rounded-xl"
+                            />
+                          </div>
+                          <div className="space-y-1.5 sm:col-span-2">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Address</Label>
+                            <Input
+                              value={formData.address}
+                              onChange={(e) => setFormData(p => ({ ...p, address: e.target.value }))}
+                              disabled={!isEditing}
+                              placeholder="Street address"
+                              className="rounded-xl"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">City</Label>
+                            <Input
+                              value={formData.city}
+                              onChange={(e) => setFormData(p => ({ ...p, city: e.target.value }))}
+                              disabled={!isEditing}
+                              placeholder="Mumbai"
+                              className="rounded-xl"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Country</Label>
+                            <Input
+                              value={formData.country}
+                              onChange={(e) => setFormData(p => ({ ...p, country: e.target.value }))}
+                              disabled={!isEditing}
+                              placeholder="India"
+                              className="rounded-xl"
+                            />
+                          </div>
                         </div>
                       </div>
 
-                      <div className="space-y-2">
-                        <Label>Working Days</Label>
-                        <div className="flex flex-wrap gap-3">
-                          {[
-                            { value: 0, label: 'Sun' },
-                            { value: 1, label: 'Mon' },
-                            { value: 2, label: 'Tue' },
-                            { value: 3, label: 'Wed' },
-                            { value: 4, label: 'Thu' },
-                            { value: 5, label: 'Fri' },
-                            { value: 6, label: 'Sat' },
-                          ].map((day) => (
-                            <div key={day.value} className="flex items-center space-x-2">
-                              <Checkbox
-                                id={`day-${day.value}`}
-                                checked={formData.working_days.includes(day.value)}
-                                onCheckedChange={(checked) => {
-                                  if (!isEditing) return;
-                                  setFormData(prev => ({
-                                    ...prev,
-                                    working_days: checked
-                                      ? [...prev.working_days, day.value].sort((a, b) => a - b)
-                                      : prev.working_days.filter(d => d !== day.value)
-                                  }));
-                                }}
-                                disabled={!isEditing}
-                              />
-                              <Label htmlFor={`day-${day.value}`} className="text-sm font-normal cursor-pointer">
-                                {day.label}
-                              </Label>
+                      <Separator />
+
+                      {/* Personal — editable */}
+                      <div>
+                        <SectionTitle>Personal Details</SectionTitle>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Date of Birth</Label>
+                            <Input
+                              type="date"
+                              value={formData.date_of_birth}
+                              onChange={(e) => setFormData(p => ({ ...p, date_of_birth: e.target.value }))}
+                              disabled={!isEditing}
+                              max={new Date(new Date().getFullYear() - 18, new Date().getMonth(), new Date().getDate())
+                                .toISOString().split("T")[0]}
+                              className="rounded-xl"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Gender</Label>
+                            <Select
+                              value={formData.gender}
+                              onValueChange={(v) => setFormData(p => ({ ...p, gender: v }))}
+                              disabled={!isEditing}
+                            >
+                              <SelectTrigger className="rounded-xl">
+                                <SelectValue placeholder="Select gender" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="male">Male</SelectItem>
+                                <SelectItem value="female">Female</SelectItem>
+                                <SelectItem value="other">Other</SelectItem>
+                                <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Marital Status</Label>
+                            <Select
+                              value={formData.marital_status}
+                              onValueChange={(v) => setFormData(p => ({ ...p, marital_status: v }))}
+                              disabled={!isEditing}
+                            >
+                              <SelectTrigger className="rounded-xl">
+                                <SelectValue placeholder="Select marital status" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="single">Single</SelectItem>
+                                <SelectItem value="married">Married</SelectItem>
+                                <SelectItem value="divorced">Divorced</SelectItem>
+                                <SelectItem value="widowed">Widowed</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Blood Group</Label>
+                            <Input
+                              value={formData.blood_group}
+                              onChange={(e) => setFormData(p => ({ ...p, blood_group: e.target.value.toUpperCase() }))}
+                              disabled={!isEditing}
+                              placeholder="e.g. O+"
+                              maxLength={10}
+                              className="rounded-xl"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <Separator />
+
+                      {/* Schedule */}
+                      <div>
+                        <SectionTitle>Working Schedule</SectionTitle>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Start Time</Label>
+                            <div className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm font-semibold text-slate-900 disabled:bg-slate-50">
+                              {isEditing ? (
+                                <Input
+                                  type="time"
+                                  value={formData.working_hours_start}
+                                  onChange={(e) => setFormData(p => ({ ...p, working_hours_start: e.target.value }))}
+                                  className="rounded-xl border-0 p-0 shadow-none focus-visible:ring-0"
+                                />
+                              ) : (
+                                <span className="flex items-center gap-2 text-slate-700">
+                                  <Clock className="h-4 w-4 text-slate-400" />
+                                  {formatTime(formData.working_hours_start)}
+                                </span>
+                              )}
                             </div>
-                          ))}
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">End Time</Label>
+                            <div className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm font-semibold text-slate-900">
+                              {isEditing ? (
+                                <Input
+                                  type="time"
+                                  value={formData.working_hours_end}
+                                  onChange={(e) => setFormData(p => ({ ...p, working_hours_end: e.target.value }))}
+                                  className="rounded-xl border-0 p-0 shadow-none focus-visible:ring-0"
+                                />
+                              ) : (
+                                <span className="flex items-center gap-2 text-slate-700">
+                                  <Clock className="h-4 w-4 text-slate-400" />
+                                  {formatTime(formData.working_hours_end)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 space-y-2">
+                          <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Working Days</Label>
+                          <div className="flex flex-wrap gap-2">
+                            {DAY_LABELS.map((label, idx) => {
+                              const active = formData.working_days.includes(idx);
+                              return (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  disabled={!isEditing}
+                                  onClick={() => {
+                                    if (!isEditing) return;
+                                    setFormData(p => ({
+                                      ...p,
+                                      working_days: active
+                                        ? p.working_days.filter(d => d !== idx)
+                                        : [...p.working_days, idx].sort((a, b) => a - b),
+                                    }));
+                                  }}
+                                  className={`h-9 w-12 rounded-xl text-xs font-bold transition-colors ${
+                                    active
+                                      ? "bg-slate-950 text-white"
+                                      : "border border-slate-200 bg-white text-slate-500"
+                                  } disabled:opacity-60`}
+                                >
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </CardContent>
-                </Card>
-              </div>
-            </TabsContent>
-
-            {/* Leaves Tab */}
-            <TabsContent value="leaves" className="space-y-6">
-              <div className="grid gap-6 lg:grid-cols-3">
-                <div className="lg:col-span-2 space-y-6">
-                  <LeaveBalanceCard employeeId={employee.id} />
-                  <LeaveRequestHistory employeeId={employee.id} />
+                  </div>
                 </div>
-                <div className="lg:col-span-1">
-                  <LeaveRequestForm employeeId={employee.id} />
+              </TabsContent>
+
+              {/* ── Other Tabs ─────────────────────────────────────────── */}
+              <TabsContent value="statutory">
+                <BankStatutoryDetails employee={employee} />
+              </TabsContent>
+
+              <TabsContent value="emergency">
+                <EmergencyNomineeDetails employee={employee} />
+              </TabsContent>
+
+              <TabsContent value="journey">
+                <EmployeeJourneyTimeline
+                  employeeName={`${employee.first_name} ${employee.last_name}`}
+                  events={journeyEvents}
+                  loading={journeyLoading}
+                />
+              </TabsContent>
+
+              <TabsContent value="leaves" className="space-y-6">
+                <div className="grid gap-6 lg:grid-cols-3">
+                  <div className="lg:col-span-2 space-y-6">
+                    <LeaveBalanceCard employeeId={employee.id} />
+                    <LeaveRequestHistory employeeId={employee.id} />
+                  </div>
+                  <div className="lg:col-span-1">
+                    <LeaveRequestForm employeeId={employee.id} />
+                  </div>
                 </div>
-              </div>
-            </TabsContent>
+              </TabsContent>
 
-            {/* Attendance Tab */}
-            <TabsContent value="attendance" className="space-y-6">
-              <AttendanceCalendar employeeId={employee.id} />
-              <MyAttendanceHistory employeeId={employee.id} />
-            </TabsContent>
+              <TabsContent value="attendance" className="space-y-6">
+                <AttendanceCalendar employeeId={employee.id} />
+                <MyAttendanceHistory employeeId={employee.id} />
+              </TabsContent>
 
-            {/* Assets Tab */}
-            <TabsContent value="assets" className="space-y-6">
-              <MyAssets employeeId={employee.id} />
-            </TabsContent>
+              <TabsContent value="assets" className="space-y-6">
+                <MyAssets employeeId={employee.id} />
+              </TabsContent>
 
-            {/* Reviews Tab */}
-            <TabsContent value="reviews" className="space-y-6">
-              <MyPerformanceReviews employeeId={employee.id} />
-            </TabsContent>
+              <TabsContent value="reviews" className="space-y-6">
+                <MyPerformanceReviews employeeId={employee.id} />
+              </TabsContent>
 
-            {/* Payslips Tab */}
-            <TabsContent value="payslips" className="space-y-6">
-              <PayslipViewer 
-                employeeId={employee.id} 
-                employeeName={`${employee.first_name} ${employee.last_name}`}
-                employeeCode={employee.employee_code}
-              />
-            </TabsContent>
+              <TabsContent value="payslips" className="space-y-6">
+                <PayslipViewer
+                  employeeId={employee.id}
+                  employeeName={`${employee.first_name} ${employee.last_name}`}
+                  employeeCode={employee.employee_code}
+                />
+              </TabsContent>
 
-            {/* Documents Tab */}
-            <TabsContent value="documents" className="space-y-6">
-              <TaxDocumentsViewer employeeId={employee.id} />
-              <EmployeeDocuments employeeId={employee.id} />
-            </TabsContent>
-          </Tabs>
+              <TabsContent value="documents" className="space-y-6">
+                <TaxDocumentsViewer employeeId={employee.id} />
+                <EmployeeDocuments
+                  employeeId={employee.id}
+                  canUpload={isAdminOrHR}
+                  canDelete={isAdminOrHR}
+                />
+              </TabsContent>
+            </Tabs>
+          </>
         )}
       </div>
+
+      <ReportingManagerChangeDialog
+        open={rmChangeOpen}
+        onOpenChange={setRmChangeOpen}
+        currentManagerName={employee?.reporting_manager_name}
+      />
+      <ChangePasswordDialog
+        open={changePasswordOpen}
+        onOpenChange={setChangePasswordOpen}
+      />
     </DashboardLayout>
   );
 };
