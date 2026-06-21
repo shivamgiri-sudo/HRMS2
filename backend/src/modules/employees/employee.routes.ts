@@ -170,6 +170,22 @@ router.get("/:id", h(async (req: any, res: any) => {
 // PATCH /api/employees/me — employee self-service (whitelisted fields only)
 router.patch("/me", h((req: any, res: any) => c.updateMyProfile(req, res)));
 
+// GET /api/employees/my-team — employees reporting to the current user (for manager detection)
+router.get("/my-team", requireAuth, h(async (req: any, res: any) => {
+  const emp = await getEmployeeForUser(req.authUser.id);
+  if (!emp?.id) return res.json({ success: true, data: [] });
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code,
+            COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS full_name,
+            e.department_id, e.designation_id, e.process_id
+       FROM employees e
+      WHERE e.active_status = 1 AND (e.reporting_manager_id = ? OR e.manager_id = ?)
+      ORDER BY full_name`,
+    [emp.id, emp.id],
+  );
+  return res.json({ success: true, data: rows });
+}));
+
 // GET /api/employees/me/journey — self-view journey timeline
 router.get("/me/journey", requireAuth, async (req: any, res: any, next: any) => {
   try {

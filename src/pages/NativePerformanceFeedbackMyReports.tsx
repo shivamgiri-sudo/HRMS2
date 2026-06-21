@@ -39,10 +39,9 @@ export default function NativePerformanceFeedbackMyReports() {
 
   const fetchReports = async () => {
     try {
-      // Fetch reports for current user
-      const data = await hrmsApi.get("/api/performance-feedback/reports", {
-        employee_id: user?.id,
-      });
+      const qs = user?.id ? `?employee_id=${encodeURIComponent(user.id)}` : "";
+      const resp = await hrmsApi.get<{ success: boolean; data: Report[] }>(`/api/performance-feedback/reports${qs}`);
+      const data: Report[] = resp.data ?? [];
 
       // Calculate trends by comparing consecutive reports
       const reportsWithTrends = data.map((report: Report, index: number) => {

@@ -59,9 +59,9 @@ export default function NativePerformanceFeedbackDevelopmentPlan() {
 
   const fetchDevelopmentPlans = async () => {
     try {
-      const data = await hrmsApi.get("/api/performance-feedback/development-plans", {
-        employee_id: user?.id,
-      });
+      const qs = user?.id ? `?employee_id=${encodeURIComponent(user.id)}` : "";
+      const resp = await hrmsApi.get<{ success: boolean; data: DevelopmentPlan[] }>(`/api/performance-feedback/development-plans${qs}`);
+      const data: DevelopmentPlan[] = resp.data ?? [];
       setPlans(data);
       if (data.length > 0) {
         setSelectedPlan(data[0]);
