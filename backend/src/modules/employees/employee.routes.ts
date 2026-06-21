@@ -121,12 +121,16 @@ router.get("/", requireAuth, requireRole("admin", "hr", "super_admin", "manager"
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.first_name, e.last_name, e.employee_code, e.email, e.mobile,
             e.gender, e.date_of_joining, e.employment_status, e.employment_type,
-            d.dept_name, des.designation_name, b.branch_name, p.process_name
+            d.dept_name AS department_name, des.designation_name, b.branch_name, p.process_name,
+            e.reporting_manager_id,
+            NULLIF(TRIM(CONCAT(COALESCE(rm.first_name,''), ' ', COALESCE(rm.last_name,''))), '') AS reporting_manager_name,
+            rm.employee_code AS reporting_manager_code
      FROM employees e
      LEFT JOIN department_master d ON d.id = e.department_id
      LEFT JOIN designation_master des ON des.id = e.designation_id
      LEFT JOIN branch_master b ON b.id = e.branch_id
      LEFT JOIN process_master p ON p.id = e.process_id
+     LEFT JOIN employees rm ON rm.id = e.reporting_manager_id
      ${whereSQL}
      ORDER BY e.first_name, e.last_name
      LIMIT ${limit} OFFSET ${offset}`,

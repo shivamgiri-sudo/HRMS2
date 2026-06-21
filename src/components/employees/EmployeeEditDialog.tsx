@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import {
@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Employee } from "./EmployeeTable";
-import { Loader2, Hash, IndianRupee, History, ChevronDown, ChevronUp, Eye, EyeOff } from "lucide-react";
+import { Loader2, Hash, IndianRupee, History, ChevronDown, ChevronUp, Eye, EyeOff, ChevronsUpDown, Check } from "lucide-react";
 import { format } from "date-fns";
 import { parseLocalDate } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -32,6 +32,19 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { EmployeeLeaveEligibility, type EmployeeLeaveEligibilityHandle } from "./EmployeeLeaveEligibility";
 import { fetchAllEmployeeRows } from "@/hooks/useEmployees";
 
@@ -167,6 +180,8 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
 
   const [showHistory, setShowHistory] = useState(false);
   const [isDepartmentManager, setIsDepartmentManager] = useState(false);
+  const [managerSearchOpen, setManagerSearchOpen] = useState(false);
+  const [managerSearchQuery, setManagerSearchQuery] = useState("");
   const eligibilityRef = useRef<EmployeeLeaveEligibilityHandle>(null);
 
   // Update salary data when structure is loaded
@@ -218,6 +233,24 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     queryFn: () => fetchAllEmployeeRows("active"),
     staleTime: 60_000,
   });
+
+  const filteredManagers = useMemo(() => {
+    const q = managerSearchQuery.toLowerCase();
+    return managers
+      .filter((m) => m.id !== employee?.id)
+      .filter((m) => {
+        if (!q) return true;
+        const name = `${m.first_name} ${m.last_name ?? ""}`.toLowerCase();
+        return name.includes(q) || m.employee_code.toLowerCase().includes(q);
+      });
+  }, [managers, managerSearchQuery, employee?.id]);
+
+  const selectedManagerLabel = useMemo(() => {
+    if (!formData.manager_id) return null;
+    const m = managers.find((m) => m.id === formData.manager_id);
+    if (!m) return null;
+    return `${m.employee_code} — ${m.first_name} ${m.last_name ?? ""}`.trim();
+  }, [managers, formData.manager_id]);
 
   // Fetch departments
   const { data: departments = [] } = useQuery({
@@ -678,27 +711,65 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="manager">
+                  <Label>
                     Reporting Manager {!isDepartmentManager && '*'}
                   </Label>
-                  <Select
-                    value={formData.manager_id}
-                    onValueChange={(value) => setFormData({ ...formData, manager_id: value === "none" ? "" : value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select manager" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {isDepartmentManager && <SelectItem value="none">No Manager</SelectItem>}
-                      {managers
-                        .filter((mgr) => mgr.id !== employee?.id)
-                        .map((mgr) => (
-                          <SelectItem key={mgr.id} value={mgr.id}>
-                            {mgr.first_name} {mgr.last_name}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
+                  <Popover open={managerSearchOpen} onOpenChange={setManagerSearchOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        className="w-full justify-between font-normal"
+                      >
+                        <span className="truncate">
+                          {selectedManagerLabel ?? "Search by name or code…"}
+                        </span>
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                      <Command shouldFilter={false}>
+                        <CommandInput
+                          placeholder="Search name or emp code…"
+                          value={managerSearchQuery}
+                          onValueChange={setManagerSearchQuery}
+                        />
+                        <CommandList>
+                          <CommandEmpty>No employee found.</CommandEmpty>
+                          <CommandGroup>
+                            {isDepartmentManager && (
+                              <CommandItem
+                                value="none"
+                                onSelect={() => {
+                                  setFormData({ ...formData, manager_id: "" });
+                                  setManagerSearchOpen(false);
+                                  setManagerSearchQuery("");
+                                }}
+                              >
+                                <Check className={`mr-2 h-4 w-4 ${!formData.manager_id ? "opacity-100" : "opacity-0"}`} />
+                                No Manager
+                              </CommandItem>
+                            )}
+                            {filteredManagers.map((mgr) => (
+                              <CommandItem
+                                key={mgr.id}
+                                value={mgr.id}
+                                onSelect={() => {
+                                  setFormData({ ...formData, manager_id: mgr.id });
+                                  setManagerSearchOpen(false);
+                                  setManagerSearchQuery("");
+                                }}
+                              >
+                                <Check className={`mr-2 h-4 w-4 ${formData.manager_id === mgr.id ? "opacity-100" : "opacity-0"}`} />
+                                <span className="font-mono text-xs text-muted-foreground mr-2">{mgr.employee_code}</span>
+                                {mgr.first_name} {mgr.last_name ?? ""}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                   {!isDepartmentManager && (
                     <p className="text-xs text-muted-foreground">
                       Required for employees who are not department managers
