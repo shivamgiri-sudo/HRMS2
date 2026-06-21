@@ -158,7 +158,7 @@ atsRouter.use("/command-centre", commandCentreRouter);
 atsRouter.use("/bgv-enhanced", bgvEnhancedRouter);
 
 // Candidates (HR/recruiter facing) - Scoped
-atsRouter.get("/candidates", requireRole("admin", "hr", "recruiter", "manager"), h(async (req, res) => {
+atsRouter.get("/candidates", requireRole("admin", "hr", "super_admin", "recruiter", "manager"), h(async (req, res) => {
   // Apply scope filtering
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
@@ -172,7 +172,7 @@ atsRouter.get("/candidates", requireRole("admin", "hr", "recruiter", "manager"),
   (req as any).scopeFilter = scoped;
   return c.listCandidates.bind(c)(req, res);
 }));
-atsRouter.get("/candidates/:id",                 requireRole("admin", "hr", "recruiter", "manager"), h(async (req: any, res: any) => {
+atsRouter.get("/candidates/:id",                 requireRole("admin", "hr", "super_admin", "recruiter", "manager"), h(async (req: any, res: any) => {
   const candidate = await atsService.getCandidate(req.params.id);
   const allowed = await hasScopedAccess(
     req.authUser!.id,
@@ -205,7 +205,7 @@ atsRouter.post("/candidates/:id/move-stage",     requireRole("admin", "recruiter
   if (!allowed) return res.status(403).json({ success: false, message: "Access denied" });
   return c.moveStage.bind(c)(req, res);
 }));
-atsRouter.get("/candidates/:id/stage-logs",      requireRole("admin", "hr", "recruiter", "manager"), h(async (req: any, res: any) => {
+atsRouter.get("/candidates/:id/stage-logs",      requireRole("admin", "hr", "super_admin", "recruiter", "manager"), h(async (req: any, res: any) => {
   const candidate = await atsService.getCandidate(req.params.id);
   const allowed = await hasScopedAccess(
     req.authUser!.id,
@@ -244,11 +244,11 @@ atsRouter.post("/onboarding-bridge",             requireRole("admin", "hr"), h(c
 atsRouter.patch("/onboarding-bridge/:id",        requireRole("admin", "hr"), h(c.updateOnboardingBridge.bind(c)));
 
 // Reference data
-atsRouter.get("/sourcing-channels",              requireRole("admin", "hr", "recruiter"), h(c.listSourcingChannels.bind(c)));
-atsRouter.get("/stats",                          requireRole("admin", "hr", "recruiter", "manager"), h(c.getDashboardStats.bind(c)));
+atsRouter.get("/sourcing-channels",              requireRole("admin", "hr", "super_admin", "recruiter"), h(c.listSourcingChannels.bind(c)));
+atsRouter.get("/stats",                          requireRole("admin", "hr", "super_admin", "recruiter", "manager"), h(c.getDashboardStats.bind(c)));
 
 // Walk-in queue — candidates who arrived via Walk-In channel, sorted by walk_in_date desc
-atsRouter.get("/walkin-queue",                   requireRole("admin", "hr", "recruiter"), h(async (req: any, res: any) => {
+atsRouter.get("/walkin-queue",                   requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: any, res: any) => {
   const { db } = await import("../../db/mysql.js");
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
@@ -270,7 +270,7 @@ atsRouter.get("/walkin-queue",                   requireRole("admin", "hr", "rec
 }));
 
 // Alias: waiting-queue = walkin-queue (used by NativeATSWaitingQueue page)
-atsRouter.get("/waiting-queue",                  requireRole("admin", "hr", "recruiter", "manager"), h(async (req: any, res: any) => {
+atsRouter.get("/waiting-queue",                  requireRole("admin", "hr", "super_admin", "recruiter", "manager"), h(async (req: any, res: any) => {
   const { db } = await import("../../db/mysql.js");
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
@@ -292,7 +292,7 @@ atsRouter.get("/waiting-queue",                  requireRole("admin", "hr", "rec
 // ── Queue Token Management ────────────────────────────────────────────────────
 
 // POST /api/ats/queue-tokens — create arrival token for a candidate (HR/recruiter)
-atsRouter.post("/queue-tokens", requireRole("admin", "hr", "recruiter"), h(async (req: any, res: any) => {
+atsRouter.post("/queue-tokens", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: any, res: any) => {
   const { candidateId, arrivalTime } = req.body;
   if (!candidateId || typeof candidateId !== 'string') {
     return res.status(400).json({ success: false, message: "candidateId is required" });
@@ -303,19 +303,19 @@ atsRouter.post("/queue-tokens", requireRole("admin", "hr", "recruiter"), h(async
 }));
 
 // GET /api/ats/queue-tokens/candidate/:candidateId — active token for a candidate
-atsRouter.get("/queue-tokens/candidate/:candidateId", requireRole("admin", "hr", "recruiter"), h(async (req: any, res: any) => {
+atsRouter.get("/queue-tokens/candidate/:candidateId", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: any, res: any) => {
   const data = await atsQueueService.getTokenByCandidateId(req.params.candidateId);
   return res.json({ success: true, data });
 }));
 
 // POST /api/ats/queue-tokens/:id/walk-out — mark candidate as walked out
-atsRouter.post("/queue-tokens/:id/walk-out", requireRole("admin", "hr", "recruiter"), h(async (req: any, res: any) => {
+atsRouter.post("/queue-tokens/:id/walk-out", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: any, res: any) => {
   const data = await atsQueueService.walkOut(req.params.id);
   return res.json({ success: true, data });
 }));
 
 // POST /api/ats/queue-tokens/re-entry — re-entry after walk-out
-atsRouter.post("/queue-tokens/re-entry", requireRole("admin", "hr", "recruiter"), h(async (req: any, res: any) => {
+atsRouter.post("/queue-tokens/re-entry", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: any, res: any) => {
   const { candidateId, arrivalTime } = req.body;
   if (!candidateId || typeof candidateId !== 'string') {
     return res.status(400).json({ success: false, message: "candidateId is required" });
@@ -326,21 +326,21 @@ atsRouter.post("/queue-tokens/re-entry", requireRole("admin", "hr", "recruiter")
 }));
 
 // PATCH /api/ats/queue-tokens/:id/assign-recruiter
-atsRouter.patch("/queue-tokens/:id/assign-recruiter", requireRole("admin", "hr", "recruiter"), h(async (req: any, res: any) => {
+atsRouter.patch("/queue-tokens/:id/assign-recruiter", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: any, res: any) => {
   const { recruiterId } = req.body;
   const data = await atsQueueService.assignRecruiter(req.params.id, recruiterId ?? null);
   return res.json({ success: true, data });
 }));
 
 // PATCH /api/ats/queue-tokens/:id/assign-interviewer
-atsRouter.patch("/queue-tokens/:id/assign-interviewer", requireRole("admin", "hr", "recruiter"), h(async (req: any, res: any) => {
+atsRouter.patch("/queue-tokens/:id/assign-interviewer", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: any, res: any) => {
   const { interviewerId } = req.body;
   const data = await atsQueueService.assignInterviewer(req.params.id, interviewerId ?? null);
   return res.json({ success: true, data });
 }));
 
 // PATCH /api/ats/queue-tokens/:id/stage
-atsRouter.patch("/queue-tokens/:id/stage", requireRole("admin", "hr", "recruiter"), h(async (req: any, res: any) => {
+atsRouter.patch("/queue-tokens/:id/stage", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: any, res: any) => {
   const { stage } = req.body;
   if (!stage || typeof stage !== 'string') {
     return res.status(400).json({ success: false, message: "stage is required" });
@@ -350,7 +350,7 @@ atsRouter.patch("/queue-tokens/:id/stage", requireRole("admin", "hr", "recruiter
 }));
 
 // GET /api/ats/queue-tokens/active — full active queue with wait times and >20min alerts
-atsRouter.get("/queue-tokens/active", requireRole("admin", "hr", "recruiter", "manager"), h(async (req: any, res: any) => {
+atsRouter.get("/queue-tokens/active", requireRole("admin", "hr", "super_admin", "recruiter", "manager"), h(async (req: any, res: any) => {
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
     ["hr", "recruiter"],
@@ -368,7 +368,7 @@ atsRouter.get("/queue-tokens/active", requireRole("admin", "hr", "recruiter", "m
 
 // POST /api/ats/recruiter/verify — validates recruiter code + PIN and biometric availability
 // Requires HRMS JWT (requireAuth already applied above)
-atsRouter.post("/recruiter/verify", requireRole("admin", "hr", "recruiter", "manager"), h(async (req: any, res: any) => {
+atsRouter.post("/recruiter/verify", requireRole("admin", "hr", "super_admin", "recruiter", "manager"), h(async (req: any, res: any) => {
   const { recruiterCode, pin } = req.body;
   if (!recruiterCode || !pin) return res.status(400).json({ success: false, message: "recruiterCode and pin are required" });
   const profile = await verifyRecruiter(recruiterCode, pin);
@@ -378,7 +378,7 @@ atsRouter.post("/recruiter/verify", requireRole("admin", "hr", "recruiter", "man
 // GET /api/ats/recruiter/my-candidates — returns candidates assigned to the authenticated recruiter.
 // Admin/hr may override by supplying ?recruiterName= to inspect any recruiter's queue.
 // Any other role sees only their own queue derived from the JWT → employee → roster chain.
-atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "recruiter", "manager"), h(async (req: any, res: any) => {
+atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "super_admin", "recruiter", "manager"), h(async (req: any, res: any) => {
   const role = req.authUser?.role as string | undefined;
   const isPrivileged = role === "admin" || role === "hr";
   const overrideName = String(req.query.recruiterName ?? "").trim();
@@ -403,7 +403,7 @@ atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "recruiter"
 
 // GET /api/ats/recruiter/submission-history — submission history for the authenticated recruiter.
 // Admin/hr may override by supplying ?recruiterCode= to inspect any recruiter's history.
-atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "recruiter", "manager"), h(async (req: any, res: any) => {
+atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super_admin", "recruiter", "manager"), h(async (req: any, res: any) => {
   const role = req.authUser?.role as string | undefined;
   const isPrivileged = role === "admin" || role === "hr";
   const overrideCode = String(req.query.recruiterCode ?? "").trim();

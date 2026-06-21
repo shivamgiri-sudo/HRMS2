@@ -73,6 +73,30 @@ router.get("/directory-masters", requireRole("admin", "hr", "manager"), h(async 
   return res.json({ data: { processes, branches } });
 }));
 
+// GET /api/employees?search=... — search employees by name or code
+router.get("/", requireAuth, h(async (req: any, res: any) => {
+  const search = String(req.query.search || "").trim();
+  const limit = Math.min(Number(req.query.limit) || 10, 100);
+
+  if (search.length < 2) {
+    return res.json({ success: true, data: [] });
+  }
+
+  const pattern = `%${search}%`;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, first_name, last_name, employee_code
+     FROM employees
+     WHERE active_status = 1 AND (
+       first_name LIKE ? OR last_name LIKE ? OR employee_code LIKE ?
+     )
+     ORDER BY first_name, last_name
+     LIMIT ?`,
+    [pattern, pattern, pattern, limit]
+  );
+
+  return res.json({ success: true, data: rows });
+}));
+
 // GET /api/employees/options/search — lightweight search for autocomplete
 router.get("/options/search", requireAuth, h(async (req: any, res: any) => {
   const q = String(req.query.q || "").trim();
