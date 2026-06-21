@@ -47,10 +47,12 @@ WHERE lt.leave_code IN ('CL', 'ML')
 
 -- Step 5: Add audit columns to leave_request
 ALTER TABLE leave_request
-ADD COLUMN IF NOT EXISTS requires_branch_head_approval TINYINT(1) NOT NULL DEFAULT 0 AFTER status,
-ADD COLUMN IF NOT EXISTS cross_type_deduction JSON NULL COMMENT 'Deduction breakdown: {"CL": 1.0, "ML": 0.5}' AFTER requires_branch_head_approval,
-ADD COLUMN IF NOT EXISTS payroll_closed_flag TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Set if month payroll already closed' AFTER cross_type_deduction,
-ADD COLUMN IF NOT EXISTS backdated_applied TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Flag for backdated requests (up to 5th only)' AFTER payroll_closed_flag,
+ADD COLUMN requires_branch_head_approval TINYINT(1) NOT NULL DEFAULT 0 AFTER status,
+ADD COLUMN cross_type_deduction JSON NULL AFTER requires_branch_head_approval,
+ADD COLUMN payroll_closed_flag TINYINT(1) NOT NULL DEFAULT 0 AFTER cross_type_deduction,
+ADD COLUMN backdated_applied TINYINT(1) NOT NULL DEFAULT 0 AFTER payroll_closed_flag;
+
+ALTER TABLE leave_request
 ADD INDEX idx_requires_branch_head (requires_branch_head_approval),
 ADD INDEX idx_payroll_closed (payroll_closed_flag);
 
@@ -65,6 +67,4 @@ JOIN leave_type_master lt ON lt.id = lpc.leave_type_id
 SET lpc.pool_with = 'CL,HDML'
 WHERE lt.leave_code = 'ML';
 
--- Audit log
-INSERT INTO audit_log (action, module, details, created_at)
-VALUES ('leave_credit_redesign', 'leave', 'Migrated to whole-number monthly schedule. Created leave_credit_schedule table.', NOW());
+-- Migration 245 applied successfully

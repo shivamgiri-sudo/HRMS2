@@ -101,8 +101,8 @@ export const leaveService = {
 
     // RULE 3: Payroll closure cutoff — block if month payroll closed
     const [payrollRows]: any = await db.execute(
-      `SELECT status FROM salary_prep_run WHERE run_month = ? AND run_year = ? LIMIT 1`,
-      [month, year]
+      `SELECT status FROM salary_prep_run WHERE run_month = ? LIMIT 1`,
+      [`${year}-${String(month).padStart(2, '0')}`]
     );
     if (payrollRows.length > 0 && ['closed', 'finalized'].includes(payrollRows[0].status)) {
       throw new Error(
