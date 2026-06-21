@@ -8,8 +8,7 @@ const lmsPool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 3,
   queueLimit: 0,
-  enableTimezoneSupport: true,
-});
+} as Parameters<typeof mysql.createPool>[0]);
 
 export async function getLmsConnection() {
   return lmsPool.getConnection();

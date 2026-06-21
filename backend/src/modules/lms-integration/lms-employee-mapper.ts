@@ -10,7 +10,7 @@ interface MappingResult {
   mappingSource: 'mobile' | 'personal_email' | 'official_email' | 'employee_code' | 'none';
   confidence: 'high' | 'medium' | 'low';
   success: boolean;
-  errorReason?: string;
+  errorReason?: string | null;
 }
 
 export const lmsEmployeeMapper = {
@@ -33,7 +33,7 @@ export const lmsEmployeeMapper = {
       emailPersonalMatchFound: false,
       emailOfficialMatchFound: false,
       employeeCodeMatchFound: false,
-      finalMatchSource: 'none' as const,
+      finalMatchSource: 'none' as 'mobile' | 'personal_email' | 'official_email' | 'employee_code' | 'none',
       finalHrmsEmployeeId: null as string | null,
     };
 
@@ -199,7 +199,7 @@ export const lmsEmployeeMapper = {
     auditId: string,
     lmsEmployeeId: string,
     hrmsEmployee: any,
-    source: 'mobile' | 'personal_email' | 'email' | 'employee_code',
+    source: 'mobile' | 'personal_email' | 'official_email' | 'email' | 'employee_code',
     confidence: 'high' | 'medium' | 'low',
     auditLog: any
   ) {
@@ -282,18 +282,16 @@ export const lmsEmployeeMapper = {
    * Get existing mapping or create new one
    */
   async getOrMapLmsTrainee(lmsId: string): Promise<string | null> {
-    // Check if already mapped
     const [existing] = await db.execute<RowDataPacket[]>(
       `SELECT hrms_employee_id FROM lms_employee_mapping WHERE lms_employee_id = ? LIMIT 1`,
       [lmsId]
     );
 
     if (existing.length > 0) {
-      return (existing[0] as any).hrms_employee_id;
+      return (existing[0] as any).hrms_employee_id ?? null;
     }
 
-    // Create new mapping using priority chain
     const result = await this.mapLmsTrainee(lmsId);
-    return result.success ? result.hrmsEmployeeId : null;
+    return result.success ? (result.hrmsEmployeeId ?? null) : null;
   },
 };

@@ -75,24 +75,43 @@ export function DashboardLayout({ children }: Props) {
     ? APP_VERSION
     : (versionData?.currentVersion ?? APP_VERSION);
 
-  /* Filter nav items by access */
+  /* Filter nav items by access — recurses into children */
   const filteredGroups = useMemo(() => {
     const visibleSet = new Set(visiblePageCodes);
+
+    const canShow = (item: { pageCode?: string; roles?: string[]; adminOnly?: boolean }) => {
+      if (item.pageCode) return visibleSet.has(item.pageCode) || canViewPage(item.pageCode);
+      if (item.roles?.length) return hasAnyRole(...item.roles);
+      if ((item as any).adminOnly && !isAdminOrHR) return false;
+      return true;
+    };
+
     return navGroups
       .map((group) => ({
         ...group,
-        items: group.items.filter((item) => {
-          if (item.pageCode) return visibleSet.has(item.pageCode) || canViewPage(item.pageCode);
-          if (item.roles?.length) return hasAnyRole(...item.roles);
-          if (item.adminOnly && !isAdminOrHR) return false;
-          return true;
-        }),
+        items: group.items
+          .map((item) => {
+            if (item.children?.length) {
+              const filteredChildren = item.children.filter(canShow);
+              if (filteredChildren.length === 0) return null;
+              return { ...item, children: filteredChildren };
+            }
+            return canShow(item) ? item : null;
+          })
+          .filter(Boolean) as typeof group.items,
       }))
       .filter((g) => g.items.length > 0);
   }, [visiblePageCodes, canViewPage, hasAnyRole, isAdminOrHR]);
 
   const searchableItems = useMemo(
-    () => filteredGroups.flatMap((g) => g.items.map((item) => ({ ...item, groupTitle: g.title }))),
+    () => filteredGroups.flatMap((g) =>
+      g.items.flatMap((item) => {
+        if (item.children?.length) {
+          return item.children.map((child) => ({ ...child, groupTitle: g.title }));
+        }
+        return [{ ...item, groupTitle: g.title }];
+      })
+    ),
     [filteredGroups]
   );
 

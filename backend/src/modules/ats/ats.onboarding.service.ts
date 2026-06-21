@@ -499,7 +499,7 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
       `SELECT gender, date_of_birth, personal_email, personal_phone, alternate_mobile,
               pan_number, aadhar_number, uan_number, current_address
        FROM ats_candidate WHERE id = ? LIMIT 1`,
-      [candidate.id]
+      [candidateId]
     );
     const candRow = candidateData[0][0] as any;
 
@@ -561,7 +561,7 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
       `SELECT nominee_name, nominee_relation, nominee_date_of_birth, nominee1_share_pct,
               nominee2_name, nominee2_relation, nominee2_dob, nominee2_share_pct
        FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
-      [candidate.id]
+      [candidateId]
     );
     const nomRow = nomineeData[0] as any;
     if (nomRow?.nominee_name) {
