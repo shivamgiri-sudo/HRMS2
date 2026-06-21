@@ -33,6 +33,12 @@ export function requireRole(...allowedRoles: string[]) {
         return res.status(401).json({ success: false, message: "Unauthenticated" });
       }
 
+      // Demo bypass: mock-token-super-admin-role gets all roles when INTERNAL_DEMO_BYPASS=true
+      if (req.authUser.isDemo && process.env.INTERNAL_DEMO_BYPASS === "true" && process.env.NODE_ENV !== "production") {
+        (req as AuthenticatedRequest & { userRoles: string[] }).userRoles = ["super_admin", ...allowedRoles];
+        return next();
+      }
+
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT role_key
            FROM user_roles

@@ -108,11 +108,11 @@ router.get("/", requireAuth, requireRole("admin", "hr", "super_admin", "manager"
     params.push(branchId);
   }
 
-  const whereSQL = whereClauses.join(" AND ");
+  const whereSQL = whereClauses.length ? "WHERE " + whereClauses.join(" AND ") : "";
 
   // Get total count
   const [countRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as total FROM employees e WHERE ${whereSQL}`,
+    `SELECT COUNT(*) as total FROM employees e ${whereSQL}`,
     params
   );
   const total = countRows[0]?.total ?? 0;
@@ -127,10 +127,10 @@ router.get("/", requireAuth, requireRole("admin", "hr", "super_admin", "manager"
      LEFT JOIN designation_master des ON des.id = e.designation_id
      LEFT JOIN branch_master b ON b.id = e.branch_id
      LEFT JOIN process_master p ON p.id = e.process_id
-     WHERE ${whereSQL}
+     ${whereSQL}
      ORDER BY e.first_name, e.last_name
-     LIMIT ? OFFSET ?`,
-    [...params, limit, offset]
+     LIMIT ${limit} OFFSET ${offset}`,
+    params
   );
 
   return res.json({
