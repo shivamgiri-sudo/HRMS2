@@ -1,5 +1,6 @@
 import { db } from '../../db/mysql.js';
 import { getLmsConnection } from './lms-external-db.js';
+import { lmsEmployeeMapper } from './lms-employee-mapper.js';
 import { randomUUID } from 'crypto';
 import type { RowDataPacket } from 'mysql2';
 
@@ -22,13 +23,26 @@ export const lmsSyncService = {
 
       for (const emp of employees) {
         try {
-          // Get employee code from mas_hrms
+          // Map LMS employee to HRMS using fallback chain (mobile → personal_email → official_email → employee_code)
+          const hrmsEmployeeId = await lmsEmployeeMapper.getOrMapLmsEmployee(emp.employee_id);
+
+          if (!hrmsEmployeeId) {
+            console.warn(`[LMS Sync] Could not map LMS employee ${emp.employee_id} to HRMS`);
+            failed++;
+            continue;
+          }
+
+          // Get employee details from mapping
           const [eRows] = await db.execute<RowDataPacket[]>(
-            `SELECT id, employee_code FROM employees WHERE id = ? OR employee_code = ? LIMIT 1`,
-            [emp.employee_id, emp.employee_id]
+            `SELECT id, employee_code FROM employees WHERE id = ? LIMIT 1`,
+            [hrmsEmployeeId]
           );
 
-          if (!eRows.length) continue; // Skip unmapped employees
+          if (!eRows.length) {
+            console.error(`[LMS Sync] Mapped HRMS employee ${hrmsEmployeeId} not found`);
+            failed++;
+            continue;
+          }
 
           const empData = eRows[0] as any;
 
