@@ -22,9 +22,11 @@ const ScrollToTop = () => {
       }
       window.scrollTo(0, 0);
 
-      // Restore sidebar scroll position
+      // Restore sidebar scroll position after browser paint
       if (sidebarNav) {
-        sidebarNav.scrollTop = savedScroll;
+        requestAnimationFrame(() => {
+          sidebarNav.scrollTop = savedScroll;
+        });
       }
     }
   }, [pathname]);

@@ -2,8 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Activity, AlertTriangle, BarChart3, BookOpen, Briefcase, CheckCircle2, Clock, Database, RefreshCcw, Search, ShieldCheck, Target, TrendingUp, Users } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-// Extended tables not yet in the generated types — use a typed escape hatch only for those
-const extendedDb = { from: (t: string) => ({ select: (...a: any[]) => ({ eq: () => ({ order: () => ({ data: [], error: null }), maybeSingle: async () => ({ data: null, error: null }), data: [], error: null }), data: [], error: null }), insert: (...a: any[]) => ({ select: () => ({ single: async () => ({ data: { id: "stub" }, error: null }) }) }), update: (...a: any[]) => ({ eq: () => ({ data: null, error: null }) }), delete: () => ({ eq: () => ({ data: null, error: null }) }) }) };
 type Row = Record<string, any>;
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -70,27 +68,25 @@ export default function UnifiedPerformanceCommandCenter() {
       const empRes = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
       const empResult = { data: empRes.data ?? [] };
 
-      // Tables below are from extended modules (ATS, LMS, WFM, Quality, Ops) not yet in base schema
-      // Use extendedDb and return empty arrays if the table doesn't exist (error.code === '42P01')
-      const safeQuery = async (query: any): Promise<Row[]> => {
+      // Load extended module data via backend APIs; fallback to empty arrays if route not available
+      const safeApiGet = async (url: string): Promise<Row[]> => {
         try {
-          const result = await query;
-          if (result.error) return [];
-          return result.data || [];
+          const res = await hrmsApi.get<{success:boolean;data:any[];}>(url);
+          return res.data ?? [];
         } catch {
           return [];
         }
       };
 
-      const [atsC, atsS, lms, roster, sessions, qa, ops] = await Promise.all([
-        safeQuery(extendedDb.from("ats_candidate").select("*").gte("created_at", `${fromDate}T00:00:00`).lte("created_at", `${toDate}T23:59:59`).limit(5000)),
-        safeQuery(extendedDb.from("ats_recruiter_submission").select("*").gte("submitted_at", `${fromDate}T00:00:00`).lte("submitted_at", `${toDate}T23:59:59`).limit(5000)),
-        safeQuery(extendedDb.from("lms_content_progress").select("*,employees(employee_code,first_name,last_name)").gte("created_at", `${fromDate}T00:00:00`).lte("created_at", `${toDate}T23:59:59`).limit(5000)),
-        safeQuery(extendedDb.from("wfm_roster_assignment").select("*,employees(employee_code,first_name,last_name),wfm_shift_master(shift_name)").gte("roster_date", fromDate).lte("roster_date", toDate).limit(5000)),
-        safeQuery(extendedDb.from("wfm_attendance_session").select("*").gte("session_date", fromDate).lte("session_date", toDate).limit(5000)),
-        safeQuery(extendedDb.from("quality_score_log").select("*").gte("audit_date", fromDate).lte("audit_date", toDate).limit(5000)),
-        safeQuery(extendedDb.from("operations_productivity_log").select("*").gte("performance_date", fromDate).lte("performance_date", toDate).limit(5000)),
+      const [atsC, atsS, roster, sessions, qa] = await Promise.all([
+        safeApiGet(`/api/ats/candidates?fromDate=${fromDate}&toDate=${toDate}&limit=500`),
+        safeApiGet(`/api/ats/submissions?fromDate=${fromDate}&toDate=${toDate}&limit=500`),
+        safeApiGet(`/api/wfm/roster?fromDate=${fromDate}&toDate=${toDate}&limit=500`),
+        safeApiGet(`/api/wfm/attendance/daily?fromDate=${fromDate}&toDate=${toDate}&limit=500`),
+        safeApiGet(`/api/quality/scores?fromDate=${fromDate}&toDate=${toDate}&limit=500`),
       ]);
+      const lms: Row[] = [];
+      const ops: Row[] = [];
 
       setEmployees(empResult.data || []);
       setAtsCandidates(atsC);

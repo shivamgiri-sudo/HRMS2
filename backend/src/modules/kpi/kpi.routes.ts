@@ -16,18 +16,18 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 router.use(requireAuth);
 
 // Metrics
-router.get("/metrics", requireRole("admin", "hr", "manager", "qa", "process_manager"), h(c.listMetrics));
-router.post("/metrics", requireRole("admin", "manager", "process_manager"), h(c.createMetric));
+router.get("/metrics", requireRole("admin", "hr", "super_admin", "manager", "qa", "process_manager"), h(c.listMetrics));
+router.post("/metrics", requireRole("admin", "super_admin", "manager", "process_manager"), h(c.createMetric));
 
 // Templates
-router.get("/templates", requireRole("admin", "hr", "manager", "qa", "process_manager"), h(c.listTemplates));
-router.post("/templates", requireRole("admin", "manager", "process_manager"), h(c.createTemplate));
-router.get("/templates/:id/metrics", requireRole("admin", "hr", "manager", "qa", "process_manager"), h(c.listTemplateMetrics));
-router.post("/templates/:id/metrics", requireRole("admin", "manager", "process_manager"), h(c.addTemplateMetric));
+router.get("/templates", requireRole("admin", "hr", "super_admin", "manager", "qa", "process_manager"), h(c.listTemplates));
+router.post("/templates", requireRole("admin", "super_admin", "manager", "process_manager"), h(c.createTemplate));
+router.get("/templates/:id/metrics", requireRole("admin", "hr", "super_admin", "manager", "qa", "process_manager"), h(c.listTemplateMetrics));
+router.post("/templates/:id/metrics", requireRole("admin", "super_admin", "manager", "process_manager"), h(c.addTemplateMetric));
 
 // Assignments — static path before dynamic
 router.post("/assignments",
-  requireRole("admin", "manager", "process_manager"),
+  requireRole("admin", "super_admin", "manager", "process_manager"),
   requireScopedRole(["manager", "process_manager"], async (req) => {
     // Resolve employee's branch/process
     const [rows] = await db.execute(
@@ -42,11 +42,11 @@ router.post("/assignments",
   }),
   h(c.assignTemplate)
 );
-router.get("/assignments/employee/:employeeId", requireRole("admin", "hr", "manager", "qa"), h(c.getEmployeeTemplate));  // TODO: Add self-scope
+router.get("/assignments/employee/:employeeId", requireRole("admin", "hr", "super_admin", "manager", "qa"), h(c.getEmployeeTemplate));  // TODO: Add self-scope
 
 // Scores — static path before dynamic
 router.post("/scores/bulk",
-  requireRole("admin", "manager", "qa"),
+  requireRole("admin", "super_admin", "manager", "qa"),
   requireScopedRole(["manager", "qa"], async (req) => {
     // Bulk scores - check first employee's scope
     const firstEmpId = req.body.scores?.[0]?.employee_id;
@@ -118,12 +118,20 @@ router.get("/rating-config", h(async (req: AuthenticatedRequest, res: Response) 
   let rows: RowDataPacket[];
   if (processId) {
     const [r] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM kpi_rating_config WHERE process_id=? OR process_id IS NULL ORDER BY process_id DESC, min_score_pct DESC",
+      `SELECT MIN(id) as id, process_id, rating_label, MIN(min_score_pct) as min_score_pct, MAX(max_score_pct) as max_score_pct, color_code
+       FROM kpi_rating_config WHERE process_id=? OR process_id IS NULL
+       GROUP BY process_id, rating_label, color_code
+       ORDER BY process_id DESC, min_score_pct DESC`,
       [processId]
     );
     rows = r as RowDataPacket[];
   } else {
-    const [r] = await db.execute<RowDataPacket[]>("SELECT * FROM kpi_rating_config ORDER BY process_id IS NULL DESC, min_score_pct DESC");
+    const [r] = await db.execute<RowDataPacket[]>(
+      `SELECT MIN(id) as id, process_id, rating_label, MIN(min_score_pct) as min_score_pct, MAX(max_score_pct) as max_score_pct, color_code
+       FROM kpi_rating_config
+       GROUP BY process_id, rating_label, color_code
+       ORDER BY process_id IS NULL DESC, min_score_pct DESC`
+    );
     rows = r as RowDataPacket[];
   }
   res.json({ success: true, data: rows });

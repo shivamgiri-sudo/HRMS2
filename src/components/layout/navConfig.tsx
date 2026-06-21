@@ -92,7 +92,7 @@ export const navGroups: NavGroup[] = [
           { label: "Walk-in Queue",     href: "/ats/walkin-queue",             icon: ic(Users),        pageCode: "ATS_WAITING_QUEUE",     description: "Queue" },
           { label: "My Candidates",     href: "/ats/recruiter/my-candidates",  icon: ic(ClipboardList),pageCode: "ATS_RECRUITER_QUEUE",   description: "Candidates" },
           { label: "ATS Sourcing",      href: "/ats/sourcing-analysis",        icon: ic(BarChart3),    pageCode: "ATS_DASHBOARD",         roles: ["admin","hr"], description: "Sourcing analytics" },
-          { label: "Jobs Portal",       href: "/jobs",                         icon: ic(Briefcase),    pageCode: "JOBS_PORTAL",           description: "Jobs" },
+          // Jobs Portal removed per business requirement
         ],
       },
       {
@@ -181,9 +181,7 @@ export const navGroups: NavGroup[] = [
           { label: "Performance",          href: "/performance",                icon: ic(Target),       description: "Performance" },
           { label: "Performance Command",  href: "/performance/command-center", icon: ic(Target),       pageCode: "WORKFORCE_COMMAND_CENTER", description: "Perf command" },
           { label: "Agent Performance",    href: "/agent-performance",          icon: ic(Activity),     roles: ["admin","hr","ceo","qa","analyst","manager","process_manager","branch_head"], description: "Cross-source KPI" },
-          { label: "Goals & Appraisal",    href: "/goals",                      icon: ic(Target),       description: "Goals" },
-          { label: "Reviews Management",   href: "/reviews-management",         icon: ic(ClipboardList),pageCode: "WORKFORCE_COMMAND_CENTER", description: "Reviews" },
-          { label: "PIP Management",       href: "/pip-management",             icon: ic(ClipboardList),pageCode: "PIP_MANAGEMENT",          description: "PIP" },
+          // Goals, Reviews Management, PIP Management removed per business requirement
           { label: "KPI Config",           href: "/kpi-config",                 icon: ic(Target),       pageCode: "KPI_CONFIG", roles: ["admin","hr","manager","process_manager"], description: "KPI" },
           { label: "Operations KPI",       href: "/operations-kpi",             icon: ic(Target),       pageCode: "OPERATIONS_KPI",          description: "Ops KPI" },
           { label: "Operations Dashboard", href: "/operations/dashboard",       icon: ic(Target),       pageCode: "OPERATIONS_DASHBOARD",    description: "Ops dashboard" },

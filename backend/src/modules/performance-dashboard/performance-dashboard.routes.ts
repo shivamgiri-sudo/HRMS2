@@ -121,7 +121,7 @@ performanceDashboardRouter.get('/feedback', h(async (req: AuthenticatedRequest, 
  * GET /api/performance-dashboard/ratings
  * Retrieve performance ratings (admin/manager view)
  */
-performanceDashboardRouter.get('/ratings', requireRole('admin', 'hr', 'manager', 'process_manager', 'ceo'),
+performanceDashboardRouter.get('/ratings', requireRole('admin', 'hr', 'super_admin', 'manager', 'process_manager', 'ceo'),
   h(async (req: AuthenticatedRequest, res: Response) => {
     try {
       const [ratings] = await db.execute<RowDataPacket[]>(
@@ -143,7 +143,7 @@ performanceDashboardRouter.get('/ratings', requireRole('admin', 'hr', 'manager',
  * GET /api/performance-dashboard/summary
  * Get summary statistics for performance dashboard
  */
-performanceDashboardRouter.get('/summary', requireRole('admin', 'hr', 'manager', 'process_manager', 'ceo', 'qa', 'analyst'),
+performanceDashboardRouter.get('/summary', requireRole('admin', 'hr', 'super_admin', 'manager', 'process_manager', 'ceo', 'qa', 'analyst'),
   h(async (req: AuthenticatedRequest, res: Response) => {
     try {
       const [summary] = await db.execute<RowDataPacket[]>(
