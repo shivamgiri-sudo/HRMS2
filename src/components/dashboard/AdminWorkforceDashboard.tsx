@@ -377,7 +377,6 @@ export function AdminWorkforceDashboard() {
   if (query.isLoading) return <AdminDashboardSkeleton />;
 
   if (query.isError || !query.data) {
-    const errorMsg = query.error instanceof Error ? query.error.message : "The workforce data endpoint is unavailable";
     return (
       <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6" role="alert">
         <div className="flex items-start gap-3">
@@ -385,34 +384,17 @@ export function AdminWorkforceDashboard() {
           <div>
             <h1 className="text-balance text-lg font-bold text-rose-950">Admin analytics could not load</h1>
             <p className="mt-1 text-pretty text-sm text-rose-800">
-              {errorMsg}. Existing HRMS modules remain accessible.
+              The workforce data endpoint is unavailable. Existing HRMS modules remain accessible.
             </p>
-            {errorMsg && !errorMsg.includes("timeout") && (
-              <p className="mt-2 text-xs text-rose-700">
-                Contact your system administrator if this persists.
-              </p>
-            )}
-            <div className="mt-4 flex gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="rounded-xl border-rose-300 bg-white"
-                onClick={() => query.refetch()}
-                disabled={query.isFetching}
-              >
-                {query.isFetching ? "Loading..." : "Try again"}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="text-rose-700"
-                onClick={() => window.location.reload()}
-              >
-                Reload page
-              </Button>
-            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-4 rounded-xl border-rose-300 bg-white"
+              onClick={() => query.refetch()}
+            >
+              Try again
+            </Button>
           </div>
         </div>
       </div>

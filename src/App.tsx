@@ -175,6 +175,12 @@ const NativeCallCentreConfig        = lazy(() => import("./pages/NativeCallCentr
 const NativeDocumentVerification    = lazy(() => import("./pages/NativeDocumentVerification"));
 const NativeRosterPreference        = lazy(() => import("./pages/NativeRosterPreference"));
 
+// Dashboards
+const Dashboard                     = lazy(() => import("./pages/Dashboard"));
+const SuperAdminDashboardV2         = lazy(() => import("./pages/SuperAdminDashboardV2"));
+const LMSProgressDashboard          = lazy(() => import("./pages/LMSProgressDashboard"));
+const CandidatePortalDashboard      = lazy(() => import("./pages/CandidatePortalDashboard"));
+
 // System
 const NativeMigrationConsole        = lazy(() => import("./pages/NativeMigrationConsole"));
 const NativeExitManagement          = lazy(() => import("./pages/NativeExitManagement"));
@@ -254,6 +260,20 @@ const App = () => (
               <Route path="/walkin-registration" element={<Navigate to="/interview-registration" replace />} />
 
               <Route path="/dashboard" element={<ProtectedRoute><Index /></ProtectedRoute>} />
+
+              {/* Dashboard Variants */}
+              <Route path="/dashboard/home" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/dashboard/admin" element={<ProtectedRoute roles={['admin', 'super_admin']}><SuperAdminDashboardV2 /></ProtectedRoute>} />
+              <Route path="/dashboard/quality" element={<ProtectedRoute><Gate pageCode="QUALITY_DASHBOARD"><NativeQualityDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/dashboard/performance" element={<ProtectedRoute><Gate pageCode="AGENT_PERFORMANCE"><NativeAgentPerformanceDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/dashboard/operations" element={<ProtectedRoute><Gate pageCode="OPERATIONS_DASHBOARD"><NativeOperationsDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/dashboard/management" element={<ProtectedRoute><Gate pageCode="MANAGEMENT_DASHBOARD"><NativeManagementDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/dashboard/kpi" element={<ProtectedRoute><Gate pageCode="KPI_CONFIG"><MyKpiDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/dashboard/lms" element={<ProtectedRoute><Gate pageCode="LMS_MY_LEARNING"><LMSProgressDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/dashboard/ats" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSDashboardV2 /></Gate></ProtectedRoute>} />
+              <Route path="/dashboard/ats-replica" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSDashboardReplica /></Gate></ProtectedRoute>} />
+              <Route path="/dashboard/candidate-portal" element={<CandidatePortalDashboard />} />
+
               <Route path="/employees" element={<ProtectedRoute><Employees /></ProtectedRoute>} />
               <Route path="/employees/:id/360" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployee360 /></Gate></ProtectedRoute>} />
               <Route path="/onboarding" element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
