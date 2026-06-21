@@ -12,8 +12,8 @@ const h = (fn: (req: any, res: Response) => Promise<any>) => (req: any, res: Res
 // GET /api/lms-dashboard/learner-progress/:employee_id
 router.get('/learner-progress/:employee_id', h(async (req: any, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM lms_learner_progress WHERE employee_id = ? OR employee_code = ? LIMIT 1`,
-    [req.params.employee_id, req.params.employee_id]
+    `SELECT * FROM lms_learning_progress_snapshot WHERE employee_id = ? LIMIT 1`,
+    [req.params.employee_id]
   );
 
   if (!rows.length) {
@@ -27,16 +27,13 @@ router.get('/learner-progress/:employee_id', h(async (req: any, res: Response) =
 router.get('/batch-progress/:batch_no', h(async (req: any, res: Response) => {
   const [summary] = await db.execute<RowDataPacket[]>(`
     SELECT
-      batch_no,
+      course_id,
       COUNT(DISTINCT employee_id) as total_learners,
-      AVG(course_completion_pct) as avg_completion,
-      AVG(mcq_best_score) as avg_score,
-      COUNT(CASE WHEN certification_status = 'certified' THEN 1 END) as certified_count,
-      COUNT(CASE WHEN attrition_risk_signal = 'red' THEN 1 END) as at_risk_count,
-      COUNT(CASE WHEN ops_handover_ready = 1 THEN 1 END) as ops_ready_count
-    FROM lms_learner_progress
-    WHERE batch_no = ?
-    GROUP BY batch_no
+      AVG(completion_pct) as avg_completion,
+      AVG(score) as avg_score
+    FROM lms_learning_progress_snapshot
+    WHERE course_id = ?
+    GROUP BY course_id
   `, [req.params.batch_no]);
 
   return res.json({ success: true, data: summary[0] || {} });
@@ -45,11 +42,12 @@ router.get('/batch-progress/:batch_no', h(async (req: any, res: Response) => {
 // GET /api/lms-dashboard/assessment-history/:employee_id
 router.get('/assessment-history/:employee_id', h(async (req: any, res: Response) => {
   const [attempts] = await db.execute<RowDataPacket[]>(`
-    SELECT * FROM lms_assessment_scores
-    WHERE employee_id = ? OR employee_code = ?
-    ORDER BY attempted_at DESC
+    SELECT id, employee_id, course_id, course_name, score, status, synced_at
+    FROM lms_learning_progress_snapshot
+    WHERE employee_id = ?
+    ORDER BY synced_at DESC
     LIMIT 50
-  `, [req.params.employee_id, req.params.employee_id]);
+  `, [req.params.employee_id]);
 
   return res.json({ success: true, data: attempts });
 }));
@@ -57,9 +55,9 @@ router.get('/assessment-history/:employee_id', h(async (req: any, res: Response)
 // GET /api/lms-dashboard/sync-status
 router.get('/sync-status', h(async (req: any, res: Response) => {
   const [audits] = await db.execute<RowDataPacket[]>(`
-    SELECT sync_type, status, rows_synced, error_message, completed_at
-    FROM lms_sync_audit
-    ORDER BY completed_at DESC
+    SELECT id, sync_type, records_synced, errors_count, status, created_at
+    FROM lms_sync_audit_log
+    ORDER BY created_at DESC
     LIMIT 20
   `);
 
