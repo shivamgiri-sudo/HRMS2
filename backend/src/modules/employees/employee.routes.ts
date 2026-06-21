@@ -274,7 +274,22 @@ router.post("/me/photo", (req: any, res: any, next: any) => {
   }
 
   const photoUrl = `/api/files/employee-photos/${req.file.filename}`;
-  await db.execute("UPDATE employees SET photo_url = ?, avatar_url = ?, updated_at = NOW() WHERE id = ?", [photoUrl, photoUrl, empId]);
+
+  // Retry logic for lock timeouts (common during concurrent updates)
+  let retries = 3;
+  while (retries > 0) {
+    try {
+      await db.execute(
+        "UPDATE employees SET photo_url = ?, avatar_url = ?, updated_at = NOW() WHERE id = ?",
+        [photoUrl, photoUrl, empId]
+      );
+      break;
+    } catch (e: any) {
+      retries--;
+      if (retries === 0 || !e.message.includes('Lock wait timeout')) throw e;
+      await new Promise(resolve => setTimeout(resolve, 100 * (4 - retries)));
+    }
+  }
 
   res.json({ success: true, avatarUrl: photoUrl, photoUrl, photo_url: photoUrl, url: photoUrl });
 }));
