@@ -116,15 +116,15 @@ export const lmsEmployeeMapper = {
         }
       }
 
-      // PRIORITY 3: Match by official email (try domain extraction if personal_email failed)
+      // PRIORITY 3: Match by official email (@teammas.co.in / @teammas.in)
       if (trainee.email && trainee.email.includes('@')) {
         auditLog.triedOfficialEmail = trainee.email;
         const [hrmsRows] = await db.execute<RowDataPacket[]>(
           `SELECT id, employee_code, mobile, personal_email, email
            FROM employees
-           WHERE office_email = ? AND active_status = 1
+           WHERE (office_email = ? OR office_email LIKE CONCAT('%', ?, '%')) AND active_status = 1
            LIMIT 1`,
-          [trainee.email]
+          [trainee.email, trainee.email.split('@')[0]]
         );
 
         if (hrmsRows.length > 0) {
