@@ -78,50 +78,79 @@ export async function creditMonthlyLeaves(
     `SELECT id, date_of_joining FROM employees WHERE active_status = 1 AND employment_status = 'active'`
   );
 
-  const RATES: Record<string, number> = { CL: 0.583, ML: 0.417, EL: 1.500 };
+  // Load CL/ML schedule for this month (whole-number credits via leave_credit_schedule)
+  const [scheduleRows]: any = await db.execute(
+    `SELECT lcs.month, lcs.leave_code, lcs.credit_days, lt.id AS leave_type_id
+     FROM leave_credit_schedule lcs
+     JOIN leave_type_master lt ON lt.leave_code = lcs.leave_code AND lt.active_status = 1
+     WHERE lcs.month = ?`,
+    [creditMonth]
+  );
+
   let credited = 0, skipped = 0;
 
   for (const emp of employees) {
     try {
-      for (const code of ['CL', 'ML', 'EL']) {
-        const leaveTypeId = leaveTypeMap[code];
-        const rate = RATES[code];
-        const daysToCredit = prorateMonthlyCredit(emp.date_of_joining, creditMonth, creditYear) * rate;
+      // Credit from schedule (CL/ML whole numbers)
+      for (const schedule of scheduleRows) {
+        const proration = prorateMonthlyCredit(emp.date_of_joining, creditMonth, creditYear);
+        const daysToCredit = Math.round(proration * schedule.credit_days * 10) / 10;
         if (daysToCredit <= 0) continue;
-        const roundedDays = Math.round(daysToCredit * 1000) / 1000;
 
         // Idempotency check
         const [exists]: any = await db.execute(
           `SELECT 1 FROM leave_el_credit_log WHERE employee_id=? AND leave_type_id=? AND credit_year=? AND credit_month=? AND credit_type='monthly' LIMIT 1`,
-          [emp.id, leaveTypeId, creditYear, creditMonth]
+          [emp.id, schedule.leave_type_id, creditYear, creditMonth]
         );
         if (exists.length > 0) continue;
 
-        if (code === 'EL') {
-          // EL goes to accrual ledger, NOT balance ledger
-          await db.execute(
-            `INSERT INTO leave_el_accrual_ledger (id, employee_id, accrual_year, accrued_days, last_credited_month)
-             VALUES (UUID(), ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE accrued_days = accrued_days + ?, last_credited_month = ?`,
-            [emp.id, creditYear, roundedDays, creditMonth, roundedDays, creditMonth]
-          );
-        } else {
-          // CL and ML go to balance ledger (spendable immediately)
-          await db.execute(
-            `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
-             VALUES (UUID(), ?, ?, ?, ?, 0, 0)
-             ON DUPLICATE KEY UPDATE allocated_days = allocated_days + ?`,
-            [emp.id, leaveTypeId, creditYear, roundedDays, roundedDays]
-          );
-        }
+        // CL/ML from schedule: go to balance ledger (spendable immediately)
+        await db.execute(
+          `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
+           VALUES (UUID(), ?, ?, ?, ?, 0, 0)
+           ON DUPLICATE KEY UPDATE allocated_days = allocated_days + ?`,
+          [emp.id, schedule.leave_type_id, creditYear, daysToCredit, daysToCredit]
+        );
 
         // Audit log
         await db.execute(
           `INSERT INTO leave_el_credit_log (id, employee_id, leave_type_id, credit_year, credit_month, credit_date, days_credited, months_served, credit_type)
            VALUES (UUID(), ?, ?, ?, ?, CURDATE(), ?, 0, 'monthly')`,
-          [emp.id, leaveTypeId, creditYear, creditMonth, roundedDays]
+          [emp.id, schedule.leave_type_id, creditYear, creditMonth, daysToCredit]
         );
       }
+
+      // Credit EL (1.5/month to accrual ledger, unchanged logic)
+      if (!leaveTypeMap['EL']) {
+        continue;
+      }
+      const elRate = 1.500;
+      const elDaysToCredit = prorateMonthlyCredit(emp.date_of_joining, creditMonth, creditYear) * elRate;
+      if (elDaysToCredit > 0) {
+        const elRoundedDays = Math.round(elDaysToCredit * 1000) / 1000;
+
+        // Idempotency check for EL
+        const [elExists]: any = await db.execute(
+          `SELECT 1 FROM leave_el_credit_log WHERE employee_id=? AND leave_type_id=? AND credit_year=? AND credit_month=? AND credit_type='monthly' LIMIT 1`,
+          [emp.id, leaveTypeMap['EL'], creditYear, creditMonth]
+        );
+        if (elExists.length === 0) {
+          await db.execute(
+            `INSERT INTO leave_el_accrual_ledger (id, employee_id, accrual_year, accrued_days, last_credited_month)
+             VALUES (UUID(), ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE accrued_days = accrued_days + ?, last_credited_month = ?`,
+            [emp.id, creditYear, elRoundedDays, creditMonth, elRoundedDays, creditMonth]
+          );
+
+          // EL audit log
+          await db.execute(
+            `INSERT INTO leave_el_credit_log (id, employee_id, leave_type_id, credit_year, credit_month, credit_date, days_credited, months_served, credit_type)
+             VALUES (UUID(), ?, ?, ?, ?, CURDATE(), ?, 0, 'monthly')`,
+            [emp.id, leaveTypeMap['EL'], creditYear, creditMonth, elRoundedDays]
+          );
+        }
+      }
+
       credited++;
     } catch (err: any) {
       console.error(`[LeaveMonthlyWorker] Error for employee ${emp.id}:`, err.message);
