@@ -1,219 +1,105 @@
-import mysql from "mysql2/promise";
-import type { RowDataPacket } from "mysql2";
+import { db } from '../../db/mysql.js'
+import type { RowDataPacket } from 'mysql2'
 
-export async function getPerfSummary(
-  pool: mysql.Pool,
-  from: string,
-  to: string,
-  aprSql: string,
-  auditSql: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  aprParams: any[],
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  auditParams: any[],
-): Promise<Record<string, unknown>> {
-  const [aprRows, auditRows, salesRows] = await Promise.all([
-    pool.execute<RowDataPacket[]>(
-      `SELECT COUNT(DISTINCT UserID) AS total_agents,
-        ROUND(AVG(Calls), 1) AS avg_calls_per_agent,
-        ROUND(AVG(CASE WHEN TIME_TO_SEC(COALESCE(Login_Time,'00:00:00')) > 0
-          THEN (TIME_TO_SEC(COALESCE(BIO,'00:00:00'))+TIME_TO_SEC(COALESCE(LUNCH,'00:00:00'))
-               +TIME_TO_SEC(COALESCE(QA,'00:00:00'))+TIME_TO_SEC(COALESCE(TRAINING,'00:00:00'))
-               +TIME_TO_SEC(COALESCE(DISMX,'00:00:00')))
-               /TIME_TO_SEC(COALESCE(Login_Time,'00:00:00'))*100 ELSE NULL END),1) AS avg_shrinkage,
-        ROUND(AVG(CASE WHEN TIME_TO_SEC(COALESCE(Net_Login,'00:00:00'))>0
-          THEN Calls/(TIME_TO_SEC(COALESCE(Net_Login,'00:00:00'))/3600) ELSE NULL END),2) AS calls_per_hour_avg
-      FROM Shivamgiri.apr WHERE ReportDate BETWEEN ? AND ?${aprSql}`,
-      [...aprParams],
-    ),
-    pool.execute<RowDataPacket[]>(
-      `SELECT ROUND(AVG(quality_percentage), 2) AS avg_quality
-      FROM db_audit.call_quality_assessment WHERE CallDate BETWEEN ? AND ?${auditSql}`,
-      [...auditParams],
-    ),
-    pool.execute<RowDataPacket[]>(
-      `SELECT COUNT(CASE WHEN SaleDone IN ('Yes','1') THEN 1 END) AS total_sales,
-        ROUND(COUNT(CASE WHEN SaleDone IN ('Yes','1') THEN 1 END)/NULLIF(COUNT(*),0)*100,2) AS avg_conversion_rate
-      FROM db_external.CallDetails WHERE CallDate BETWEEN ? AND ?`,
-      [from, to],
-    ),
-  ]);
-
-  const apr = aprRows[0] as RowDataPacket[];
-  const audit = auditRows[0] as RowDataPacket[];
-  const sales = salesRows[0] as RowDataPacket[];
-
-  return { ...apr[0], ...audit[0], ...sales[0] };
+/**
+ * Get performance goals for a user
+ */
+export async function getUserGoals(userId: string): Promise<RowDataPacket[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT g.* FROM goal g
+     JOIN employees e ON g.employee_id = e.id
+     WHERE e.user_id = ?
+     LIMIT 20`,
+    [userId]
+  )
+  return rows as RowDataPacket[]
 }
 
-export async function getAgentMatrix(
-  pool: mysql.Pool,
-  from: string,
-  to: string,
-  aprSql: string,
-  auditSql: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  aprParams: any[],
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  auditParams: any[],
-): Promise<RowDataPacket[]> {
-  const sql = `SELECT COALESCE(a.agent_code, q.agent_name, s.agent_name) AS agent_code,
-    COALESCE(a.total_calls, 0) AS total_calls,
-    a.avg_aht_seconds, a.shrinkage_pct,
-    COALESCE(q.avg_quality, 0) AS avg_quality,
-    COALESCE(s.sales_done, 0) AS sales_done,
-    COALESCE(s.conversion_pct, 0) AS conversion_pct,
-    a.calls_per_hour,
-    ROUND(0.4*COALESCE(q.avg_quality,0)+0.3*(100-COALESCE(a.shrinkage_pct,50))+0.3*LEAST(COALESCE(s.conversion_pct,0)*10,100),1) AS performance_score
-  FROM (
-    SELECT UserID AS agent_code, SUM(Calls) AS total_calls,
-      ROUND(AVG(TIME_TO_SEC(COALESCE(AHT,'00:00:00'))),0) AS avg_aht_seconds,
-      ROUND(AVG(CASE WHEN TIME_TO_SEC(COALESCE(Login_Time,'00:00:00'))>0
-        THEN (TIME_TO_SEC(COALESCE(BIO,'00:00:00'))+TIME_TO_SEC(COALESCE(LUNCH,'00:00:00'))
-             +TIME_TO_SEC(COALESCE(QA,'00:00:00'))+TIME_TO_SEC(COALESCE(TRAINING,'00:00:00'))
-             +TIME_TO_SEC(COALESCE(DISMX,'00:00:00')))
-             /TIME_TO_SEC(COALESCE(Login_Time,'00:00:00'))*100 ELSE NULL END),1) AS shrinkage_pct,
-      ROUND(AVG(CASE WHEN TIME_TO_SEC(COALESCE(Net_Login,'00:00:00'))>0
-        THEN Calls/(TIME_TO_SEC(COALESCE(Net_Login,'00:00:00'))/3600) ELSE NULL END),2) AS calls_per_hour
-    FROM Shivamgiri.apr WHERE ReportDate BETWEEN ? AND ?${aprSql}
-    GROUP BY UserID
-  ) a
-  LEFT JOIN (
-    SELECT User AS agent_name, ROUND(AVG(quality_percentage),2) AS avg_quality
-    FROM db_audit.call_quality_assessment WHERE CallDate BETWEEN ? AND ?${auditSql}
-      AND User IS NOT NULL AND User != '' GROUP BY User
-  ) q ON a.agent_code = q.agent_name
-  LEFT JOIN (
-    SELECT AgentName AS agent_name,
-      COUNT(CASE WHEN SaleDone IN ('Yes','1') THEN 1 END) AS sales_done,
-      ROUND(COUNT(CASE WHEN SaleDone IN ('Yes','1') THEN 1 END)/NULLIF(COUNT(*),0)*100,2) AS conversion_pct
-    FROM db_external.CallDetails WHERE CallDate BETWEEN ? AND ?
-      AND AgentName IS NOT NULL AND AgentName != '' GROUP BY AgentName
-  ) s ON a.agent_code = s.agent_name
-  ORDER BY performance_score DESC LIMIT 50`;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const params: any[] = [...aprParams, ...auditParams, from, to];
-  const [rows] = await pool.execute<RowDataPacket[]>(sql, params);
-  return rows;
+/**
+ * Get performance feedback requests for a user
+ */
+export async function getUserFeedbackRequests(userId: string): Promise<RowDataPacket[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT pfr.* FROM performance_feedback_request pfr
+     JOIN employees e ON pfr.reviewer_id = e.id OR pfr.employee_id = e.id
+     WHERE e.user_id = ? AND pfr.status IN ('pending', 'completed')
+     LIMIT 50`,
+    [userId]
+  )
+  return rows as RowDataPacket[]
 }
 
-export async function getPerfTrend(
-  pool: mysql.Pool,
-  from: string,
-  to: string,
-  aprSql: string,
-  auditSql: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  aprParams: any[],
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  auditParams: any[],
-): Promise<{ apr_trend: RowDataPacket[]; audit_trend: RowDataPacket[]; sales_trend: RowDataPacket[] }> {
-  const [aprRows, auditRows, salesRows] = await Promise.all([
-    pool.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(ReportDate,'%Y-%m-%d') AS date,
-        ROUND(AVG(Calls),1) AS avg_calls,
-        ROUND(AVG(TIME_TO_SEC(COALESCE(AHT,'00:00:00'))),0) AS avg_aht_seconds,
-        ROUND(AVG(CASE WHEN TIME_TO_SEC(COALESCE(Login_Time,'00:00:00'))>0
-          THEN (TIME_TO_SEC(COALESCE(BIO,'00:00:00'))+TIME_TO_SEC(COALESCE(LUNCH,'00:00:00'))
-               +TIME_TO_SEC(COALESCE(QA,'00:00:00'))+TIME_TO_SEC(COALESCE(TRAINING,'00:00:00'))
-               +TIME_TO_SEC(COALESCE(DISMX,'00:00:00')))
-               /TIME_TO_SEC(COALESCE(Login_Time,'00:00:00'))*100 ELSE NULL END),1) AS avg_shrinkage
-      FROM Shivamgiri.apr WHERE ReportDate BETWEEN ? AND ?${aprSql}
-      GROUP BY DATE(ReportDate) ORDER BY date ASC LIMIT 180`,
-      [...aprParams],
-    ),
-    pool.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date,
-        ROUND(AVG(quality_percentage),2) AS avg_quality
-      FROM db_audit.call_quality_assessment WHERE CallDate BETWEEN ? AND ?${auditSql}
-      GROUP BY DATE(CallDate) ORDER BY date ASC LIMIT 180`,
-      [...auditParams],
-    ),
-    pool.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date,
-        COUNT(CASE WHEN SaleDone IN ('Yes','1') THEN 1 END) AS sales_count,
-        ROUND(COUNT(CASE WHEN SaleDone IN ('Yes','1') THEN 1 END)/NULLIF(COUNT(*),0)*100,2) AS conversion_pct
-      FROM db_external.CallDetails WHERE CallDate BETWEEN ? AND ?
-      GROUP BY DATE(CallDate) ORDER BY date ASC LIMIT 180`,
-      [from, to],
-    ),
-  ]);
-
-  return {
-    apr_trend: aprRows[0] as RowDataPacket[],
-    audit_trend: auditRows[0] as RowDataPacket[],
-    sales_trend: salesRows[0] as RowDataPacket[],
-  };
+/**
+ * Get performance summary for dashboards
+ */
+export async function getPerformanceSummary(): Promise<Record<string, unknown>> {
+  const [summary] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COUNT(DISTINCT e.id) AS total_employees,
+       COUNT(DISTINCT g.employee_id) AS employees_with_goals,
+       COUNT(DISTINCT ar.employee_id) AS employees_rated,
+       ROUND(AVG(ar.final_rating), 2) AS avg_rating,
+       SUM(CASE WHEN ar.final_rating >= 4 THEN 1 ELSE 0 END) AS high_performers,
+       SUM(CASE WHEN ar.final_rating < 2.5 THEN 1 ELSE 0 END) AS low_performers
+     FROM employees e
+     LEFT JOIN goal g ON e.id = g.employee_id AND g.status = 'active'
+     LEFT JOIN appraisal_rating ar ON e.id = ar.employee_id
+     WHERE e.active_status = 1`
+  )
+  return summary[0] as Record<string, unknown>
 }
 
-export async function getProcessComparison(
-  pool: mysql.Pool,
-  from: string,
-  to: string,
-  aprSql: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  aprParams: any[],
-): Promise<RowDataPacket[]> {
-  const sql = `SELECT a.campaign_id AS process,
-    COUNT(DISTINCT a.UserID) AS agent_count,
-    ROUND(AVG(a.Calls),1) AS avg_calls,
-    ROUND(AVG(TIME_TO_SEC(COALESCE(a.AHT,'00:00:00'))),0) AS avg_aht_seconds,
-    ROUND(AVG(CASE WHEN TIME_TO_SEC(COALESCE(a.Login_Time,'00:00:00'))>0
-      THEN (TIME_TO_SEC(COALESCE(a.BIO,'00:00:00'))+TIME_TO_SEC(COALESCE(a.LUNCH,'00:00:00'))
-           +TIME_TO_SEC(COALESCE(a.QA,'00:00:00'))+TIME_TO_SEC(COALESCE(a.TRAINING,'00:00:00'))
-           +TIME_TO_SEC(COALESCE(a.DISMX,'00:00:00')))
-           /TIME_TO_SEC(COALESCE(a.Login_Time,'00:00:00'))*100 ELSE NULL END),1) AS avg_shrinkage,
-    ROUND(AVG(q.avg_quality),2) AS avg_quality,
-    ROUND(AVG(s.conversion_pct),2) AS avg_conversion,
-    ROUND(0.4*COALESCE(AVG(q.avg_quality),0)
-      +0.3*(100-COALESCE(AVG(CASE WHEN TIME_TO_SEC(COALESCE(a.Login_Time,'00:00:00'))>0
-        THEN (TIME_TO_SEC(COALESCE(a.BIO,'00:00:00'))+TIME_TO_SEC(COALESCE(a.LUNCH,'00:00:00'))
-             +TIME_TO_SEC(COALESCE(a.QA,'00:00:00'))+TIME_TO_SEC(COALESCE(a.TRAINING,'00:00:00'))
-             +TIME_TO_SEC(COALESCE(a.DISMX,'00:00:00')))
-             /TIME_TO_SEC(COALESCE(a.Login_Time,'00:00:00'))*100 ELSE NULL END),0))
-      +0.3*LEAST(COALESCE(AVG(s.conversion_pct),0)*10,100),1) AS overall_score
-  FROM Shivamgiri.apr a
-  LEFT JOIN (
-    SELECT User AS agent_name, ROUND(AVG(quality_percentage),2) AS avg_quality
-    FROM db_audit.call_quality_assessment WHERE CallDate BETWEEN ? AND ?
-      AND User IS NOT NULL AND User != '' GROUP BY User
-  ) q ON a.UserID = q.agent_name
-  LEFT JOIN (
-    SELECT AgentName AS agent_name,
-      ROUND(COUNT(CASE WHEN SaleDone IN ('Yes','1') THEN 1 END)/NULLIF(COUNT(*),0)*100,2) AS conversion_pct
-    FROM db_external.CallDetails WHERE CallDate BETWEEN ? AND ?
-      AND AgentName IS NOT NULL GROUP BY AgentName
-  ) s ON a.UserID = s.agent_name
-  WHERE a.ReportDate BETWEEN ? AND ?${aprSql}
-  GROUP BY a.campaign_id ORDER BY overall_score DESC LIMIT 20`;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const params: any[] = [from, to, from, to, ...aprParams];
-  const [rows] = await pool.execute<RowDataPacket[]>(sql, params);
-  return rows;
+/**
+ * Get all competencies from the master list
+ */
+export async function getCompetencies(): Promise<RowDataPacket[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT competency_id, competency_name, description, category, is_active
+     FROM competency_master
+     WHERE is_active = 1
+     ORDER BY category, competency_name`
+  )
+  return rows as RowDataPacket[]
 }
 
-export async function getUtilization(
-  pool: mysql.Pool,
-  from: string,
-  to: string,
-  aprSql: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  params: any[],
-): Promise<RowDataPacket[]> {
-  const sql = `SELECT UserID AS agent_code,
-    ROUND(SUM(TIME_TO_SEC(COALESCE(Login_Time,'00:00:00')))/3600,2) AS login_hours,
-    ROUND(SUM(TIME_TO_SEC(COALESCE(Net_Login,'00:00:00')))/3600,2) AS net_login_hours,
-    ROUND(SUM(TIME_TO_SEC(COALESCE(Net_Login,'00:00:00')))/NULLIF(SUM(TIME_TO_SEC(COALESCE(Login_Time,'00:00:00'))),0)*100,1) AS utilization_pct,
-    ROUND(SUM(Calls)/NULLIF(SUM(TIME_TO_SEC(COALESCE(Net_Login,'00:00:00')))/3600,0),2) AS calls_per_hour,
-    ROUND(SUM(TIME_TO_SEC(COALESCE(BIO,'00:00:00')))/60,1) AS bio_mins,
-    ROUND(SUM(TIME_TO_SEC(COALESCE(LUNCH,'00:00:00')))/60,1) AS lunch_mins,
-    ROUND(SUM(TIME_TO_SEC(COALESCE(QA,'00:00:00')))/60,1) AS qa_mins,
-    ROUND(SUM(TIME_TO_SEC(COALESCE(TRAINING,'00:00:00')))/60,1) AS training_mins
-  FROM Shivamgiri.apr WHERE ReportDate BETWEEN ? AND ?${aprSql}
-  GROUP BY UserID HAVING login_hours > 0 ORDER BY utilization_pct DESC LIMIT 50`;
+/**
+ * Get active feedback cycles
+ */
+export async function getActiveCycles(): Promise<RowDataPacket[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT cycle_id, cycle_name, period, start_date, end_date, deadline,
+            feedback_type, status, created_at
+     FROM performance_feedback_cycle
+     WHERE status IN ('draft', 'active')
+     ORDER BY start_date DESC
+     LIMIT 50`
+  )
+  return rows as RowDataPacket[]
+}
 
-  const [rows] = await pool.execute<RowDataPacket[]>(sql, [...params]);
-  return rows;
+/**
+ * Submit a feedback response
+ */
+export async function submitFeedbackResponse(
+  requestId: string,
+  competencyId: number,
+  rating: number,
+  comments?: string
+): Promise<{ responseId: string }> {
+  const responseId = require('crypto').randomUUID()
+  await db.execute(
+    `INSERT INTO performance_feedback_response
+     (response_id, request_id, competency_id, rating, comments, submitted_at)
+     VALUES (?, ?, ?, ?, ?, NOW())`,
+    [responseId, requestId, competencyId, rating, comments || null]
+  )
+
+  // Update the feedback request status
+  await db.execute(
+    `UPDATE performance_feedback_request SET status = 'completed', completed_at = NOW()
+     WHERE request_id = ?`,
+    [requestId]
+  )
+
+  return { responseId }
 }

@@ -1,248 +1,217 @@
-import { Router } from "express";
-import mysql from "mysql2/promise";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import { env } from "../../config/env.js";
-import { db } from "../../db/mysql.js";
-import { hasRole, getEmployeeForUser } from "../../shared/accessGuard.js";
-import type { RowDataPacket } from "mysql2";
-import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { getPerfSummary, getAgentMatrix, getPerfTrend, getProcessComparison, getUtilization } from "./performance-dashboard.service.js";
+import { Router } from 'express'
+import { db } from '../../db/mysql.js'
+import { requireAuth } from '../../middleware/authMiddleware.js'
+import { requireRole } from '../../middleware/requireRole.js'
+import type { Response, Request } from 'express'
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js'
+import type { RowDataPacket } from 'mysql2'
 
-const router = Router();
-router.use(requireAuth);
+const performanceDashboardRouter = Router()
+performanceDashboardRouter.use(requireAuth)
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
-
-const ALLOWED_ROLES = ["admin", "hr", "ceo", "qa", "analyst", "manager", "process_manager", "branch_head"] as const;
+const h = (fn: (req: any, res: Response) => Promise<any>) => (req: any, res: Response, next: any) =>
+  fn(req, res).catch(next)
 
 /**
- * Resolve caller's data scope:
- * - admin/hr/ceo/qa/analyst → full access (no filter)
- * - process_manager/manager → scoped to their assigned process campaign_ids
- * - branch_head → scoped to their branch's agent emp_codes
- * Returns extra SQL conditions to AND into queries, or null for global access.
+ * GET /api/performance-dashboard/goals
+ * Retrieve performance goals for the current employee or all (if admin/hr)
  */
-async function resolveScope(req: AuthenticatedRequest): Promise<{
-  global: boolean;
-  campaignIds: string[] | null;  // filter Shivamgiri.apr by campaign_id
-  agentCodes: string[] | null;   // filter db_audit by User / Shivamgiri by UserID
-}> {
-  const userId = req.authUser!.id;
-
-  // Global roles see everything
-  if (await hasRole(userId, "admin", "hr", "ceo", "qa", "analyst")) {
-    return { global: true, campaignIds: null, agentCodes: null };
+performanceDashboardRouter.get('/goals', h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser?.id
+  if (!userId) {
+    return res.status(401).json({ success: false, message: 'Unauthenticated' })
   }
 
-  // Process manager / manager: get their assigned processes from user_assignment_scope
-  if (await hasRole(userId, "process_manager", "manager")) {
-    const [scopeRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DISTINCT pm.process_name
-       FROM user_assignment_scope uas
-       JOIN process_master pm ON pm.id = uas.process_id
-       WHERE uas.user_id = ? AND uas.active_status = 1 AND uas.process_id IS NOT NULL`,
+  try {
+    // Get the employee_id for this user
+    const [userEmps] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM employees WHERE user_id = ? LIMIT 1`,
       [userId]
-    );
-    const names = (scopeRows as any[]).map((r) => r.process_name as string).filter(Boolean);
-    if (!names.length) return { global: false, campaignIds: [], agentCodes: [] };
-    // Map mas_hrms process_name → Shivamgiri campaign_id (same values, direct match)
-    return { global: false, campaignIds: names, agentCodes: null };
+    )
+
+    const employeeId = (userEmps && userEmps[0]) ? (userEmps[0] as any).id : null
+
+    let query = `SELECT id, employee_id, title, description, goal_type, period,
+                        target_value, actual_value, weightage, status,
+                        created_by, created_at, updated_at
+                 FROM goal`
+    const params: any[] = []
+
+    if (employeeId) {
+      query += ` WHERE employee_id = ?`
+      params.push(employeeId)
+    }
+
+    query += ` ORDER BY created_at DESC LIMIT 100`
+
+    const [goals] = await db.execute<RowDataPacket[]>(query, params)
+    return res.json({ success: true, data: goals })
+  } catch (err) {
+    return res.status(500).json({ success: false, message: String(err) })
+  }
+}))
+
+/**
+ * GET /api/performance-dashboard/feedback
+ * Retrieve performance feedback for the current employee
+ */
+performanceDashboardRouter.get('/feedback', h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser?.id
+  if (!userId) {
+    return res.status(401).json({ success: false, message: 'Unauthenticated' })
   }
 
-  // Branch head: get all agent emp_codes in their branch
-  if (await hasRole(userId, "branch_head")) {
-    const emp = await getEmployeeForUser(userId);
-    if (!emp) return { global: false, campaignIds: [], agentCodes: [] };
-    const [bRows] = await db.execute<RowDataPacket[]>(
-      `SELECT branch_id FROM employees WHERE id = ? LIMIT 1`, [emp.id]
-    );
-    const branchId = (bRows[0] as any)?.branch_id;
-    if (!branchId) return { global: false, campaignIds: [], agentCodes: [] };
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT employee_code FROM employees WHERE branch_id = ? AND active_status = 1`, [branchId]
-    );
-    const codes = (empRows as any[]).map((r) => r.employee_code as string).filter(Boolean);
-    return { global: false, campaignIds: null, agentCodes: codes.length ? codes : [] };
-  }
-
-  // Default: no access
-  return { global: false, campaignIds: [], agentCodes: [] };
-}
-
-let ciPool: mysql.Pool | null = null;
-function getCiPool(): mysql.Pool {
-  if (!ciPool) ciPool = mysql.createPool({
-    host: env.DB_HOST,
-    port: env.DB_PORT,
-    user: env.DB_USER,
-    password: env.DB_PASSWORD,
-    database: "Shivamgiri",
-    waitForConnections: true,
-    connectionLimit: 5,
-    connectTimeout: 10000,
-  });
-  return ciPool;
-}
-
-function dateDefaults(query: Record<string, unknown>): { from: string; to: string } {
-  const now = new Date();
-  const to = query.to ? String(query.to) : now.toISOString().slice(0, 10);
-  const from = query.from ? String(query.from) : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-  return { from, to };
-}
-
-// Build scope conditions for db_audit.call_quality_assessment (filters by User = agent emp_code)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function auditScopeCond(scope: Awaited<ReturnType<typeof resolveScope>>, params: any[]): string {
-  if (scope.global) return "";
-  if (scope.agentCodes !== null) {
-    if (!scope.agentCodes.length) { params.push("__no_match__"); return " AND User = ?"; }
-    const ph = scope.agentCodes.map(() => "?").join(",");
-    params.push(...scope.agentCodes);
-    return ` AND User IN (${ph})`;
-  }
-  // campaignIds for db_audit — no direct campaign column; return empty (process scope maps to UserID not User)
-  return "";
-}
-
-// Build scope conditions for Shivamgiri.apr (filters by campaign_id or UserID)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function aprScopeCond(scope: Awaited<ReturnType<typeof resolveScope>>, params: any[]): string {
-  if (scope.global) return "";
-  if (scope.campaignIds !== null) {
-    if (!scope.campaignIds.length) { params.push("__no_match__"); return " AND campaign_id = ?"; }
-    const ph = scope.campaignIds.map(() => "?").join(",");
-    params.push(...scope.campaignIds);
-    return ` AND campaign_id IN (${ph})`;
-  }
-  if (scope.agentCodes !== null) {
-    if (!scope.agentCodes.length) { params.push("__no_match__"); return " AND UserID = ?"; }
-    const ph = scope.agentCodes.map(() => "?").join(",");
-    params.push(...scope.agentCodes);
-    return ` AND UserID IN (${ph})`;
-  }
-  return "";
-}
-
-// GET /api/performance-dashboard/summary
-router.get("/summary", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
-  const { from, to } = dateDefaults(req.query);
   try {
-    const pool = getCiPool();
-    const scope = await resolveScope(req);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const aprParams: any[] = [from, to];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const auditParams: any[] = [from, to];
-    const aprSql = aprScopeCond(scope, aprParams);
-    const auditSql = auditScopeCond(scope, auditParams);
-    const data = await getPerfSummary(pool, from, to, aprSql, auditSql, aprParams, auditParams);
-    return res.json({
-      success: true,
-      summary: data,
-      scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "External DB unavailable";
-    console.error("[performance-dashboard/summary]", msg);
-    return res.json({ success: true, summary: { total_agents: 0, avg_calls_per_agent: 0, avg_quality: 0, avg_shrinkage: 0, avg_conversion_rate: 0, total_sales: 0, calls_per_hour_avg: 0 }, scope_label: "All", _error: msg });
-  }
-}));
+    // Get the employee_id for this user
+    const [userEmps] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM employees WHERE user_id = ? LIMIT 1`,
+      [userId]
+    )
 
-// GET /api/performance-dashboard/agent-matrix
-router.get("/agent-matrix", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
-  const { from, to } = dateDefaults(req.query);
+    const employeeId = (userEmps && userEmps[0]) ? (userEmps[0] as any).id : null
+
+    if (!employeeId) {
+      return res.json({ success: true, data: [] })
+    }
+
+    const [feedback] = await db.execute<RowDataPacket[]>(
+      `SELECT pfr.request_id, pfr.cycle_id, pfr.employee_id, pfr.reviewer_id,
+              pfr.reviewer_type, pfr.status, pfr.requested_at, pfr.completed_at,
+              pfc.cycle_name, pfc.period
+       FROM performance_feedback_request pfr
+       LEFT JOIN performance_feedback_cycle pfc ON pfr.cycle_id = pfc.cycle_id
+       WHERE pfr.employee_id = ? OR pfr.reviewer_id = ?
+       ORDER BY pfr.requested_at DESC LIMIT 100`,
+      [employeeId, employeeId]
+    )
+    return res.json({ success: true, data: feedback })
+  } catch (err) {
+    return res.status(500).json({ success: false, message: String(err) })
+  }
+}))
+
+/**
+ * GET /api/performance-dashboard/ratings
+ * Retrieve performance ratings (admin/manager view)
+ */
+performanceDashboardRouter.get('/ratings', requireRole('admin', 'hr', 'manager', 'process_manager', 'ceo'),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const [ratings] = await db.execute<RowDataPacket[]>(
+        `SELECT e.id, e.first_name, e.last_name, e.employee_code,
+                ar.final_rating, ar.manager_comments, ac.cycle_name, ac.period
+         FROM employees e
+         LEFT JOIN appraisal_rating ar ON e.id = ar.employee_id
+         LEFT JOIN appraisal_cycle ac ON ar.cycle_id = ac.id
+         WHERE e.active_status = 1 AND ac.status = 'active'
+         ORDER BY ar.final_rating DESC LIMIT 100`
+      )
+      return res.json({ success: true, data: ratings })
+    } catch (err) {
+      return res.status(500).json({ success: false, message: String(err) })
+    }
+  }))
+
+/**
+ * GET /api/performance-dashboard/summary
+ * Get summary statistics for performance dashboard
+ */
+performanceDashboardRouter.get('/summary', requireRole('admin', 'hr', 'manager', 'process_manager', 'ceo', 'qa', 'analyst'),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const [summary] = await db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(DISTINCT e.id) AS total_employees,
+           COUNT(DISTINCT g.employee_id) AS employees_with_goals,
+           COUNT(DISTINCT ar.employee_id) AS employees_rated,
+           ROUND(AVG(ar.final_rating), 2) AS avg_rating,
+           SUM(CASE WHEN ar.final_rating >= 4 THEN 1 ELSE 0 END) AS high_performers,
+           SUM(CASE WHEN ar.final_rating < 2.5 THEN 1 ELSE 0 END) AS low_performers
+         FROM employees e
+         LEFT JOIN goal g ON e.id = g.employee_id AND g.status = 'active'
+         LEFT JOIN appraisal_rating ar ON e.id = ar.employee_id
+         WHERE e.active_status = 1`
+      )
+      return res.json({ success: true, data: summary[0] })
+    } catch (err) {
+      return res.status(500).json({ success: false, message: String(err) })
+    }
+  }))
+
+/**
+ * GET /api/performance-dashboard/competencies
+ * Get competency framework
+ */
+performanceDashboardRouter.get('/competencies', h(async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const pool = getCiPool();
-    const scope = await resolveScope(req);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const aprParams: any[] = [from, to];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const auditParams: any[] = [from, to];
-    const aprSql = aprScopeCond(scope, aprParams);
-    const auditSql = auditScopeCond(scope, auditParams);
-    const rows = await getAgentMatrix(pool, from, to, aprSql, auditSql, aprParams, auditParams);
-    return res.json({
-      success: true,
-      matrix: rows,
-      scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "External DB unavailable";
-    console.error("[performance-dashboard/agent-matrix]", msg);
-    return res.json({ success: true, matrix: [], scope_label: "All", _error: msg });
+    const [competencies] = await db.execute<RowDataPacket[]>(
+      `SELECT competency_id, competency_name, description, category, is_active
+       FROM competency_master
+       WHERE is_active = 1
+       ORDER BY category, competency_name`
+    )
+    return res.json({ success: true, data: competencies })
+  } catch (err) {
+    return res.status(500).json({ success: false, message: String(err) })
   }
-}));
+}))
 
-// GET /api/performance-dashboard/trend
-router.get("/trend", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
-  const { from, to } = dateDefaults(req.query);
+/**
+ * GET /api/performance-dashboard/cycles
+ * Get active performance feedback cycles
+ */
+performanceDashboardRouter.get('/cycles', h(async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const pool = getCiPool();
-    const scope = await resolveScope(req);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const aprParams: any[] = [from, to];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const auditParams: any[] = [from, to];
-    const aprSql = aprScopeCond(scope, aprParams);
-    const auditSql = auditScopeCond(scope, auditParams);
-    const data = await getPerfTrend(pool, from, to, aprSql, auditSql, aprParams, auditParams);
-    return res.json({
-      success: true,
-      ...data,
-      scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "External DB unavailable";
-    console.error("[performance-dashboard/trend]", msg);
-    return res.json({ success: true, apr_trend: [], audit_trend: [], sales_trend: [], scope_label: "All", _error: msg });
+    const [cycles] = await db.execute<RowDataPacket[]>(
+      `SELECT cycle_id, cycle_name, period, start_date, end_date, deadline,
+              feedback_type, status, created_at
+       FROM performance_feedback_cycle
+       WHERE status IN ('draft', 'active')
+       ORDER BY start_date DESC LIMIT 50`
+    )
+    return res.json({ success: true, data: cycles })
+  } catch (err) {
+    return res.status(500).json({ success: false, message: String(err) })
   }
-}));
+}))
 
-// GET /api/performance-dashboard/process-comparison
-router.get("/process-comparison", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
-  const { from, to } = dateDefaults(req.query);
-  try {
-    const pool = getCiPool();
-    const scope = await resolveScope(req);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const aprParams: any[] = [from, to];
-    const aprSql = aprScopeCond(scope, aprParams);
-    const rows = await getProcessComparison(pool, from, to, aprSql, aprParams);
-    return res.json({
-      success: true,
-      processes: rows,
-      scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "External DB unavailable";
-    console.error("[performance-dashboard/process-comparison]", msg);
-    return res.json({ success: true, processes: [], scope_label: "All", _error: msg });
-  }
-}));
+/**
+ * POST /api/performance-dashboard/feedback-response
+ * Submit feedback response for a competency
+ */
+performanceDashboardRouter.post('/feedback-response', requireRole('admin', 'hr', 'manager', 'process_manager', 'employee'),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { requestId, competencyId, rating, comments } = req.body
 
-// GET /api/performance-dashboard/utilization
-router.get("/utilization", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
-  const { from, to } = dateDefaults(req.query);
-  try {
-    const pool = getCiPool();
-    const scope = await resolveScope(req);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const aprParams: any[] = [from, to];
-    const aprSql = aprScopeCond(scope, aprParams);
-    const rows = await getUtilization(pool, from, to, aprSql, aprParams);
-    return res.json({
-      success: true,
-      utilization: rows,
-      scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "External DB unavailable";
-    console.error("[performance-dashboard/utilization]", msg);
-    return res.json({ success: true, utilization: [], scope_label: "All", _error: msg });
-  }
-}));
+    if (!requestId || !competencyId || !rating) {
+      return res.status(400).json({ success: false, message: 'Missing required fields' })
+    }
 
-export const performanceDashboardRouter = router;
+    if (rating < 1 || rating > 5) {
+      return res.status(400).json({ success: false, message: 'Rating must be between 1 and 5' })
+    }
+
+    try {
+      const responseId = require('crypto').randomUUID()
+      await db.execute(
+        `INSERT INTO performance_feedback_response
+         (response_id, request_id, competency_id, rating, comments, submitted_at)
+         VALUES (?, ?, ?, ?, ?, NOW())`,
+        [responseId, requestId, competencyId, rating, comments || null]
+      )
+
+      // Update the feedback request status
+      await db.execute(
+        `UPDATE performance_feedback_request SET status = 'completed', completed_at = NOW()
+         WHERE request_id = ?`,
+        [requestId]
+      )
+
+      return res.json({ success: true, message: 'Feedback submitted', responseId })
+    } catch (err) {
+      return res.status(500).json({ success: false, message: String(err) })
+    }
+  }))
+
+export { performanceDashboardRouter }
