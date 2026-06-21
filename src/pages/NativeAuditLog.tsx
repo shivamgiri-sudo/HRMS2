@@ -104,7 +104,7 @@ export default function NativeAuditLog() {
     try {
       const { getAuthToken } = await import("@/lib/hrmsApi");
       const token = getAuthToken();
-      const baseUrl = import.meta.env.VITE_HRMS_API_URL?.replace(/\/$/, "") || (import.meta.env.DEV ? "http://localhost:5055" : "");
+      const baseUrl = import.meta.env.VITE_HRMS_API_URL?.replace(/\/$/, "") || (import.meta.env.DEV ? "http://localhost:5056" : "");
       const res = await fetch(`${baseUrl}/api/audit/export`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },

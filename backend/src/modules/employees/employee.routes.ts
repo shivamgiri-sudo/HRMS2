@@ -223,23 +223,7 @@ router.post("/",
   })),
   h(c.createEmployee)
 );
-router.get("/:id", h(async (req: any, res: any) => {
-  const userId = req.authUser!.id;
-  const targetId = req.params.id;
-  const isPrivileged = await hasRole(userId, 'admin', 'hr', 'manager');
-  if (!isPrivileged) {
-    const emp = await getEmployeeForUser(userId);
-    if (!emp || emp.id !== targetId) {
-      return res.status(403).json({ success: false, error: 'Forbidden' });
-    }
-  }
-  return c.getEmployee(req, res);
-}));
-
-// PATCH /api/employees/me — employee self-service (whitelisted fields only)
-router.patch("/me", h((req: any, res: any) => c.updateMyProfile(req, res)));
-
-// GET /api/employees/my-team — employees reporting to the current user (for manager detection)
+// GET /api/employees/my-team — must be before /:id
 router.get("/my-team", requireAuth, h(async (req: any, res: any) => {
   const emp = await getEmployeeForUser(req.authUser.id);
   if (!emp?.id) return res.json({ success: true, data: [] });
@@ -255,7 +239,7 @@ router.get("/my-team", requireAuth, h(async (req: any, res: any) => {
   return res.json({ success: true, data: rows });
 }));
 
-// GET /api/employees/me/journey — self-view journey timeline
+// GET /api/employees/me/journey — must be before /:id
 router.get("/me/journey", requireAuth, async (req: any, res: any, next: any) => {
   try {
     const [empRows] = await db.execute<RowDataPacket[]>(
@@ -273,6 +257,22 @@ router.get("/me/journey", requireAuth, async (req: any, res: any, next: any) => 
     return res.json({ success: true, data });
   } catch (err) { next(err); }
 });
+
+router.get("/:id", h(async (req: any, res: any) => {
+  const userId = req.authUser!.id;
+  const targetId = req.params.id;
+  const isPrivileged = await hasRole(userId, 'admin', 'hr', 'manager');
+  if (!isPrivileged) {
+    const emp = await getEmployeeForUser(userId);
+    if (!emp || emp.id !== targetId) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
+  }
+  return c.getEmployee(req, res);
+}));
+
+// PATCH /api/employees/me — employee self-service (whitelisted fields only)
+router.patch("/me", h((req: any, res: any) => c.updateMyProfile(req, res)));
 
 // POST /api/employees/me/photo — upload profile photo
 const profilePhotoUpload = multer({
