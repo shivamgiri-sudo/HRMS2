@@ -147,7 +147,7 @@ function invalidateProfile(queryClient: ReturnType<typeof useQueryClient>) {
   void queryClient.invalidateQueries({ queryKey: ["employee-profile"] });
 }
 
-export function BankStatutoryDetails({ employee }: { employee: SensitiveProfile }) {
+export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: { employee: SensitiveProfile; allowStatutoryEdit?: boolean }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const bank = employee.bank_details;
@@ -190,7 +190,11 @@ export function BankStatutoryDetails({ employee }: { employee: SensitiveProfile 
   const statutoryMutation = useMutation({
     mutationFn: () => {
       const payload = Object.fromEntries(
-        Object.entries(statutoryForm).filter(([, value]) => value.trim()),
+        Object.entries(statutoryForm).filter(([key, value]) => {
+          if (!value.trim()) return false;
+          if (!allowStatutoryEdit && (key === "pan_number" || key === "aadhaar_last4")) return false;
+          return true;
+        }),
       );
       return hrmsApi.put("/api/employees/me/statutory-details", payload);
     },
@@ -355,40 +359,46 @@ export function BankStatutoryDetails({ employee }: { employee: SensitiveProfile 
         <div className="mt-5 flex gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-[#073f78]">
           <LockKeyhole className="mt-0.5 size-4 shrink-0" />
           <p className="text-pretty">
-            Enter only values you need to replace. Aadhaar accepts its last four digits only.
+            {allowStatutoryEdit
+              ? "Enter only values you need to replace. Aadhaar accepts its last four digits only."
+              : "PAN and Aadhaar can only be updated by HR or Super Admin. Contact HR to make corrections."}
           </p>
         </div>
 
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="profile-pan">New PAN</Label>
-            <Input
-              id="profile-pan"
-              autoComplete="off"
-              value={statutoryForm.pan_number}
-              onChange={(event) => setStatutoryForm((current) => ({
-                ...current,
-                pan_number: event.target.value.toUpperCase(),
-              }))}
-              placeholder="ABCDE1234F"
-              maxLength={10}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="profile-aadhaar-last4">Aadhaar Last 4 Digits</Label>
-            <Input
-              id="profile-aadhaar-last4"
-              inputMode="numeric"
-              autoComplete="off"
-              value={statutoryForm.aadhaar_last4}
-              onChange={(event) => setStatutoryForm((current) => ({
-                ...current,
-                aadhaar_last4: event.target.value.replace(/\D/g, ""),
-              }))}
-              placeholder="1234"
-              maxLength={4}
-            />
-          </div>
+          {allowStatutoryEdit && (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="profile-pan">New PAN</Label>
+                <Input
+                  id="profile-pan"
+                  autoComplete="off"
+                  value={statutoryForm.pan_number}
+                  onChange={(event) => setStatutoryForm((current) => ({
+                    ...current,
+                    pan_number: event.target.value.toUpperCase(),
+                  }))}
+                  placeholder="ABCDE1234F"
+                  maxLength={10}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="profile-aadhaar-last4">Aadhaar Last 4 Digits</Label>
+                <Input
+                  id="profile-aadhaar-last4"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={statutoryForm.aadhaar_last4}
+                  onChange={(event) => setStatutoryForm((current) => ({
+                    ...current,
+                    aadhaar_last4: event.target.value.replace(/\D/g, ""),
+                  }))}
+                  placeholder="1234"
+                  maxLength={4}
+                />
+              </div>
+            </>
+          )}
           <div className="space-y-2">
             <Label htmlFor="profile-pf">New PF Member Number</Label>
             <Input

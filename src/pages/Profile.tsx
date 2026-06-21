@@ -735,7 +735,7 @@ const Profile = () => {
 
               {/* ── Other Tabs ─────────────────────────────────────────── */}
               <TabsContent value="statutory">
-                <BankStatutoryDetails employee={employee} />
+                <BankStatutoryDetails employee={employee} allowStatutoryEdit={isAdminOrHR} />
               </TabsContent>
 
               <TabsContent value="emergency">

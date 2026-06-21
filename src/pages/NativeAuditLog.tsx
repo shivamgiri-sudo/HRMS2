@@ -81,15 +81,15 @@ export default function NativeAuditLog() {
       params.append("page", String(filters.page));
       params.append("limit", String(filters.limit));
 
-      const resp = await hrmsApi.get("/access/audit-log?" + params.toString());
-      if (resp.data?.success) {
-        setEvents(resp.data.data || []);
-        setPagination(resp.data.pagination || {});
+      const resp = await hrmsApi.get<{ success: boolean; data: AuditEvent[]; pagination: any; error?: string }>("/api/access/audit-log?" + params.toString());
+      if (resp.success) {
+        setEvents(resp.data || []);
+        setPagination(resp.pagination || {});
       } else {
-        setError(resp.data?.error || "Failed to load audit log");
+        setError(resp.error || "Failed to load audit log");
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || "Error loading audit log");
+      setError(err.message || "Error loading audit log");
     } finally {
       setLoading(false);
     }
@@ -102,24 +102,33 @@ export default function NativeAuditLog() {
   const handleExport = async () => {
     setExporting(true);
     try {
-      const resp = await hrmsApi.post("/audit/export", {
-        fromDate: filters.fromDate,
-        toDate: filters.toDate,
-        employeeId: filters.employeeId,
-        actorRole: filters.actorRole,
-        module: filters.module,
-        actionType: filters.actionType,
-      }, { responseType: "blob" });
-
-      const url = window.URL.createObjectURL(new Blob([resp.data]));
+      const { getAuthToken } = await import("@/lib/hrmsApi");
+      const token = getAuthToken();
+      const baseUrl = import.meta.env.VITE_HRMS_API_URL?.replace(/\/$/, "") || (import.meta.env.DEV ? "http://localhost:5055" : "");
+      const res = await fetch(`${baseUrl}/api/audit/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          fromDate: filters.fromDate,
+          toDate: filters.toDate,
+          employeeId: filters.employeeId,
+          actorRole: filters.actorRole,
+          module: filters.module,
+          actionType: filters.actionType,
+        }),
+      });
+      if (!res.ok) throw new Error(`Export failed: HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
       link.setAttribute("download", `audit-log-${new Date().toISOString().split("T")[0]}.csv`);
       document.body.appendChild(link);
       link.click();
       link.remove();
+      window.URL.revokeObjectURL(url);
     } catch (err: any) {
-      setError(err.response?.data?.error || "Export failed");
+      setError(err.message || "Export failed");
     } finally {
       setExporting(false);
     }

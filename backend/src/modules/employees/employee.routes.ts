@@ -170,6 +170,25 @@ router.get("/:id", h(async (req: any, res: any) => {
 // PATCH /api/employees/me — employee self-service (whitelisted fields only)
 router.patch("/me", h((req: any, res: any) => c.updateMyProfile(req, res)));
 
+// GET /api/employees/me/journey — self-view journey timeline
+router.get("/me/journey", requireAuth, async (req: any, res: any, next: any) => {
+  try {
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+      [req.authUser?.id]
+    );
+    const empId = (empRows[0] as any)?.id;
+    if (!empId) return res.status(404).json({ success: false, error: "Employee not found" });
+    const data = await listJourneyEvents(empId, {
+      module:    req.query.module    as string | undefined,
+      eventType: req.query.eventType as string | undefined,
+      fromDate:  req.query.fromDate  as string | undefined,
+      toDate:    req.query.toDate    as string | undefined,
+    });
+    return res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
 // POST /api/employees/me/photo — upload profile photo
 const profilePhotoUpload = multer({
   storage: multer.diskStorage({
@@ -332,7 +351,13 @@ router.put("/me/emergency-contact", requireAuth, h3(async (req: any, res: any, n
 
 router.put("/me/statutory-details", requireAuth, h3(async (req: any, res: any, next: any) => {
   try {
-    const validated = statutoryDetailsSchema.parse(req.body);
+    const body = req.body as Record<string, unknown>;
+    // PAN and Aadhaar update restricted to HR/super_admin only — enforced at API level
+    const isHROrSuperAdmin = await hasRole(req.authUser!.id, "super_admin", "admin", "hr");
+    if (!isHROrSuperAdmin && (body.pan_number || body.aadhaar_last4)) {
+      return res.status(403).json({ success: false, error: "PAN and Aadhaar can only be updated by HR or Super Admin" });
+    }
+    const validated = statutoryDetailsSchema.parse(body);
     const result = await employeeProfileService.saveStatutoryDetails(req.authUser!.id, validated);
     res.json({ success: true, data: result });
   } catch (err) { next(err); }
