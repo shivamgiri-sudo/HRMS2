@@ -153,7 +153,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
                     ROUND(SUM(COALESCE(adr.raw_minutes,adr.biometric_minutes,adr.dialler_minutes,0))/60,2) AS total_hours
                FROM attendance_daily_record adr JOIN employees e ON e.id = adr.employee_id
               WHERE ${clauses.join(" AND ")}
-              GROUP BY e.id, e.employee_code, employee_name
+              GROUP BY e.id, e.employee_code, e.first_name, e.last_name
               ORDER BY employee_name`;
       break;
     }

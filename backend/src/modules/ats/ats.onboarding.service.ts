@@ -495,16 +495,28 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
     // salary_start_date: use date_of_salary if set (some processes have unpaid training post-joining)
     const salaryStartDate: string | null = (offer.date_of_salary as string | null) ?? (offer.date_of_joining as string | null) ?? null;
 
+    const candidateData = await conn.execute<RowDataPacket[]>(
+      `SELECT gender, date_of_birth, personal_email, personal_phone, alternate_mobile,
+              pan_number, aadhar_number, uan_number, current_address
+       FROM ats_candidate WHERE id = ? LIMIT 1`,
+      [candidate.id]
+    );
+    const candRow = candidateData[0][0] as any;
+
     await conn.execute(
       `INSERT INTO employees
-         (id, employee_code, first_name, last_name, email, mobile,
+         (id, employee_code, first_name, last_name, email, official_email, mobile,
+          personal_email, personal_phone, alternate_mobile,
+          gender, date_of_birth, address1, city, country,
           branch_id, process_id, department_id, designation_id,
           date_of_joining, salary_start_date, employment_type, reporting_manager_id,
           user_id, active_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
       [
         employeeId, employeeCode, firstName, lastName,
-        offer.email, offer.mobile,
+        offer.email, offer.email, offer.mobile,
+        candRow?.personal_email ?? null, candRow?.personal_phone ?? null, candRow?.alternate_mobile ?? null,
+        candRow?.gender ?? null, candRow?.date_of_birth ?? null, candRow?.current_address ?? null, null, null,
         offer.resolved_branch_id ?? null, offer.resolved_process_id ?? null,
         offer.department_id ?? null, offer.designation_id ?? null,
         offer.date_of_joining, salaryStartDate, offer.emp_type,
@@ -541,6 +553,31 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
            (id, employee_id, structure_id, ctc_annual, effective_from, active_status)
          VALUES (UUID(), ?, ?, ?, ?, 1)`,
         [employeeId, defaultStructureId, offer.offered_ctc ?? 0, salaryStartDate ?? new Date().toISOString().slice(0, 10)],
+      );
+    }
+
+    // Migrate nominee data from onboarding profile to employee_nominee
+    const [nomineeData] = await conn.execute<RowDataPacket[]>(
+      `SELECT nominee_name, nominee_relation, nominee_date_of_birth, nominee1_share_pct,
+              nominee2_name, nominee2_relation, nominee2_dob, nominee2_share_pct
+       FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
+      [candidate.id]
+    );
+    const nomRow = nomineeData[0] as any;
+    if (nomRow?.nominee_name) {
+      await conn.execute(
+        `INSERT INTO employee_nominee
+           (id, employee_id, nominee_name, relationship, date_of_birth, share_percentage, nominee_for, mobile, address)
+         VALUES (UUID(), ?, ?, ?, ?, ?, 'gratuity', NULL, NULL)`,
+        [employeeId, nomRow.nominee_name, nomRow.nominee_relation, nomRow.nominee_date_of_birth, nomRow.nominee1_share_pct ?? 100]
+      );
+    }
+    if (nomRow?.nominee2_name) {
+      await conn.execute(
+        `INSERT INTO employee_nominee
+           (id, employee_id, nominee_name, relationship, date_of_birth, share_percentage, nominee_for, mobile, address)
+         VALUES (UUID(), ?, ?, ?, ?, ?, 'gratuity', NULL, NULL)`,
+        [employeeId, nomRow.nominee2_name, nomRow.nominee2_relation, nomRow.nominee2_dob, nomRow.nominee2_share_pct ?? 0]
       );
     }
 
