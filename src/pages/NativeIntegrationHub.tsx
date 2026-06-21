@@ -13,6 +13,7 @@ import {
   Settings,
   ToggleLeft,
   ToggleRight,
+  Trash2,
   X,
   Zap,
 } from "lucide-react";
@@ -367,6 +368,47 @@ export default function NativeIntegrationHub() {
     }
   };
 
+  const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
+
+  // Data preview
+  const [dataPreview, setDataPreview] = useState<Array<{ table: string; rows: Record<string, unknown>[]; total: number }>>([]);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [expandedPreviewTable, setExpandedPreviewTable] = useState<string | null>(null);
+
+  const deleteConnector = async (key: string) => {
+    setDeletingKey(key);
+    setConfirmDeleteKey(null);
+    try {
+      await hrmsApi.delete(`/api/integration-hub/${key}`);
+      setMessage(`Connector '${key}' deleted.`);
+      await loadConnectors();
+      await loadDbConnectors();
+      if (selectedConnector?.key === key) setSelectedConnector(null);
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Delete failed.");
+    } finally {
+      setDeletingKey(null);
+    }
+  };
+
+  const loadDataPreview = async (key: string) => {
+    setPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: Array<{ table: string; rows: Record<string, unknown>[]; total: number }> }>(
+        `/api/integration-hub/${key}/data-preview`
+      );
+      setDataPreview(res.data ?? []);
+      if ((res.data ?? []).length > 0) setExpandedPreviewTable((res.data ?? [])[0].table);
+    } catch (err: unknown) {
+      setPreviewError(err instanceof Error ? err.message : "Failed to load data preview");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   const loadConnectorDetail = async (connector: Connector) => {
     setSelectedConnector(connector);
     setFieldMaps([]);
@@ -374,6 +416,9 @@ export default function NativeIntegrationHub() {
     setSourceSchemas([]);
     setSuggestions([]);
     setSchedule(null);
+    setDataPreview([]);
+    setPreviewError(null);
+    setExpandedPreviewTable(null);
     setFieldMapForm(emptyFieldMapForm());
     setTableMapForm(emptyTableMapForm());
     setDetailLoading(true);
@@ -410,6 +455,8 @@ export default function NativeIntegrationHub() {
     } finally {
       setDetailLoading(false);
     }
+    // Load preview async — non-blocking
+    void loadDataPreview(connector.key);
   };
 
   useEffect(() => {
@@ -803,19 +850,34 @@ export default function NativeIntegrationHub() {
                             {c.last_run_at ? c.last_run_at.slice(0, 16).replace("T", " ") : "Never"}
                           </span>
                         </div>
-                        <button
-                          onClick={() => void triggerRun(c.key)}
-                          disabled={runningKey === c.key || !runnable}
-                          title={disabledReason ?? "Run this connector now"}
-                          className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50"
-                        >
-                          {runningKey === c.key ? (
-                            <Loader className="h-3.5 w-3.5 animate-spin" />
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => void triggerRun(c.key)}
+                            disabled={runningKey === c.key || !runnable}
+                            title={disabledReason ?? "Run this connector now"}
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            {runningKey === c.key ? (
+                              <Loader className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Zap className="h-3.5 w-3.5" />
+                            )}
+                            Run Now
+                          </button>
+                          {confirmDeleteKey === c.key ? (
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-red-600 font-bold">Delete?</span>
+                              <button onClick={() => void deleteConnector(c.key)} disabled={deletingKey === c.key} className="rounded-lg bg-red-600 px-2 py-1 text-xs font-bold text-white hover:bg-red-700 cursor-pointer disabled:opacity-50">
+                                {deletingKey === c.key ? "…" : "Yes"}
+                              </button>
+                              <button onClick={() => setConfirmDeleteKey(null)} className="rounded-lg border px-2 py-1 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer">No</button>
+                            </div>
                           ) : (
-                            <Zap className="h-3.5 w-3.5" />
+                            <button onClick={() => setConfirmDeleteKey(c.key)} title="Delete connector" className="rounded-xl border border-red-200 px-2 py-2 text-xs text-red-500 hover:bg-red-50 cursor-pointer">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
                           )}
-                          Run Now
-                        </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -1438,6 +1500,100 @@ export default function NativeIntegrationHub() {
                       ) : (
                         <div className="rounded-2xl border border-dashed py-8 text-center text-sm text-slate-400">
                           No schedule configured for this connector.
+                        </div>
+                      )}
+                    </div>
+                    {/* Synced Data Preview */}
+                    <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                      <div className="mb-4 flex items-center justify-between">
+                        <div>
+                          <h3 className="font-black text-slate-950">Synced Data</h3>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Recent rows in HRMS target tables from the last sync.
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => selectedConnector && void loadDataPreview(selectedConnector.key)}
+                          disabled={previewLoading}
+                          className="inline-flex items-center gap-1.5 cursor-pointer rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50"
+                        >
+                          {previewLoading ? <Loader className="h-3 w-3 animate-spin" /> : <RefreshCcw className="h-3 w-3" />}
+                          Refresh
+                        </button>
+                      </div>
+
+                      {previewLoading ? (
+                        <div className="flex items-center justify-center py-10">
+                          <Loader className="h-6 w-6 animate-spin text-slate-300" />
+                        </div>
+                      ) : previewError ? (
+                        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                          {previewError}
+                        </div>
+                      ) : dataPreview.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed py-8 text-center text-sm text-slate-400">
+                          No synced data yet. Configure table mappings and run a sync to populate target tables.
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {dataPreview.map((preview) => (
+                            <div key={preview.table} className="rounded-2xl border overflow-hidden">
+                              <button
+                                onClick={() => setExpandedPreviewTable(expandedPreviewTable === preview.table ? null : preview.table)}
+                                className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer text-left"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <Database className="h-4 w-4 text-slate-500" />
+                                  <span className="font-mono font-semibold text-slate-800 text-sm">{preview.table}</span>
+                                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-bold text-blue-700">
+                                    {preview.total.toLocaleString()} rows
+                                  </span>
+                                </div>
+                                <ChevronRight className={`h-4 w-4 text-slate-400 transition-transform ${expandedPreviewTable === preview.table ? "rotate-90" : ""}`} />
+                              </button>
+                              {expandedPreviewTable === preview.table && (
+                                <div className="overflow-x-auto max-h-64">
+                                  {preview.rows.length === 0 ? (
+                                    <div className="py-6 text-center text-sm text-slate-400">No rows.</div>
+                                  ) : (
+                                    <table className="w-full text-xs">
+                                      <thead className="bg-white border-b sticky top-0">
+                                        <tr>
+                                          {Object.keys(preview.rows[0]).map((col) => (
+                                            <th key={col} className="px-3 py-2 text-left font-bold text-slate-600 whitespace-nowrap">
+                                              {col}
+                                            </th>
+                                          ))}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {preview.rows.map((row, idx) => (
+                                          <tr key={idx} className="border-t hover:bg-slate-50/80">
+                                            {Object.values(row).map((val, ci) => (
+                                              <td key={ci} className="px-3 py-2 font-mono text-slate-700 whitespace-nowrap max-w-[200px] truncate">
+                                                {val === null || val === undefined ? (
+                                                  <span className="text-slate-300 italic">null</span>
+                                                ) : typeof val === "object" ? (
+                                                  JSON.stringify(val).slice(0, 80)
+                                                ) : (
+                                                  String(val).slice(0, 80)
+                                                )}
+                                              </td>
+                                            ))}
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  )}
+                                  {preview.total > 50 && (
+                                    <div className="border-t px-4 py-2 text-xs text-slate-400 text-center">
+                                      Showing 50 of {preview.total.toLocaleString()} rows
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>

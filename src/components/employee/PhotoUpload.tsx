@@ -145,10 +145,13 @@ export function PhotoUpload({
 
       const data = await readJsonSafely(res);
       if (!res.ok || !data.success) {
+        console.error("[PhotoUpload Error]", { status: res.status, data, endpoint });
         throw new Error(data.error ?? data.message ?? `Upload failed with status ${res.status}`);
       }
-      setPreview(null); // clear local preview; parent will supply new URL
-      onSuccess?.(data.avatarUrl ?? data.photoUrl ?? data.url ?? "");
+      // Keep showing the uploaded URL directly (Facebook pattern - optimistic)
+      const uploadedUrl = data.avatarUrl ?? data.photoUrl ?? data.url ?? "";
+      setPreview(uploadedUrl);
+      onSuccess?.(uploadedUrl);
     } catch (err: any) {
       setError(err.message ?? "Upload failed — please try again.");
       setPreview(null);

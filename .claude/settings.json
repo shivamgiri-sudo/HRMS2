@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E '\\\\.\\(tsx|ts\\)$')",
+      "Bash(chmod +x /tmp/extract_handlers.sh)",
+      "Bash(/tmp/extract_handlers.sh)",
+      "Bash(bash /tmp/extract_handlers.sh)",
+      "Bash(mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms -e \"SHOW TABLES LIMIT 20;\")",
+      "Bash(mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms -e \"SHOW TABLES;\")",
+      "Bash(mysql -h 122.184.128.90 -u shivam_user '-pqwersdfg!@#hjk' mas_hrms -e ' *)",
+      "Bash(mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms -e \"SHOW TABLES LIKE 'payroll%';\")",
+      "Bash(chmod +x /tmp/schema_audit.sh)",
+      "Bash(/tmp/schema_audit.sh)",
+      "Bash(mysql -h 127.0.0.1 -u root -proot123 mas_hrms -e \"DESCRIBE employees;\")",
+      "Bash(mysql -u root -proot mas_hrms -N -e ' *)",
+      "Bash(mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' -e \"SHOW DATABASES;\")",
+      "Bash(sudo service mysql status)",
+      "Bash(mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' Shivamgiri -e \"SHOW TABLES;\")",
+      "Bash(mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' db_audit -e \"SHOW TABLES;\")",
+      "Bash(mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' db_external -e \"SHOW TABLES;\")",
+      "Bash(mysql -h 122.184.128.90 -u shivam_user '-pqwersdfg!@#hjk' Shivamgiri -e ' *)",
+      "Bash(awk '{print $9, \"\\(\" $5 \"\\)\"}')",
+      "Bash(chmod +x /home/shuvam/Desktop/MyHRMS1/scripts/run-objection-analysis.sh)",
+      "Bash(grep -E \"\\\\.sql$\")",
+      "Bash(grep -E \"\\\\.\\(sql|json|ts|js\\)$\")",
+      "Bash(awk '{print $NF}')",
+      "Bash(git add *)",
+      "Bash(git commit -m 'design: Phase 7.1 Individual Agent Quality Dashboard specification *)",
+      "Bash(git commit -m 'plan: Phase 7.1 Individual Agent Quality Dashboard - full implementation plan *)",
+      "Bash(git commit -m 'feat: Phase 7.1 Track C - Data Layer \\(Query Builders + Cache\\) *)",
+      "Bash(git commit -m 'feat: Phase 7.1 Task A1 - Quality Aggregation Service *)",
+      "Bash(git commit -m 'feat: Phase 7.1 Tasks B1-B6 - React Components \\(6 components\\) *)",
+      "Bash(git commit -m 'feat: Phase 7.1 Tasks B1-B6 - React Components \\(Quality Dashboard\\) *)"
+    ],
+    "additionalDirectories": [
+      "/home/shuvam/Desktop"
+    ]
+  }
+}

@@ -10,6 +10,7 @@ import type { Response } from "express";
 import { leaveController } from "./leave.controller.js";
 import { leaveService } from "./leave.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 
 export const leaveRouter = Router();
 leaveRouter.use(requireAuth);
@@ -102,13 +103,38 @@ leaveRouter.post("/requests", requireWriteAccess, h(async (req: AuthenticatedReq
   return leaveController.submitRequest(req, res);
 }));
 
-// Employee self-scope: employees see only their own leave requests; privileged roles can filter/list.
+// Employee self-scope: employees see only their own leave requests; privileged roles filtered by branch.
 leaveRouter.get("/requests", h(async (req: AuthenticatedRequest, res: Response) => {
-  const privileged = await isLeavePrivileged(req.authUser!.id);
+  const userId = req.authUser!.id;
+  const privileged = await isLeavePrivileged(userId);
   if (!privileged) {
-    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    const callerEmp = await getEmployeeForUser(userId);
     if (!callerEmp) return res.status(403).json({ success: false, message: "No employee record linked to your login" });
     (req.query as Record<string, unknown>).employeeId = callerEmp.id;
+  } else {
+    // super_admin sees all; head-office admin/hr see all; others scoped to their branch
+    const isSuperAdmin = await hasRole(userId, "super_admin");
+    if (!isSuperAdmin) {
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        `SELECT bm.branch_name
+           FROM employees e
+           JOIN branch_master bm ON bm.id = e.branch_id
+          WHERE e.user_id = ? AND e.active_status = 1
+          LIMIT 1`,
+        [userId]
+      );
+      const empBranch = (empRows[0] as any)?.branch_name ?? "";
+      const isHO = /head\s*office/i.test(empBranch);
+      if (!isHO) {
+        const scoped = await buildScopeWhereClause(
+          userId,
+          ["admin", "hr", "manager"],
+          { branchId: "e.branch_id" },
+          { allowCeoAllRead: true }
+        );
+        (req as any).scopeFilter = scoped;
+      }
+    }
   }
   return leaveController.listRequests(req, res);
 }));

@@ -3,6 +3,7 @@ import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { env } from "../config/env.js";
 import { db } from "../db/mysql.js";
 import { executeConnector } from "../modules/integration-hub/connectorRunner.js";
+import { runFullSync } from "../modules/lms/lms.sync.service.js";
 import { nextCronRun } from "../modules/integration-hub/cronSchedule.js";
 import type {
   IntegrationConfig,
@@ -59,6 +60,13 @@ async function recordSchedulerFailure(
 
 async function executeWithRetries(connector: IntegrationConfig): Promise<void> {
   let lastError: unknown;
+
+  // LMS sync is handled by its own dedicated service, not the generic connector.
+  if (connector.integration_key === "lms_sync") {
+    const result = await runFullSync("scheduler");
+    console.log(`[integration-scheduler] lms_sync complete — mapped:${result.mapped} progress:${result.progress} certs:${result.certifications} errors:${result.errors.length}`);
+    return;
+  }
 
   for (let attempt = 1; attempt <= env.INTEGRATION_SCHEDULER_MAX_RETRIES; attempt += 1) {
     try {

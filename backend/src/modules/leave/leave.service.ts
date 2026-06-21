@@ -287,25 +287,71 @@ export const leaveService = {
         throw new Error(`Insufficient leave balance. Available: ${totalAvailable}, Requested: ${request.total_days}`);
       }
 
-      // Apply deductions per year
+      // Get leave code for cross-type pooling
+      const [ltRows] = await db.execute<RowDataPacket[]>(
+        `SELECT leave_code FROM leave_type_master WHERE id = ?`,
+        [leaveTypeId]
+      );
+      const leaveCode = (ltRows[0] as any)?.leave_code;
+
+      // Apply deductions per year with cross-type pool support for CL/ML
+      const crossTypeDeduction: Record<string, number> = {};
+
       for (const [yearStr, deduction] of Object.entries(deductionByYear)) {
         const year = Number(yearStr);
         const [balRows] = await db.execute<RowDataPacket[]>(
           `SELECT * FROM leave_balance_ledger WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
           [employeeId, leaveTypeId, year]
         );
+
+        let fromPrimary = 0, fromSecondary = 0;
+
         if (balRows.length === 0) {
-          await db.execute(
-            `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
-             VALUES (UUID(), ?, ?, ?, 0, ?, 0)`,
-            [employeeId, leaveTypeId, year, deduction]
-          );
+          fromPrimary = Math.min(deduction, 0);
+          fromSecondary = deduction - fromPrimary;
         } else {
-          await db.execute(
-            `UPDATE leave_balance_ledger SET used_days = used_days + ? WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-            [deduction, employeeId, leaveTypeId, year]
-          );
+          const b = balRows[0] as any;
+          const available = (b.allocated_days || 0) + (b.adjusted_days || 0) - (b.used_days || 0);
+          fromPrimary = Math.min(deduction, available);
+          fromSecondary = deduction - fromPrimary;
         }
+
+        // Deduct from primary type
+        await db.execute(
+          `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
+           VALUES (UUID(), ?, ?, ?, 0, ?, 0)
+           ON DUPLICATE KEY UPDATE used_days = used_days + ?`,
+          [employeeId, leaveTypeId, year, fromPrimary, fromPrimary]
+        );
+        crossTypeDeduction[leaveCode] = (crossTypeDeduction[leaveCode] || 0) + fromPrimary;
+
+        // Deduct from secondary pool if needed (CL/ML cross-pool)
+        if (fromSecondary > 0 && ['CL', 'ML', 'HDCL', 'HDML'].includes(leaveCode || '')) {
+          const secondaryCode = leaveCode === 'CL' ? 'ML' : leaveCode === 'ML' ? 'CL'
+                              : leaveCode === 'HDCL' ? 'HDML' : 'HDCL';
+          const [secondaryLtRows] = await db.execute<RowDataPacket[]>(
+            `SELECT id FROM leave_type_master WHERE leave_code = ?`,
+            [secondaryCode]
+          );
+          if (secondaryLtRows.length > 0) {
+            const secondaryLeaveTypeId = (secondaryLtRows[0] as any).id;
+            await db.execute(
+              `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
+               VALUES (UUID(), ?, ?, ?, 0, ?, 0)
+               ON DUPLICATE KEY UPDATE used_days = used_days + ?`,
+              [employeeId, secondaryLeaveTypeId, year, fromSecondary, fromSecondary]
+            );
+            crossTypeDeduction[secondaryCode] = (crossTypeDeduction[secondaryCode] || 0) + fromSecondary;
+          }
+        }
+      }
+
+      // Store cross-type deduction breakdown for audit
+      if (Object.keys(crossTypeDeduction).length > 0) {
+        await db.execute(
+          `UPDATE leave_request SET cross_type_deduction = ? WHERE id = ?`,
+          [JSON.stringify(crossTypeDeduction), id]
+        );
       }
     }
 

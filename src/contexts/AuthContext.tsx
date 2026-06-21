@@ -171,13 +171,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
+      console.log('[AuthContext] Login attempt:', { identifier, apiUrl: API_URL });
       const res = await fetch(`${API_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier, password }),
       });
       const json = await res.json();
-      if (!res.ok) return { error: new Error(json.error || 'Authentication failed') };
+      console.log('[AuthContext] Login response:', { status: res.status, data: json });
+      if (!res.ok) return { error: new Error(json.error || `Login failed: HTTP ${res.status}`) };
       const { accessToken, refreshToken, user: authUser } = json.data;
       localStorage.removeItem('hrms_demo_session');
       localStorage.setItem('hrms_access_token', accessToken);

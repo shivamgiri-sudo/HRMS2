@@ -8,6 +8,15 @@ import { hasRole, getEmployeeForUser } from "../../shared/accessGuard.js";
 import type { RowDataPacket } from "mysql2";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getQualityHeatmap, predictAgentRisk, generateInsights, calculateQualityROI } from "./quality-insights.service.js";
+import {
+  getTopObjectionPatterns,
+  getTopObjectionHandlers,
+  getSalesClosedAfterObjection,
+  getObjectionsByProcess,
+  getObjectionRebuttalMatrix,
+  getObjectionHealthDashboard,
+  generateComprehensiveObjectionReport,
+} from "./objection-analysis.service.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -593,6 +602,151 @@ router.get("/roi", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
     const msg = err instanceof Error ? err.message : "External DB unavailable";
     console.error("[quality-dashboard/roi]", msg);
     return res.json({ success: true, roi: { current_metrics: { quality: 0, conversion: 0, total_calls: 0, total_sales: 0 }, projections: [] }, _error: msg });
+  }
+}));
+
+// ============================================================================
+// OBJECTION ANALYSIS ENDPOINTS
+// ============================================================================
+
+// GET /api/quality-dashboard/objections/patterns
+// Top objection types with resolution rates and sales conversion metrics
+router.get("/objections/patterns", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit ?? 50), 200);
+    const patterns = await getTopObjectionPatterns(limit);
+    return res.json({ success: true, patterns });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/objections/patterns]", msg);
+    return res.json({ success: true, patterns: [], _error: msg });
+  }
+}));
+
+// GET /api/quality-dashboard/objections/handlers
+// Top objection handlers with best resolution and sales conversion rates
+router.get("/objections/handlers", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit ?? 50), 200);
+    const handlers = await getTopObjectionHandlers(limit);
+    return res.json({ success: true, handlers });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/objections/handlers]", msg);
+    return res.json({ success: true, handlers: [], _error: msg });
+  }
+}));
+
+// GET /api/quality-dashboard/objections/sales-metrics
+// Sales conversion rates after objection handling by objection type
+router.get("/objections/sales-metrics", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit ?? 50), 200);
+    const metrics = await getSalesClosedAfterObjection(limit);
+    return res.json({ success: true, metrics });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/objections/sales-metrics]", msg);
+    return res.json({ success: true, metrics: [], _error: msg });
+  }
+}));
+
+// GET /api/quality-dashboard/objections/by-process
+// Objection types breakdown by process/campaign
+router.get("/objections/by-process", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit ?? 100), 500);
+    const data = await getObjectionsByProcess(limit);
+    return res.json({ success: true, data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/objections/by-process]", msg);
+    return res.json({ success: true, data: [], _error: msg });
+  }
+}));
+
+// GET /api/quality-dashboard/objections/rebuttals
+// Objection & Rebuttal reference matrix from knowledge base
+router.get("/objections/rebuttals", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit ?? 100), 500);
+    const rebuttals = await getObjectionRebuttalMatrix(limit);
+    return res.json({ success: true, rebuttals });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/objections/rebuttals]", msg);
+    return res.json({ success: true, rebuttals: [], _error: msg });
+  }
+}));
+
+// GET /api/quality-dashboard/objections/health
+// Overall objection health dashboard metrics
+router.get("/objections/health", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const dashboard = await getObjectionHealthDashboard();
+    return res.json({ success: true, dashboard });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/objections/health]", msg);
+    return res.json({
+      success: true,
+      dashboard: {
+        TOTAL_OBJECTIONS_RAISED: 0,
+        UNIQUE_OBJECTION_TYPES: 0,
+        TOTAL_OBJECTIONS_HANDLED: 0,
+        OVERALL_RESOLUTION_RATE_PCT: 0,
+        SALES_CLOSED_AFTER_OBJECTION_HANDLING: 0,
+        SALES_CONVERSION_AFTER_OBJECTION_PCT: 0,
+        UNIQUE_HANDLERS: 0,
+        UNIQUE_CLIENTS: 0,
+        UNIQUE_PROCESSES: 0,
+      },
+      _error: msg,
+    });
+  }
+}));
+
+// GET /api/quality-dashboard/objections/comprehensive-report
+// Complete objection analysis report (all metrics consolidated)
+router.get("/objections/comprehensive-report", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const patternLimit = Math.min(Number(req.query.patternLimit ?? 50), 200);
+    const handlerLimit = Math.min(Number(req.query.handlerLimit ?? 50), 200);
+    const processLimit = Math.min(Number(req.query.processLimit ?? 100), 500);
+    const rebuttalLimit = Math.min(Number(req.query.rebuttalLimit ?? 100), 500);
+
+    const report = await generateComprehensiveObjectionReport(
+      patternLimit,
+      handlerLimit,
+      processLimit,
+      rebuttalLimit
+    );
+    return res.json({ success: true, report });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/objections/comprehensive-report]", msg);
+    return res.json({
+      success: true,
+      report: {
+        dashboard: {
+          TOTAL_OBJECTIONS_RAISED: 0,
+          UNIQUE_OBJECTION_TYPES: 0,
+          TOTAL_OBJECTIONS_HANDLED: 0,
+          OVERALL_RESOLUTION_RATE_PCT: 0,
+          SALES_CLOSED_AFTER_OBJECTION_HANDLING: 0,
+          SALES_CONVERSION_AFTER_OBJECTION_PCT: 0,
+          UNIQUE_HANDLERS: 0,
+          UNIQUE_CLIENTS: 0,
+          UNIQUE_PROCESSES: 0,
+        },
+        topPatterns: [],
+        topHandlers: [],
+        salesMetrics: [],
+        processList: [],
+        rebuttalMatrix: [],
+      },
+      _error: msg,
+    });
   }
 }));
 

@@ -153,9 +153,7 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
                         <CalendarDays className="h-4 w-4 text-muted-foreground" />
-                        {record.date
-                          ? format(new Date(record.date + "T00:00:00"), "MMM d, yyyy")
-                          : format(new Date(record.record_date + "T00:00:00"), "MMM d, yyyy")}
+                        {format(new Date(record.record_date + "T00:00:00"), "MMM d, yyyy")}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -163,13 +161,13 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                         <Tooltip>
                           <TooltipTrigger className="flex items-center gap-1">
                             {formatTime(record.clock_in_time)}
-                            {record.clock_in_location_name && (
+                            {record.clock_in_location && (
                               <MapPin className="h-3 w-3 text-muted-foreground" />
                             )}
                           </TooltipTrigger>
-                          {record.clock_in_location_name && (
+                          {record.clock_in_location && (
                             <TooltipContent>
-                              <p>{record.clock_in_location_name}</p>
+                              <p>{record.clock_in_location}</p>
                             </TooltipContent>
                           )}
                         </Tooltip>

@@ -64,8 +64,8 @@ export default function NativeKudos() {
     }
     const timer = setTimeout(async () => {
       try {
-        const res = await hrmsApi.get<{ data: EmployeeSearchResult[] }>(
-          `/api/employees?search=${encodeURIComponent(searchQuery)}&limit=10`
+        const res = await hrmsApi.get<{ success: boolean; data: EmployeeSearchResult[] }>(
+          `/api/employees/options/search?q=${encodeURIComponent(searchQuery)}&limit=10`
         );
         setSearchResults(res.data ?? []);
         setShowDropdown(true);

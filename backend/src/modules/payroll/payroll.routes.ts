@@ -97,21 +97,30 @@ router.get("/salary-assignments/:employeeId/history", requireRole("admin", "hr",
 
 // ─── Payroll Runs — static paths before :id ───────────────────────────────────
 
+async function isHeadOfficeMember(userId: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT bm.branch_name
+       FROM employees e
+       JOIN branch_master bm ON bm.id = e.branch_id
+      WHERE e.user_id = ? AND e.active_status = 1
+      LIMIT 1`,
+    [userId]
+  );
+  const name = (rows[0] as any)?.branch_name ?? "";
+  return /head\s*office/i.test(name);
+}
+
 router.get("/runs", requireRole("admin", "hr", "finance", "payroll"), h(async (req, res) => {
-  // Apply scope filtering for finance/payroll — admin/hr bypass
   let scoped: { sql: string; params: unknown[] };
   try {
-    const isAdminOrHr = await hasRole(req.authUser!.id, "admin", "hr");
-    if (isAdminOrHr) {
+    const isSuperAdmin = await hasRole(req.authUser!.id, "super_admin");
+    if (isSuperAdmin || await isHeadOfficeMember(req.authUser!.id)) {
       scoped = { sql: "1=1", params: [] };
     } else {
       scoped = await buildScopeWhereClause(
         req.authUser!.id,
-        ["finance", "payroll"],
-        {
-          branchId: "spr.branch_id",
-          processId: "spr.process_id"
-        },
+        ["admin", "hr", "finance", "payroll"],
+        { branchId: "spr.branch_id", processId: "spr.process_id" },
         { allowCeoAllRead: true }
       );
     }
@@ -124,22 +133,18 @@ router.get("/runs", requireRole("admin", "hr", "finance", "payroll"), h(async (r
 router.get("/records", requireRole("admin", "hr", "finance", "payroll"), h(async (req, res) => {
   let scoped: { sql: string; params: unknown[] };
   try {
-    const isAdminOrHr = await hasRole(req.authUser!.id, "admin", "hr");
-    if (isAdminOrHr) {
+    const isSuperAdmin = await hasRole(req.authUser!.id, "super_admin");
+    if (isSuperAdmin || await isHeadOfficeMember(req.authUser!.id)) {
       scoped = { sql: "1=1", params: [] };
     } else {
       scoped = await buildScopeWhereClause(
         req.authUser!.id,
-        ["finance", "payroll"],
-        {
-          branchId: "e.branch_id",
-          processId: "e.process_id"
-        },
+        ["admin", "hr", "finance", "payroll"],
+        { branchId: "e.branch_id", processId: "e.process_id" },
         { allowCeoAllRead: true }
       );
     }
   } catch (_err) {
-    // Degrade gracefully if scope table is missing
     scoped = { sql: "1=1", params: [] };
   }
   (req as any).scopeFilter = scoped;

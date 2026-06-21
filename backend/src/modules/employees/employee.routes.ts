@@ -13,6 +13,13 @@ import { db } from "../../db/mysql.js";
 import { employeeController as c } from "./employee.controller.js";
 import { appendJourneyEvent, listJourneyEvents } from "./journeyLog.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { employeeProfileService } from "./employee.profile.service.js";
+import {
+  bankDetailsSchema,
+  nomineeSchema,
+  emergencyContactSchema,
+  statutoryDetailsSchema,
+} from "./employee.profile.validation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOADS_ROOT = path.resolve(__dirname, "../../../uploads");
@@ -20,6 +27,8 @@ const UPLOADS_ROOT = path.resolve(__dirname, "../../../uploads");
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const h3 = (fn: (req: any, res: any, next: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res, next).catch(next);
 
 router.use(requireAuth);
 
@@ -133,40 +142,54 @@ router.get("/options/search", requireAuth, h(async (req: any, res: any) => {
 }));
 
 router.get("/", requireRole("admin", "hr", "manager"), h(async (req, res) => {
-  // Admin/HR must see all active employees — scope filtering only restricts managers
   const userId = req.authUser!.id;
   let scoped: { sql: string; params: unknown[] };
   try {
-    const isAdminOrHr = await hasRole(userId, "admin", "hr");
-    if (isAdminOrHr) {
-      // Admin/HR bypass scope entirely — they see all employees
+    // super_admin sees all branches unconditionally
+    const isSuperAdmin = await hasRole(userId, "super_admin");
+    if (isSuperAdmin) {
       scoped = { sql: "1=1", params: [] };
     } else {
-      scoped = await buildScopeWhereClause(
-        userId,
-        ["manager"],
-        {
-          branchId: "e.branch_id",
-          processId: "e.process_id",
-          departmentId: "e.department_id",
-          managerEmployeeId: "e.reporting_manager_id"
-        },
-        { allowCeoAllRead: true }
+      // admin/hr/finance/payroll at HEAD OFFICE branch see all branches
+      // Everyone else (including admin/hr) sees only their assigned scope
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        `SELECT e.branch_id, bm.branch_name
+           FROM employees e
+           JOIN branch_master bm ON bm.id = e.branch_id
+          WHERE e.user_id = ? AND e.active_status = 1
+          LIMIT 1`,
+        [userId]
       );
-      // If manager has no scope assignments, degrade to showing their direct reports
-      if (scoped.sql === "1=0") {
-        const emp = await getEmployeeForUser(userId);
-        if (emp) {
-          scoped = { sql: "e.reporting_manager_id = ?", params: [emp.id] };
+      const empBranch = (empRows[0] as any)?.branch_name ?? "";
+      const isHeadOffice = /head\s*office/i.test(empBranch);
+
+      if (isHeadOffice && await hasRole(userId, "admin", "hr", "finance", "payroll")) {
+        scoped = { sql: "1=1", params: [] };
+      } else {
+        scoped = await buildScopeWhereClause(
+          userId,
+          ["admin", "hr", "manager"],
+          {
+            branchId: "e.branch_id",
+            processId: "e.process_id",
+            departmentId: "e.department_id",
+            managerEmployeeId: "e.reporting_manager_id"
+          },
+          { allowCeoAllRead: true }
+        );
+        // manager with no scope assignment: degrade to direct reports
+        if (scoped.sql === "1=0") {
+          const emp = await getEmployeeForUser(userId);
+          if (emp) {
+            scoped = { sql: "e.reporting_manager_id = ?", params: [emp.id] };
+          }
         }
       }
     }
   } catch (_err) {
-    // If scope filtering fails (e.g. missing table), degrade gracefully
     scoped = { sql: "1=1", params: [] };
   }
 
-  // Pass scope SQL to controller
   (req as any).scopeFilter = scoped;
   return c.listEmployees(req, res);
 }));
@@ -219,12 +242,12 @@ const profilePhotoUpload = multer({
 
 router.post("/me/photo", (req: any, res: any, next: any) => {
   profilePhotoUpload.single("photo")(req, res, (err) => {
-    if (err instanceof multer.MulterError) return res.status(400).json({ success: false, message: `Upload error: ${err.message}` });
-    if (err) return res.status(400).json({ success: false, message: err.message });
+    if (err instanceof multer.MulterError) return res.status(400).json({ success: false, error: `Upload error: ${err.message}` });
+    if (err) return res.status(400).json({ success: false, error: err.message });
     next();
   });
 }, h(async (req: any, res: any) => {
-  if (!req.file) return res.status(400).json({ success: false, message: "No photo uploaded" });
+  if (!req.file) return res.status(400).json({ success: false, error: "No photo uploaded" });
 
   const userId = req.authUser?.id;
   if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
@@ -238,7 +261,6 @@ router.post("/me/photo", (req: any, res: any, next: any) => {
   const empId = rows[0].id;
   const oldPhotoUrl = rows[0].photo_url;
 
-  // Delete old photo file if it exists
   if (oldPhotoUrl) {
     try {
       const oldFilename = oldPhotoUrl.split("/").pop();
@@ -252,15 +274,41 @@ router.post("/me/photo", (req: any, res: any, next: any) => {
   }
 
   const photoUrl = `/api/files/employee-photos/${req.file.filename}`;
-  await db.execute("UPDATE employees SET photo_url = ?, updated_at = NOW() WHERE id = ?", [photoUrl, empId]);
+  await db.execute("UPDATE employees SET photo_url = ?, avatar_url = ?, updated_at = NOW() WHERE id = ?", [photoUrl, photoUrl, empId]);
 
-  res.json({ success: true, photoUrl, photo_url: photoUrl, url: photoUrl, message: "Profile photo updated successfully" });
+  res.json({ success: true, avatarUrl: photoUrl, photoUrl, photo_url: photoUrl, url: photoUrl });
+}));
+
+router.delete("/me/photo", h(async (req: any, res: any) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT id, photo_url FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    [userId]
+  );
+  if (!rows.length) return res.status(404).json({ success: false, error: "No employee record" });
+
+  const photoUrl = String(rows[0].photo_url ?? "");
+  if (photoUrl) {
+    try {
+      const filename = photoUrl.split("/").pop();
+      if (filename) {
+        const filePath = path.join(UPLOADS_ROOT, "employee-photos", filename);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      }
+    } catch (err) {
+      console.warn("Failed to delete photo file:", err);
+    }
+  }
+
+  await db.execute("UPDATE employees SET photo_url = NULL, avatar_url = NULL, updated_at = NOW() WHERE id = ?", [rows[0].id]);
+  res.json({ success: true });
 }));
 
 router.patch("/:id",
   requireRole("admin", "hr"),
   requireScopedRole(["hr"], async (req) => {
-    // Resolve employee's branch/process from DB
     const [rows] = await db.execute(
       'SELECT branch_id, process_id, department_id FROM employees WHERE id = ? LIMIT 1',
       [req.params.id]
@@ -272,9 +320,56 @@ router.patch("/:id",
       departmentId: emp?.department_id
     };
   }),
-  h(c.updateEmployee)
+  h(async (req: any, res: any) => {
+    // salary_start_date is a payroll-sensitive field — restrict to super_admin, admin, branch_hr, payroll_hr
+    const hasSalaryStartDate = req.body?.salaryStartDate !== undefined
+      || req.body?.salary_start_date !== undefined;
+    if (hasSalaryStartDate) {
+      const allowed = await hasRole(req.authUser!.id, "super_admin", "admin", "branch_hr", "payroll_hr");
+      if (!allowed) {
+        return res.status(403).json({
+          success: false,
+          message: "salary_start_date can only be set by Admin, Branch HR, or Payroll HR"
+        });
+      }
+    }
+    return c.updateEmployee(req, res);
+  })
 );
 router.delete("/:id", requireRole("admin"), h(c.deactivateEmployee));
+
+// Profile sensitive data PUT routes
+router.put("/me/bank-details", requireAuth, h3(async (req: any, res: any, next: any) => {
+  try {
+    const validated = bankDetailsSchema.parse(req.body);
+    const result = await employeeProfileService.saveBankDetails(req.authUser!.id, validated);
+    res.json({ success: true, data: result });
+  } catch (err) { next(err); }
+}));
+
+router.put("/me/nominee", requireAuth, h3(async (req: any, res: any, next: any) => {
+  try {
+    const validated = nomineeSchema.parse(req.body);
+    const result = await employeeProfileService.saveNominee(req.authUser!.id, validated);
+    res.json({ success: true, data: result });
+  } catch (err) { next(err); }
+}));
+
+router.put("/me/emergency-contact", requireAuth, h3(async (req: any, res: any, next: any) => {
+  try {
+    const validated = emergencyContactSchema.parse(req.body);
+    const result = await employeeProfileService.saveEmergencyContact(req.authUser!.id, validated);
+    res.json({ success: true, data: result });
+  } catch (err) { next(err); }
+}));
+
+router.put("/me/statutory-details", requireAuth, h3(async (req: any, res: any, next: any) => {
+  try {
+    const validated = statutoryDetailsSchema.parse(req.body);
+    const result = await employeeProfileService.saveStatutoryDetails(req.authUser!.id, validated);
+    res.json({ success: true, data: result });
+  } catch (err) { next(err); }
+}));
 
 // Journey log
 router.get("/:id/journey", requireRole("admin", "hr", "manager"), async (req: any, res: any, next: any) => {
@@ -309,6 +404,28 @@ router.post("/:id/journey", requireRole("admin", "hr"), async (req: any, res: an
     return res.status(201).json({ success: true, data });
   } catch (err) { next(err); }
 });
+
+// GET /api/employees/:id/ctc — salary assignment for payslip CTC card
+router.get("/:id/ctc", requireAuth, h(async (req: any, res: any) => {
+  const targetId = req.params.id;
+  const isSelf = (await getEmployeeForUser(req.authUser!.id))?.id === targetId;
+  const isPrivileged = await hasRole(req.authUser!.id, "admin", "hr", "payroll_hr", "finance");
+  if (!isSelf && !isPrivileged) {
+    return res.status(403).json({ success: false, error: "Forbidden" });
+  }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT esa.ctc_annual, e.ctc AS monthly_ctc
+       FROM employees e
+       LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
+      WHERE e.id = ? LIMIT 1`,
+    [targetId]
+  );
+  if (!rows.length) return res.status(404).json({ success: false, error: "Not found" });
+  const row = rows[0] as any;
+  // ctc_annual is the true annual CTC; fallback: e.ctc * 12 (e.ctc stores monthly)
+  const ctcAnnual = row.ctc_annual ?? (row.monthly_ctc ? row.monthly_ctc * 12 : null);
+  return res.json({ success: true, data: { ctc: ctcAnnual } });
+}));
 
 // GET /api/employees/:id/stat-card — comprehensive employee profile aggregate
 router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {

@@ -1,24 +1,46 @@
 import { randomUUID } from "crypto";
-import mysql from "mysql2/promise";
-import type { RowDataPacket } from "mysql2";
+import type { RowDataPacket, Pool } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
+import { getPoolForKey, testPoolForKey } from "../external-db/external-db.service.js";
+import mysql from "mysql2/promise";
 
-const lmsPool = mysql.createPool({
-  host: env.LMS_DB_HOST,
-  port: env.LMS_DB_PORT,
-  user: env.LMS_DB_USER,
-  password: env.LMS_DB_PASSWORD,
-  database: env.LMS_DB_NAME,
-  connectionLimit: env.LMS_DB_POOL_MAX,
-  waitForConnections: true,
-  queueLimit: 0,
-  timezone: "local",
-  decimalNumbers: true,
-});
+// Static fallback pool from .env — used only when no Integration Hub credentials are configured.
+// Once LMS credentials are saved via Integration Hub (integration_key='lms_sync'),
+// getLmsPool() will return the config-driven pool instead.
+let _envPool: Pool | null = null;
+function getEnvPool(): Pool {
+  if (!_envPool) {
+    _envPool = mysql.createPool({
+      host: env.LMS_DB_HOST,
+      port: env.LMS_DB_PORT,
+      user: env.LMS_DB_USER,
+      password: env.LMS_DB_PASSWORD,
+      database: env.LMS_DB_NAME,
+      connectionLimit: env.LMS_DB_POOL_MAX,
+      waitForConnections: true,
+      queueLimit: 0,
+      timezone: "local",
+      decimalNumbers: true,
+    });
+  }
+  return _envPool;
+}
 
-async function lmsQuery<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params: unknown[] = []) {
-  const [rows] = await lmsPool.execute<T>(sql, params as any);
+// Returns the active LMS pool. Prefers Integration Hub credentials (lms_sync key).
+// Falls back to .env pool when no IH credentials are stored.
+export async function getLmsPool(): Promise<Pool> {
+  try {
+    const pool = await getPoolForKey("lms_sync") as Pool;
+    return pool;
+  } catch {
+    return getEnvPool();
+  }
+}
+
+export async function lmsQuery<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params: unknown[] = []): Promise<T> {
+  const pool = await getLmsPool();
+  const [rows] = await pool.execute<T>(sql, params as any);
   return rows;
 }
 
@@ -31,11 +53,28 @@ function hasLmsCoordinatorRole(hrmsRoles: string[], lmsRole?: string | null) {
   return normalized.some((role) => ["trainer", "quality", "quality_auditor", "qa", "qtl", "training", "training_manager", "lms_coordinator", "coordinator"].includes(role)) || ["coordinator", "trainer", "quality"].includes(String(lmsRole ?? "").toLowerCase());
 }
 
-function safeDate(value: unknown) {
-  return value ? String(value).slice(0, 10) : null;
-}
-
 export const lmsService = {
+  async testConnection(): Promise<{ ok: boolean; source: "integration_hub" | "env"; latency_ms?: number; error?: string }> {
+    const start = Date.now();
+    // Try Integration Hub credentials first
+    try {
+      const result = await testPoolForKey("lms_sync");
+      if (result.ok) {
+        return { ok: true, source: "integration_hub", latency_ms: Date.now() - start };
+      }
+    } catch {
+      // Fall through to env pool
+    }
+    // Try env pool
+    try {
+      const pool = getEnvPool();
+      await pool.execute("SELECT 1");
+      return { ok: true, source: "env", latency_ms: Date.now() - start };
+    } catch (e: any) {
+      return { ok: false, source: "env", error: e?.message ?? "Connection failed", latency_ms: Date.now() - start };
+    }
+  },
+
   async getAccessForEmployee(employee: any, hrmsRoles: string[]) {
     const employeeCode = String(employee?.employee_code ?? "").trim();
     const userId = String(employee?.user_id ?? "").trim();

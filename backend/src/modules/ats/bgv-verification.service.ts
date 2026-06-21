@@ -482,6 +482,121 @@ export async function verifyCourtByToken(
   return getBgvStatusForCandidate(candidateId);
 }
 
+// ── Vendor Dispatch ──────────────────────────────────────────────────────────
+
+export async function dispatchToVendor(
+  candidateId: string,
+  input: {
+    checkType: string;
+    checkId?: string;
+    vendorName: string;
+    vendorContactEmail?: string;
+    vendorContactPhone?: string;
+    documentIds?: string[];
+    dispatchNotes?: string;
+  },
+  actorUserId: string
+) {
+  const id = randomUUID();
+  await db.execute(
+    `INSERT INTO candidate_bgv_vendor_dispatch
+       (id, candidate_id, check_id, check_type, vendor_name, vendor_contact_email, vendor_contact_phone,
+        document_ids, dispatch_notes, status, sent_by, sent_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'sent', ?, NOW())`,
+    [
+      id, candidateId,
+      input.checkId ?? null,
+      input.checkType,
+      input.vendorName,
+      input.vendorContactEmail ?? null,
+      input.vendorContactPhone ?? null,
+      input.documentIds?.length ? JSON.stringify(input.documentIds) : null,
+      input.dispatchNotes ?? null,
+      actorUserId,
+    ]
+  );
+  // Move the bgv check to manual_review status so it shows as escalated
+  if (input.checkId) {
+    await db.execute(
+      `UPDATE candidate_bgv_check
+          SET status = 'manual_review', review_remarks = ?, reviewed_by = ?, reviewed_at = NOW(), updated_at = NOW()
+        WHERE id = ? AND candidate_id = ?`,
+      [`Dispatched to vendor: ${input.vendorName}`, actorUserId, input.checkId, candidateId]
+    );
+  }
+  await logEvent(candidateId, "BGV_VENDOR_DISPATCHED", { vendorName: input.vendorName, checkType: input.checkType }, input.checkId ?? null, { actorType: "hr", actorId: actorUserId });
+  return { dispatch_id: id };
+}
+
+export async function updateVendorResult(
+  dispatchId: string,
+  candidateId: string,
+  input: {
+    vendorReferenceNo?: string;
+    vendorResult: "verified" | "not_verified" | "inconclusive";
+    vendorRemarks?: string;
+    updateBgvCheck?: boolean;
+  },
+  actorUserId: string
+) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, check_id, check_type, candidate_id FROM candidate_bgv_vendor_dispatch WHERE id = ? AND candidate_id = ? LIMIT 1`,
+    [dispatchId, candidateId]
+  );
+  const dispatch = (rows as RowDataPacket[])[0];
+  if (!dispatch) throw Object.assign(new Error("Vendor dispatch not found"), { statusCode: 404 });
+
+  await db.execute(
+    `UPDATE candidate_bgv_vendor_dispatch
+        SET vendor_reference_no = ?, vendor_result = ?, vendor_remarks = ?,
+            result_received_at = NOW(), result_updated_by = ?,
+            status = 'result_received', bgv_check_updated = ?, updated_at = NOW()
+      WHERE id = ?`,
+    [
+      input.vendorReferenceNo ?? null,
+      input.vendorResult,
+      input.vendorRemarks ?? null,
+      actorUserId,
+      input.updateBgvCheck ? 1 : 0,
+      dispatchId,
+    ]
+  );
+
+  // If HR opts to sync result back to bgv check
+  if (input.updateBgvCheck && dispatch.check_id) {
+    const checkStatus = input.vendorResult === "verified" ? "verified"
+      : input.vendorResult === "not_verified" ? "failed"
+      : "manual_review";
+    await db.execute(
+      `UPDATE candidate_bgv_check
+          SET status = ?, review_remarks = ?, reviewed_by = ?, reviewed_at = NOW(),
+              verified_at = IF(? = 'verified', NOW(), verified_at), updated_at = NOW()
+        WHERE id = ? AND candidate_id = ?`,
+      [checkStatus, `Vendor: ${input.vendorRemarks ?? input.vendorResult}`, actorUserId, checkStatus, dispatch.check_id, candidateId]
+    );
+    await db.execute(
+      `UPDATE candidate_bgv_vendor_dispatch SET status = 'completed', updated_at = NOW() WHERE id = ?`,
+      [dispatchId]
+    );
+  }
+
+  await logEvent(candidateId, "BGV_VENDOR_RESULT_RECEIVED", input, dispatch.check_id ?? null, { actorType: "hr", actorId: actorUserId });
+  return getBgvStatusForCandidate(candidateId);
+}
+
+export async function listVendorDispatches(candidateId: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT d.*, u.full_name AS sent_by_name, u2.full_name AS result_updated_by_name
+       FROM candidate_bgv_vendor_dispatch d
+       LEFT JOIN employees u  ON u.user_id  = d.sent_by
+       LEFT JOIN employees u2 ON u2.user_id = d.result_updated_by
+      WHERE d.candidate_id = ?
+      ORDER BY d.sent_at DESC`,
+    [candidateId]
+  );
+  return rows;
+}
+
 export async function listBgvQueueScoped(status: string | undefined, scopeClause: { sql: string; params: unknown[] }) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id AS candidate_id, c.candidate_code, c.full_name, c.mobile, c.email,

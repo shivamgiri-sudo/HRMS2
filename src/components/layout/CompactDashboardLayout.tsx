@@ -31,7 +31,8 @@ import {
 } from "lucide-react";
 import { PWAInstallBanner } from "@/components/layout/PWAInstallBanner";
 import { TopBar } from "@/components/layout/TopBar";
-import { SidebarNav, type NavGroup } from "@/components/layout/SidebarNav";
+import { SidebarNav } from "@/components/layout/SidebarNav";
+import { navGroups } from "@/components/layout/navConfig";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
@@ -46,117 +47,6 @@ type Props = { children: ReactNode };
 
 const companyLogo = "/mcn-logo.png?v=999";
 
-const navGroups: NavGroup[] = [
-  {
-    title: "Overview",
-    items: [
-      { label: "Dashboard",  href: "/dashboard",  icon: <Home className="h-[15px] w-[15px]" />,         description: "Workspace" },
-      { label: "My Modules", href: "/modules",    icon: <Package className="h-[15px] w-[15px]" />,      description: "All allowed pages" },
-      { label: "Notifications", href: "/notifications", icon: <Bell className="h-[15px] w-[15px]" />,   description: "Personal updates" },
-      { label: "Work Inbox", href: "/work-inbox", icon: <ClipboardList className="h-[15px] w-[15px]" />, pageCode: "WORK_INBOX", description: "Pending actions" },
-      { label: "Reports",    href: "/reports",    icon: <BarChart3 className="h-[15px] w-[15px]" />,    roles: ["admin","hr","manager","ceo","branch_head"], description: "Reports" },
-    ],
-  },
-  {
-    title: "My Space",
-    items: [
-      { label: "Profile",          href: "/profile",              icon: <User className="h-[15px] w-[15px]" />,         description: "Profile" },
-      { label: "Attendance",       href: "/attendance",           icon: <Clock className="h-[15px] w-[15px]" />,         description: "Attendance" },
-      { label: "Leaves",           href: "/leaves",               icon: <CalendarDays className="h-[15px] w-[15px]" />,  description: "Leave" },
-      { label: "My Roster",        href: "/my-roster",            icon: <Calendar className="h-[15px] w-[15px]" />,      description: "Roster" },
-      { label: "Week-off Preference", href: "/week-off-preferences", icon: <CalendarDays className="h-[15px] w-[15px]" />, description: "Week-off" },
-      { label: "Payslips",         href: "/profile?tab=payslips", icon: <CreditCard className="h-[15px] w-[15px]" />,    description: "Payslips" },
-      { label: "Tax Declaration",  href: "/payroll/tax-declaration", icon: <Landmark className="h-[15px] w-[15px]" />,  description: "Tax" },
-      { label: "Engagement",       href: "/engagement",           icon: <Sparkles className="h-[15px] w-[15px]" />,      description: "Engagement" },
-    ],
-  },
-  {
-    title: "People & Hiring",
-    items: [
-      { label: "Employees",             href: "/employees",                      icon: <Users className="h-[15px] w-[15px]" />,       roles: ["admin","hr","manager","branch_head","process_manager"], description: "Directory" },
-      { label: "Departments",           href: "/departments",                    icon: <Building2 className="h-[15px] w-[15px]" />,    roles: ["admin","hr","manager","ceo","branch_head"], description: "Departments" },
-      { label: "Onboarding",            href: "/onboarding",                     icon: <UserPlus className="h-[15px] w-[15px]" />,     roles: ["admin","hr"], description: "Onboarding" },
-      { label: "Document Verification", href: "/document-verification",          icon: <FileCheck className="h-[15px] w-[15px]" />,    roles: ["admin","hr"], description: "Documents" },
-      { label: "BGV Reports",           href: "/ats/bgv-report",                 icon: <FileCheck className="h-[15px] w-[15px]" />,    roles: ["admin","hr"], description: "BGV" },
-      { label: "Employee Journey",      href: "/employee-stat-card",             icon: <Users className="h-[15px] w-[15px]" />,        description: "Journey" },
-      { label: "ATS Command",           href: "/ats/command-center",             icon: <Briefcase className="h-[15px] w-[15px]" />,    pageCode: "ATS_DASHBOARD", description: "ATS" },
-      { label: "Walk-in Queue",         href: "/ats/walkin-queue",               icon: <Users className="h-[15px] w-[15px]" />,        pageCode: "ATS_WAITING_QUEUE", description: "Queue" },
-      { label: "My Candidates",         href: "/ats/recruiter/my-candidates",    icon: <ClipboardList className="h-[15px] w-[15px]" />, pageCode: "ATS_RECRUITER_QUEUE", description: "Candidates" },
-      { label: "Jobs Portal",           href: "/jobs",                           icon: <Briefcase className="h-[15px] w-[15px]" />,    pageCode: "JOBS_PORTAL", description: "Jobs" },
-    ],
-  },
-  {
-    title: "Workforce",
-    items: [
-      { label: "My Learning",    href: "/lms/my-learning",    icon: <GraduationCap className="h-[15px] w-[15px]" />, pageCode: "LMS_MY_LEARNING", description: "LMS" },
-      { label: "LMS Coordinator",href: "/lms/coordinator",   icon: <Users className="h-[15px] w-[15px]" />,         pageCode: "LMS_COORDINATOR", description: "Training" },
-      { label: "LMS Admin",      href: "/lms/admin",          icon: <GraduationCap className="h-[15px] w-[15px]" />, pageCode: "LMS_ADMIN", description: "LMS admin" },
-      { label: "Roster Planning",href: "/wfm/roster",         icon: <Clock className="h-[15px] w-[15px]" />,         pageCode: "WFM_ROSTER", description: "Roster" },
-      { label: "Auto Roster",    href: "/wfm/auto-roster",    icon: <Calendar className="h-[15px] w-[15px]" />,      pageCode: "WFM_AUTO_ROSTER", description: "Auto roster" },
-      { label: "RTA Board",      href: "/rta-board",          icon: <Activity className="h-[15px] w-[15px]" />,      pageCode: "RTA_BOARD", description: "RTA" },
-      { label: "WFM Tracker",    href: "/wfm/live-tracker",   icon: <Clock className="h-[15px] w-[15px]" />,         pageCode: "WFM_LIVE_TRACKER", description: "Live" },
-    ],
-  },
-  {
-    title: "Operations",
-    items: [
-      { label: "Performance",      href: "/performance",             icon: <Target className="h-[15px] w-[15px]" />,      description: "Performance" },
-      { label: "Goals & Appraisal",href: "/goals",                  icon: <Target className="h-[15px] w-[15px]" />,      description: "Goals" },
-      { label: "Payroll",          href: "/payroll",                 icon: <CreditCard className="h-[15px] w-[15px]" />,  roles: ["admin","hr","finance","payroll"], description: "Payroll" },
-      { label: "Full & Final",     href: "/payroll/full-final",      icon: <Zap className="h-[15px] w-[15px]" />,         roles: ["admin","hr","finance","payroll"], description: "F&F" },
-      { label: "Payroll Masters",  href: "/payroll/masters",         icon: <Settings2 className="h-[15px] w-[15px]" />,   roles: ["admin","hr","finance","payroll"], description: "Slabs" },
-      { label: "Salary Packages",  href: "/payroll/salary-packages", icon: <Wallet className="h-[15px] w-[15px]" />,      roles: ["admin","finance"], description: "Pay matrix" },
-      { label: "Incentives",       href: "/payroll/incentives",      icon: <TrendingUp className="h-[15px] w-[15px]" />,  roles: ["admin","hr","finance","payroll"], description: "Incentives" },
-      { label: "KPI Config",       href: "/kpi-config",              icon: <Target className="h-[15px] w-[15px]" />,      pageCode: "KPI_CONFIG", roles: ["admin","hr","manager","process_manager"], description: "KPI" },
-      { label: "Operations KPI",   href: "/operations-kpi",          icon: <Target className="h-[15px] w-[15px]" />,      pageCode: "OPERATIONS_KPI", description: "Ops KPI" },
-      { label: "KPI Master",       href: "/kpi-master",              icon: <Target className="h-[15px] w-[15px]" />,      roles: ["admin","hr","process_manager"], description: "Define KPIs" },
-      { label: "My KPIs",          href: "/my-kpi",                  icon: <Activity className="h-[15px] w-[15px]" />,    description: "Live KPI" },
-      { label: "Management",       href: "/management/dashboard",    icon: <BarChart3 className="h-[15px] w-[15px]" />,   pageCode: "MANAGEMENT_DASHBOARD", description: "Management" },
-      { label: "Control Tower",    href: "/control-tower",           icon: <Activity className="h-[15px] w-[15px]" />,    pageCode: "CONTROL_TOWER", description: "Control tower" },
-      { label: "Operations Dashboard", href: "/operations/dashboard", icon: <Target className="h-[15px] w-[15px]" />,     pageCode: "OPERATIONS_DASHBOARD", description: "Ops dashboard" },
-      { label: "Quality Dashboard", href: "/quality/dashboard",      icon: <BarChart3 className="h-[15px] w-[15px]" />,   pageCode: "QUALITY_DASHBOARD", description: "Quality dashboard" },
-      { label: "Agent Performance", href: "/agent-performance",      icon: <Activity className="h-[15px] w-[15px]" />,    roles: ["admin","hr","ceo","qa","analyst","manager","process_manager","branch_head"], description: "Cross-source KPI" },
-    ],
-  },
-  {
-    title: "Engage & Support",
-    items: [
-      { label: "Kudos Wall",       href: "/engagement/kudos",              icon: <Heart className="h-[15px] w-[15px]" />,       description: "Kudos" },
-      { label: "Badges",           href: "/engagement/badges",             icon: <ShieldCheck className="h-[15px] w-[15px]" />,  description: "Badges" },
-      { label: "Surveys",          href: "/engagement/surveys",            icon: <ClipboardList className="h-[15px] w-[15px]" />, description: "Surveys" },
-      { label: "Helpdesk",         href: "/helpdesk",                      icon: <ShieldCheck className="h-[15px] w-[15px]" />,  description: "Helpdesk" },
-      { label: "Benefits & Claims",href: "/benefits",                      icon: <ShieldCheck className="h-[15px] w-[15px]" />,  description: "Benefits" },
-      { label: "Feedback",         href: "/performance-feedback/my-reports", icon: <FileText className="h-[15px] w-[15px]" />,  description: "Feedback" },
-    ],
-  },
-  {
-    title: "Expenses",
-    items: [
-      { label: "My Expenses",         href: "/expenses",              icon: <Receipt className="h-[15px] w-[15px]" />,      description: "My expense claims" },
-      { label: "Expense Approvals",   href: "/expenses/approvals",    icon: <ClipboardList className="h-[15px] w-[15px]" />, roles: ["admin","hr","manager","branch_head"], description: "Approve expenses" },
-      { label: "Finance Queue",       href: "/expenses/finance",      icon: <Wallet className="h-[15px] w-[15px]" />,        roles: ["admin","finance"], description: "Finance processing" },
-      { label: "Expense Reports",     href: "/expenses/reports",      icon: <BarChart3 className="h-[15px] w-[15px]" />,     roles: ["admin","finance","hr"], description: "Expense analytics" },
-    ],
-  },
-  {
-    title: "Admin",
-    items: [
-      { label: "Access Control",   href: "/settings/access-control",      icon: <Settings className="h-[15px] w-[15px]" />,    pageCode: "ACCESS_CONTROL", roles: ["admin"], description: "Access" },
-      { label: "Page Access",      href: "/super-admin/page-access",       icon: <ShieldCheck className="h-[15px] w-[15px]" />, roles: ["admin"], description: "Page access" },
-      { label: "Comm. Config",     href: "/settings/communication-config", icon: <Settings2 className="h-[15px] w-[15px]" />,  roles: ["admin"], description: "Email/SMS" },
-      { label: "Org Masters",      href: "/org-masters",                   icon: <Building2 className="h-[15px] w-[15px]" />,   roles: ["admin","hr"], description: "Masters" },
-      { label: "Process Config",   href: "/process-config",                icon: <Network className="h-[15px] w-[15px]" />,     roles: ["admin","hr","process_manager"], description: "Process" },
-      { label: "Leave Types",      href: "/leave-types",                   icon: <CalendarDays className="h-[15px] w-[15px]" />, roles: ["admin","hr"], description: "Leave types" },
-      { label: "Statutory Config", href: "/payroll/statutory-config",      icon: <Landmark className="h-[15px] w-[15px]" />,    roles: ["admin","hr","finance"], description: "Statutory" },
-      { label: "Compliance",       href: "/compliance/statutory",          icon: <Landmark className="h-[15px] w-[15px]" />,    roles: ["admin","hr","finance"], description: "Compliance" },
-      { label: "DPDP / Privacy",   href: "/compliance/dpdp",               icon: <ShieldCheck className="h-[15px] w-[15px]" />, roles: ["admin","hr"], description: "DPDP" },
-      { label: "Client Master",    href: "/client-master",                 icon: <Users className="h-[15px] w-[15px]" />,       roles: ["admin","hr"], description: "Clients" },
-      { label: "Integration Hub",  href: "/integration-hub",               icon: <Network className="h-[15px] w-[15px]" />,     roles: ["admin"], description: "Integration" },
-      { label: "Exit Management",  href: "/exit-management",               icon: <UserMinus className="h-[15px] w-[15px]" />,   roles: ["admin","hr"], description: "Exit" },
-      { label: "IT Provisioning",  href: "/it-provisioning",               icon: <Server className="h-[15px] w-[15px]" />,       pageCode: "IT_PROVISIONING_TRACKER", roles: ["admin","branch_it","hr"], description: "IT Provisioning" },
-    ],
-  },
-];
 
 /* Bottom nav items (mobile only — 5 tabs max) */
 const BOTTOM_NAV = [

@@ -51,6 +51,15 @@ integrationRouter.put("/:key", (req, res, next) => {
   integrationController.update(req as any, res).catch(next);
 });
 
+integrationRouter.delete("/:key", async (req: any, res: any, next: any) => {
+  try {
+    await integrationService.delete(req.params.key);
+    return res.json({ success: true, message: `Connector '${req.params.key}' deleted.` });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 integrationRouter.post("/:key/run", async (req: any, res: any, next: any) => {
   try {
     const connector = await integrationService.getByKey(req.params.key);
@@ -85,6 +94,15 @@ integrationRouter.get("/:key/source-schema", (req, res, next) => {
 
 integrationRouter.get("/:key/suggestions", (req, res, next) => {
   integrationController.listSuggestions(req as any, res).catch(next);
+});
+
+integrationRouter.get("/:key/data-preview", async (req: any, res: any, next: any) => {
+  try {
+    const data = await integrationService.previewTargetData(req.params.key);
+    return res.json({ success: true, data });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 integrationRouter.get("/:key/schedule", (req, res, next) => {

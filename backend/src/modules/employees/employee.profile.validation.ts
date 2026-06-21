@@ -34,7 +34,7 @@ export const selfProfileUpdateSchema = z.object({
   date_of_birth: z.union([z.string().regex(DATE_REGEX), z.literal(""), z.null()])
     .optional()
     .transform((value) => value === "" ? null : value),
-  gender: z.union([z.enum(["male", "female", "other"]), z.literal(""), z.null()])
+  gender: z.union([z.enum(["male", "female", "other", "prefer_not_to_say"]), z.literal(""), z.null()])
     .optional()
     .transform((value) => value === "" ? null : value),
   marital_status: z.union([

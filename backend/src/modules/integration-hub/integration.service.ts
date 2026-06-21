@@ -180,6 +180,18 @@ export const integrationService = {
     return this.getByKey(integrationKey);
   },
 
+  async delete(integrationKey: string): Promise<void> {
+    await this.getByKey(integrationKey); // throws 404 if not found
+    // Cascade-delete related rows before removing the config
+    await db.execute("DELETE FROM integration_schedule WHERE integration_key = ?", [integrationKey]);
+    await db.execute("DELETE FROM integration_field_map WHERE integration_key = ?", [integrationKey]);
+    await db.execute("DELETE FROM integration_table_map WHERE integration_key = ?", [integrationKey]);
+    await db.execute("DELETE FROM integration_field_map_suggestion WHERE integration_key = ?", [integrationKey]);
+    await db.execute("DELETE FROM integration_event_log WHERE integration_key = ?", [integrationKey]);
+    // Keep run history in integration_connector_run for audit — just orphan it
+    await db.execute("DELETE FROM integration_config WHERE integration_key = ?", [integrationKey]);
+  },
+
   async listRuns(filters: RunFilters): Promise<PaginatedResult<IntegrationConnectorRun>> {
     const { page, limit, integrationKey, status } = filters;
     const offset = (page - 1) * limit;
@@ -488,6 +500,53 @@ export const integrationService = {
       last_run_at: null,
       next_run_at: null,
     };
+  },
+
+  async previewTargetData(integrationKey: string): Promise<Array<{ table: string; rows: Record<string, unknown>[]; total: number }>> {
+    // Allowed target tables — prevents arbitrary table reads
+    const allowedTargets = new Set(Object.keys(APPROVED_MAPPING_TARGETS));
+    const lmsTargets = ["lms_learning_progress_snapshot", "lms_certification_snapshot", "lms_employee_mapping"];
+
+    const result: Array<{ table: string; rows: Record<string, unknown>[]; total: number }> = [];
+
+    // lms_sync connector: always preview its snapshot tables
+    if (integrationKey === "lms_sync") {
+      for (const lmsTable of lmsTargets) {
+        try {
+          const [[countRow]] = await db.execute<RowDataPacket[]>(
+            `SELECT COUNT(*) AS total FROM ${quoteIdentifier(lmsTable, "mysql")}`,
+            [],
+          );
+          const total = Number(countRow?.total ?? 0);
+          const [rows] = await db.execute<RowDataPacket[]>(
+            `SELECT * FROM ${quoteIdentifier(lmsTable, "mysql")} ORDER BY id DESC LIMIT 50`,
+            [],
+          );
+          result.push({ table: lmsTable, rows: rows as Record<string, unknown>[], total });
+        } catch { /* table may not exist yet */ }
+      }
+      return result;
+    }
+
+    const tableMaps = await this.listTableMaps(integrationKey);
+    for (const tm of tableMaps) {
+      const target = tm.target_table;
+      if (!allowedTargets.has(target) && !lmsTargets.includes(target)) continue;
+      try {
+        const [[countRow]] = await db.execute<RowDataPacket[]>(
+          `SELECT COUNT(*) AS total FROM ${quoteIdentifier(target, "mysql")}`,
+          [],
+        );
+        const total = Number(countRow?.total ?? 0);
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT * FROM ${quoteIdentifier(target, "mysql")} ORDER BY id DESC LIMIT 50`,
+          [],
+        );
+        result.push({ table: target, rows: rows as Record<string, unknown>[], total });
+      } catch { /* table may not exist */ }
+    }
+
+    return result;
   },
 
   async upsertSchedule(integrationKey: string, input: UpsertScheduleInput): Promise<IntegrationSchedule> {

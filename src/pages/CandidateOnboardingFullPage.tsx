@@ -43,19 +43,25 @@ type BgvStatus = {
   missing_mandatory_checks: string[];
 };
 
+const TITLE_OPTS = ["Mr", "Mrs", "Ms", "Dr"];
+const GENDER_OPTS = ["Male", "Female", "Other"];
+const MARITAL_OPTS = ["Single", "Married", "Divorced", "Widowed"];
+const BLOOD_OPTS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
+const RELATION_OPTS = ["Father", "Husband", "Mother", "Spouse", "Son", "Daughter", "Brother", "Sister"];
+const NOMINEE_RELATION_OPTS = ["Father", "Mother", "Spouse", "Son", "Daughter", "Brother", "Sister", "Guardian"];
+const ACCOUNT_OPTS = ["Savings", "Current", "Salary"];
+const QUAL_OPTS = ["10th", "12th", "Diploma", "Graduate", "Post Graduate", "Other"];
+const EXP_OPTS = ["fresher", "Less than 1 year", "1–2 years", "2–3 years", "3–5 years", "5+ years"];
+
 const emptyEmployee = {
   title: "Mr", employeeName: "", relation: "Father", fatherHusbandName: "", gender: "", maritalStatus: "", dateOfBirth: "", bloodGroup: "",
-  // Nominee 1
   nominee: "", nomineeRelation: "", nomineeDateOfBirth: "", nominee1SharePct: "",
-  // Nominee 2 (optional)
   nominee2Name: "", nominee2Relation: "", nominee2Dob: "", nominee2SharePct: "",
   permanentAddress: "", permanentState: "", permanentCity: "", permanentPincode: "",
   presentAddress: "", presentState: "", presentCity: "", presentPincode: "",
   mobileNumber: "", altMobileNumber: "", personalEmailId: "", officialEmailId: "",
   panNumber: "", aadhaarNumber: "",
-  // Identity documents (candidate fills if available — optional)
   passportNo: "", drivingLicenseNo: "",
-  // Statutory IDs from previous employment (optional)
   uanNumber: "", epfNumber: "", esicNumber: "",
   sourceType: "", source: "",
 };
@@ -83,6 +89,7 @@ export default function CandidateOnboardingFullPage() {
   const [docForm, setDocForm] = useState({ docType: "Aadhaar", docName: "Aadhaar Card", pageNo: "" });
   const [file, setFile] = useState<File | null>(null);
   const [consentAccepted, setConsentAccepted] = useState(false);
+  const [sameAddress, setSameAddress] = useState(false);
 
   const steps: Record<Step, string> = {
     1: "Welcome", 2: "Employee Details", 3: "Documents", 4: "Digital BGV", 5: "Bank Details", 6: "Qualification", 7: "Family & Experience", 8: "Review & Submit",
@@ -140,22 +147,70 @@ export default function CandidateOnboardingFullPage() {
   const updateEmployee = (key: keyof typeof emptyEmployee, value: string) => setEmployee((prev) => ({ ...prev, [key]: value }));
   const updateBank = (key: keyof typeof emptyBank, value: string) => setBank((prev) => ({ ...prev, [key]: value }));
 
+  const copySameAddress = (checked: boolean) => {
+    setSameAddress(checked);
+    if (checked) {
+      setEmployee((prev) => ({
+        ...prev,
+        presentAddress: prev.permanentAddress,
+        presentState: prev.permanentState,
+        presentCity: prev.permanentCity,
+        presentPincode: prev.permanentPincode,
+      }));
+    }
+  };
+
+  const lookupIfsc = async (ifsc: string) => {
+    if (ifsc.length !== 11) return;
+    try {
+      const res = await fetch(`https://ifsc.razorpay.com/${ifsc.toUpperCase()}`);
+      if (res.ok) {
+        const d = await res.json();
+        setBank((prev) => ({ ...prev, bankName: d.BANK || prev.bankName, branchName: d.BRANCH || prev.branchName }));
+      }
+    } catch { /* non-fatal */ }
+  };
+
   const saveEmployee = async () => { setSaving(true); try { await hrmsApi.post(`${apiBase}/employee-details`, { token, ...employee }); await load(); } finally { setSaving(false); } };
   const saveBank = async () => { setSaving(true); try { await hrmsApi.post(`${apiBase}/bank-details`, { token, ...bank }); await load(); } finally { setSaving(false); } };
   const addQualification = async () => { setSaving(true); try { await hrmsApi.post(`${apiBase}/qualification`, { token, ...qualification }); setQualification(emptyQualification); await load(); } finally { setSaving(false); } };
   const saveFamilyExperience = async () => { setSaving(true); try { await hrmsApi.post(`${apiBase}/family`, { token, ...family }); await hrmsApi.post(`${apiBase}/experience`, { token, ...experience }); await load(); } finally { setSaving(false); } };
   const saveFinal = async () => { setSaving(true); try { await hrmsApi.post(`${apiBase}/final-section`, { token, confirmed: true }); await load(); } finally { setSaving(false); } };
 
+  const handleNext = async () => {
+    if (saving) return;
+    try {
+      if (step === 2) await saveEmployee();
+      else if (step === 5) await saveBank();
+      else if (step === 7) await saveFamilyExperience();
+    } catch { /* error shown via banner — still advance */ }
+    setStep((s) => Math.min(8, s + 1) as Step);
+  };
+
   const uploadDocument = async () => {
     if (!file) return setError("Please select a file first.");
     setSaving(true);
+    const uploadedType = docForm.docType;
     try {
       const fd = new FormData();
       fd.append("token", token); fd.append("docType", docForm.docType); fd.append("docName", docForm.docName); fd.append("pageNo", docForm.pageNo); fd.append("file", file);
       const res = await fetch(`${import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055"}${apiBase}/documents`, { method: "POST", body: fd });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || "Upload failed");
-      setFile(null); setDocForm({ docType: "Aadhaar", docName: "Aadhaar Card", pageNo: "" }); await load();
+      const docId = json.data?.id;
+      setFile(null); setDocForm({ docType: "Aadhaar", docName: "Aadhaar Card", pageNo: "" });
+      await load();
+      if (consentAccepted) {
+        try {
+          if (uploadedType.toLowerCase().includes("aadhaar") && employee.aadhaarNumber) {
+            await hrmsApi.post(`${bgvBase}/verify/aadhaar-offline`, { token, documentId: docId, aadhaarLast4: employee.aadhaarNumber.slice(-4) });
+            await load();
+          } else if (uploadedType.toLowerCase().includes("pan") && employee.panNumber) {
+            await hrmsApi.post(`${bgvBase}/verify/pan`, { token, panNumber: employee.panNumber });
+            await load();
+          }
+        } catch { /* BGV auto-trigger non-fatal */ }
+      }
     } catch (e: any) { setError(e.message || "Upload failed"); } finally { setSaving(false); }
   };
 
@@ -200,84 +255,85 @@ export default function CandidateOnboardingFullPage() {
         {step === 1 && <Card><CardHeader><CardTitle>Auto-filled from ATS</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-3"><ReadOnly label="Name" value={status?.token.full_name} /><ReadOnly label="Mobile" value={status?.token.mobile} /><ReadOnly label="Email" value={status?.token.email} /><ReadOnly label="Source type" value={status?.token.source_type} /><ReadOnly label="Source" value={status?.token.source} /><ReadOnly label="Candidate ID" value={status?.token.candidate_code || status?.token.candidate_id} /></CardContent></Card>}
 
         {step === 2 && <Card><CardHeader><CardTitle>Employee Details</CardTitle></CardHeader><CardContent className="space-y-6">
-          {/* ── Personal Info ── */}
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">Personal Information</p>
             <div className="grid gap-4 md:grid-cols-3">
-              <Field label="Title *" value={employee.title} onChange={(v) => updateEmployee("title", v)} />
+              <Field label="Title *" value={employee.title} onChange={(v) => updateEmployee("title", v)} options={TITLE_OPTS} />
               <Field label="Full Name *" value={employee.employeeName} onChange={(v) => updateEmployee("employeeName", v)} />
-              <Field label="Relation" value={employee.relation} onChange={(v) => updateEmployee("relation", v)} />
+              <Field label="Relation" value={employee.relation} onChange={(v) => updateEmployee("relation", v)} options={RELATION_OPTS} />
               <Field label="Father / Husband Name *" value={employee.fatherHusbandName} onChange={(v) => updateEmployee("fatherHusbandName", v)} />
-              <Field label="Gender *" value={employee.gender} onChange={(v) => updateEmployee("gender", v)} />
-              <Field label="Marital Status *" value={employee.maritalStatus} onChange={(v) => updateEmployee("maritalStatus", v)} />
+              <Field label="Gender *" value={employee.gender} onChange={(v) => updateEmployee("gender", v)} options={GENDER_OPTS} />
+              <Field label="Marital Status *" value={employee.maritalStatus} onChange={(v) => updateEmployee("maritalStatus", v)} options={MARITAL_OPTS} />
               <Field type="date" label="Date of Birth *" value={employee.dateOfBirth} onChange={(v) => updateEmployee("dateOfBirth", v)} />
-              <Field label="Blood Group" value={employee.bloodGroup} onChange={(v) => updateEmployee("bloodGroup", v)} />
-              <Field label="Mobile Number *" value={employee.mobileNumber} onChange={(v) => updateEmployee("mobileNumber", v)} />
-              <Field label="Alternate Mobile" value={employee.altMobileNumber} onChange={(v) => updateEmployee("altMobileNumber", v)} />
+              <Field label="Blood Group" value={employee.bloodGroup} onChange={(v) => updateEmployee("bloodGroup", v)} options={BLOOD_OPTS} />
+              <Field label="Mobile Number *" value={employee.mobileNumber} onChange={(v) => updateEmployee("mobileNumber", v)} type="tel" inputMode="numeric" />
+              <Field label="Alternate Mobile" value={employee.altMobileNumber} onChange={(v) => updateEmployee("altMobileNumber", v)} type="tel" inputMode="numeric" />
               <Field label="Personal Email *" value={employee.personalEmailId} onChange={(v) => updateEmployee("personalEmailId", v)} />
               <Field label="Official Email" value={employee.officialEmailId} onChange={(v) => updateEmployee("officialEmailId", v)} />
             </div>
           </div>
-          {/* ── KYC Documents ── */}
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">KYC &amp; Identity Documents</p>
             <div className="grid gap-4 md:grid-cols-3">
-              <Field label="PAN Number *" value={employee.panNumber} onChange={(v) => updateEmployee("panNumber", v.toUpperCase())} />
-              <Field label="Aadhaar Number *" value={employee.aadhaarNumber} onChange={(v) => updateEmployee("aadhaarNumber", v)} />
+              <Field label="PAN Number *" value={employee.panNumber} onChange={(v) => updateEmployee("panNumber", v.toUpperCase())} placeholder="ABCDE1234F" />
+              <Field label="Aadhaar Number *" value={employee.aadhaarNumber} onChange={(v) => updateEmployee("aadhaarNumber", v)} inputMode="numeric" />
               <Field label="Passport No (if any)" value={employee.passportNo} onChange={(v) => updateEmployee("passportNo", v.toUpperCase())} />
               <Field label="Driving License No (if any)" value={employee.drivingLicenseNo} onChange={(v) => updateEmployee("drivingLicenseNo", v.toUpperCase())} />
             </div>
           </div>
-          {/* ── Previous Employment (PF/ESIC) ── */}
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">Previous Employment — Statutory IDs <span className="normal-case font-medium text-slate-500">(Fill only if previously employed)</span></p>
             <div className="grid gap-4 md:grid-cols-3">
-              <Field label="UAN Number" value={employee.uanNumber} onChange={(v) => updateEmployee("uanNumber", v)} />
+              <Field label="UAN Number" value={employee.uanNumber} onChange={(v) => updateEmployee("uanNumber", v)} inputMode="numeric" />
               <Field label="Previous EPF Number" value={employee.epfNumber} onChange={(v) => updateEmployee("epfNumber", v)} />
               <Field label="Previous ESIC Number" value={employee.esicNumber} onChange={(v) => updateEmployee("esicNumber", v)} />
             </div>
           </div>
-          {/* ── Nominee 1 ── */}
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">Nominee 1 (Primary) *</p>
             <div className="grid gap-4 md:grid-cols-4">
               <Field label="Nominee Name *" value={employee.nominee} onChange={(v) => updateEmployee("nominee", v)} />
-              <Field label="Relation *" value={employee.nomineeRelation} onChange={(v) => updateEmployee("nomineeRelation", v)} />
+              <Field label="Relation *" value={employee.nomineeRelation} onChange={(v) => updateEmployee("nomineeRelation", v)} options={NOMINEE_RELATION_OPTS} />
               <Field type="date" label="Date of Birth" value={employee.nomineeDateOfBirth} onChange={(v) => updateEmployee("nomineeDateOfBirth", v)} />
-              <Field label="Share %" value={employee.nominee1SharePct} onChange={(v) => updateEmployee("nominee1SharePct", v)} />
+              <Field label="Share %" value={employee.nominee1SharePct} onChange={(v) => updateEmployee("nominee1SharePct", v)} inputMode="numeric" />
             </div>
           </div>
-          {/* ── Nominee 2 ── */}
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">Nominee 2 (Optional)</p>
             <div className="grid gap-4 md:grid-cols-4">
               <Field label="Nominee 2 Name" value={employee.nominee2Name} onChange={(v) => updateEmployee("nominee2Name", v)} />
-              <Field label="Relation" value={employee.nominee2Relation} onChange={(v) => updateEmployee("nominee2Relation", v)} />
+              <Field label="Relation" value={employee.nominee2Relation} onChange={(v) => updateEmployee("nominee2Relation", v)} options={NOMINEE_RELATION_OPTS} />
               <Field type="date" label="Date of Birth" value={employee.nominee2Dob} onChange={(v) => updateEmployee("nominee2Dob", v)} />
-              <Field label="Share %" value={employee.nominee2SharePct} onChange={(v) => updateEmployee("nominee2SharePct", v)} />
+              <Field label="Share %" value={employee.nominee2SharePct} onChange={(v) => updateEmployee("nominee2SharePct", v)} inputMode="numeric" />
             </div>
           </div>
-          {/* ── Address ── */}
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">Address</p>
-            <div className="grid gap-4 md:grid-cols-2 mb-4">
-              <Text label="Permanent Address *" value={employee.permanentAddress} onChange={(v) => updateEmployee("permanentAddress", v)} />
-              <Text label="Present / Current Address *" value={employee.presentAddress} onChange={(v) => updateEmployee("presentAddress", v)} />
+            <div className="grid gap-4 md:grid-cols-2 mb-3">
+              <Text label="Permanent Address *" value={employee.permanentAddress} onChange={(v) => { updateEmployee("permanentAddress", v); if (sameAddress) updateEmployee("presentAddress", v); }} />
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <input type="checkbox" id="sameAddr" checked={sameAddress} onChange={(e) => copySameAddress(e.target.checked)} className="h-4 w-4 rounded border-gray-300 cursor-pointer" />
+                  <label htmlFor="sameAddr" className="text-sm font-medium cursor-pointer select-none">Same as permanent address</label>
+                </div>
+                <Text label="Present / Current Address *" value={employee.presentAddress} onChange={(v) => { setSameAddress(false); updateEmployee("presentAddress", v); }} />
+              </div>
             </div>
             <div className="grid gap-4 md:grid-cols-3">
-              <Field label="Permanent State" value={employee.permanentState} onChange={(v) => updateEmployee("permanentState", v)} />
-              <Field label="Permanent City" value={employee.permanentCity} onChange={(v) => updateEmployee("permanentCity", v)} />
-              <Field label="Permanent Pincode" value={employee.permanentPincode} onChange={(v) => updateEmployee("permanentPincode", v)} />
-              <Field label="Present State" value={employee.presentState} onChange={(v) => updateEmployee("presentState", v)} />
-              <Field label="Present City" value={employee.presentCity} onChange={(v) => updateEmployee("presentCity", v)} />
-              <Field label="Present Pincode" value={employee.presentPincode} onChange={(v) => updateEmployee("presentPincode", v)} />
+              <Field label="Permanent State" value={employee.permanentState} onChange={(v) => { updateEmployee("permanentState", v); if (sameAddress) updateEmployee("presentState", v); }} />
+              <Field label="Permanent City" value={employee.permanentCity} onChange={(v) => { updateEmployee("permanentCity", v); if (sameAddress) updateEmployee("presentCity", v); }} />
+              <Field label="Permanent Pincode" value={employee.permanentPincode} onChange={(v) => { updateEmployee("permanentPincode", v); if (sameAddress) updateEmployee("presentPincode", v); }} inputMode="numeric" />
+              <Field label="Present State" value={employee.presentState} onChange={(v) => { setSameAddress(false); updateEmployee("presentState", v); }} />
+              <Field label="Present City" value={employee.presentCity} onChange={(v) => { setSameAddress(false); updateEmployee("presentCity", v); }} />
+              <Field label="Present Pincode" value={employee.presentPincode} onChange={(v) => { setSameAddress(false); updateEmployee("presentPincode", v); }} inputMode="numeric" />
             </div>
           </div>
           <div><Button onClick={saveEmployee} disabled={saving}>Save Employee Details</Button></div>
         </CardContent></Card>}
 
         {step === 3 && <Card><CardHeader><CardTitle>Document Details</CardTitle></CardHeader><CardContent className="space-y-5">
-          <div className="grid gap-3 md:grid-cols-5"><Field label="Doc Type" value={docForm.docType} onChange={(v) => setDocForm({ ...docForm, docType: v })} /><Field label="Doc Name" value={docForm.docName} onChange={(v) => setDocForm({ ...docForm, docName: v })} /><Field label="Page No" value={docForm.pageNo} onChange={(v) => setDocForm({ ...docForm, pageNo: v })} /><div className="md:col-span-2"><Label>File Upload</Label><Input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></div></div>
+          <div className="grid gap-3 md:grid-cols-5"><Field label="Doc Type" value={docForm.docType} onChange={(v) => setDocForm({ ...docForm, docType: v })} /><Field label="Doc Name" value={docForm.docName} onChange={(v) => setDocForm({ ...docForm, docName: v })} /><Field label="Page No" value={docForm.pageNo} onChange={(v) => setDocForm({ ...docForm, pageNo: v })} inputMode="numeric" /><div className="md:col-span-2"><Label>File Upload</Label><Input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></div></div>
+          {consentAccepted && <p className="text-xs text-emerald-700 font-bold">✓ Consent given — BGV will auto-trigger on Aadhaar / PAN upload</p>}
           <Button onClick={uploadDocument} disabled={saving} className="gap-2"><FileUp className="h-4 w-4" /> Upload Document</Button>
           <div className="overflow-x-auto rounded-2xl border"><table className="w-full text-sm"><thead className="bg-slate-50"><tr><th className="p-3 text-left">SNo</th><th className="p-3 text-left">Doc Type</th><th className="p-3 text-left">Doc Name</th><th className="p-3 text-left">Status</th><th className="p-3 text-left">View</th><th className="p-3 text-left">Delete</th></tr></thead><tbody>{status?.documents.map((d, i) => <tr key={d.id} className="border-t"><td className="p-3">{i+1}</td><td className="p-3">{d.doc_type}</td><td className="p-3">{d.doc_name}</td><td className="p-3">{d.document_status}</td><td className="p-3">{d.file_url ? <a className="text-blue-600" href={d.file_url} target="_blank">View</a> : "-"}</td><td className="p-3"><Button variant="outline" size="sm"><Trash2 className="h-4 w-4" /></Button></td></tr>)}</tbody></table></div>
         </CardContent></Card>}
@@ -290,21 +346,79 @@ export default function CandidateOnboardingFullPage() {
           <div className="rounded-2xl border"><table className="w-full text-sm"><thead className="bg-slate-50"><tr><th className="p-3 text-left">Check</th><th className="p-3 text-left">Status</th><th className="p-3 text-left">Match</th><th className="p-3 text-left">Summary</th></tr></thead><tbody>{(bgv?.checks || []).map((c) => <tr key={c.id} className="border-t"><td className="p-3">{c.check_type}</td><td className="p-3">{c.status}</td><td className="p-3">{c.match_score ?? "-"}</td><td className="p-3">{c.result_summary}</td></tr>)}</tbody></table></div>
         </CardContent></Card>}
 
-        {step === 5 && <Card><CardHeader><CardTitle>Bank Details</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-3"><Field label="Bank Name" value={bank.bankName} onChange={(v) => updateBank("bankName", v)} /><Field label="Branch Name" value={bank.branchName} onChange={(v) => updateBank("branchName", v)} /><Field label="Account Holder Name" value={bank.accountHolderName} onChange={(v) => updateBank("accountHolderName", v)} /><Field label="Account No" value={bank.accountNo} onChange={(v) => updateBank("accountNo", v)} /><Field label="IFSC Code" value={bank.ifscCode} onChange={(v) => updateBank("ifscCode", v.toUpperCase())} /><Field label="Account Type" value={bank.accountType} onChange={(v) => updateBank("accountType", v)} /><div className="md:col-span-3"><Button onClick={saveBank} disabled={saving}>Upload Bank Details</Button></div></CardContent></Card>}
+        {step === 5 && <Card><CardHeader><CardTitle>Bank Details</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-3">
+          <Field label="IFSC Code" value={bank.ifscCode} onChange={(v) => updateBank("ifscCode", v.toUpperCase())} onBlur={() => lookupIfsc(bank.ifscCode)} placeholder="ABCD0123456" />
+          <Field label="Bank Name" value={bank.bankName} onChange={(v) => updateBank("bankName", v)} />
+          <Field label="Branch Name" value={bank.branchName} onChange={(v) => updateBank("branchName", v)} />
+          <Field label="Account Holder Name" value={bank.accountHolderName} onChange={(v) => updateBank("accountHolderName", v)} />
+          <Field label="Account No" value={bank.accountNo} onChange={(v) => updateBank("accountNo", v)} inputMode="numeric" />
+          <Field label="Account Type" value={bank.accountType} onChange={(v) => updateBank("accountType", v)} options={ACCOUNT_OPTS} />
+          <div className="md:col-span-3"><Button onClick={saveBank} disabled={saving}>Upload Bank Details</Button></div>
+        </CardContent></Card>}
 
-        {step === 6 && <Card><CardHeader><CardTitle>Qualification Details</CardTitle></CardHeader><CardContent className="space-y-4"><div className="grid gap-4 md:grid-cols-3"><Field label="Qualification" value={qualification.qualification} onChange={(v) => setQualification({ ...qualification, qualification: v })} /><Field label="Specialization / Course Name" value={qualification.specializationCourseName} onChange={(v) => setQualification({ ...qualification, specializationCourseName: v })} /><Field label="Passed Out Year" value={qualification.passedOutYear} onChange={(v) => setQualification({ ...qualification, passedOutYear: v })} /><Field label="Passed Out State" value={qualification.passedOutState} onChange={(v) => setQualification({ ...qualification, passedOutState: v })} /><Field label="Passed Out City" value={qualification.passedOutCity} onChange={(v) => setQualification({ ...qualification, passedOutCity: v })} /><Field label="Passed Out %" value={qualification.passedOutPercentage} onChange={(v) => setQualification({ ...qualification, passedOutPercentage: v })} /></div><Button onClick={addQualification} disabled={saving}>Add Qualification</Button><div className="grid gap-2">{status?.qualifications.map((q) => <div key={q.id} className="rounded-xl border p-3 text-sm">{q.qualification} · {q.specialization_course_name} · {q.passed_out_year}</div>)}</div></CardContent></Card>}
+        {step === 6 && <Card><CardHeader><CardTitle>Qualification Details</CardTitle></CardHeader><CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Field label="Qualification" value={qualification.qualification} onChange={(v) => setQualification({ ...qualification, qualification: v })} options={QUAL_OPTS} />
+            <Field label="Specialization / Course Name" value={qualification.specializationCourseName} onChange={(v) => setQualification({ ...qualification, specializationCourseName: v })} />
+            <Field label="Passed Out Year" value={qualification.passedOutYear} onChange={(v) => setQualification({ ...qualification, passedOutYear: v })} inputMode="numeric" />
+            <Field label="Passed Out State" value={qualification.passedOutState} onChange={(v) => setQualification({ ...qualification, passedOutState: v })} />
+            <Field label="Passed Out City" value={qualification.passedOutCity} onChange={(v) => setQualification({ ...qualification, passedOutCity: v })} />
+            <Field label="Passed Out %" value={qualification.passedOutPercentage} onChange={(v) => setQualification({ ...qualification, passedOutPercentage: v })} inputMode="decimal" />
+          </div>
+          <Button onClick={addQualification} disabled={saving}>Add Qualification</Button>
+          <div className="grid gap-2">{status?.qualifications.map((q) => <div key={q.id} className="rounded-xl border p-3 text-sm">{q.qualification} · {q.specialization_course_name} · {q.passed_out_year}</div>)}</div>
+        </CardContent></Card>}
 
-        {step === 7 && <Card><CardHeader><CardTitle>Family & Working Experience Details</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-3"><Field label="Annual Income" value={family.annualIncome} onChange={(v) => setFamily({ ...family, annualIncome: v })} /><Field label="Count Of Dependents" value={family.countOfDependents} onChange={(v) => setFamily({ ...family, countOfDependents: v })} /><Field label="Working Experience" value={experience.workingExperience} onChange={(v) => setExperience({ ...experience, workingExperience: v })} /><Field label="Experience Year" value={experience.experienceYear} onChange={(v) => setExperience({ ...experience, experienceYear: v })} /><Field label="Experience Doc Type" value={experience.experienceDocType} onChange={(v) => setExperience({ ...experience, experienceDocType: v })} /><Field label="Employer Name" value={experience.employerName} onChange={(v) => setExperience({ ...experience, employerName: v })} /><div className="md:col-span-3"><Button onClick={saveFamilyExperience} disabled={saving}>Save Final Section</Button></div></CardContent></Card>}
+        {step === 7 && <Card><CardHeader><CardTitle>Family & Working Experience Details</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-3">
+          <Field label="Annual Income" value={family.annualIncome} onChange={(v) => setFamily({ ...family, annualIncome: v })} inputMode="numeric" />
+          <Field label="Count Of Dependents" value={family.countOfDependents} onChange={(v) => setFamily({ ...family, countOfDependents: v })} inputMode="numeric" />
+          <Field label="Working Experience" value={experience.workingExperience} onChange={(v) => setExperience({ ...experience, workingExperience: v })} options={EXP_OPTS} />
+          <Field label="Experience Year" value={experience.experienceYear} onChange={(v) => setExperience({ ...experience, experienceYear: v })} inputMode="numeric" />
+          <Field label="Experience Doc Type" value={experience.experienceDocType} onChange={(v) => setExperience({ ...experience, experienceDocType: v })} />
+          <Field label="Employer Name" value={experience.employerName} onChange={(v) => setExperience({ ...experience, employerName: v })} />
+          <Field label="Last Designation" value={experience.lastDesignation} onChange={(v) => setExperience({ ...experience, lastDesignation: v })} />
+          <Field label="Last CTC (Annual)" value={experience.lastCtc} onChange={(v) => setExperience({ ...experience, lastCtc: v })} inputMode="numeric" />
+          <div className="md:col-span-3"><Button onClick={saveFamilyExperience} disabled={saving}>Save Final Section</Button></div>
+        </CardContent></Card>}
 
         {step === 8 && <Card><CardHeader><CardTitle>Review & Submit</CardTitle></CardHeader><CardContent className="space-y-4"><div className="grid gap-3 md:grid-cols-3"><ReadOnly label="Name" value={employee.employeeName} /><ReadOnly label="PAN" value={employee.panNumber ? `${employee.panNumber.slice(0,3)}XXXX${employee.panNumber.slice(-2)}` : ""} /><ReadOnly label="Documents" value={`${status?.documents.length || 0} uploaded`} /><ReadOnly label="BGV" value={bgv?.overall_status} /><ReadOnly label="Bank" value={bank.bankName} /><ReadOnly label="Completion" value={`${completion}%`} /></div><div className="flex gap-3"><Button variant="outline" onClick={saveFinal} disabled={saving}>Save Final Section</Button><Button onClick={submit} disabled={saving}>Submit</Button></div></CardContent></Card>}
 
-        <div className="flex justify-between"><Button variant="outline" disabled={step===1} onClick={() => setStep((s) => Math.max(1, s-1) as Step)}>Back</Button><Button disabled={step===8} onClick={() => setStep((s) => Math.min(8, s+1) as Step)}>Next</Button></div>
+        <div className="flex justify-between">
+          <Button variant="outline" disabled={step === 1} onClick={() => setStep((s) => Math.max(1, s - 1) as Step)}>Back</Button>
+          <Button disabled={step === 8 || saving} onClick={handleNext}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Next"}</Button>
+        </div>
       </div>
     </div>
   );
 }
 
-function Field({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (value: string) => void; type?: string }) { return <div><Label>{label}</Label><Input type={type} value={value || ""} onChange={(e) => onChange(e.target.value)} /></div>; }
+function Field({ label, value, onChange, type = "text", options, inputMode, onBlur, placeholder }: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+  options?: string[];
+  inputMode?: string;
+  onBlur?: () => void;
+  placeholder?: string;
+}) {
+  return (
+    <div>
+      <Label>{label}</Label>
+      {options
+        ? <select
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            value={value || ""}
+            onChange={(e) => onChange(e.target.value)}
+          >
+            <option value="">Select...</option>
+            {options.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        : <Input type={type} inputMode={inputMode as any} value={value || ""} onChange={(e) => onChange(e.target.value)} onBlur={onBlur} placeholder={placeholder} />
+      }
+    </div>
+  );
+}
 function Text({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) { return <div><Label>{label}</Label><Textarea value={value || ""} onChange={(e) => onChange(e.target.value)} rows={3} /></div>; }
 function ReadOnly({ label, value }: { label: string; value?: any }) { return <div className="rounded-2xl border bg-slate-50 p-3"><p className="text-xs font-bold uppercase text-slate-500">{label}</p><p className="mt-1 font-bold text-slate-900">{value || "-"}</p></div>; }
 function VerifyCard({ title, value }: { title: string; value: string }) { return <div className="rounded-2xl border bg-white p-4"><p className="text-xs font-black uppercase text-slate-500">{title}</p><p className="mt-2 text-xl font-black text-slate-950 capitalize">{value}</p></div>; }

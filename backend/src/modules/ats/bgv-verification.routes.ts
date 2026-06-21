@@ -9,6 +9,7 @@ import {
   getBgvStatusByToken,
   getBgvStatusForCandidate,
   listBgvQueueScoped,
+  listVendorDispatches,
   manualReview,
   providerCallback,
   saveBgvConsentByToken,
@@ -22,6 +23,8 @@ import {
   verifyPanByToken,
   verifyPanForCandidate,
   waiveCheck,
+  dispatchToVendor,
+  updateVendorResult,
 } from "./bgv-verification.service.js";
 import { getBgvProviderAdapter } from "./bgv-provider.adapter.js";
 import { db } from "../../db/mysql.js";
@@ -246,6 +249,36 @@ router.post("/report", requireAuth, requireRole("admin", "hr"), h(async (req: Au
     ],
   );
   return res.status(201).json({ success: true, message: locked ? "BGV report locked" : "BGV report saved" });
+}));
+
+// ── Vendor Dispatch (manual fallback when API BGV fails) ─────────────────────
+
+router.get("/candidates/:candidateId/vendor-dispatches", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+  await requireBgvCandidateScope(req, req.params.candidateId);
+  return res.json({ success: true, data: await listVendorDispatches(req.params.candidateId) });
+}));
+
+router.post("/candidates/:candidateId/vendor-dispatch", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+  const { checkType, checkId, vendorName, vendorContactEmail, vendorContactPhone, documentIds, dispatchNotes } = req.body;
+  if (!checkType) return res.status(400).json({ success: false, message: "checkType required" });
+  if (!vendorName) return res.status(400).json({ success: false, message: "vendorName required" });
+  await requireBgvCandidateScope(req, req.params.candidateId);
+  return res.status(201).json({
+    success: true,
+    data: await dispatchToVendor(req.params.candidateId, { checkType, checkId, vendorName, vendorContactEmail, vendorContactPhone, documentIds, dispatchNotes }, req.authUser!.id),
+  });
+}));
+
+router.patch("/candidates/:candidateId/vendor-dispatch/:dispatchId/result", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+  const { vendorResult, vendorReferenceNo, vendorRemarks, updateBgvCheck } = req.body;
+  if (!vendorResult || !["verified", "not_verified", "inconclusive"].includes(vendorResult)) {
+    return res.status(400).json({ success: false, message: "vendorResult must be verified | not_verified | inconclusive" });
+  }
+  await requireBgvCandidateScope(req, req.params.candidateId);
+  return res.json({
+    success: true,
+    data: await updateVendorResult(req.params.candidateId, req.params.dispatchId, { vendorResult, vendorReferenceNo, vendorRemarks, updateBgvCheck: Boolean(updateBgvCheck) }, req.authUser!.id),
+  });
 }));
 
 // ── BGV portal initiation (InfinitiAI candidate-portal flow) ──────────────────

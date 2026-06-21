@@ -67,7 +67,8 @@ export interface AttritionRiskResponse {
 }
 
 class OperationsLiveService {
-  constructor(private db: Pool = db) {}
+  private db: Pool;
+  constructor(dbPool?: Pool) { this.db = dbPool ?? db; }
 
   /**
    * Get live agent status for all agents or filtered by process/branch

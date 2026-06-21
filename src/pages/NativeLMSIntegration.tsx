@@ -3,13 +3,17 @@ import {
   Award,
   BookOpen,
   CheckCircle2,
+  Database,
   ExternalLink,
   Loader,
   Plus,
   RefreshCcw,
   Settings,
+  ShieldCheck,
   X,
   AlertTriangle,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -147,6 +151,72 @@ export default function NativeLMSIntegration() {
   const [syncLog, setSyncLog]           = useState<SyncLogEntry[]>([]);
   const [loadingSyncLog, setLoadingSyncLog] = useState(false);
 
+  // ── Connection & Sync Control ─────────────────────────────────────────────
+  const [connStatus, setConnStatus] = useState<{ ok: boolean; source?: string; latency_ms?: number; error?: string } | null>(null);
+  const [checkingConn, setCheckingConn] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ mapped: number; progress: number; certifications: number; errors: string[] } | null>(null);
+
+  // ── Credentials Form ───────────────────────────────────────────────────────
+  const [showCredForm, setShowCredForm] = useState(false);
+  const [credForm, setCredForm] = useState({ host: "", port: "3306", database: "lms_mcn", username: "", password: "" });
+  const [savingCreds, setSavingCreds] = useState(false);
+
+  const checkConnection = async () => {
+    setCheckingConn(true);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: any }>("/api/lms/connection");
+      setConnStatus(res.data);
+    } catch (err) {
+      setConnStatus({ ok: false, error: (err as Error).message });
+    } finally {
+      setCheckingConn(false);
+    }
+  };
+
+  const runSync = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await hrmsApi.post<{ success: boolean; data: any }>("/api/lms/sync", {});
+      setSyncResult(res.data);
+      await loadSyncLog();
+    } catch (err) {
+      setMessage((err as Error).message || "Sync failed.");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const saveCreds = async () => {
+    if (!credForm.host || !credForm.database || !credForm.username || !credForm.password) {
+      setMessage("Host, database, username and password are required.");
+      return;
+    }
+    setSavingCreds(true);
+    try {
+      await hrmsApi.post("/api/lms/config", {
+        host: credForm.host.trim(),
+        port: Number(credForm.port) || 3306,
+        database: credForm.database.trim(),
+        username: credForm.username.trim(),
+        password: credForm.password,
+        db_type: "mysql",
+      });
+      setShowCredForm(false);
+      setMessage("LMS credentials saved.");
+      await checkConnection();
+    } catch (err) {
+      setMessage((err as Error).message || "Failed to save credentials.");
+    } finally {
+      setSavingCreds(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAdminOrHR) void checkConnection();
+  }, [isAdminOrHR]);
+
   // ── Loaders ────────────────────────────────────────────────────────────────
 
   const loadLearning = async () => {
@@ -276,6 +346,117 @@ export default function NativeLMSIntegration() {
           <div className="flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-bold text-blue-800">
             <AlertTriangle className="h-4 w-4 flex-shrink-0" />
             {message}
+            <button onClick={() => setMessage("")} className="ml-auto"><X className="h-4 w-4" /></button>
+          </div>
+        )}
+
+        {/* ── LMS Connection & Sync Control (admin/HR only) ──────────────────── */}
+        {isAdminOrHR && (
+          <div className="grid gap-4 lg:grid-cols-3">
+            {/* Connection Status */}
+            <div className="rounded-3xl border bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="flex items-center gap-2 font-black text-slate-950"><Database className="h-4 w-4 text-blue-600" />LMS Database</h2>
+                <button onClick={checkConnection} disabled={checkingConn} className="rounded-xl border px-3 py-1 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 cursor-pointer">
+                  {checkingConn ? <Loader className="h-3.5 w-3.5 animate-spin inline" /> : <RefreshCcw className="h-3.5 w-3.5 inline" />}
+                </button>
+              </div>
+              {connStatus === null && !checkingConn && <p className="text-xs text-slate-500">Checking…</p>}
+              {checkingConn && <p className="text-xs text-slate-500">Testing connection…</p>}
+              {connStatus && (
+                <div className="space-y-2">
+                  <div className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold ${connStatus.ok ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
+                    {connStatus.ok ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+                    {connStatus.ok ? `Connected (${connStatus.latency_ms}ms)` : "Disconnected"}
+                  </div>
+                  {connStatus.source && <p className="text-xs text-slate-500">Source: <span className="font-semibold">{connStatus.source === "integration_hub" ? "Integration Hub credentials" : ".env fallback"}</span></p>}
+                  {connStatus.error && <p className="text-xs text-red-600">{connStatus.error}</p>}
+                </div>
+              )}
+              <button onClick={() => setShowCredForm(v => !v)} className="mt-4 flex items-center gap-2 text-xs font-bold text-blue-600 hover:underline cursor-pointer">
+                <Settings className="h-3.5 w-3.5" />{showCredForm ? "Hide" : "Configure"} Credentials
+              </button>
+              {showCredForm && (
+                <div className="mt-4 space-y-3 rounded-2xl border bg-slate-50 p-4">
+                  <p className="text-xs font-black uppercase text-slate-500 tracking-wide">LMS MySQL Connection</p>
+                  {[
+                    { key: "host", label: "Host / IP", placeholder: "192.168.11.225" },
+                    { key: "port", label: "Port", placeholder: "3306" },
+                    { key: "database", label: "Database", placeholder: "lms_mcn" },
+                    { key: "username", label: "Username", placeholder: "db_user" },
+                  ].map(({ key, label, placeholder }) => (
+                    <div key={key}>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">{label}</label>
+                      <input
+                        value={(credForm as any)[key]}
+                        onChange={e => setCredForm(f => ({ ...f, [key]: e.target.value }))}
+                        placeholder={placeholder}
+                        className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  ))}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Password</label>
+                    <input
+                      type="password"
+                      value={credForm.password}
+                      onChange={e => setCredForm(f => ({ ...f, password: e.target.value }))}
+                      placeholder="••••••••"
+                      className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <button onClick={saveCreds} disabled={savingCreds} className="w-full rounded-xl bg-blue-600 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50 cursor-pointer">
+                    {savingCreds ? "Saving…" : "Save & Test Connection"}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Sync Control */}
+            <div className="rounded-3xl border bg-white p-5 shadow-sm">
+              <h2 className="flex items-center gap-2 font-black text-slate-950 mb-3"><ShieldCheck className="h-4 w-4 text-emerald-600" />Sync Control</h2>
+              <p className="text-xs text-slate-500 mb-4">Pulls trainee progress, certifications and mappings from LMS into HRMS snapshot tables.</p>
+              <button onClick={runSync} disabled={syncing || !connStatus?.ok} className="w-full rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2">
+                {syncing ? <><Loader className="h-4 w-4 animate-spin" />Syncing…</> : <><RefreshCcw className="h-4 w-4" />Run Full Sync</>}
+              </button>
+              {!connStatus?.ok && <p className="mt-2 text-xs text-slate-400 text-center">Connect database first</p>}
+              {syncResult && (
+                <div className="mt-4 space-y-2 rounded-2xl bg-slate-50 p-4">
+                  <p className="text-xs font-black uppercase text-slate-500 mb-2">Last Sync Result</p>
+                  {[
+                    { label: "Mappings", value: syncResult.mapped },
+                    { label: "Progress rows", value: syncResult.progress },
+                    { label: "Certifications", value: syncResult.certifications },
+                    { label: "Errors", value: syncResult.errors.length, warn: syncResult.errors.length > 0 },
+                  ].map(({ label, value, warn }) => (
+                    <div key={label} className="flex justify-between text-xs">
+                      <span className="text-slate-600">{label}</span>
+                      <span className={`font-bold ${warn ? "text-amber-600" : "text-slate-950"}`}>{value}</span>
+                    </div>
+                  ))}
+                  {syncResult.errors.length > 0 && (
+                    <details className="mt-2">
+                      <summary className="text-xs font-bold text-amber-600 cursor-pointer">Show errors</summary>
+                      <ul className="mt-2 space-y-1">
+                        {syncResult.errors.slice(0, 10).map((e, i) => <li key={i} className="text-xs text-red-600 break-all">{e}</li>)}
+                      </ul>
+                    </details>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Integration Hub Link */}
+            <div className="rounded-3xl border bg-white p-5 shadow-sm flex flex-col gap-4">
+              <h2 className="flex items-center gap-2 font-black text-slate-950"><Settings className="h-4 w-4 text-slate-500" />Integration Hub</h2>
+              <p className="text-xs text-slate-500 flex-1">Manage schedule, view run history, configure field mappings and monitor all connectors from the central Integration Hub.</p>
+              <button onClick={() => navigate("/integration-hub")} className="w-full rounded-xl border border-slate-300 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer">
+                Open Integration Hub →
+              </button>
+              <a href="https://mcnlms.teammas.in/lms" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 py-2.5 text-sm font-bold text-white hover:bg-blue-700 cursor-pointer">
+                <ExternalLink className="h-4 w-4" />Open LMS Portal
+              </a>
+            </div>
           </div>
         )}
 

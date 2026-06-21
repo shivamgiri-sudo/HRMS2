@@ -151,6 +151,7 @@ interface EmployeeRow {
   basic_pct: number;
   hra_pct: number;
   state_code: string | null;
+  salary_start_date: string | null;
 }
 
 interface AttendanceRow {
@@ -216,7 +217,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id, e.employee_code,
             esa.ctc_annual, ss.basic_pct, ss.hra_pct,
-            bm.state AS state_code
+            bm.state AS state_code,
+            COALESCE(e.salary_start_date, e.date_of_joining) AS salary_start_date
        FROM employees e
        JOIN employee_salary_assignment esa ON esa.employee_id = e.id
        JOIN salary_structure_master ss      ON ss.id = esa.structure_id
@@ -245,9 +247,33 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   const maternityExemptIds = await maternityService.getActiveEmployeeIdsForMonth(run.run_month);
 
   for (const emp of employees) {
-    // 5. Fetch attendance summary for this employee for run_month
     const monthStart = `${run.run_month}-01`;
     const monthEnd   = `${run.run_month}-${String(daysInMonth).padStart(2, "0")}`;
+
+    // salary_start_date gate: skip employees whose salary hasn't started yet this month
+    if (emp.salary_start_date) {
+      const ssd = new Date(emp.salary_start_date);
+      const monthEndDate = new Date(monthEnd);
+      if (ssd > monthEndDate) {
+        // Still in unpaid training — no payroll entry this month
+        continue;
+      }
+    }
+
+    // Pro-rata multiplier: if salary starts mid-month, pay only from that date
+    let proRataMultiplier = 1;
+    if (emp.salary_start_date) {
+      const ssd = new Date(emp.salary_start_date);
+      const mStart = new Date(monthStart);
+      if (ssd > mStart) {
+        // Days from salary_start_date to end of month (inclusive)
+        const calendarDaysInMonth = daysInMonth;
+        const paidDays = new Date(monthEnd).getDate() - ssd.getDate() + 1;
+        proRataMultiplier = Math.max(0, Math.min(1, paidDays / calendarDaysInMonth));
+      }
+    }
+
+    // 5. Fetch attendance summary for this employee for run_month
 
     // Check if attendance_daily_record has been populated for this employee+month
     const [adrCountRows] = await db.execute<RowDataPacket[]>(
@@ -312,7 +338,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       };
     }
 
-    const grossMonthly = emp.ctc_annual / 12;
+    const grossMonthly = (emp.ctc_annual / 12) * proRataMultiplier;
 
     // 5c. LWP deduction — skip for employees on maternity leave (MBA 1961 s.5(1))
     const workingDays = att.working_days || defaultWorkingDays;

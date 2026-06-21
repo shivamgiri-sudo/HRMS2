@@ -52,7 +52,6 @@ interface ProfileForm {
   personal_email: string;
   personal_phone: string;
   alternate_mobile: string;
-  personal_mobile: string;
   address: string;
   city: string;
   country: string;
@@ -157,7 +156,7 @@ const Profile = () => {
   const { data: myRMRequests } = useMyRMChangeRequests();
   const hasPendingRMRequest = myRMRequests?.some(r => r.status === "pending") ?? false;
 
-  const { data: employee, isLoading } = useQuery({
+  const { data: employee, isLoading, refetch } = useQuery({
     queryKey: ["my-profile", user?.id],
     queryFn: async () => {
       if (!user?.id) return null;
@@ -165,6 +164,8 @@ const Profile = () => {
       return res.data ?? null;
     },
     enabled: !!user?.id,
+    staleTime: 0,
+    gcTime: 0,
   });
 
   useEffect(() => {
@@ -177,7 +178,6 @@ const Profile = () => {
         personal_email: employee.personal_email || "",
         personal_phone: employee.personal_phone || "",
         alternate_mobile: employee.alternate_mobile || "",
-        personal_mobile: employee.personal_mobile || "",
         address: employee.address || "",
         city: employee.city || "",
         country: employee.country || "",
@@ -210,7 +210,11 @@ const Profile = () => {
       setIsEditing(false);
       toast({ title: "Profile updated", description: "Your information has been saved." });
     },
-    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    onError: (err: Error) => {
+      console.error("[Profile Save Error]", err);
+      const msg = err.message || "Failed to save profile. Check console and network tab.";
+      toast({ title: "Error", description: msg, variant: "destructive" });
+    },
   });
 
   const cancelEdit = () => {
@@ -222,7 +226,6 @@ const Profile = () => {
       personal_email: employee.personal_email || "",
       personal_phone: employee.personal_phone || "",
       alternate_mobile: employee.alternate_mobile || "",
-      personal_mobile: employee.personal_mobile || "",
       address: employee.address || "",
       city: employee.city || "",
       country: employee.country || "",
@@ -282,6 +285,7 @@ const Profile = () => {
                       setAvatarUrl(url || null);
                       queryClient.invalidateQueries({ queryKey: ["my-profile"] });
                       queryClient.invalidateQueries({ queryKey: ["employee-profile"] });
+                      refetch();
                     }}
                     size="2xl"
                   />
@@ -532,7 +536,7 @@ const Profile = () => {
                               value={formData.personal_phone}
                               onChange={(e) => setFormData(p => ({ ...p, personal_phone: e.target.value }))}
                               disabled={!isEditing}
-                              placeholder="Personal mobile number"
+                              placeholder="+91 98765 43210"
                               className="rounded-xl"
                             />
                           </div>
@@ -544,17 +548,6 @@ const Profile = () => {
                               onChange={(e) => setFormData(p => ({ ...p, alternate_mobile: e.target.value }))}
                               disabled={!isEditing}
                               placeholder="Alternate contact number"
-                              className="rounded-xl"
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Personal Mobile</Label>
-                            <Input
-                              type="tel"
-                              value={formData.personal_mobile}
-                              onChange={(e) => setFormData(p => ({ ...p, personal_mobile: e.target.value }))}
-                              disabled={!isEditing}
-                              placeholder="+91 98765 43210"
                               className="rounded-xl"
                             />
                           </div>
