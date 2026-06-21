@@ -16,14 +16,18 @@ interface MyAttendanceHistoryProps {
 
 interface AttendanceRecord {
   id: string;
-  record_date: string;
-  clock_in_time: string | null;
-  clock_out_time: string | null;
-  raw_minutes: number | null;
-  attendance_status: string;
-  work_mode: string | null;
-  clock_in_location: string | null;
-  clock_out_location: string | null;
+  date?: string;
+  record_date?: string;
+  clock_in?: string | null;
+  clock_in_time?: string | null;
+  clock_out?: string | null;
+  clock_out_time?: string | null;
+  raw_minutes?: number | null;
+  status?: string;
+  attendance_status?: string;
+  work_mode?: string | null;
+  clock_in_location?: string | null;
+  clock_out_location?: string | null;
 }
 
 const statusStyles: Record<string, string> = {
@@ -153,21 +157,21 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
                         <CalendarDays className="h-4 w-4 text-muted-foreground" />
-                        {format(new Date(record.record_date + "T00:00:00"), "MMM d, yyyy")}
+                        {format(new Date((record.date || record.record_date) + "T00:00:00"), "MMM d, yyyy")}
                       </div>
                     </TableCell>
                     <TableCell>
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger className="flex items-center gap-1">
-                            {formatTime(record.clock_in_time)}
-                            {record.clock_in_location && (
+                            {formatTime(record.clock_in || record.clock_in_time)}
+                            {(record.clock_in_location || record.clock_in_location) && (
                               <MapPin className="h-3 w-3 text-muted-foreground" />
                             )}
                           </TooltipTrigger>
-                          {record.clock_in_location && (
+                          {(record.clock_in_location || record.clock_in_location) && (
                             <TooltipContent>
-                              <p>{record.clock_in_location}</p>
+                              <p>{record.clock_in_location || record.clock_in_location}</p>
                             </TooltipContent>
                           )}
                         </Tooltip>
@@ -177,14 +181,14 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger className="flex items-center gap-1">
-                            {formatTime(record.clock_out_time)}
-                            {record.clock_out_location && (
+                            {formatTime(record.clock_out || record.clock_out_time)}
+                            {(record.clock_out_location || record.clock_out_location) && (
                               <MapPin className="h-3 w-3 text-muted-foreground" />
                             )}
                           </TooltipTrigger>
-                          {record.clock_out_location && (
+                          {(record.clock_out_location || record.clock_out_location) && (
                             <TooltipContent>
-                              <p>{record.clock_out_location}</p>
+                              <p>{record.clock_out_location || record.clock_out_location}</p>
                             </TooltipContent>
                           )}
                         </Tooltip>
@@ -223,8 +227,8 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={statusStyles[record.attendance_status] || ""}>
-                        {record.attendance_status}
+                      <Badge variant="outline" className={statusStyles[record.status || record.attendance_status] || ""}>
+                        {record.status || record.attendance_status}
                       </Badge>
                     </TableCell>
                   </TableRow>
