@@ -604,10 +604,9 @@ export async function scanPayrollReadiness(actor: Actor, filters: QueryFilters, 
               ELSE 'ready'
             END,
             JSON_ARRAYAGG(
-              CASE
+              DISTINCT CASE
                 WHEN bd.employee_id IS NULL THEN 'missing_bank_details'
                 WHEN adr.attendance_status = 'unreconciled' THEN 'unreconciled_attendance'
-                ELSE NULL
               END
             ),
             NULL,
@@ -622,7 +621,7 @@ export async function scanPayrollReadiness(actor: Actor, filters: QueryFilters, 
        LEFT JOIN employee_bank_detail bd ON bd.employee_id = e.id AND bd.verified = 1
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id AND adr.record_date BETWEEN ? AND ?
       WHERE ${scoped.sql}
-      GROUP BY e.id, bd.employee_id, e.branch_id, e.process_id
+      GROUP BY e.id, e.branch_id, e.process_id
      ON DUPLICATE KEY UPDATE
        readiness_status = VALUES(readiness_status),
        blocker_codes = VALUES(blocker_codes),
