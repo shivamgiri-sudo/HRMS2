@@ -78,6 +78,7 @@ SOURCE sql/070_attendance_clock_columns.sql;
 SOURCE sql/071_communication_provider_config.sql;
 SOURCE sql/102_biometric_tables.sql;
 SOURCE sql/183_launch_data_repairs.sql;
+SOURCE sql/211_employee_personal_contact_fields.sql;
 SOURCE sql/240_bgv_vendor_dispatch.sql;
 SOURCE sql/241_ats_bgv_enhanced_tables.sql;
 SOURCE sql/242_ats_interview_result_columns.sql;

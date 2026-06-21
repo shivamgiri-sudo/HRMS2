@@ -178,13 +178,13 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                         <Tooltip>
                           <TooltipTrigger className="flex items-center gap-1">
                             {formatTime(record.clock_out_time)}
-                            {record.clock_out_location_name && (
+                            {record.clock_out_location && (
                               <MapPin className="h-3 w-3 text-muted-foreground" />
                             )}
                           </TooltipTrigger>
-                          {record.clock_out_location_name && (
+                          {record.clock_out_location && (
                             <TooltipContent>
-                              <p>{record.clock_out_location_name}</p>
+                              <p>{record.clock_out_location}</p>
                             </TooltipContent>
                           )}
                         </Tooltip>
