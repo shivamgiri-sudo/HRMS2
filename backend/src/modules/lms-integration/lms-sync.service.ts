@@ -13,61 +13,53 @@ export const lmsSyncService = {
     try {
       const lms = await getLmsConnection();
 
-      // Get unique employee IDs from assessment attempts
-      const [employees] = await lms.execute<RowDataPacket[]>(`
-        SELECT DISTINCT aa.employee_id
-        FROM assessment_attempts aa
-        WHERE aa.submitted_at IS NOT NULL
+      // Get unique trainees from trainee_master (has HRMS employee_id mapped)
+      const [trainees] = await lms.execute<RowDataPacket[]>(`
+        SELECT DISTINCT tm.employee_id, tm.lms_id, tm.email, tm.mobile, tm.batch_no, tm.process, tm.branch
+        FROM trainee_master tm
+        WHERE tm.employee_id IS NOT NULL
         LIMIT 1000
       `);
 
-      for (const emp of employees) {
+      for (const trainee of trainees) {
         try {
-          // Map LMS employee to HRMS using fallback chain (mobile → personal_email → official_email → employee_code)
-          const hrmsEmployeeId = await lmsEmployeeMapper.getOrMapLmsEmployee(emp.employee_id);
-
-          if (!hrmsEmployeeId) {
-            console.warn(`[LMS Sync] Could not map LMS employee ${emp.employee_id} to HRMS`);
-            failed++;
-            continue;
-          }
-
-          // Get employee details from mapping
+          // Get HRMS employee by employee_code (from trainee_master.employee_id)
           const [eRows] = await db.execute<RowDataPacket[]>(
-            `SELECT id, employee_code FROM employees WHERE id = ? LIMIT 1`,
-            [hrmsEmployeeId]
+            `SELECT id, employee_code FROM employees WHERE employee_code = ? LIMIT 1`,
+            [trainee.employee_id]
           );
 
           if (!eRows.length) {
-            console.error(`[LMS Sync] Mapped HRMS employee ${hrmsEmployeeId} not found`);
+            console.warn(`[LMS Sync] HRMS employee ${trainee.employee_id} not found`);
             failed++;
             continue;
           }
 
           const empData = eRows[0] as any;
 
+          // Save trainee→HRMS mapping
+          await db.execute(
+            `INSERT INTO lms_employee_mapping (id, lms_employee_id, hrms_employee_id, hrms_employee_code, hrms_mobile, hrms_personal_email, mapping_source, mapping_confidence, mapped_by)
+             VALUES (UUID(), ?, ?, ?, ?, ?, 'mobile', 'high', 'system')
+             ON DUPLICATE KEY UPDATE hrms_employee_id = VALUES(hrms_employee_id), mapped_at = NOW()`,
+            [trainee.lms_id, empData.id, empData.employee_code, trainee.mobile, trainee.email]
+          );
+
           // Get best MCQ score
           const [scores] = await lms.execute<RowDataPacket[]>(`
             SELECT MAX(percentage) as best_score, COUNT(*) as attempt_count
             FROM assessment_attempts
             WHERE employee_id = ?
-          `, [emp.employee_id]);
+          `, [trainee.lms_id]);
 
           const bestScore = (scores[0] as any)?.best_score || 0;
 
-          // Get batch info
-          const [batches] = await lms.execute<RowDataPacket[]>(`
-            SELECT DISTINCT bcm.batch_no, bcm.batch_name, bm.process, bm.branch
-            FROM assessment_attempts aa
-            JOIN batch_classroom_map bcm ON bcm.classroom_id = (
-              SELECT classroom_id FROM assessment_master WHERE assessment_id = aa.assessment_id LIMIT 1
-            )
-            LEFT JOIN batch_master bm ON bm.batch_no = bcm.batch_no
-            WHERE aa.employee_id = ?
-            LIMIT 1
-          `, [emp.employee_id]);
-
-          const batch = (batches[0] || {}) as any;
+          // Batch info from trainee_master
+          const batch = {
+            batch_no: trainee.batch_no,
+            process: trainee.process,
+            branch: trainee.branch
+          };
 
           // Calculate readiness
           const readinessScore = Math.min(bestScore, 100);
@@ -89,7 +81,7 @@ export const lmsSyncService = {
             empData.id,
             empData.employee_code,
             batch.batch_no || null,
-            batch.batch_name || null,
+            `Batch ${batch.batch_no}` || null,
             batch.process || null,
             batch.branch || null,
             bestScore,
@@ -100,7 +92,7 @@ export const lmsSyncService = {
 
           synced++;
         } catch (e) {
-          console.error(`Failed to sync ${emp.employee_id}:`, e);
+          console.error(`Failed to sync ${trainee.lms_id}:`, e);
           failed++;
         }
       }
@@ -123,22 +115,22 @@ export const lmsSyncService = {
       const lms = await getLmsConnection();
 
       const [attempts] = await lms.execute<RowDataPacket[]>(`
-        SELECT aa.*, am.assessment_name,
-               bcm.batch_no
+        SELECT aa.*, am.assessment_name, tm.employee_id as hrms_employee_code, tm.batch_no
         FROM assessment_attempts aa
         LEFT JOIN assessment_master am ON am.assessment_id = aa.assessment_id
-        LEFT JOIN batch_classroom_map bcm ON bcm.classroom_id = am.classroom_id
+        LEFT JOIN trainee_master tm ON tm.lms_id = aa.employee_id
         WHERE aa.submitted_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
         LIMIT 5000
       `);
 
       for (const att of attempts) {
-        const [eRows] = await db.execute<RowDataPacket[]>(
-          `SELECT employee_code FROM employees WHERE id = ? OR employee_code = ? LIMIT 1`,
-          [att.employee_id, att.employee_id]
+        // Get HRMS employee_id from mapping
+        const [mapping] = await db.execute<RowDataPacket[]>(
+          `SELECT hrms_employee_id FROM lms_employee_mapping WHERE lms_employee_id = ? LIMIT 1`,
+          [att.employee_id]
         );
 
-        const empCode = (eRows[0] as any)?.employee_code || att.employee_id;
+        const hrmsEmployeeId = (mapping[0] as any)?.hrms_employee_id || att.hrms_employee_code;
 
         await db.execute(`
           INSERT INTO lms_assessment_scores (
@@ -149,8 +141,8 @@ export const lmsSyncService = {
             percentage = VALUES(percentage), result = VALUES(result), synced_at = NOW()
         `, [
           randomUUID(),
-          att.employee_id,
-          empCode,
+          hrmsEmployeeId,
+          att.hrms_employee_code || null,
           att.batch_no || null,
           att.assessment_name || 'Unknown Assessment',
           att.attempt_no || 1,
