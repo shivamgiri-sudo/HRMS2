@@ -23,6 +23,8 @@ const DEMO_TOKEN_MAP: Record<string, { id: string; email: string }> = {
   "mock-token-employee":       { id: "demo-employee-id",  email: "employee@mascallnet.com"  },
   "mock-token-ceo":            { id: "demo-ceo-id",       email: "ceo@mascallnet.com"       },
   "mock-token-trainer":        { id: "demo-trainer-id",   email: "trainer@mascallnet.com"   },
+  // Super admin demo token (all roles)
+  "mock-token-super-admin-role": { id: "demo-super-admin-id", email: "super-admin@mascallnet.com" },
   // Legacy demo token
   "mock-token":                { id: "demo-user-id",      email: "demo@mascallnet.com"      },
 };
