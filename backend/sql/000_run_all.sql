@@ -91,3 +91,4 @@ SELECT 'mas_hrms schema complete' AS status;
 SHOW TABLES;
 SOURCE ./250_lms_integration_schema.sql;
 SOURCE ./251_lms_employee_mapping.sql;
+SOURCE ./260_communication_preferences.sql;
