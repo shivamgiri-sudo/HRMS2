@@ -55,19 +55,13 @@ export const employeeController = {
       mobile:              'mobile',
       address:             'address1',
       address1:            'address1',
-      address2:            'address2',
       city:                'city',
-      state:               'state',
-      pincode:             'pincode',
       country:             'country',
       date_of_birth:       'date_of_birth',
       gender:              'gender',
       blood_group:         'blood_group',
       nominee_name:        'nominee_name',
       nominee_relation:    'nominee_relation',
-      working_hours_start: 'working_hours_start',
-      working_hours_end:   'working_hours_end',
-      working_days:        'working_days',
     };
     const updates: Record<string, unknown> = {};
     for (const [bodyKey, dbCol] of Object.entries(fieldMap)) {

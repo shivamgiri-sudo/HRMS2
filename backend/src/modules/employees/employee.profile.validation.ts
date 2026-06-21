@@ -26,11 +26,8 @@ export const selfProfileUpdateSchema = z.object({
   personal_phone: optionalPhone,
   alternate_mobile: optionalPhone,
   address: optionalText(500),
-  address2: optionalText(500),
   city: optionalText(100),
-  state: optionalText(100),
   country: optionalText(100),
-  pincode: optionalText(20),
   date_of_birth: z.union([z.string().regex(DATE_REGEX), z.literal(""), z.null()])
     .optional()
     .transform((value) => value === "" ? null : value),
@@ -43,9 +40,6 @@ export const selfProfileUpdateSchema = z.object({
     z.null(),
   ]).optional().transform((value) => value === "" ? null : value),
   blood_group: optionalText(10),
-  working_hours_start: z.string().regex(TIME_REGEX).optional(),
-  working_hours_end: z.string().regex(TIME_REGEX).optional(),
-  working_days: z.array(z.number().int().min(0).max(6)).max(7).optional(),
 }).strict();
 
 export const emergencyContactSchema = z.object({
