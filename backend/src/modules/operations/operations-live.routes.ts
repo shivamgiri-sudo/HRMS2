@@ -21,7 +21,7 @@ const router = Router();
 router.get(
   "/live-status",
   requireAuth,
-  requireRole("operations", "admin", "process_manager"),
+  requireRole("operations", "admin", "process_manager", "manager", "branch_head"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { processName, branchName } = req.query as Record<string, string | undefined>;
@@ -54,7 +54,7 @@ router.get(
 router.get(
   "/roster-vs-actual",
   requireAuth,
-  requireRole("operations", "admin", "process_manager"),
+  requireRole("operations", "admin", "process_manager", "manager", "branch_head"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result: RosterVsActualResponse = await operationsLiveService.getRosterVsActual();
@@ -83,7 +83,7 @@ router.get(
 router.get(
   "/attrition-risk",
   requireAuth,
-  requireRole("operations", "admin", "hr"),
+  requireRole("operations", "admin", "hr", "manager", "branch_head"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const minRiskScore = parseInt(req.query.minRiskScore as string) || 0;

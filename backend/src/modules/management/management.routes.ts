@@ -183,4 +183,93 @@ router.get("/ceo-metrics", requireRole("admin", "hr", "ceo", "finance"), h(async
   }
 }));
 
+// ─── Management Team Dashboard endpoints (ManagementDashboard.tsx) ───────────
+
+router.get("/team-overview", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeIds, isWide } = await resolveTeamScope(req.authUser!.id);
+  const [summary, salaryRows] = await Promise.all([
+    managementService.getDashboardSummary(
+      req.query.process_id as string | undefined,
+      (!isWide && employeeIds) ? employeeIds : undefined
+    ),
+    db.execute<any[]>(
+      `SELECT COALESCE(total_gross, 0) AS total_gross
+       FROM salary_prep_run
+       WHERE status IN ('approved','processing','FINALIZED')
+       ORDER BY run_month DESC LIMIT 1`
+    ),
+  ]);
+  const monthlyCost = Number((salaryRows[0] as any[])[0]?.total_gross ?? 0);
+  res.json({ success: true, data: {
+    headcount: summary.headcount ?? 0,
+    utilization_pct: summary.attendance_rate ?? 0,
+    avg_quality_score: summary.avg_kpi_score ?? 0,
+    monthly_cost: monthlyCost,
+  }});
+}));
+
+router.get("/agent-performance", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeIds, isWide } = await resolveTeamScope(req.authUser!.id);
+  const filters: Record<string, unknown> = { ...req.query };
+  if (!isWide && employeeIds) filters.employee_ids = employeeIds;
+  const rows = await managementService.getTeamKpiSummary(filters as any);
+  const mapped = rows.map((r: any) => {
+    const score = Number(r.overall_score ?? 0);
+    return {
+      agent_id: r.employee_id,
+      agent_name: r.employee_name,
+      quality_pct: score,
+      calls: Number(r.calls_handled ?? 0),
+      risk_score: score < 60 ? 80 : score < 70 ? 55 : score < 80 ? 35 : 20,
+      coaching_needed: score < 70,
+    };
+  });
+  res.json({ success: true, data: mapped });
+}));
+
+router.get("/payroll-projection", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  // Build 30-day projection window
+  const days: { date: string; projected_cost: number; actual_cost?: number }[] = [];
+  const [salaryRows] = await db.execute<any[]>(
+    `SELECT DATE_FORMAT(sp.run_month, '%Y-%m') as run_month,
+            SUM(sl.gross_salary) as total_gross,
+            COUNT(DISTINCT sl.employee_id) as emp_count
+     FROM salary_prep_run sp
+     JOIN salary_prep_line sl ON sl.run_id = sp.id
+     WHERE sp.run_month >= DATE_SUB(CURDATE(), INTERVAL 2 MONTH)
+     GROUP BY sp.run_month ORDER BY sp.run_month ASC LIMIT 3`
+  );
+  const avgDaily = salaryRows.length > 0
+    ? salaryRows.reduce((s: number, r: any) => s + Number(r.total_gross ?? 0), 0) / salaryRows.length / 30
+    : 0;
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(year, month, i + 1);
+    days.push({ date: d.toISOString().slice(0, 10), projected_cost: Math.round(avgDaily) });
+  }
+  const periodStart = days[0]?.date;
+  const periodEnd = days[days.length - 1]?.date;
+  const totalProjected = days.reduce((s, d) => s + d.projected_cost, 0);
+  res.json({ success: true, data: { period_start: periodStart, period_end: periodEnd, days, total_projected: totalProjected } });
+}));
+
+router.get("/training-needs", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa"), h(async (req: AuthenticatedRequest, res: Response) => {
+  // listTni filters by single employee_id or status only; no employee_ids array support
+  // Wide roles get all TNI rows; scoped managers get filtered subset via status filter
+  const filters: { status?: string } = {};
+  if (req.query.status) filters.status = req.query.status as string;
+  const tniRows = await managementService.listTni(filters);
+  const mapped = (tniRows as any[]).map((r: any) => ({
+    agent_id: r.employee_id,
+    agent_name: r.full_name ?? r.employee_code ?? r.employee_id,
+    skill_gap: r.need_type ?? "General",
+    current_score: 0,
+    target_score: 80,
+    priority: (r.priority ?? "medium") as "high" | "medium" | "low",
+  }));
+  res.json({ success: true, data: mapped });
+}));
+
 export { router as managementRouter };
