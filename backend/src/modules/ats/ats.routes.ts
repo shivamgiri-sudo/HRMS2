@@ -368,7 +368,8 @@ atsRouter.get("/queue-tokens/active", requireRole("admin", "hr", "super_admin", 
 
 // POST /api/ats/recruiter/verify — validates recruiter code + PIN and biometric availability
 // Requires HRMS JWT (requireAuth already applied above)
-atsRouter.post("/recruiter/verify", requireRole("admin", "hr", "super_admin", "recruiter", "manager"), h(async (req: any, res: any) => {
+// No role restriction: recruiter app provides separate credential layer
+atsRouter.post("/recruiter/verify", h(async (req: any, res: any) => {
   const { recruiterCode, pin } = req.body;
   if (!recruiterCode || !pin) return res.status(400).json({ success: false, message: "recruiterCode and pin are required" });
   const profile = await verifyRecruiter(recruiterCode, pin);
