@@ -32,60 +32,12 @@ const h3 = (fn: (req: any, res: any, next: any) => Promise<unknown>) => (req: an
 
 router.use(requireAuth);
 
-// GET /api/employees/me — returns the employee record for the logged-in user (with joined master data)
+// GET /api/employees/me — returns full profile with nested bank/statutory/emergency/nominee objects
 router.get("/me", h(async (req: any, res: any) => {
   const userId = req.authUser?.id;
   if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-            e.id, e.employee_code, e.user_id,
-            e.first_name, e.last_name,
-            CONCAT(e.first_name, ' ', COALESCE(e.last_name,'')) AS full_name,
-            e.email,
-            e.mobile         AS phone,
-            e.photo_url      AS avatar_url,
-            e.gender,
-            e.date_of_birth,
-            e.date_of_joining AS hire_date,
-            e.employment_status AS status,
-            e.employment_type,
-            e.active_status,
-            e.branch_id, e.department_id, e.process_id, e.designation_id,
-            e.reporting_manager_id,
-            e.address1 AS address, e.address2, e.city, e.state, e.pincode,
-            e.blood_group, e.father_name, e.office_email,
-            e.bank_account_number, e.bank_name, e.bank_branch, e.ifsc_code,
-            e.account_holder_name, e.account_type,
-            e.nominee_name, e.nominee_relation,
-            e.uan_number,
-            e.epf_number, e.esic_number,
-            e.ctc, e.gross_salary, e.net_inhand,
-            e.aadhaar_number, e.aadhaar_last4,
-            e.emp_type, e.billable_status, e.cost_center_code,
-            e.biometric_code, e.legacy_emp_id,
-            e.created_at, e.updated_at,
-            dm.designation_name  AS designation,
-            dept.dept_name       AS department_name,
-            b.branch_name,
-            p.process_name,
-            mgr.first_name       AS manager_first_name,
-            mgr.last_name        AS manager_last_name
-       FROM employees e
-       LEFT JOIN designation_master dm   ON dm.id   = e.designation_id
-       LEFT JOIN department_master  dept ON dept.id = e.department_id
-       LEFT JOIN branch_master      b    ON b.id    = e.branch_id
-       LEFT JOIN process_master     p    ON p.id    = e.process_id
-       LEFT JOIN employees          mgr  ON mgr.id  = e.reporting_manager_id
-      WHERE e.user_id = ? AND e.active_status = 1 LIMIT 1`,
-    [userId]
-  );
-  if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
-  const emp: any = rows[0];
-  emp.department = emp.department_name ? { name: emp.department_name } : null;
-  emp.reporting_manager = (emp.manager_first_name || emp.manager_last_name)
-    ? `${emp.manager_first_name ?? ''} ${emp.manager_last_name ?? ''}`.trim()
-    : null;
-  return res.json({ success: true, data: emp });
+  const profile = await employeeProfileService.getMyProfile(userId);
+  return res.json({ success: true, data: profile });
 }));
 
 // GET /api/employees/stats — aggregate counts (must be before /:id to avoid route collision)

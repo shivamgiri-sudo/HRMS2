@@ -36,7 +36,7 @@ wfmRouter.get("/shifts/:id",      requireRole("admin", "wfm", "manager"), h(wfmC
 wfmRouter.put("/shifts/:id",      requireRole("admin", "wfm"), h(wfmController.updateShift.bind(wfmController)));
 
 // Attendance calendar - monthly attendance data for employee
-wfmRouter.get("/attendance", h(async (req: any, res: any) => {
+wfmRouter.get("/attendance/daily", h(async (req: any, res: any) => {
   const { employee_id, month, year } = req.query;
   if (!employee_id || !month || !year) {
     return res.status(400).json({ success: false, error: "employee_id, month, and year are required" });
