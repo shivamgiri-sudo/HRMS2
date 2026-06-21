@@ -35,31 +35,36 @@ wfmRouter.post("/shifts",         requireRole("admin", "wfm"), h(wfmController.c
 wfmRouter.get("/shifts/:id",      requireRole("admin", "wfm", "manager"), h(wfmController.getShift.bind(wfmController)));
 wfmRouter.put("/shifts/:id",      requireRole("admin", "wfm"), h(wfmController.updateShift.bind(wfmController)));
 
-// Attendance calendar - monthly attendance data for employee
+// Attendance calendar - daily attendance data for date range
 wfmRouter.get("/attendance/daily", h(async (req: any, res: any) => {
-  const { employee_id, month, year } = req.query;
-  if (!employee_id || !month || !year) {
-    return res.status(400).json({ success: false, error: "employee_id, month, and year are required" });
+  const { employeeId, fromDate, toDate } = req.query;
+  if (!employeeId) {
+    return res.status(400).json({ success: false, error: "employeeId is required" });
   }
 
   const { db } = await import("../../db/mysql.js");
-  const [rows] = await db.execute(
-    `SELECT record_date AS attendance_date,
-            attendance_status AS status,
-            clock_in_time AS first_punch,
-            clock_out_time AS last_punch,
-            ROUND(COALESCE(raw_minutes, TIMESTAMPDIFF(MINUTE, clock_in_time, clock_out_time), 0) / 60, 2) AS working_hours,
-            0 AS break_minutes,
-            COALESCE(clock_in_location, clock_out_location) AS punch_location,
-            attendance_source AS source,
-            override_reason AS remarks
-     FROM attendance_daily_record
-     WHERE employee_id = ?
-       AND YEAR(record_date) = ?
-       AND MONTH(record_date) = ?
-     ORDER BY record_date ASC`,
-    [employee_id, year, month]
-  );
+  let sql = `SELECT record_date AS date,
+                   attendance_status AS status,
+                   clock_in_time AS clock_in,
+                   clock_out_time AS clock_out,
+                   raw_minutes,
+                   COALESCE(clock_in_location, clock_out_location) AS location,
+                   attendance_source AS source
+            FROM attendance_daily_record
+            WHERE employee_id = ?`;
+  const params: unknown[] = [employeeId];
+
+  if (fromDate) {
+    sql += " AND record_date >= ?";
+    params.push(fromDate);
+  }
+  if (toDate) {
+    sql += " AND record_date <= ?";
+    params.push(toDate);
+  }
+
+  sql += " ORDER BY record_date ASC";
+  const [rows] = await db.execute(sql, params);
 
   return res.json({ success: true, data: rows });
 }));
