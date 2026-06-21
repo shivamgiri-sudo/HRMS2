@@ -23,27 +23,28 @@ export const lmsSyncService = {
 
       for (const trainee of trainees) {
         try {
-          // Get HRMS employee by employee_code (from trainee_master.employee_id)
+          // Map LMS trainee to HRMS using priority chain (mobile → email → code)
+          const hrmsEmployeeId = await lmsEmployeeMapper.getOrMapLmsTrainee(trainee.lms_id);
+
+          if (!hrmsEmployeeId) {
+            console.warn(`[LMS Sync] Could not map LMS trainee ${trainee.lms_id} to HRMS`);
+            failed++;
+            continue;
+          }
+
+          // Get HRMS employee details
           const [eRows] = await db.execute<RowDataPacket[]>(
-            `SELECT id, employee_code FROM employees WHERE employee_code = ? LIMIT 1`,
-            [trainee.employee_id]
+            `SELECT id, employee_code FROM employees WHERE id = ? LIMIT 1`,
+            [hrmsEmployeeId]
           );
 
           if (!eRows.length) {
-            console.warn(`[LMS Sync] HRMS employee ${trainee.employee_id} not found`);
+            console.error(`[LMS Sync] Mapped HRMS employee ${hrmsEmployeeId} not found`);
             failed++;
             continue;
           }
 
           const empData = eRows[0] as any;
-
-          // Save trainee→HRMS mapping
-          await db.execute(
-            `INSERT INTO lms_employee_mapping (id, lms_employee_id, hrms_employee_id, hrms_employee_code, hrms_mobile, hrms_personal_email, mapping_source, mapping_confidence, mapped_by)
-             VALUES (UUID(), ?, ?, ?, ?, ?, 'mobile', 'high', 'system')
-             ON DUPLICATE KEY UPDATE hrms_employee_id = VALUES(hrms_employee_id), mapped_at = NOW()`,
-            [trainee.lms_id, empData.id, empData.employee_code, trainee.mobile, trainee.email]
-          );
 
           // Get best MCQ score
           const [scores] = await lms.execute<RowDataPacket[]>(`
