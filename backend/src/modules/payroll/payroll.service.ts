@@ -396,7 +396,7 @@ export const payrollService = {
                COALESCE(spl.basic, 0) AS basic,
                COALESCE(spl.hra, 0) AS hra,
                COALESCE(spl.special_allowance, 0) AS special_allowance,
-               0 AS incentive_total,
+               COALESCE(spl.incentive_total, 0) AS incentive_total,
                COALESCE(spl.total_deductions, 0) AS total_deductions,
                COALESCE(spl.net_salary, 0) AS net_salary,
                COALESCE(spl.gross_salary, 0) AS gross_salary,
