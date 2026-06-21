@@ -273,6 +273,7 @@ const App = () => (
               <Route path="/dashboard/ats" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSDashboardV2 /></Gate></ProtectedRoute>} />
               <Route path="/dashboard/ats-replica" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSDashboardReplica /></Gate></ProtectedRoute>} />
               <Route path="/dashboard/candidate-portal" element={<CandidatePortalDashboard />} />
+              <Route path="/dashboard/payroll" element={<ProtectedRoute roles={['admin', 'finance', 'payroll', 'super_admin']}><Payroll /></ProtectedRoute>} />
 
               <Route path="/employees" element={<ProtectedRoute><Employees /></ProtectedRoute>} />
               <Route path="/employees/:id/360" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployee360 /></Gate></ProtectedRoute>} />
