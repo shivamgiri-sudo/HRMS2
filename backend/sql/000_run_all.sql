@@ -87,8 +87,9 @@ SOURCE sql/245_leave_credit_redesign.sql;
 SOURCE sql/246_nominee_gratuity_distribution.sql;
 SOURCE sql/250_lms_integration_schema.sql;
 
+SOURCE sql/251_lms_employee_mapping.sql;
+SOURCE sql/260_communication_preferences.sql;
+SOURCE sql/261_profile_update_approval.sql;
+
 SELECT 'mas_hrms schema complete' AS status;
 SHOW TABLES;
-SOURCE ./250_lms_integration_schema.sql;
-SOURCE ./251_lms_employee_mapping.sql;
-SOURCE ./260_communication_preferences.sql;

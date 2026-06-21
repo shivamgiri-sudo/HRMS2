@@ -27,6 +27,7 @@ import { employeeReportMasterRouter } from "./modules/employees/employee.report-
 import { employeeSecureRouter } from "./modules/employees/employee.secure.routes.js";
 import { employeeGovernanceRouter } from "./modules/employees/employee-governance.routes.js";
 import { employeePhotoCompatRouter } from "./modules/employees/employee.photo.compat.routes.js";
+import { profileApprovalRouter } from "./modules/employees/profile-approval.routes.js";
 import { rmChangeRouter } from "./modules/employees/rm-change.routes.js";
 import { kpiRouter } from "./modules/kpi/kpi.routes.js";
 import { kpiProcessRoleRouter } from "./modules/kpi/kpi.process-role.routes.js";
@@ -200,6 +201,7 @@ app.use("/api/employees", listEndpointLimiter, employeeGovernanceRouter);
 // Photo routes consolidated in employeeRouter; compat router disabled to prevent conflicts
 app.use("/api/employees", listEndpointLimiter, employee360Router);
 app.use("/api/employees", listEndpointLimiter, employeeRouter);
+app.use("/api/profile-approval", profileApprovalRouter);
 app.use("/api/rm-change", rmChangeRouter);
 app.use("/api/kpi/process-role", kpiProcessRoleRouter);
 app.use("/api/kpi-master", kpiMasterRouter);
