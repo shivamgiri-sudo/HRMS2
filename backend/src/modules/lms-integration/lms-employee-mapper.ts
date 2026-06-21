@@ -145,13 +145,13 @@ export const lmsEmployeeMapper = {
         }
       }
 
-      // PRIORITY 4: Match by employee code from trainee_master
+      // PRIORITY 4: Match by employee code from trainee_master (case-insensitive)
       if (trainee.employee_id) {
         auditLog.triedEmployeeCode = trainee.employee_id;
         const [hrmsRows] = await db.execute<RowDataPacket[]>(
           `SELECT id, employee_code, mobile, personal_email, email
            FROM employees
-           WHERE employee_code = ? AND active_status = 1
+           WHERE UPPER(employee_code) = UPPER(?) AND active_status = 1
            LIMIT 1`,
           [trainee.employee_id]
         );
