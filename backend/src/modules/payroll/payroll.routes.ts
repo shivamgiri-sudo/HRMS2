@@ -33,11 +33,11 @@ router.use(requireAuth);
 
 // ─── Structures ───────────────────────────────────────────────────────────────
 
-router.get("/structures", requireRole("admin", "hr", "finance", "payroll"), h(c.listStructures));
-router.post("/structures", requireRole("admin", "hr", "finance", "payroll"), h(c.createStructure));
+router.get("/structures", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.listStructures));
+router.post("/structures", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.createStructure));
 
 // ─── Employee Salaries (per-employee assignment with computed monthly amounts) ─
-router.get("/employee-salaries", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/employee-salaries", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        esa.id,
@@ -69,13 +69,13 @@ router.get("/employee-salaries", requireRole("admin", "hr", "finance", "payroll"
 
 // ─── Components ───────────────────────────────────────────────────────────────
 
-router.get("/components", requireRole("admin", "hr", "finance", "payroll"), h(c.listComponents));
-router.post("/components", requireRole("admin", "hr", "finance", "payroll"), h(c.createComponent));
+router.get("/components", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.listComponents));
+router.post("/components", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.createComponent));
 
 // ─── Salary Assignments ───────────────────────────────────────────────────────
 
 router.post("/salary-assignments",
-  requireRole("admin", "hr", "finance", "payroll"),
+  requireRole("admin", "hr", "super_admin", "finance", "payroll"),
   requireScopedRole(["hr", "finance", "payroll"], async (req) => {
     // Resolve employee's branch/process from DB
     const [rows] = await db.execute(
@@ -91,9 +91,9 @@ router.post("/salary-assignments",
   }),
   h(c.assignSalary)
 );
-router.post("/salary-assignments/bulk", requireRole("admin", "hr", "finance", "payroll"), h(c.bulkAssignSalary));
-router.get("/salary-assignments/:employeeId", requireRole("admin", "hr", "finance", "payroll"), h(c.getEmployeeSalary));
-router.get("/salary-assignments/:employeeId/history", requireRole("admin", "hr", "finance", "payroll"), h(c.getEmployeeSalaryHistory));
+router.post("/salary-assignments/bulk", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.bulkAssignSalary));
+router.get("/salary-assignments/:employeeId", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.getEmployeeSalary));
+router.get("/salary-assignments/:employeeId/history", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.getEmployeeSalaryHistory));
 
 // ─── Payroll Runs — static paths before :id ───────────────────────────────────
 
@@ -110,7 +110,7 @@ async function isHeadOfficeMember(userId: string): Promise<boolean> {
   return /head\s*office/i.test(name);
 }
 
-router.get("/runs", requireRole("admin", "hr", "finance", "payroll"), h(async (req, res) => {
+router.get("/runs", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req, res) => {
   let scoped: { sql: string; params: unknown[] };
   try {
     const isSuperAdmin = await hasRole(req.authUser!.id, "super_admin");
@@ -130,7 +130,7 @@ router.get("/runs", requireRole("admin", "hr", "finance", "payroll"), h(async (r
   (req as any).scopeFilter = scoped;
   return c.listRuns(req, res);
 }));
-router.get("/records", requireRole("admin", "hr", "finance", "payroll"), h(async (req, res) => {
+router.get("/records", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req, res) => {
   let scoped: { sql: string; params: unknown[] };
   try {
     const isSuperAdmin = await hasRole(req.authUser!.id, "super_admin");
@@ -150,9 +150,9 @@ router.get("/records", requireRole("admin", "hr", "finance", "payroll"), h(async
   (req as any).scopeFilter = scoped;
   return c.listPayrollRecords(req, res);
 }));
-router.get("/overview", requireRole("admin", "hr", "finance", "payroll"), h(c.getPayrollOverview));
+router.get("/overview", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.getPayrollOverview));
 router.post("/runs",
-  requireRole("admin", "finance", "payroll"),
+  requireRole("admin", "super_admin", "finance", "payroll"),
   requireScopedRole(["finance", "payroll"], async (req) => ({
     branchId: req.body.branch_id,
     processId: req.body.process_id,
@@ -160,13 +160,13 @@ router.post("/runs",
   })),
   h(c.createRun)
 );
-router.get("/runs/:id", requireRole("admin", "hr", "finance", "payroll"), h(c.getRun));
-router.get("/runs/:id/readiness", requireRole("admin", "hr", "finance", "payroll"), h(async (req, res) => {
+router.get("/runs/:id", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.getRun));
+router.get("/runs/:id/readiness", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req, res) => {
   const data = await payrollGovernanceService.readiness(req.params.id);
   return res.json({ success: true, data });
 }));
 
-router.post("/runs/:id/freeze-attendance", requireRole("admin", "finance", "payroll"), h(async (req, res) => {
+router.post("/runs/:id/freeze-attendance", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req, res) => {
   const actorId = req.authUser?.id ?? "system";
   const data = await payrollGovernanceService.freezeAttendance(req.params.id, actorId);
 
@@ -183,9 +183,9 @@ router.post("/runs/:id/freeze-attendance", requireRole("admin", "finance", "payr
   return res.json({ success: true, data, message: "Attendance frozen for payroll run" });
 }));
 
-router.patch("/runs/:id/status", requireRole("admin", "finance", "payroll"), h(c.updateRunStatus));
-router.get("/runs/:id/lines", requireRole("admin", "hr", "finance", "payroll"), h(c.listLines));
-router.post("/runs/:id/calculate", requireRole("admin", "finance", "payroll"), async (req: any, res: any, next: any) => {
+router.patch("/runs/:id/status", requireRole("admin", "super_admin", "finance", "payroll"), h(c.updateRunStatus));
+router.get("/runs/:id/lines", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.listLines));
+router.post("/runs/:id/calculate", requireRole("admin", "super_admin", "finance", "payroll"), async (req: any, res: any, next: any) => {
   try {
     const actorId = req.authUser?.id ?? "system";
     if (process.env.PAYROLL_STRICT_READINESS === "true") {
@@ -215,7 +215,7 @@ router.post("/runs/:id/calculate", requireRole("admin", "finance", "payroll"), a
 
 // ─── Run Lines ────────────────────────────────────────────────────────────────
 
-router.patch("/lines/:id", requireRole("admin", "finance", "payroll"), h(c.updateLine));
+router.patch("/lines/:id", requireRole("admin", "super_admin", "finance", "payroll"), h(c.updateLine));
 
 // ─── Overtime (WFM-only) ──────────────────────────────────────────────────────
 
@@ -228,7 +228,7 @@ router.patch("/lines/:lineId/overtime",
 // ─── Advances ─────────────────────────────────────────────────────────────────
 
 router.post("/advances",
-  requireRole("admin", "hr", "finance", "payroll"),
+  requireRole("admin", "hr", "super_admin", "finance", "payroll"),
   requireScopedRole(["hr", "finance", "payroll"], async (req) => {
     // Resolve employee's branch/process
     const [rows] = await db.execute(
@@ -257,7 +257,7 @@ router.get("/advances/:employeeId", h(async (req: AuthenticatedRequest, res: Res
 
 // ─── Statutory Config ─────────────────────────────────────────────────────────
 
-router.get("/statutory-config", requireRole("admin", "finance", "payroll"), h(c.getStatutoryConfig));
+router.get("/statutory-config", requireRole("admin", "super_admin", "finance", "payroll"), h(c.getStatutoryConfig));
 
 // ─── Payslip ──────────────────────────────────────────────────────────────────
 
@@ -376,7 +376,7 @@ router.get("/payslip/:runId/:employeeId", h(async (req: AuthenticatedRequest, re
 // POST /api/payroll/payslip/:runId/generate — admin/hr/finance/payroll only
 router.post(
   "/payslip/:runId/generate",
-  requireRole("admin", "hr", "finance", "payroll"),
+  requireRole("admin", "hr", "super_admin", "finance", "payroll"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { employeeId } = req.body as { employeeId?: string };
     if (!employeeId) {
@@ -592,7 +592,7 @@ router.post("/uan/:employeeId", requireRole("admin", "hr", "finance"), h(async (
 // POST /api/payroll/disbursements — record a bank disbursement
 router.post(
   "/disbursements",
-  requireRole("admin", "finance", "payroll"),
+  requireRole("admin", "super_admin", "finance", "payroll"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { run_id, bank_ref, total_amount, employee_count } = req.body as {
       run_id: string;
@@ -632,7 +632,7 @@ router.post(
 // GET /api/payroll/disbursements/:runId — get disbursement for a run
 router.get(
   "/disbursements/:runId",
-  requireRole("admin", "finance", "payroll"),
+  requireRole("admin", "super_admin", "finance", "payroll"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM payroll_disbursement WHERE run_id = ? ORDER BY created_at DESC",
@@ -645,7 +645,7 @@ router.get(
 // PATCH /api/payroll/disbursements/:id — update disbursement status
 router.patch(
   "/disbursements/:id",
-  requireRole("admin", "finance", "payroll"),
+  requireRole("admin", "super_admin", "finance", "payroll"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { status, disbursed_at } = req.body as {
       status?: "completed" | "failed";
@@ -790,7 +790,7 @@ router.get(
 // ─── Analytics ────────────────────────────────────────────────────────────────
 
 // GET /api/payroll/analytics/trends?months=6
-router.get("/analytics/trends", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/analytics/trends", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const months = Math.min(24, Math.max(1, Number(req.query.months ?? 6)));
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT spr.run_month,
@@ -810,7 +810,7 @@ router.get("/analytics/trends", requireRole("admin", "hr", "finance", "payroll")
 }));
 
 // GET /api/payroll/analytics?dimension=department&runMonth=2026-06
-router.get("/analytics", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/analytics", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const dimension = (req.query.dimension as string) || "department";
   let runMonth = req.query.runMonth as string | undefined;
 
@@ -881,7 +881,7 @@ router.get("/analytics", requireRole("admin", "hr", "finance", "payroll"), h(asy
 // ─── PT Slabs ─────────────────────────────────────────────────────────────────
 
 // GET /api/payroll/pt-slabs — list PT slabs; optional ?state_code=
-router.get("/pt-slabs", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/pt-slabs", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { state_code } = req.query as { state_code?: string };
   const params: unknown[] = [];
   let where = "WHERE is_active = 1";
@@ -975,7 +975,7 @@ router.patch(
 // ─── Minimum Wages ────────────────────────────────────────────────────────────
 
 // GET /api/payroll/minimum-wages — list minimum wages; optional ?state_code=
-router.get("/minimum-wages", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/minimum-wages", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { state_code } = req.query as { state_code?: string };
   const params: unknown[] = [];
   let where = "WHERE is_active = 1";
@@ -993,7 +993,7 @@ router.get("/minimum-wages", requireRole("admin", "hr", "finance", "payroll"), h
 // ─── NEFT Export ─────────────────────────────────────────────────────────────
 
 // GET /api/payroll/runs/:id/neft-summary — count of employees with/without bank details
-router.get("/runs/:id/neft-summary", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/runs/:id/neft-summary", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*)                                                                          AS total,
@@ -1015,7 +1015,7 @@ router.get("/runs/:id/neft-summary", requireRole("admin", "finance", "payroll"),
 router.get(
   "/runs/:runId/neft-lines",
   requireAuth,
-  requireRole("admin", "finance", "payroll"),
+  requireRole("admin", "super_admin", "finance", "payroll"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params;
 
@@ -1073,7 +1073,7 @@ router.get(
 );
 
 // GET /api/payroll/runs/:id/neft-export — generate NEFT disbursement CSV
-router.get("/runs/:id/neft-export", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const runId = req.params.id;
 
   const [runRows] = await db.execute<RowDataPacket[]>(
@@ -1130,7 +1130,7 @@ router.get("/runs/:id/neft-export", requireRole("admin", "finance", "payroll"), 
 // ─── ECR / ESIC Challan ───────────────────────────────────────────────────────
 
 // GET /api/payroll/runs/:id/ecr — ECR-format data for a run
-router.get("/runs/:id/ecr", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/runs/:id/ecr", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const runId = req.params.id;
 
   // Verify run exists
@@ -1162,7 +1162,7 @@ router.get("/runs/:id/ecr", requireRole("admin", "finance", "payroll"), h(async 
 }));
 
 // GET /api/payroll/runs/:id/esic-challan — ESIC challan data for a run
-router.get("/runs/:id/esic-challan", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/runs/:id/esic-challan", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const runId = req.params.id;
 
   const [runRows] = await db.execute<RowDataPacket[]>(
@@ -1219,7 +1219,7 @@ router.get("/runs/:id/esic-challan", requireRole("admin", "finance", "payroll"),
 // ─── Payroll Dashboard Endpoints ──────────────────────────────────────
 
 // GET /api/payroll/summary — payroll dashboard summary metrics
-router.get("/summary", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/summary", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [summary] = await db.execute<RowDataPacket[]>(`
     SELECT
       COUNT(DISTINCT e.id) as payroll_processed,
@@ -1235,7 +1235,7 @@ router.get("/summary", requireRole("admin", "finance", "payroll"), h(async (req:
 }));
 
 // GET /api/payroll/compliance — payroll compliance check (statutory fields validation)
-router.get("/compliance", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/compliance", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [compliance] = await db.execute<RowDataPacket[]>(`
     SELECT e.id, e.employee_code, CONCAT_WS(' ', e.first_name, e.last_name) AS employee_name,
            e.pan_number, e.uan_number, e.epf_number, e.esic_number,

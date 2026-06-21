@@ -23,12 +23,12 @@ async function isLeavePrivileged(userId: string): Promise<boolean> {
 }
 
 leaveRouter.get("/types",                         h(leaveController.listLeaveTypes.bind(leaveController)));  // All can view
-leaveRouter.post("/types", requireRole("admin", "hr"), h(leaveController.createLeaveType.bind(leaveController)));
+leaveRouter.post("/types", requireRole("admin", "hr", "super_admin"), h(leaveController.createLeaveType.bind(leaveController)));
 
 // PUT /types/:id — update leave type (admin/hr)
 leaveRouter.put(
   "/types/:id",
-  requireRole("admin", "hr"),
+  requireRole("admin", "hr", "super_admin"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const { leave_name, max_days_per_year, carry_forward, requires_approval, paid_leave } =
@@ -214,10 +214,10 @@ leaveRouter.get("/balance", h(async (req: AuthenticatedRequest, res: Response) =
 }));
 
 leaveRouter.get("/holidays",                      h(leaveController.listHolidays.bind(leaveController)));  // All can view
-leaveRouter.post("/holidays",                     requireRole("admin", "hr"), h(leaveController.createHoliday.bind(leaveController)));
+leaveRouter.post("/holidays",                     requireRole("admin", "hr", "super_admin"), h(leaveController.createHoliday.bind(leaveController)));
 
 // POST /balance/seed — bulk seed leave balances during onboarding
-leaveRouter.post("/balance/seed", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+leaveRouter.post("/balance/seed", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const rows = req.body as Array<{ employee_id: string; leave_type_id: string; year: number; allocated_days: number }>;
   if (!Array.isArray(rows)) return res.status(400).json({ error: "Array required" });
   for (const row of rows) {
@@ -259,7 +259,7 @@ leaveRouter.get("/eligibility/:employeeId", h(async (req: AuthenticatedRequest, 
 }));
 
 // POST /admin/sync-used-days-from-db-bill — sync 2026 used_days from db_bill (admin/hr only)
-leaveRouter.post("/admin/sync-used-days-from-db-bill", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+leaveRouter.post("/admin/sync-used-days-from-db-bill", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const year = Number(req.query.year ?? 2026);
   const legacy = await getLegacyPool();
 

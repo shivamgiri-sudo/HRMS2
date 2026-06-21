@@ -24,7 +24,7 @@ router.use(requireAuth);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
-const ALLOWED_ROLES = ["admin", "hr", "ceo", "qa", "analyst", "manager", "process_manager", "branch_head"] as const;
+const ALLOWED_ROLES = ["admin", "hr", "super_admin", "ceo", "qa", "analyst", "manager", "process_manager", "branch_head"] as const;
 
 /**
  * Resolve caller's data scope:

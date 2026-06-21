@@ -66,11 +66,11 @@ router.post("/scores/bulk",
 router.post("/scores", requireRole("admin", "manager", "qa"), h(c.recordScore));  // TODO: Add self-scope for employees
 
 // Summary + Leaderboard
-router.get("/summary/:employeeId/:templateId/:period", requireRole("admin", "hr", "manager", "qa"), h(c.getEmployeeSummary));  // TODO: Add self-scope
-router.get("/leaderboard", requireRole("admin", "hr", "manager", "qa", "process_manager", "branch_head", "ceo", "tl"), h(c.getLeaderboard));
+router.get("/summary/:employeeId/:templateId/:period", requireRole("admin", "hr", "super_admin", "manager", "qa"), h(c.getEmployeeSummary));  // TODO: Add self-scope
+router.get("/leaderboard", requireRole("admin", "hr", "super_admin", "manager", "qa", "process_manager", "branch_head", "ceo", "tl"), h(c.getLeaderboard));
 
 // Family summary — aggregated scores per family for a process/period
-router.get("/family-summary/:processId/:period", requireRole("admin", "hr", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/family-summary/:processId/:period", requireRole("admin", "hr", "super_admin", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { processId, period } = req.params;
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
     return res.status(400).json({ error: "period must be YYYY-MM" });
@@ -80,7 +80,7 @@ router.get("/family-summary/:processId/:period", requireRole("admin", "hr", "man
 }));
 
 // Per-process KPI config
-router.get("/process-config/:processId", requireRole("admin", "hr", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/process-config/:processId", requireRole("admin", "hr", "super_admin", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT kpc.*, km.metric_name, km.metric_code, km.category AS metric_type, km.unit,
             ktm.target_value AS template_default
@@ -96,7 +96,7 @@ router.get("/process-config/:processId", requireRole("admin", "hr", "manager"), 
   res.json({ success: true, data: rows });
 }));
 
-router.post("/process-config/:processId", requireRole("admin", "hr", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/process-config/:processId", requireRole("admin", "hr", "super_admin", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { metric_id, target_value, min_threshold, max_achievement, weightage } = req.body;
   if (!metric_id || target_value === undefined) return res.status(400).json({ error: "metric_id and target_value required" });
   await db.execute(
@@ -108,7 +108,7 @@ router.post("/process-config/:processId", requireRole("admin", "hr", "process_ma
   res.json({ success: true });
 }));
 
-router.delete("/process-config/:processId/:metricId", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.delete("/process-config/:processId/:metricId", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   await db.execute("DELETE FROM kpi_process_config WHERE process_id=? AND metric_id=?", [req.params.processId, req.params.metricId]);
   res.json({ success: true });
 }));
