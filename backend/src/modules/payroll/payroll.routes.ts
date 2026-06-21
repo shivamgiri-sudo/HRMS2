@@ -1216,4 +1216,39 @@ router.get("/runs/:id/esic-challan", requireRole("admin", "finance", "payroll"),
   });
 }));
 
+// ─── Payroll Dashboard Endpoints ──────────────────────────────────────
+
+// GET /api/payroll/summary — payroll dashboard summary metrics
+router.get("/summary", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [summary] = await db.execute<RowDataPacket[]>(`
+    SELECT
+      COUNT(DISTINCT e.id) as payroll_processed,
+      COALESCE(SUM(e.ctc_annual), 0) as total_ctc,
+      COALESCE(SUM(spl.gross_salary), 0) as total_gross,
+      COALESCE(SUM(spl.net_salary), 0) as total_net,
+      COALESCE(AVG(e.ctc_annual), 0) as avg_ctc
+    FROM employees e
+    LEFT JOIN salary_prep_line spl ON spl.employee_id = e.id
+    WHERE e.active_status = 1 AND e.employment_status = 'active'
+  `);
+  return res.json({ success: true, data: (summary as RowDataPacket[])[0] || {} });
+}));
+
+// GET /api/payroll/compliance — payroll compliance check (statutory fields validation)
+router.get("/compliance", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [compliance] = await db.execute<RowDataPacket[]>(`
+    SELECT e.id, e.employee_code, CONCAT_WS(' ', e.first_name, e.last_name) AS employee_name,
+           e.pan_number, e.uan_number, e.epf_number, e.esic_number,
+           CASE WHEN e.pan_number IS NOT NULL AND e.pan_number != '' THEN 'Valid' ELSE 'Missing' END as pan_status,
+           CASE WHEN e.uan_number IS NOT NULL AND e.uan_number != '' THEN 'Valid' ELSE 'Missing' END as uan_status,
+           CASE WHEN e.epf_number IS NOT NULL AND e.epf_number != '' THEN 'Valid' ELSE 'Missing' END as epf_status,
+           CASE WHEN e.esic_number IS NOT NULL AND e.esic_number != '' THEN 'Valid' ELSE 'Missing' END as esic_status
+    FROM employees e
+    WHERE e.active_status = 1 AND e.employment_status = 'active'
+    ORDER BY e.employee_code
+    LIMIT 100
+  `);
+  return res.json({ success: true, data: compliance });
+}));
+
 export { router as payrollRouter };
