@@ -5,6 +5,8 @@ import { requireRole } from '../../middleware/requireRole.js'
 import type { Response, Request } from 'express'
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js'
 import type { RowDataPacket } from 'mysql2'
+import mysql from 'mysql2/promise'
+import { env } from '../../config/env.js'
 
 const performanceDashboardRouter = Router()
 performanceDashboardRouter.use(requireAuth)
@@ -12,6 +14,30 @@ performanceDashboardRouter.use(requireAuth)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: Response) => Promise<any>) => (req: any, res: Response, next: any) =>
   fn(req, res).catch(next)
+
+let _ciPool: mysql.Pool | null = null
+function getCiPool(): mysql.Pool {
+  if (!_ciPool) _ciPool = mysql.createPool({
+    host: env.DB_HOST,
+    port: env.DB_PORT,
+    user: env.DB_USER,
+    password: env.DB_PASSWORD,
+    database: 'Shivamgiri',
+    waitForConnections: true,
+    connectionLimit: 3,
+    connectTimeout: 10000,
+  })
+  return _ciPool
+}
+
+function pdDates(q: Record<string, unknown>): { from: string; to: string } {
+  const now = new Date()
+  const to = q.to ? String(q.to) : now.toISOString().slice(0, 10)
+  const from = q.from ? String(q.from) : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+  return { from, to }
+}
+
+const PERF_ROLES = ['admin', 'hr', 'super_admin', 'manager', 'process_manager', 'ceo', 'qa', 'wfm'] as const
 
 /**
  * GET /api/performance-dashboard/goals
@@ -133,7 +159,7 @@ performanceDashboardRouter.get('/summary', requireRole('admin', 'hr', 'manager',
          LEFT JOIN appraisal_rating ar ON e.id = ar.employee_id
          WHERE e.active_status = 1`
       )
-      return res.json({ success: true, data: summary[0] })
+      return res.json({ success: true, summary: summary[0], data: summary[0] })
     } catch (err) {
       return res.status(500).json({ success: false, message: String(err) })
     }
@@ -211,6 +237,143 @@ performanceDashboardRouter.post('/feedback-response', requireRole('admin', 'hr',
       return res.json({ success: true, message: 'Feedback submitted', responseId })
     } catch (err) {
       return res.status(500).json({ success: false, message: String(err) })
+    }
+  }))
+
+// GET /api/performance-dashboard/agent-matrix
+performanceDashboardRouter.get('/agent-matrix', requireRole(...PERF_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { from, to } = pdDates(req.query)
+      const pool = getCiPool()
+      const [rows] = await pool.execute<RowDataPacket[]>(
+        `SELECT
+           apr.UserID AS agent_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, e.last_name), apr.UserID) AS agent_name,
+           SUM(apr.Calls) AS total_calls,
+           ROUND(AVG(TIME_TO_SEC(apr.AHT)), 0) AS avg_aht_seconds,
+           ROUND(AVG(
+             CASE WHEN TIME_TO_SEC(IFNULL(apr.Login_Time,'00:00:00')) > 0 THEN
+               (TIME_TO_SEC(IFNULL(apr.BIO,'00:00:00')) + TIME_TO_SEC(IFNULL(apr.LUNCH,'00:00:00')) +
+                TIME_TO_SEC(IFNULL(apr.QA,'00:00:00')) + TIME_TO_SEC(IFNULL(apr.TRAINING,'00:00:00')))
+               / TIME_TO_SEC(IFNULL(apr.Login_Time,'00:00:00')) * 100
+             ELSE 0 END
+           ), 2) AS shrinkage_pct,
+           COUNT(*) AS days_present
+         FROM Shivamgiri.apr apr
+         LEFT JOIN mas_hrms.employees e ON e.employee_code = apr.UserID
+         WHERE apr.ReportDate BETWEEN ? AND ?
+         GROUP BY apr.UserID
+         ORDER BY total_calls DESC
+         LIMIT 200`,
+        [from, to]
+      )
+      return res.json({ success: true, matrix: rows })
+    } catch (err) {
+      return res.json({ success: true, matrix: [] })
+    }
+  }))
+
+// GET /api/performance-dashboard/trend
+performanceDashboardRouter.get('/trend', requireRole(...PERF_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { from, to } = pdDates(req.query)
+      const pool = getCiPool()
+      const [aprTrend] = await pool.execute<RowDataPacket[]>(
+        `SELECT
+           DATE_FORMAT(ReportDate, '%Y-%m-%d') AS date,
+           ROUND(AVG(Calls), 1) AS avg_calls,
+           ROUND(AVG(TIME_TO_SEC(AHT)), 0) AS avg_aht_seconds,
+           ROUND(AVG(
+             CASE WHEN TIME_TO_SEC(IFNULL(Login_Time,'00:00:00')) > 0 THEN
+               (TIME_TO_SEC(IFNULL(BIO,'00:00:00')) + TIME_TO_SEC(IFNULL(LUNCH,'00:00:00')) +
+                TIME_TO_SEC(IFNULL(QA,'00:00:00')) + TIME_TO_SEC(IFNULL(TRAINING,'00:00:00')))
+               / TIME_TO_SEC(IFNULL(Login_Time,'00:00:00')) * 100
+             ELSE 0 END
+           ), 2) AS avg_shrinkage
+         FROM Shivamgiri.apr
+         WHERE ReportDate BETWEEN ? AND ?
+         GROUP BY DATE_FORMAT(ReportDate, '%Y-%m-%d')
+         ORDER BY date ASC`,
+        [from, to]
+      )
+      return res.json({
+        success: true,
+        apr_trend: aprTrend,
+        audit_trend: [],
+        sales_trend: [],
+      })
+    } catch (err) {
+      return res.json({ success: true, apr_trend: [], audit_trend: [], sales_trend: [] })
+    }
+  }))
+
+// GET /api/performance-dashboard/process-comparison
+performanceDashboardRouter.get('/process-comparison', requireRole(...PERF_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { from, to } = pdDates(req.query)
+      const pool = getCiPool()
+      const [rows] = await pool.execute<RowDataPacket[]>(
+        `SELECT
+           COALESCE(pm.process_name, apr.campaign_id, 'Unknown') AS process,
+           COUNT(DISTINCT apr.UserID) AS agent_count,
+           ROUND(AVG(apr.Calls), 1) AS avg_calls,
+           ROUND(AVG(TIME_TO_SEC(apr.AHT)), 0) AS avg_aht_seconds,
+           ROUND(AVG(
+             CASE WHEN TIME_TO_SEC(IFNULL(apr.Login_Time,'00:00:00')) > 0 THEN
+               (TIME_TO_SEC(IFNULL(apr.BIO,'00:00:00')) + TIME_TO_SEC(IFNULL(apr.LUNCH,'00:00:00')) +
+                TIME_TO_SEC(IFNULL(apr.QA,'00:00:00')) + TIME_TO_SEC(IFNULL(apr.TRAINING,'00:00:00')))
+               / TIME_TO_SEC(IFNULL(apr.Login_Time,'00:00:00')) * 100
+             ELSE 0 END
+           ), 2) AS avg_shrinkage
+         FROM Shivamgiri.apr apr
+         LEFT JOIN mas_hrms.process_master pm ON pm.process_code = apr.campaign_id
+         WHERE apr.ReportDate BETWEEN ? AND ?
+         GROUP BY apr.campaign_id
+         ORDER BY avg_calls DESC`,
+        [from, to]
+      )
+      return res.json({ success: true, processes: rows })
+    } catch (err) {
+      return res.json({ success: true, processes: [] })
+    }
+  }))
+
+// GET /api/performance-dashboard/utilization
+performanceDashboardRouter.get('/utilization', requireRole(...PERF_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { from, to } = pdDates(req.query)
+      const pool = getCiPool()
+      const [rows] = await pool.execute<RowDataPacket[]>(
+        `SELECT
+           apr.UserID AS agent_code,
+           COALESCE(NULLIF(e.full_name,''), apr.UserID) AS agent_name,
+           ROUND(AVG(TIME_TO_SEC(IFNULL(apr.Login_Time,'00:00:00'))) / 3600, 2) AS login_hours,
+           ROUND(AVG(TIME_TO_SEC(IFNULL(apr.Net_Login,'00:00:00'))) / 3600, 2) AS net_login_hours,
+           ROUND(AVG(
+             CASE WHEN TIME_TO_SEC(IFNULL(apr.Login_Time,'00:00:00')) > 0 THEN
+               TIME_TO_SEC(IFNULL(apr.Net_Login,'00:00:00'))
+               / TIME_TO_SEC(IFNULL(apr.Login_Time,'00:00:00')) * 100
+             ELSE 0 END
+           ), 2) AS utilization_pct,
+           ROUND(AVG(TIME_TO_SEC(IFNULL(apr.BIO,'00:00:00'))) / 60, 1) AS bio_mins,
+           ROUND(AVG(TIME_TO_SEC(IFNULL(apr.LUNCH,'00:00:00'))) / 60, 1) AS lunch_mins,
+           ROUND(AVG(TIME_TO_SEC(IFNULL(apr.QA,'00:00:00'))) / 60, 1) AS qa_mins,
+           ROUND(AVG(TIME_TO_SEC(IFNULL(apr.TRAINING,'00:00:00'))) / 60, 1) AS training_mins
+         FROM Shivamgiri.apr apr
+         LEFT JOIN mas_hrms.employees e ON e.employee_code = apr.UserID
+         WHERE apr.ReportDate BETWEEN ? AND ?
+         GROUP BY apr.UserID
+         ORDER BY utilization_pct DESC
+         LIMIT 200`,
+        [from, to]
+      )
+      return res.json({ success: true, utilization: rows })
+    } catch (err) {
+      return res.json({ success: true, utilization: [] })
     }
   }))
 
