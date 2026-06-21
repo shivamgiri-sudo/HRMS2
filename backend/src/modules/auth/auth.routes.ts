@@ -168,6 +168,25 @@ router.post("/forgot-password", authLimiter, h(async (req: any, res: any) => {
   return res.json({ success: true, message: "If that email exists, a reset link has been sent." });
 }));
 
+// POST /api/auth/forgot-password-demo — DEV ONLY: return token via response (SMTP offline)
+router.post("/forgot-password-demo", h(async (req: any, res: any) => {
+  if (env.NODE_ENV === 'production') {
+    return res.status(403).json({ error: 'Not available in production' });
+  }
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email required' });
+
+  try {
+    const token = await authService.forgotPassword(email);
+    if (!token) {
+      return res.json({ success: false, message: 'Email not found or employee inactive' });
+    }
+    return res.json({ success: true, token, message: 'Use this token with /api/auth/reset-password' });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+}));
+
 // POST /api/auth/forgot-password-otp — public (rate limited) — SMS/WhatsApp OTP
 router.post("/forgot-password-otp", authLimiter, h(async (req: any, res: any) => {
   const { phone } = req.body;

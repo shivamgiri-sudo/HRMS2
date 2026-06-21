@@ -57,7 +57,7 @@ router.get("/me", h(async (req: any, res: any) => {
             e.bank_account_number, e.bank_name, e.bank_branch, e.ifsc_code,
             e.account_holder_name, e.account_type,
             e.nominee_name, e.nominee_relation,
-            COALESCE(e.uan_number, e.uan) AS uan_number,
+            e.uan_number,
             e.epf_number, e.esic_number,
             e.ctc, e.gross_salary, e.net_inhand,
             e.aadhaar_number, e.aadhaar_last4,
