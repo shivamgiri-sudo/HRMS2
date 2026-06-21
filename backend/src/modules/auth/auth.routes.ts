@@ -10,8 +10,8 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // 10 attempts per window per IP
+  windowMs: 60 * 1000, // 1 minute
+  max: 100, // 100 attempts per minute per IP (dev-friendly)
   message: { success: false, message: "Too many attempts, please try again later" },
   standardHeaders: true,
   legacyHeaders: false,
