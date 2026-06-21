@@ -84,8 +84,12 @@ const UnifiedPerformanceCommandCenter = lazy(() => import("./pages/UnifiedPerfor
 const UnifiedAccessControl          = lazy(() => import("./pages/UnifiedAccessControl"));
 const SuperAdminAccessControl       = lazy(() => import("./pages/SuperAdminAccessControl"));
 const NativeManagementDashboard     = lazy(() => import("./pages/NativeManagementDashboard"));
+const ManagementDashboard           = lazy(() => import("./pages/ManagementDashboard"));
 const NativeQualityDashboard        = lazy(() => import("./pages/NativeQualityDashboard"));
 const AgentQualityDashboard         = lazy(() => import("./pages/AgentQualityDashboard"));
+const ManagerQualityDashboard       = lazy(() => import("./pages/ManagerQualityDashboard"));
+const QADashboard                   = lazy(() => import("./pages/QADashboard"));
+const ExecutiveQualityDashboard     = lazy(() => import("./pages/ExecutiveQualityDashboard"));
 const NativeOperationsDashboard     = lazy(() => import("./pages/NativeOperationsDashboard"));
 const NativeSecurityCenter          = lazy(() => import("./pages/NativeSecurityCenter"));
 const NativeBusinessActionQueue     = lazy(() => import("./pages/NativeBusinessActionQueue"));
@@ -315,6 +319,9 @@ const App = () => (
               {/* Quality / Ops */}
               <Route path="/quality/dashboard" element={<ProtectedRoute><Gate pageCode="QUALITY_DASHBOARD"><NativeQualityDashboard /></Gate></ProtectedRoute>} />
               <Route path="/quality/my-dashboard" element={<ProtectedRoute><AgentQualityDashboard /></ProtectedRoute>} />
+              <Route path="/quality/team" element={<ProtectedRoute><ManagerQualityDashboard /></ProtectedRoute>} />
+              <Route path="/quality/audit" element={<ProtectedRoute><QADashboard /></ProtectedRoute>} />
+              <Route path="/quality/executive" element={<ProtectedRoute><ExecutiveQualityDashboard /></ProtectedRoute>} />
               <Route path="/operations/dashboard" element={<ProtectedRoute><Gate pageCode="OPERATIONS_DASHBOARD"><NativeOperationsDashboard /></Gate></ProtectedRoute>} />
               <Route path="/business-command-center" element={<ProtectedRoute roles={['admin', 'ceo', 'hr', 'manager', 'process_manager']}><NativeBusinessCommandCenter /></ProtectedRoute>} />
               <Route path="/business-actions" element={<ProtectedRoute roles={['admin', 'ceo', 'hr', 'manager', 'process_manager', 'team_leader', 'tl']}><NativeBusinessActionQueue /></ProtectedRoute>} />
@@ -374,6 +381,7 @@ const App = () => (
               <Route path="/org-masters/locations-policies" element={<ProtectedRoute><Gate pageCode="ORG_MASTERS"><NativeLocationPolicyMasters /></Gate></ProtectedRoute>} />
               <Route path="/workflow-admin" element={<ProtectedRoute><Gate pageCode="WORKFLOW_ADMIN"><NativeWorkflowAdmin /></Gate></ProtectedRoute>} />
               <Route path="/management/dashboard" element={<ProtectedRoute><Gate pageCode="MANAGEMENT_DASHBOARD"><NativeManagementDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/management/team" element={<ProtectedRoute roles={['admin', 'hr', 'manager', 'branch_head', 'ceo', 'process_manager']}><ManagementDashboard /></ProtectedRoute>} />
               <Route path="/management/ceo-command-center" element={<ProtectedRoute roles={['admin', 'hr', 'ceo', 'finance', 'process_manager', 'manager']}><NativeCEOCommandCenter /></ProtectedRoute>} />
               <Route path="/benefits" element={<ProtectedRoute><Gate pageCode="BENEFITS"><NativeBenefitsClaims /></Gate></ProtectedRoute>} />
               <Route path="/career-planning" element={<ProtectedRoute><Gate pageCode="CAREER_PLANNING"><NativeCareerPlanning /></Gate></ProtectedRoute>} />
