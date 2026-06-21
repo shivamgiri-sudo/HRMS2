@@ -7,6 +7,7 @@ import { startAnnualLeaveWorker } from './leave-annual-el-credit.worker.js';
 import { startLeaveMonthlyWorker } from './leave-monthly-credit.worker.js';
 import { startOfficialEmailComplianceScheduler } from './official-email-compliance.worker.js';
 import { startSLABreachWorker } from './sla-breach-worker.js';
+import { startLmsSyncWorker } from './lms-sync.worker.js';
 import { runNcosecBiometricSync } from '../../scripts/migrate-ncosec-biometric.js';
 
 const BIOMETRIC_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
@@ -54,6 +55,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: 'sla-breach',
     start: startSLABreachWorker,
+  },
+  {
+    name: 'lms-sync',
+    start: startLmsSyncWorker,
   },
   {
     name: 'biometric-cosec-sync',
