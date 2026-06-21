@@ -246,21 +246,37 @@ wfmRouter.post("/week-off-preference", requireAuth, h(async (req: any, res: any)
   return res.status(201).json({ success: true, data: (rows as any[])[0] });
 }));
 
-// GET /api/wfm/week-off-preference — list (wfm: filtered by branch; employee: own)
+// GET /api/wfm/week-off-preference — list (role-based: own/downline/branch/all)
 wfmRouter.get("/week-off-preference", requireAuth, h(async (req: any, res: any) => {
   const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
   const { db: dbConn } = await import("../../db/mysql.js");
-  const isPrivileged = await checkRole(req.authUser.id, 'admin', 'hr', 'wfm', 'manager');
+
+  const isAdmin = await checkRole(req.authUser.id, 'admin', 'hr', 'wfm');
   let cond = '', params: unknown[] = [];
-  if (!isPrivileged) {
+
+  if (isAdmin) {
+    // Admin/HR/WFM see all or filtered by branchId
+    if (req.query.branchId) {
+      cond = 'WHERE e.branch_id = ?';
+      params = [req.query.branchId];
+    }
+    // else no filter, see all
+  } else {
     const emp = await getEmployeeForUser(req.authUser.id);
     if (!emp) return res.status(403).json({ success: false, error: 'Forbidden' });
-    cond = 'WHERE wop.employee_id = ?';
-    params = [emp.id];
-  } else if (req.query.branchId) {
-    cond = 'WHERE e.branch_id = ?';
-    params = [req.query.branchId];
+
+    const isManager = await checkRole(req.authUser.id, 'manager', 'tl', 'team_lead');
+    if (isManager) {
+      // Manager/TL sees direct reports (downline)
+      cond = 'WHERE e.reporting_manager_id = ?';
+      params = [emp.id];
+    } else {
+      // Employee sees own only
+      cond = 'WHERE wop.employee_id = ?';
+      params = [emp.id];
+    }
   }
+
   const [rows] = await dbConn.execute(
     `SELECT wop.*, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
        e.employee_code, b.branch_name
