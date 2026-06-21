@@ -239,18 +239,12 @@ export const employeeProfileService = {
       personal_phone: "personal_phone",
       alternate_mobile: "alternate_mobile",
       address: "address1",
-      address2: "address2",
       city: "city",
-      state: "state",
       country: "country",
-      pincode: "pincode",
       date_of_birth: "date_of_birth",
       gender: "gender",
       marital_status: "marital_status",
       blood_group: "blood_group",
-      working_hours_start: "working_hours_start",
-      working_hours_end: "working_hours_end",
-      working_days: "working_days",
     };
 
     const entries = Object.entries(input) as Array<
@@ -259,7 +253,6 @@ export const employeeProfileService = {
     if (!entries.length) throw badRequest("No editable fields provided");
 
     const values = entries.map(([key, value]) => {
-      if (key === "working_days") return JSON.stringify(value);
       if (key === "gender" && typeof value === "string") {
         return value.charAt(0).toUpperCase() + value.slice(1);
       }
