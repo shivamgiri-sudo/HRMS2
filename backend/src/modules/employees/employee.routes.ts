@@ -73,28 +73,73 @@ router.get("/directory-masters", requireRole("admin", "hr", "manager"), h(async 
   return res.json({ data: { processes, branches } });
 }));
 
-// GET /api/employees?search=... — search employees by name or code
-router.get("/", requireAuth, h(async (req: any, res: any) => {
+// GET /api/employees — directory listing (with optional search/filters)
+router.get("/", requireAuth, requireRole("admin", "hr", "super_admin", "manager"), h(async (req: any, res: any) => {
   const search = String(req.query.search || "").trim();
-  const limit = Math.min(Number(req.query.limit) || 10, 100);
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(Number(req.query.limit) || 20, 100);
+  const offset = (page - 1) * limit;
+  const recordStatus = String(req.query.recordStatus || "active");
+  const departmentId = String(req.query.departmentId || "").trim();
+  const processId = String(req.query.processId || "").trim();
+  const branchId = String(req.query.branchId || "").trim();
 
-  if (search.length < 2) {
-    return res.json({ success: true, data: [] });
+  let whereClauses = ["e.active_status = 1"];
+  let params: any[] = [];
+
+  if (search.length >= 2) {
+    whereClauses.push(`(e.first_name LIKE ? OR e.last_name LIKE ? OR e.employee_code LIKE ?)`);
+    const pattern = `%${search}%`;
+    params.push(pattern, pattern, pattern);
   }
 
-  const pattern = `%${search}%`;
+  if (departmentId) {
+    whereClauses.push("e.department_id = ?");
+    params.push(departmentId);
+  }
+
+  if (processId) {
+    whereClauses.push("e.process_id = ?");
+    params.push(processId);
+  }
+
+  if (branchId) {
+    whereClauses.push("e.branch_id = ?");
+    params.push(branchId);
+  }
+
+  const whereSQL = whereClauses.join(" AND ");
+
+  // Get total count
+  const [countRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) as total FROM employees e WHERE ${whereSQL}`,
+    params
+  );
+  const total = countRows[0]?.total ?? 0;
+
+  // Get paginated results
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, first_name, last_name, employee_code
-     FROM employees
-     WHERE active_status = 1 AND (
-       first_name LIKE ? OR last_name LIKE ? OR employee_code LIKE ?
-     )
-     ORDER BY first_name, last_name
-     LIMIT ?`,
-    [pattern, pattern, pattern, limit]
+    `SELECT e.id, e.first_name, e.last_name, e.employee_code, e.email, e.mobile,
+            e.gender, e.date_of_joining, e.employment_status, e.employment_type,
+            d.dept_name, des.designation_name, b.branch_name, p.process_name
+     FROM employees e
+     LEFT JOIN department_master d ON d.id = e.department_id
+     LEFT JOIN designation_master des ON des.id = e.designation_id
+     LEFT JOIN branch_master b ON b.id = e.branch_id
+     LEFT JOIN process_master p ON p.id = e.process_id
+     WHERE ${whereSQL}
+     ORDER BY e.first_name, e.last_name
+     LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
   );
 
-  return res.json({ success: true, data: rows });
+  return res.json({
+    success: true,
+    data: rows,
+    total,
+    page,
+    limit
+  });
 }));
 
 // GET /api/employees/options/search — lightweight search for autocomplete
