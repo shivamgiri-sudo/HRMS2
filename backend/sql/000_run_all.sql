@@ -85,6 +85,7 @@ SOURCE sql/242_ats_interview_result_columns.sql;
 SOURCE sql/243_lms_integration_hub_config.sql;
 SOURCE sql/245_leave_credit_redesign.sql;
 SOURCE sql/246_nominee_gratuity_distribution.sql;
+SOURCE sql/250_lms_integration_schema.sql;
 
 SELECT 'mas_hrms schema complete' AS status;
 SHOW TABLES;
