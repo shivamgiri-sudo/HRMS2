@@ -43,6 +43,10 @@ export function LeaveBalanceCard({ employeeId }: LeaveBalanceCardProps) {
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {balances.map((balance) => {
                 const isEL = balance.leave_code === "EL";
+                const isCLML = ["CL", "ML"].includes(balance.leave_code || "");
+                const currentMonth = new Date().getMonth() + 1; // 1-12
+                const accruedMonths = Math.min(currentMonth, 12);
+                const accruedToDate = isCLML ? accruedMonths : balance.allocated_days;
                 const usedPct = balance.allocated_days > 0
                   ? Math.min((balance.used_days / balance.allocated_days) * 100, 100)
                   : 0;
@@ -81,6 +85,26 @@ export function LeaveBalanceCard({ employeeId }: LeaveBalanceCardProps) {
                         </span>
                       )}
                     </p>
+
+                    {/* CL/ML accrual info — shows accrued-to-date vs full year */}
+                    {isCLML && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="flex items-center gap-1.5 rounded-md bg-amber-50 px-2 py-1.5 cursor-help border border-amber-100">
+                            <TrendingUp className="h-3.5 w-3.5 text-amber-600 flex-shrink-0" />
+                            <span className="text-xs text-amber-700">
+                              {accruedToDate.toFixed(0)}/{balance.allocated_days.toFixed(0)} accrued
+                            </span>
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-xs text-xs">
+                          <p>
+                            {balance.leave_type?.name} accrues 1 day per month.
+                            Through {MONTH_NAMES[accruedMonths]}, you've accrued {accruedToDate.toFixed(0)} of {balance.allocated_days.toFixed(0)} annual days.
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
 
                     {/* EL accrual info — current year's accumulation, usable from next year */}
                     {isEL && balance.el_accruing_days != null && (
