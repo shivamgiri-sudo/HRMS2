@@ -73,7 +73,7 @@ export const engagementController = {
       reason: req.body.reason,
       awarded_by: req.authUser!.id,
     });
-    if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
+    if (!parsed.success) return res.status(400).json({ success: false, error: Object.values(parsed.error.flatten().fieldErrors).flat().join("; ") || parsed.error.message });
     return res.status(201).json({ success: true, data: await awardBadge(parsed.data) });
   },
 
@@ -91,7 +91,7 @@ export const engagementController = {
       transaction_type: "manual_adjustment",
       description: req.body.reason,
     });
-    if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
+    if (!parsed.success) return res.status(400).json({ success: false, error: Object.values(parsed.error.flatten().fieldErrors).flat().join("; ") || parsed.error.message });
     return res.status(201).json({
       success: true,
       data: await addPoints(
@@ -132,7 +132,7 @@ export const engagementController = {
       custom_message: req.body.message,
       is_anonymous: req.body.isAnonymous,
     });
-    if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
+    if (!parsed.success) return res.status(400).json({ success: false, error: Object.values(parsed.error.flatten().fieldErrors).flat().join("; ") || parsed.error.message });
     return res.status(201).json({ success: true, data: { id: await sendKudos(parsed.data) } });
   },
 
@@ -162,7 +162,7 @@ export const engagementController = {
 
   async createSurvey(req: AuthenticatedRequest, res: Response) {
     const parsed = CreateSurveySchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
+    if (!parsed.success) return res.status(400).json({ success: false, error: Object.values(parsed.error.flatten().fieldErrors).flat().join("; ") || parsed.error.message });
     return res.status(201).json({
       success: true,
       data: { id: await createSurvey(parsed.data, req.authUser!.id) },
@@ -178,7 +178,7 @@ export const engagementController = {
       employee_id: employee?.id,
       responses: req.body.responses,
     });
-    if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
+    if (!parsed.success) return res.status(400).json({ success: false, error: Object.values(parsed.error.flatten().fieldErrors).flat().join("; ") || parsed.error.message });
     await submitSurveyResponse(parsed.data);
     return res.status(201).json({ success: true });
   },
@@ -197,7 +197,7 @@ export const engagementController = {
   async submitPulse(req: AuthenticatedRequest, res: Response) {
     const employee = await requireEmployee(req);
     const parsed = SubmitPulseCheckSchema.safeParse({ ...req.body, employee_id: employee.id });
-    if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
+    if (!parsed.success) return res.status(400).json({ success: false, error: Object.values(parsed.error.flatten().fieldErrors).flat().join("; ") || parsed.error.message });
     await submitPulseCheck(parsed.data);
     return res.status(201).json({ success: true });
   },

@@ -48,12 +48,13 @@ const TICKET_SELECT = `SELECT t.*,
        e.full_name,
        b.branch_name,
        p.process_name,
-       COALESCE(NULLIF(u.full_name,''), u.email) AS assigned_name
+       COALESCE(NULLIF(emp_u.full_name,''), u.email) AS assigned_name
   FROM helpdesk_ticket t
   JOIN employees e ON e.id = t.employee_id
   LEFT JOIN branch_master b ON b.id = e.branch_id
   LEFT JOIN process_master p ON p.id = e.process_id
-  LEFT JOIN auth_user u ON u.id = t.assigned_to`;
+  LEFT JOIN auth_user u ON u.id = t.assigned_to
+  LEFT JOIN employees emp_u ON emp_u.user_id = u.id`;
 
 export const helpdeskService = {
   async listTickets(filters: {
@@ -99,10 +100,11 @@ export const helpdeskService = {
               c.comment_text AS text,
               c.is_internal,
               c.author_user_id AS created_by,
-              COALESCE(NULLIF(u.full_name, ''), u.email, 'Agent') AS author_name,
+              COALESCE(NULLIF(emp_c.full_name, ''), u.email, 'Agent') AS author_name,
               c.created_at
          FROM helpdesk_ticket_comment c
          LEFT JOIN auth_user u ON u.id = c.author_user_id
+         LEFT JOIN employees emp_c ON emp_c.user_id = u.id
         WHERE c.ticket_id = ?
         ORDER BY c.created_at ASC`, [id]
     );
@@ -234,11 +236,12 @@ export const helpdeskService = {
   async ownerWorkload(_filters: Record<string, unknown> = {}) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(t.assigned_to, 'unassigned') AS owner_user_id,
-              COALESCE(NULLIF(u.full_name,''), u.email, 'Unassigned') AS owner_name,
+              COALESCE(NULLIF(emp_ow.full_name,''), u.email, 'Unassigned') AS owner_name,
               COUNT(*) AS open_count,
               SUM(t.priority = 'urgent') AS urgent_count
          FROM helpdesk_ticket t
          LEFT JOIN auth_user u ON u.id = t.assigned_to
+         LEFT JOIN employees emp_ow ON emp_ow.user_id = u.id
         WHERE t.status NOT IN ('resolved','closed','cancelled')
         GROUP BY COALESCE(t.assigned_to, 'unassigned'), owner_name
         ORDER BY open_count DESC

@@ -170,7 +170,7 @@ export default function NativeRosterPreference() {
 
   const submitMutation = useMutation({
     mutationFn: (data: SubmitForm) =>
-      hrmsApi.post("/wfm/roster-preferences", {
+      hrmsApi.post("/api/wfm/roster-preferences", {
         preferredShiftId: data.preferredShiftId || undefined,
         preferredWeekOff: data.preferredWeekOff || undefined,
         flexibility: data.flexibility,

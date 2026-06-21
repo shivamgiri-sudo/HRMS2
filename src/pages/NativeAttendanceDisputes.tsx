@@ -90,14 +90,15 @@ export default function NativeAttendanceDisputes() {
         // Payroll queue
       }
 
-      const resp = await hrmsApi.get("/attendance/disputes", { params });
-      if (resp.data?.success) {
-        setDisputes(resp.data.data || []);
+      const qs = new URLSearchParams(params).toString();
+      const resp = await hrmsApi.get<{success:boolean;data:Dispute[];error?:string}>(`/api/attendance/disputes${qs ? `?${qs}` : ""}`);
+      if (resp.success) {
+        setDisputes(resp.data || []);
       } else {
-        setError(resp.data?.error || "Failed to load disputes");
+        setError(resp.error || "Failed to load disputes");
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || "Error loading disputes");
+      setError(err.message || "Error loading disputes");
     } finally {
       setLoading(false);
     }

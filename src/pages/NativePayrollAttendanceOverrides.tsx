@@ -64,14 +64,14 @@ export default function NativePayrollAttendanceOverrides() {
     setLoading(true);
     setError("");
     try {
-      const resp = await hrmsApi.get("/attendance/manual-overrides");
-      if (resp.data?.success) {
-        setOverrides(resp.data.data || []);
+      const resp = await hrmsApi.get<{success:boolean;data:any[];error?:string}>("/api/attendance/manual-overrides");
+      if (resp.success) {
+        setOverrides(resp.data || []);
       } else {
-        setError(resp.data?.error || "Failed to load overrides");
+        setError(resp.error || "Failed to load overrides");
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || "Error loading overrides");
+      setError(err.message || "Error loading overrides");
     } finally {
       setLoading(false);
     }
@@ -90,7 +90,7 @@ export default function NativePayrollAttendanceOverrides() {
     setLoading(true);
     setError("");
     try {
-      const resp = await hrmsApi.post("/attendance/manual-overrides", {
+      const resp = await hrmsApi.post<{success:boolean;error?:string}>("/api/attendance/manual-overrides", {
         employee_id: formData.employee_id,
         attendance_date: formData.attendance_date,
         new_status: formData.new_status,
@@ -98,7 +98,7 @@ export default function NativePayrollAttendanceOverrides() {
         payroll_month: formData.payroll_month || undefined,
       });
 
-      if (resp.data?.success) {
+      if (resp.success) {
         await fetchOverrides();
         setShowCreateDialog(false);
         setFormData({

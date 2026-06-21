@@ -40,10 +40,11 @@ export const businessActionsService = {
     const where = listWhere(filters);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT a.*,
-              COALESCE(NULLIF(u.full_name, ''), u.email, a.owner_role, 'Unassigned') AS owner_name,
+              COALESCE(NULLIF(emp_u.full_name, ''), u.email, a.owner_role, 'Unassigned') AS owner_name,
               CASE WHEN a.due_date < CURDATE() AND a.status NOT IN ('completed','cancelled') THEN 1 ELSE 0 END AS is_overdue
          FROM business_action_queue a
          LEFT JOIN auth_user u ON u.id = a.owner_user_id
+         LEFT JOIN employees emp_u ON emp_u.user_id = u.id
          ${where.sql}
         ORDER BY FIELD(a.severity, 'critical','high','medium','low'), a.due_date ASC, a.created_at DESC
         LIMIT 300`,
@@ -79,9 +80,10 @@ export const businessActionsService = {
     );
 
     const [byOwner] = await db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(NULLIF(u.full_name, ''), u.email, a.owner_role, 'Unassigned') AS label, COUNT(*) AS value
+      `SELECT COALESCE(NULLIF(emp_u.full_name, ''), u.email, a.owner_role, 'Unassigned') AS label, COUNT(*) AS value
          FROM business_action_queue a
          LEFT JOIN auth_user u ON u.id = a.owner_user_id
+         LEFT JOIN employees emp_u ON emp_u.user_id = u.id
         WHERE a.status IN (${OPEN_STATUSES.map(() => "?").join(",")})
         GROUP BY label
         ORDER BY value DESC
@@ -94,18 +96,20 @@ export const businessActionsService = {
 
   async get(id: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT a.*, COALESCE(NULLIF(u.full_name, ''), u.email, a.owner_role, 'Unassigned') AS owner_name
+      `SELECT a.*, COALESCE(NULLIF(emp_u.full_name, ''), u.email, a.owner_role, 'Unassigned') AS owner_name
          FROM business_action_queue a
          LEFT JOIN auth_user u ON u.id = a.owner_user_id
+         LEFT JOIN employees emp_u ON emp_u.user_id = u.id
         WHERE a.id = ? LIMIT 1`,
       [id]
     );
     const action = rows[0];
     if (!action) return null;
     const [comments] = await db.execute<RowDataPacket[]>(
-      `SELECT c.*, COALESCE(NULLIF(u.full_name, ''), u.email, 'System') AS author_name
+      `SELECT c.*, COALESCE(NULLIF(emp_c.full_name, ''), u.email, 'System') AS author_name
          FROM business_action_comment c
          LEFT JOIN auth_user u ON u.id = c.author_user_id
+         LEFT JOIN employees emp_c ON emp_c.user_id = u.id
         WHERE c.action_id = ?
         ORDER BY c.created_at ASC`,
       [id]

@@ -132,7 +132,7 @@ export async function getCategoryBreakdown(filters: { from?: string; to?: string
 export async function getOwnerWorkload() {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT t.assigned_to,
-            COALESCE(NULLIF(u.full_name,''), u.email, 'Unassigned') AS owner_name,
+            COALESCE(NULLIF(emp_ow.full_name,''), u.email, 'Unassigned') AS owner_name,
             COUNT(*) AS total,
             SUM(t.status NOT IN ('resolved','closed','cancelled')) AS open,
             SUM(t.priority = 'urgent' AND t.status NOT IN ('resolved','closed','cancelled')) AS urgent_open,
@@ -141,6 +141,7 @@ export async function getOwnerWorkload() {
                            THEN TIMESTAMPDIFF(MINUTE, t.created_at, t.resolved_at) END), 0) AS avg_resolution_minutes
        FROM helpdesk_ticket t
        LEFT JOIN auth_user u ON u.id = t.assigned_to
+       LEFT JOIN employees emp_ow ON emp_ow.user_id = u.id
       WHERE t.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
       GROUP BY t.assigned_to
       ORDER BY open DESC

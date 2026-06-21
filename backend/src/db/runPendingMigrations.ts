@@ -168,6 +168,19 @@ const MIGRATION_MANIFEST: string[] = [
   "236_add_rejected_request_decision_type.sql",
   "237_attendance_dispute_schema.sql",
   "238_attendance_manual_override.sql",
+  "239_conversion_funnel_schema.sql",
+  "240_bgv_vendor_dispatch.sql",
+  "241_ats_bgv_enhanced_tables.sql",
+  "242_ats_interview_result_columns.sql",
+  "243_lms_integration_hub_config.sql",
+  "245_leave_credit_redesign.sql",
+  "246_nominee_gratuity_distribution.sql",
+  "250_lms_integration_schema.sql",
+  "251_lms_employee_mapping.sql",
+  "252_lms_sync_audit_table.sql",
+  "260_communication_preferences.sql",
+  "261_profile_update_approval.sql",
+  "1000_fix_engagement_schema_columns.sql",
 ];
 
 export type MigrationHealth = {

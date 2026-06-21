@@ -384,9 +384,10 @@ export const taskService = {
    */
   async getTaskComments(taskId: string): Promise<EmployeeTaskComment[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT c.*, u.full_name as user_name
+      `SELECT c.*, COALESCE(emp.full_name, u.email) as user_name
        FROM employee_task_comment c
        LEFT JOIN auth_user u ON u.id = c.user_id
+       LEFT JOIN employees emp ON emp.user_id = u.id
        WHERE c.task_id = ?
        ORDER BY c.created_at ASC`,
       [taskId]

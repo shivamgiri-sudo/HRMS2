@@ -119,7 +119,13 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
 
   const formatTime = (timestamp: string | null) => {
     if (!timestamp) return "-";
-    return format(new Date(timestamp), "h:mm a");
+    // If timestamp has no timezone info (MySQL datetime stored as UTC), append Z so JS parses as UTC
+    // then display in IST (UTC+5:30)
+    const ts = /[Zz+\-]\d*$/.test(timestamp) ? timestamp : timestamp.replace(" ", "T") + "Z";
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return "-";
+    const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+    return format(ist, "h:mm a") + " IST";
   };
 
   const formatHours = (hours: number | null) => {
@@ -157,7 +163,7 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
                         <CalendarDays className="h-4 w-4 text-muted-foreground" />
-                        {format(new Date((record.date || record.record_date) + "T00:00:00"), "MMM d, yyyy")}
+                        {(() => { const d = new Date((record.date || record.record_date || "") + "T00:00:00"); return isNaN(d.getTime()) ? (record.date || record.record_date || "—") : format(d, "MMM d, yyyy"); })()}
                       </div>
                     </TableCell>
                     <TableCell>
