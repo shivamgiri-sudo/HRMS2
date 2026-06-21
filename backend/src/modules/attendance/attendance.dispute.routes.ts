@@ -190,7 +190,13 @@ function auditDispute(
  *               payrollImpact, payrollHeadApprovalRequired
  */
 attendanceDisputeRouter.get("/disputes", h(async (req: any, res: any) => {
-  const scope = await buildDisputeListScope(req.authUser.id);
+  let scope;
+  try {
+    scope = await buildDisputeListScope(req.authUser.id);
+  } catch (err) {
+    console.error("[Disputes Scope Error]", err);
+    return res.status(500).json({ success: false, error: "Failed to build scope: " + (err instanceof Error ? err.message : String(err)) });
+  }
   const conds: string[] = [`(${scope.sql})`];
   const params: unknown[] = [...scope.params];
 
