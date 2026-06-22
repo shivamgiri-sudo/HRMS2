@@ -2,6 +2,7 @@
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
+import { toIST } from '../../shared/timezone.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -626,7 +627,14 @@ export const attendanceEngineService = {
        WHERE adr.employee_id = ? AND adr.record_date = ? LIMIT 1`,
       [employeeId, date]
     );
-    return (rows[0] as AttendanceDailyRecord) ?? null;
+    const rec = rows[0] as any;
+    if (rec) {
+      rec.clock_in_time  = toIST(rec.clock_in_time);
+      rec.clock_out_time = toIST(rec.clock_out_time);
+      rec.clock_in       = toIST(rec.clock_in);
+      rec.clock_out      = toIST(rec.clock_out);
+    }
+    return (rec as AttendanceDailyRecord) ?? null;
   },
 
   async listRecords(filters: {
@@ -682,6 +690,10 @@ export const attendanceEngineService = {
     // Nest employee fields into sub-object to match frontend expectations
     const mapped = (rows as any[]).map(r => ({
       ...r,
+      clock_in_time:  toIST(r.clock_in_time),
+      clock_out_time: toIST(r.clock_out_time),
+      clock_in:       toIST(r.clock_in),
+      clock_out:      toIST(r.clock_out),
       employee: {
         first_name: r.first_name ?? '',
         last_name:  r.last_name  ?? '',

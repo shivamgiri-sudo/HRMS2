@@ -344,6 +344,8 @@ router.get(UUID_ROUTE, h(async (req: any, res: any) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.*,
             COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS email,
+            COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS official_email,
+            NULLIF(TRIM(COALESCE(e.personal_email, '')), '') AS personal_email,
             d.designation_name,
             dept.dept_name,
             b.branch_name,

@@ -11,7 +11,7 @@ import {
   CircleGauge,
   Clock3,
   Database,
-  DollarSign,
+
   GraduationCap,
   IndianRupee,
   ShieldAlert,
@@ -602,21 +602,21 @@ export function AdminWorkforceDashboard() {
               tone="amber"
             />
             <BusinessImpactCard
-              label="Payroll Liability"
-              value={inr(ceoQuery.data.payroll_liability.total_gross)}
+              label="Payroll (Net)"
+              value={inr(ceoQuery.data.payroll_liability.total_net)}
               sub={
                 ceoQuery.data.payroll_liability.run_month
-                  ? `${ceoQuery.data.payroll_liability.employee_count} employees · ${ceoQuery.data.payroll_liability.run_month}`
-                  : "Latest draft run"
+                  ? `${ceoQuery.data.payroll_liability.employee_count} employees · ${ceoQuery.data.payroll_liability.run_month} · Gross ${inr(ceoQuery.data.payroll_liability.total_gross)}`
+                  : "Current month run"
               }
               icon={<Wallet className="size-5" />}
               tone="blue"
             />
             <BusinessImpactCard
-              label="Attrition Cost (30d)"
+              label="Est. Attrition Cost (30d)"
               value={inr(ceoQuery.data.attrition_cost.replacement_cost_estimate)}
-              sub={`${ceoQuery.data.attrition_cost.exits_30d} exits · est. replacement cost`}
-              icon={<DollarSign className="size-5" />}
+              sub={`${ceoQuery.data.attrition_cost.exits_30d} exits · ~50% CTC replacement est.`}
+              icon={<UserMinus className="size-5" />}
               tone="violet"
             />
           </div>
@@ -694,29 +694,44 @@ export function AdminWorkforceDashboard() {
 
         <ChartCard
           title="Headcount by department"
-          description="Largest active departments, including unassigned records that require HR cleanup."
+          description="Largest active departments by headcount."
           action={
             <Badge variant="outline" className="tabular-nums">
               {formatNumber(data.summary.active_headcount)} total
             </Badge>
           }
         >
-          {data.headcount_by_department.length > 0 ? (
-            <div className="h-80" aria-label="Department headcount chart">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data.headcount_by_department} layout="vertical" margin={{ top: 8, right: 20, left: 8, bottom: 0 }}>
-                  <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" tick={{ fill: "#64748B", fontSize: 12 }} axisLine={false} tickLine={false} allowDecimals={false} />
-                  <YAxis dataKey="label" type="category" width={110} tick={{ fill: "#475569", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <Tooltip
-                    formatter={(value: number) => [formatNumber(value), "Employees"]}
-                    contentStyle={{ borderRadius: 12, borderColor: "#CBD5E1" }}
-                  />
-                  <Bar dataKey="value" fill="#1B6AB5" radius={[0, 6, 6, 0]} isAnimationActive={false} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
+          {data.headcount_by_department.length > 0 ? (() => {
+            const maxLabelLen = Math.max(...data.headcount_by_department.map(d => (d.label || "").length));
+            const yAxisWidth = Math.min(Math.max(maxLabelLen * 7, 90), 200);
+            const chartHeight = Math.max(280, data.headcount_by_department.length * 36 + 24);
+            return (
+              <div style={{ height: chartHeight }} aria-label="Department headcount chart">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={data.headcount_by_department} layout="vertical" margin={{ top: 4, right: 40, left: 4, bottom: 4 }}>
+                    <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" tick={{ fill: "#64748B", fontSize: 12 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                    <YAxis
+                      dataKey="label"
+                      type="category"
+                      width={yAxisWidth}
+                      tick={{ fill: "#475569", fontSize: 12 }}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={(v: string) => v.length > 22 ? v.slice(0, 21) + "…" : v}
+                    />
+                    <Tooltip
+                      formatter={(value: number) => [formatNumber(value), "Employees"]}
+                      contentStyle={{ borderRadius: 12, borderColor: "#CBD5E1" }}
+                    />
+                    <Bar dataKey="value" fill="#1B6AB5" radius={[0, 6, 6, 0]} isAnimationActive={false}
+                      label={{ position: "right", fill: "#475569", fontSize: 12, formatter: (v: number) => v > 0 ? formatNumber(v) : "" }}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            );
+          })() : (
             <EmptyChart message="Department assignments are not available yet." href="/org-masters" action="Configure departments" />
           )}
         </ChartCard>

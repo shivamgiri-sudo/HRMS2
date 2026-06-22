@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { toIST } from "../../shared/timezone.js";
 
 export const attendanceDailyScopedRouter = Router();
 attendanceDailyScopedRouter.use(requireAuth);
@@ -105,6 +106,10 @@ attendanceDailyScopedRouter.get("/daily", h(async (req, res) => {
 
   const data = rows.map((r: any) => ({
     ...r,
+    clock_in_time:  toIST(r.clock_in_time),
+    clock_out_time: toIST(r.clock_out_time),
+    clock_in:       toIST(r.clock_in),
+    clock_out:      toIST(r.clock_out),
     employee: {
       first_name: r.first_name ?? "",
       last_name: r.last_name ?? "",
