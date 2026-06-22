@@ -15,6 +15,7 @@ import { PortalRoute } from "./components/portal/PortalRoute";
 // ── Core (eager — needed before auth resolves) ────────────────────────────────
 import Auth from "./pages/AuthClean";
 import ResetPassword from "./pages/ResetPassword";
+import ChangePassword from "./pages/ChangePassword";
 import NotFound from "./pages/NotFound";
 
 // ── Lazy page chunks ──────────────────────────────────────────────────────────
@@ -253,6 +254,7 @@ const App = () => (
               <Route path="/security" element={<Security />} />
               <Route path="/auth" element={<Auth />} />
               <Route path="/reset-password" element={<ResetPassword />} />
+              <Route path="/change-password" element={<ProtectedRoute><ChangePassword /></ProtectedRoute>} />
               <Route path="/onboard" element={<CandidateOnboardingPage />} />
 
               <Route path="/interview-registration" element={<NativeATSCandidateRegistration />} />
@@ -403,7 +405,7 @@ const App = () => (
               <Route path="/workflow-admin" element={<ProtectedRoute><Gate pageCode="WORKFLOW_ADMIN"><NativeWorkflowAdmin /></Gate></ProtectedRoute>} />
               <Route path="/management/dashboard" element={<ProtectedRoute><Gate pageCode="MANAGEMENT_DASHBOARD"><NativeManagementDashboard /></Gate></ProtectedRoute>} />
               <Route path="/management/team" element={<ProtectedRoute roles={['admin', 'hr', 'manager', 'branch_head', 'ceo', 'process_manager']}><ManagementDashboard /></ProtectedRoute>} />
-              <Route path="/management/ceo-command-center" element={<ProtectedRoute roles={['admin', 'hr', 'ceo', 'finance', 'process_manager', 'manager']}><NativeCEOCommandCenter /></ProtectedRoute>} />
+              {/* /management/ceo-command-center disabled */}
               <Route path="/benefits" element={<ProtectedRoute><Gate pageCode="BENEFITS"><NativeBenefitsClaims /></Gate></ProtectedRoute>} />
               <Route path="/career-planning" element={<ProtectedRoute><Gate pageCode="CAREER_PLANNING"><NativeCareerPlanning /></Gate></ProtectedRoute>} />
               <Route path="/pip-management" element={<ProtectedRoute><Gate pageCode="PIP_MANAGEMENT"><NativePIPManagement /></Gate></ProtectedRoute>} />
@@ -468,7 +470,7 @@ const App = () => (
               <Route path="/wfm/slot-requirements" element={<ProtectedRoute roles={['admin','hr','wfm','manager','super_admin']}><NativeSlotRequirementBuilder /></ProtectedRoute>} />
               <Route path="/wfm/weekoff-day-rules" element={<ProtectedRoute roles={['admin','hr','wfm','manager','super_admin']}><NativeWeekOffDayRuleConfig /></ProtectedRoute>} />
               <Route path="/workforce-planning" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWorkforcePlanning /></Gate></ProtectedRoute>} />
-              <Route path="/control-tower" element={<ProtectedRoute><Gate pageCode="CONTROL_TOWER"><NativeControlTower /></Gate></ProtectedRoute>} />
+              {/* /control-tower disabled */}
               <Route path="/rta-board" element={<ProtectedRoute><Gate pageCode="RTA_BOARD"><NativeRTABoard /></Gate></ProtectedRoute>} />
               <Route path="/ats/walkin-queue" element={<ProtectedRoute><Gate pageCode="ATS_WAITING_QUEUE"><NativeWalkinQueue /></Gate></ProtectedRoute>} />
               <Route path="/attendance-rules-master" element={<ProtectedRoute><NativeAttendanceRulesMaster /></ProtectedRoute>} />

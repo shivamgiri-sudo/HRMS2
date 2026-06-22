@@ -66,6 +66,54 @@ businessCommandRouter.get("/revenue-risk/snapshot", h(async (req, res) => {
 }));
 
 businessCommandRouter.post("/revenue-risk/generate-daily", h(async (req, res) => {
-  const date = String(req.body?.date ?? new Date().toISOString().slice(0, 10));
+  // Default to latest date that has attendance data (COSEC may lag 1-2 days behind today)
+  let date = String(req.body?.date ?? "");
+  if (!date || date === "today") {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      "SELECT DATE_FORMAT(MAX(record_date), '%Y-%m-%d') AS latest_date FROM attendance_daily_record"
+    );
+    date = (latestRows[0] as any)?.latest_date ?? new Date().toISOString().slice(0, 10);
+  }
   res.json({ success: true, data: await revenueRiskService.calculate(date, true) });
+}));
+
+// GET /api/business-command/workforce-mandates — list mandates
+businessCommandRouter.get("/workforce-mandates", h(async (_req, res) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT wm.*, pm.process_name, cm.client_name
+       FROM workforce_mandate wm
+       LEFT JOIN process_master pm ON pm.id = wm.process_id
+       LEFT JOIN client_master cm ON cm.id = wm.client_id
+      WHERE wm.active_status = 1
+      ORDER BY pm.process_name ASC, wm.effective_from DESC
+      LIMIT 500`
+  );
+  res.json({ success: true, data: rows });
+}));
+
+// POST /api/business-command/workforce-mandates — create/update mandate for a process
+businessCommandRouter.post("/workforce-mandates", h(async (req, res) => {
+  const { process_id, client_id, mandated_hc, effective_from, effective_to, hc_type } = req.body;
+  if (!process_id) return res.status(400).json({ success: false, error: "process_id is required" });
+  if (!mandated_hc || Number(mandated_hc) < 1) return res.status(400).json({ success: false, error: "mandated_hc must be >= 1" });
+  if (!effective_from) return res.status(400).json({ success: false, error: "effective_from is required" });
+
+  const { randomUUID } = await import("crypto");
+  const id = randomUUID();
+  await db.execute(
+    `INSERT INTO workforce_mandate
+       (id, process_id, client_id, mandated_hc, hc_type, effective_from, effective_to, active_status, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+    [
+      id,
+      process_id,
+      client_id ?? null,
+      Number(mandated_hc),
+      hc_type ?? "production",
+      effective_from,
+      effective_to ?? null,
+      req.authUser!.id,
+    ]
+  );
+  res.status(201).json({ success: true, data: { id } });
 }));

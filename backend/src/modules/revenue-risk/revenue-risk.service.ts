@@ -71,9 +71,10 @@ async function getContract(processId: string, clientId: string | null, date: str
 async function requiredHc(processId: string, date: string) {
   if (await tableExists("workforce_mandate")) {
     return scalar(
-      `SELECT COALESCE(SUM(required_hc), SUM(target_hc), SUM(mandated_hc), 0)
+      `SELECT COALESCE(SUM(mandated_hc), 0)
          FROM workforce_mandate
         WHERE process_id = ?
+          AND active_status = 1
           AND (effective_from IS NULL OR effective_from <= ?)
           AND (effective_to IS NULL OR effective_to >= ?)`,
       [processId, date, date]
@@ -107,14 +108,31 @@ async function plannedHc(processId: string, date: string) {
 
 async function availableHc(processId: string, date: string) {
   if (await tableExists("attendance_daily_record")) {
+    // Use requested date; fall back to latest date with data if no records for requested date
+    const countForDate = await scalar(
+      `SELECT COUNT(DISTINCT adr.employee_id)
+         FROM attendance_daily_record adr
+         JOIN employees e ON e.id = adr.employee_id
+        WHERE e.process_id = ?
+          AND adr.record_date = ?
+          AND adr.attendance_status IN ('present','half_day')`,
+      [processId, date]
+    );
+    if (countForDate > 0) return countForDate;
+
+    // Fallback: use latest date that has attendance data (COSEC may lag 1-2 days)
     return scalar(
       `SELECT COUNT(DISTINCT adr.employee_id)
          FROM attendance_daily_record adr
          JOIN employees e ON e.id = adr.employee_id
         WHERE e.process_id = ?
-          AND adr.attendance_date = ?
-          AND LOWER(adr.status) IN ('present','p','late','half_day_late')`,
-      [processId, date]
+          AND adr.record_date = (
+            SELECT MAX(record_date) FROM attendance_daily_record adr2
+            JOIN employees e2 ON e2.id = adr2.employee_id
+            WHERE e2.process_id = ? AND adr2.attendance_status IN ('present','half_day')
+          )
+          AND adr.attendance_status IN ('present','half_day')`,
+      [processId, processId]
     );
   }
   return plannedHc(processId, date);

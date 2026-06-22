@@ -7,14 +7,11 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 export interface RbacMismatch {
   user_id: string;
   mysql_roles: string[];
-  supabase_roles: string[];
-  in_supabase_only: string[];
   in_mysql_only: string[];
 }
 
 export interface ReconciliationReport {
   total_mysql_users: number;
-  total_supabase_users: number;
   mismatches: RbacMismatch[];
   checked_at: string;
 }
@@ -62,8 +59,6 @@ export async function getRbacReconciliation(): Promise<ReconciliationReport> {
       mismatches.push({
         user_id: userId,
         mysql_roles: roles,
-        supabase_roles: [], // Deprecated field
-        in_supabase_only: [], // Deprecated field
         in_mysql_only: invalidRoles.length > 0 ? invalidRoles : (userExists ? [] : roles),
       });
     }
@@ -71,7 +66,6 @@ export async function getRbacReconciliation(): Promise<ReconciliationReport> {
 
   return {
     total_mysql_users: mysqlByUser.size,
-    total_supabase_users: 0, // Deprecated
     mismatches,
     checked_at: new Date().toISOString(),
   };

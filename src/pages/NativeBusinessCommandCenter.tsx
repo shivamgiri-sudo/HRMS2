@@ -43,6 +43,17 @@ type ContractRow = {
 
 type OptionRow = { id: string; name: string; client_id?: string; client_name?: string };
 
+type MandateRow = {
+  id: string;
+  process_id: string;
+  process_name?: string;
+  client_name?: string;
+  mandated_hc: number;
+  hc_type: string;
+  effective_from: string;
+  effective_to?: string;
+};
+
 type Overview = {
   generated_at: string;
   executive_summary: {
@@ -71,11 +82,20 @@ type Overview = {
 export default function NativeBusinessCommandCenter() {
   const [data, setData] = useState<Overview | null>(null);
   const [contracts, setContracts] = useState<ContractRow[]>([]);
+  const [mandates, setMandates] = useState<MandateRow[]>([]);
   const [clients, setClients] = useState<OptionRow[]>([]);
   const [processes, setProcesses] = useState<OptionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingContract, setSavingContract] = useState(false);
+  const [savingMandate, setSavingMandate] = useState(false);
   const [message, setMessage] = useState("");
+  const [mandateForm, setMandateForm] = useState({
+    process_id: "none",
+    mandated_hc: "",
+    hc_type: "production",
+    effective_from: new Date().toISOString().slice(0, 10),
+    effective_to: "",
+  });
   const [contractForm, setContractForm] = useState({
     contract_name: "",
     client_id: "none",
@@ -97,15 +117,17 @@ export default function NativeBusinessCommandCenter() {
     setLoading(true);
     setMessage("");
     try {
-      const [overviewRes, contractRes, optionRes] = await Promise.all([
+      const [overviewRes, contractRes, optionRes, mandateRes] = await Promise.all([
         hrmsApi.get<{ success: boolean; data: Overview }>("/api/business-command/overview"),
         hrmsApi.get<{ success: boolean; data: ContractRow[] }>("/api/business-command/revenue-risk/contracts"),
         hrmsApi.get<{ success: boolean; data: { clients: OptionRow[]; processes: OptionRow[] } }>("/api/business-command/revenue-risk/options"),
+        hrmsApi.get<{ success: boolean; data: MandateRow[] }>("/api/business-command/workforce-mandates"),
       ]);
       setData(overviewRes.data);
       setContracts(contractRes.data ?? []);
       setClients(optionRes.data?.clients ?? []);
       setProcesses(optionRes.data?.processes ?? []);
+      setMandates(mandateRes.data ?? []);
     } catch (error: any) {
       setMessage(error?.message || "Unable to load Business Command Center");
     } finally {
@@ -157,6 +179,32 @@ export default function NativeBusinessCommandCenter() {
       setMessage(error?.message || "Unable to create contract");
     } finally {
       setSavingContract(false);
+    }
+  };
+
+  const createMandate = async () => {
+    if (mandateForm.process_id === "none") { setMessage("Select a process."); return; }
+    if (!mandateForm.mandated_hc || Number(mandateForm.mandated_hc) < 1) { setMessage("Required HC must be at least 1."); return; }
+    if (!mandateForm.effective_from) { setMessage("Effective from date is required."); return; }
+    setSavingMandate(true);
+    setMessage("");
+    try {
+      const proc = processes.find(p => p.id === mandateForm.process_id);
+      await hrmsApi.post("/api/business-command/workforce-mandates", {
+        process_id: mandateForm.process_id,
+        client_id: proc?.client_id ?? null,
+        mandated_hc: Number(mandateForm.mandated_hc),
+        hc_type: mandateForm.hc_type,
+        effective_from: mandateForm.effective_from,
+        effective_to: mandateForm.effective_to || null,
+      });
+      setMessage("Required HC saved. Click Generate Revenue Risk to update the board.");
+      setMandateForm({ process_id: "none", mandated_hc: "", hc_type: "production", effective_from: new Date().toISOString().slice(0, 10), effective_to: "" });
+      await load();
+    } catch (error: any) {
+      setMessage(error?.message || "Unable to save required HC");
+    } finally {
+      setSavingMandate(false);
     }
   };
 
@@ -212,76 +260,126 @@ export default function NativeBusinessCommandCenter() {
         </section>
 
         <section className="grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
-          <Panel title="Revenue-at-Risk by Process" subtitle="Daily estimate from contract rate, mandate, roster and attendance signals">
+          <Panel title="Revenue-at-Risk by Process" subtitle="Live from biometric attendance vs required HC mandate. Available HC = present employees per process on latest synced date.">
             <div className="max-h-[430px] overflow-auto">
               <table className="w-full min-w-[980px] text-sm">
                 <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                  <tr>{["Risk", "Client / Process", "Required", "Available", "Short", "At Risk", "Confidence", "Reason"].map((h) => <th key={h} className="px-3 py-3 font-black">{h}</th>)}</tr>
+                  <tr>{["Risk", "Client / Process", "Required HC", "Available HC (biometric)", "Short HC", "Rev. at Risk", "Confidence", "Reason"].map((h) => <th key={h} className="px-3 py-3 font-black">{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {revenueRows.map((row, index) => (
                     <tr key={`${row.process_id ?? index}-${row.revenue_date}`} className="border-t hover:bg-slate-50">
                       <td className="px-3 py-3"><RiskPill label={row.risk_level} /></td>
-                      <td className="px-3 py-3"><div className="font-black text-slate-950">{row.process_name || "Unknown process"}</div><div className="text-xs text-slate-500">{row.client_name || "Unknown client"}</div></td>
-                      <td className="px-3 py-3 font-bold">{row.required_hc}</td>
-                      <td className="px-3 py-3 font-bold">{row.available_hc}</td>
-                      <td className="px-3 py-3 font-bold text-amber-700">{row.shortage_hc}</td>
-                      <td className="px-3 py-3 font-black text-red-700">{formatInr(row.revenue_at_risk)}</td>
+                      <td className="px-3 py-3"><div className="font-black text-slate-950">{row.process_name || "Unknown process"}</div><div className="text-xs text-slate-500">{row.client_name || "—"}</div></td>
+                      <td className="px-3 py-3 font-bold">{row.required_hc || <span className="text-amber-600 text-xs">Not set</span>}</td>
+                      <td className="px-3 py-3 font-bold text-emerald-700">{row.available_hc}</td>
+                      <td className={`px-3 py-3 font-bold ${row.shortage_hc > 0 ? "text-red-700" : "text-slate-400"}`}>{row.shortage_hc > 0 ? row.shortage_hc : "—"}</td>
+                      <td className="px-3 py-3 font-black text-red-700">{row.revenue_at_risk > 0 ? formatInr(row.revenue_at_risk) : "—"}</td>
                       <td className="px-3 py-3">{row.data_confidence_score}%</td>
-                      <td className="px-3 py-3 max-w-[280px] truncate text-xs text-slate-500">{(row.reason_json ?? []).join(" | ") || "No risk reason"}</td>
+                      <td className="px-3 py-3 max-w-[280px] truncate text-xs text-slate-500">{(row.reason_json ?? []).join(" | ") || "—"}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {!loading && revenueRows.length === 0 ? <Empty /> : null}
+              {!loading && revenueRows.length === 0 ? <div className="p-6 text-center text-sm text-slate-500">No processes found. Click <strong>Generate Revenue Risk</strong> to compute.</div> : null}
             </div>
           </Panel>
 
-          <Panel title="Mapped Contract Setup" subtitle="Map INR billing contract to client/process for precise revenue-risk calculation">
-            <div className="space-y-3">
-              <Input placeholder="Contract name" value={contractForm.contract_name} onChange={(e) => setContractForm((p) => ({ ...p, contract_name: e.target.value }))} />
-              <Select value={contractForm.client_id} onValueChange={(value) => setContractForm((p) => ({ ...p, client_id: value, process_id: p.process_id !== "none" && value !== "none" && !processes.find((process) => process.id === p.process_id && process.client_id === value) ? "none" : p.process_id }))}>
-                <SelectTrigger><SelectValue placeholder="Select client" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">All clients / not mapped</SelectItem>
-                  {clients.map((client) => <SelectItem key={client.id} value={client.id}>{client.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Select value={contractForm.process_id} onValueChange={(value) => setContractForm((p) => ({ ...p, process_id: value }))}>
-                <SelectTrigger><SelectValue placeholder="Select process" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">All processes for selected client</SelectItem>
-                  {filteredProcesses.map((process) => <SelectItem key={process.id} value={process.id}>{process.client_name ? `${process.client_name} · ` : ""}{process.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Select value={contractForm.billing_type} onValueChange={(value) => setContractForm((p) => ({ ...p, billing_type: value }))}>
-                <SelectTrigger><SelectValue placeholder="Billing type" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="per_seat">Per seat</SelectItem>
-                  <SelectItem value="per_hour">Per hour</SelectItem>
-                  <SelectItem value="per_transaction">Per transaction</SelectItem>
-                  <SelectItem value="fixed_monthly">Fixed monthly</SelectItem>
-                  <SelectItem value="hybrid">Hybrid</SelectItem>
-                </SelectContent>
-              </Select>
-              <Input type="number" placeholder="Billing rate INR" value={contractForm.billing_rate} onChange={(e) => setContractForm((p) => ({ ...p, billing_rate: e.target.value }))} />
-              <Input type="number" placeholder="Monthly minimum commitment INR" value={contractForm.monthly_minimum_commitment} onChange={(e) => setContractForm((p) => ({ ...p, monthly_minimum_commitment: e.target.value }))} />
-              <Input type="number" placeholder="SLA target % optional" value={contractForm.sla_target_percentage} onChange={(e) => setContractForm((p) => ({ ...p, sla_target_percentage: e.target.value }))} />
-              <div className="grid gap-2 md:grid-cols-2">
-                <Input type="date" value={contractForm.effective_from} onChange={(e) => setContractForm((p) => ({ ...p, effective_from: e.target.value }))} />
-                <Input type="date" value={contractForm.effective_to} onChange={(e) => setContractForm((p) => ({ ...p, effective_to: e.target.value }))} />
+          <div className="space-y-5">
+            {/* Required HC (Workforce Mandate) */}
+            <Panel title="Set Required HC per Process" subtitle="Mandatory headcount needed on floor. Short HC = Required − Available (biometric).">
+              <div className="space-y-3">
+                <Select value={mandateForm.process_id} onValueChange={(v) => setMandateForm(p => ({ ...p, process_id: v }))}>
+                  <SelectTrigger><SelectValue placeholder="Select process" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">— Select process —</SelectItem>
+                    {processes.map((proc) => <SelectItem key={proc.id} value={proc.id}>{proc.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Input type="number" placeholder="Required headcount (e.g. 50)" value={mandateForm.mandated_hc} onChange={(e) => setMandateForm(p => ({ ...p, mandated_hc: e.target.value }))} />
+                <Select value={mandateForm.hc_type} onValueChange={(v) => setMandateForm(p => ({ ...p, hc_type: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="production">Production</SelectItem>
+                    <SelectItem value="support">Support</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="grid gap-2 md:grid-cols-2">
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-500 mb-1">Mandate valid from</p>
+                    <Input type="date" value={mandateForm.effective_from} onChange={(e) => setMandateForm(p => ({ ...p, effective_from: e.target.value }))} />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-500 mb-1">Mandate valid to (leave blank = ongoing)</p>
+                    <Input type="date" value={mandateForm.effective_to} onChange={(e) => setMandateForm(p => ({ ...p, effective_to: e.target.value }))} />
+                  </div>
+                </div>
+                <Button onClick={createMandate} disabled={savingMandate} className="w-full">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Save Required HC
+                </Button>
               </div>
-              <Button onClick={createContract} disabled={savingContract} className="w-full">
-                <Plus className="mr-2 h-4 w-4" />
-                Create Mapped Contract
-              </Button>
-            </div>
-            <div className="mt-5 space-y-2">
-              <div className="text-sm font-black text-slate-700">Recent contracts</div>
-              {contracts.slice(0, 5).map((contract) => <Mini key={contract.id} label={`${contract.contract_name}${contract.process_name ? ` · ${contract.process_name}` : contract.client_name ? ` · ${contract.client_name}` : ""}`} value={`${contract.billing_type} · ${formatInr(contract.billing_rate)}`} />)}
-              {contracts.length === 0 ? <Empty /> : null}
-            </div>
-          </Panel>
+              <div className="mt-4 space-y-1">
+                <div className="text-xs font-black text-slate-600 mb-1">Active mandates</div>
+                {mandates.slice(0, 6).map((m) => (
+                  <Mini key={m.id} label={`${m.process_name || "—"}`} value={`${m.mandated_hc} HC · ${m.hc_type}`} />
+                ))}
+                {mandates.length === 0 ? <Empty /> : null}
+              </div>
+            </Panel>
+
+            {/* Contract billing setup */}
+            <Panel title="Billing Contract Setup" subtitle={`Map INR billing rate to process. Effective from/to = dates this rate is valid (e.g. 01 Apr – 31 Mar). Revenue at Risk = (Required HC − Available HC) × rate.`}>
+              <div className="space-y-3">
+                <Input placeholder="Contract name (e.g. HDFC Inbound FY26)" value={contractForm.contract_name} onChange={(e) => setContractForm((p) => ({ ...p, contract_name: e.target.value }))} />
+                <Select value={contractForm.client_id} onValueChange={(value) => setContractForm((p) => ({ ...p, client_id: value, process_id: p.process_id !== "none" && value !== "none" && !processes.find((process) => process.id === p.process_id && process.client_id === value) ? "none" : p.process_id }))}>
+                  <SelectTrigger><SelectValue placeholder="Select client" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">All clients / not mapped</SelectItem>
+                    {clients.map((client) => <SelectItem key={client.id} value={client.id}>{client.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={contractForm.process_id} onValueChange={(value) => setContractForm((p) => ({ ...p, process_id: value }))}>
+                  <SelectTrigger><SelectValue placeholder="Select process" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">All processes for selected client</SelectItem>
+                    {filteredProcesses.map((process) => <SelectItem key={process.id} value={process.id}>{process.client_name ? `${process.client_name} · ` : ""}{process.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={contractForm.billing_type} onValueChange={(value) => setContractForm((p) => ({ ...p, billing_type: value }))}>
+                  <SelectTrigger><SelectValue placeholder="Billing type" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="per_seat">Per seat / day</SelectItem>
+                    <SelectItem value="per_hour">Per hour</SelectItem>
+                    <SelectItem value="per_transaction">Per transaction</SelectItem>
+                    <SelectItem value="fixed_monthly">Fixed monthly</SelectItem>
+                    <SelectItem value="hybrid">Hybrid</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input type="number" placeholder="Billing rate INR (per seat/hour/transaction)" value={contractForm.billing_rate} onChange={(e) => setContractForm((p) => ({ ...p, billing_rate: e.target.value }))} />
+                <Input type="number" placeholder="Monthly minimum commitment INR" value={contractForm.monthly_minimum_commitment} onChange={(e) => setContractForm((p) => ({ ...p, monthly_minimum_commitment: e.target.value }))} />
+                <div className="grid gap-2 md:grid-cols-2">
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-500 mb-1">Rate valid from</p>
+                    <Input type="date" value={contractForm.effective_from} onChange={(e) => setContractForm((p) => ({ ...p, effective_from: e.target.value }))} />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-500 mb-1">Rate valid to (blank = ongoing)</p>
+                    <Input type="date" value={contractForm.effective_to} onChange={(e) => setContractForm((p) => ({ ...p, effective_to: e.target.value }))} />
+                  </div>
+                </div>
+                <Button onClick={createContract} disabled={savingContract} className="w-full">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create Billing Contract
+                </Button>
+              </div>
+              <div className="mt-4 space-y-1">
+                <div className="text-xs font-black text-slate-600 mb-1">Recent contracts</div>
+                {contracts.slice(0, 4).map((contract) => <Mini key={contract.id} label={`${contract.contract_name}${contract.process_name ? ` · ${contract.process_name}` : ""}`} value={`${contract.billing_type} · ${formatInr(contract.billing_rate)}`} />)}
+                {contracts.length === 0 ? <Empty /> : null}
+              </div>
+            </Panel>
+          </div>
         </section>
 
         <section className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">

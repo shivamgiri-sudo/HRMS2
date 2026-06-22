@@ -42,7 +42,7 @@ export const accountControlService = {
       entity_id: userId,
       change_summary: { email },
     });
-    return { logged: true, message: "Reset request logged; Supabase Auth sends the reset link" };
+    return { logged: true, message: "Reset request logged" };
   },
 
   async forcePasswordChange(
@@ -51,8 +51,7 @@ export const accountControlService = {
     reason: string,
     ip: string
   ): Promise<RowDataPacket> {
-    // MySQL logs the intent. Auth-layer enforcement remains Supabase-owned until
-    // the production auth bridge is connected; no plaintext credential is stored.
+    // MySQL logs the intent. No plaintext credential is stored.
     await insertControlLog(userId, "force_change_set", initiatedBy, ip, reason);
     await logSensitiveAction({
       actor_user_id: initiatedBy,
@@ -60,7 +59,7 @@ export const accountControlService = {
       module_key: "ACCOUNT_CONTROL",
       entity_type: "user",
       entity_id: userId,
-      change_summary: { reason, enforcement: "supabase_auth_bridge_pending" },
+      change_summary: { reason, enforcement: "pending" },
     });
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT user_id, role_key, active_status

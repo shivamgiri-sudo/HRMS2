@@ -108,8 +108,14 @@ function fmtDate(year: number, month: number, day: number) {
 function fmtTime(val?: string | null): string {
   if (!val) return "--:--";
   try {
-    return new Date(val).toLocaleTimeString("en-IN", {
+    // MySQL returns datetime without timezone offset (e.g. "2024-01-15 09:00:00").
+    // Appending +05:30 ensures the value is parsed as IST, not UTC.
+    const istStr = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(val)
+      ? val.replace(" ", "T") + "+05:30"
+      : val;
+    return new Date(istStr).toLocaleTimeString("en-IN", {
       hour: "2-digit", minute: "2-digit", hour12: true,
+      timeZone: "Asia/Kolkata",
     });
   } catch { return val.slice(11, 16) || "--:--"; }
 }
@@ -121,11 +127,13 @@ function fmtMinutes(mins?: number | null): string {
 }
 function normalizeDate(value?: string): string {
   if (!value) return "";
+  // Already a date string
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  // ISO with T — slice directly, no timezone conversion needed
   if (/^\d{4}-\d{2}-\d{2}T/.test(value)) return value.slice(0, 10);
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value.slice(0, 10);
-  return parsed.toISOString().slice(0, 10);
+  // MySQL datetime "YYYY-MM-DD HH:MM:SS" — take date part directly (no UTC parse)
+  if (/^\d{4}-\d{2}-\d{2} /.test(value)) return value.slice(0, 10);
+  return value.slice(0, 10);
 }
 function normalizeStatus(status?: string): DayStatus {
   const s = String(status || "").toLowerCase();
@@ -142,9 +150,12 @@ function normalizeStatus(status?: string): DayStatus {
 function detectNightShift(punchIn?: string | null, punchOut?: string | null): boolean {
   if (!punchIn || !punchOut) return false;
   try {
-    const inDate  = new Date(punchIn).toISOString().slice(0, 10);
-    const outDate = new Date(punchOut).toISOString().slice(0, 10);
-    const outHour = new Date(punchOut).getHours();
+    // Treat naked datetime strings as IST to avoid UTC date boundary shift
+    const toIST = (s: string) =>
+      /^\d{4}-\d{2}-\d{2} /.test(s) ? s.replace(" ", "T") + "+05:30" : s;
+    const inDate  = normalizeDate(punchIn);
+    const outDate = normalizeDate(punchOut);
+    const outHour = new Date(toIST(punchOut)).getHours();
     return inDate !== outDate && outHour < 6;
   } catch { return false; }
 }

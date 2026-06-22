@@ -19,7 +19,7 @@ const service = new QualityExecutiveService(db);
 router.get(
   '/quality-summary',
   requireAuth,
-  requireRole('ceo', 'super_admin'),
+  requireRole('ceo', 'super_admin', 'admin'),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.authUser?.id;

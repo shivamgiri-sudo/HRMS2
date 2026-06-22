@@ -222,7 +222,7 @@ registrationEnhancedRouter.post("/parse-resume", async (req, res) => {
     const isPdf = lower.endsWith('.pdf');
     const isDoc = lower.endsWith('.docx') || lower.endsWith('.doc');
 
-    // For plain-text files hosted on Supabase Storage, attempt a fetch and read
+    // For plain-text files, attempt a fetch and read
     let extractedText = '';
     if (lower.endsWith('.txt')) {
       try {

@@ -234,6 +234,19 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     staleTime: 60_000,
   });
 
+  // Check if there's a pending reporting manager change for this employee
+  const { data: pendingManagerRequest } = useQuery({
+    queryKey: ["reporting-manager-pending", employee?.id],
+    queryFn: async () => {
+      if (!employee?.id) return null;
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/employees/reporting-manager-requests");
+      const pending = (res.data ?? []).find((r: any) => r.employee_id === employee.id);
+      return pending ?? null;
+    },
+    enabled: open && !!employee?.id,
+    staleTime: 10_000,
+  });
+
   const filteredManagers = useMemo(() => {
     const q = managerSearchQuery.toLowerCase();
     return managers
@@ -309,7 +322,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
 
   const updateMutation = useMutation({
     mutationFn: async ({ data, isDeptManager }: { data: EditFormData; isDeptManager: boolean }) => {
-      await hrmsApi.patch(`/api/employees/${employee.id}`, {
+      const result = await hrmsApi.patch<{ success?: boolean; pendingApproval?: boolean; message?: string }>(`/api/employees/${employee.id}`, {
         // Note: employeeCode, firstName, and lastName are protected and cannot be updated
         email: data.email,
         officialEmail: data.official_email || null,
@@ -331,6 +344,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         workingDays: data.working_days,
         employmentStatus: data.status,
       });
+      return result;
 
       // Update department manager status if employee has a department
       if (data.department_id) {
@@ -343,11 +357,16 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
           await hrmsApi.put(`/api/org/departments/${data.department_id}`, { manager_id: null });
         }
       }
+      return result;
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["employees"] });
       queryClient.invalidateQueries({ queryKey: ["employee-directory"] });
       queryClient.invalidateQueries({ queryKey: ["departments"] });
+      queryClient.invalidateQueries({ queryKey: ["reporting-manager-pending", employee?.id] });
+      if (result?.pendingApproval) {
+        toast.info(result.message ?? "Reporting manager change submitted for WFM approval");
+      }
     },
     onError: (error) => {
       toast.error(`Failed to update employee: ${error.message}`);
@@ -711,9 +730,16 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                 </div>
 
                 <div className="space-y-2">
-                  <Label>
-                    Reporting Manager {!isDepartmentManager && '*'}
-                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Label>
+                      Reporting Manager {!isDepartmentManager && '*'}
+                    </Label>
+                    {pendingManagerRequest && (
+                      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                        Pending WFM approval
+                      </span>
+                    )}
+                  </div>
                   <Popover open={managerSearchOpen} onOpenChange={setManagerSearchOpen}>
                     <PopoverTrigger asChild>
                       <Button

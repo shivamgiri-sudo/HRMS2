@@ -56,7 +56,7 @@ INSERT IGNORE INTO dpdp_config (config_key, config_value, description) VALUES
 ('dpdp_authority_registration_number', '', 'Registration number from DPDP Authority (when notified)'),
 ('dpdp_authority_registration_date', '', 'Date of DPDP Authority registration'),
 ('dpdp_rules_notified', 'no', 'Whether DPDP Rules 2025 have been officially notified: yes/no'),
-('privacy_policy_url', 'https://mas-callnet-hrms.vercel.app/privacy-policy', 'Full URL of published privacy policy'),
+('privacy_policy_url', 'https://hrms.mascallnet.com/privacy-policy', 'Full URL of published privacy policy'),
 ('privacy_policy_last_updated', '2026-05-31', 'Date privacy policy was last reviewed/updated'),
 ('consent_active_version_employment', 'v1.0', 'Active consent version for employment purpose'),
 ('consent_active_version_recruitment', 'v1.0', 'Active consent version for recruitment purpose'),

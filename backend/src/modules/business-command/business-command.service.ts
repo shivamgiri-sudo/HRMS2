@@ -34,9 +34,9 @@ export const businessCommandService = {
 
     const todayAttendance = await tableExists("attendance_daily_record")
       ? {
-          present: await scalar("SELECT COUNT(*) FROM attendance_daily_record WHERE attendance_date = CURDATE() AND LOWER(status) IN ('present','p')"),
-          absent: await scalar("SELECT COUNT(*) FROM attendance_daily_record WHERE attendance_date = CURDATE() AND LOWER(status) IN ('absent','a','lwp')"),
-          late: await scalar("SELECT COUNT(*) FROM attendance_daily_record WHERE attendance_date = CURDATE() AND LOWER(status) IN ('late','half_day_late')"),
+          present: await scalar("SELECT COUNT(*) FROM attendance_daily_record WHERE record_date = (SELECT MAX(record_date) FROM attendance_daily_record) AND attendance_status IN ('present','half_day')"),
+          absent: await scalar("SELECT COUNT(*) FROM attendance_daily_record WHERE record_date = (SELECT MAX(record_date) FROM attendance_daily_record) AND attendance_status IN ('absent','unreconciled')"),
+          late: await scalar("SELECT COUNT(*) FROM attendance_daily_record WHERE record_date = (SELECT MAX(record_date) FROM attendance_daily_record) AND late_mark = 1"),
         }
       : { present: 0, absent: 0, late: 0 };
 

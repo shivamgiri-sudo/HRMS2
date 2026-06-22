@@ -924,7 +924,12 @@ wfmRouter.get(
     const { employeeId, date } = req.params;
     // Allow: privileged roles, OR employee viewing their own record
     const { hasRole: checkRole2 } = await import("../../shared/accessGuard.js");
-    const isPrivileged = await checkRole2(req.authUser!.id, "admin", "hr", "wfm", "manager", "ceo", "finance", "payroll");
+    const isPrivileged = await checkRole2(
+      req.authUser!.id,
+      "super_admin", "admin", "hr", "wfm", "manager", "ceo",
+      "finance", "payroll", "branch_head", "process_manager",
+      "recruiter", "qa", "trainer"
+    );
     if (!isPrivileged) {
       const emp = await getEmployeeForUser(req.authUser!.id);
       if (!emp || emp.id !== employeeId) {

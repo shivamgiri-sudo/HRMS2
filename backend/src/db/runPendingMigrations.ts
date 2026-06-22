@@ -181,6 +181,9 @@ const MIGRATION_MANIFEST: string[] = [
   "252_lms_sync_audit_table.sql",
   "260_communication_preferences.sql",
   "261_profile_update_approval.sql",
+  "262_reporting_manager_change_request.sql",
+  "263_superadmin_mas47814.sql",
+  "264_business_action_queue.sql",
   "1000_fix_engagement_schema_columns.sql",
 ];
 

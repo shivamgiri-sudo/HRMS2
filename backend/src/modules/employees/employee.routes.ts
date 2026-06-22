@@ -381,6 +381,107 @@ router.delete("/me/photo", h(async (req: any, res: any) => {
   res.json({ success: true });
 }));
 
+// GET /api/employees/reporting-manager-requests — WFM sees pending for their branch
+router.get("/reporting-manager-requests", requireAuth, requireRole("wfm", "admin", "hr"), h(async (req: any, res: any) => {
+  const userId = req.authUser!.id;
+  const isWfm = await hasRole(userId, "wfm");
+
+  let branchFilter = "";
+  let params: any[] = [];
+
+  if (isWfm && !await hasRole(userId, "admin")) {
+    // WFM sees only their branch
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      "SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+      [userId]
+    );
+    const branchId = (empRows[0] as any)?.branch_id;
+    if (branchId) {
+      branchFilter = "AND pua.branch_id = ?";
+      params = [branchId];
+    }
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT pua.id, pua.employee_id, pua.branch_id, pua.new_values, pua.old_values,
+            pua.status, pua.requested_at, pua.reviewer_note,
+            CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+            e.employee_code,
+            CONCAT(rm.first_name, ' ', COALESCE(rm.last_name, '')) AS proposed_manager_name,
+            rm.employee_code AS proposed_manager_code
+       FROM profile_update_approval pua
+       JOIN employees e ON e.id = pua.employee_id
+       LEFT JOIN employees rm ON rm.id = pua.pending_manager_id
+      WHERE pua.request_type = 'reporting_manager_change' AND pua.status = 'pending'
+      ${branchFilter}
+      ORDER BY pua.requested_at DESC`,
+    params
+  );
+  return res.json({ success: true, data: rows });
+}));
+
+// POST /api/employees/reporting-manager-requests/:id/approve
+router.post("/reporting-manager-requests/:id/approve", requireAuth, requireRole("wfm", "admin", "hr"), h(async (req: any, res: any) => {
+  const requestId = req.params.id;
+  const reviewerId = req.authUser!.id;
+
+  const [reqRows] = await db.execute<RowDataPacket[]>(
+    "SELECT * FROM profile_update_approval WHERE id = ? AND request_type = 'reporting_manager_change' AND status = 'pending' LIMIT 1",
+    [requestId]
+  );
+  const approval = reqRows[0] as any;
+  if (!approval) return res.status(404).json({ success: false, error: "Request not found or already processed" });
+
+  const newManagerId = approval.pending_manager_id;
+
+  await db.execute(
+    "UPDATE employees SET reporting_manager_id = ?, updated_at = NOW() WHERE id = ?",
+    [newManagerId, approval.employee_id]
+  );
+
+  const [reviewerEmp] = await db.execute<RowDataPacket[]>(
+    "SELECT id FROM employees WHERE user_id = ? LIMIT 1", [reviewerId]
+  );
+  const reviewerEmpId = (reviewerEmp[0] as any)?.id ?? reviewerId;
+
+  await db.execute(
+    `UPDATE profile_update_approval
+       SET status = 'approved', reviewed_by = ?, reviewer_role = 'wfm',
+           reviewer_note = ?, reviewed_at = NOW()
+     WHERE id = ?`,
+    [reviewerEmpId, req.body?.note ?? null, requestId]
+  );
+
+  return res.json({ success: true, message: "Reporting manager change approved" });
+}));
+
+// POST /api/employees/reporting-manager-requests/:id/reject
+router.post("/reporting-manager-requests/:id/reject", requireAuth, requireRole("wfm", "admin", "hr"), h(async (req: any, res: any) => {
+  const requestId = req.params.id;
+  const reviewerId = req.authUser!.id;
+
+  const [reqRows] = await db.execute<RowDataPacket[]>(
+    "SELECT id FROM profile_update_approval WHERE id = ? AND request_type = 'reporting_manager_change' AND status = 'pending' LIMIT 1",
+    [requestId]
+  );
+  if (!reqRows[0]) return res.status(404).json({ success: false, error: "Request not found or already processed" });
+
+  const [reviewerEmp] = await db.execute<RowDataPacket[]>(
+    "SELECT id FROM employees WHERE user_id = ? LIMIT 1", [reviewerId]
+  );
+  const reviewerEmpId = (reviewerEmp[0] as any)?.id ?? reviewerId;
+
+  await db.execute(
+    `UPDATE profile_update_approval
+       SET status = 'rejected', reviewed_by = ?, reviewer_role = 'wfm',
+           reviewer_note = ?, reviewed_at = NOW()
+     WHERE id = ?`,
+    [reviewerEmpId, req.body?.note ?? "Rejected by WFM", requestId]
+  );
+
+  return res.json({ success: true, message: "Reporting manager change rejected" });
+}));
+
 router.patch("/:id",
   requireRole("admin", "hr"),
   requireScopedRole(["hr"], async (req) => {
@@ -408,6 +509,53 @@ router.patch("/:id",
         });
       }
     }
+
+    // Intercept reportingManagerId — route through WFM approval workflow
+    if (req.body?.reportingManagerId !== undefined) {
+      const newManagerId: string | null = req.body.reportingManagerId;
+
+      // Fetch employee's current state for audit trail + branch
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        "SELECT reporting_manager_id, branch_id FROM employees WHERE id = ? LIMIT 1",
+        [req.params.id]
+      );
+      const empRow = empRows[0] as any;
+      const oldManagerId: string | null = empRow?.reporting_manager_id ?? null;
+      const branchId: string | null = empRow?.branch_id ?? null;
+
+      // Cancel any existing pending request for this employee before creating new one
+      await db.execute(
+        "UPDATE profile_update_approval SET status = 'cancelled' WHERE employee_id = ? AND request_type = 'reporting_manager_change' AND status = 'pending'",
+        [req.params.id]
+      );
+
+      // Create approval request
+      const { randomUUID } = await import("crypto");
+      await db.execute(
+        `INSERT INTO profile_update_approval
+           (id, employee_id, request_type, old_values, new_values, pending_manager_id, branch_id, status, requested_by_role)
+         VALUES (?, ?, 'reporting_manager_change', ?, ?, ?, ?, 'pending', 'hr')`,
+        [
+          randomUUID(),
+          req.params.id,
+          JSON.stringify({ reporting_manager_id: oldManagerId }),
+          JSON.stringify({ reporting_manager_id: newManagerId }),
+          newManagerId,
+          branchId,
+        ]
+      );
+
+      // Remove reportingManagerId so updateEmployee does not write it directly
+      const { reportingManagerId: _omitted, ...restBody } = req.body;
+      req.body = restBody;
+
+      // If no other fields remain, return early with pending notice
+      const remaining = Object.keys(restBody).filter(k => k !== "reportingManagerId");
+      if (remaining.length === 0) {
+        return res.json({ success: true, pendingApproval: true, message: "Reporting manager change submitted for WFM approval" });
+      }
+    }
+
     return c.updateEmployee(req, res);
   })
 );

@@ -63,7 +63,7 @@ router.get("/pages/my-catalog", h(async (req: AuthenticatedRequest, res: Respons
 
 /**
  * GET /api/access/rbac-reconciliation
- * Read-only mismatch report between MySQL user_roles (authority) and Supabase user_roles (UI mirror).
+ * Read-only mismatch report for MySQL user_roles.
  * Admin only. No writes, no auto-fix, no backfill.
  */
 router.get(
@@ -233,7 +233,6 @@ router.get("/rbac/status", requireRole("admin"), h(async (_req: AuthenticatedReq
       last_sync: report.checked_at,
       conflicts_count: report.mismatches.length,
       mysql_count: report.total_mysql_users,
-      supabase_count: report.total_supabase_users,
     },
   });
 }));

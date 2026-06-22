@@ -14,9 +14,15 @@ import {
 
 export const commandCentreRouter = Router();
 
-// All routes require authentication and manager/admin role
+// Accessible to all management/supervisory roles (view-only analytics)
 commandCentreRouter.use(requireAuth);
-commandCentreRouter.use(requireRole('admin', 'manager', 'hr'));
+commandCentreRouter.use(requireRole(
+  'super_admin', 'admin', 'ceo',
+  'hr', 'manager', 'process_manager', 'branch_head',
+  'recruiter', 'tl', 'team_leader',
+  'qa', 'wfm', 'trainer', 'payroll', 'finance',
+  'assistant_manager'
+));
 
 // ── 1. Get dashboard metrics ──────────────────────────────────────────────────
 commandCentreRouter.get('/metrics', async (_req, res) => {

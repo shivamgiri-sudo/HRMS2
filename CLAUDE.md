@@ -24,14 +24,14 @@ Do **not** create a Store Manager role. Use appropriate roles such as Super Admi
 
 The repository currently contains:
 
-- Frontend: React 18 + TypeScript + Vite + Tailwind + shadcn/Radix, intended for Vercel.
-- Backend: Express + TypeScript under `/backend`, intended for Railway.
+- Frontend: React 18 + TypeScript + Vite + Tailwind + shadcn/Radix, served locally or via nginx.
+- Backend: Express + TypeScript under `/backend`, runs locally or via Docker.
 - Operational DB: MySQL `mas_hrms`.
-- Authentication and storage: Supabase Auth and Storage; some existing frontend-native modules still read Supabase tables.
+- Authentication: MySQL-based JWT auth via `/api/auth/*` endpoints.
 - Current backend route modules: employees, ATS, leave, payroll foundation, WFM/roster, KPI, portal, exit, integration hub, process and migration.
-- Existing Supabase/native pages and SQL foundations for assets, documents, LMS access surfaces, WFM, Quality, Operations, ATS and access control.
+- Existing pages and SQL foundations for assets, documents, LMS access surfaces, WFM, Quality, Operations, ATS and access control.
 
-Existing functional or partially functional flows must not be discarded. Add an integration, wrapper or migration path before changing any direct-Supabase functionality.
+Existing functional or partially functional flows must not be discarded. Add an integration, wrapper or migration path before changing any existing functionality.
 
 ## LMS Integration Rule — Existing Deployed System
 
@@ -79,7 +79,7 @@ Treat these as protected unless the user explicitly approves replacement:
 3. Existing independently deployed LMS and all its working operational flows; integrate only.
 4. Existing Client Portal concept: process-scoped client access only, with no payroll/PII leakage.
 5. Existing WFM/roster, KPI, exit and Integration Hub work.
-6. Existing HRMS/Supabase authentication and stored document flows until a tested migration is available.
+6. Existing HRMS authentication and stored document flows until a tested migration is available.
 
 ## Non-Negotiable Engineering Rules
 
@@ -99,14 +99,7 @@ Treat these as protected unless the user explicitly approves replacement:
 
 ### MySQL First — Permanent Direction
 - `mas_hrms` is the dedicated writable PeopleOS application database. All new business workflow data lives here.
-- Do NOT create new operational or business tables in Supabase.
 - Build every new module (ATS, employee lifecycle, payroll, WFM, portal, LMS integration, ERP) in MySQL.
-
-### Supabase Transitional Boundary
-- Supabase Auth: may remain as identity/session provider; MySQL RBAC is authoritative for API access.
-- Supabase Storage: may retain binary-file storage temporarily; MySQL owns metadata, access audit and workflows.
-- Existing Supabase-native screens/tables: preserve until MySQL equivalent is tested and migrated. Do not expand as new architecture.
-- Existing Supabase LMS-related flows: treat as protected transitional legacy only; do not enhance into a second LMS.
 
 ### Upstream Source Systems
 - Existing production SQL databases, Call Master, attendance sources, client/source systems are upstream read-only sources.
@@ -122,10 +115,9 @@ Treat these as protected unless the user explicitly approves replacement:
 
 | Domain | Authoritative Source / Direction |
 |---|---|
-| Login/session identity | Supabase Auth |
-| File binaries | Supabase Storage initially |
-| Employee, ATS, attendance, leave, WFM, payroll, KPI, portal metrics, exit, process masters | MySQL through Express APIs as modules converge |
-| Existing Supabase-native modules not yet migrated | Preserve temporarily; document as transitional and migrate module-by-module |
+| Login/session identity | MySQL-based JWT auth (`/api/auth/*`) |
+| File binaries | Local filesystem via Express `/api/files/*` |
+| Employee, ATS, attendance, leave, WFM, payroll, KPI, portal metrics, exit, process masters | MySQL through Express APIs |
 | LMS course/content/assessment/certification operations | Existing deployed LMS only |
 | LMS readiness and reporting snapshots in HRMS | Synced from deployed LMS through integration layer |
 
@@ -138,9 +130,9 @@ Verify these in code before implementing changes:
 1. `backend/sql/000_run_all.sql` may omit KPI base schema and Client Portal schema required by mounted services.
 2. `backend/src/middleware/requireRole.ts` exists, but route-level authorization and row-scope enforcement require a complete security audit.
 3. `backend/src/modules/payroll/payrollCalculate.service.ts` must be reconciled with the `statutory_config` database contract before payroll is treated as reliable.
-4. Local development configuration is Supabase/PostgreSQL-centred while Express operational modules depend on MySQL; establish isolated local/staging MySQL testing first.
+4. All modules run against MySQL `mas_hrms`. Establish isolated local/staging MySQL testing first.
 5. Several `App.tsx` routes use `NativePlaceholderPage`, but that wrapper currently renders real LMS Admin, LMS Management, WFM Live Tracker, Quality and Operations components for matching titles. Do not delete it blindly; refactor only after integration/runtime testing.
-6. Asset/document journeys have existing Supabase foundations; build controlled backend convergence rather than removing active flows.
+6. Asset/document journeys have existing file-upload foundations; build controlled backend convergence rather than removing active flows.
 7. Payroll remains a foundation until TDS, gratuity, F&F, salary-advance recovery, payout workflow and statutory outputs are complete.
 8. LMS is not a missing backend to rebuild: it is an external deployed system to integrate.
 
@@ -194,7 +186,7 @@ For every phase:
 
 ## Claude Must Not Do Without Explicit Approval
 
-- Deploy to Vercel, Railway, Supabase or the deployed LMS.
+- Deploy to any hosting platform or the deployed LMS.
 - Run MySQL SQL on the production host.
 - Reset databases or storage.
 - Broadly modify authentication or RLS policies.

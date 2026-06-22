@@ -24,7 +24,7 @@ hrms-audit/
 ```env
 NODE_ENV=production
 PORT=5055
-FRONTEND_URL=https://your-vercel-app.vercel.app
+FRONTEND_URL=http://localhost:8080
 ```
 
 ### Database - MySQL (Primary)

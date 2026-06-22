@@ -57,9 +57,10 @@ export function DocumentViewerDialog({
     }
 
     return () => {
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-      }
+      setPreviewUrl((prev) => {
+        if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return null;
+      });
     };
   }, [open, documentInfo]);
 
@@ -68,27 +69,31 @@ export function DocumentViewerDialog({
 
     setIsLoading(true);
     try {
-      const fileName = documentInfo.document_name.toLowerCase();
-      const isPdf = fileName.endsWith(".pdf");
-      const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(fileName);
-
-      if (isPdf) {
-        setFileType("pdf");
-      } else if (isImage) {
-        setFileType("image");
-      } else {
-        setFileType("other");
-      }
-
-      // Build the correct URL — file_url already contains the correct /api/files/... path
       if (!documentInfo.file_url) {
         throw new Error("Document file URL is missing");
       }
-      const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
+
+      // Detect type from the actual file path (not display name)
+      const filePath = documentInfo.file_url.toLowerCase();
+      const isPdf = filePath.endsWith(".pdf");
+      const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(filePath);
+      setFileType(isPdf ? "pdf" : isImage ? "image" : "other");
+
+      const HRMS_API = (import.meta.env.VITE_HRMS_API_URL || import.meta.env.VITE_API_URL || "http://localhost:5056").replace(/\/$/, "");
       const fileUrl = documentInfo.file_url.startsWith("http") ? documentInfo.file_url
         : documentInfo.file_url.startsWith("/api/") ? `${HRMS_API}${documentInfo.file_url}`
         : `${HRMS_API}/api/files/employee-documents/${documentInfo.file_url}`;
-      setPreviewUrl(fileUrl);
+
+      // Fetch with auth header — endpoint requires authentication
+      const token = localStorage.getItem("hrms_access_token");
+      const resp = await fetch(fileUrl, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: "include",
+      });
+      if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      setPreviewUrl(blobUrl);
     } catch (error) {
       console.error("Error loading preview:", error);
       setPreviewUrl(null);
@@ -101,7 +106,7 @@ export function DocumentViewerDialog({
     if (!documentInfo || !documentInfo.file_url) return;
 
     try {
-      const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
+      const HRMS_API = (import.meta.env.VITE_HRMS_API_URL || import.meta.env.VITE_API_URL || "http://localhost:5056").replace(/\/$/, "");
       const fileUrl = documentInfo.file_url.startsWith("http") ? documentInfo.file_url
         : documentInfo.file_url.startsWith("/api/") ? `${HRMS_API}${documentInfo.file_url}`
         : `${HRMS_API}/api/files/employee-documents/${documentInfo.file_url}`;

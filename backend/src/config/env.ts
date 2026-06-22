@@ -8,7 +8,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(5055),
   FRONTEND_URL: z.string().url().default("http://localhost:8080"),
 
-  ACTIVE_DB_PROVIDER: z.enum(["supabase", "sqlserver", "mysql"]).default("mysql"),
+  ACTIVE_DB_PROVIDER: z.enum(["sqlserver", "mysql"]).default("mysql"),
 
   // MySQL (mas_hrms)
   DB_HOST:     z.string().default("localhost"),
