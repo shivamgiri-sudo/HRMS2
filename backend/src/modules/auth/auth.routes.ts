@@ -142,9 +142,6 @@ router.post("/forgot-password", authLimiter, h(async (req: any, res: any) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: "email required" });
 
-  const normalizedEmail = String(email).trim().toLowerCase();
-  const token = await authService.forgotPassword(normalizedEmail);
-
   if (!emailService.isConfigured()) {
     return res.status(503).json({
       success: false,
@@ -153,11 +150,14 @@ router.post("/forgot-password", authLimiter, h(async (req: any, res: any) => {
     });
   }
 
-  if (token) {
+  const normalizedEmail = String(email).trim().toLowerCase();
+  const result = await authService.forgotPassword(normalizedEmail);
+
+  if (result) {
     try {
-      const link = resetLink(token);
+      const link = resetLink(result.token);
       await emailService.send({
-        to: normalizedEmail,
+        to: result.deliverTo,
         subject: "Reset your MAS Callnet HRMS password",
         html: resetEmailHtml(link),
         text: resetEmailText(link),
@@ -180,11 +180,11 @@ router.post("/forgot-password-demo", h(async (req: any, res: any) => {
   if (!email) return res.status(400).json({ error: 'Email required' });
 
   try {
-    const token = await authService.forgotPassword(email);
-    if (!token) {
+    const result = await authService.forgotPassword(email);
+    if (!result) {
       return res.json({ success: false, message: 'Email not found or employee inactive' });
     }
-    return res.json({ success: true, token, message: 'Use this token with /api/auth/reset-password' });
+    return res.json({ success: true, token: result.token, deliverTo: result.deliverTo, message: 'Use this token with /api/auth/reset-password' });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
   }

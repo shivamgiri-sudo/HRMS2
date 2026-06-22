@@ -227,30 +227,39 @@ export const authService = {
     return rawToken;
   },
 
-  async forgotPassword(email: string): Promise<string | null> {
+  async forgotPassword(email: string): Promise<{ token: string; deliverTo: string } | null> {
     const normalizedEmail = normalizeEmail(email);
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT id FROM auth_user WHERE LOWER(email) = LOWER(?) AND is_blocked = 0 LIMIT 1',
+      'SELECT id, email FROM auth_user WHERE LOWER(email) = LOWER(?) AND is_blocked = 0 LIMIT 1',
       [normalizedEmail]
     );
-    if (rows[0]) return this.createPasswordResetTokenByUserId(rows[0].id, 1);
+    if (rows[0]) {
+      const token = await this.createPasswordResetTokenByUserId(rows[0].id, 1);
+      return { token, deliverTo: String(rows[0].email) };
+    }
 
-    // First-time employee access fallback. If launch bootstrap has not yet created
-    // auth_user, prepare employee account from employees.email.
-    // Includes both active and inactive employees (35K+ total).
+    // First-time employee access fallback. Check all email columns so employees
+    // whose login email is stored in official_email are also matched.
     const [employeeRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, email, user_id, active_status
+      `SELECT id, user_id, active_status,
+              COALESCE(NULLIF(TRIM(official_email),''), NULLIF(TRIM(email),'')) AS resolved_email
          FROM employees
         WHERE LOWER(email) = LOWER(?)
+           OR LOWER(official_email) = LOWER(?)
         LIMIT 1`,
-      [normalizedEmail]
+      [normalizedEmail, normalizedEmail]
     );
     const employee = employeeRows[0];
     if (!employee) return null; // silent — don't leak whether email exists
 
-    const userId = await createOrRepairEmployeeAuthUser(employee, normalizedEmail);
+    const resolvedEmail = employee.resolved_email
+      ? String(employee.resolved_email).toLowerCase().trim()
+      : normalizedEmail;
+
+    const userId = await createOrRepairEmployeeAuthUser(employee, resolvedEmail);
     if (!userId) return null;
-    return this.createPasswordResetTokenByUserId(userId, 1);
+    const token = await this.createPasswordResetTokenByUserId(userId, 1);
+    return { token, deliverTo: resolvedEmail };
   },
 
   async resetPassword(rawToken: string, newPassword: string): Promise<void> {
