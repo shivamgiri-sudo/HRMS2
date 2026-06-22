@@ -64,8 +64,13 @@ export default function AuthClean() {
         return;
       }
       setLoading(true);
-      const { error } = await forgotPassword(resetEmail.trim());
+      const { error, smtpNotConfigured } = await forgotPassword(resetEmail.trim());
       setLoading(false);
+      if (smtpNotConfigured) {
+        toast({ title: "Email Not Available", description: "Email reset is not set up. Switching to mobile OTP reset." });
+        setForgotChannel('sms');
+        return;
+      }
       if (error) {
         toast({ title: "Reset Password", description: error.message });
         return;

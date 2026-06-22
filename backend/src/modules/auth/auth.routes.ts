@@ -1,6 +1,7 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
+import { v4 as uuidv4 } from "uuid";
 import type { RowDataPacket } from "mysql2";
 import { authService } from "./auth.service.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
@@ -144,23 +145,25 @@ router.post("/forgot-password", authLimiter, h(async (req: any, res: any) => {
   const normalizedEmail = String(email).trim().toLowerCase();
   const token = await authService.forgotPassword(normalizedEmail);
 
+  if (!emailService.isConfigured()) {
+    return res.status(503).json({
+      success: false,
+      smtpNotConfigured: true,
+      error: "Email reset is not available. Please use the mobile OTP option or contact your HR/Admin to reset your password."
+    });
+  }
+
   if (token) {
-    if (emailService.isConfigured()) {
-      try {
-        const link = resetLink(token);
-        await emailService.send({
-          to: normalizedEmail,
-          subject: "Reset your MAS Callnet HRMS password",
-          html: resetEmailHtml(link),
-          text: resetEmailText(link),
-        });
-      } catch (error) {
-        console.error("[HRMS] Password reset email delivery failed:", error instanceof Error ? error.message : "unknown error");
-      }
-    } else {
-      // Never log the reset URL or token. Administrators can check SMTP readiness
-      // through the protected launch configuration endpoint.
-      console.warn("[HRMS] SMTP is not configured; password reset email was not sent.");
+    try {
+      const link = resetLink(token);
+      await emailService.send({
+        to: normalizedEmail,
+        subject: "Reset your MAS Callnet HRMS password",
+        html: resetEmailHtml(link),
+        text: resetEmailText(link),
+      });
+    } catch (error) {
+      console.error("[HRMS] Password reset email delivery failed:", error instanceof Error ? error.message : "unknown error");
     }
   }
 
@@ -315,7 +318,8 @@ router.post("/admin-reset-password", requireAuth, h(async (req: any, res: any) =
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.id AS employee_id, e.user_id,
               COALESCE(d.designation_name, e.emp_type, e.profile_type) AS designation,
-              au.email
+              COALESCE(NULLIF(TRIM(e.official_email),''), NULLIF(TRIM(e.office_email),''), NULLIF(TRIM(e.email),'')) AS emp_email,
+              au.email AS auth_email
        FROM employees e
        LEFT JOIN designation_master d ON d.id = e.designation_id
        LEFT JOIN auth_user au ON au.id = e.user_id
@@ -327,9 +331,50 @@ router.post("/admin-reset-password", requireAuth, h(async (req: any, res: any) =
       return res.status(404).json({ success: false, error: "Employee not found" });
     }
     targetEmployeeId = String(empRows[0].employee_id);
-    targetUserId = empRows[0].user_id ? String(empRows[0].user_id) : "";
     targetDesignation = empRows[0].designation ? String(empRows[0].designation) : null;
-    targetUserEmail = empRows[0].email ? String(empRows[0].email) : null;
+
+    if (empRows[0].user_id) {
+      targetUserId = String(empRows[0].user_id);
+      targetUserEmail = empRows[0].auth_email ? String(empRows[0].auth_email) : null;
+    } else {
+      // No auth_user yet — auto-provision if employee has an email address
+      const empEmail = empRows[0].emp_email ? String(empRows[0].emp_email).trim().toLowerCase() : null;
+      if (!empEmail) {
+        return res.status(400).json({
+          success: false,
+          error: "Employee has no email address on record. Add an official email before creating their account."
+        });
+      }
+      // Check if an auth_user with this email already exists (orphaned)
+      const [existingAuth] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM auth_user WHERE email = ? LIMIT 1`, [empEmail]
+      );
+      let newUserId: string;
+      if (existingAuth.length) {
+        newUserId = String(existingAuth[0].id);
+      } else {
+        // Create new auth_user with a temporary hash (will be overwritten below)
+        newUserId = uuidv4();
+        await db.execute(
+          `INSERT INTO auth_user (id, email, password_hash, must_change_password)
+           VALUES (?, ?, '', 1)`,
+          [newUserId, empEmail]
+        );
+      }
+      // Link auth_user to employee
+      await db.execute(
+        `UPDATE employees SET user_id = ? WHERE id = ?`,
+        [newUserId, employeeId]
+      );
+      // Grant default employee role if not already assigned
+      await db.execute(
+        `INSERT IGNORE INTO user_roles (id, user_id, role_key, active_status)
+         VALUES (UUID(), ?, 'employee', 1)`,
+        [newUserId]
+      );
+      targetUserId = newUserId;
+      targetUserEmail = empEmail;
+    }
   } else {
     const [userRows] = await db.execute<RowDataPacket[]>(
       `SELECT au.id AS user_id, au.email, e.id AS employee_id,
@@ -354,7 +399,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req: any, res: any) =
   if (!targetUserId) {
     return res.status(400).json({
       success: false,
-      error: "Target employee does not have a user account"
+      error: "Could not resolve user account for this employee"
     });
   }
 

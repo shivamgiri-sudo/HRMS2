@@ -14,7 +14,7 @@ interface AuthContextType {
   signIn: (identifier: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, fullName: string, onboardingToken?: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
-  forgotPassword: (email: string) => Promise<{ error: Error | null }>;
+  forgotPassword: (email: string) => Promise<{ error: Error | null; smtpNotConfigured?: boolean }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -213,7 +213,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const forgotPassword = async (email: string): Promise<{ error: Error | null }> => {
+  const forgotPassword = async (email: string): Promise<{ error: Error | null; smtpNotConfigured?: boolean }> => {
     try {
       const res = await fetch(`${API_URL}/api/auth/forgot-password`, {
         method: 'POST',
@@ -222,7 +222,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (!res.ok) {
         const json = await res.json();
-        return { error: new Error(json.error || 'Request failed') };
+        return { error: new Error(json.error || 'Request failed'), smtpNotConfigured: !!json.smtpNotConfigured };
       }
       return { error: null };
     } catch (err) {
