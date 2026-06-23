@@ -4,32 +4,38 @@ import { hrmsApi } from "@/lib/hrmsApi";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type WalkinStatus = "waiting" | "called" | "in_interview" | "completed" | "no_show";
+type QueueStatus = "waiting" | "called" | "in_interview" | "completed" | "no_show";
 
-interface WalkinEntry {
+interface QueueEntry {
   id: string;
   token_number: string;
+  candidate_id: string;
   candidate_name: string;
   mobile: string;
   email: string | null;
   applied_role: string | null;
-  branch_id: string | null;
-  process_id: string | null;
-  registered_at: string;
-  called_at: string | null;
-  status: WalkinStatus;
-  notes: string | null;
+  branch_name: string;
+  branch_display_name: string | null;
+  queue_status: QueueStatus;
   recruiter_id: string | null;
+  recruiter_name: string;
+  recruiter_employee_code: string;
+  created_at: string;
+  called_at: string | null;
+  interview_started_at: string | null;
+  interview_completed_at: string | null;
+  position_in_queue: number;
 }
 
-interface Process {
+interface Branch {
   id: string;
-  process_name: string;
+  branch_name: string;
+  display_name?: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-const STATUS_STYLES: Record<WalkinStatus, string> = {
+const STATUS_STYLES: Record<QueueStatus, string> = {
   waiting:      "bg-amber-50 text-amber-700 border-amber-200",
   called:       "bg-blue-50 text-blue-700 border-blue-200",
   in_interview: "bg-purple-50 text-purple-700 border-purple-200",
@@ -37,7 +43,7 @@ const STATUS_STYLES: Record<WalkinStatus, string> = {
   no_show:      "bg-red-50 text-red-700 border-red-200",
 };
 
-const STATUS_LABEL: Record<WalkinStatus, string> = {
+const STATUS_LABEL: Record<QueueStatus, string> = {
   waiting:      "Waiting",
   called:       "Called",
   in_interview: "In Interview",
@@ -45,13 +51,15 @@ const STATUS_LABEL: Record<WalkinStatus, string> = {
   no_show:      "No Show",
 };
 
-const TOKEN_CHIP_BG: Record<WalkinStatus, string> = {
+const TOKEN_CHIP_BG: Record<QueueStatus, string> = {
   waiting:      "bg-amber-100 text-amber-800",
   called:       "bg-blue-100 text-blue-800",
   in_interview: "bg-purple-100 text-purple-800",
   completed:    "bg-emerald-100 text-emerald-800",
   no_show:      "bg-red-100 text-red-800",
 };
+
+const ALL_STATUSES: QueueStatus[] = ["waiting", "called", "in_interview", "completed", "no_show"];
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -64,32 +72,33 @@ function today(): string {
 // ── Main Component ─────────────────────────────────────────────────────────────
 
 export default function NativeWalkinQueue() {
-  const [entries, setEntries] = useState<WalkinEntry[]>([]);
-  const [processes, setProcesses] = useState<Process[]>([]);
+  const [entries, setEntries] = useState<QueueEntry[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [actionLoading, setActionLoading] = useState("");
-  const [dateFilter, setDateFilter] = useState(today());
 
-  // Registration form state
-  const [regName, setRegName] = useState("");
-  const [regMobile, setRegMobile] = useState("");
-  const [regRole, setRegRole] = useState("");
-  const [regProcess, setRegProcess] = useState("");
-  const [regLoading, setRegLoading] = useState(false);
-  const [regError, setRegError] = useState("");
+  // Filters
+  const [dateFilter, setDateFilter] = useState(today());
+  const [branchFilter, setBranchFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Data loading ─────────────────────────────────────────────────────────────
 
+  const buildUrl = () => {
+    const params = new URLSearchParams({ date: dateFilter });
+    if (branchFilter) params.set("branch", branchFilter);
+    if (statusFilter) params.set("status", statusFilter);
+    return `/api/ats/queue/live?${params.toString()}`;
+  };
+
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
     setMessage("");
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: WalkinEntry[] }>(
-        `/api/jobs/walkin?date=${dateFilter}`
-      );
+      const res = await hrmsApi.get<{ success: boolean; data: QueueEntry[] }>(buildUrl());
       setEntries(res.data ?? []);
     } catch (err: unknown) {
       if (!silent) setMessage(err instanceof Error ? err.message : "Failed to load queue");
@@ -98,19 +107,24 @@ export default function NativeWalkinQueue() {
     }
   };
 
-  const loadProcesses = async () => {
+  const loadBranches = async () => {
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: Process[] }>("/api/processes");
-      setProcesses(res.data ?? []);
+      const res = await hrmsApi.get<{ success: boolean; data: Branch[] }>(
+        "/api/org/branches?active=1"
+      );
+      setBranches(res.data ?? []);
     } catch {
-      // processes are optional for the form dropdown
+      // branches are optional for filter
     }
   };
 
   useEffect(() => {
     void load();
-    void loadProcesses();
-  }, [dateFilter]);
+  }, [dateFilter, branchFilter, statusFilter]);
+
+  useEffect(() => {
+    void loadBranches();
+  }, []);
 
   // Auto-refresh every 30 seconds
   useEffect(() => {
@@ -118,26 +132,26 @@ export default function NativeWalkinQueue() {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [dateFilter]);
+  }, [dateFilter, branchFilter, statusFilter]);
 
   // ── Stats ────────────────────────────────────────────────────────────────────
 
   const stats = {
-    waiting:      entries.filter((e) => e.status === "waiting").length,
-    called:       entries.filter((e) => e.status === "called").length,
-    in_interview: entries.filter((e) => e.status === "in_interview").length,
-    completed:    entries.filter((e) => e.status === "completed").length,
-    no_show:      entries.filter((e) => e.status === "no_show").length,
+    waiting:      entries.filter((e) => e.queue_status === "waiting").length,
+    called:       entries.filter((e) => e.queue_status === "called").length,
+    in_interview: entries.filter((e) => e.queue_status === "in_interview").length,
+    completed:    entries.filter((e) => e.queue_status === "completed").length,
+    no_show:      entries.filter((e) => e.queue_status === "no_show").length,
   };
 
   // ── Actions ──────────────────────────────────────────────────────────────────
 
   const callNext = async () => {
-    const nextWaiting = entries.find((e) => e.status === "waiting");
+    const nextWaiting = entries.find((e) => e.queue_status === "waiting");
     if (!nextWaiting) return;
     setActionLoading(`call-${nextWaiting.id}`);
     try {
-      await hrmsApi.patch(`/api/jobs/walkin/${nextWaiting.id}/call`, {});
+      await hrmsApi.post("/api/ats/queue/call-next", { queue_id: nextWaiting.id });
       await load(true);
     } catch (err: unknown) {
       setMessage(err instanceof Error ? err.message : "Failed to call candidate");
@@ -146,10 +160,10 @@ export default function NativeWalkinQueue() {
     }
   };
 
-  const updateStatus = async (id: string, status: WalkinStatus) => {
+  const updateStatus = async (id: string, status: QueueStatus) => {
     setActionLoading(id);
     try {
-      await hrmsApi.patch(`/api/jobs/walkin/${id}/status`, { status });
+      await hrmsApi.post("/api/ats/queue/update-status", { queue_id: id, status });
       await load(true);
     } catch (err: unknown) {
       setMessage(err instanceof Error ? err.message : "Failed to update status");
@@ -158,26 +172,15 @@ export default function NativeWalkinQueue() {
     }
   };
 
-  // ── Registration ─────────────────────────────────────────────────────────────
-
-  const registerWalkin = async () => {
-    setRegError("");
-    if (!regName.trim()) { setRegError("Name is required"); return; }
-    if (!regMobile.trim()) { setRegError("Mobile is required"); return; }
-    setRegLoading(true);
+  const markNoShow = async (id: string) => {
+    setActionLoading(id);
     try {
-      await hrmsApi.post("/api/jobs/walkin", {
-        candidate_name: regName.trim(),
-        mobile: regMobile.trim(),
-        applied_role: regRole.trim() || undefined,
-        process_id: regProcess || undefined,
-      });
-      setRegName(""); setRegMobile(""); setRegRole(""); setRegProcess("");
+      await hrmsApi.post("/api/ats/queue/mark-no-show", { queue_id: id });
       await load(true);
     } catch (err: unknown) {
-      setRegError(err instanceof Error ? err.message : "Registration failed");
+      setMessage(err instanceof Error ? err.message : "Failed to mark no-show");
     } finally {
-      setRegLoading(false);
+      setActionLoading("");
     }
   };
 
@@ -193,13 +196,35 @@ export default function NativeWalkinQueue() {
             <h1 className="mt-2 text-3xl font-black text-slate-950">Walk-in Queue</h1>
             <p className="mt-2 text-slate-600">Reception desk view — manage today's walk-in candidates in real-time.</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <input
               type="date"
               value={dateFilter}
               onChange={(e) => setDateFilter(e.target.value)}
               className="rounded-2xl border bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm"
             />
+            <select
+              value={branchFilter}
+              onChange={(e) => setBranchFilter(e.target.value)}
+              className="rounded-2xl border bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm"
+            >
+              <option value="">All Branches</option>
+              {branches.map((b) => (
+                <option key={b.id} value={b.branch_name}>
+                  {b.display_name || b.branch_name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="rounded-2xl border bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm"
+            >
+              <option value="">All Statuses</option>
+              {ALL_STATUSES.map((s) => (
+                <option key={s} value={s}>{STATUS_LABEL[s]}</option>
+              ))}
+            </select>
             <button
               onClick={() => void load()}
               className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
@@ -217,11 +242,15 @@ export default function NativeWalkinQueue() {
 
         {/* Stats */}
         <div className="grid gap-3 sm:grid-cols-5">
-          {(["waiting", "called", "in_interview", "completed", "no_show"] as WalkinStatus[]).map((s) => (
-            <div key={s} className={`rounded-3xl border p-4 shadow-sm ${STATUS_STYLES[s].replace("border-", "border ").replace("bg-", "bg-")}`}>
+          {ALL_STATUSES.map((s) => (
+            <button
+              key={s}
+              onClick={() => setStatusFilter(statusFilter === s ? "" : s)}
+              className={`rounded-3xl border p-4 shadow-sm text-left transition-all ${STATUS_STYLES[s]} ${statusFilter === s ? "ring-2 ring-offset-1 ring-slate-400" : ""}`}
+            >
               <p className="text-xs font-semibold uppercase tracking-wide opacity-75">{STATUS_LABEL[s]}</p>
               <p className="mt-1 text-2xl font-black">{stats[s]}</p>
-            </div>
+            </button>
           ))}
         </div>
 
@@ -236,66 +265,6 @@ export default function NativeWalkinQueue() {
           </button>
         </div>
 
-        {/* Walk-in Registration Form */}
-        <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
-          <div className="border-b p-5">
-            <h2 className="font-bold text-slate-950">Walk-in Registration</h2>
-            <p className="text-sm text-slate-500">Register a new walk-in candidate directly.</p>
-          </div>
-          <div className="p-5">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Full Name *</label>
-                <input
-                  value={regName}
-                  onChange={(e) => setRegName(e.target.value)}
-                  placeholder="Candidate name"
-                  className="w-full rounded-2xl border bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-blue-400"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Mobile *</label>
-                <input
-                  value={regMobile}
-                  onChange={(e) => setRegMobile(e.target.value)}
-                  placeholder="10-digit mobile"
-                  className="w-full rounded-2xl border bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-blue-400"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Applied Role</label>
-                <input
-                  value={regRole}
-                  onChange={(e) => setRegRole(e.target.value)}
-                  placeholder="e.g. CSE Agent"
-                  className="w-full rounded-2xl border bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-blue-400"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Process</label>
-                <select
-                  value={regProcess}
-                  onChange={(e) => setRegProcess(e.target.value)}
-                  className="w-full rounded-2xl border bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-blue-400"
-                >
-                  <option value="">-- Select --</option>
-                  {processes.map((p) => (
-                    <option key={p.id} value={p.id}>{p.process_name}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            {regError && <p className="mt-2 text-sm font-bold text-rose-600">{regError}</p>}
-            <button
-              onClick={() => void registerWalkin()}
-              disabled={regLoading}
-              className="mt-4 rounded-2xl bg-slate-950 px-6 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-400"
-            >
-              {regLoading ? "Registering..." : "Register Walk-in"}
-            </button>
-          </div>
-        </div>
-
         {/* Queue Board */}
         <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
           <div className="border-b p-5">
@@ -306,7 +275,7 @@ export default function NativeWalkinQueue() {
             <div className="p-8 text-center text-slate-500">Loading queue...</div>
           ) : entries.length === 0 ? (
             <div className="p-12 text-center text-slate-400">
-              <p className="font-semibold">No walk-ins registered for this date.</p>
+              <p className="font-semibold">No candidates in queue for the selected filters.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -315,8 +284,9 @@ export default function NativeWalkinQueue() {
                   <tr>
                     <th className="p-4">Token</th>
                     <th className="p-4">Candidate</th>
-                    <th className="p-4">Applied Role</th>
-                    <th className="p-4">Registered</th>
+                    <th className="p-4">Role / Branch</th>
+                    <th className="p-4">Recruiter</th>
+                    <th className="p-4">Arrived</th>
                     <th className="p-4">Status</th>
                     <th className="p-4">Actions</th>
                   </tr>
@@ -325,7 +295,7 @@ export default function NativeWalkinQueue() {
                   {entries.map((e) => (
                     <tr key={e.id} className="border-t hover:bg-slate-50/60 transition-colors">
                       <td className="p-4">
-                        <span className={`inline-flex h-12 w-12 items-center justify-center rounded-2xl text-lg font-black ${TOKEN_CHIP_BG[e.status]}`}>
+                        <span className={`inline-flex h-12 w-12 items-center justify-center rounded-2xl text-sm font-black ${TOKEN_CHIP_BG[e.queue_status]}`}>
                           {e.token_number}
                         </span>
                       </td>
@@ -333,16 +303,23 @@ export default function NativeWalkinQueue() {
                         <div className="font-bold text-slate-900">{e.candidate_name}</div>
                         <div className="text-xs text-slate-500">{e.mobile}</div>
                       </td>
-                      <td className="p-4 text-slate-600">{e.applied_role ?? "-"}</td>
-                      <td className="p-4 text-slate-600">{formatTime(e.registered_at)}</td>
                       <td className="p-4">
-                        <span className={`rounded-full border px-3 py-1 text-xs font-bold ${STATUS_STYLES[e.status]}`}>
-                          {STATUS_LABEL[e.status]}
+                        <div className="text-slate-700">{e.applied_role ?? "-"}</div>
+                        <div className="text-xs text-slate-400">{e.branch_display_name || e.branch_name}</div>
+                      </td>
+                      <td className="p-4">
+                        <div className="text-slate-700">{e.recruiter_name}</div>
+                        <div className="text-xs text-slate-400">{e.recruiter_employee_code !== "N/A" ? e.recruiter_employee_code : ""}</div>
+                      </td>
+                      <td className="p-4 text-slate-600">{formatTime(e.created_at)}</td>
+                      <td className="p-4">
+                        <span className={`rounded-full border px-3 py-1 text-xs font-bold ${STATUS_STYLES[e.queue_status]}`}>
+                          {STATUS_LABEL[e.queue_status]}
                         </span>
                       </td>
                       <td className="p-4">
                         <div className="flex flex-wrap gap-2">
-                          {e.status === "called" && (
+                          {e.queue_status === "called" && (
                             <button
                               disabled={actionLoading === e.id}
                               onClick={() => void updateStatus(e.id, "in_interview")}
@@ -351,7 +328,7 @@ export default function NativeWalkinQueue() {
                               In Interview
                             </button>
                           )}
-                          {(e.status === "in_interview" || e.status === "called") && (
+                          {(e.queue_status === "in_interview" || e.queue_status === "called") && (
                             <button
                               disabled={actionLoading === e.id}
                               onClick={() => void updateStatus(e.id, "completed")}
@@ -360,10 +337,10 @@ export default function NativeWalkinQueue() {
                               Completed
                             </button>
                           )}
-                          {e.status === "waiting" && (
+                          {e.queue_status === "waiting" && (
                             <button
                               disabled={actionLoading === e.id}
-                              onClick={() => void updateStatus(e.id, "no_show")}
+                              onClick={() => void markNoShow(e.id)}
                               className="rounded-xl bg-red-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-700 disabled:opacity-50"
                             >
                               No Show

@@ -60,6 +60,7 @@ const enhancedRegistrationSchema = z.object({
   email: z.string().email().nullable().optional(),
   branchDisplayName: z.string().min(1),
   preferredRecruiterId: z.string().uuid().optional(),
+  recruiterName: z.string().optional(), // fallback when UUID not available
   roleApplied: z.string().min(1),
   address: z.string().optional(),
   education: z.string().min(1),
@@ -67,6 +68,12 @@ const enhancedRegistrationSchema = z.object({
   gender: z.enum(["Male", "Female", "Other"]).nullable().optional(),
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   preferredShift: z.string().nullable().optional(),
+  rotationalShift: z.number().nullable().optional(),
+  nightShiftOk: z.number().nullable().optional(),
+  leavesIn3months: z.number().nullable().optional(),
+  ownsTwoWheeler: z.number().nullable().optional(),
+  idProofAvailable: z.number().nullable().optional(),
+  educationProofAvailable: z.number().nullable().optional(),
   sourcingChannel: z.string().default("Walk-In"),
 });
 
@@ -106,17 +113,38 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
     }, null);
     const candidateId = candidate.id;
 
+    // Resolve recruiter UUID from name when only name was provided
+    let resolvedRecruiterId = input.preferredRecruiterId || null;
+    if (!resolvedRecruiterId && input.recruiterName) {
+      const nameParts = input.recruiterName.trim().split(' ');
+      const firstName = nameParts[0];
+      const lastName = nameParts.slice(1).join(' ');
+      const [recRows] = await db.execute<RowDataPacket[]>(
+        `SELECT e.id FROM employees e
+         JOIN branch_master b ON b.id = e.branch_id
+         WHERE e.active_status = 1
+           AND UPPER(e.first_name) = UPPER(?)
+           AND (? = '' OR UPPER(TRIM(e.last_name)) = UPPER(?))
+           AND (b.branch_name = ? OR b.branch_code = ?)
+         LIMIT 1`,
+        [firstName, lastName, lastName, branchName, branchName]
+      );
+      if ((recRows as RowDataPacket[]).length > 0) {
+        resolvedRecruiterId = (recRows as RowDataPacket[])[0].id;
+      }
+    }
+
     await db.execute(
       `UPDATE ats_candidate
-       SET branch_display_name = ?, preferred_recruiter_id = ?
+       SET branch_display_name = ?, preferred_recruiter_id = ?, recruiter_name = ?
        WHERE id = ?`,
-      [input.branchDisplayName, input.preferredRecruiterId ?? null, candidateId]
+      [input.branchDisplayName, resolvedRecruiterId ?? null, input.recruiterName ?? null, candidateId]
     );
 
     // 4. Assign recruiter (smart assignment with fallback)
     const assignmentResult = await assignRecruiterToCandidate(
       candidateId,
-      input.preferredRecruiterId || null
+      resolvedRecruiterId
     );
 
     // 5. Generate token if recruiter assigned
@@ -185,11 +213,18 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       }).catch((err) => console.error('Failed to send recruiter email:', err));
     }
 
-    // 8. Send success response
+    // 8. Fetch candidate_code for the success response
+    const [codeRows] = await db.execute<RowDataPacket[]>(
+      'SELECT candidate_code FROM ats_candidate WHERE id = ? LIMIT 1',
+      [candidateId]
+    );
+    const candidate_code = (codeRows as RowDataPacket[])[0]?.candidate_code ?? null;
+
     return res.status(201).json({
       success: true,
       message: "Registration successful",
       candidateId,
+      candidate_code,
       tokenNumber,
       branchName,
       branchDisplayName: input.branchDisplayName,

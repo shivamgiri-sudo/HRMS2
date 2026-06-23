@@ -175,9 +175,9 @@ export const atsFormConfigService = {
 
     // 1. Try ats_recruiter_roster filtered by branch (active only)
     const [rosterRows] = await db.execute<RowDataPacket[]>(
-      `SELECT name, email, mobile FROM ats_recruiter_roster
-       WHERE active_status = 1 AND (branch = ? OR branch = ?)
-       ORDER BY name ASC`,
+      `SELECT r.id, r.name, r.email, r.mobile, r.employee_id FROM ats_recruiter_roster r
+       WHERE r.active_status = 1 AND (r.branch = ? OR r.branch = ?)
+       ORDER BY r.name ASC`,
       [branchName, canonicalKey]
     );
     if ((rosterRows as RowDataPacket[]).length > 0) {
@@ -185,12 +185,14 @@ export const atsFormConfigService = {
         name: String(r.name),
         email: r.email || null,
         mobile: r.mobile || null,
+        employee_id: r.employee_id || null,
       }));
     }
 
     // 2. Fallback: employees in HR/Recruiter designations at this branch
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT
+         e.id AS employee_id,
          TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
          COALESCE(e.office_email, e.official_email, e.email) AS email,
          e.mobile
@@ -211,6 +213,7 @@ export const atsFormConfigService = {
       name: String(r.name),
       email: r.email || null,
       mobile: r.mobile || null,
+      employee_id: r.employee_id || null,
     }));
   },
 

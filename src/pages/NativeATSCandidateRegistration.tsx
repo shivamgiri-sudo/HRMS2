@@ -345,6 +345,7 @@ export default function NativeATSCandidateRegistration() {
   const [selfiePreview, setSelfiePreview] = useState<string>("");
   const [consentGiven, setConsentGiven] = useState(false);
   const [branchRecruiters, setBranchRecruiters] = useState<string[]>([]);
+  const [branchRecruitersData, setBranchRecruitersData] = useState<{ name: string; employee_id?: string | null; email?: string | null; mobile?: string | null }[]>([]);
 
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -391,15 +392,16 @@ export default function NativeATSCandidateRegistration() {
   // When branch changes, load recruiters for that branch
   useEffect(() => {
     const branch = form.branch;
-    if (!branch) { setBranchRecruiters([]); return; }
+    if (!branch) { setBranchRecruiters([]); setBranchRecruitersData([]); return; }
     hrmsApi.get(`/api/ats/form-config/recruiters-by-branch?branch=${encodeURIComponent(branch)}`)
       .then((res: any) => {
-        const list: { name: string }[] = res?.data ?? [];
+        const list: { name: string; employee_id?: string | null; email?: string | null; mobile?: string | null }[] = res?.data ?? [];
         setBranchRecruiters(list.map(r => r.name));
+        setBranchRecruitersData(list);
         // Auto-clear recruiter if no longer valid for this branch
         setForm(prev => list.find(r => r.name === prev.recruiterName) ? prev : { ...prev, recruiterName: "" });
       })
-      .catch(() => setBranchRecruiters([]));
+      .catch(() => { setBranchRecruiters([]); setBranchRecruitersData([]); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.branch]);
 
@@ -766,17 +768,20 @@ export default function NativeATSCandidateRegistration() {
       const selectedBranchAlias = bootstrap.branchAliases?.find(a => a.display === coreData.branch);
       const canonicalBranch = selectedBranchAlias?.canonical || coreData.branch;
 
+      // Resolve recruiter UUID from the branch-filtered recruiter list
+      const branchRecruiterFull = (branchRecruitersData || []).find(
+        (r: any) => r.name === coreData.recruiterName
+      );
+      const preferredRecruiterId = branchRecruiterFull?.employee_id || null;
+
       const payload = {
-        fullName:                 coreData.name,
+        name:                     coreData.name,
         mobile:                   coreData.mobile,
         email:                    coreData.email || null,
         gender:                   coreData.gender || null,
-        appliedForProcess:        coreData.roleApplied || null,
-        appliedForRole:           coreData.roleApplied || null,
-        appliedForBranch:         canonicalBranch || null,
-        sourcingChannel:          'Walk-In', // Canonical format - backend normalizes this
-        walkInDate:               new Date().toISOString().slice(0, 10),
-        // New fields from migration 054 - convert Yes/No to 1/0 for TINYINT columns
+        roleApplied:              coreData.roleApplied || null,
+        branchDisplayName:        coreData.branch,
+        sourcingChannel:          'Walk-In',
         address:                  coreData.address || null,
         education:                coreData.education || null,
         experience:               coreData.experience || null,
@@ -788,19 +793,20 @@ export default function NativeATSCandidateRegistration() {
         idProofAvailable:         yesNoToInt(coreData.idProofAvailable),
         educationProofAvailable:  yesNoToInt(coreData.educationProofAvailable),
         recruiterName:            coreData.recruiterName || null,
+        ...(preferredRecruiterId ? { preferredRecruiterId } : {}),
       };
-      const apiRes = await hrmsApi.post<{ success: boolean; data: any; message?: string }>(
-        "/api/ats/candidates",
+      const apiRes = await hrmsApi.post<{ success: boolean; candidateId?: string; candidate_code?: string; branchName?: string; recruiter?: any; message?: string; data?: any }>(
+        "/api/ats/submit-enhanced",
         payload
       );
 
       const res: SubmitResponse = {
         success: apiRes.success,
         message: apiRes.message,
-        candidateDbId: apiRes.data?.id ?? "",
-        candidateId: apiRes.data?.candidate_code ?? "",
-        recruiterName: coreData.recruiterName || "",
-        branch: apiRes.data?.applied_for_branch ?? coreData.branch ?? "",
+        candidateDbId: apiRes.candidateId ?? apiRes.data?.id ?? "",
+        candidateId: apiRes.candidate_code ?? apiRes.data?.candidate_code ?? apiRes.candidateId ?? "",
+        recruiterName: apiRes.recruiter?.name || coreData.recruiterName || "",
+        branch: apiRes.branchName ?? coreData.branch ?? "",
       };
 
       if (!res.success) throw new Error(res.message || "Submission failed. Please try again.");

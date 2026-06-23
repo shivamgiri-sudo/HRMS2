@@ -32,6 +32,8 @@ export async function resolveBranchFromAlias(displayName: string) {
 export async function getAvailableRecruiters(branchName: string) {
   const today = new Date().toISOString().split('T')[0];
 
+  // Include all active HR/Executive employees at this branch regardless of attendance clock-in.
+  // Walk-in recruiters often don't have attendance records during early morning registrations.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT
        e.id,
@@ -70,15 +72,10 @@ export async function getAvailableRecruiters(branchName: string) {
 }
 
 export async function isRecruiterAvailableToday(recruiterId: string): Promise<boolean> {
-  const today = new Date().toISOString().split('T')[0];
-
+  // Consider any active employee available — attendance absence at walk-in time is common.
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM attendance_daily_record
-     WHERE employee_id = ?
-       AND record_date = ?
-       AND (clock_in_time IS NOT NULL OR attendance_status IN ('present', 'half_day'))
-     LIMIT 1`,
-    [recruiterId, today]
+    `SELECT id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1`,
+    [recruiterId]
   );
 
   return rows.length > 0;
