@@ -40,7 +40,7 @@ export const managementCommandCenterRouter = Router();
 managementCommandCenterRouter.use(requireAuth);
 managementCommandCenterRouter.get(
   "/ceo-command-center",
-  requireRole("admin", "hr", "super_admin", "ceo", "finance", "process_manager", "manager"),
+  requireRole("admin", "hr", "ceo", "finance", "process_manager", "manager"),
   h(async (req, res) => res.json(apiSuccess(await getCeoCommandCenter(actor(req), req.query)))),
 );
 
@@ -61,12 +61,12 @@ export const attendanceExceptionRouter = Router();
 attendanceExceptionRouter.use(requireAuth);
 attendanceExceptionRouter.get(
   "/summary",
-  requireRole("admin", "hr", "super_admin", "ceo", "wfm", "process_manager", "manager", "team_leader", "tl"),
+  requireRole("admin", "hr", "ceo", "wfm", "process_manager", "manager", "team_leader", "tl"),
   h(async (req, res) => res.json(apiSuccess(await getAttendanceExceptionSummary(actor(req), req.query)))),
 );
 attendanceExceptionRouter.get(
   "/list",
-  requireRole("admin", "hr", "super_admin", "ceo", "wfm", "process_manager", "manager", "team_leader", "tl"),
+  requireRole("admin", "hr", "ceo", "wfm", "process_manager", "manager", "team_leader", "tl"),
   h(async (req, res) => res.json(apiSuccess(await listAttendanceExceptions(actor(req), req.query)))),
 );
 attendanceExceptionRouter.get(
@@ -100,7 +100,7 @@ attendanceExceptionRouter.post(
 
 export const cosecMonitoringRouter = Router();
 cosecMonitoringRouter.use(requireAuth);
-cosecMonitoringRouter.use(requireRole("admin", "hr", "super_admin", "ceo", "wfm"));
+cosecMonitoringRouter.use(requireRole("admin", "hr", "ceo", "wfm"));
 cosecMonitoringRouter.get("/sync-status", h(async (req, res) => {
   const data = await getCosecMonitoring(actor(req));
   return res.json(apiSuccess({ status: data.status, latest_run: data.latest_run, data_confidence: data.data_confidence }));
@@ -111,7 +111,7 @@ cosecMonitoringRouter.get("/latest-punches", h(async (req, res) => res.json(apiS
 
 export const payrollReadinessRouter = Router();
 payrollReadinessRouter.use(requireAuth);
-payrollReadinessRouter.use(requireRole("admin", "hr", "super_admin", "ceo", "finance", "payroll", "payroll_hr", "branch_hr"));
+payrollReadinessRouter.use(requireRole("admin", "hr", "ceo", "finance", "payroll"));
 payrollReadinessRouter.get("/summary", h(async (req, res) => res.json(apiSuccess((await getPayrollReadiness(actor(req), req.query)).summary))));
 payrollReadinessRouter.get("/blocked-employees", h(async (req, res) => res.json(apiSuccess((await getPayrollReadiness(actor(req), req.query)).blocked_employees))));
 payrollReadinessRouter.get("/employee/:employeeId", h(async (req, res) => res.json(apiSuccess(await getPayrollReadiness(actor(req), { ...req.query, employee_id: req.params.employeeId })))));
@@ -121,7 +121,7 @@ payrollReadinessRouter.post("/release-hold", requireWriteAccess, h(async (req, r
 
 export const workforcePlanningRouter = Router();
 workforcePlanningRouter.use(requireAuth);
-workforcePlanningRouter.use(requireRole("admin", "hr", "super_admin", "ceo", "wfm", "process_manager", "manager"));
+workforcePlanningRouter.use(requireRole("admin", "hr", "ceo", "wfm", "process_manager", "manager"));
 workforcePlanningRouter.get("/summary", h(async (req, res) => res.json(apiSuccess((await getWorkforcePlanning(actor(req), req.query)).summary))));
 workforcePlanningRouter.get("/coverage", h(async (req, res) => res.json(apiSuccess((await getWorkforcePlanning(actor(req), req.query)).coverage))));
 workforcePlanningRouter.get("/shortage", h(async (req, res) => res.json(apiSuccess((await getWorkforcePlanning(actor(req), req.query)).shortage))));
@@ -135,7 +135,7 @@ export const enterpriseReportsRouter = Router();
 enterpriseReportsRouter.use(requireAuth);
 enterpriseReportsRouter.get(
   "/enterprise",
-  requireRole("admin", "hr", "super_admin", "ceo", "finance", "payroll", "wfm", "process_manager", "manager"),
+  requireRole("admin", "hr", "ceo", "finance", "payroll", "wfm", "process_manager", "manager"),
   h(async (req, res) => res.json(apiSuccess(await getEnterpriseReports(actor(req), req.query)))),
 );
 
@@ -144,8 +144,8 @@ assistantContextRouter.use(requireAuth);
 assistantContextRouter.get("/me", h(async (req, res) => res.json(apiSuccess(await getAssistantContext(actor(req), "me", req.query, req)))));
 assistantContextRouter.get("/employee-summary/:employeeId", h(async (req, res) => res.json(apiSuccess(await getEmployeeAssistantSummary(actor(req), req.params.employeeId, req)))));
 assistantContextRouter.get("/manager-team-summary", h(async (req, res) => res.json(apiSuccess(await getAssistantContext(actor(req), "ceo-summary", req.query, req)))));
-assistantContextRouter.get("/ceo-summary", requireRole("admin", "hr", "super_admin", "ceo"), h(async (req, res) => res.json(apiSuccess(await getAssistantContext(actor(req), "ceo-summary", req.query, req)))));
-assistantContextRouter.get("/payroll-blockers", requireRole("admin", "hr", "super_admin", "finance", "payroll", "ceo"), h(async (req, res) => res.json(apiSuccess(await getAssistantContext(actor(req), "payroll-blockers", req.query, req)))));
+assistantContextRouter.get("/ceo-summary", requireRole("admin", "hr", "ceo"), h(async (req, res) => res.json(apiSuccess(await getAssistantContext(actor(req), "ceo-summary", req.query, req)))));
+assistantContextRouter.get("/payroll-blockers", requireRole("admin", "hr", "finance", "payroll", "ceo"), h(async (req, res) => res.json(apiSuccess(await getAssistantContext(actor(req), "payroll-blockers", req.query, req)))));
 assistantContextRouter.get("/attendance-risk", h(async (req, res) => res.json(apiSuccess(await getAssistantContext(actor(req), "attendance-risk", req.query, req)))));
 assistantContextRouter.get("/people-risk", h(async (req, res) => res.json(apiSuccess(await getAssistantContext(actor(req), "people-risk", req.query, req)))));
 assistantContextRouter.get("/support-risk", h(async (req, res) => res.json(apiSuccess(await getAssistantContext(actor(req), "support-risk", req.query, req)))));

@@ -5,7 +5,6 @@ import { getDemoCred, buildDemoSession } from "@/lib/demoCreds";
 export interface HrmsUser {
   id: string;
   email: string;
-  isReadOnly?: boolean;
 }
 
 interface AuthContextType {
@@ -18,7 +17,7 @@ interface AuthContextType {
   signIn: (identifier: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, fullName: string, onboardingToken?: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
-  forgotPassword: (email: string) => Promise<{ error: Error | null }>;
+  forgotPassword: (email: string) => Promise<{ error: Error | null; smtpNotConfigured?: boolean }>;
   completePasswordChange: () => void;
   sendTwoFactorCode: (channel: "email" | "sms") => Promise<{ error: Error | null }>;
   verifyTwoFactorCode: (otp: string) => Promise<{ error: Error | null }>;
@@ -26,13 +25,6 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const DEMO_LOGIN_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_LOGIN === 'true';
-
-// Known demo user IDs from DEMO_TOKEN_MAP in authMiddleware
-const KNOWN_DEMO_IDS = new Set([
-  'demo-admin-id', 'demo-hr-id', 'demo-recruiter-id', 'demo-manager-id',
-  'demo-tl-id', 'demo-qa-id', 'demo-wfm-id', 'demo-finance-id',
-  'demo-employee-id', 'demo-ceo-id', 'demo-trainer-id', 'demo-user-id',
-]);
 
 function apiBaseUrl(): string {
   const configured = import.meta.env.VITE_HRMS_API_URL;
@@ -47,11 +39,7 @@ function decodeJwtUser(token: string): HrmsUser | null {
     const [, b64] = token.split('.');
     const payload = JSON.parse(atob(b64.replace(/-/g, '+').replace(/_/g, '/')));
     if (payload?.sub && payload?.exp && payload.exp * 1000 > Date.now()) {
-      return {
-        id: payload.sub,
-        email: payload.email ?? '',
-        isReadOnly: payload.isReadOnly || false
-      };
+      return { id: payload.sub, email: payload.email ?? '' };
     }
     return null;
   } catch {
@@ -62,14 +50,11 @@ function decodeJwtUser(token: string): HrmsUser | null {
 async function tryRefresh(): Promise<HrmsUser | null> {
   const raw = localStorage.getItem('hrms_refresh_token');
   if (!raw) return null;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
   try {
     const res = await fetch(`${API_URL}/api/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken: raw }),
-      signal: controller.signal,
     });
     if (!res.ok) return null;
     const { data } = await res.json();
@@ -77,8 +62,6 @@ async function tryRefresh(): Promise<HrmsUser | null> {
     return decodeJwtUser(data.accessToken);
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -115,28 +98,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const init = async () => {
-      // Demo sessions are allowed only in local development or when explicitly enabled.
-      if (DEMO_LOGIN_ENABLED) {
-        const demoRaw = localStorage.getItem('hrms_demo_session');
-        if (demoRaw) {
-          try {
-            const demo = JSON.parse(demoRaw);
-            if (demo?.user?.id && KNOWN_DEMO_IDS.has(demo.user.id)) {
-              setUser({ id: demo.user.id, email: demo.user.email ?? '' });
-              setIsLoading(false);
-              return;
-            }
-          } catch { /* fall through */ }
-          localStorage.removeItem('hrms_demo_session');
-        }
-      } else {
-        localStorage.removeItem('hrms_demo_session');
-      }
-
+      // Real JWT tokens always take priority over demo sessions
       const token = localStorage.getItem('hrms_access_token');
       if (token) {
         const decoded = decodeJwtUser(token);
         if (decoded) {
+          // Clear any lingering demo session when real JWT is present
+          localStorage.removeItem('hrms_demo_session');
           setUser(decoded);
           setIsLoading(false);
           scheduleRefresh();
@@ -151,6 +119,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
         localStorage.removeItem('hrms_refresh_token');
+      }
+
+      // Demo sessions are only checked if no real JWT token exists
+      if (DEMO_LOGIN_ENABLED) {
+        const demoRaw = localStorage.getItem('hrms_demo_session');
+        if (demoRaw) {
+          try {
+            const demo = JSON.parse(demoRaw);
+            if (demo?.user?.id) {
+              setUser({ id: demo.user.id, email: demo.user.email ?? '' });
+              setIsLoading(false);
+              return;
+            }
+          } catch {
+            localStorage.removeItem('hrms_demo_session');
+          }
+        }
       }
 
       setUser(null);
@@ -173,23 +158,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         const mockSession = buildDemoSession(demoCred);
         localStorage.setItem('hrms_demo_session', JSON.stringify(mockSession));
-        await queryClient.cancelQueries();
-        queryClient.clear();
         setUser({ id: mockSession.user.id, email: mockSession.user.email });
+        queryClient.invalidateQueries();
         return { error: null };
       }
     }
 
     try {
-      console.log('[AuthContext] Login attempt:', { identifier, apiUrl: API_URL });
       const res = await fetch(`${API_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier, password }),
       });
       const json = await res.json();
-      console.log('[AuthContext] Login response:', { status: res.status, data: json });
-      if (!res.ok) return { error: new Error(json.error || `Login failed: HTTP ${res.status}`) };
+      if (!res.ok) return { error: new Error(json.error || 'Authentication failed') };
       const { accessToken, refreshToken, user: authUser } = json.data;
       localStorage.removeItem('hrms_demo_session');
       localStorage.setItem('hrms_access_token', accessToken);
@@ -205,8 +187,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setTwoFactorVerified(verifiedTwoFactor);
       await queryClient.cancelQueries();
       queryClient.clear();
-      setUser({ id: authUser.id, email: authUser.email, isReadOnly: authUser.isReadOnly || false });
+      setUser({ id: authUser.id, email: authUser.email });
       scheduleRefresh();
+      queryClient.invalidateQueries();
       return { error: null };
     } catch (err) {
       return { error: err instanceof Error ? err : new Error('Network error') };
@@ -262,7 +245,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const forgotPassword = async (email: string): Promise<{ error: Error | null }> => {
+  const forgotPassword = async (email: string): Promise<{ error: Error | null; smtpNotConfigured?: boolean }> => {
     try {
       const res = await fetch(`${API_URL}/api/auth/forgot-password`, {
         method: 'POST',
@@ -271,7 +254,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (!res.ok) {
         const json = await res.json();
-        return { error: new Error(json.error || 'Request failed') };
+        return { error: new Error(json.error || 'Request failed'), smtpNotConfigured: !!json.smtpNotConfigured };
       }
       return { error: null };
     } catch (err) {
@@ -343,9 +326,4 @@ export function useAuth() {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
-}
-
-export function useIsReadOnly() {
-  const { user } = useAuth();
-  return user?.isReadOnly || false;
 }

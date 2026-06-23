@@ -9,6 +9,7 @@ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { getEmployeeForUser, hasRole } from '../../shared/accessGuard.js';
+import { toIST } from '../../shared/timezone.js';
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -228,7 +229,14 @@ router.post('/clock-in', h(async (req: AuthenticatedRequest, res: Response) => {
        adr.clock_in_location AS clock_in_location_name, adr.clock_out_location AS clock_out_location_name
      FROM attendance_daily_record adr WHERE adr.id = ? LIMIT 1`, [id]
   );
-  res.status(201).json({ success: true, data: (rows as RowDataPacket[])[0] });
+  const row = (rows as RowDataPacket[])[0] as any;
+  if (row) {
+    row.clock_in_time  = toIST(row.clock_in_time);
+    row.clock_out_time = toIST(row.clock_out_time);
+    row.clock_in       = toIST(row.clock_in);
+    row.clock_out      = toIST(row.clock_out);
+  }
+  res.status(201).json({ success: true, data: row });
 }));
 
 // POST /clock-out
@@ -263,7 +271,14 @@ router.post('/clock-out', h(async (req: AuthenticatedRequest, res: Response) => 
        adr.clock_in_location AS clock_in_location_name, adr.clock_out_location AS clock_out_location_name
      FROM attendance_daily_record adr WHERE adr.id = ? LIMIT 1`, [record_id]
   );
-  res.json({ success: true, data: (rows as RowDataPacket[])[0] });
+  const out = (rows as RowDataPacket[])[0] as any;
+  if (out) {
+    out.clock_in_time  = toIST(out.clock_in_time);
+    out.clock_out_time = toIST(out.clock_out_time);
+    out.clock_in       = toIST(out.clock_in);
+    out.clock_out      = toIST(out.clock_out);
+  }
+  res.json({ success: true, data: out });
 }));
 
 export { router as attendanceEngineRouter };

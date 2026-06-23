@@ -8,6 +8,8 @@ import { startLeaveMonthlyWorker } from './leave-monthly-credit.worker.js';
 import { startOfficialEmailComplianceScheduler } from './official-email-compliance.worker.js';
 import { startSLABreachWorker } from './sla-breach-worker.js';
 import { startLmsSyncWorker } from './lms-sync.worker.js';
+import { startPayrollNightlyRecalcWorker } from './payroll-nightly-recalc.worker.js';
+import { startAprVicidialSyncWorker } from './apr-vicidial-sync.worker.js';
 import { runNcosecBiometricSync } from '../../scripts/migrate-ncosec-biometric.js';
 
 const BIOMETRIC_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
@@ -63,6 +65,14 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: 'biometric-cosec-sync',
     start: startBiometricCosecWorker,
+  },
+  {
+    name: 'payroll-nightly-recalc',
+    start: startPayrollNightlyRecalcWorker,
+  },
+  {
+    name: 'apr-vicidial-sync',
+    start: startAprVicidialSyncWorker,
   },
 ];
 

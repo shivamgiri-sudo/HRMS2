@@ -27,7 +27,6 @@ import { employeeReportMasterRouter } from "./modules/employees/employee.report-
 import { employeeSecureRouter } from "./modules/employees/employee.secure.routes.js";
 import { employeeGovernanceRouter } from "./modules/employees/employee-governance.routes.js";
 import { employeePhotoCompatRouter } from "./modules/employees/employee.photo.compat.routes.js";
-import { profileApprovalRouter } from "./modules/employees/profile-approval.routes.js";
 import { rmChangeRouter } from "./modules/employees/rm-change.routes.js";
 import { kpiRouter } from "./modules/kpi/kpi.routes.js";
 import { kpiProcessRoleRouter } from "./modules/kpi/kpi.process-role.routes.js";
@@ -62,7 +61,6 @@ import { rtaRouter } from "./modules/rta/rta.routes.js";
 import { accountControlRouter } from "./modules/account-control/account.control.routes.js";
 import { workforceMandateRouter } from "./modules/workforce-mandate/workforce.mandate.routes.js";
 import { lmsRouter } from "./modules/lms/lms.routes.js";
-import { lmsDashboardRouter } from "./modules/lms-integration/lms-dashboard.routes.js";
 import { benefitsRouter } from "./modules/benefits/benefits.routes.js";
 import { careerRouter } from "./modules/career/career.routes.js";
 import { erpRouter } from "./modules/erp/erp.routes.js";
@@ -80,9 +78,6 @@ import { communicationRouter } from "./modules/communication/communication.route
 import { securityCenterRouter } from "./modules/security/security-center.routes.js";
 import { attendanceEngineRouter } from "./modules/wfm/attendance-engine.routes.js";
 import { attendanceDailyScopedRouter } from "./modules/wfm/attendance-daily-scoped.routes.js";
-import { attendanceDisputeRouter } from "./modules/attendance/attendance.dispute.routes.js";
-import { attendanceManualOverrideRouter } from "./modules/attendance/attendance.manual-override.routes.js";
-import { auditLogRouter, getAuditLogExtended } from "./modules/audit/audit.log.routes.js";
 import { biometricPunchRouter } from "./modules/wfm/biometric-punch.routes.js";
 import { cosecSyncRouter } from "./modules/wfm/cosec-sync.routes.js";
 import { biometricSummaryRouter } from "./modules/wfm/biometric-summary.routes.js";
@@ -106,12 +101,7 @@ import dialerRouter from "./modules/dialer/dialer.routes.js";
 import { externalDbRouter } from "./modules/external-db/external-db.routes.js";
 import { aprRouter } from "./modules/apr/apr.routes.js";
 import { qualityDashboardRouter } from "./modules/quality-dashboard/quality-dashboard.routes.js";
-import { qualityAggregationRouter } from "./modules/quality-dashboard/quality-aggregation.routes.js";
-import { qualityManagerRouter } from "./modules/quality-dashboard/quality-manager.routes.js";
-import { qualityQARouter } from "./modules/quality-dashboard/quality-qa.routes.js";
-import { qualityExecutiveRouter } from "./modules/quality-dashboard/quality-executive.routes.js";
 import { performanceDashboardRouter } from "./modules/performance-dashboard/performance-dashboard.routes.js";
-import operationsLiveRouter from "./modules/operations/operations-live.routes.js";
 import { kpiMasterRouter } from "./modules/kpi/kpi-master.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
 import { payrollMastersRouter } from "./modules/payroll-masters/payrollMasters.routes.js";
@@ -127,8 +117,6 @@ import {
 } from "./modules/peopleos/peopleos.routes.js";
 import { incentivesRouter } from "./modules/incentives/incentives.routes.js";
 import { expenseRouter } from "./modules/expenses/expense.routes.js";
-import { businessActionsRouter } from "./modules/business-actions/business-actions.routes.js";
-import { businessCommandRouter } from "./modules/business-command/business-command.routes.js";
 
 export const app = express();
 
@@ -151,7 +139,7 @@ function isAllowedOrigin(origin: string): boolean {
 app.use(compression({
   level: 6,
   threshold: 1024,
-  filter: (req: any, res: any) => {
+  filter: (req, res) => {
     if (req.path.includes("/stream") || req.path.includes("/biometric-punch")) return false;
     return compression.filter(req, res);
   },
@@ -198,16 +186,13 @@ app.use("/api/payroll-compliance", payrollComplianceRouter);
 app.use("/api/employees", listEndpointLimiter, employeeReportMasterRouter);
 app.use("/api/employees", listEndpointLimiter, employeeSecureRouter);
 app.use("/api/employees", listEndpointLimiter, employeeGovernanceRouter);
-// Photo routes consolidated in employeeRouter; compat router disabled to prevent conflicts
+app.use("/api/employees", employeePhotoCompatRouter);
 app.use("/api/employees", listEndpointLimiter, employee360Router);
 app.use("/api/employees", listEndpointLimiter, employeeRouter);
-app.use("/api/profile-approval", profileApprovalRouter);
 app.use("/api/rm-change", rmChangeRouter);
 app.use("/api/kpi/process-role", kpiProcessRoleRouter);
 app.use("/api/kpi-master", kpiMasterRouter);
 app.use("/api/kpi", kpiRouter);
-app.use("/api/files", filesRouter);
-app.use("/api/employee-docs", employeeDocsRouter);
 app.use("/api/portal", portalRouter);
 app.use("/api/ats", atsFormConfigRouter);
 app.use("/api/ats", atsRouter);
@@ -227,6 +212,8 @@ app.use("/api/bulk-upload", bulkUploadRouter);
 app.use("/api/workflow", workflowRouter);
 app.use("/api/lifecycle", lifecycleRouter);
 app.use("/api/assets-mgmt", assetsRouter);
+app.use("/api/files", filesRouter);
+app.use("/api/employee-docs", employeeDocsRouter);
 app.use("/api/helpdesk", helpdeskRouter);
 app.use("/api/letters", lettersRouter);
 app.use("/api/ats-ext", atsExtRouter);
@@ -240,7 +227,6 @@ app.use("/api/rta", rtaRouter);
 app.use("/api/account-control", accountControlRouter);
 app.use("/api/workforce-mandate", workforceMandateRouter);
 app.use("/api/lms", lmsRouter);
-app.use("/api/lms-dashboard", lmsDashboardRouter);
 app.use("/api/benefits", benefitsRouter);
 app.use("/api/career", careerRouter);
 app.use("/api/erp", erpRouter);
@@ -256,8 +242,6 @@ app.use("/api/performance-feedback", performanceFeedbackRouter);
 app.use("/api/engagement", engagementRouter);
 app.use("/api/engagement-intelligence", engagementIntelligenceRouter);
 app.use("/api/people-experience", peopleExperienceRouter);
-app.use("/api/business-actions", businessActionsRouter);
-app.use("/api/business-command", businessCommandRouter);
 app.use("/api/communication", communicationRouter);
 app.use("/api/security-center", securityCenterRouter);
 app.use("/api/external-db", externalDbRouter);
@@ -272,9 +256,6 @@ app.use('/api/wfm/biometric-punch', biometricPunchRouter);
 app.use('/api/wfm/cosec-sync', cosecSyncRouter);
 app.use('/api/wfm/biometric-summary', biometricSummaryRouter);
 app.use("/api/attendance/exception-engine", attendanceExceptionRouter);
-app.use("/api/attendance", attendanceDisputeRouter);
-app.use("/api/attendance", attendanceManualOverrideRouter);
-app.use("/api/audit", auditLogRouter);
 app.use("/api/integrations/cosec", cosecMonitoringRouter);
 app.use("/api/workforce-planning", workforcePlanningRouter);
 app.use("/api/customization", customizationRouter);
@@ -286,12 +267,7 @@ app.use('/api/reports', reportLimiter, reportingRouter);
 app.use("/api/assistant/context", assistantContextRouter);
 app.use('/api/control-tower', controlTowerRouter);
 app.use("/api/quality-dashboard", qualityDashboardRouter);
-app.use("/api/agent", qualityAggregationRouter);
-app.use("/api/manager", qualityManagerRouter);
-app.use("/api/qa", qualityQARouter);
-app.use("/api/executive", qualityExecutiveRouter);
 app.use("/api/performance-dashboard", performanceDashboardRouter);
-app.use("/api/operations", operationsLiveRouter);
 app.use("/api/legacy", legacyRouter);
 app.use("/api/expenses", expenseRouter);
 

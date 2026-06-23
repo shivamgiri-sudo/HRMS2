@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { toIST } from "../../shared/timezone.js";
 
 export const biometricSummaryRouter = Router();
 biometricSummaryRouter.use(requireAuth);
@@ -117,6 +118,10 @@ biometricSummaryRouter.get("/reconciliation", roleGuard, h(async (req: any, res:
   );
   const data = rows.map((row: any) => ({
     ...row,
+    clock_in_time:  toIST(row.clock_in_time),
+    clock_out_time: toIST(row.clock_out_time),
+    first_punch:    toIST(row.first_punch),
+    last_punch:     toIST(row.last_punch),
     mismatch_type: !row.first_punch && ["present", "half_day"].includes(String(row.attendance_status))
       ? "NO_BIOMETRIC_FOR_PRESENT"
       : row.first_punch && String(row.attendance_status) === "absent"

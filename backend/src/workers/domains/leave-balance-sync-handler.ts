@@ -86,16 +86,34 @@ export class LeaveBalanceSyncHandler extends DomainSyncBase {
         const usedDays = Number(usedRow?.used_days ?? 0);
 
         try {
-          const [res] = await db.execute<any>(
-            `INSERT INTO leave_balance_ledger
-               (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
-             VALUES (UUID(), ?, ?, ?, ?, ?, 0)
-             ON DUPLICATE KEY UPDATE
-               allocated_days = VALUES(allocated_days),
-               used_days      = VALUES(used_days),
-               updated_at     = NOW()`,
-            [empId, leaveTypeId, year, Number(allocated), usedDays]
-          );
+          // For the current year, do NOT overwrite allocated_days — the monthly credit
+          // worker accrues CL/ML incrementally (1 day/month). Overwriting with the
+          // full annual entitlement from legacy is what causes the "showing full year"
+          // bug. Only sync used_days from legacy leave requests.
+          const currentYear = new Date().getFullYear();
+          let sql: string;
+          let sqlParams: unknown[];
+          if (year === currentYear) {
+            // Current year: upsert without touching allocated_days
+            sql = `INSERT INTO leave_balance_ledger
+                     (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
+                   VALUES (UUID(), ?, ?, ?, ?, ?, 0)
+                   ON DUPLICATE KEY UPDATE
+                     used_days  = VALUES(used_days),
+                     updated_at = NOW()`;
+            sqlParams = [empId, leaveTypeId, year, Number(allocated), usedDays];
+          } else {
+            // Past years: safe to set allocated_days (no active accrual)
+            sql = `INSERT INTO leave_balance_ledger
+                     (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
+                   VALUES (UUID(), ?, ?, ?, ?, ?, 0)
+                   ON DUPLICATE KEY UPDATE
+                     allocated_days = VALUES(allocated_days),
+                     used_days      = VALUES(used_days),
+                     updated_at     = NOW()`;
+            sqlParams = [empId, leaveTypeId, year, Number(allocated), usedDays];
+          }
+          const [res] = await db.execute<any>(sql, sqlParams);
           if (res.affectedRows === 1) inserted++;
           else updated++;
         } catch {

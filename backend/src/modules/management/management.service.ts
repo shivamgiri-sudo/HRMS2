@@ -563,6 +563,9 @@ export const managementService = {
         `SELECT COALESCE(NULLIF(current_stage, ''), 'Unspecified') AS stage, COUNT(*) AS value
            FROM ats_candidate
           WHERE active_status = 1
+            AND LOWER(COALESCE(current_stage,'')) NOT IN (
+              'joined','converted','onboarded','rejected','declined','withdrawn','absconded'
+            )
           GROUP BY COALESCE(NULLIF(current_stage, ''), 'Unspecified')
           ORDER BY value DESC`,
       ),
@@ -767,7 +770,7 @@ export const managementService = {
       hiringGapResult,
       ffLiabilityResult,
     ] = await Promise.all([
-      // 1. Payroll liability — latest run (any status)
+      // 1. Payroll liability — current month run (matches Payroll page total)
       db.execute<RowDataPacket[]>(
         `SELECT
            COALESCE(SUM(spl.gross_salary), 0)  AS total_gross,
@@ -778,10 +781,8 @@ export const managementService = {
            spr.run_month
          FROM salary_prep_run spr
          JOIN salary_prep_line spl ON spl.run_id = spr.id
-         WHERE spr.run_month = (
-           SELECT MAX(run_month) FROM salary_prep_run
-           WHERE status IN ('draft','processing','completed')
-         )
+         WHERE spr.run_month = DATE_FORMAT(CURDATE(), '%Y-%m')
+           AND spr.status IN ('draft','processing','completed')
          GROUP BY spr.run_month
          LIMIT 1`
       ),
@@ -849,7 +850,8 @@ export const managementService = {
          ORDER BY billing_month DESC
          LIMIT 1`
       ),
-      // 5. Attrition replacement cost (exits last 30d × avg CTC/12)
+      // 5. Attrition cost (exits last 30d × avg CTC × 0.5 replacement multiplier)
+      // Industry standard: replacement cost ≈ 50% of annual CTC (recruitment + training + productivity loss)
       db.execute<RowDataPacket[]>(
         `SELECT
            COUNT(*) AS exits_30d,
@@ -860,11 +862,12 @@ export const managementService = {
                 WHERE esa.effective_from <= CURDATE()
                   AND (esa.effective_to IS NULL OR esa.effective_to >= CURDATE())
                ), 0
-             ) / 12, 0
+             ) * 0.5, 0
            ) AS replacement_cost_estimate
          FROM employees
-         WHERE COALESCE(date_of_leaving, resignation_date, date_of_exit)
-           BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND CURDATE()`
+         WHERE active_status = 0
+           AND COALESCE(date_of_leaving, resignation_date, date_of_exit)
+             BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND CURDATE()`
       ),
       // 6. Open hiring pipeline
       db.execute<RowDataPacket[]>(

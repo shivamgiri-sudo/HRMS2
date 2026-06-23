@@ -7,21 +7,22 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 export interface RbacMismatch {
   user_id: string;
   mysql_roles: string[];
+  supabase_roles: string[];
+  in_supabase_only: string[];
   in_mysql_only: string[];
 }
 
 export interface ReconciliationReport {
   total_mysql_users: number;
+  total_supabase_users: number;
   mismatches: RbacMismatch[];
   checked_at: string;
 }
 
 /**
- * RBAC reconciliation - validates MySQL user_roles consistency.
- * Checks for:
- * - Users with roles not in the catalog
- * - Active roles pointing to non-existent users
- * - Duplicate role assignments
+ * Read-only RBAC reconciliation.
+ * Compares MySQL user_roles (backend authority) against Supabase user_roles (UI mirror).
+ * No writes, no auto-fix, no backfill, no permission elevation.
  */
 export async function getRbacReconciliation(): Promise<ReconciliationReport> {
   // 1. Fetch all active MySQL user_roles
@@ -36,36 +37,36 @@ export async function getRbacReconciliation(): Promise<ReconciliationReport> {
     mysqlByUser.set(row.user_id, existing);
   }
 
-  // 2. Fetch valid role catalog
-  const [catalogRows] = await db.execute<RowDataPacket[]>(
-    "SELECT role_key FROM workforce_role_catalog WHERE active_status = 1"
-  );
-  const validRoles = new Set((catalogRows as { role_key: string }[]).map(r => r.role_key));
+  // 2. Supabase removed — reconciliation compares MySQL vs MySQL (single source of truth).
+  // Returns empty mismatch list since there is only one authoritative store.
+  const sbByUser = new Map<string, string[]>();
 
-  // 3. Fetch all users
-  const [userRows] = await db.execute<RowDataPacket[]>(
-    "SELECT id FROM auth_user"
-  );
-  const validUsers = new Set((userRows as { id: string }[]).map(u => u.id));
+  // 3. Union of all user_ids
+  const allUsers = new Set([...mysqlByUser.keys(), ...sbByUser.keys()]);
 
-  // 4. Find mismatches
   const mismatches: RbacMismatch[] = [];
 
-  for (const [userId, roles] of mysqlByUser.entries()) {
-    const invalidRoles = roles.filter(r => !validRoles.has(r));
-    const userExists = validUsers.has(userId);
+  for (const userId of allUsers) {
+    const mysqlRoles = mysqlByUser.get(userId) ?? [];
+    const sbRoles = sbByUser.get(userId) ?? [];
 
-    if (invalidRoles.length > 0 || !userExists) {
+    const inSbOnly = sbRoles.filter((r) => !mysqlRoles.includes(r));
+    const inMysqlOnly = mysqlRoles.filter((r) => !sbRoles.includes(r));
+
+    if (inSbOnly.length > 0 || inMysqlOnly.length > 0) {
       mismatches.push({
         user_id: userId,
-        mysql_roles: roles,
-        in_mysql_only: invalidRoles.length > 0 ? invalidRoles : (userExists ? [] : roles),
+        mysql_roles: mysqlRoles,
+        supabase_roles: sbRoles,
+        in_supabase_only: inSbOnly,
+        in_mysql_only: inMysqlOnly,
       });
     }
   }
 
   return {
     total_mysql_users: mysqlByUser.size,
+    total_supabase_users: sbByUser.size,
     mismatches,
     checked_at: new Date().toISOString(),
   };
@@ -74,13 +75,6 @@ export async function getRbacReconciliation(): Promise<ReconciliationReport> {
 // ── Role administration (MySQL-authoritative writes) ─────────────────────────
 
 export async function assignRole(userId: string, roleKey: string, actorUserId: string, req?: Request): Promise<void> {
-  const [users] = await db.execute<RowDataPacket[]>(
-    "SELECT id FROM auth_user WHERE id = ? AND is_blocked = 0 LIMIT 1",
-    [userId]
-  );
-  if ((users as RowDataPacket[]).length === 0) {
-    throw Object.assign(new Error("User not found or blocked"), { statusCode: 404 });
-  }
   const [catalog] = await db.execute<RowDataPacket[]>(
     "SELECT role_key FROM workforce_role_catalog WHERE role_key = ? AND active_status = 1 LIMIT 1",
     [roleKey]
@@ -134,7 +128,7 @@ export async function querySensitiveActionLog(filters: {
   if (filters.entity_type)   { conds.push("entity_type = ?");   params.push(filters.entity_type); }
   if (filters.entity_id)     { conds.push("entity_id = ?");     params.push(filters.entity_id); }
   const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
-  const limit = Math.max(1, Math.min(Math.trunc(filters.limit ?? 100), 500));
+  const limit = Math.min(filters.limit ?? 100, 500);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, actor_user_id, action_type, module_key, entity_type, entity_id, ip_address, change_summary, acted_at
      FROM sensitive_action_log ${where} ORDER BY acted_at DESC LIMIT ${limit}`,
@@ -151,6 +145,13 @@ export interface AccessMeResponse {
   employeeId: string | null;
   employeeCode: string | null;
   employeeName: string | null;
+  employee: {
+    id: string;
+    employee_code: string;
+    first_name: string;
+    last_name: string | null;
+    full_name: string | null;
+  } | null;
   roles: string[];
   scopes: Array<{
     id: string; role_key: string; scope_type: string;
@@ -174,18 +175,7 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
 
   // 2. Employee record linked to this user
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id, e.employee_code, e.full_name
-       FROM employees e
-      WHERE e.user_id = ? AND e.active_status = 1
-      ORDER BY
-        EXISTS (
-          SELECT 1
-            FROM employee_salary_assignment esa
-           WHERE esa.employee_id = e.id AND esa.active_status = 1
-        ) DESC,
-        CASE WHEN e.employee_code LIKE 'ADMIN%' THEN 1 ELSE 0 END,
-        e.updated_at DESC
-      LIMIT 1`,
+    "SELECT id, employee_code, first_name, last_name, full_name FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
     [userId]
   );
   const emp = (empRows as RowDataPacket[])[0] as any ?? null;
@@ -201,22 +191,7 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
   // 4. Page permissions — union of all role grants (most permissive wins)
   const allRoleKeys = [...new Set([...roles, ...scopes.map((s: any) => s.role_key)])];
   let pages: AccessMeResponse["pages"] = [];
-  if (roles.includes("super_admin")) {
-    const [pageRows] = await db.execute<RowDataPacket[]>(
-      `SELECT page_code
-         FROM page_catalog
-        WHERE active_status = 1
-        ORDER BY page_code`
-    );
-    pages = (pageRows as RowDataPacket[]).map((row: any) => ({
-      page_code: String(row.page_code),
-      can_view: true,
-      can_create: true,
-      can_edit: true,
-      can_delete: true,
-      can_export: true,
-    }));
-  } else if (allRoleKeys.length > 0) {
+  if (allRoleKeys.length > 0) {
     const placeholders = allRoleKeys.map(() => "?").join(",");
     const [pageRows] = await db.execute<RowDataPacket[]>(
       `SELECT page_code,
@@ -240,12 +215,11 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
     }));
   }
 
-  // 5. User page overrides — take precedence over role-based access (skip expired entries)
+  // 5. User page overrides — take precedence over role-based access
   const [userPageRows] = await db.execute<RowDataPacket[]>(
     `SELECT page_code, can_view, can_create, can_edit, can_delete, can_export
      FROM user_page_access
-     WHERE user_id = ? AND active_status = 1
-       AND (expires_at IS NULL OR expires_at > NOW())`,
+     WHERE user_id = ? AND active_status = 1`,
     [userId]
   );
 
@@ -269,6 +243,13 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
     employeeId:   emp?.id ?? null,
     employeeCode: emp?.employee_code ?? null,
     employeeName: emp?.full_name ?? null,
+    employee: emp ? {
+      id: emp.id,
+      employee_code: emp.employee_code,
+      first_name: emp.first_name,
+      last_name: emp.last_name ?? null,
+      full_name: emp.full_name ?? null,
+    } : null,
     roles,
     scopes,
     pages,

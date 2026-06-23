@@ -575,7 +575,7 @@ export async function getPayrollReadiness(actor: Actor, filters: QueryFilters) {
        WHERE prs.period_start <= ? AND prs.period_end >= ? AND ${scoped.sql}`,
       [to, from, ...scoped.params],
     ),
-    blocked_employees: (await queryRows(
+    blocked_employees: await queryRows(
       `SELECT prs.*, e.employee_code, e.full_name AS employee_name, b.branch_name, p.process_name
        FROM payroll_readiness_snapshot prs
        JOIN employees e ON e.id = prs.employee_id
@@ -587,12 +587,7 @@ export async function getPayrollReadiness(actor: Actor, filters: QueryFilters) {
        ORDER BY prs.scanned_at DESC
        LIMIT ?`,
       [to, from, ...scoped.params, limit(filters.limit)],
-    )).map((row: any) => ({
-      ...row,
-      blocker_codes: Array.isArray(row.blocker_codes)
-        ? row.blocker_codes.filter((c: unknown) => c != null)
-        : row.blocker_codes,
-    })),
+    ),
   };
 }
 
@@ -609,8 +604,11 @@ export async function scanPayrollReadiness(actor: Actor, filters: QueryFilters, 
               ELSE 'ready'
             END,
             JSON_ARRAYAGG(
-              DISTINCT IF(bd.employee_id IS NULL, 'missing_bank_details',
-                IF(adr.attendance_status = 'unreconciled', 'unreconciled_attendance', NULL))
+              CASE
+                WHEN bd.employee_id IS NULL THEN 'missing_bank_details'
+                WHEN adr.attendance_status = 'unreconciled' THEN 'unreconciled_attendance'
+                ELSE NULL
+              END
             ),
             NULL,
             e.branch_id,
@@ -624,7 +622,7 @@ export async function scanPayrollReadiness(actor: Actor, filters: QueryFilters, 
        LEFT JOIN employee_bank_detail bd ON bd.employee_id = e.id AND bd.verified = 1
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id AND adr.record_date BETWEEN ? AND ?
       WHERE ${scoped.sql}
-      GROUP BY e.id, e.branch_id, e.process_id
+      GROUP BY e.id, bd.employee_id, e.branch_id, e.process_id
      ON DUPLICATE KEY UPDATE
        readiness_status = VALUES(readiness_status),
        blocker_codes = VALUES(blocker_codes),

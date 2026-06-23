@@ -1,9 +1,8 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { sendSelectedEmail, sendRejectedEmail, sendRejectedEmailProfessional } from "./ats.email.service.js";
+import { sendSelectedEmail, sendRejectedEmail } from "./ats.email.service.js";
 import { sendOnboardingToken } from "./ats.onboarding.service.js";
-import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import type {
   AtsCandidate,
   AtsCandidateStageLog,
@@ -37,20 +36,8 @@ function normalizeSourceChannel(channel: string | null | undefined): string | nu
   return mapping[normalized] || channel; // Return normalized or original if no match
 }
 
-/** Convert Yes/No strings OR integers to boolean (1/0) for TINYINT(1) columns */
-function yesNoToBoolean(value: string | number | null | undefined): number | null {
-  if (value === null || value === undefined) return null;
-  // Already a number (from frontend integer conversion)
-  if (typeof value === 'number') return value === 1 ? 1 : 0;
-  // String conversion
-  const normalized = value.trim().toLowerCase();
-  if (normalized === 'yes' || normalized === '1' || normalized === 'true') return 1;
-  if (normalized === 'no' || normalized === '0' || normalized === 'false') return 0;
-  return null;
-}
-
 export const atsService = {
-  async listCandidates(filters: CandidateListFilters & { scopeFilter?: { sql: string; params: unknown[] } | string }): Promise<PaginatedResult<AtsCandidate>> {
+  async listCandidates(filters: CandidateListFilters): Promise<PaginatedResult<AtsCandidate>> {
     const conds: string[] = ["active_status = 1"];
     const params: unknown[] = [];
     if (filters.stage)    { conds.push("current_stage = ?");         params.push(filters.stage); }
@@ -64,17 +51,23 @@ export const atsService = {
     if (filters.fromDate) { conds.push("walk_in_date >= ?"); params.push(filters.fromDate); }
     if (filters.toDate)   { conds.push("walk_in_date <= ?"); params.push(filters.toDate); }
 
-    // Apply scope filter from middleware (object {sql, params} or legacy string)
-    if (filters.scopeFilter) {
-      if (typeof filters.scopeFilter === 'object' && filters.scopeFilter.sql) {
-        const scopeClause = String(filters.scopeFilter.sql).replace(/^WHERE\s+/i, '').trim();
-        if (scopeClause) {
-          conds.push(`(${scopeClause})`);
-          params.push(...(filters.scopeFilter.params || []));
+    // Apply scope filter from middleware
+    if ((filters as any).scopeFilter) {
+      const scopeFilter = (filters as any).scopeFilter;
+      // scopeFilter is {sql: string, params: unknown[]} from buildScopeWhereClause
+      if (typeof scopeFilter === 'object' && scopeFilter.sql) {
+        const { sql, params: scopeParams } = scopeFilter;
+        if (sql === "1=0") {
+          // User has no access - return empty result immediately
+          return { data: [], total: 0, page: filters.page, limit: filters.limit };
         }
-      } else if (typeof filters.scopeFilter === 'string') {
-        const scopeClause = filters.scopeFilter.replace(/^WHERE\s+/i, '').trim();
-        if (scopeClause) conds.push(`(${scopeClause})`);
+        if (sql && sql !== "1=1") {
+          // Add scope filter SQL (already without WHERE prefix)
+          conds.push(`(${sql})`);
+          // Merge scope params into main params array
+          params.push(...(scopeParams || []));
+        }
+        // If sql === "1=1", user has full access - no additional filter needed
       }
     }
 
@@ -95,60 +88,15 @@ export const atsService = {
   async getCandidate(id: string): Promise<AtsCandidate> {
     const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM ats_candidate WHERE id = ? LIMIT 1", [id]);
     const candidate = (rows as AtsCandidate[])[0];
-    if (!candidate) {
-      throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
-    }
+    if (!candidate) throw new Error("Candidate not found");
     return candidate;
   },
 
   async createCandidate(input: CreateCandidateInput, userId: string | null): Promise<AtsCandidate> {
-    // Check mobile duplicate — detect candidate status for reprocess messaging
-    const [dupMobile] = await db.execute<RowDataPacket[]>(
-      "SELECT id, current_stage, active_status FROM ats_candidate WHERE mobile = ? LIMIT 1",
-      [input.mobile]
+    const [dup] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM ats_candidate WHERE mobile = ? LIMIT 1", [input.mobile]
     );
-    if ((dupMobile as RowDataPacket[]).length > 0) {
-      const existing = (dupMobile as RowDataPacket[])[0];
-      const stage: string = String(existing.current_stage ?? '');
-      if (stage === 'Rejected') {
-        const err = new Error("This mobile belongs to a previously rejected candidate. Please contact HR to reprocess.");
-        (err as any).statusCode = 409;
-        (err as any).code = 'DUPLICATE_REJECTED';
-        throw err;
-      }
-      if (stage === 'Selected' || stage === 'converted') {
-        const err = new Error("This mobile belongs to a candidate who was already selected.");
-        (err as any).statusCode = 409;
-        (err as any).code = 'DUPLICATE_SELECTED';
-        throw err;
-      }
-      const err = new Error("This mobile is already registered");
-      (err as any).statusCode = 409;
-      (err as any).code = 'DUPLICATE_MOBILE';
-      throw err;
-    }
-
-    // Check email duplicate
-    if (input.email) {
-      const [dupEmail] = await db.execute<RowDataPacket[]>(
-        "SELECT id, current_stage FROM ats_candidate WHERE email = ? LIMIT 1",
-        [input.email]
-      );
-      if ((dupEmail as RowDataPacket[]).length > 0) {
-        const existing = (dupEmail as RowDataPacket[])[0];
-        const stage: string = String(existing.current_stage ?? '');
-        if (stage === 'Rejected') {
-          const err = new Error("This email belongs to a previously rejected candidate. Please contact HR to reprocess.");
-          (err as any).statusCode = 409;
-          (err as any).code = 'DUPLICATE_EMAIL_REJECTED';
-          throw err;
-        }
-        const err = new Error("This email is already registered");
-        (err as any).statusCode = 409;
-        (err as any).code = 'DUPLICATE_EMAIL';
-        throw err;
-      }
-    }
+    if ((dup as RowDataPacket[]).length > 0) throw new Error("This mobile already registered");
 
     // Normalize sourcing channel before insert
     const normalizedChannel = normalizeSourceChannel(input.sourcingChannel);
@@ -157,55 +105,19 @@ export const atsService = {
     await db.execute(
       `INSERT INTO ats_candidate
          (id, candidate_code, full_name, mobile, email, gender, date_of_birth, applied_for_process,
-          applied_for_branch, role_applied, sourcing_channel, referred_by, walk_in_date, remarks, created_by,
+          applied_for_branch, sourcing_channel, referred_by, walk_in_date, remarks, created_by,
           address, education, experience, rotational_shift, preferred_shift, night_shift_ok,
           leaves_in_3months, owns_two_wheeler, id_proof_available, education_proof_available,
           recruiter_name, profile_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, candidateCode(), input.fullName, input.mobile, input.email ?? null, input.gender ?? null,
-       input.dateOfBirth ?? null, input.appliedForProcess, input.appliedForBranch,
-       input.appliedForRole ?? input.appliedForProcess, normalizedChannel, input.referredBy ?? null,
-       input.walkInDate ?? null, input.remarks ?? null, userId,
-       input.address ?? null, input.education, input.experience,
-       yesNoToBoolean(input.rotationalShift), input.preferredShift ?? null, input.nightShiftOk ?? null,
-       yesNoToBoolean(input.leavesIn3months), yesNoToBoolean(input.ownsTwoWheeler), yesNoToBoolean(input.idProofAvailable),
-       yesNoToBoolean(input.educationProofAvailable), input.recruiterName ?? null, input.profileStatus ?? 'registered']
+       input.dateOfBirth ?? null, input.appliedForProcess ?? null, input.appliedForBranch ?? null,
+       normalizedChannel, input.referredBy ?? null, input.walkInDate ?? null, input.remarks ?? null, userId,
+       input.address ?? null, input.education ?? null, input.experience ?? null,
+       input.rotationalShift ?? null, input.preferredShift ?? null, input.nightShiftOk ?? null,
+       input.leavesIn3months ?? null, input.ownsTwoWheeler ?? null, input.idProofAvailable ?? null,
+       input.educationProofAvailable ?? null, input.recruiterName ?? null, input.profileStatus ?? 'registered']
     );
-
-    await db.execute(
-      `INSERT INTO ats_candidate_stage_log
-         (id, candidate_id, from_stage, to_stage, remarks, updated_by)
-       VALUES (?, ?, NULL, 'Applied', 'Candidate registration completed', ?)`,
-      [randomUUID(), id, userId]
-    );
-
-    // Auto-create queue token for Walk-In candidates
-    if (normalizedChannel === 'Walk-In') {
-      try {
-        // Generate queue token (format: WI-YYYYMMDD-XXXX)
-        const dateStr = (input.walkInDate || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
-        const targetDate = input.walkInDate || new Date().toISOString().slice(0, 10);
-        const [countRows] = await db.execute<RowDataPacket[]>(
-          `SELECT COUNT(*) as count FROM ats_queue_token
-           WHERE DATE(created_at) = DATE(?)`,
-          [targetDate]
-        );
-        const dailyCount = ((countRows as RowDataPacket[])[0]?.count || 0) + 1;
-        const tokenNumber = `WI-${dateStr}-${String(dailyCount).padStart(4, '0')}`;
-        const branchName = input.appliedForBranch || null;
-
-        await db.execute(
-          `INSERT INTO ats_queue_token
-           (id, candidate_id, token, token_number, branch_name, queue_status, current_stage, status)
-           VALUES (?, ?, ?, ?, ?, 'waiting', 'Arrived', 'active')`,
-          [randomUUID(), id, tokenNumber, tokenNumber, branchName]
-        );
-      } catch (err) {
-        // Log error but don't fail candidate creation
-        console.error('Failed to create queue token:', err);
-      }
-    }
-
     return this.getCandidate(id);
   },
 
@@ -232,31 +144,14 @@ export const atsService = {
     return this.getCandidate(id);
   },
 
-  async moveStage(
-    candidateId: string,
-    toStage: string,
-    userId: string,
-    remarks?: string,
-    extra?: { interviewRating?: number | null; interviewNotes?: string | null }
-  ): Promise<AtsCandidate> {
+  async moveStage(candidateId: string, toStage: string, userId: string, remarks?: string): Promise<AtsCandidate> {
     const candidate = await this.getCandidate(candidateId);
     await db.execute("UPDATE ats_candidate SET current_stage = ?, updated_at = NOW() WHERE id = ?", [toStage, candidateId]);
-
-    // Store recruiter feedback if provided (migration 202 adds these columns)
-    const hasRatingCols = !!(extra?.interviewRating !== undefined || extra?.interviewNotes !== undefined);
-    if (hasRatingCols) {
-      await db.execute(
-        `INSERT INTO ats_candidate_stage_log (id, candidate_id, from_stage, to_stage, remarks, updated_by, interview_rating, interview_notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [randomUUID(), candidateId, candidate.current_stage, toStage, remarks ?? null, userId, extra?.interviewRating ?? null, extra?.interviewNotes ?? null]
-      );
-    } else {
-      await db.execute(
-        `INSERT INTO ats_candidate_stage_log (id, candidate_id, from_stage, to_stage, remarks, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [randomUUID(), candidateId, candidate.current_stage, toStage, remarks ?? null, userId]
-      );
-    }
+    await db.execute(
+      `INSERT INTO ats_candidate_stage_log (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [randomUUID(), candidateId, candidate.current_stage, toStage, remarks ?? null, userId]
+    );
 
     // Fire email side-effects after the stage is committed — failure must not break the stage move
     if (toStage === 'Selected' && candidate.email) {
@@ -268,30 +163,14 @@ export const atsService = {
         hrName: 'HR Team',
         hrPhone: '',
       }).catch(() => { /* already logged in ats_email_log */ });
-      sendOnboardingToken(candidateId, userId).catch((err: unknown) => {
-        console.error('[ats] Onboarding token email failed for candidate', candidateId, ':', err instanceof Error ? err.message : String(err));
-      });
+      sendOnboardingToken(candidateId, userId).catch(() => {});
     } else if (toStage === 'Rejected' && candidate.email) {
-      // Professional rejection email — replaces the old plain-text rejection
-      sendRejectedEmailProfessional({
+      sendRejectedEmail({
         candidateId,
         to: candidate.email,
         candidateName: candidate.full_name ?? '',
-        branchDisplayName: (candidate as any).branch_name ?? candidate.applied_for_branch ?? '',
-        processName: (candidate as any).process_name ?? null,
-        applicationRef: candidate.candidate_code ?? null,
-      }).catch((err: unknown) => {
-        console.error('[ats] Professional rejection email failed for candidate', candidateId, ', trying fallback:', err instanceof Error ? err.message : String(err));
-        // Fallback to legacy rejection email if professional template fails
-        sendRejectedEmail({
-          candidateId,
-          to: candidate.email!,
-          candidateName: candidate.full_name ?? '',
-          branchName: candidate.applied_for_branch ?? '',
-        }).catch((fallbackErr: unknown) => {
-          console.error('[ats] Fallback rejection email also failed for candidate', candidateId, ':', fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr));
-        });
-      });
+        branchName: candidate.applied_for_branch ?? '',
+      }).catch(() => { /* already logged in ats_email_log */ });
     }
 
     return this.getCandidate(candidateId);
@@ -305,66 +184,11 @@ export const atsService = {
     return rows as AtsCandidateStageLog[];
   },
 
-  async listOnboardingBridges(
-    scopeFilter: { sql: string; params: unknown[] } = { sql: "1=1", params: [] }
-  ): Promise<AtsOnboardingBridge[]> {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         c.id AS candidate_id,
-         c.candidate_code,
-         c.full_name,
-         c.mobile,
-         c.email,
-         COALESCE(br.branch_name, c.branch_display_name, c.applied_for_branch) AS branch_name,
-         COALESCE(c.role_applied, c.applied_for_process) AS role_applied,
-         TRIM(CONCAT(COALESCE(rec.first_name, ''), ' ', COALESCE(rec.last_name, ''))) AS recruiter_name,
-         c.current_stage AS latest_stage,
-         c.applied_for_process AS latest_process,
-         c.profile_status,
-         c.created_at,
-         ob.id,
-         COALESCE(ob.status, 'not_started') AS status,
-         ob.onboarding_token_expires_at,
-         obr.status AS request_status,
-         cop.profile_status AS onboarding_profile_status,
-         eo.status AS offer_status,
-         eo.offered_ctc AS offer_salary,
-         eo.date_of_joining AS offer_doj,
-         COALESCE(ob.employee_id, emp.id) AS employee_id,
-         emp.employee_code
-       FROM ats_candidate c
-       LEFT JOIN branch_master br
-         ON br.id = c.applied_for_branch
-         OR br.branch_name = c.applied_for_branch
-         OR br.branch_code = c.applied_for_branch
-       LEFT JOIN employees rec
-         ON rec.id = COALESCE(c.assigned_recruiter_id, c.recruiter_assigned_id, c.recruiter_id)
-       LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
-       LEFT JOIN ats_onboarding_request obr ON obr.candidate_id = c.id
-       LEFT JOIN candidate_onboarding_profile cop ON cop.candidate_id = c.id
-       LEFT JOIN ats_employment_offer eo ON eo.candidate_id = c.id
-       LEFT JOIN employees emp ON emp.id = ob.employee_id
-       WHERE c.active_status = 1
-         AND (${scopeFilter.sql})
-         AND (
-           c.current_stage IN ('Selected', 'selected', 'converted', 'Onboarded')
-           OR c.profile_status IN ('selected', 'onboarding_sent', 'profile_in_progress', 'profile_submitted', 'onboarded')
-           OR ob.id IS NOT NULL
-           OR obr.id IS NOT NULL
-         )
-       ORDER BY COALESCE(obr.updated_at, ob.created_at, c.updated_at) DESC`,
-      scopeFilter.params
-    );
-    return rows as AtsOnboardingBridge[];
-  },
-
   async createOnboardingBridge(
     input: CreateOnboardingBridgeInput,
     userId: string
   ): Promise<AtsOnboardingBridge> {
-    const candidate = await this.getCandidate(input.candidateId);
-    const allowed = await hasScopedAccess(userId, ["admin", "hr"], { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined }, { allowAdminBypass: true });
-    if (!allowed) throw Object.assign(new Error("Access denied"), { statusCode: 403 });
+    await this.getCandidate(input.candidateId);
     const [existing] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1",
       [input.candidateId]
@@ -385,14 +209,8 @@ export const atsService = {
   async updateOnboardingBridge(
     id: string,
     input: { employeeId?: string | null; joiningDate?: string | null; status?: string; offerLetterUrl?: string | null; notes?: string | null },
-    userId: string
+    _userId: string
   ): Promise<AtsOnboardingBridge> {
-    const [bridgeRows] = await db.execute<RowDataPacket[]>("SELECT candidate_id FROM ats_onboarding_bridge WHERE id = ? LIMIT 1", [id]);
-    const bridge = (bridgeRows as RowDataPacket[])[0];
-    if (!bridge) throw Object.assign(new Error("Onboarding bridge not found"), { statusCode: 404 });
-    const candidate = await this.getCandidate(bridge.candidate_id as string);
-    const allowed = await hasScopedAccess(userId, ["admin", "hr"], { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined }, { allowAdminBypass: true });
-    if (!allowed) throw Object.assign(new Error("Access denied"), { statusCode: 403 });
     const sets: string[] = [];
     const params: unknown[] = [];
     if (input.employeeId     !== undefined) { sets.push("employee_id = ?");      params.push(input.employeeId ?? null); }
