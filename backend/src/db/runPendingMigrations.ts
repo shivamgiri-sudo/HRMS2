@@ -199,6 +199,8 @@ const MIGRATION_MANIFEST: string[] = [
   "268_production_hardening_appointment_provisioning.sql",
   "269_fix_lifecycle_route_schema_access.sql",
   "270_fix_shivam_page_access_and_schema_mismatch.sql",
+  "271_candidate_onboarding_otp_dpdp_engine.sql",
+  "272_hrms2_joining_control_room_document_viewer.sql",
   "1000_fix_engagement_schema_columns.sql",
 ];
 

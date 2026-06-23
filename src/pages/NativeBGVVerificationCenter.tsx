@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { SecureDocumentList } from "@/components/documents/SecureDocumentList";
 
 type QueueRow = {
   candidate_id: string;
@@ -303,19 +304,7 @@ export default function NativeBGVVerificationCenter() {
                       </table>
                     </div>
 
-                    {/* Uploaded documents */}
-                    <div>
-                      <p className="mb-2 font-black text-slate-900">Uploaded Documents</p>
-                      <div className="grid gap-2 md:grid-cols-2">
-                        {selected.documents.map((d) => (
-                          <div key={d.id} className="rounded-xl border bg-slate-50 p-3 text-sm">
-                            <p className="font-bold">{d.doc_type}</p>
-                            <p className="text-slate-600">{d.doc_name}</p>
-                            <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-bold ${STATUS_COLOR[d.document_status] ?? "bg-slate-100 text-slate-600"}`}>{d.document_status}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                    <SecureDocumentList candidateId={selectedId} />
                   </CardContent>
                 </Card>
 

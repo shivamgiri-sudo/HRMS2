@@ -51,10 +51,12 @@ const Notifications                 = lazy(() => import("./pages/Notifications")
 // ATS Onboarding
 const CandidateOnboardingPage       = lazy(() => import("./pages/CandidateOnboardingPage"));
 const CandidateOnboardingFullPage   = lazy(() => import("./pages/CandidateOnboardingFullPage"));
+const CandidateOnboardingV2         = lazy(() => import("./pages/CandidateOnboardingV2"));
 const NativeHROnboardingRequests    = lazy(() => import("./pages/NativeHROnboardingRequests"));
 const NativeBranchHeadApproval      = lazy(() => import("./pages/NativeBranchHeadApproval"));
 const NativeBGVVerificationCenter   = lazy(() => import("./pages/NativeBGVVerificationCenter"));
 const NativePayrollHRValidation     = lazy(() => import("./pages/NativePayrollHRValidation"));
+const NativeJoiningControlRoom      = lazy(() => import("./pages/NativeJoiningControlRoom"));
 
 // ATS
 const NativeBGVReport               = lazy(() => import("./pages/NativeBGVReport"));
@@ -323,7 +325,9 @@ const App = () => (
               <Route path="/ats/offer-approvals" element={<ProtectedRoute><Gate pageCode="ATS_OFFER_APPROVALS"><NativeBranchHeadApproval /></Gate></ProtectedRoute>} />
               <Route path="/ats/branch-head-approval" element={<Navigate to="/ats/offer-approvals" replace />} />
               <Route path="/ats/payroll-hr" element={<ProtectedRoute roles={['admin', 'hr', 'payroll_hr']}><Gate pageCode="ATS_PAYROLL_HR"><NativePayrollHRValidation /></Gate></ProtectedRoute>} />
-              <Route path="/onboard-full" element={<CandidateOnboardingFullPage />} />
+              <Route path="/ats/joining-control-room" element={<ProtectedRoute roles={['admin', 'hr', 'payroll_hr', 'super_admin']}><Gate pageCode="ATS_JOINING_CONTROL_ROOM"><NativeJoiningControlRoom /></Gate></ProtectedRoute>} />
+              <Route path="/onboard-full" element={<CandidateOnboardingV2 />} />
+              <Route path="/onboard-v1" element={<CandidateOnboardingFullPage />} />
               <Route path="/ats/bgv" element={<ProtectedRoute><Gate pageCode="ATS_BGV"><NativeBGVVerificationCenter /></Gate></ProtectedRoute>} />
               <Route path="/ats/bgv-report" element={<ProtectedRoute><Gate pageCode="ATS_BGV_REPORT"><NativeBGVReport /></Gate></ProtectedRoute>} />
               <Route path="/provisioning/wfm-alignment" element={<ProtectedRoute roles={['wfm', 'admin', 'super_admin']}><Gate pageCode="PROVISIONING_WFM_ALIGNMENT"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />

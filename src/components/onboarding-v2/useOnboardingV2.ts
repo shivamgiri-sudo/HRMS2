@@ -4,8 +4,15 @@ const BASE = `${import.meta.env.VITE_HRMS_API_URL ?? 'http://localhost:5055'}/ap
 const API = `${BASE}/onboarding-full`;
 const BGV_API = `${BASE}/bgv`;
 
-async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...options });
+async function apiFetch<T>(url: string, options?: RequestInit, sessionToken?: string): Promise<T> {
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(sessionToken ? { 'x-candidate-session-token': sessionToken } : {}),
+      ...(options?.headers ?? {}),
+    },
+  });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ message: res.statusText }));
     throw new Error(body?.message ?? res.statusText);
@@ -39,7 +46,7 @@ export interface BgvStatus {
   missing_mandatory_checks: string[];
 }
 
-export function useOnboardingV2(token: string | null) {
+export function useOnboardingV2(token: string | null, sessionToken?: string) {
   const [currentSection, setCurrentSection] = useState(0);
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [bgv, setBgv] = useState<BgvStatus | null>(null);
@@ -51,8 +58,8 @@ export function useOnboardingV2(token: string | null) {
   const fetchStatus = useCallback(async () => {
     if (!token) return;
     const [onbRes, bgvRes] = await Promise.all([
-      apiFetch<{ success: boolean; data: OnboardingStatus }>(`${API}/status?token=${token}`),
-      apiFetch<{ success: boolean; data: BgvStatus }>(`${BGV_API}/status?token=${token}`),
+      apiFetch<{ success: boolean; data: OnboardingStatus }>(`${API}/status?token=${token}`, undefined, sessionToken),
+      apiFetch<{ success: boolean; data: BgvStatus }>(`${BGV_API}/status?token=${token}`, undefined, sessionToken),
     ]);
     if (onbRes.success) setStatus(onbRes.data);
     if (bgvRes.success) setBgv(bgvRes.data);
@@ -61,13 +68,13 @@ export function useOnboardingV2(token: string | null) {
       setCurrentSection(stepIdx);
     }
     initializedRef.current = true;
-  }, [token]);
+  }, [token, sessionToken]);
 
   const refreshBgvStatus = useCallback(async () => {
     if (!token) return;
-    const res = await apiFetch<{ success: boolean; data: BgvStatus }>(`${BGV_API}/status?token=${token}`);
+    const res = await apiFetch<{ success: boolean; data: BgvStatus }>(`${BGV_API}/status?token=${token}`, undefined, sessionToken);
     if (res.success) setBgv(res.data);
-  }, [token]);
+  }, [token, sessionToken]);
 
   useEffect(() => {
     if (!token) { setLoading(false); setError('Invalid or missing onboarding token.'); return; }
@@ -92,21 +99,21 @@ export function useOnboardingV2(token: string | null) {
     if (!token) return;
     fetch(`${API}/progress`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(sessionToken ? { 'x-candidate-session-token': sessionToken } : {}) },
       body: JSON.stringify({ token, stepIdx: idx }),
     }).catch(() => {});
-  }, [token]);
+  }, [token, sessionToken]);
 
   const saveSection = useCallback(async (endpoint: string, payload: Record<string, unknown>) => {
     if (!token) return;
     setSaving(true);
     try {
-      await apiFetch(`${API}/${endpoint}`, { method: 'POST', body: JSON.stringify({ token, ...payload }) });
+      await apiFetch(`${API}/${endpoint}`, { method: 'POST', body: JSON.stringify({ token, ...payload }) }, sessionToken);
       await fetchStatus();
     } finally {
       setSaving(false);
     }
-  }, [token, fetchStatus]);
+  }, [token, fetchStatus, sessionToken]);
 
   const verifyBgv = useCallback(async (endpoint: string, payload?: Record<string, unknown>) => {
     if (!token) return;
@@ -115,23 +122,23 @@ export function useOnboardingV2(token: string | null) {
       const res = await apiFetch<{ success: boolean; data: BgvStatus }>(`${BGV_API}/${endpoint}`, {
         method: 'POST',
         body: JSON.stringify({ token, ...payload }),
-      });
+      }, sessionToken);
       if (res.success) setBgv(res.data);
     } finally {
       setSaving(false);
     }
-  }, [token]);
+  }, [token, sessionToken]);
 
   const submitOnboarding = useCallback(async () => {
     if (!token) return;
     setSaving(true);
     try {
-      await apiFetch(`${API}/submit`, { method: 'POST', body: JSON.stringify({ token }) });
+      await apiFetch(`${API}/submit`, { method: 'POST', body: JSON.stringify({ token }) }, sessionToken);
       await fetchStatus();
     } finally {
       setSaving(false);
     }
-  }, [token, fetchStatus]);
+  }, [token, fetchStatus, sessionToken]);
 
   const bgvCheckFor = useCallback((checkType: string): BgvCheck | undefined => {
     return bgv?.checks.find(c => c.check_type === checkType);

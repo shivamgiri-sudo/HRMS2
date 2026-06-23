@@ -129,6 +129,7 @@ import { incentivesRouter } from "./modules/incentives/incentives.routes.js";
 import { expenseRouter } from "./modules/expenses/expense.routes.js";
 import { businessActionsRouter } from "./modules/business-actions/business-actions.routes.js";
 import { businessCommandRouter } from "./modules/business-command/business-command.routes.js";
+import { candidateOnboardingRouter } from "./modules/candidate-onboarding/candidate-onboarding.routes.js";
 
 export const app = express();
 
@@ -176,6 +177,7 @@ app.get("/", (_req, res) => res.json({ success: true, service: "MCN HRMS Backend
 app.use("/api/auth", authRouter);
 app.use("/api/auth", passwordResetRouter);
 app.use("/api/auth/launch", authLaunchRouter);
+app.use("/api/candidate/onboarding", candidateOnboardingRouter);
 app.use("/api/health", healthRouter);
 app.use("/api/admin", roleAssignmentRouter);
 app.use("/api/processes", processRouter);

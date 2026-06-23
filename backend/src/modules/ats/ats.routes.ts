@@ -14,6 +14,8 @@ import onboardingFullRouter from "./onboarding-full.routes.js";
 import bgvVerificationRouter from "./bgv-verification.routes.js";
 import { registrationEnhancedRouter } from "./registration.enhanced.routes.js";
 import { payrollHRRouter } from "./payroll-hr.routes.js";
+import { joiningControlRoomRouter } from "./joining-control-room.routes.js";
+import { secureDocumentsRouter } from "./secure-documents.routes.js";
 import { interviewRouter } from "./interview.routes.js";
 import { queueRouter } from "./queue.routes.js";
 import { candidatePortalRouter } from "./candidate-portal.routes.js";
@@ -138,6 +140,10 @@ atsRouter.use(requireAuth);
 
 // Payroll HR validation routes (with salary_start_date support)
 atsRouter.use("/payroll-hr", payrollHRRouter);
+
+// HRMS2 Joining Control Room and protected candidate document viewer
+atsRouter.use("/joining-control-room", joiningControlRoomRouter);
+atsRouter.use("/", secureDocumentsRouter);
 
 // Interview routes (recruiter portal)
 atsRouter.use("/interview", interviewRouter);

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { ChevronRight, Calendar, DollarSign, User, Building, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
+import { SecureDocumentList } from '@/components/documents/SecureDocumentList';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -324,7 +325,7 @@ export default function NativePayrollHRValidation() {
   // ── View: Validate ─────────────────────────────────────────────────────────
   return (
     <DashboardLayout>
-      <div className="p-6 max-w-4xl mx-auto">
+      <div className="p-6 max-w-6xl mx-auto">
         <div className="mb-6">
           <button
             onClick={() => {
@@ -355,6 +356,10 @@ export default function NativePayrollHRValidation() {
         )}
 
         <div className="space-y-6">
+          {selectedCandidate?.candidate_id && (
+            <SecureDocumentList candidateId={selectedCandidate.candidate_id} />
+          )}
+
           {/* Employment Details */}
           <div className="bg-white border border-gray-200 rounded-lg p-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">Employment Details</h2>

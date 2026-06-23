@@ -12,6 +12,7 @@ import {
   Briefcase, MapPin, Fingerprint, Search, Download,
   Send, ExternalLink, RefreshCw,
 } from 'lucide-react';
+import { SecureDocumentList } from '@/components/documents/SecureDocumentList';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -424,6 +425,8 @@ export default function NativeBGVReport() {
       )}
 
       {/* Document checklist + box file */}
+      {selected?.id && <SecureDocumentList candidateId={selected.id} />}
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><FileText className="w-5 h-5" /> Physical Document Checklist</CardTitle>

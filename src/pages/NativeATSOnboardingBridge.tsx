@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { SecureDocumentList } from "@/components/documents/SecureDocumentList";
 
 type Row = {
   id?: string;
@@ -43,6 +44,7 @@ export default function NativeATSOnboardingBridge() {
   const [statusFilter, setStatusFilter] = useState("All");
   const [sendingToken, setSendingToken] = useState<string | null>(null);
   const [tokenSent, setTokenSent] = useState<Set<string>>(new Set());
+  const [documentsCandidateId, setDocumentsCandidateId] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -196,6 +198,12 @@ export default function NativeATSOnboardingBridge() {
                           )}
                         </td>
                         <td className="p-4 space-y-2">
+                          <button
+                            onClick={() => setDocumentsCandidateId(r.candidate_id)}
+                            className="block rounded bg-slate-900 px-2 py-1 text-xs font-semibold text-white hover:bg-slate-700"
+                          >
+                            Review Documents
+                          </button>
                           {canSendToken && (
                             <button
                               onClick={() => handleSendToken(r.candidate_id)}
@@ -230,6 +238,18 @@ export default function NativeATSOnboardingBridge() {
             </div>
           )}
         </div>
+        {documentsCandidateId && (
+          <div className="rounded-3xl border bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h2 className="font-bold text-slate-950">Secure Document Review</h2>
+                <p className="text-sm text-slate-500">Protected preview, verify, reject, re-upload request, and access audit.</p>
+              </div>
+              <button onClick={() => setDocumentsCandidateId(null)} className="rounded border px-3 py-1 text-sm">Close</button>
+            </div>
+            <SecureDocumentList candidateId={documentsCandidateId} />
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );
