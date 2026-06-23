@@ -86,6 +86,8 @@ import { auditLogRouter, getAuditLogExtended } from "./modules/audit/audit.log.r
 import { biometricPunchRouter } from "./modules/wfm/biometric-punch.routes.js";
 import { cosecSyncRouter } from "./modules/wfm/cosec-sync.routes.js";
 import { biometricSummaryRouter } from "./modules/wfm/biometric-summary.routes.js";
+import { mismatchReviewRouter } from "./modules/wfm/mismatch-review.routes.js";
+import { billingConfigRouter } from "./modules/attendance/billing-config.routes.js";
 import customizationRouter from "./modules/customization/customization.routes.js";
 import { rosterMasterRouter } from "./modules/roster/roster-master.routes.js";
 import rosterCapacityRouter from "./modules/roster/roster-capacity.routes.js";
@@ -276,6 +278,8 @@ app.use('/api/wfm/biometric-summary', biometricSummaryRouter);
 app.use("/api/attendance/exception-engine", attendanceExceptionRouter);
 app.use("/api/attendance", attendanceDisputeRouter);
 app.use("/api/attendance", attendanceManualOverrideRouter);
+app.use("/api/wfm/mismatches", mismatchReviewRouter);
+app.use("/api/attendance/billing-config", billingConfigRouter);
 app.use("/api/audit", auditLogRouter);
 app.use("/api/integrations/cosec", cosecMonitoringRouter);
 app.use("/api/workforce-planning", workforcePlanningRouter);

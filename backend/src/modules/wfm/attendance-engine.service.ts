@@ -8,7 +8,8 @@ import type { RowDataPacket } from 'mysql2';
 export type AttendanceSource = 'dialler' | 'biometric';
 export type AttendanceStatus =
   | 'present' | 'half_day' | 'absent'
-  | 'leave_approved' | 'holiday' | 'week_off' | 'unreconciled';
+  | 'leave_approved' | 'holiday' | 'week_off' | 'unreconciled'
+  | 'missing_punch' | 'week_off_worked';
 
 export interface AttendanceRuleConfig {
   id: string;
@@ -68,6 +69,10 @@ export interface EngineResult {
   lateMark: number;
   lateByMinutes: number;
   ruleConfigId: string | null;
+  // G4: mismatch tracking
+  biometricStatus: AttendanceStatus | null;
+  aprStatus: AttendanceStatus | null;
+  mismatchFlag: number;
 }
 
 export interface CorrectionInput {
@@ -97,26 +102,47 @@ export interface BatchResult {
   errors: string[];
 }
 
-export function isOperationsExecutive(departmentName: string, designationName: string): boolean {
+// Legacy regex fallback — used when apr_eligibility_config table is empty.
+export function isOperationsExecutiveByRegex(departmentName: string, designationName: string): boolean {
   const department = departmentName.trim().toLowerCase();
   const designation = designationName.trim().toLowerCase();
   return (department === 'operations' || department === 'operation')
     && /^executive(?:\s*-\s*.+)?$/.test(designation);
 }
 
+// G9: Read a feature flag from attendance_feature_config. Returns the raw string or null.
+async function getFeatureFlag(key: string): Promise<string | null> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT config_value FROM attendance_feature_config WHERE config_key = ? LIMIT 1`,
+      [key]
+    );
+    return (rows[0] as any)?.config_value ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function getFeatureFlagBool(key: string, defaultVal = false): Promise<boolean> {
+  const v = await getFeatureFlag(key);
+  if (v === null) return defaultVal;
+  return v === '1' || v.toLowerCase() === 'true';
+}
+
 export function classifyOperationsNetLogin(
   netLoginMinutes: number
 ): { status: 'present' | 'half_day' | 'absent'; lwpValue: number } {
   if (netLoginMinutes >= 480) return { status: 'present', lwpValue: 0.0 };
-  if (netLoginMinutes > 240) return { status: 'half_day', lwpValue: 0.5 };
+  if (netLoginMinutes >= 240) return { status: 'half_day', lwpValue: 0.5 };
   return { status: 'absent', lwpValue: 1.0 };
 }
 
 export function classifyCosecMinutes(
-  biometricMinutes: number
+  biometricMinutes: number,
+  halfDayFloor = 240
 ): { status: 'present' | 'half_day' | 'absent'; lwpValue: number } {
   if (biometricMinutes >= 540) return { status: 'present', lwpValue: 0.0 };
-  if (biometricMinutes > 240) return { status: 'half_day', lwpValue: 0.5 };
+  if (biometricMinutes >= halfDayFloor) return { status: 'half_day', lwpValue: 0.5 };
   return { status: 'absent', lwpValue: 1.0 };
 }
 
@@ -159,12 +185,56 @@ export const attendanceEngineService = {
     return rows[0] as AttendanceRuleConfig;
   },
 
-  // Check leave/holiday/week-off overrides — returns first match or null
+  // G1: DB-backed APR eligibility check (replaces hardcoded isOperationsExecutive).
+  // Falls back to regex if apr_eligibility_config table is empty.
+  async isAprEligible(
+    designationId: string | null,
+    departmentId: string | null,
+    processId: string | null,
+    deptNameLower: string,
+    desigNameLower: string
+  ): Promise<boolean> {
+    try {
+      // First check if any active rules exist in the config table
+      const [countRows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM apr_eligibility_config WHERE active_status = 1`
+      );
+      const configCount = Number((countRows[0] as any).cnt ?? 0);
+      if (configCount === 0) {
+        // Fall back to legacy regex if config is empty (safe deploy with no seed)
+        return isOperationsExecutiveByRegex(deptNameLower, desigNameLower);
+      }
+
+      // Match: process_id (most specific) > department_id > designation_id > all NULL (global)
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM apr_eligibility_config
+         WHERE active_status = 1
+           AND (designation_id = ? OR designation_id IS NULL)
+           AND (department_id  = ? OR department_id  IS NULL)
+           AND (process_id     = ? OR process_id     IS NULL)
+         ORDER BY
+           (CASE WHEN process_id    IS NOT NULL THEN 4 ELSE 0 END +
+            CASE WHEN department_id IS NOT NULL THEN 2 ELSE 0 END +
+            CASE WHEN designation_id IS NOT NULL THEN 1 ELSE 0 END) DESC
+         LIMIT 1`,
+        [designationId, departmentId, processId]
+      );
+      return (rows as RowDataPacket[]).length > 0;
+    } catch {
+      // If table doesn't exist yet (migration pending), use regex fallback
+      return isOperationsExecutiveByRegex(deptNameLower, desigNameLower);
+    }
+  },
+
+  // Check leave/holiday/week-off overrides.
+  // G7: doJ is passed for holiday exclusion in joining month.
+  // G12: week-off is NOT returned directly here — caller checks actual attendance first.
   async resolveOverridePriority(
     employeeId: string,
     date: string,
-    branchId: string | null
-  ): Promise<{ status: AttendanceStatus } | null> {
+    branchId: string | null,
+    dateOfJoining?: string | null
+  ): Promise<{ status: AttendanceStatus; isRosterWeekOff?: boolean } | null> {
     // 1. Approved leave
     const [leaveRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM leave_request
@@ -174,22 +244,28 @@ export const attendanceEngineService = {
     );
     if ((leaveRows as RowDataPacket[]).length > 0) return { status: 'leave_approved' };
 
-    // 2. Holiday (branch-aware)
-    const [holidayRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM leave_holiday_master
+    // 2. Holiday (branch-aware) + G7 DOJ exclusion
+    const dojExclusionEnabled = await getFeatureFlagBool('doj_holiday_exclusion_enabled', true);
+    let holidaySql = `SELECT id FROM leave_holiday_master
        WHERE holiday_date = ? AND active_status = 1
-         AND (branch_id IS NULL OR branch_id = ?) LIMIT 1`,
-      [date, branchId ?? null]
-    );
+         AND (branch_id IS NULL OR branch_id = ?)`;
+    const holidayParams: unknown[] = [date, branchId ?? null];
+    if (dojExclusionEnabled && dateOfJoining) {
+      holidaySql += ` AND holiday_date >= ?`;
+      holidayParams.push(dateOfJoining);
+    }
+    holidaySql += ` LIMIT 1`;
+    const [holidayRows] = await db.execute<RowDataPacket[]>(holidaySql, holidayParams);
     if ((holidayRows as RowDataPacket[]).length > 0) return { status: 'holiday' };
 
-    // 3. Week off from roster
+    // 3. Week off from roster — signal caller with isRosterWeekOff=true so it can
+    //    cross-validate against actual Cosec/APR data (G12).
     const [woffRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM wfm_roster_assignment
        WHERE employee_id = ? AND roster_date = ? AND roster_status = 'Week Off' LIMIT 1`,
       [employeeId, date]
     );
-    if ((woffRows as RowDataPacket[]).length > 0) return { status: 'week_off' };
+    if ((woffRows as RowDataPacket[]).length > 0) return { status: 'week_off', isRosterWeekOff: true };
 
     return null;
   },
@@ -393,10 +469,10 @@ export const attendanceEngineService = {
 
   // Per-employee orchestrator
   async processEmployee(employeeId: string, date: string): Promise<EngineResult> {
-    // Fetch employee info including dept/designation for APR determination
+    // Fetch employee info including dept/designation/department_id for APR determination
     const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.employee_code, e.designation_id, e.process_id, e.branch_id,
-         e.reporting_manager_id,
+      `SELECT e.employee_code, e.designation_id, e.department_id, e.process_id, e.branch_id,
+         e.date_of_joining, e.reporting_manager_id,
          LOWER(COALESCE(dept.dept_name,'')) AS dept_name,
          LOWER(COALESCE(desig.designation_name,'')) AS designation_name
        FROM employees e
@@ -410,18 +486,62 @@ export const attendanceEngineService = {
     }
     const emp = empRows[0] as any;
     const designationId: string | null = emp.designation_id ?? null;
+    const departmentId: string | null = emp.department_id ?? null;
     const processId: string | null = emp.process_id ?? null;
     const branchId: string | null = emp.branch_id ?? null;
+    const dateOfJoining: string | null = emp.date_of_joining ?? null;
 
     // Resolve rule
     let rule = await this.resolveRule(designationId, processId, branchId, date);
 
-    // Only Operations Executive variants use net login. All other roles use COSEC.
-    const isAprEmployee = isOperationsExecutive(emp.dept_name, emp.designation_name);
+    // G1: DB-backed APR eligibility check (replaces hardcoded regex)
+    const isAprEmployee = await this.isAprEligible(
+      designationId, departmentId, processId,
+      emp.dept_name, emp.designation_name
+    );
 
-    // Check overrides (leave/holiday/week-off)
-    const override = await this.resolveOverridePriority(employeeId, date, branchId);
+    // Always fetch biometric minutes upfront — needed for G12 week-off cross-validation
+    // and for mismatch detection even when employee is APR-eligible.
+    const biometricEvidence = await this.getBiometricEvidence(employeeId, date);
+    const biometricMinutes = biometricEvidence.minutes;
+
+    // Check overrides (leave/holiday/week-off) with G7 DOJ holiday exclusion
+    const override = await this.resolveOverridePriority(employeeId, date, branchId, dateOfJoining);
+
     if (override) {
+      // G12: If roster says week_off but employee actually has attendance data, mark week_off_worked
+      if (override.isRosterWeekOff) {
+        // Get APR minutes if applicable to check for actual work on this day
+        let actualMinutesOnWeekOff = biometricMinutes;
+        if (isAprEmployee) {
+          const aprCheck = await this.getAprNetMinutes(emp.employee_code, date);
+          if (aprCheck > 0) actualMinutesOnWeekOff = aprCheck;
+        }
+
+        if (actualMinutesOnWeekOff > 0) {
+          // Employee worked on their roster week-off — flag for WFM review
+          const wowResult: EngineResult = {
+            employeeId, date, processId, branchId,
+            source: isAprEmployee ? 'dialler' : 'biometric',
+            sourceSystem: biometricEvidence.sourceSystem,
+            sourceRecordDate: date,
+            sourceReference: biometricEvidence.sourceReference,
+            diallerMinutes: isAprEmployee ? actualMinutesOnWeekOff : null,
+            biometricMinutes: biometricMinutes > 0 ? biometricMinutes : null,
+            rawMinutes: actualMinutesOnWeekOff,
+            status: 'week_off_worked',
+            lwpValue: 0.0,
+            lateMark: 0, lateByMinutes: 0,
+            ruleConfigId: rule.id === 'fallback' ? null : rule.id,
+            biometricStatus: null,
+            aprStatus: null,
+            mismatchFlag: 0,
+          };
+          return wowResult;
+        }
+      }
+
+      // Regular override (leave, holiday, or confirmed week-off with no attendance)
       return {
         employeeId, date, processId, branchId,
         source: isAprEmployee ? 'dialler' : 'biometric',
@@ -432,21 +552,32 @@ export const attendanceEngineService = {
         status: override.status, lwpValue: 0.0,
         lateMark: 0, lateByMinutes: 0,
         ruleConfigId: rule.id === 'fallback' ? null : rule.id,
+        biometricStatus: null,
+        aprStatus: null,
+        mismatchFlag: 0,
       };
     }
 
-    // Always fetch biometric minutes (needed for mismatch check even for dialler employees)
-    const biometricEvidence = await this.getBiometricEvidence(employeeId, date);
-    const biometricMinutes = biometricEvidence.minutes;
+    // Read feature-flagged half-day floor for biometric
+    const halfDayFloorStr = await getFeatureFlag('biometric_half_day_floor_minutes');
+    const halfDayFloor = halfDayFloorStr ? Number(halfDayFloorStr) : 240;
+
     let diallerMinutes: number | null = null;
     let rawMinutes: number;
     let sourceSystem = biometricEvidence.sourceSystem;
     let sourceReference = biometricEvidence.sourceReference;
 
+    // Raw status for each source (for mismatch detection)
+    let biometricStatusRaw: AttendanceStatus | null = null;
+    let aprStatusRaw: AttendanceStatus | null = null;
+    let mismatchFlag = 0;
+
     if (isAprEmployee) {
-      // APR is primary for Operations Executives. Imported dialler aggregates
-      // are the fallback when APR has no usable row for the employee/date.
-      // Thresholds: >=8h present, >4h and <8h half day, <=4h absent.
+      // G4: Classify biometric independently for mismatch comparison
+      if (biometricMinutes > 0) {
+        biometricStatusRaw = classifyCosecMinutes(biometricMinutes, halfDayFloor).status;
+      }
+
       const aprMinutes = await this.getAprNetMinutes(emp.employee_code, date);
       diallerMinutes = aprMinutes > 0
         ? aprMinutes
@@ -455,15 +586,46 @@ export const attendanceEngineService = {
       sourceReference = emp.employee_code;
       rawMinutes = diallerMinutes;
       rule = { ...rule, attendance_source: 'dialler', full_day_minutes: 480, half_day_minutes: 240 };
+
+      aprStatusRaw = classifyOperationsNetLogin(rawMinutes).status;
+
+      // G4: flag mismatch when both sources have data and they disagree
+      if (biometricStatusRaw !== null && biometricStatusRaw !== aprStatusRaw) {
+        mismatchFlag = 1;
+      }
     } else {
-      rule = { ...rule, attendance_source: 'biometric', full_day_minutes: 540, half_day_minutes: 240 };
+      rule = { ...rule, attendance_source: 'biometric', full_day_minutes: 540, half_day_minutes: halfDayFloor };
       rawMinutes = biometricMinutes;
+    }
+
+    // G3: Missing punch — no data from any source AND not on leave/holiday/week-off
+    if (rawMinutes === 0 && !isAprEmployee) {
+      // Biometric employee with zero minutes = missing punch (not same as absent)
+      const lateResult = await this.calculateLateArrival(employeeId, date, rule);
+      return {
+        employeeId, date, processId, branchId,
+        source: 'biometric',
+        sourceSystem: 'cosec_policy_absence',
+        sourceRecordDate: date,
+        sourceReference: null,
+        diallerMinutes: null,
+        biometricMinutes: null,
+        rawMinutes: 0,
+        status: 'missing_punch',
+        lwpValue: 0.0,  // LWP NOT applied until WFM resolves — prevents wrongful deduction
+        lateMark: lateResult.lateMark,
+        lateByMinutes: lateResult.lateByMinutes,
+        ruleConfigId: rule.id === 'fallback' ? null : rule.id,
+        biometricStatus: null,
+        aprStatus: null,
+        mismatchFlag: 0,
+      };
     }
 
     // Classify
     const classification = isAprEmployee
       ? classifyOperationsNetLogin(rawMinutes)
-      : classifyCosecMinutes(rawMinutes);
+      : classifyCosecMinutes(rawMinutes, halfDayFloor);
 
     // Late arrival
     const lateResult = await this.calculateLateArrival(employeeId, date, rule);
@@ -482,10 +644,13 @@ export const attendanceEngineService = {
       lateMark: lateResult.lateMark,
       lateByMinutes: lateResult.lateByMinutes,
       ruleConfigId: rule.id === 'fallback' ? null : rule.id,
+      biometricStatus: biometricStatusRaw,
+      aprStatus: aprStatusRaw,
+      mismatchFlag,
     };
   },
 
-  // DB write — is_locked guard enforced at SQL level
+  // DB write — is_locked guard enforced at SQL level. Also writes mismatch columns (G4).
   async upsertDailyRecord(
     result: EngineResult,
     createdBy: string
@@ -495,8 +660,9 @@ export const attendanceEngineService = {
          (id, employee_id, record_date, process_id, branch_id, attendance_source,
           source_system, source_record_date, source_reference,
           dialler_minutes, biometric_minutes, raw_minutes, attendance_status,
+          biometric_status, apr_status, mismatch_flag,
           lwp_value, late_mark, late_by_minutes, rule_config_id, processed_at, created_by)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
        ON DUPLICATE KEY UPDATE
          attendance_source  = IF(is_locked = 0, VALUES(attendance_source),  attendance_source),
          source_system      = IF(is_locked = 0, VALUES(source_system),      source_system),
@@ -506,6 +672,9 @@ export const attendanceEngineService = {
          biometric_minutes  = IF(is_locked = 0, VALUES(biometric_minutes),  biometric_minutes),
          raw_minutes        = IF(is_locked = 0, VALUES(raw_minutes),        raw_minutes),
          attendance_status  = IF(is_locked = 0, VALUES(attendance_status),  attendance_status),
+         biometric_status   = IF(is_locked = 0, VALUES(biometric_status),   biometric_status),
+         apr_status         = IF(is_locked = 0, VALUES(apr_status),         apr_status),
+         mismatch_flag      = IF(is_locked = 0, VALUES(mismatch_flag),      mismatch_flag),
          lwp_value          = IF(is_locked = 0, VALUES(lwp_value),          lwp_value),
          late_mark          = IF(is_locked = 0, VALUES(late_mark),          late_mark),
          late_by_minutes    = IF(is_locked = 0, VALUES(late_by_minutes),    late_by_minutes),
@@ -516,7 +685,11 @@ export const attendanceEngineService = {
         result.employeeId, result.date, result.processId, result.branchId,
         result.source, result.sourceSystem, result.sourceRecordDate, result.sourceReference,
         result.diallerMinutes, result.biometricMinutes, result.rawMinutes,
-        result.status, result.lwpValue, result.lateMark, result.lateByMinutes,
+        result.status,
+        result.biometricStatus ?? null,
+        result.aprStatus ?? null,
+        result.mismatchFlag,
+        result.lwpValue, result.lateMark, result.lateByMinutes,
         result.ruleConfigId, createdBy
       ]
     );
@@ -593,8 +766,14 @@ export const attendanceEngineService = {
           if (lockedSet.has(emp.employee_id)) { skipped++; return; }
           const result = await this.processEmployee(emp.employee_id, date);
           await this.upsertDailyRecord(result, 'system');
-          // Fire biometric mismatch notification (non-blocking)
+          // Fire notifications non-blocking
           this.checkAndNotifyBiometricMismatch(emp.employee_id, date, result).catch(() => {});
+          if (result.status === 'missing_punch') {
+            this.notifyMissingPunch(emp.employee_id, date).catch(() => {});
+          }
+          if (result.status === 'week_off_worked') {
+            this.notifyWeekOffWorked(emp.employee_id, date, result).catch(() => {});
+          }
           processed++;
         })
       );
@@ -791,5 +970,104 @@ export const attendanceEngineService = {
 
   async deactivateRule(id: string): Promise<void> {
     await db.execute(`UPDATE attendance_rule_config SET active_status = 0 WHERE id = ?`, [id]);
+  },
+
+  // G10: Missing punch inbox notification to employee + reporting manager
+  async notifyMissingPunch(employeeId: string, date: string): Promise<void> {
+    const enabled = await getFeatureFlagBool('missing_punch_notification_enabled', true);
+    if (!enabled) return;
+
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT user_id, reporting_manager_id, employee_code,
+         CONCAT(first_name,' ',COALESCE(last_name,'')) AS full_name
+       FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId]
+    );
+    const emp = empRows[0] as any;
+    if (!emp) return;
+
+    let managerUserId: string | null = null;
+    if (emp.reporting_manager_id) {
+      const [mgr] = await db.execute<RowDataPacket[]>(
+        `SELECT user_id FROM employees WHERE id = ? LIMIT 1`, [emp.reporting_manager_id]
+      );
+      managerUserId = (mgr[0] as any)?.user_id ?? null;
+    }
+
+    const recipients = Array.from(new Set(
+      [emp.user_id, managerUserId].filter((u): u is string => Boolean(u))
+    ));
+    if (!recipients.length) return;
+
+    try {
+      const { inboxService } = await import('../inbox/inbox.service.js');
+      const actionUrl = `/attendance-regularization?employeeId=${employeeId}&date=${date}`;
+      for (const userId of recipients) {
+        const [existing] = await db.execute<RowDataPacket[]>(
+          `SELECT id FROM work_inbox_item
+           WHERE user_id = ? AND type = 'attendance_missing_punch'
+             AND entity_id = ? AND action_url = ? LIMIT 1`,
+          [userId, employeeId, actionUrl]
+        );
+        if (existing.length > 0) continue;
+        await inboxService.createItem({
+          user_id: userId,
+          type: 'attendance_missing_punch',
+          title: userId === emp.user_id
+            ? `No attendance recorded for ${date}`
+            : `Missing punch: ${emp.full_name} on ${date}`,
+          description: `${emp.employee_code} has no biometric punch recorded for ${date}. `
+            + `This may be a COSEC sync issue. Please verify and submit regularisation if correct.`,
+          entity_type: 'attendance',
+          entity_id: employeeId,
+          action_url: actionUrl,
+          priority: 'high',
+        });
+      }
+    } catch { /* non-fatal */ }
+  },
+
+  // G12: Week-off worked notification to reporting manager for WFM review
+  async notifyWeekOffWorked(employeeId: string, date: string, result: EngineResult): Promise<void> {
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT user_id, reporting_manager_id, employee_code,
+         CONCAT(first_name,' ',COALESCE(last_name,'')) AS full_name
+       FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId]
+    );
+    const emp = empRows[0] as any;
+    if (!emp) return;
+
+    let managerUserId: string | null = null;
+    if (emp.reporting_manager_id) {
+      const [mgr] = await db.execute<RowDataPacket[]>(
+        `SELECT user_id FROM employees WHERE id = ? LIMIT 1`, [emp.reporting_manager_id]
+      );
+      managerUserId = (mgr[0] as any)?.user_id ?? null;
+    }
+    if (!managerUserId) return;
+
+    try {
+      const { inboxService } = await import('../inbox/inbox.service.js');
+      const actionUrl = `/wfm/attendance-mismatches?employeeId=${employeeId}&date=${date}`;
+      const [existing] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM work_inbox_item
+         WHERE user_id = ? AND type = 'attendance_week_off_worked'
+           AND entity_id = ? AND action_url = ? LIMIT 1`,
+        [managerUserId, employeeId, actionUrl]
+      );
+      if (existing.length > 0) return;
+      await inboxService.createItem({
+        user_id: managerUserId,
+        type: 'attendance_week_off_worked',
+        title: `Week-off worked: ${emp.full_name} on ${date}`,
+        description: `${emp.employee_code} has attendance data recorded (${Math.round(result.rawMinutes / 60 * 10) / 10}h) `
+          + `on their roster week-off day ${date}. WFM review required before payroll.`,
+        entity_type: 'attendance',
+        entity_id: employeeId,
+        action_url: actionUrl,
+        priority: 'high',
+      });
+    } catch { /* non-fatal */ }
   },
 };
