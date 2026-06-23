@@ -26,6 +26,13 @@ type FormData = {
   gender: string;
   preferredShift: string;
   recruiterName: string;
+  rotationalShift: string;
+  nightShiftComfort: string;
+  leavesRequired: string;
+  ownTwoWheeler: string;
+  idProofAvailable: string;
+  educationProofAvailable: string;
+  address: string;
 };
 
 type SubmitResponse = {
@@ -42,6 +49,9 @@ const EMPTY: FormData = {
   branch: "", name: "", mobile: "", email: "",
   roleApplied: "", education: "", experience: "",
   gender: "", preferredShift: "", recruiterName: "",
+  rotationalShift: "", nightShiftComfort: "", leavesRequired: "",
+  ownTwoWheeler: "", idProofAvailable: "", educationProofAvailable: "",
+  address: "",
 };
 
 const DEFAULT_BOOTSTRAP: Bootstrap = {
@@ -166,6 +176,22 @@ const css = `
   @keyframes rgFadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
   .rg-anim{animation:rgFadeUp .22s ease forwards}
 
+  /* Yes/No toggle row */
+  .rg-yn-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .rg-yn-item{display:flex;align-items:center;justify-content:space-between;background:#f7f9fc;border:1.5px solid var(--c-border);border-radius:10px;padding:11px 14px;cursor:pointer;transition:border-color .15s,background .15s;-webkit-user-select:none;user-select:none}
+  .rg-yn-item.yes{border-color:var(--c-green);background:#f0fdf4}
+  .rg-yn-item.no{border-color:#fca5a5;background:#fff5f5}
+  .rg-yn-label{font-size:13px;font-weight:600;color:var(--c-text);line-height:1.3}
+  .rg-yn-sublabel{font-size:11px;color:var(--c-muted);margin-top:1px}
+  .rg-yn-toggle{display:flex;gap:5px;flex:0 0 auto}
+  .rg-yn-btn{border:1.5px solid var(--c-border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:700;background:#fff;color:var(--c-muted);cursor:pointer;transition:all .12s}
+  .rg-yn-btn.sel-y{border-color:var(--c-green);background:#dcfce7;color:#166534}
+  .rg-yn-btn.sel-n{border-color:#fca5a5;background:#fee2e2;color:#b91c1c}
+
+  /* Address textarea */
+  .rg-ta{width:100%;border:1.5px solid var(--c-border);outline:none;background:#f7f9fc;color:var(--c-text);font-family:'DM Sans',sans-serif;font-size:15px;font-weight:500;padding:12px 14px;border-radius:10px;appearance:none;resize:none;min-height:70px;transition:border-color .15s,background .15s}
+  .rg-ta:focus{border-color:var(--c-primary);box-shadow:0 0 0 3px rgba(109,40,217,.1);background:#fff}
+
   /* Consent */
   .rg-consent{display:flex;align-items:flex-start;gap:10px;padding:12px;background:#fefce8;border:1px solid #fde68a;border-radius:10px;margin-top:4px}
   .rg-consent input{margin-top:3px;flex:0 0 auto;width:16px;height:16px;cursor:pointer}
@@ -265,6 +291,7 @@ export default function NativeATSCandidateRegistration() {
     try {
       const alias = bootstrap.branchAliases.find(a => a.display === form.branch);
       const canonicalBranch = alias?.canonical || form.branch;
+      const yn = (v: string) => v === "Yes" ? 1 : v === "No" ? 0 : null;
       const payload = {
         fullName: form.name.trim(),
         mobile: form.mobile,
@@ -279,6 +306,13 @@ export default function NativeATSCandidateRegistration() {
         experience: form.experience || null,
         preferredShift: form.preferredShift || null,
         recruiterName: form.recruiterName || null,
+        address: form.address.trim() || null,
+        rotationalShift: yn(form.rotationalShift),
+        nightShiftOk: yn(form.nightShiftComfort),
+        leavesIn3months: yn(form.leavesRequired),
+        ownsTwoWheeler: yn(form.ownTwoWheeler),
+        idProofAvailable: yn(form.idProofAvailable),
+        educationProofAvailable: yn(form.educationProofAvailable),
       };
       const apiRes = await hrmsApi.post<{ success: boolean; data: any; message?: string }>("/api/ats/candidates", payload);
       if (!(apiRes as any).success) throw new Error((apiRes as any).message || "Submission failed");
@@ -316,6 +350,26 @@ export default function NativeATSCandidateRegistration() {
       ))}
     </div>
   );
+
+  // Yes/No toggle for a single field
+  const YnToggle = ({ fieldKey, label, sub }: { fieldKey: keyof FormData; label: string; sub?: string }) => {
+    const val = form[fieldKey];
+    return (
+      <div className={`rg-yn-item${val === "Yes" ? " yes" : val === "No" ? " no" : ""}`}
+        onClick={() => set(fieldKey, val === "Yes" ? "No" : val === "No" ? "" : "Yes")}>
+        <div>
+          <div className="rg-yn-label">{label}</div>
+          {sub && <div className="rg-yn-sublabel">{sub}</div>}
+        </div>
+        <div className="rg-yn-toggle">
+          <button type="button" className={`rg-yn-btn${val === "Yes" ? " sel-y" : ""}`}
+            onClick={e => { e.stopPropagation(); set(fieldKey, "Yes"); }}>Y</button>
+          <button type="button" className={`rg-yn-btn${val === "No" ? " sel-n" : ""}`}
+            onClick={e => { e.stopPropagation(); set(fieldKey, "No"); }}>N</button>
+        </div>
+      </div>
+    );
+  };
 
   const renderForm = () => (
     <div className="rg-form rg-anim">
@@ -466,6 +520,26 @@ export default function NativeATSCandidateRegistration() {
           </div>
         )}
         <div className={`rg-err${errors.recruiterName ? " show" : ""}`} style={{ marginTop: 6 }}>{errors.recruiterName}</div>
+      </div>
+
+      {/* QUICK YES/NO CHECKS */}
+      <div className="rg-card">
+        <div className="rg-sec-title">✅ Quick Checks</div>
+        <div className="rg-yn-grid">
+          <YnToggle fieldKey="rotationalShift" label="Rotational Shift" sub="OK with rotation?" />
+          <YnToggle fieldKey="nightShiftComfort" label="Night Shift" sub="Comfortable?" />
+          <YnToggle fieldKey="leavesRequired" label="Leaves in 3 Months" sub="Need leave soon?" />
+          <YnToggle fieldKey="ownTwoWheeler" label="Own 2-Wheeler" sub="Bike / scooter?" />
+          <YnToggle fieldKey="idProofAvailable" label="ID Proof" sub="Aadhar / PAN ready?" />
+          <YnToggle fieldKey="educationProofAvailable" label="Education Proof" sub="Certificates ready?" />
+        </div>
+      </div>
+
+      {/* ADDRESS (optional) */}
+      <div className="rg-card">
+        <div className="rg-sec-title">📍 Address <span style={{ fontSize: 10, fontWeight: 600, color: "var(--c-muted)", textTransform: "lowercase", letterSpacing: 0 }}>(optional)</span></div>
+        <textarea className="rg-ta" placeholder="Current residential address" value={form.address}
+          onChange={e => set("address", e.target.value)} maxLength={500} rows={3} />
       </div>
 
       {/* Consent */}
