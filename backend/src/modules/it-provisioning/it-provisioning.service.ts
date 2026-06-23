@@ -153,18 +153,32 @@ async function createRequest(params: {
 
 const JOIN_TASKS: ProvisioningTask[] = [
   {
-    taskCode: 'domain_create',
-    assignedRole: 'branch_it',
-    titleFn: (name, code) => `IT Action: Create domain account + official email for ${name} [${code}]`,
+    taskCode: 'WFM_PROCESS_ALIGNMENT',
+    assignedRole: 'wfm',
+    titleFn: (name, code) => `WFM Action: Align process roster for ${name} [${code}]`,
     descFn: (name, code) =>
-      `New employee ${name} (${code}) has joined. Please create their domain account and official email ID (@teammas.in / @teammas.co.in) and update it in the HRMS portal.`,
+      `New employee ${name} (${code}) has an employee code. Please align process, roster eligibility, shift rules, and attendance planning in WFM.`,
   },
   {
-    taskCode: 'biometric_enroll',
-    assignedRole: 'admin',
-    titleFn: (name, code) => `Biometric: Enroll ${name} [${code}] in biometric system`,
+    taskCode: 'IT_EMAIL_DOMAIN_ASSET',
+    assignedRole: 'it',
+    titleFn: (name, code) => `IT Action: Create domain account + official email for ${name} [${code}]`,
     descFn: (name, code) =>
-      `New employee ${name} (${code}) has joined. Please enroll them in the biometric attendance system at their branch.`,
+      `New employee ${name} (${code}) has an employee code. Please create their domain account, official email ID (@teammas.in / @teammas.co.in), and asset assignment in the HRMS portal.`,
+  },
+  {
+    taskCode: 'ADMIN_BIOMETRIC_ID_CARD',
+    assignedRole: 'admin',
+    titleFn: (name, code) => `Admin Action: Biometric and ID card for ${name} [${code}]`,
+    descFn: (name, code) =>
+      `New employee ${name} (${code}) has an employee code. Please enroll biometric attendance and issue the employee ID card.`,
+  },
+  {
+    taskCode: 'APPOINTMENT_LETTER_ESIGN',
+    assignedRole: 'hr',
+    titleFn: (name, code) => `HR Action: Appointment letter e-sign for ${name} [${code}]`,
+    descFn: (name, code) =>
+      `New employee ${name} (${code}) has an employee code. Please generate the appointment letter and complete e-sign tracking.`,
   },
 ];
 
@@ -202,14 +216,14 @@ export async function dispatchJoinProvisioningTasks(params: {
 const EXIT_TASKS: ProvisioningTask[] = [
   {
     taskCode: 'domain_delete',
-    assignedRole: 'branch_it',
+    assignedRole: 'it',
     titleFn: (name, code, lwd) => `IT Action: Delete domain account for ${name} [${code}]${lwd ? ` (LWD: ${lwd})` : ''}`,
     descFn: (name, code, lwd) =>
       `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ''}. Please delete their domain account immediately.`,
   },
   {
     taskCode: 'email_delete',
-    assignedRole: 'branch_it',
+    assignedRole: 'it',
     titleFn: (name, code, lwd) => `IT Action: Delete official email for ${name} [${code}]${lwd ? ` (LWD: ${lwd})` : ''}`,
     descFn: (name, code, lwd) =>
       `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ''}. Please delete their official email ID and revoke all email access.`,
@@ -385,9 +399,11 @@ export async function autoLockConfirmedRequests(): Promise<{ locked: number }> {
 
 export async function listProvisioningRequests(filters: {
   assignedRole?: string;
+  assignedUserId?: string;
   branchId?: string;
   status?: string;
   requestType?: string;
+  taskCode?: string;
   employeeId?: string;
   page?: number;
   limit?: number;
@@ -399,9 +415,18 @@ export async function listProvisioningRequests(filters: {
   const conds: string[] = ['1=1'];
   const params: unknown[] = [];
 
-  if (filters.assignedRole) { conds.push('ipr.assigned_role = ?'); params.push(filters.assignedRole); }
+  if (filters.assignedRole) {
+    if (filters.assignedRole === 'it') {
+      conds.push("ipr.assigned_role IN ('it', 'branch_it')");
+    } else {
+      conds.push('ipr.assigned_role = ?');
+      params.push(filters.assignedRole);
+    }
+  }
+  if (filters.assignedUserId) { conds.push('(ipr.assigned_user_id = ? OR ipr.assigned_user_id IS NULL)'); params.push(filters.assignedUserId); }
   if (filters.status)       { conds.push('ipr.status = ?');        params.push(filters.status); }
   if (filters.requestType)  { conds.push('ipr.request_type = ?');  params.push(filters.requestType); }
+  if (filters.taskCode)     { conds.push('ipr.task_code = ?');     params.push(filters.taskCode); }
   if (filters.employeeId)   { conds.push('ipr.employee_id = ?');   params.push(filters.employeeId); }
   if (filters.branchId) {
     conds.push('e.branch_id = ?');

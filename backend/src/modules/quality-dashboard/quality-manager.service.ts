@@ -1,4 +1,4 @@
-import { Pool, RowDataPacket } from 'mysql2/promise';
+import { PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { logger } from '../../logger.js';
 
 export interface TeamQualitySummary {
@@ -20,8 +20,10 @@ export interface AgentBreakdown {
   risk_score: number;
 }
 
+type DbPoolLike = { getConnection: () => Promise<PoolConnection> };
+
 export class QualityManagerService {
-  constructor(private db: Pool) {}
+  constructor(private db: DbPoolLike) {}
 
   async getTeamQuality(
     managerCode: string,

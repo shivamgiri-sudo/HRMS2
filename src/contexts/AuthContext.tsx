@@ -13,11 +13,15 @@ interface AuthContextType {
   isLoading: boolean;
   isSigningOut: boolean;
   mustChangePassword: boolean;
+  twoFactorRequired: boolean;
+  twoFactorVerified: boolean;
   signIn: (identifier: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, fullName: string, onboardingToken?: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   forgotPassword: (email: string) => Promise<{ error: Error | null }>;
   completePasswordChange: () => void;
+  sendTwoFactorCode: (channel: "email" | "sms") => Promise<{ error: Error | null }>;
+  verifyTwoFactorCode: (otp: string) => Promise<{ error: Error | null }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -84,6 +88,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [mustChangePassword, setMustChangePassword] = useState(
     localStorage.getItem('hrms_must_change_password') === 'true'
+  );
+  const [twoFactorRequired, setTwoFactorRequired] = useState(
+    localStorage.getItem('hrms_2fa_required') === 'true'
+  );
+  const [twoFactorVerified, setTwoFactorVerified] = useState(
+    localStorage.getItem('hrms_2fa_verified') === 'true'
   );
   const queryClient = useQueryClient();
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -185,8 +195,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('hrms_access_token', accessToken);
       localStorage.setItem('hrms_refresh_token', refreshToken);
       const forceChange = authUser.mustChangePassword === true;
+      const requiresTwoFactor = authUser.twoFactorRequired === true;
+      const verifiedTwoFactor = authUser.twoFactorVerified === true;
       localStorage.setItem('hrms_must_change_password', String(forceChange));
+      localStorage.setItem('hrms_2fa_required', String(requiresTwoFactor));
+      localStorage.setItem('hrms_2fa_verified', String(verifiedTwoFactor));
       setMustChangePassword(forceChange);
+      setTwoFactorRequired(requiresTwoFactor);
+      setTwoFactorVerified(verifiedTwoFactor);
       await queryClient.cancelQueries();
       queryClient.clear();
       setUser({ id: authUser.id, email: authUser.email, isReadOnly: authUser.isReadOnly || false });
@@ -234,7 +250,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('hrms_access_token');
       localStorage.removeItem('hrms_refresh_token');
       localStorage.removeItem('hrms_must_change_password');
+      localStorage.removeItem('hrms_2fa_required');
+      localStorage.removeItem('hrms_2fa_verified');
       setMustChangePassword(false);
+      setTwoFactorRequired(false);
+      setTwoFactorVerified(false);
       if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
       setUser(null);
       queryClient.clear();
@@ -261,11 +281,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const completePasswordChange = () => {
     localStorage.setItem('hrms_must_change_password', 'false');
+    localStorage.setItem('hrms_2fa_required', 'true');
+    localStorage.setItem('hrms_2fa_verified', 'false');
     setMustChangePassword(false);
+    setTwoFactorRequired(true);
+    setTwoFactorVerified(false);
+  };
+
+  const sendTwoFactorCode = async (channel: "email" | "sms"): Promise<{ error: Error | null }> => {
+    try {
+      const token = localStorage.getItem('hrms_access_token');
+      const res = await fetch(`${API_URL}/api/auth/2fa/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ channel }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: new Error(json.error || json.message || 'Unable to send verification code') };
+      return { error: null };
+    } catch (err) {
+      return { error: err instanceof Error ? err : new Error('Network error') };
+    }
+  };
+
+  const verifyTwoFactorCode = async (otp: string): Promise<{ error: Error | null }> => {
+    try {
+      const token = localStorage.getItem('hrms_access_token');
+      const res = await fetch(`${API_URL}/api/auth/2fa/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ otp }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: new Error(json.error || json.message || 'Verification failed') };
+      localStorage.setItem('hrms_2fa_required', 'true');
+      localStorage.setItem('hrms_2fa_verified', 'true');
+      setTwoFactorRequired(true);
+      setTwoFactorVerified(true);
+      return { error: null };
+    } catch (err) {
+      return { error: err instanceof Error ? err : new Error('Network error') };
+    }
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, isSigningOut, mustChangePassword, signIn, signUp, signOut, forgotPassword, completePasswordChange }}>
+    <AuthContext.Provider value={{ user, isLoading, isSigningOut, mustChangePassword, twoFactorRequired, twoFactorVerified, signIn, signUp, signOut, forgotPassword, completePasswordChange, sendTwoFactorCode, verifyTwoFactorCode }}>
       {children}
     </AuthContext.Provider>
   );

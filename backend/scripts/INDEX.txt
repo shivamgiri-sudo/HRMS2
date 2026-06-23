@@ -58,7 +58,7 @@ QUICK START PATHS
 PATH 1: SQL-Only (Minimal dependencies)
 ────────────────────────────────────────
   1. cd /home/shuvam/Desktop/MyHRMS1/backend/scripts
-  2. mysql -h 122.184.128.90 -u root -p mas_hrms < process-team-optimization.sql
+  2. mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < process-team-optimization.sql
   3. Output: Console display of all 5 query results
   4. To export: ... > optimization-results.txt
 
@@ -79,7 +79,7 @@ OUTPUT: JSON (structured), CSV (Excel), JSON stdout
 
 PATH 3: CSV Export for Excel/Tableau
 ──────────────────────────────────────
-  1. mysql -h 122.184.128.90 -u root -p -B -e "source process-team-optimization.sql;" mas_hrms > optimization-results.tsv
+  1. mysql -h "$DB_HOST" -u "$DB_USER" -p -B -e "source process-team-optimization.sql;" "$DB_NAME" > optimization-results.tsv
   2. Open in Excel: Data → Text to Columns → Tab-delimited
   3. Sort by Quality_Rank column
   4. Create pivot tables and charts
@@ -361,7 +361,7 @@ Issue: MySQL timeout
 Issue: Python script fails
 → Check credentials in lines 150-155
 → Verify MySQL is accessible from Python environment
-→ Test: mysql -h 122.184.128.90 -u root -p
+→ Test: mysql -h "$DB_HOST" -u "$DB_USER" -p
 
 Issue: Don't understand a metric
 → Check QUICK_REFERENCE.txt (all definitions)

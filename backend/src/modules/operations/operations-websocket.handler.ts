@@ -11,7 +11,7 @@ interface SubscribedClient {
 
 class OperationsWebSocketHandler {
   private clients: Map<string, SubscribedClient> = new Map();
-  private broadcastInterval: NodeJS.Timer | null = null;
+  private broadcastInterval: NodeJS.Timeout | null = null;
 
   /**
    * Handle new WebSocket connection
@@ -50,9 +50,9 @@ class OperationsWebSocketHandler {
       });
 
       // Set up message handler
-      ws.on('message', (data) => this.handleMessage(clientId, data));
+      ws.on('message', (data: WebSocket.Data) => this.handleMessage(clientId, data));
       ws.on('close', () => this.handleDisconnection(clientId));
-      ws.on('error', (error) => {
+      ws.on('error', (error: Error) => {
         logger.error(`[OperationsWS] Client error (${clientId}):`, error);
       });
 

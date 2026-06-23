@@ -5,11 +5,18 @@
 
 import { createConnection } from 'mysql2/promise';
 
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 const DB_CONFIG = {
-  host: '122.184.128.90',
-  user: 'mysql',
-  password: 'masHRMS@@2024',
-  database: 'mas_hrms'
+  host: requiredEnv('DB_HOST'),
+  port: Number(process.env.DB_PORT || 3306),
+  user: requiredEnv('DB_USER'),
+  password: requiredEnv('DB_PASSWORD'),
+  database: requiredEnv('DB_NAME')
 };
 
 async function main() {

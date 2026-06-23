@@ -45,6 +45,37 @@ async function logCandidateAction(candidateId: string, actionType: string, paylo
   );
 }
 
+async function triggerBgvAfterOnboardingSubmit(candidateId: string, meta?: { ip?: string; userAgent?: string }) {
+  const checkTypes = ["aadhaar", "digilocker", "pan", "court", "education_doc", "employment", "address"];
+  for (const checkType of checkTypes) {
+    const [existing] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
+      [candidateId, checkType]
+    );
+    if (existing.length) continue;
+    await db.execute(
+      `INSERT INTO candidate_bgv_check
+         (id, candidate_id, check_type, provider_key, status, result_summary, result_json)
+       VALUES (?, ?, ?, 'system', 'pending', 'Auto-created after onboarding submit', CAST(? AS JSON))`,
+      [randomUUID(), candidateId, checkType, JSON.stringify({ source: "onboarding_submit" })]
+    );
+  }
+
+  await db.execute(
+    `INSERT INTO candidate_bgv_report (id, candidate_id, overall_status, bgv_score, hr_remarks)
+     VALUES (?, ?, 'in_progress', 0, 'Auto-triggered after onboarding profile submission')
+     ON DUPLICATE KEY UPDATE overall_status = IF(overall_status = 'verified', overall_status, 'in_progress'), updated_at = NOW()`,
+    [randomUUID(), candidateId]
+  );
+
+  await db.execute(
+    `INSERT INTO candidate_bgv_verification_event
+       (id, candidate_id, event_type, event_status, event_payload, actor_type, ip_address, user_agent)
+     VALUES (?, ?, 'BGV_AUTO_TRIGGERED', 'in_progress', CAST(? AS JSON), 'system', ?, ?)`,
+    [randomUUID(), candidateId, JSON.stringify({ checkTypes }), meta?.ip ?? null, meta?.userAgent ?? null]
+  );
+}
+
 export async function validateOnboardingToken(token: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT b.candidate_id, b.onboarding_token_expires_at,
@@ -454,6 +485,13 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
      VALUES (UUID(), ?, 'Onboarding Link Sent', 'Profile Submitted', 'Candidate completed onboarding profile', NULL)`,
     [candidateId]
   );
+  await triggerBgvAfterOnboardingSubmit(candidateId, meta);
+  await db.execute(
+    `INSERT INTO ats_candidate_stage_log
+       (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+     VALUES (UUID(), ?, 'Profile Submitted', 'BGV In Progress', 'BGV checks auto-created after onboarding profile submission', NULL)`,
+    [candidateId]
+  );
   await logCandidateAction(candidateId, "SUBMIT_ONBOARDING", null, meta);
   return { candidateId, status: "submitted" };
 }
@@ -572,4 +610,3 @@ export async function saveProgress(token: string, stepIdx: number) {
   );
   return { candidateId, currentStepIdx: idx };
 }
-

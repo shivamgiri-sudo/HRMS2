@@ -1,4 +1,4 @@
-import type { Pool, RowDataPacket } from "mysql2/promise";
+import type { FieldPacket, PoolConnection, QueryResult, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 
@@ -66,9 +66,14 @@ export interface AttritionRiskResponse {
   timestamp: string;
 }
 
+type DbExecutor = {
+  execute<T extends QueryResult = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, FieldPacket[]]>;
+  getConnection?: () => Promise<PoolConnection>;
+};
+
 class OperationsLiveService {
-  private db: Pool;
-  constructor(dbPool?: Pool) { this.db = dbPool ?? db; }
+  private db: DbExecutor;
+  constructor(dbPool?: DbExecutor) { this.db = dbPool ?? db; }
 
   /**
    * Get live agent status for all agents or filtered by process/branch

@@ -377,21 +377,22 @@ atsRouter.post("/recruiter/verify", h(async (req: any, res: any) => {
 }));
 
 // GET /api/ats/recruiter/my-candidates — returns candidates assigned to the authenticated recruiter.
-// Admin/hr may override by supplying ?recruiterName= to inspect any recruiter's queue.
+// Admin/hr/super_admin may inspect all or filter by supplying ?recruiterName=.
 // Any other role sees only their own queue derived from the JWT → employee → roster chain.
-atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "super_admin", "recruiter", "manager"), h(async (req: any, res: any) => {
-  const role = req.authUser?.role as string | undefined;
-  const isPrivileged = role === "admin" || role === "hr";
+atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: any, res: any) => {
+  const userRoles = (req.userRoles ?? []) as string[];
+  const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
   const overrideName = String(req.query.recruiterName ?? "").trim();
 
-  let recruiterName: string;
+  let recruiterName: string | undefined;
+  let profile: Awaited<ReturnType<typeof resolveRecruiterForActor>> = null;
 
   if (isPrivileged && overrideName) {
     // Admin/HR may explicitly request any recruiter's queue by name
     recruiterName = overrideName;
-  } else {
+  } else if (!isPrivileged) {
     // Derive name from the JWT-linked recruiter row
-    const profile = await resolveRecruiterForActor(req.authUser!.id);
+    profile = await resolveRecruiterForActor(req.authUser!.id);
     if (!profile) {
       return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
     }
@@ -399,22 +400,23 @@ atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "super_admi
   }
 
   const data = await getMyPendingCandidates(recruiterName);
-  return res.json({ success: true, data });
+  return res.json({ success: true, data, recruiter: profile });
 }));
 
 // GET /api/ats/recruiter/submission-history — submission history for the authenticated recruiter.
-// Admin/hr may override by supplying ?recruiterCode= to inspect any recruiter's history.
-atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super_admin", "recruiter", "manager"), h(async (req: any, res: any) => {
-  const role = req.authUser?.role as string | undefined;
-  const isPrivileged = role === "admin" || role === "hr";
+// Admin/hr/super_admin may inspect all or filter by supplying ?recruiterCode=.
+atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: any, res: any) => {
+  const userRoles = (req.userRoles ?? []) as string[];
+  const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
   const overrideCode = String(req.query.recruiterCode ?? "").trim();
 
-  let recruiterCode: string;
+  let recruiterCode: string | undefined;
+  let profile: Awaited<ReturnType<typeof resolveRecruiterForActor>> = null;
 
   if (isPrivileged && overrideCode) {
     recruiterCode = overrideCode;
-  } else {
-    const profile = await resolveRecruiterForActor(req.authUser!.id);
+  } else if (!isPrivileged) {
+    profile = await resolveRecruiterForActor(req.authUser!.id);
     if (!profile) {
       return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
     }
@@ -422,7 +424,7 @@ atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super
   }
 
   const data = await getSubmissionHistory(recruiterCode);
-  return res.json({ success: true, data });
+  return res.json({ success: true, data, recruiter: profile });
 }));
 
 // Onboarding flow — token generation, profile submission, offer mgmt, approve/reject

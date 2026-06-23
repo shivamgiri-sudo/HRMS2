@@ -26,6 +26,7 @@ import {
   dispatchToVendor,
   updateVendorResult,
 } from "./bgv-verification.service.js";
+import { overrideNameMatchReview, runNameMatchCheck } from "./bgv.enhanced.service.js";
 import { getBgvProviderAdapter } from "./bgv-provider.adapter.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
@@ -133,9 +134,39 @@ router.get("/queue", requireAuth, requireRole("admin", "hr", "recruiter"), h(asy
   return res.json({ success: true, data: await listBgvQueueScoped(req.query.status as string | undefined, scoped) });
 }));
 
+router.get("/candidates", requireAuth, requireRole("admin", "hr", "recruiter"), h(async (req: AuthenticatedRequest, res) => {
+  const scoped = await buildScopeWhereClause(req.authUser!.id, ["admin", "hr", "recruiter"], { branchId: "c.applied_for_branch", processId: "c.applied_for_process" }, { allowAdminBypass: true });
+  return res.json({ success: true, data: await listBgvQueueScoped(req.query.status as string | undefined, scoped) });
+}));
+
 router.get("/candidates/:candidateId", requireAuth, requireRole("admin", "hr", "recruiter"), h(async (req: AuthenticatedRequest, res) => {
   await requireBgvCandidateScope(req, req.params.candidateId);
   return res.json({ success: true, data: await getBgvStatusForCandidate(req.params.candidateId) });
+}));
+
+router.get("/status/:candidateId", requireAuth, requireRole("admin", "hr", "recruiter"), h(async (req: AuthenticatedRequest, res) => {
+  await requireBgvCandidateScope(req, req.params.candidateId);
+  return res.json({ success: true, data: await getBgvStatusForCandidate(req.params.candidateId) });
+}));
+
+router.post("/trigger/:candidateId", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+  await requireBgvCandidateScope(req, req.params.candidateId);
+  const nameMatch = await runNameMatchCheck(req.params.candidateId, req.authUser!.id);
+  return res.status(201).json({ success: true, data: { name_match: nameMatch } });
+}));
+
+router.post("/retry/:candidateId/:checkType", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+  await requireBgvCandidateScope(req, req.params.candidateId);
+  if (req.params.checkType === "name_match") {
+    return res.json({ success: true, data: await runNameMatchCheck(req.params.candidateId, req.authUser!.id) });
+  }
+  return res.json({
+    success: true,
+    data: await manualReview(req.params.candidateId, {
+      status: "manual_review",
+      remarks: `Retry requested for ${req.params.checkType}. Awaiting provider/vendor response.`,
+    }, req.authUser!.id),
+  });
 }));
 
 router.post("/candidates/:candidateId/verify/pan", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
@@ -152,6 +183,30 @@ router.post("/candidates/:candidateId/manual-review", requireAuth, requireRole("
   if (!req.body.remarks) return res.status(400).json({ success: false, message: "remarks required" });
   await requireBgvCandidateScope(req, req.params.candidateId);
   return res.json({ success: true, data: await manualReview(req.params.candidateId, req.body, req.authUser!.id) });
+}));
+
+router.patch("/manual-feedback/:candidateId/:checkType", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+  const allowedStatuses = new Set(["verified", "mismatch", "failed", "manual_review"]);
+  const requestedStatus = String(req.body.status ?? "manual_review");
+  const status = (allowedStatuses.has(requestedStatus) ? requestedStatus : "manual_review") as "verified" | "mismatch" | "failed" | "manual_review";
+  const remarks = String(req.body.remarks ?? req.body.reason ?? "");
+  if (!remarks.trim()) return res.status(400).json({ success: false, message: "remarks required" });
+  await requireBgvCandidateScope(req, req.params.candidateId);
+  return res.json({
+    success: true,
+    data: await manualReview(req.params.candidateId, {
+      checkId: req.body.checkId,
+      status,
+      remarks: `${req.params.checkType}: ${remarks}`,
+    }, req.authUser!.id),
+  });
+}));
+
+router.patch("/name-match/:candidateId/override", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+  const reason = String(req.body.reason ?? "");
+  if (!reason.trim()) return res.status(400).json({ success: false, message: "reason required" });
+  await requireBgvCandidateScope(req, req.params.candidateId);
+  return res.json({ success: true, data: await overrideNameMatchReview({ candidateId: req.params.candidateId, actorUserId: req.authUser!.id, reason }) });
 }));
 
 router.post("/candidates/:candidateId/waive", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {

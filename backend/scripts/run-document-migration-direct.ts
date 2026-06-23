@@ -14,24 +14,30 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const BATCH_SIZE = 500;
 
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 // Create pools with localAddress to force physical NIC
 const legacyPool = mysql.createPool({
-  host: process.env.LEGACY_MYSQL_HOST || '14.97.30.236',
+  host: requiredEnv('LEGACY_MYSQL_HOST'),
   port: Number(process.env.LEGACY_MYSQL_PORT) || 3306,
-  user: process.env.LEGACY_MYSQL_USER || 'shivam_user',
-  password: process.env.LEGACY_MYSQL_PASSWORD || 'qwersdfg!@#hjk',
-  database: process.env.LEGACY_MYSQL_DATABASE || 'db_bill',
-  localAddress: '192.168.1.12',  // Force physical NIC
+  user: requiredEnv('LEGACY_MYSQL_USER'),
+  password: requiredEnv('LEGACY_MYSQL_PASSWORD'),
+  database: requiredEnv('LEGACY_MYSQL_DATABASE'),
+  localAddress: process.env.LEGACY_MYSQL_LOCAL_ADDRESS,
   connectionLimit: 3,
   connectTimeout: 15000,
 });
 
 const hrmsPool = mysql.createPool({
-  host: process.env.DB_HOST || '122.184.128.90',
-  port: 3306,
-  user: process.env.DB_USER || 'shivam_user',
-  password: process.env.DB_PASSWORD || 'qwersdfg!@#hjk',
-  database: process.env.DB_NAME || 'mas_hrms',
+  host: requiredEnv('DB_HOST'),
+  port: Number(process.env.DB_PORT || 3306),
+  user: requiredEnv('DB_USER'),
+  password: requiredEnv('DB_PASSWORD'),
+  database: requiredEnv('DB_NAME'),
   connectionLimit: 5,
   connectTimeout: 15000,
 });

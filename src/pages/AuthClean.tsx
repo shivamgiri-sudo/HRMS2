@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LoginSmartGreeting } from "@/components/integrations/LoginSmartGreeting";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { DEMO_CREDENTIALS } from "@/lib/demoCreds";
 
 const companyLogo = "/mcn-logo.png?v=999";
 const currentYear = new Date().getFullYear();
@@ -35,13 +36,18 @@ export default function AuthClean() {
   const [forgotChannel, setForgotChannel] = useState<ForgotPasswordChannel>('email');
   const [forgotStep, setForgotStep] = useState<ForgotPasswordStep>('send');
   const [loading, setLoading] = useState(false);
-  const { signIn, forgotPassword, user, mustChangePassword } = useAuth();
+  const { signIn, forgotPassword, user, mustChangePassword, twoFactorRequired, twoFactorVerified } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (user) navigate(mustChangePassword ? "/change-password" : "/dashboard", { replace: true });
-  }, [user, mustChangePassword, navigate]);
+    if (user) {
+      navigate(
+        mustChangePassword ? "/change-password" : twoFactorRequired && !twoFactorVerified ? "/two-factor" : "/dashboard",
+        { replace: true },
+      );
+    }
+  }, [user, mustChangePassword, twoFactorRequired, twoFactorVerified, navigate]);
 
   const handleLogin = async (event: FormEvent) => {
     event.preventDefault();
@@ -343,8 +349,9 @@ export default function AuthClean() {
                             variant="outline"
                             size="sm"
                             onClick={() => {
-                              setIdentifier('admin@mascallnet.com');
-                              setPassword('Admin@123');
+                              const demoAdmin = DEMO_CREDENTIALS.find((item) => item.role === 'admin');
+                              setIdentifier(demoAdmin?.email ?? 'admin@mascallnet.com');
+                              setPassword(demoAdmin?.password ?? '');
                             }}
                             className="text-xs"
                           >

@@ -1,12 +1,12 @@
 /**
  * Quality Correlation Analysis Queries
  * Shivamgiri APR + mas_hrms Employees
- * Run against: 122.184.128.90:3306
+ * Run against: <DB_HOST>:3306
  * Databases: mas_hrms, db_audit (Shivamgiri), dialer_db
  * Timeframe: Last 90 days (configurable)
  *
  * Execution:
- *   mysql -h 122.184.128.90 -u root -p mas_hrms < quality-correlation-queries.sql
+ *   mysql -h <DB_HOST> -u <DB_USER> -p mas_hrms < quality-correlation-queries.sql
  */
 
 -- =====================================================================
@@ -325,5 +325,5 @@ LIMIT 20;
 -- EXPORT SUMMARY: Run all analysis in sequence
 -- =====================================================================
 -- Usage: Copy all above queries into MySQL client
--- OR:    mysql -h 122.184.128.90 -u root -pVICIDIALNOW mas_hrms < quality-correlation-queries.sql > quality-analysis-results.csv
+-- OR:    mysql -h <DB_HOST> -u <DB_USER> --p<DB_PASSWORD> mas_hrms < quality-correlation-queries.sql > quality-analysis-results.csv
 -- Results will be in tab-separated format suitable for Excel/Tableau import

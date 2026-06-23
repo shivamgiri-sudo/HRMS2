@@ -10,17 +10,17 @@ import bcrypt from 'bcryptjs';
 import { db } from '../src/db/mysql.js';
 
 const DEMO_ACCOUNTS = [
-  { id: 'demo-admin-id',     email: 'admin@mascallnet.com',     password: 'Admin@123'   },
-  { id: 'demo-hr-id',        email: 'hr@mascallnet.com',        password: 'Hr@123456'   },
-  { id: 'demo-recruiter-id', email: 'recruiter@mascallnet.com', password: 'Recruiter@1' },
-  { id: 'demo-manager-id',   email: 'manager@mascallnet.com',   password: 'Manager@1'   },
-  { id: 'demo-tl-id',        email: 'tl@mascallnet.com',        password: 'TeamLead@1'  },
-  { id: 'demo-qa-id',        email: 'qa@mascallnet.com',        password: 'Quality@1'   },
-  { id: 'demo-wfm-id',       email: 'wfm@mascallnet.com',       password: 'Workforce@1' },
-  { id: 'demo-finance-id',   email: 'finance@mascallnet.com',   password: 'Finance@1'   },
-  { id: 'demo-employee-id',  email: 'employee@mascallnet.com',  password: 'Employee@1'  },
-  { id: 'demo-ceo-id',       email: 'ceo@mascallnet.com',       password: 'Ceo@12345'   },
-  { id: 'demo-trainer-id',   email: 'trainer@mascallnet.com',   password: 'Trainer@1'   },
+  { id: 'demo-admin-id',     email: 'admin@mascallnet.com' },
+  { id: 'demo-hr-id',        email: 'hr@mascallnet.com' },
+  { id: 'demo-recruiter-id', email: 'recruiter@mascallnet.com' },
+  { id: 'demo-manager-id',   email: 'manager@mascallnet.com' },
+  { id: 'demo-tl-id',        email: 'tl@mascallnet.com' },
+  { id: 'demo-qa-id',        email: 'qa@mascallnet.com' },
+  { id: 'demo-wfm-id',       email: 'wfm@mascallnet.com' },
+  { id: 'demo-finance-id',   email: 'finance@mascallnet.com' },
+  { id: 'demo-employee-id',  email: 'employee@mascallnet.com' },
+  { id: 'demo-ceo-id',       email: 'ceo@mascallnet.com' },
+  { id: 'demo-trainer-id',   email: 'trainer@mascallnet.com' },
 ];
 
 const DEMO_ROLES: Record<string, string[]> = {
@@ -38,9 +38,13 @@ const DEMO_ROLES: Record<string, string[]> = {
 };
 
 async function main() {
+  const demoPassword = process.env.DEMO_AUTH_PASSWORD?.trim();
+  if (!demoPassword || demoPassword.length < 12) {
+    throw new Error('DEMO_AUTH_PASSWORD with at least 12 characters is required');
+  }
   console.log('Seeding demo auth accounts...');
   for (const account of DEMO_ACCOUNTS) {
-    const hash = await bcrypt.hash(account.password, 10);
+    const hash = await bcrypt.hash(demoPassword, 10);
     await db.execute(
       `INSERT INTO auth_user (id, email, password_hash)
        VALUES (?, ?, ?)

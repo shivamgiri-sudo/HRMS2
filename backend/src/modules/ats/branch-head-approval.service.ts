@@ -1,7 +1,7 @@
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
-import { generateEmployeeCode } from './ats.enhanced.service.js';
 import { sendSelectedEmail, sendRejectedEmail } from './ats.email.service.js';
+import { approveOffer, rejectOffer } from './ats.onboarding.service.js';
 
 /**
  * Branch Head Approval Service
@@ -80,19 +80,21 @@ export async function getPendingApprovals(branchHeadId: string): Promise<Pending
       phv.gross_salary,
       phv.joining_date,
       phv.salary_start_date,
-      phv.basic_salary,
-      phv.hra,
-      phv.conveyance,
-      phv.special_allowance,
-      phv.pf_amount,
-      phv.esic_amount,
+      JSON_UNQUOTE(JSON_EXTRACT(phv.salary_components, '$.basic')) as basic_salary,
+      JSON_UNQUOTE(JSON_EXTRACT(phv.salary_components, '$.hra')) as hra,
+      JSON_UNQUOTE(JSON_EXTRACT(phv.salary_components, '$.conveyance')) as conveyance,
+      JSON_UNQUOTE(JSON_EXTRACT(phv.salary_components, '$.specialAllowance')) as special_allowance,
+      0 as pf_amount,
+      0 as esic_amount,
       e.full_name as submitted_by,
       phv.validated_at as submitted_at,
-      phv.validation_status as approval_status
+      bha.approval_status
     FROM ats_payroll_hr_validation phv
     INNER JOIN ats_candidate c ON c.id = phv.candidate_id
-    LEFT JOIN employees e ON e.id = phv.validated_by
-    WHERE phv.validation_status = 'approved'
+    INNER JOIN ats_branch_head_approval bha ON bha.payroll_validation_id = phv.id
+    LEFT JOIN employees e ON e.id = phv.payroll_hr_id
+    WHERE phv.validation_status = 'validated'
+      AND bha.approval_status = 'pending'
       AND c.applied_for_branch IN (${placeholders})
       AND c.current_stage = 'payroll_validated'
     ORDER BY phv.validated_at DESC`,
@@ -120,10 +122,15 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
       c.candidate_code,
       c.full_name,
       c.email,
-      c.applied_for_branch
+      c.applied_for_branch,
+      o.id AS offer_id
     FROM ats_payroll_hr_validation phv
+    LEFT JOIN ats_onboarding_request r ON r.candidate_id = phv.candidate_id
+    LEFT JOIN ats_employment_offer o ON o.onboarding_request_id = r.id AND o.status = 'submitted'
     INNER JOIN ats_candidate c ON c.id = phv.candidate_id
-    WHERE phv.id = ?`,
+    WHERE phv.id = ?
+    ORDER BY o.submitted_at DESC
+    LIMIT 1`,
     [approval_id]
   );
 
@@ -142,33 +149,43 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
 
   try {
     if (approval_status === 'approved') {
-      // Generate employee code
-      const companyPrefix: 'MAS' | 'IDC' = approval.applied_for_branch.includes('IDC') ? 'IDC' : 'MAS';
-      const isOffrole = approval.employment_type === 'offrole';
-
-      const employeeCode = await generateEmployeeCode(companyPrefix, isOffrole);
-
-      // Create branch head approval record
       await connection.execute(
-        `INSERT INTO ats_branch_head_approval
-          (payroll_validation_id, branch_head_id, approval_status, employee_code_generated, remarks, approved_at)
-        VALUES (?, ?, 'approved', ?, ?, NOW())`,
-        [approval_id, branch_head_id, employeeCode, remarks || null]
+        `UPDATE salary_exception_proposal
+            SET status = 'approved', approved_by = ?, approved_at = NOW(), updated_at = NOW()
+          WHERE candidate_id = ? AND status = 'pending'`,
+        [branch_head_id, approval.candidate_id]
       );
 
-      // Update candidate stage
+      await connection.execute(
+        `UPDATE ats_branch_head_approval
+            SET branch_head_id = ?, approval_status = 'approved', remarks = ?, approved_at = NOW(), updated_at = NOW()
+          WHERE payroll_validation_id = ? AND approval_status = 'pending'`,
+        [branch_head_id, remarks || null, approval_id]
+      );
+
       await connection.execute(
         `UPDATE ats_candidate
-        SET current_stage = 'offer_pending',
-            employee_code = ?
+        SET current_stage = 'offer_approved',
+            updated_at = NOW()
         WHERE id = ?`,
-        [employeeCode, approval.candidate_id]
+        [approval.candidate_id]
+      );
+
+      await connection.execute(
+        `INSERT INTO ats_candidate_stage_log
+           (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+         VALUES (UUID(), ?, 'payroll_validated', 'offer_approved', ?, ?)`,
+        [approval.candidate_id, remarks || 'Branch Head approved final offer', branch_head_id]
       );
 
       await connection.commit();
 
+      if (approval.offer_id) {
+        await approveOffer(String(approval.offer_id), branch_head_id, remarks);
+      }
+
       // Fire-and-forget: send approval email after transaction commits
-      if (approval.email) {
+      if (!approval.offer_id && approval.email) {
         sendSelectedEmail({
           candidateId: approval.candidate_id,
           to: approval.email,
@@ -181,30 +198,55 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
 
       return {
         success: true,
-        message: 'Approval successful. Employee code generated.',
-        employee_code: employeeCode,
+        message: approval.offer_id
+          ? 'Approval successful. Employee conversion completed through canonical offer approval.'
+          : 'Approval recorded. Submit an employment offer to complete canonical employee conversion.',
       };
     } else {
-      // Rejected
       await connection.execute(
-        `INSERT INTO ats_branch_head_approval
-          (payroll_validation_id, branch_head_id, approval_status, remarks, approved_at)
-        VALUES (?, ?, 'rejected', ?, NOW())`,
-        [approval_id, branch_head_id, remarks || null]
+        `UPDATE ats_branch_head_approval
+            SET branch_head_id = ?, approval_status = 'rejected', remarks = ?, approved_at = NOW(), updated_at = NOW()
+          WHERE payroll_validation_id = ? AND approval_status = 'pending'`,
+        [branch_head_id, remarks || null, approval_id]
       );
 
       // Update candidate stage
       await connection.execute(
         `UPDATE ats_candidate
-        SET current_stage = 'rejected_by_branch_head'
+        SET current_stage = 'payroll_validated', updated_at = NOW()
         WHERE id = ?`,
         [approval.candidate_id]
       );
 
+      await connection.execute(
+        `UPDATE ats_payroll_hr_validation
+            SET validation_status = 'correction_requested', remarks = ?, updated_at = NOW()
+          WHERE id = ?`,
+        [remarks || 'Rejected by Branch Head', approval_id]
+      );
+
+      await connection.execute(
+        `UPDATE salary_exception_proposal
+            SET status = 'rejected', rejection_reason = ?, approved_by = ?, approved_at = NOW(), updated_at = NOW()
+          WHERE candidate_id = ? AND status = 'pending'`,
+        [remarks || 'Rejected by Branch Head', branch_head_id, approval.candidate_id]
+      );
+
+      await connection.execute(
+        `INSERT INTO ats_candidate_stage_log
+           (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+         VALUES (UUID(), ?, 'payroll_validated', 'payroll_correction_requested', ?, ?)`,
+        [approval.candidate_id, remarks || 'Branch Head rejected offer; returned to Payroll HR', branch_head_id]
+      );
+
       await connection.commit();
 
+      if (approval.offer_id && remarks) {
+        await rejectOffer(String(approval.offer_id), branch_head_id, remarks);
+      }
+
       // Fire-and-forget: send rejection email after transaction commits
-      if (approval.email) {
+      if (!approval.offer_id && approval.email) {
         sendRejectedEmail({
           candidateId: approval.candidate_id,
           to: approval.email,

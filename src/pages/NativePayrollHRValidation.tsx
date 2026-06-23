@@ -30,6 +30,8 @@ interface ValidationFormData {
   reporting_manager_id: string;
   salary_slab_id: string;
   gross_salary: number;
+  requested_gross_salary: number;
+  salary_exception_reason: string;
   joining_date: string;
   salary_start_date: string;
   shift_id: string;
@@ -71,6 +73,7 @@ export default function NativePayrollHRValidation() {
   const [costCentres, setCostCentres] = useState<any[]>([]);
   const [managers, setManagers] = useState<any[]>([]);
   const [shifts, setShifts] = useState<any[]>([]);
+  const [salarySlabs, setSalarySlabs] = useState<any[]>([]);
 
   const [formData, setFormData] = useState<ValidationFormData>({
     employment_type: 'onroll',
@@ -82,6 +85,8 @@ export default function NativePayrollHRValidation() {
     reporting_manager_id: '',
     salary_slab_id: '',
     gross_salary: 0,
+    requested_gross_salary: 0,
+    salary_exception_reason: '',
     joining_date: '',
     salary_start_date: '',
     shift_id: '',
@@ -126,6 +131,7 @@ export default function NativePayrollHRValidation() {
         costCentresRes,
         managersRes,
         shiftsRes,
+        salarySlabsRes,
       ] = await Promise.all([
         hrmsApi.get('/api/org/companies'),
         hrmsApi.get('/api/org/designations'),
@@ -134,6 +140,7 @@ export default function NativePayrollHRValidation() {
         hrmsApi.get('/api/org/cost-centres'),
         hrmsApi.get('/api/employees?role=manager'),
         hrmsApi.get('/api/wfm/shifts'),
+        hrmsApi.get('/api/payroll-masters/slabs'),
       ]);
 
       setCompanies(companiesRes.data || []);
@@ -143,6 +150,7 @@ export default function NativePayrollHRValidation() {
       setCostCentres(costCentresRes.data || []);
       setManagers(managersRes.data || []);
       setShifts(shiftsRes.data || []);
+      setSalarySlabs(salarySlabsRes.data || []);
     } catch (err) {
       console.error('Failed to load master data:', err);
     }
@@ -150,8 +158,8 @@ export default function NativePayrollHRValidation() {
 
   // ── Calculate salary breakdown ─────────────────────────────────────────────
   const calculateBreakdown = async () => {
-    if (!formData.gross_salary || formData.gross_salary <= 0) {
-      setError('Please enter gross salary');
+    if (!formData.salary_slab_id || !formData.gross_salary || formData.gross_salary <= 0) {
+      setError('Please select an active salary slab');
       return;
     }
 
@@ -177,6 +185,14 @@ export default function NativePayrollHRValidation() {
     // Validation
     if (!formData.joining_date) {
       setError('Joining date is required');
+      return;
+    }
+    if (!formData.salary_slab_id) {
+      setError('Salary slab is required');
+      return;
+    }
+    if (formData.requested_gross_salary && formData.requested_gross_salary !== formData.gross_salary && !formData.salary_exception_reason.trim()) {
+      setError('Salary exception reason is required when requested gross differs from the slab.');
       return;
     }
 
@@ -214,6 +230,8 @@ export default function NativePayrollHRValidation() {
       reporting_manager_id: '',
       salary_slab_id: '',
       gross_salary: 0,
+      requested_gross_salary: 0,
+      salary_exception_reason: '',
       joining_date: '',
       salary_start_date: '',
       shift_id: '',
@@ -479,21 +497,69 @@ export default function NativePayrollHRValidation() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Gross Salary (Monthly) *
+                  Salary Slab *
+                </label>
+                <select
+                  value={formData.salary_slab_id}
+                  onChange={(e) => {
+                    const slab = salarySlabs.find((s) => s.id === e.target.value);
+                    const gross = slab ? Number(slab.range_to || 0) : 0;
+                    setFormData({ ...formData, salary_slab_id: e.target.value, gross_salary: gross, requested_gross_salary: 0 });
+                    setBreakdown(null);
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                >
+                  <option value="">Select active slab</option>
+                  {salarySlabs.filter((s) => Number(s.active_status ?? 1) === 1).map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label || s.slab_code} (₹{Number(s.range_from || 0).toLocaleString()} - ₹{Number(s.range_to || 0).toLocaleString()})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Gross Salary From Slab *
                 </label>
                 <div className="relative">
                   <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
                   <input
                     type="number"
                     value={formData.gross_salary || ''}
-                    onChange={(e) =>
-                      setFormData({ ...formData, gross_salary: parseFloat(e.target.value) || 0 })
-                    }
-                    placeholder="Enter gross salary"
-                    className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    readOnly
+                    className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-700"
                   />
                 </div>
               </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Salary Exception Proposal
+                </label>
+                <input
+                  type="number"
+                  value={formData.requested_gross_salary || ''}
+                  onChange={(e) => setFormData({ ...formData, requested_gross_salary: parseFloat(e.target.value) || 0 })}
+                  placeholder="Only if different from slab"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                />
+              </div>
+
+              {formData.requested_gross_salary > 0 && formData.requested_gross_salary !== formData.gross_salary && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Exception Reason *
+                  </label>
+                  <textarea
+                    value={formData.salary_exception_reason}
+                    onChange={(e) => setFormData({ ...formData, salary_exception_reason: e.target.value })}
+                    placeholder="Required for Branch Head review"
+                    rows={2}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                  />
+                </div>
+              )}
 
               <button
                 onClick={calculateBreakdown}
@@ -634,7 +700,7 @@ export default function NativePayrollHRValidation() {
             </button>
             <button
               onClick={handleSubmit}
-              disabled={submitting || !formData.joining_date || !formData.gross_salary}
+                disabled={submitting || !formData.joining_date || !formData.salary_slab_id || !formData.gross_salary}
               className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
             >
               {submitting ? 'Submitting...' : 'Save & Send for Approval'}

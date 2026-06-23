@@ -12,13 +12,19 @@ import mysql from 'mysql2/promise';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 // Database configuration from environment
 const DB_CONFIG = {
-  host: process.env.DB_HOST || '192.168.10.6',
+  host: requiredEnv('DB_HOST'),
   port: parseInt(process.env.DB_PORT || '3306'),
-  user: process.env.DB_USER || 'shivam_user',
-  password: process.env.DB_PASSWORD || 'qwersdfg!@#hjk',
-  database: process.env.DB_NAME || 'mas_hrms',
+  user: requiredEnv('DB_USER'),
+  password: requiredEnv('DB_PASSWORD'),
+  database: requiredEnv('DB_NAME'),
   multipleStatements: true, // Required for running multiple SQL statements
 };
 

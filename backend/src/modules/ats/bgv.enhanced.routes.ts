@@ -7,6 +7,8 @@ import {
   initiateBGVVerification,
   updateVerificationStatus,
   getBGVStatistics,
+  runNameMatchCheck,
+  overrideNameMatchReview,
 } from './bgv.enhanced.service.js';
 
 export const bgvEnhancedRouter = Router();
@@ -63,6 +65,28 @@ bgvEnhancedRouter.post('/update-status', requireRole('admin', 'hr'), async (req,
     return res.json(result);
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+bgvEnhancedRouter.post('/name-match/run', requireRole('admin', 'hr'), async (req: AuthenticatedRequest, res) => {
+  try {
+    const result = await runNameMatchCheck(req.body.candidate_id, req.authUser!.id);
+    return res.json(result);
+  } catch (error: any) {
+    return res.status(error.statusCode ?? 500).json({ success: false, message: error.message });
+  }
+});
+
+bgvEnhancedRouter.post('/name-match/override', requireRole('admin', 'hr'), async (req: AuthenticatedRequest, res) => {
+  try {
+    const result = await overrideNameMatchReview({
+      candidateId: req.body.candidate_id,
+      actorUserId: req.authUser!.id,
+      reason: String(req.body.reason ?? ''),
+    });
+    return res.json(result);
+  } catch (error: any) {
+    return res.status(error.statusCode ?? 500).json({ success: false, message: error.message });
   }
 });
 

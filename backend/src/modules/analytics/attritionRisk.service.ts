@@ -6,8 +6,7 @@
  */
 
 import { Request, Response } from 'express';
-import { pool } from '../../db/pool';
-import { requireRole } from '../../middleware/requireRole';
+import { db as pool } from '../../db/mysql.js';
 
 interface AttritionRiskAgent {
   RISK_AGENT: string;

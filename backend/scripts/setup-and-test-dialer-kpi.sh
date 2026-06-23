@@ -9,12 +9,12 @@ echo "==========================================================================
 echo "DIALER KPI INTEGRATION - SETUP AND TEST"
 echo "================================================================================"
 
-# Database credentials
-DB_HOST="${DB_HOST:-122.184.128.90}"
+# Database credentials must be supplied by environment.
+: "${DB_HOST:?DB_HOST is required}"
+: "${DB_USER:?DB_USER is required}"
+: "${DB_PASSWORD:?DB_PASSWORD is required}"
+: "${DB_NAME:?DB_NAME is required}"
 DB_PORT="${DB_PORT:-3306}"
-DB_USER="${DB_USER:-Shivam_user}"
-DB_PASSWORD="${DB_PASSWORD:-Shivam@8171}"
-DB_NAME="${DB_NAME:-mas_hrms}"
 
 echo ""
 echo "Step 1: Creating KPI Metrics..."

@@ -40,7 +40,9 @@ export interface SalaryValidationInput {
   cost_centre_id: string;
   reporting_manager_id: string;
   salary_slab_id: string;
-  gross_salary: number;
+  gross_salary?: number;
+  requested_gross_salary?: number;
+  salary_exception_reason?: string;
   salary_components?: any; // Optional - can be auto-calculated
   joining_date: string; // YYYY-MM-DD format
   salary_start_date?: string; // YYYY-MM-DD format (optional, defaults to joining_date)
@@ -59,23 +61,50 @@ export async function getPendingCandidates(): Promise<PendingCandidate[]> {
       c.full_name,
       c.mobile,
       c.email,
-      c.applied_for_role,
+      COALESCE(c.role_applied, c.applied_for_process) AS applied_for_role,
       c.applied_for_branch,
       c.branch_display_name,
-      bgv.bgv_status,
-      bgv.completed_at as bgv_completed_at,
+      COALESCE(bgv.verification_status, CASE WHEN COALESCE(bgv_details.verified_count, 0) > 0 OR COALESCE(bgv_checks.verified_count, 0) > 0 THEN 'verified' END) AS bgv_status,
+      COALESCE(bgv.completed_at, bgv_details.completed_at, bgv_checks.verified_at) as bgv_completed_at,
       c.education,
-      c.years_of_experience,
+      c.experience AS years_of_experience,
       onb.submitted_at as onboarding_submitted_at
     FROM ats_candidate c
-    INNER JOIN ats_bgv_initiation bgv ON bgv.candidate_id = c.id
+    LEFT JOIN ats_bgv_verification bgv ON bgv.candidate_id = c.id
+    LEFT JOIN (
+      SELECT
+        candidate_id,
+        SUM(CASE WHEN status = 'verified' THEN 1 ELSE 0 END) AS verified_count,
+        SUM(CASE WHEN status IN ('failed', 'manual_review') THEN 1 ELSE 0 END) AS blocker_count,
+        MAX(completed_at) AS completed_at
+      FROM ats_bgv_verification_details
+      GROUP BY candidate_id
+    ) bgv_details ON bgv_details.candidate_id = c.id
+    LEFT JOIN (
+      SELECT
+        candidate_id,
+        SUM(CASE WHEN status IN ('verified', 'waived') THEN 1 ELSE 0 END) AS verified_count,
+        SUM(CASE WHEN status IN ('mismatch', 'failed', 'manual_review') THEN 1 ELSE 0 END) AS blocker_count,
+        MAX(verified_at) AS verified_at
+      FROM candidate_bgv_check
+      GROUP BY candidate_id
+    ) bgv_checks ON bgv_checks.candidate_id = c.id
+    LEFT JOIN candidate_bgv_consent bgv_consent
+      ON bgv_consent.candidate_id = c.id AND bgv_consent.consent_status = 'granted'
     LEFT JOIN candidate_onboarding_profile onb ON onb.candidate_id = c.id
     LEFT JOIN ats_payroll_hr_validation phr ON phr.candidate_id = c.id
-    WHERE c.candidate_status = 'selected'
-      AND bgv.bgv_status = 'verified'
+    WHERE LOWER(COALESCE(c.final_decision, c.status, c.current_stage, '')) = 'selected'
+      AND bgv_consent.id IS NOT NULL
+      AND (
+        bgv.verification_status = 'verified'
+        OR COALESCE(bgv_details.verified_count, 0) > 0
+        OR COALESCE(bgv_checks.verified_count, 0) > 0
+      )
+      AND COALESCE(bgv_details.blocker_count, 0) = 0
+      AND COALESCE(bgv_checks.blocker_count, 0) = 0
       AND onb.submitted_at IS NOT NULL
       AND (phr.id IS NULL OR phr.validation_status = 'correction_requested')
-    ORDER BY bgv.completed_at DESC`
+    ORDER BY COALESCE(bgv.completed_at, bgv_details.completed_at, bgv_checks.verified_at, onb.submitted_at) DESC`
   );
 
   return rows as PendingCandidate[];
@@ -88,17 +117,47 @@ export async function getCandidateForValidation(candidateId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
       c.*,
-      bgv.bgv_status,
-      bgv.completed_at as bgv_completed_at,
-      bgv.remarks as bgv_remarks,
+      COALESCE(bgv.verification_status, CASE WHEN COALESCE(bgv_details.verified_count, 0) > 0 OR COALESCE(bgv_checks.verified_count, 0) > 0 THEN 'verified' END) AS bgv_status,
+      COALESCE(bgv.completed_at, bgv_details.completed_at, bgv_checks.verified_at) as bgv_completed_at,
+      COALESCE(bgv_details.remarks, bgv_checks.remarks) as bgv_remarks,
       onb.*,
       b.branch_name,
       b.id as branch_id
     FROM ats_candidate c
-    INNER JOIN ats_bgv_initiation bgv ON bgv.candidate_id = c.id
+    LEFT JOIN ats_bgv_verification bgv ON bgv.candidate_id = c.id
+    LEFT JOIN (
+      SELECT
+        candidate_id,
+        SUM(CASE WHEN status = 'verified' THEN 1 ELSE 0 END) AS verified_count,
+        SUM(CASE WHEN status IN ('failed', 'manual_review') THEN 1 ELSE 0 END) AS blocker_count,
+        MAX(completed_at) AS completed_at,
+        GROUP_CONCAT(NULLIF(remarks, '') SEPARATOR '; ') AS remarks
+      FROM ats_bgv_verification_details
+      GROUP BY candidate_id
+    ) bgv_details ON bgv_details.candidate_id = c.id
+    LEFT JOIN (
+      SELECT
+        candidate_id,
+        SUM(CASE WHEN status IN ('verified', 'waived') THEN 1 ELSE 0 END) AS verified_count,
+        SUM(CASE WHEN status IN ('mismatch', 'failed', 'manual_review') THEN 1 ELSE 0 END) AS blocker_count,
+        MAX(verified_at) AS verified_at,
+        GROUP_CONCAT(NULLIF(review_remarks, '') SEPARATOR '; ') AS remarks
+      FROM candidate_bgv_check
+      GROUP BY candidate_id
+    ) bgv_checks ON bgv_checks.candidate_id = c.id
+    LEFT JOIN candidate_bgv_consent bgv_consent
+      ON bgv_consent.candidate_id = c.id AND bgv_consent.consent_status = 'granted'
     LEFT JOIN candidate_onboarding_profile onb ON onb.candidate_id = c.id
     LEFT JOIN branch_master b ON b.branch_name = c.applied_for_branch
-    WHERE c.id = ?`,
+    WHERE c.id = ?
+      AND bgv_consent.id IS NOT NULL
+      AND (
+        bgv.verification_status = 'verified'
+        OR COALESCE(bgv_details.verified_count, 0) > 0
+        OR COALESCE(bgv_checks.verified_count, 0) > 0
+      )
+      AND COALESCE(bgv_details.blocker_count, 0) = 0
+      AND COALESCE(bgv_checks.blocker_count, 0) = 0`,
     [candidateId]
   );
 
@@ -135,14 +194,58 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
       throw new Error('salary_start_date cannot be before joining_date');
     }
 
-    // Auto-calculate salary_components if not provided
-    const salaryComponents = input.salary_components || calculateSalaryBreakdown(input.gross_salary, input.employment_type).components;
+    const [slabRowsRaw] = await connection.execute(
+      `SELECT id, range_from, range_to, active_status FROM salary_slab_master WHERE id = ? LIMIT 1`,
+      [input.salary_slab_id]
+    );
+    const slabRows = slabRowsRaw as RowDataPacket[];
+    const slab = slabRows[0];
+    if (!slab || Number(slab.active_status) !== 1) {
+      throw new Error('salary slab must be active');
+    }
+
+    const [processRowsRaw] = await connection.execute(
+      `SELECT id FROM process_master WHERE id = ? AND active_status = 1 LIMIT 1`,
+      [input.process_id]
+    );
+    const processRows = processRowsRaw as RowDataPacket[];
+    if (!processRows.length) throw new Error('process_id must exist');
+
+    const [branchRowsRaw] = await connection.execute(
+      `SELECT b.id AS branch_id
+         FROM ats_candidate c
+         LEFT JOIN branch_master b ON b.id = c.applied_for_branch OR b.branch_name = c.applied_for_branch OR b.branch_code = c.applied_for_branch
+        WHERE c.id = ?
+        LIMIT 1`,
+      [input.candidate_id]
+    );
+    const branchRows = branchRowsRaw as RowDataPacket[];
+    const branchId = branchRows[0]?.branch_id;
+    if (!branchId) throw new Error('branch_id must exist');
+
+    const [managerRowsRaw] = await connection.execute(
+      `SELECT id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1`,
+      [input.reporting_manager_id]
+    );
+    const managerRows = managerRowsRaw as RowDataPacket[];
+    if (!managerRows.length) throw new Error('reporting_manager_id must be active employee');
+
+    const slabGross = Number(slab.range_to);
+    const requestedGross = Number(input.requested_gross_salary || 0);
+    const isException = requestedGross > 0 && requestedGross !== slabGross;
+    if (isException && !String(input.salary_exception_reason || '').trim()) {
+      throw new Error('salary proposal must have reason');
+    }
+
+    const effectiveGross = isException ? requestedGross : slabGross;
+    const salaryComponents = input.salary_components || calculateSalaryBreakdown(effectiveGross, input.employment_type).components;
 
     // Check if validation already exists
-    const [existing] = await connection.execute<RowDataPacket[]>(
+    const [existingRaw] = await connection.execute(
       `SELECT id FROM ats_payroll_hr_validation WHERE candidate_id = ?`,
       [input.candidate_id]
     );
+    const existing = existingRaw as RowDataPacket[];
 
     const validationId = existing.length > 0 ? existing[0].id : randomUUID();
 
@@ -154,9 +257,7 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
         cost_centre_id, reporting_manager_id, salary_slab_id, gross_salary,
         salary_components, joining_date, salary_start_date, shift_id, remarks,
         validated_at
-      ) VALUES (?, ?, (SELECT b.id FROM branch_master b WHERE b.branch_name = (
-        SELECT applied_for_branch FROM ats_candidate WHERE id = ?
-      )), ?, 'validated', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      ) VALUES (?, ?, ?, ?, 'validated', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       ON DUPLICATE KEY UPDATE
         payroll_hr_id = VALUES(payroll_hr_id),
         validation_status = 'validated',
@@ -178,7 +279,7 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
       [
         validationId,
         input.candidate_id,
-        input.candidate_id,
+        branchId,
         input.payroll_hr_id,
         input.employment_type,
         input.company_id,
@@ -188,8 +289,8 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
         input.cost_centre_id,
         input.reporting_manager_id,
         input.salary_slab_id,
-        input.gross_salary,
-        JSON.stringify(salaryComponents),
+        effectiveGross,
+        JSON.stringify({ ...salaryComponents, slabGross, requestedGross: isException ? requestedGross : null, exceptionReason: input.salary_exception_reason || null }),
         input.joining_date,
         salaryStartDate, // This ensures salary_start_date is always set
         input.shift_id || null,
@@ -200,9 +301,19 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
     // Update candidate status
     await connection.execute(
       `UPDATE ats_candidate
-       SET candidate_status = 'pending_approval'
+       SET candidate_status = 'pending_approval',
+           current_stage = 'payroll_validated',
+           updated_at = NOW()
        WHERE id = ?`,
       [input.candidate_id]
+    );
+
+    await connection.execute(
+      `INSERT INTO ats_branch_head_approval
+         (id, candidate_id, payroll_validation_id, branch_head_id, approval_status, notified_at)
+       VALUES (UUID(), ?, ?, NULL, 'pending', NOW())
+       ON DUPLICATE KEY UPDATE approval_status = IF(approval_status = 'rejected', 'pending', approval_status), notified_at = NOW(), updated_at = NOW()`,
+      [input.candidate_id, validationId]
     );
 
     // Log in notification table
@@ -215,7 +326,9 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
         input.candidate_id,
         input.payroll_hr_id,
         'Salary Validated',
-        `Salary assigned for candidate. Joining: ${input.joining_date}, Salary Start: ${salaryStartDate}`,
+        isException
+          ? `Salary exception proposed for Branch Head review. Slab: ${slabGross}, Requested: ${requestedGross}. Joining: ${input.joining_date}, Salary Start: ${salaryStartDate}`
+          : `Salary slab assigned for candidate. Joining: ${input.joining_date}, Salary Start: ${salaryStartDate}`,
       ]
     );
 

@@ -9,7 +9,8 @@
  */
 
 import { Router, Request, Response } from 'express';
-import db from '../db';
+import type { RowDataPacket } from 'mysql2/promise';
+import { db } from '../db/mysql.js';
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -171,7 +172,7 @@ class ROIEfficiencyService {
     `;
 
     const [rows] = await db.query(query);
-    return this.mapQueryResults<ProcessEfficiencyMetrics>(rows);
+    return this.mapQueryResults<ProcessEfficiencyMetrics>(rows as RowDataPacket[]);
   }
 
   /**
@@ -242,7 +243,7 @@ class ROIEfficiencyService {
     `;
 
     const [rows] = await db.query(query);
-    return this.mapQueryResults<LOBEfficiencyMetrics>(rows);
+    return this.mapQueryResults<LOBEfficiencyMetrics>(rows as RowDataPacket[]);
   }
 
   /**
@@ -318,7 +319,7 @@ class ROIEfficiencyService {
     `;
 
     const [rows] = await db.query(query);
-    return this.mapQueryResults<ProcessROIAnalysis>(rows);
+    return this.mapQueryResults<ProcessROIAnalysis>(rows as RowDataPacket[]);
   }
 
   /**
@@ -427,7 +428,7 @@ class ROIEfficiencyService {
     `;
 
     const [rows] = await db.query(query);
-    return this.mapQueryResults<PerformanceCategory>(rows);
+    return this.mapQueryResults<PerformanceCategory>(rows as RowDataPacket[]);
   }
 
   /**

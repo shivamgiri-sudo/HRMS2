@@ -1,5 +1,4 @@
 import { randomUUID, createHash } from 'crypto';
-import bcrypt from 'bcryptjs';
 import { RowDataPacket, PoolConnection } from 'mysql2/promise';
 import { db } from '../../db/mysql.js';
 import { env } from '../../config/env.js';
@@ -12,6 +11,8 @@ import {
   sendWelcomeEmail,
   sendRejectedEmail,
 } from './ats.email.service.js';
+import { createTemporaryPasswordCredential } from '../auth/tempPassword.service.js';
+import { logSensitiveAction } from '../../shared/auditLog.js';
 
 // ── PII Helpers ───────────────────────────────────────────────────────────────
 
@@ -403,10 +404,8 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
   );
   if (!allowed) throw Object.assign(new Error('Access denied'), { statusCode: 403 });
 
-  // Pre-compute values that don't need a DB connection
-  const mobile: string = offer.mobile ?? '0000';
-  const tempPassword = `${mobile.slice(-4)}@MAS`;
-  const passwordHash = await bcrypt.hash(tempPassword, 10);
+  // Pre-compute the one-time password credential. The raw value is never logged.
+  const { temporaryPassword, passwordHash } = await createTemporaryPasswordCredential();
 
   const nameParts: string[] = ((offer.full_name as string) ?? '').trim().split(/\s+/);
   const firstName = nameParts[0] ?? '';
@@ -419,6 +418,7 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
   const conn: PoolConnection = await db.getConnection();
   let employeeCode = '';
   let resolvedAuthUserId = authUserId;
+  let passwordRecipientEmail = '';
 
   try {
     await conn.beginTransaction();
@@ -496,12 +496,24 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
     const salaryStartDate: string | null = (offer.date_of_salary as string | null) ?? (offer.date_of_joining as string | null) ?? null;
 
     const candidateData = await conn.execute<RowDataPacket[]>(
-      `SELECT gender, date_of_birth, personal_email, personal_phone, alternate_mobile,
-              pan_number, aadhar_number, uan_number, current_address
-       FROM ats_candidate WHERE id = ? LIMIT 1`,
+      `SELECT
+              COALESCE(p.gender, c.gender) AS gender,
+              COALESCE(p.date_of_birth, c.date_of_birth) AS date_of_birth,
+              COALESCE(p.personal_email_id, c.email) AS personal_email,
+              c.mobile AS personal_phone,
+              p.alternate_mobile,
+              NULL AS pan_number,
+              NULL AS aadhar_number,
+              NULL AS uan_number,
+              p.current_address,
+              p.personal_email_id
+       FROM ats_candidate c
+       LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
+       WHERE c.id = ? LIMIT 1`,
       [candidateId]
     );
     const candRow = candidateData[0][0] as any;
+    passwordRecipientEmail = String(candRow?.personal_email ?? '').trim();
 
     await conn.execute(
       `INSERT INTO employees
@@ -635,6 +647,14 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
       [resolvedAuthUserId],
     );
 
+    await conn.execute(
+      `INSERT INTO appointment_letter_request
+         (id, employee_id, candidate_id, status, aadhaar_esign_status, company_signature_status)
+       VALUES (UUID(), ?, ?, 'draft', 'not_sent', 'pending')
+       ON DUPLICATE KEY UPDATE candidate_id = VALUES(candidate_id), updated_at = NOW()`,
+      [employeeId, candidateId],
+    );
+
     await conn.commit();
   } catch (err) {
     await conn.rollback();
@@ -656,6 +676,21 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
     console.error('[onboarding] Journey log failed for employee', employeeId, ':', err instanceof Error ? err.message : String(err));
   });
 
+  await logSensitiveAction({
+    actor_user_id: approverId,
+    action_type: 'employee_temp_password_created',
+    module_key: 'ats',
+    entity_type: 'auth_user',
+    entity_id: resolvedAuthUserId,
+    employee_id: employeeId,
+    change_summary: {
+      candidate_id: candidateId,
+      employee_code: employeeCode,
+      must_change_password: true,
+      delivery_channel: 'personal_email',
+    },
+  });
+
   // Fire IT provisioning tasks — runs after transaction commits, fire-and-forget
   const branchIdForProvisioning: string | null = (offer.resolved_branch_id ?? offer.applied_for_branch) || null;
   import('../it-provisioning/it-provisioning.service.js').then(({ dispatchJoinProvisioningTasks }) => {
@@ -671,14 +706,14 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
 
   // Send welcome email after transaction commits — email failure should not roll back employee creation
   const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
-  if (offer.email) {
+  if (passwordRecipientEmail) {
     await sendWelcomeEmail({
       candidateId,
-      to: offer.email,
+      to: passwordRecipientEmail,
       candidateName: offer.full_name,
       employeeCode,
       loginEmail: offer.email,
-      tempPassword,
+      tempPassword: temporaryPassword,
       loginUrl: baseUrl,
     });
   }

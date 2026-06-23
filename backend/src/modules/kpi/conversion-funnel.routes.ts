@@ -1,8 +1,9 @@
 import { Router, Request, Response } from "express";
-import { ConversionFunnelService } from "./conversion-funnel.service";
-import { requireAuth } from "../../middleware/requireAuth";
-import { requireRole } from "../../middleware/requireRole";
-import pool from "../../config/database";
+import type { RowDataPacket } from "mysql2/promise";
+import { ConversionFunnelService } from "./conversion-funnel.service.js";
+import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
+import { db as pool } from "../../db/mysql.js";
 
 const router = Router();
 
@@ -13,7 +14,7 @@ const router = Router();
 router.post(
   "/inbound",
   requireAuth,
-  requireRole(["Super Admin", "WFM", "Quality", "Process Manager"]),
+  requireRole("Super Admin", "WFM", "Quality", "Process Manager"),
   async (req: Request, res: Response) => {
     try {
       const eventId = await ConversionFunnelService.recordInboundEvent({
@@ -60,7 +61,7 @@ router.post(
 router.post(
   "/outbound",
   requireAuth,
-  requireRole(["Super Admin", "WFM", "Quality", "Process Manager"]),
+  requireRole("Super Admin", "WFM", "Quality", "Process Manager"),
   async (req: Request, res: Response) => {
     try {
       const eventId = await ConversionFunnelService.recordOutboundEvent({
@@ -107,7 +108,7 @@ router.post(
 router.post(
   "/chat",
   requireAuth,
-  requireRole(["Super Admin", "WFM", "Quality", "Process Manager"]),
+  requireRole("Super Admin", "WFM", "Quality", "Process Manager"),
   async (req: Request, res: Response) => {
     try {
       const eventId = await ConversionFunnelService.recordChatEvent({
@@ -154,7 +155,7 @@ router.post(
 router.post(
   "/email",
   requireAuth,
-  requireRole(["Super Admin", "WFM", "Quality", "Process Manager"]),
+  requireRole("Super Admin", "WFM", "Quality", "Process Manager"),
   async (req: Request, res: Response) => {
     try {
       const eventId = await ConversionFunnelService.recordEmailEvent({
@@ -238,7 +239,7 @@ router.get(
 router.get(
   "/report/summary",
   requireAuth,
-  requireRole(["Super Admin", "WFM", "Quality", "Process Manager"]),
+  requireRole("Super Admin", "WFM", "Quality", "Process Manager"),
   async (req: Request, res: Response) => {
     try {
       const connection = await pool.getConnection();
@@ -289,10 +290,13 @@ router.get(
 
       connection.release();
 
+      const summaryRows = summary as RowDataPacket[];
+      const byProcessRows = byProcess as RowDataPacket[];
+
       res.json({
         success: true,
-        summary: summary[0],
-        by_process: byProcess,
+        summary: summaryRows[0],
+        by_process: byProcessRows,
       });
     } catch (error) {
       console.error("Error fetching funnel summary:", error);
@@ -311,7 +315,7 @@ router.get(
 router.get(
   "/report/bottlenecks",
   requireAuth,
-  requireRole(["Super Admin", "WFM", "Quality", "Process Manager"]),
+  requireRole("Super Admin", "WFM", "Quality", "Process Manager"),
   async (req: Request, res: Response) => {
     try {
       const connection = await pool.getConnection();

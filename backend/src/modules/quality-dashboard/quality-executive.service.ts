@@ -1,4 +1,4 @@
-import { Pool, RowDataPacket } from 'mysql2/promise';
+import { PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { logger } from '../../logger.js';
 
 export interface ExecutiveQualityMetrics {
@@ -42,8 +42,10 @@ export interface ExecutiveSummaryResponse {
   };
 }
 
+type DbPoolLike = { getConnection: () => Promise<PoolConnection> };
+
 export class QualityExecutiveService {
-  constructor(private db: Pool) {}
+  constructor(private db: DbPoolLike) {}
 
   async getExecutiveSummary(daysBack: number = 30): Promise<ExecutiveSummaryResponse> {
     const conn = await this.db.getConnection();

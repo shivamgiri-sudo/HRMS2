@@ -2,13 +2,14 @@ import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { env } from '../../config/env.js';
 
 /**
  * Candidate Portal Service
  * Handles candidate login, profile, tasks, and document management
  */
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+const JWT_SECRET = env.JWT_SECRET;
 
 export interface CandidateLoginInput {
   candidate_id: string;

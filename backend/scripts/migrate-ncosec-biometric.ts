@@ -1,7 +1,7 @@
 /**
  * migrate-ncosec-biometric.ts
  *
- * One-shot ETL: Matrix Cosec NCOSEC (172.10.10.146) → HRMS MySQL
+ * One-shot ETL: Matrix Cosec NCOSEC (<NCOSEC_DB_HOST>) → HRMS MySQL
  *
  * Logic:
  *   1. Connect to NCOSEC MSSQL
@@ -191,7 +191,7 @@ async function upsertAttendanceDailyRecord(
 export async function runNcosecBiometricSync(): Promise<Summary> {
   console.log('\n=================================================');
   console.log('  NCOSEC → HRMS Biometric Sync');
-  console.log('  NCOSEC Server: 172.10.10.146');
+  console.log('  NCOSEC Server: <NCOSEC_DB_HOST>');
   console.log('=================================================\n');
 
   console.log('[1/5] Testing NCOSEC connection...');

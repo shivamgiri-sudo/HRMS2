@@ -1,12 +1,18 @@
 const mysql = require('mysql2/promise');
 
+function requiredEnv(name) {
+  const value = process.env[name] && process.env[name].trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 async function run() {
   const conn = await mysql.createConnection({
-    host: '14.97.30.236',
-    port: 3306,
-    user: 'shivam_user',
-    password: 'qwersdfg!@#hjk',
-    database: 'db_bill'
+    host: requiredEnv('BILL_DB_HOST'),
+    port: Number(process.env.BILL_DB_PORT || 3306),
+    user: requiredEnv('BILL_DB_USER'),
+    password: requiredEnv('BILL_DB_PASSWORD'),
+    database: requiredEnv('BILL_DB_NAME')
   });
 
   console.log('ALL tables ordered by row count:');

@@ -8,9 +8,9 @@
  *   const metrics = await CostEfficiencyService.getAgentCostEfficiency();
  */
 
-import { db } from '../../db';
+import { db } from '../../db/mysql.js';
 import { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
-import { logger } from '../../logger';
+import { logger } from '../../logger.js';
 
 // ──────────────────────────────────────────────────────────────────────────
 // Type Definitions

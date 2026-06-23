@@ -16,7 +16,7 @@ function requiredEnv(name: string): string {
 }
 
 const config: sql.config = {
-  server: process.env.NCOSEC_DB_HOST || '14.97.30.234',
+  server: process.env.NCOSEC_DB_HOST || '<NCOSEC_DB_HOST>',
   port: parseInt(process.env.NCOSEC_DB_PORT || '1433', 10),
   user: requiredEnv('NCOSEC_DB_USER'),
   password: requiredEnv('NCOSEC_DB_PASSWORD'),
@@ -138,9 +138,9 @@ async function testConnection() {
       if (error.message.includes('timeout')) {
         console.error('\n💡 Troubleshooting:');
         console.error('   - Check if VPN is connected');
-        console.error('   - Verify IP address: 14.97.30.234');
+        console.error('   - Verify IP address: <NCOSEC_DB_HOST>');
         console.error('   - Check firewall rules');
-        console.error('   - Try: telnet 14.97.30.234 1433\n');
+        console.error('   - Try: telnet <NCOSEC_DB_HOST> 1433\n');
       } else if (error.message.includes('Login failed')) {
         console.error('\n💡 Troubleshooting:');
         console.error('   - Verify username: shivamg');

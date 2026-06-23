@@ -1,4 +1,4 @@
-import { Pool, RowDataPacket } from 'mysql2/promise';
+import { PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { logger } from '../../logger.js';
 
 export interface ProcessQualityMetrics {
@@ -38,8 +38,10 @@ export interface QualityAuditResponse {
   };
 }
 
+type DbPoolLike = { getConnection: () => Promise<PoolConnection> };
+
 export class QualityQAService {
-  constructor(private db: Pool) {}
+  constructor(private db: DbPoolLike) {}
 
   async getQualityAudit(
     daysBack: number = 7,

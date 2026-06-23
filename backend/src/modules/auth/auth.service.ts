@@ -15,7 +15,15 @@ const RESET_EXPIRES_HOURS = 24;
 export interface AuthTokens {
   accessToken: string;
   refreshToken: string;
-  user: { id: string; email: string; isBlocked: boolean; mustChangePassword?: boolean; isReadOnly?: boolean };
+  user: {
+    id: string;
+    email: string;
+    isBlocked: boolean;
+    mustChangePassword?: boolean;
+    isReadOnly?: boolean;
+    twoFactorRequired?: boolean;
+    twoFactorVerified?: boolean;
+  };
 }
 
 function mysqlDateTime(date: Date): string {
@@ -269,6 +277,9 @@ export const authService = {
       [user.id, tokenHash, mysqlDateTime(expiresAt)]
     );
 
+    const mustChangePassword = Number(user.must_change_password ?? 0) === 1;
+    const twoFactorRequired = !mustChangePassword;
+
     return {
       accessToken,
       refreshToken: rawRefresh,
@@ -276,8 +287,10 @@ export const authService = {
         id: user.id,
         email: user.email,
         isBlocked: user.is_blocked === 1,
-        mustChangePassword: Number(user.must_change_password ?? 0) === 1,
-        isReadOnly
+        mustChangePassword,
+        isReadOnly,
+        twoFactorRequired,
+        twoFactorVerified: !twoFactorRequired,
       },
     };
   },

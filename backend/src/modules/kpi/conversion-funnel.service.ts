@@ -1,6 +1,6 @@
-import pool from "../../config/database";
+import { db as pool } from "../../db/mysql.js";
 import { RowDataPacket, ResultSetHeader } from "mysql2/promise";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID as uuidv4 } from "crypto";
 
 interface ConversionFunnelEvent extends RowDataPacket {
   id: string;

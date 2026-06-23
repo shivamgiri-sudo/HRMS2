@@ -3,16 +3,16 @@
  * Executes quality queries and transforms responses
  */
 
-import { Pool, RowDataPacket } from 'mysql2/promise';
+import { PoolConnection, RowDataPacket } from 'mysql2/promise';
 import {
   buildCQScoreQuery,
   buildWeaknessDetailQuery,
   buildCallsReviewQuery,
   buildCallDetailQuery,
   buildTotalCallsCountQuery,
-} from '../../lib/query-builders/quality-queries';
-import { cacheInstance } from '../../lib/cache/quality-cache';
-import { logger } from '../../logger';
+} from '../../lib/query-builders/quality-queries.js';
+import { cacheInstance } from '../../lib/cache/quality-cache.js';
+import { logger } from '../../logger.js';
 
 export interface CQScoreResponse {
   cq_score_current: number;
@@ -81,8 +81,10 @@ export interface CallDetail {
   };
 }
 
+type DbPoolLike = { getConnection: () => Promise<PoolConnection> };
+
 export class QualityAggregationService {
-  constructor(private db: Pool) {}
+  constructor(private db: DbPoolLike) {}
 
   async getCQScore(employeeCode: string, daysBack: number = 7): Promise<CQScoreResponse> {
     const cacheKey = `quality:cq_score:${employeeCode}:${daysBack}d`;

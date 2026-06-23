@@ -4,20 +4,26 @@
 
 const mysql = require('mysql2/promise');
 
+function requiredEnv(name) {
+  const value = process.env[name] && process.env[name].trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 const dialerConfig = {
-  host: '122.184.128.90',
-  port: 3306,
-  user: 'root',
-  password: 'vicidialnow',
-  database: 'dialer_db',
+  host: requiredEnv('DIALER_DB_HOST'),
+  port: Number(process.env.DIALER_DB_PORT || 3306),
+  user: requiredEnv('DIALER_DB_USER'),
+  password: requiredEnv('DIALER_DB_PASSWORD'),
+  database: requiredEnv('DIALER_DB_NAME'),
 };
 
 const hrmsConfig = {
-  host: process.env.DB_HOST || '122.184.128.90',
-  port: Number(process.env.DB_PORT) || 3306,
-  user: process.env.DB_USER || 'Shivam_user',
-  password: process.env.DB_PASSWORD || 'Shivam@8171',
-  database: process.env.DB_NAME || 'mas_hrms',
+  host: requiredEnv('DB_HOST'),
+  port: Number(process.env.DB_PORT || 3306),
+  user: requiredEnv('DB_USER'),
+  password: requiredEnv('DB_PASSWORD'),
+  database: requiredEnv('DB_NAME'),
 };
 
 async function testDialerKpiIntegration() {

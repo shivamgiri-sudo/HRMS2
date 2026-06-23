@@ -1,5 +1,11 @@
 const mysql = require('mysql2/promise');
 
+function requiredEnv(name) {
+  const value = process.env[name] && process.env[name].trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 // Employee Code, Manager Code, Email
 const batch3 = [
   ['MAS36220', 'MAS59568', 'Kamal.Singh@teammas.in'],
@@ -236,10 +242,11 @@ const batch3 = [
 
 async function updateBatch3() {
   const connection = await mysql.createConnection({
-    host: '192.168.10.6',
-    user: 'shivam_user',
-    password: 'qwersdfg!@#hjk',
-    database: 'mas_hrms',
+    host: requiredEnv('DB_HOST'),
+    port: Number(process.env.DB_PORT || 3306),
+    user: requiredEnv('DB_USER'),
+    password: requiredEnv('DB_PASSWORD'),
+    database: requiredEnv('DB_NAME'),
   });
 
   try {

@@ -34,8 +34,8 @@ export default function ChangePassword() {
     try {
       await hrmsApi.post("/api/auth/change-password", { currentPassword, newPassword });
       completePasswordChange();
-      toast({ title: "Password updated", description: "Your account is ready to use." });
-      navigate("/dashboard", { replace: true });
+      toast({ title: "Password updated", description: "Verify your login to continue." });
+      navigate("/two-factor", { replace: true });
     } catch (error) {
       toast({
         title: "Password not updated",

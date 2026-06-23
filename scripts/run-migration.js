@@ -2,12 +2,19 @@ const mysql = require('mysql2/promise');
 const fs = require('fs');
 const path = require('path');
 
+function requiredEnv(name) {
+  const value = process.env[name] && process.env[name].trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 async function runMigration() {
   const connection = await mysql.createConnection({
-    host: '192.168.10.6',
-    user: 'shivam_user',
-    password: 'qwersdfg!@#hjk',
-    database: 'mas_hrms',
+    host: requiredEnv('DB_HOST'),
+    port: Number(process.env.DB_PORT || 3306),
+    user: requiredEnv('DB_USER'),
+    password: requiredEnv('DB_PASSWORD'),
+    database: requiredEnv('DB_NAME'),
   });
 
   try {

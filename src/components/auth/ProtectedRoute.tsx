@@ -13,7 +13,7 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
-  const { user, isLoading, mustChangePassword } = useAuth();
+  const { user, isLoading, mustChangePassword, twoFactorRequired, twoFactorVerified } = useAuth();
   const location = useLocation();
   const { data: employeeStatus, isLoading: isEmployeeLoading } = useEmployeeStatus();
   const { isAdminOrHR, isLoading: isRoleLoading, roleKeys } = useIsAdminOrHR();
@@ -34,6 +34,10 @@ export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
 
   if (mustChangePassword && location.pathname !== "/change-password") {
     return <Navigate to="/change-password" replace />;
+  }
+
+  if (!mustChangePassword && twoFactorRequired && !twoFactorVerified && location.pathname !== "/two-factor") {
+    return <Navigate to="/two-factor" replace />;
   }
 
   // Role-restricted route: user must have one of the required roles

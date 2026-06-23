@@ -10,7 +10,7 @@
  *
  * Database Sources: mas_hrms, db_audit (Shivamgiri APR), Shivamgiri KPI
  * Timeframe: Last 90 days (adjustable)
- * Execution: mysql -h 122.184.128.90 -u root -p mas_hrms < top-10-percent-agents-analysis.sql
+ * Execution: mysql -h <DB_HOST> -u <DB_USER> -p mas_hrms < top-10-percent-agents-analysis.sql
  */
 
 -- =====================================================================

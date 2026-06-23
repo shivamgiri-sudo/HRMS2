@@ -1,5 +1,6 @@
 import { db } from '../../db/mysql.js';
 import { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
+import { logSensitiveAction } from '../../shared/auditLog.js';
 
 /**
  * BGV Enhanced Service
@@ -8,11 +9,40 @@ import { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 
 export interface BGVRequest {
   candidate_id: string;
-  verification_type: 'aadhaar' | 'pan' | 'education' | 'employment' | 'address' | 'criminal';
+  verification_type: 'aadhaar' | 'pan' | 'education' | 'employment' | 'address' | 'criminal' | 'name_match';
   document_number?: string;
   verification_method: 'manual' | 'digilocker' | 'api';
   initiated_by: string;
   remarks?: string;
+}
+
+function normalizeName(value: unknown): string {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function nameMatches(expected: string, actual: string): boolean {
+  const left = normalizeName(expected);
+  const right = normalizeName(actual);
+  if (!left || !right) return false;
+  return left === right || left.split(" ").sort().join(" ") === right.split(" ").sort().join(" ");
+}
+
+async function ensureBgvRecord(candidateId: string): Promise<string> {
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM ats_bgv_verification WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  if (existing[0]) return String(existing[0].id);
+  const [inserted] = await db.execute<ResultSetHeader>(
+    `INSERT INTO ats_bgv_verification (candidate_id, verification_status, overall_progress)
+     VALUES (?, 'in_progress', 0)`,
+    [candidateId],
+  );
+  return String(inserted.insertId);
 }
 
 export interface BGVStatus {
@@ -328,6 +358,142 @@ export async function updateVerificationStatus(
   } finally {
     conn.release();
   }
+}
+
+export async function runNameMatchCheck(candidateId: string, actorUserId: string): Promise<{
+  success: boolean;
+  status: 'verified' | 'manual_review';
+  result: Record<string, unknown>;
+}> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.full_name AS candidate_name,
+            p.employee_name AS profile_name,
+            p.full_name_aadhaar,
+            JSON_UNQUOTE(JSON_EXTRACT(aadhaar.result_data, '$.matchedName')) AS aadhaar_name,
+            JSON_UNQUOTE(JSON_EXTRACT(pan.result_data, '$.matchedName')) AS pan_name,
+            JSON_UNQUOTE(JSON_EXTRACT(bank_match.result_data, '$.matchedName')) AS bank_verified_name,
+            JSON_UNQUOTE(JSON_EXTRACT(education.result_data, '$.matchedName')) AS education_name,
+            b.account_holder_name,
+            q.institution_name
+       FROM ats_candidate c
+       LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
+       LEFT JOIN candidate_onboarding_bank_detail b ON b.candidate_id = c.id
+       LEFT JOIN candidate_onboarding_qualification q ON q.candidate_id = c.id
+       LEFT JOIN ats_bgv_verification_details aadhaar
+         ON aadhaar.candidate_id = c.id AND aadhaar.verification_type = 'aadhaar'
+       LEFT JOIN ats_bgv_verification_details pan
+         ON pan.candidate_id = c.id AND pan.verification_type = 'pan'
+       LEFT JOIN ats_bgv_verification_details bank_match
+         ON bank_match.candidate_id = c.id AND bank_match.verification_type = 'address'
+       LEFT JOIN ats_bgv_verification_details education
+         ON education.candidate_id = c.id AND education.verification_type = 'education'
+      WHERE c.id = ?
+      LIMIT 1`,
+    [candidateId],
+  );
+  const row = rows[0];
+  if (!row) throw Object.assign(new Error('Candidate not found'), { statusCode: 404 });
+
+  const baseline = String(row.profile_name ?? row.candidate_name ?? '').trim();
+  const checks = [
+    { source: 'aadhaar', value: row.aadhaar_name ?? row.full_name_aadhaar },
+    { source: 'pan', value: row.pan_name },
+    { source: 'bank', value: row.bank_verified_name ?? row.account_holder_name },
+    { source: 'education', value: row.education_name },
+  ].map((item) => {
+    const value = String(item.value ?? '').trim();
+    return {
+      source: item.source,
+      available: Boolean(value),
+      matched: value ? nameMatches(baseline, value) : null,
+    };
+  });
+  const hasMismatch = checks.some((item) => item.matched === false);
+  const status = hasMismatch ? 'manual_review' : 'verified';
+  const result = {
+    baseline_name: baseline,
+    checks,
+    decision: status,
+  };
+
+  const bgvId = await ensureBgvRecord(candidateId);
+  await db.execute(
+    `INSERT INTO ats_bgv_verification_details
+       (bgv_id, candidate_id, verification_type, status, verification_method, initiated_by, remarks, result_data, completed_at)
+     VALUES (?, ?, 'name_match', ?, 'system', ?, ?, ?, NOW())`,
+    [
+      bgvId,
+      candidateId,
+      status,
+      actorUserId,
+      hasMismatch ? 'Name mismatch requires HR manual review' : 'Name match verified',
+      JSON.stringify(result),
+    ],
+  );
+  await db.execute(
+    `UPDATE ats_bgv_verification
+        SET verification_status = IF(? = 'manual_review', 'in_progress', verification_status),
+            updated_at = NOW()
+      WHERE id = ?`,
+    [status, bgvId],
+  );
+
+  await logSensitiveAction({
+    actor_user_id: actorUserId,
+    action_type: 'bgv_name_match_checked',
+    module_key: 'ats_bgv',
+    entity_type: 'ats_bgv_verification_details',
+    entity_id: candidateId,
+    change_summary: result,
+  });
+
+  return { success: true, status, result };
+}
+
+export async function overrideNameMatchReview(params: {
+  candidateId: string;
+  actorUserId: string;
+  reason: string;
+}): Promise<{ success: boolean }> {
+  if (!params.reason.trim()) {
+    throw Object.assign(new Error('Override reason is required'), { statusCode: 400 });
+  }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, result_data
+       FROM ats_bgv_verification_details
+      WHERE candidate_id = ? AND verification_type = 'name_match'
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [params.candidateId],
+  );
+  const detail = rows[0];
+  if (!detail) throw Object.assign(new Error('Name match review not found'), { statusCode: 404 });
+
+  await db.execute(
+    `UPDATE ats_bgv_verification_details
+        SET status = 'verified',
+            reviewed_by = ?,
+            remarks = CONCAT(COALESCE(remarks, ''), '\nHR override: ', ?),
+            completed_at = NOW(),
+            updated_at = NOW()
+      WHERE id = ?`,
+    [params.actorUserId, params.reason.trim(), detail.id],
+  );
+
+  await logSensitiveAction({
+    actor_user_id: params.actorUserId,
+    action_type: 'bgv_name_match_hr_override',
+    module_key: 'ats_bgv',
+    entity_type: 'ats_bgv_verification_details',
+    entity_id: String(detail.id),
+    reason: params.reason.trim(),
+    change_summary: {
+      candidate_id: params.candidateId,
+      override: true,
+    },
+  });
+
+  return { success: true };
 }
 
 /**

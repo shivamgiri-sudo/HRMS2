@@ -5,8 +5,8 @@
  */
 
 import { Router } from 'express';
-import { requireAuth } from '../../middleware/requireAuth';
-import { requireRole } from '../../middleware/requireRole';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
 import {
   getPerformanceDegradation,
   getAbsenteeismCorrelation,
@@ -14,7 +14,7 @@ import {
   getQualityVelocity,
   getEarlyWarningIndicators,
   getConsolidatedRiskReport
-} from './attritionRisk.service';
+} from './attritionRisk.service.js';
 
 const router = Router();
 
@@ -27,7 +27,7 @@ const router = Router();
 router.get(
   '/performance-degradation',
   requireAuth,
-  requireRole(['HR_ADMIN', 'WFM_MANAGER', 'OPERATIONS_MANAGER']),
+  requireRole('HR_ADMIN', 'WFM_MANAGER', 'OPERATIONS_MANAGER'),
   getPerformanceDegradation
 );
 
@@ -35,7 +35,7 @@ router.get(
 router.get(
   '/absenteeism-correlation',
   requireAuth,
-  requireRole(['HR_ADMIN', 'OPERATIONS_MANAGER']),
+  requireRole('HR_ADMIN', 'OPERATIONS_MANAGER'),
   getAbsenteeismCorrelation
 );
 
@@ -43,7 +43,7 @@ router.get(
 router.get(
   '/compound-risk',
   requireAuth,
-  requireRole(['HR_ADMIN', 'WFM_MANAGER', 'OPERATIONS_MANAGER']),
+  requireRole('HR_ADMIN', 'WFM_MANAGER', 'OPERATIONS_MANAGER'),
   getCompoundRiskProfile
 );
 
@@ -51,7 +51,7 @@ router.get(
 router.get(
   '/quality-velocity',
   requireAuth,
-  requireRole(['HR_ADMIN', 'WFM_MANAGER']),
+  requireRole('HR_ADMIN', 'WFM_MANAGER'),
   getQualityVelocity
 );
 
@@ -59,7 +59,7 @@ router.get(
 router.get(
   '/early-warning',
   requireAuth,
-  requireRole(['HR_ADMIN', 'OPERATIONS_MANAGER']),
+  requireRole('HR_ADMIN', 'OPERATIONS_MANAGER'),
   getEarlyWarningIndicators
 );
 
@@ -67,7 +67,7 @@ router.get(
 router.get(
   '/consolidated',
   requireAuth,
-  requireRole(['HR_ADMIN', 'WFM_MANAGER', 'OPERATIONS_MANAGER']),
+  requireRole('HR_ADMIN', 'WFM_MANAGER', 'OPERATIONS_MANAGER'),
   getConsolidatedRiskReport
 );
 

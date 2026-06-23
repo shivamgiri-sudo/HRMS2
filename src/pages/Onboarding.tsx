@@ -359,35 +359,19 @@ const Onboarding = () => {
     mutationFn: async (data: FormData) => {
       // Get department name for notification
       const selectedDept = departments.find(d => d.id === data.departmentId);
-      const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
-      const token = getAuthToken();
-
       let linkedUserId = data.linkedUserId;
       let inviteSent = false;
 
       // If no linked user, create a user account for the employee
       if (!linkedUserId) {
         try {
-          const registerRes = await fetch(
-            `${HRMS_API}/api/auth/register`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-              body: JSON.stringify({ email: data.email.trim(), password: "Welcome@1234" }),
-            }
-          );
-          const registerData = await registerRes.json();
-          if (!registerRes.ok) {
-            // If duplicate email, that's OK - user may already exist
-            if (!registerData.error?.includes("already registered")) {
-              console.error("Failed to create user account:", registerData.error);
-            }
-          } else if (registerData.userId) {
-            linkedUserId = registerData.userId;
-            inviteSent = true;
-          }
+          const invite = await hrmsApi.post<{ userId?: string; inviteSent?: boolean }>("/api/auth/invite-user", {
+            email: data.email.trim(),
+          });
+          linkedUserId = invite.userId ?? linkedUserId;
+          inviteSent = Boolean(invite.inviteSent);
         } catch (err) {
-          console.error("Error creating user account:", err);
+          console.error("Error inviting user account:", err);
           // Continue with employee creation even if user creation fails
         }
       }
@@ -550,29 +534,11 @@ const Onboarding = () => {
   const handleResendInvite = async (employee: any) => {
     setResendingInvite(employee.id);
     try {
-      const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
-      const token = getAuthToken();
-
-      const registerRes = await fetch(
-        `${HRMS_API}/api/auth/register`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ email: employee.email, password: "Welcome@1234" }),
-        }
-      );
-      const registerData = await registerRes.json();
-      let alreadyExists = false;
-
-      if (!registerRes.ok) {
-        if (registerData.error?.includes("already registered")) {
-          alreadyExists = true;
-        } else {
-          throw new Error(registerData.error || "Failed to create user account");
-        }
-      }
-
-      const userId = registerData.userId || null;
+      const invite = await hrmsApi.post<{ userId?: string; inviteSent?: boolean }>("/api/auth/invite-user", {
+        email: employee.email,
+        employeeId: employee.id,
+      });
+      const userId = invite.userId || null;
 
       // Link user account to employee record
       if (userId && !employee.user_id) {
@@ -582,9 +548,9 @@ const Onboarding = () => {
 
       toast({
         title: "Invite Sent",
-        description: alreadyExists
-          ? `${employee.first_name} already has an account. No new invite needed.`
-          : `A user account has been created for ${employee.email} with default password.`,
+        description: invite.inviteSent
+          ? `A password setup link has been sent to ${employee.email}.`
+          : `A password setup token was created for ${employee.email}; SMTP is not configured.`,
       });
     } catch (error: any) {
       toast({

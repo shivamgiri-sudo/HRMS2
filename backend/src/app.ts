@@ -246,6 +246,7 @@ app.use("/api/career", careerRouter);
 app.use("/api/erp", erpRouter);
 app.use("/api/inbox", inboxRouter);
 app.use("/api/it-provisioning", itProvisioningRouter);
+app.use("/api/onboarding-provisioning", itProvisioningRouter);
 app.use("/api/mobility", mobilityRouter);
 app.use("/api/goals", goalsRouter);
 app.use("/api/jobs", jobsRouter);

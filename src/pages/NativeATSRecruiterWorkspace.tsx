@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 type CandidateRow = {
@@ -185,10 +185,8 @@ function cascadeSelected(form: Form): Form {
 }
 
 export default function NativeATSRecruiterWorkspace() {
-  const [screen, setScreen] = useState<"login" | "workspace" | "form">("login");
+  const [screen, setScreen] = useState<"workspace" | "form">("workspace");
   const [tab, setTab] = useState<"pending" | "history">("pending");
-  const [code, setCode] = useState("");
-  const [pin, setPin] = useState("");
   const [recruiterProfile, setRecruiterProfile] = useState<RecruiterProfile | null>(null);
   const [pending, setPending] = useState<CandidateRow[]>([]);
   const [history, setHistory] = useState<HistoryRow[]>([]);
@@ -204,10 +202,11 @@ export default function NativeATSRecruiterWorkspace() {
 
   const rank = STAGE_RANK[form.stageName] ?? 0;
 
-  const loadPending = async (profile: RecruiterProfile) => {
-    const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
-      `/api/ats/recruiter/my-candidates?recruiterName=${encodeURIComponent(profile.name)}`
+  const loadPending = async () => {
+    const res = await hrmsApi.get<{ success: boolean; data: any[]; recruiter?: RecruiterProfile | null }>(
+      "/api/ats/recruiter/my-candidates"
     );
+    setRecruiterProfile(res.recruiter ?? null);
     setPending((res.data ?? []).map((c: any) => ({
       candidateId: c.candidateId,
       qToken: c.qToken ?? null,
@@ -217,38 +216,26 @@ export default function NativeATSRecruiterWorkspace() {
       roleApplied: c.process,
       status: c.status,
       stage: c.status,
-      recruiterName: profile.name,
+      recruiterName: c.recruiterName ?? res.recruiter?.name,
       pendingMinutes: c.pendingMinutes ?? 0,
     })));
   };
 
-  const loadHistory = async (profile: RecruiterProfile) => {
+  const loadHistory = async () => {
     const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
-      `/api/ats/recruiter/submission-history?recruiterCode=${encodeURIComponent(profile.recruiterCode)}`
+      "/api/ats/recruiter/submission-history"
     );
     setHistory(res.data ?? []);
   };
 
-  const login = async () => {
-    if (!code.trim() || !pin.trim()) {
-      setMsg("Recruiter Code and PIN are required.");
-      return;
-    }
+  const loadWorkspace = async () => {
     setLoading(true);
-    setMsg("Verifying recruiter identity...");
+    setMsg("Loading workspace...");
     try {
-      const verifyRes = await hrmsApi.post<{ success: boolean; data: RecruiterProfile; message?: string }>(
-        "/api/ats/recruiter/verify",
-        { recruiterCode: code.trim(), pin: pin.trim() }
-      );
-      const profile = verifyRes.data;
-      setRecruiterProfile(profile);
-      setMsg("Loading workspace...");
-      await Promise.all([loadPending(profile), loadHistory(profile)]);
+      await Promise.all([loadPending(), loadHistory()]);
       setMsg("");
-      setScreen("workspace");
     } catch (err: any) {
-      const detail = err?.response?.data?.message || err.message || "Unable to login";
+      const detail = err?.response?.data?.message || err.message || "Unable to load recruiter workspace";
       setMsg(detail);
     } finally {
       setLoading(false);
@@ -256,17 +243,20 @@ export default function NativeATSRecruiterWorkspace() {
   };
 
   const refresh = async () => {
-    if (!recruiterProfile) return;
     setLoading(true);
     setMsg("");
     try {
-      await Promise.all([loadPending(recruiterProfile), loadHistory(recruiterProfile)]);
+      await Promise.all([loadPending(), loadHistory()]);
     } catch (err: any) {
       setMsg(err.message || "Unable to refresh");
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadWorkspace();
+  }, []);
 
   const openForm = (c: CandidateRow, resubmit = false, h?: HistoryRow) => {
     setSelected(c);
@@ -376,16 +366,14 @@ export default function NativeATSRecruiterWorkspace() {
       `}</style>
       <div className="rw-top"><h1>Recruiter Workspace</h1><p>Pending queue, full submission history, filters, search, and Client Round Pending resubmission.</p></div>
       <div className="rw-wrap">
-        {screen === "login" && <div className="rw-card"><div className="rw-grid rw-2"><div><label>Recruiter Code</label><input value={code} onChange={(e)=>setCode(e.target.value)} /></div><div><label>PIN</label><input type="password" value={pin} onChange={(e)=>setPin(e.target.value)} /></div></div><button disabled={loading} onClick={login} style={{marginTop:12}}>{loading?"Loading...":"Open Workspace"}</button>{msg && <p className="rw-msg">{msg}</p>}</div>}
-
-        {screen === "workspace" && recruiterProfile && <>
-          <div className="rw-card"><div className="rw-row"><div><h2 style={{margin:0}}>{recruiterProfile.name}</h2><p className="rw-muted">{recruiterProfile.recruiterCode} • {recruiterProfile.branch}</p></div><button onClick={refresh} disabled={loading} style={{width:"auto"}}>Refresh</button></div>{msg && <p className="rw-msg">{msg}</p>}</div>
+        {screen === "workspace" && <>
+          <div className="rw-card"><div className="rw-row"><div><h2 style={{margin:0}}>{recruiterProfile?.name ?? "Recruiter Workspace"}</h2><p className="rw-muted">{recruiterProfile ? `${recruiterProfile.recruiterCode} • ${recruiterProfile.branch}` : "Showing authorised candidate queue"}</p></div><button onClick={refresh} disabled={loading} style={{width:"auto"}}>Refresh</button></div>{msg && <p className="rw-msg">{msg}</p>}</div>
           <div className="rw-grid rw-3"><div className="rw-kpi"><span className="rw-muted">Pending Queue</span><br/><b>{pending.length}</b></div><div className="rw-kpi"><span className="rw-muted">Selected Today</span><br/><b>{kpiSelected}</b></div><div className="rw-kpi"><span className="rw-muted">Client Pending</span><br/><b>{kpiPending}</b></div></div>
           <div className="rw-card"><div className="rw-tabs"><button className={`rw-tab ${tab==='pending'?'on':''}`} onClick={()=>setTab('pending')}>Pending Queue</button><button className={`rw-tab ${tab==='history'?'on':''}`} onClick={()=>setTab('history')}>Submission History</button></div></div>
 
-          {tab === "pending" && <div className="rw-card"><h3>Assigned Waiting Candidates</h3>{pending.length===0?<p className="rw-muted">No pending candidates.</p>:pending.map((c)=><div className="rw-item" key={c.candidateId}><div className="rw-row"><div><b>{c.fullName}</b><p className="rw-muted">{c.candidateId} • {c.mobile} • {c.branch} • Waiting {c.pendingMinutes||0} mins</p><Badge value={c.status}/></div><button style={{width:"auto"}} onClick={()=>openForm(c)}>Open</button></div></div>)}</div>}
+          {tab === "pending" && <div className="rw-card"><h3>Assigned Waiting Candidates</h3>{pending.length===0?<p className="rw-muted">No pending candidates.</p>:pending.map((c)=><div className="rw-item" key={c.candidateId}><div className="rw-row"><div><b>{c.fullName}</b><p className="rw-muted">{c.candidateId} • {c.mobile} • {c.branch} • Waiting {c.pendingMinutes||0} mins</p><Badge value={c.status}/></div><button style={{width:"auto"}} disabled={!recruiterProfile} onClick={()=>openForm(c)}>{recruiterProfile ? "Open" : "View Only"}</button></div></div>)}</div>}
 
-          {tab === "history" && <div className="rw-card"><h3>Past Submissions</h3><div className="rw-grid rw-2"><input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search name, number, candidate ID, process..."/><select value={decision} onChange={(e)=>setDecision(e.target.value)}><option>All</option><Opts values={config.decisionOptions}/></select><input type="date" value={fromDate} readOnly /><input type="date" value={toDate} readOnly /></div><button onClick={refresh} disabled={loading} style={{marginTop:10,width:"auto"}}>Refresh</button><div className="rw-scroll" style={{marginTop:12}}><table className="rw-table"><thead><tr><th>Candidate</th><th>Contact</th><th>Decision</th><th>Stage</th><th>Process</th><th>Submitted</th><th>Action</th></tr></thead><tbody>{filteredHistory.map((h)=>{const canResubmit=h.final_decision==='Client Round - Pending';return <tr key={h.id}><td><b>{h.full_name||'-'}</b><br/><span className="rw-muted">{h.candidate_id}</span></td><td>{h.mobile||'-'}</td><td><Badge value={h.final_decision}/></td><td>{h.walkin_end_stage||'-'}</td><td>{h.interviewed_for_process||'-'}</td><td>{fmt(h.submitted_at)}</td><td><button disabled={!canResubmit} onClick={()=>openForm({candidateId:h.candidate_id,qToken:h.q_token??undefined,fullName:h.full_name??undefined,mobile:h.mobile??undefined},true,h)}>{canResubmit?'Resubmit':'View Only'}</button></td></tr>})}</tbody></table></div></div>}
+          {tab === "history" && <div className="rw-card"><h3>Past Submissions</h3><div className="rw-grid rw-2"><input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search name, number, candidate ID, process..."/><select value={decision} onChange={(e)=>setDecision(e.target.value)}><option>All</option><Opts values={config.decisionOptions}/></select><input type="date" value={fromDate} readOnly /><input type="date" value={toDate} readOnly /></div><button onClick={refresh} disabled={loading} style={{marginTop:10,width:"auto"}}>Refresh</button><div className="rw-scroll" style={{marginTop:12}}><table className="rw-table"><thead><tr><th>Candidate</th><th>Contact</th><th>Decision</th><th>Stage</th><th>Process</th><th>Submitted</th><th>Action</th></tr></thead><tbody>{filteredHistory.map((h)=>{const canResubmit=h.final_decision==='Client Round - Pending' && !!recruiterProfile;return <tr key={h.id}><td><b>{h.full_name||'-'}</b><br/><span className="rw-muted">{h.candidate_id}</span></td><td>{h.mobile||'-'}</td><td><Badge value={h.final_decision}/></td><td>{h.walkin_end_stage||'-'}</td><td>{h.interviewed_for_process||'-'}</td><td>{fmt(h.submitted_at)}</td><td><button disabled={!canResubmit} onClick={()=>openForm({candidateId:h.candidate_id,qToken:h.q_token??undefined,fullName:h.full_name??undefined,mobile:h.mobile??undefined},true,h)}>{canResubmit?'Resubmit':'View Only'}</button></td></tr>})}</tbody></table></div></div>}
         </>}
 
         {screen === "form" && selected && <div className="rw-card">

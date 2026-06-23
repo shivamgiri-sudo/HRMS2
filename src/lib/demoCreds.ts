@@ -1,7 +1,7 @@
 /**
  * Demo credentials for role-based testing.
  * Each entry creates a local mock session — backend API only.
- * Passwords are intentionally simple for test convenience.
+ * Local-only demo passwords are placeholders, enabled only by explicit demo mode.
  */
 
 export interface DemoCred {
@@ -35,7 +35,7 @@ const ALL_PAGES = [
 export const DEMO_CREDENTIALS: DemoCred[] = [
   {
     email:        "admin@mascallnet.com",
-    password:     "Admin@123",
+    password:     "local-demo-admin",
     role:         "admin",
     label:        "Admin",
     userId:       "demo-admin-id",
@@ -46,7 +46,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
   },
   {
     email:        "hr@mascallnet.com",
-    password:     "Hr@123456",
+    password:     "local-demo-hr",
     role:         "hr",
     label:        "HR Manager",
     userId:       "demo-hr-id",
@@ -66,7 +66,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
   },
   {
     email:        "recruiter@mascallnet.com",
-    password:     "Recruiter@1",
+    password:     "local-demo-recruiter",
     role:         "recruiter",
     label:        "Recruiter",
     userId:       "demo-recruiter-id",
@@ -81,7 +81,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
   },
   {
     email:        "manager@mascallnet.com",
-    password:     "Manager@1",
+    password:     "local-demo-manager",
     role:         "process_manager",
     label:        "Process Manager",
     userId:       "demo-manager-id",
@@ -97,7 +97,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
   },
   {
     email:        "tl@mascallnet.com",
-    password:     "TeamLead@1",
+    password:     "local-demo-team-lead",
     role:         "team_leader",
     label:        "Team Leader",
     userId:       "demo-tl-id",
@@ -111,7 +111,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
   },
   {
     email:        "qa@mascallnet.com",
-    password:     "Quality@1",
+    password:     "local-demo-quality",
     role:         "qa",
     label:        "QA Analyst",
     userId:       "demo-qa-id",
@@ -125,7 +125,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
   },
   {
     email:        "wfm@mascallnet.com",
-    password:     "Workforce@1",
+    password:     "local-demo-workforce",
     role:         "wfm",
     label:        "WFM Analyst",
     userId:       "demo-wfm-id",
@@ -140,7 +140,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
   },
   {
     email:        "finance@mascallnet.com",
-    password:     "Finance@1",
+    password:     "local-demo-finance",
     role:         "finance",
     label:        "Finance",
     userId:       "demo-finance-id",
@@ -154,7 +154,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
   },
   {
     email:        "employee@mascallnet.com",
-    password:     "Employee@1",
+    password:     "local-demo-employee",
     role:         "employee",
     label:        "Employee (Self-service)",
     userId:       "demo-employee-id",
@@ -168,7 +168,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
   },
   {
     email:        "ceo@mascallnet.com",
-    password:     "Ceo@12345",
+    password:     "local-demo-ceo",
     role:         "ceo",
     label:        "CEO / Leadership",
     userId:       "demo-ceo-id",
@@ -183,7 +183,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
   },
   {
     email:        "trainer@mascallnet.com",
-    password:     "Trainer@1",
+    password:     "local-demo-trainer",
     role:         "trainer",
     label:        "Trainer / L&D",
     userId:       "demo-trainer-id",
@@ -198,7 +198,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
   // Legacy alias — stays for backward compat
   {
     email:        "demo@mascallnet.com",
-    password:     "demo1234",
+    password:     "local-demo-generic",
     role:         "admin",
     label:        "Demo (legacy)",
     userId:       "demo-user-id",

@@ -14,14 +14,14 @@
  */
 
 import { Router, Request, Response, NextFunction } from 'express';
-import { requireRole } from '../../middleware/requireRole';
-import { CostEfficiencyService } from './costEfficiency.service';
-import { logger } from '../../logger';
+import { requireRole } from '../../middleware/requireRole.js';
+import { CostEfficiencyService } from './costEfficiency.service.js';
+import { logger } from '../../logger.js';
 
 const router = Router();
 
 // Middleware: Require HR Admin or Finance role
-const requireCostAccess = requireRole(['super_admin', 'hr_admin', 'finance_admin']);
+const requireCostAccess = requireRole('super_admin', 'hr_admin', 'finance_admin');
 
 // ──────────────────────────────────────────────────────────────────────────
 // Helper: Query Parameter Extraction

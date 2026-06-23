@@ -15,9 +15,18 @@ import mysql from 'mysql2/promise';
 
 const DRY = process.argv.includes('--dry-run');
 
+function requiredEnv(name) {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 const CFG = {
-  host: '192.168.10.6', port: 3306,
-  user: 'shivam_user', password: 'qwersdfg!@#hjk', database: 'mas_hrms',
+  host: requiredEnv('DB_HOST'),
+  port: Number(process.env.DB_PORT || 3306),
+  user: requiredEnv('DB_USER'),
+  password: requiredEnv('DB_PASSWORD'),
+  database: requiredEnv('DB_NAME'),
 };
 
 // ─── helpers ────────────────────────────────────────────────────────────────

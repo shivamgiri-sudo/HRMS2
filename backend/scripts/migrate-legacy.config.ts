@@ -5,12 +5,18 @@ import { resolve } from 'path';
 
 dotenv.config({ path: resolve(process.cwd(), '.env') });
 
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 export const LEGACY_SRC: ConnectionOptions = {
-  host:        '192.168.10.22',       // Fill in: 122.184.128.90
-  port:        3306,
-  user:        'shivam_user',       // Fill in: root
-  password:    'qwersdfg!@#hjk',   // Fill in: (provided separately)
-  database:    'db_bill',   // Fill in: legacy source DB name
+  host:        requiredEnv('LEGACY_MYSQL_HOST'),
+  port:        Number(process.env.LEGACY_MYSQL_PORT ?? 3306),
+  user:        requiredEnv('LEGACY_MYSQL_USER'),
+  password:    requiredEnv('LEGACY_MYSQL_PASSWORD'),
+  database:    requiredEnv('LEGACY_MYSQL_DATABASE'),
   dateStrings: true,
   timezone:    'local',
 };
@@ -21,11 +27,11 @@ export const LEGACY_TABLES = {
 } as const;
 
 export const DST: ConnectionOptions = {
-  host:        process.env.DB_HOST     ?? '122.184.128.90',
+  host:        requiredEnv('DB_HOST'),
   port:        Number(process.env.DB_PORT ?? 3306),
-  user:        process.env.DB_USER     ?? 'root',
-  password:    process.env.DB_PASSWORD ?? 'vicidialnow',
-  database:    process.env.DB_NAME     ?? 'mas_hrms',
+  user:        requiredEnv('DB_USER'),
+  password:    requiredEnv('DB_PASSWORD'),
+  database:    requiredEnv('DB_NAME'),
   dateStrings: false,
   timezone:    '+00:00',
   decimalNumbers: true,

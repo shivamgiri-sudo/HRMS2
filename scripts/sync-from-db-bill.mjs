@@ -33,19 +33,26 @@ if (fs.existsSync(envPath)) {
 
 const mysql = require('mysql2/promise');
 
+function requiredEnv(name) {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 // ── Config ────────────────────────────────────────────────────────────────────
 const SOURCE = {
-  host: '192.168.10.22', port: 3306,
-  user: process.env.DB_BILL_USER     || 'shivam_user',
-  password: process.env.DB_BILL_PASS || 'qwersdfg!@#hjk',
-  database: 'db_bill',
+  host: requiredEnv('BILL_DB_HOST'),
+  port: Number(process.env.BILL_DB_PORT || 3306),
+  user: requiredEnv('BILL_DB_USER'),
+  password: requiredEnv('BILL_DB_PASSWORD'),
+  database: requiredEnv('BILL_DB_NAME'),
 };
 const TARGET = {
-  host: process.env.DB_HOST     || '192.168.10.6',
+  host: requiredEnv('DB_HOST'),
   port: Number(process.env.DB_PORT || 3306),
-  user: process.env.DB_USER     || 'shivam_user',
-  password: process.env.DB_PASSWORD || 'qwersdfg!@#hjk',
-  database: process.env.DB_NAME || 'mas_hrms',
+  user: requiredEnv('DB_USER'),
+  password: requiredEnv('DB_PASSWORD'),
+  database: requiredEnv('DB_NAME'),
 };
 
 const args        = process.argv.slice(2);

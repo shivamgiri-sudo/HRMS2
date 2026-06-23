@@ -16,6 +16,7 @@ import { PortalRoute } from "./components/portal/PortalRoute";
 import Auth from "./pages/AuthClean";
 import ResetPassword from "./pages/ResetPassword";
 import ChangePassword from "./pages/ChangePassword";
+import TwoFactor from "./pages/TwoFactor";
 import NotFound from "./pages/NotFound";
 
 // ── Lazy page chunks ──────────────────────────────────────────────────────────
@@ -53,6 +54,7 @@ const CandidateOnboardingFullPage   = lazy(() => import("./pages/CandidateOnboar
 const NativeHROnboardingRequests    = lazy(() => import("./pages/NativeHROnboardingRequests"));
 const NativeBranchHeadApproval      = lazy(() => import("./pages/NativeBranchHeadApproval"));
 const NativeBGVVerificationCenter   = lazy(() => import("./pages/NativeBGVVerificationCenter"));
+const NativePayrollHRValidation     = lazy(() => import("./pages/NativePayrollHRValidation"));
 
 // ATS
 const NativeBGVReport               = lazy(() => import("./pages/NativeBGVReport"));
@@ -253,8 +255,10 @@ const App = () => (
               <Route path="/terms-of-service" element={<TermsOfService />} />
               <Route path="/security" element={<Security />} />
               <Route path="/auth" element={<Auth />} />
+              <Route path="/login" element={<Auth />} />
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/change-password" element={<ProtectedRoute><ChangePassword /></ProtectedRoute>} />
+              <Route path="/two-factor" element={<ProtectedRoute><TwoFactor /></ProtectedRoute>} />
               <Route path="/onboard" element={<CandidateOnboardingPage />} />
 
               <Route path="/interview-registration" element={<NativeATSCandidateRegistration />} />
@@ -316,10 +320,16 @@ const App = () => (
               <Route path="/ats/form-config" element={<ProtectedRoute><NativeATSFormConfig /></ProtectedRoute>} />
               <Route path="/ats/command-center" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSFullParityCommandCenter /></Gate></ProtectedRoute>} />
               <Route path="/ats/onboarding-requests" element={<ProtectedRoute><NativeHROnboardingRequests /></ProtectedRoute>} />
-              <Route path="/ats/offer-approvals" element={<ProtectedRoute><NativeBranchHeadApproval /></ProtectedRoute>} />
+              <Route path="/ats/offer-approvals" element={<ProtectedRoute><Gate pageCode="ATS_OFFER_APPROVALS"><NativeBranchHeadApproval /></Gate></ProtectedRoute>} />
+              <Route path="/ats/branch-head-approval" element={<Navigate to="/ats/offer-approvals" replace />} />
+              <Route path="/ats/payroll-hr" element={<ProtectedRoute roles={['admin', 'hr', 'payroll_hr']}><Gate pageCode="ATS_PAYROLL_HR"><NativePayrollHRValidation /></Gate></ProtectedRoute>} />
               <Route path="/onboard-full" element={<CandidateOnboardingFullPage />} />
               <Route path="/ats/bgv" element={<ProtectedRoute><Gate pageCode="ATS_BGV"><NativeBGVVerificationCenter /></Gate></ProtectedRoute>} />
-              <Route path="/ats/bgv-report" element={<ProtectedRoute><Gate pageCode="ATS_BGV"><NativeBGVReport /></Gate></ProtectedRoute>} />
+              <Route path="/ats/bgv-report" element={<ProtectedRoute><Gate pageCode="ATS_BGV_REPORT"><NativeBGVReport /></Gate></ProtectedRoute>} />
+              <Route path="/provisioning/wfm-alignment" element={<ProtectedRoute roles={['wfm', 'admin', 'super_admin']}><Gate pageCode="PROVISIONING_WFM_ALIGNMENT"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
+              <Route path="/provisioning/it" element={<ProtectedRoute roles={['it', 'admin', 'super_admin']}><Gate pageCode="PROVISIONING_IT"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
+              <Route path="/provisioning/admin" element={<ProtectedRoute roles={['branch_admin', 'hr', 'admin', 'super_admin']}><Gate pageCode="PROVISIONING_ADMIN"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
+              <Route path="/provisioning/appointment-letter" element={<ProtectedRoute roles={['hr', 'admin', 'super_admin']}><Gate pageCode="PROVISIONING_APPOINTMENT_LETTER"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
 
               {/* LMS */}
               <Route path="/lms/my-learning" element={<ProtectedRoute><Gate pageCode="LMS_MY_LEARNING"><NativeLMSMyLearning /></Gate></ProtectedRoute>} />
@@ -472,7 +482,7 @@ const App = () => (
               <Route path="/workforce-planning" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWorkforcePlanning /></Gate></ProtectedRoute>} />
               {/* /control-tower disabled */}
               <Route path="/rta-board" element={<ProtectedRoute><Gate pageCode="RTA_BOARD"><NativeRTABoard /></Gate></ProtectedRoute>} />
-              <Route path="/ats/walkin-queue" element={<ProtectedRoute><Gate pageCode="ATS_WAITING_QUEUE"><NativeWalkinQueue /></Gate></ProtectedRoute>} />
+              <Route path="/ats/walkin-queue" element={<ProtectedRoute><Gate pageCode="ATS_WALKIN_QUEUE"><NativeWalkinQueue /></Gate></ProtectedRoute>} />
               <Route path="/attendance-rules-master" element={<ProtectedRoute><NativeAttendanceRulesMaster /></ProtectedRoute>} />
               <Route path="/changelog" element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />

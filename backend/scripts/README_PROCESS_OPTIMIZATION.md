@@ -20,7 +20,7 @@ Comprehensive SQL analysis script with 5 queries:
 
 **Usage**:
 ```bash
-mysql -h 122.184.128.90 -u root -p mas_hrms < process-team-optimization.sql > results.csv
+mysql -h <DB_HOST> -u <DB_USER> -p mas_hrms < process-team-optimization.sql > results.csv
 ```
 
 ### 2. **process-optimization-analyzer.py**
@@ -71,13 +71,13 @@ One-page quick reference card with:
 cd /home/shuvam/Desktop/MyHRMS1/backend/scripts
 
 # Option A: Direct SQL execution
-mysql -h 122.184.128.90 -u root -p mas_hrms < process-team-optimization.sql > scorecard.txt
+mysql -h <DB_HOST> -u <DB_USER> -p mas_hrms < process-team-optimization.sql > scorecard.txt
 
 # Option B: Python automation
 python3 process-optimization-analyzer.py
 
 # Option C: Export to CSV for Excel
-mysql -h 122.184.128.90 -u root -p -B -e "source process-team-optimization.sql;" mas_hrms > optimization-results.tsv
+mysql -h <DB_HOST> -u <DB_USER> -p -B -e "source process-team-optimization.sql;" mas_hrms > optimization-results.tsv
 ```
 
 ### Step 2: Review Results
@@ -287,8 +287,8 @@ Use: Org restructuring, span of control analysis
 ## Data Requirements
 
 ### Source Database
-- **Host**: 122.184.128.90
-- **User**: root
+- **Host**: <DB_HOST>
+- **User**: <DB_USER>
 - **Password**: [as configured]
 - **Databases**:
   - `mas_hrms` (employee master data)
@@ -325,7 +325,7 @@ backend/scripts/
 
 ### Option 1: Direct SQL (Simple)
 ```bash
-mysql -h 122.184.128.90 -u root -p mas_hrms < process-team-optimization.sql
+mysql -h <DB_HOST> -u <DB_USER> -p mas_hrms < process-team-optimization.sql
 ```
 
 ### Option 2: Python Automation (Recommended)
@@ -349,7 +349,7 @@ python3 process-optimization-analyzer.py
 ### Issue: MySQL connection timeout
 ```bash
 # Increase timeout
-mysql -h 122.184.128.90 -u root -p --connect-timeout=30 mas_hrms
+mysql -h <DB_HOST> -u <DB_USER> -p --connect-timeout=30 mas_hrms
 ```
 
 ### Issue: Large dataset - queries timeout
@@ -365,8 +365,8 @@ WHERE cqa.Campaign IN ('Process_A', 'Process_B', 'Process_C')
 ### Issue: Python script credential error
 ```python
 # Edit process-optimization-analyzer.py line 150-155
-HOST = "122.184.128.90"
-USER = "root"
+HOST = "<DB_HOST>"
+USER = "<DB_USER>"
 PASSWORD = "your_actual_password"  # Or use env var
 DB = "mas_hrms"
 ```

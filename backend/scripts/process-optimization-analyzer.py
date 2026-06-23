@@ -7,12 +7,20 @@ Output: PROCESS | QUALITY_RANK | VARIANCE | OPTIMAL_SHIFT | FATIGUE_FACTOR
 
 import sys
 import json
+import os
 import subprocess
 from datetime import datetime
 from typing import Dict, List, Any, Tuple
 
+def required_env(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise RuntimeError(f"{name} is required")
+    return value
+
+
 class ProcessOptimizationAnalyzer:
-    def __init__(self, host: str = "122.184.128.90", user: str = "root", password: str = "", db: str = "mas_hrms"):
+    def __init__(self, host: str, user: str, password: str, db: str):
         self.host = host
         self.user = user
         self.password = password
@@ -379,11 +387,10 @@ class ProcessOptimizationAnalyzer:
 
 
 def main():
-    # Configuration - update with your database credentials
-    HOST = "122.184.128.90"
-    USER = "root"
-    PASSWORD = "VICIDIALNow"  # Replace with actual password or use env var
-    DB = "mas_hrms"
+    HOST = required_env("DB_HOST")
+    USER = required_env("DB_USER")
+    PASSWORD = required_env("DB_PASSWORD")
+    DB = required_env("DB_NAME")
 
     analyzer = ProcessOptimizationAnalyzer(host=HOST, user=USER, password=PASSWORD, db=DB)
 

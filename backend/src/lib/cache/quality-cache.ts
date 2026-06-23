@@ -4,7 +4,7 @@
  * TTL: 2-10 min per endpoint
  */
 
-import { logger } from '../logger';
+import { logger } from '../logger.js';
 
 export type CacheValue = Record<string, any> | Array<any>;
 

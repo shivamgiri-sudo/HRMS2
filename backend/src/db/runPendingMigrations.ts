@@ -5,7 +5,16 @@ import mysql from "mysql2/promise";
 import { env } from "../config/env.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SQL_DIR = path.resolve(__dirname, "../../sql");
+
+function resolveSqlDir(): string {
+  const candidates = [
+    path.resolve(__dirname, "../../sql"),
+    path.resolve(__dirname, "../../../sql"),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0];
+}
+
+const SQL_DIR = resolveSqlDir();
 
 // Canonical migration order, derived from 000_run_all.sql.
 // 043_demo_data.sql is excluded unless SEED_DEMO_DATA=true.
@@ -184,6 +193,12 @@ const MIGRATION_MANIFEST: string[] = [
   "262_reporting_manager_change_request.sql",
   "263_superadmin_mas47814.sql",
   "264_business_action_queue.sql",
+  "265_ats_lifecycle_alignment.sql",
+  "266_hrms2_security_lifecycle_stabilization.sql",
+  "267_lifecycle_completion_surfaces.sql",
+  "268_production_hardening_appointment_provisioning.sql",
+  "269_fix_lifecycle_route_schema_access.sql",
+  "270_fix_shivam_page_access_and_schema_mismatch.sql",
   "1000_fix_engagement_schema_columns.sql",
 ];
 

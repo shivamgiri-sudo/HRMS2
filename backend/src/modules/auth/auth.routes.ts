@@ -1,18 +1,29 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { authService } from "./auth.service.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import { emailService } from "../communication/email.service.js";
 import { env } from "../../config/env.js";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { sendTwoFactorChallenge, verifyTwoFactorChallenge, type TwoFactorChannel } from "./twoFactor.service.js";
 
 const authLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 100, // 100 attempts per minute per IP (dev-friendly)
   message: { success: false, message: "Too many attempts, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const twoFactorLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 5,
+  message: { success: false, message: "Too many verification attempts, please try again later" },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -114,6 +125,66 @@ router.post("/register", h(async (req: any, res: any) => {
     const status = error.status || 400;
     return res.status(status).json({ error: error.message });
   }
+}));
+
+// POST /api/auth/invite-user — protected invite/reset-token flow, no raw password exposure
+router.post("/invite-user", requireAuth, requireRole("admin", "hr", "super_admin"), h(async (req: any, res: any) => {
+  const email = String(req.body.email ?? "").trim().toLowerCase();
+  const employeeId = String(req.body.employeeId ?? "").trim();
+  if (!email) return res.status(400).json({ success: false, error: "email required" });
+
+  const randomPasswordHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12);
+  let userId = "";
+
+  const [existing] = await db.execute<RowDataPacket[]>(
+    "SELECT id FROM auth_user WHERE LOWER(email) = LOWER(?) LIMIT 1",
+    [email],
+  );
+
+  if (existing[0]) {
+    userId = String(existing[0].id);
+    await db.execute(
+      "UPDATE auth_user SET must_change_password = 1, updated_at = NOW() WHERE id = ?",
+      [userId],
+    );
+  } else {
+    userId = crypto.randomUUID();
+    await db.execute(
+      "INSERT INTO auth_user (id, email, password_hash, must_change_password) VALUES (?, ?, ?, 1)",
+      [userId, email, randomPasswordHash],
+    );
+  }
+
+  if (employeeId) {
+    await db.execute(
+      "UPDATE employees SET user_id = ? WHERE id = ? AND (user_id IS NULL OR user_id = ?)",
+      [userId, employeeId, userId],
+    );
+  }
+
+  const token = await authService.createPasswordResetTokenByUserId(userId, 24);
+  const link = resetLink(token);
+  let inviteSent = false;
+  if (emailService.isConfigured()) {
+    await emailService.send({
+      to: email,
+      subject: "Set your MAS Callnet HRMS password",
+      html: resetEmailHtml(link),
+      text: resetEmailText(link),
+    });
+    inviteSent = true;
+  }
+
+  await logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "AUTH_USER_INVITED",
+    module_key: "auth",
+    entity_type: "auth_user",
+    entity_id: userId,
+    change_summary: { email, employee_id: employeeId || null, invite_sent: inviteSent },
+  });
+
+  return res.status(201).json({ success: true, userId, inviteSent });
 }));
 
 // POST /api/auth/refresh — public
@@ -243,6 +314,24 @@ router.post("/change-password", requireAuth, h(async (req: any, res: any) => {
   }
   await authService.changePassword(req.authUser.id, String(currentPassword), String(newPassword));
   return res.json({ success: true });
+}));
+
+router.post("/2fa/send", requireAuth, twoFactorLimiter, h(async (req: any, res: any) => {
+  const channel = String(req.body.channel ?? "email").toLowerCase() as TwoFactorChannel;
+  if (!["email", "sms"].includes(channel)) {
+    return res.status(400).json({ success: false, error: "channel must be email or sms" });
+  }
+  await sendTwoFactorChallenge(req.authUser.id, channel);
+  return res.json({ success: true, message: "Verification code sent" });
+}));
+
+router.post("/2fa/verify", requireAuth, twoFactorLimiter, h(async (req: any, res: any) => {
+  const otp = String(req.body.otp ?? "").trim();
+  if (!/^\d{6}$/.test(otp)) {
+    return res.status(400).json({ success: false, error: "A valid 6 digit code is required" });
+  }
+  await verifyTwoFactorChallenge(req.authUser.id, otp);
+  return res.json({ success: true, twoFactorVerified: true });
 }));
 
 // POST /api/auth/admin-reset-password — Admin password reset for employees

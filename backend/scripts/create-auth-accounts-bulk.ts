@@ -3,7 +3,7 @@
  * Bulk Create Auth Accounts for All Active Employees
  *
  * Creates auth_user records for all active employees who have email addresses
- * but don't have auth accounts yet. Sets a default temporary password and
+ * but don't have auth accounts yet. Sets a random unknown temporary password and
  * forces password change on first login.
  */
 
@@ -11,8 +11,6 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { db } from '../src/db/mysql.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
-
-const DEFAULT_PASSWORD = 'MAS@2024!Temp'; // Temporary password for all new accounts
 
 interface Employee {
   id: string;
@@ -35,9 +33,10 @@ async function createAuthAccount(employee: Employee): Promise<boolean> {
       return false;
     }
 
-    // Generate user ID and hash password
+    // Generate user ID and hash a random unknown password. The user must use
+    // the invite/reset flow; no raw password is printed or stored outside hash.
     const userId = crypto.randomUUID();
-    const passwordHash = await bcrypt.hash(DEFAULT_PASSWORD, 10);
+    const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
 
     // Create auth_user record
     await db.execute<ResultSetHeader>(
@@ -130,9 +129,8 @@ async function main() {
     console.log(`   ❌ Failed: ${failed}`);
     console.log(`   📊 Total: ${employees.length}`);
 
-    console.log('\n🔑 Default Password for All New Accounts:');
-    console.log(`   Password: ${DEFAULT_PASSWORD}`);
-    console.log(`   ⚠️  Users will be forced to change on first login`);
+    console.log('\n🔑 New accounts use random unknown password hashes.');
+    console.log('   ⚠️  Users must use the invite/reset flow and will be forced to change on first login');
 
     console.log('\n✅ Bulk account creation complete!\n');
 

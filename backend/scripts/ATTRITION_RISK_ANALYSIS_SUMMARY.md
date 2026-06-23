@@ -233,10 +233,10 @@ CREATE INDEX idx_emp_status ON employees(employment_status, active_status);
 
 ```bash
 # Run full attrition analysis suite
-mysql -h 122.184.128.90 -u root -p mas_hrms < attrition-risk-analysis.sql > results.csv
+mysql -h <DB_HOST> -u <DB_USER> -p mas_hrms < attrition-risk-analysis.sql > results.csv
 
 # Run specific query (e.g., performance degradation only)
-mysql -h 122.184.128.90 -u root -p mas_hrms -e "
+mysql -h <DB_HOST> -u <DB_USER> -p mas_hrms -e "
   SELECT ... FROM QUERY SET 1 ...
 " > degradation-report.csv
 ```

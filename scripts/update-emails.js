@@ -1,5 +1,11 @@
 const mysql = require('mysql2/promise');
 
+function requiredEnv(name) {
+  const value = process.env[name] && process.env[name].trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 // Mapping from the image: Employee Code -> Official Email ID
 const emailMappings = [
   { employeeCode: 'MAS38040', email: 'Prem.ragput@teammas.in' },
@@ -118,10 +124,11 @@ const emailMappings = [
 
 async function updateEmails() {
   const connection = await mysql.createConnection({
-    host: '192.168.10.6',
-    user: 'shivam_user',
-    password: 'qwersdfg!@#hjk',
-    database: 'mas_hrms',
+    host: requiredEnv('DB_HOST'),
+    port: Number(process.env.DB_PORT || 3306),
+    user: requiredEnv('DB_USER'),
+    password: requiredEnv('DB_PASSWORD'),
+    database: requiredEnv('DB_NAME'),
   });
 
   try {

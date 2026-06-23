@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "react-router-dom";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -49,12 +50,42 @@ const TASK_LABELS: Record<string, string> = {
   email_delete:     "Delete Official Email",
   biometric_delete: "Remove from Biometric",
   dialler_delete:   "Remove from Dialler / External IDs",
+  WFM_PROCESS_ALIGNMENT: "WFM Process Alignment",
+  IT_EMAIL_DOMAIN_ASSET: "Email, Domain, and Asset Setup",
+  ADMIN_BIOMETRIC_ID_CARD: "Biometric and ID Card",
+  APPOINTMENT_LETTER_ESIGN: "Appointment Letter E-Sign",
 };
 
 const ROLE_LABELS: Record<string, string> = {
+  it:        "IT",
   branch_it: "Branch IT",
   admin:     "Admin",
+  branch_admin: "Branch Admin",
   wfm:       "WFM",
+  hr:        "HR",
+};
+
+const QUEUE_PRESETS: Record<string, { role: string; taskCode: string; title: string }> = {
+  "/provisioning/wfm-alignment": {
+    role: "wfm",
+    taskCode: "WFM_PROCESS_ALIGNMENT",
+    title: "WFM Alignment Queue",
+  },
+  "/provisioning/it": {
+    role: "it",
+    taskCode: "IT_EMAIL_DOMAIN_ASSET",
+    title: "IT Provisioning Queue",
+  },
+  "/provisioning/admin": {
+    role: "admin",
+    taskCode: "ADMIN_BIOMETRIC_ID_CARD",
+    title: "Admin Provisioning Queue",
+  },
+  "/provisioning/appointment-letter": {
+    role: "hr",
+    taskCode: "APPOINTMENT_LETTER_ESIGN",
+    title: "Appointment Letter Queue",
+  },
 };
 
 function StatusBadge({ status, locked }: { status: string; locked: number }) {
@@ -87,10 +118,13 @@ function TypeBadge({ type }: { type: string }) {
 
 export default function NativeITProvisioningTracker() {
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const preset = QUEUE_PRESETS[location.pathname];
 
   const [statusFilter, setStatusFilter]     = useState("all");
   const [typeFilter, setTypeFilter]         = useState("all");
-  const [roleFilter, setRoleFilter]         = useState("all");
+  const [roleFilter, setRoleFilter]         = useState(preset?.role ?? "all");
+  const [taskFilter, setTaskFilter]         = useState(preset?.taskCode ?? "all");
   const [searchQuery, setSearchQuery]       = useState("");
   const [page, setPage]                     = useState(1);
   const LIMIT = 50;
@@ -106,6 +140,7 @@ export default function NativeITProvisioningTracker() {
     ...(statusFilter !== "all" && { status: statusFilter }),
     ...(typeFilter   !== "all" && { request_type: typeFilter }),
     ...(roleFilter   !== "all" && { assigned_role: roleFilter }),
+    ...(taskFilter   !== "all" && { task_code: taskFilter }),
     page,
     limit: LIMIT,
   };
@@ -114,7 +149,7 @@ export default function NativeITProvisioningTracker() {
     queryKey: ["it-provisioning", queryParams],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: ProvisioningRequest[]; total: number }>(
-        "/api/it-provisioning/requests",
+        "/api/onboarding-provisioning/tasks",
         { params: queryParams },
       );
       return res.data;
@@ -150,8 +185,10 @@ export default function NativeITProvisioningTracker() {
     mutationFn: async ({ id, mode, note }: { id: string; mode: string; note: string }) => {
       const endpoint = mode === "confirm"
         ? `/api/it-provisioning/requests/${id}/confirm`
-        : `/api/it-provisioning/requests/${id}/${mode}`;
-      const method = mode === "confirm" ? "post" : "patch";
+        : mode === "action"
+          ? `/api/onboarding-provisioning/tasks/${id}/complete`
+          : `/api/onboarding-provisioning/tasks/${id}/waive`;
+      const method = "post";
       await hrmsApi[method](endpoint, { evidence_note: note });
     },
     onSuccess: () => {
@@ -187,7 +224,7 @@ export default function NativeITProvisioningTracker() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Server className="h-6 w-6 text-primary" />
-            IT Provisioning Tracker
+            {preset?.title ?? "IT Provisioning Tracker"}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
             Track domain, email, biometric, and dialler provisioning tasks for all employee joins and exits
@@ -270,9 +307,20 @@ export default function NativeITProvisioningTracker() {
               <SelectTrigger className="w-[140px]"><SelectValue placeholder="Assigned To" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Roles</SelectItem>
-                <SelectItem value="branch_it">Branch IT</SelectItem>
+                <SelectItem value="it">IT</SelectItem>
                 <SelectItem value="admin">Admin</SelectItem>
+                <SelectItem value="branch_admin">Branch Admin</SelectItem>
                 <SelectItem value="wfm">WFM</SelectItem>
+                <SelectItem value="hr">HR</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={taskFilter} onValueChange={(v) => { setTaskFilter(v); setPage(1); }}>
+              <SelectTrigger className="w-[190px]"><SelectValue placeholder="Task" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Tasks</SelectItem>
+                {Object.entries(TASK_LABELS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

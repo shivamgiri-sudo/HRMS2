@@ -1,19 +1,25 @@
 import mysql from 'mysql2/promise';
 
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 async function testConnection() {
   console.log('Testing legacy MySQL connection...');
-  console.log('Host: 14.97.30.236');
-  console.log('Port: 3306');
-  console.log('Database: db_bill');
-  console.log('User: shivam_user\n');
+  console.log(`Host: ${requiredEnv('BILL_DB_HOST')}`);
+  console.log(`Port: ${process.env.BILL_DB_PORT || '3306'}`);
+  console.log(`Database: ${requiredEnv('BILL_DB_NAME')}`);
+  console.log(`User: ${requiredEnv('BILL_DB_USER')}\n`);
 
   try {
     const connection = await mysql.createConnection({
-      host: '14.97.30.236',
-      port: 3306,
-      user: 'shivam_user',
-      password: 'qwersdfg!@#hjk',
-      database: 'db_bill',
+      host: requiredEnv('BILL_DB_HOST'),
+      port: Number(process.env.BILL_DB_PORT || 3306),
+      user: requiredEnv('BILL_DB_USER'),
+      password: requiredEnv('BILL_DB_PASSWORD'),
+      database: requiredEnv('BILL_DB_NAME'),
       connectTimeout: 10000,
     });
 

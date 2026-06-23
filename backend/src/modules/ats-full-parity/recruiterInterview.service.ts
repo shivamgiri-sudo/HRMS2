@@ -2,6 +2,8 @@ import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { sendOnboardingToken } from "../ats/ats.onboarding.service.js";
+import { sendRejectedEmail } from "../ats/ats.email.service.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -166,8 +168,10 @@ export interface PendingCandidate {
   status: string;
 }
 
-export async function getMyPendingCandidates(recruiterName: string): Promise<PendingCandidate[]> {
-  if (!recruiterName) err("Recruiter name required", 400);
+export async function getMyPendingCandidates(recruiterName?: string): Promise<PendingCandidate[]> {
+  const params: unknown[] = [];
+  const recruiterClause = recruiterName ? "AND recruiter_assigned_name = ?" : "";
+  if (recruiterName) params.push(recruiterName);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        id,
@@ -183,11 +187,11 @@ export async function getMyPendingCandidates(recruiterName: string): Promise<Pen
          NOW()
        ) AS pending_minutes
      FROM ats_candidate
-     WHERE recruiter_assigned_name = ?
+     WHERE active_status = 1
+       ${recruiterClause}
        AND status = 'Waiting'
-       AND active_status = 1
      ORDER BY pending_minutes DESC`,
-    [recruiterName]
+    params
   );
   return (rows as any[]).map((r) => ({
     candidateId: r.id,
@@ -204,16 +208,18 @@ export async function getMyPendingCandidates(recruiterName: string): Promise<Pen
 
 // ── Submission history ────────────────────────────────────────────────────────
 
-export async function getSubmissionHistory(recruiterCode: string) {
-  if (!recruiterCode) err("Recruiter code required", 400);
+export async function getSubmissionHistory(recruiterCode?: string) {
+  const params: unknown[] = [];
+  const recruiterClause = recruiterCode ? "WHERE s.recruiter_code = ?" : "";
+  if (recruiterCode) params.push(recruiterCode);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT s.*, c.full_name, c.candidate_code, c.mobile
      FROM ats_interview_submission s
      JOIN ats_candidate c ON c.id = s.candidate_id
-     WHERE s.recruiter_code = ?
+     ${recruiterClause}
      ORDER BY s.submitted_at DESC
      LIMIT 200`,
-    [recruiterCode]
+    params
   );
   return rows as any[];
 }
@@ -371,7 +377,9 @@ export async function submitInterviewUpdate(
       : [input.qToken];
 
     const [candRows] = await conn.execute(
-      `SELECT c.id, c.candidate_code, c.recruiter_assigned_name, c.q_token, c.current_stage, c.status, c.created_date, c.created_time
+      `SELECT c.id, c.candidate_code, c.full_name, c.email,
+              c.recruiter_id, c.recruiter_assigned_id, c.assigned_recruiter_id, c.recruiter_assigned_name,
+              c.applied_for_branch, c.branch_display_name, c.q_token, c.current_stage, c.status, c.created_date, c.created_time
        FROM ats_candidate c
        WHERE ${whereClause}
        LIMIT 1
@@ -382,10 +390,14 @@ export async function submitInterviewUpdate(
     if (!candidate) err("Candidate not found", 404);
 
     // Ownership check
-    if (
-      candidate.recruiter_assigned_name &&
-      candidate.recruiter_assigned_name !== recruiterProfile.name
-    ) {
+    const assignedRecruiterIds = [
+      candidate.recruiter_id,
+      candidate.recruiter_assigned_id,
+      candidate.assigned_recruiter_id,
+    ].filter(Boolean).map(String);
+    const assignedById = assignedRecruiterIds.length > 0 && assignedRecruiterIds.includes(String(recruiterProfile.id));
+    const assignedByName = candidate.recruiter_assigned_name && candidate.recruiter_assigned_name === recruiterProfile.name;
+    if ((assignedRecruiterIds.length > 0 || candidate.recruiter_assigned_name) && !assignedById && !assignedByName) {
       err("This candidate is assigned to a different recruiter", 403);
     }
 
@@ -530,11 +542,66 @@ export async function submitInterviewUpdate(
       [randomUUID(), submissionId, isUpdate ? "UPDATE" : "INSERT", actorUserId ?? null, JSON.stringify(snapshotData)]
     );
 
-    // Update ats_candidate status/stage only (never touch created_date / created_time)
+    // Update canonical ATS decision fields only; never touch created_date / created_time.
     const newStatus = finalDecision === "No Show" ? "No Show" : finalDecision;
     await conn.execute(
-      `UPDATE ats_candidate SET current_stage = ?, status = ?, updated_at = NOW() WHERE id = ?`,
-      [walkinEndStage, newStatus, candidate.id]
+      `UPDATE ats_candidate SET
+         current_stage = ?,
+         status = ?,
+         final_decision = ?,
+         walkin_end_stage = ?,
+         round1_result = ?,
+         round1_voc = ?,
+         round1_remarks = ?,
+         skilltest_typing = ?,
+         skilltest_ai = ?,
+         skilltest_result = ?,
+         skilltest_voc = ?,
+         skilltest_remarks = ?,
+         round2_result = ?,
+         round2_voc = ?,
+         round2_remarks = ?,
+         round3_result = ?,
+         round3_voc = ?,
+         round3_remarks = ?,
+         offer_salary = ?,
+         offer_doj = ?,
+         reporting_shift = ?,
+         offer_performance_incentive = ?,
+         profile_status = CASE
+           WHEN ? = 'Selected' THEN 'selected'
+           WHEN ? IN ('Rejected', 'No Show') THEN 'closed'
+           ELSE profile_status
+         END,
+         updated_at = NOW()
+       WHERE id = ?`,
+      [
+        walkinEndStage,
+        newStatus,
+        finalDecision,
+        walkinEndStage,
+        r1,
+        nvl(input.round1Voc),
+        nvl(input.round1Remarks),
+        nvlNum(input.skillTestTyping),
+        nvlNum(input.skillTestAi),
+        nvl(input.skillTestResult),
+        nvl(input.skillTestVoc),
+        nvl(input.skillTestRemarks),
+        r2,
+        nvl(input.round2Voc),
+        nvl(input.round2Remarks),
+        r3,
+        nvl(input.round3Voc),
+        nvl(input.round3Remarks),
+        nvlNum(input.offerSalary),
+        nvl(input.offerDoj),
+        nvl(input.reportingTiming),
+        nvl(input.performanceIncentives),
+        finalDecision,
+        finalDecision,
+        candidate.id,
+      ]
     );
 
     // Stage log
@@ -544,7 +611,35 @@ export async function submitInterviewUpdate(
       [randomUUID(), candidate.id, candidate.current_stage || candidate.status, walkinEndStage, nvl(raw.remarks), actorUserId ?? null]
     );
 
+    if ((raw.proxySubmission === true || raw.proxySubmission === "true") && actorUserId) {
+      await conn.execute(
+        `INSERT INTO ats_interview_submission_audit (id, submission_id, action, actor_user_id, snapshot)
+         VALUES (?, ?, 'UPDATE', ?, CAST(? AS JSON))`,
+        [
+          randomUUID(),
+          submissionId,
+          actorUserId,
+          JSON.stringify({ proxySubmission: true, recruiterCode: recruiterProfile.recruiterCode, recruiterName: recruiterProfile.name }),
+        ]
+      );
+    }
+
     await conn.commit();
+
+    if (finalDecision === "Selected") {
+      try {
+        await sendOnboardingToken(candidate.id, actorUserId ?? "SYSTEM");
+      } catch (e) {
+        console.error("[ats] automatic onboarding link failed:", e instanceof Error ? e.message : String(e));
+      }
+    } else if ((finalDecision === "Rejected" || finalDecision === "No Show") && candidate.email) {
+      sendRejectedEmail({
+        candidateId: candidate.id,
+        to: candidate.email,
+        candidateName: candidate.full_name,
+        branchName: candidate.branch_display_name ?? candidate.applied_for_branch ?? "",
+      }).catch((e: unknown) => console.error("[ats] rejection email failed:", e instanceof Error ? e.message : String(e)));
+    }
 
     // Fetch updated submission row for response (outside transaction)
     const [subRows] = await db.execute<RowDataPacket[]>(

@@ -1,20 +1,25 @@
 const mysql = require('mysql2/promise');
 
-// Hardcoded for simplicity
+function requiredEnv(name) {
+  const value = process.env[name] && process.env[name].trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 const LEGACY_CONFIG = {
-  host: '14.97.30.236',
-  port: 3306,
-  user: 'shivam_user',
-  password: 'qwersdfg!@#hjk',
-  database: 'db_bill',
+  host: requiredEnv('BILL_DB_HOST'),
+  port: Number(process.env.BILL_DB_PORT || 3306),
+  user: requiredEnv('BILL_DB_USER'),
+  password: requiredEnv('BILL_DB_PASSWORD'),
+  database: requiredEnv('BILL_DB_NAME'),
 };
 
 const HRMS_CONFIG = {
-  host: '122.184.128.90',
-  port: 3306,
-  user: 'root',
-  password: 'vicidialnow',
-  database: 'mas_hrms',
+  host: requiredEnv('DB_HOST'),
+  port: Number(process.env.DB_PORT || 3306),
+  user: requiredEnv('DB_USER'),
+  password: requiredEnv('DB_PASSWORD'),
+  database: requiredEnv('DB_NAME'),
 };
 
 function splitName(fullName) {
@@ -171,44 +176,9 @@ async function runFullSync() {
     const [count] = await hrmsDb.execute('SELECT COUNT(*) as total FROM employees WHERE legacy_emp_id IS NOT NULL');
     console.log(`\n📊 Total employees in HRMS: ${count[0].total}`);
 
-    // Create default passwords for all employees
-    console.log('\n🔐 Creating auth users with default passwords...');
-    const [empList] = await hrmsDb.execute(`
-      SELECT id, employee_code, email, official_email, mobile
-      FROM employees
-      WHERE legacy_emp_id IS NOT NULL
-      LIMIT 1000
-    `);
-
-    let authCreated = 0;
-    for (const emp of empList) {
-      const email = emp.official_email || emp.email;
-      if (!email) continue;
-
-      try {
-        // Create auth_user with default password (Employee@123)
-        // Hash: $2b$10$eF1vN9yKGZ8K.X0QYZ4L0OpU4nO/xI.D9sxC6vY6L3QZ4L0OpU4nO
-        await hrmsDb.execute(`
-          INSERT INTO auth_user (id, email, password_hash, is_blocked, created_at)
-          VALUES (?, ?, '$2b$10$eF1vN9yKGZ8K.X0QYZ4L0OpU4nO/xI.D9sxC6vY6L3QZ4L0OpU4nO', 0, NOW())
-          ON DUPLICATE KEY UPDATE id=id
-        `, [emp.id, email]);
-
-        // Assign employee role
-        await hrmsDb.execute(`
-          INSERT INTO user_roles (user_id, role_key, active_status, assigned_at)
-          VALUES (?, 'employee', 1, NOW())
-          ON DUPLICATE KEY UPDATE active_status=1
-        `, [emp.id]);
-
-        authCreated++;
-      } catch (err) {
-        // Ignore duplicate errors
-      }
-    }
-
-    console.log(`✅ Created ${authCreated} auth users (default password: Employee@123)`);
-    console.log('\n🎉 ALL EMPLOYEES READY TO USE THE SYSTEM!');
+    console.log('\n🔐 Auth users were not created by this sync.');
+    console.log('   Use the protected invite/reset-token flow to activate employee accounts.');
+    console.log('\n🎉 EMPLOYEE SYNC COMPLETE!');
 
   } finally {
     await legacyDb.end();

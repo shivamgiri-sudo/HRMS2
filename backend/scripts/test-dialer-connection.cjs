@@ -7,12 +7,18 @@
 
 const mysql = require('mysql2/promise');
 
+function requiredEnv(name) {
+  const value = process.env[name] && process.env[name].trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 const config = {
-  host: '122.184.128.90',
-  port: 3306,
-  user: 'root',
-  password: 'vicidialnow',
-  database: 'dialer_db',
+  host: requiredEnv('DIALER_DB_HOST'),
+  port: Number(process.env.DIALER_DB_PORT || 3306),
+  user: requiredEnv('DIALER_DB_USER'),
+  password: requiredEnv('DIALER_DB_PASSWORD'),
+  database: requiredEnv('DIALER_DB_NAME'),
 };
 
 async function testDialerConnection() {
