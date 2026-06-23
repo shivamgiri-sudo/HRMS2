@@ -13,6 +13,9 @@ import {
   encryptCredentials,
   invalidatePool,
 } from "../external-db/external-db.service.js";
+import { env } from "../../config/env.js";
+import { lmsEmployeeMapper } from "./lms-employee-mapper.js";
+import { randomUUID } from "crypto";
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -165,6 +168,26 @@ router.post("/mapping",
   })
 );
 
+router.post("/mapping/auto-map",
+  requireRole("admin", "hr", "trainer"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { lms_learner_id } = req.body;
+    if (!lms_learner_id) return res.status(400).json({ error: "lms_learner_id required" });
+    const result = await lmsEmployeeMapper.mapLmsTrainee(String(lms_learner_id));
+    res.json({ success: result.success, data: result });
+  })
+);
+
+router.get("/mapping/audit",
+  requireRole("admin", "hr", "trainer"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM lms_mapping_audit ORDER BY attempted_at DESC LIMIT 100`
+    );
+    res.json({ success: true, data: rows });
+  })
+);
+
 router.get("/sync-log", requireRole("admin", "hr", "trainer"), h(async (_req: AuthenticatedRequest, res: Response) => {
   res.json({ success: true, data: await lmsService.getSyncLog() });
 }));
@@ -190,6 +213,168 @@ router.get("/sync/status", requireRole("admin", "hr", "super_admin"), h(async (_
   );
   res.json({ success: true, data: { connection, recent_syncs: rows } });
 }));
+
+// GET /api/lms/progress-summary
+router.get("/progress-summary", requireRole("admin", "hr", "super_admin", "operations_head", "branch_head"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const [summaryRows] = await db.execute<RowDataPacket[]>(`
+    SELECT
+      COUNT(DISTINCT m.employee_id) AS totalLearners,
+      COUNT(DISTINCT CASE WHEN m.is_active = 1 THEN m.employee_id END) AS mappedLearners,
+      COALESCE(ROUND(AVG(p.completion_pct), 1), 0) AS averageCourseCompletion,
+      COALESCE(ROUND(AVG(p.score), 1), 0) AS averageAssessmentPass,
+      COUNT(DISTINCT CASE WHEN c.status = 'active' THEN c.employee_id END) AS certifiedCount,
+      MAX(p.synced_at) AS lastSyncAt
+    FROM lms_employee_mapping m
+    LEFT JOIN lms_learning_progress_snapshot p ON p.employee_id = m.employee_id
+    LEFT JOIN lms_certification_snapshot c ON c.employee_id = m.employee_id
+  `);
+  const summary = (summaryRows as any[])[0] ?? {};
+
+  const [atRiskRows] = await db.execute<RowDataPacket[]>(`
+    SELECT lp.employee_id, lp.employee_code, e.full_name AS employee_name,
+           lp.readiness_score, lp.attrition_risk_signal, lp.batch_no, lp.synced_at
+    FROM lms_learner_progress lp
+    LEFT JOIN employees e ON e.id = lp.employee_id
+    WHERE lp.attrition_risk_signal = 'red'
+    ORDER BY lp.readiness_score ASC
+    LIMIT 20
+  `).catch(() => [] as RowDataPacket[]);
+
+  const [byBatchRows] = await db.execute<RowDataPacket[]>(`
+    SELECT lp.batch_no,
+           COUNT(DISTINCT lp.employee_id) AS total_learners,
+           ROUND(AVG(lp.readiness_score), 1) AS avg_readiness,
+           SUM(CASE WHEN lp.ops_handover_ready = 1 THEN 1 ELSE 0 END) AS ready_count,
+           SUM(CASE WHEN lp.attrition_risk_signal = 'red' THEN 1 ELSE 0 END) AS at_risk_count
+    FROM lms_learner_progress lp
+    WHERE lp.batch_no IS NOT NULL
+    GROUP BY lp.batch_no
+    ORDER BY lp.batch_no DESC
+    LIMIT 20
+  `).catch(() => [] as RowDataPacket[]);
+
+  const [perEmpRows] = await db.execute<RowDataPacket[]>(`
+    SELECT
+      e.id AS employee_id,
+      e.employee_code,
+      e.full_name AS employee_name,
+      COUNT(DISTINCT p.course_id) AS modules_assigned,
+      COUNT(DISTINCT CASE WHEN p.status = 'completed' THEN p.course_id END) AS modules_completed,
+      COALESCE(ROUND(AVG(p.completion_pct), 0), 0) AS completion_percent,
+      COUNT(DISTINCT c.id) AS certifications_earned,
+      MAX(p.synced_at) AS last_activity
+    FROM employees e
+    JOIN lms_employee_mapping m ON m.employee_id = e.id AND m.is_active = 1
+    LEFT JOIN lms_learning_progress_snapshot p ON p.employee_id = e.id
+    LEFT JOIN lms_certification_snapshot c ON c.employee_id = e.id AND c.status = 'active'
+    WHERE e.active_status = 1
+    GROUP BY e.id, e.employee_code, e.full_name
+    ORDER BY completion_percent DESC
+    LIMIT 200
+  `);
+
+  const [syncStatusRows] = await db.execute<RowDataPacket[]>(
+    `SELECT sync_type, status, records_synced, errors_count, created_at
+     FROM lms_sync_audit_log ORDER BY created_at DESC LIMIT 4`
+  );
+
+  res.json({
+    success: true,
+    data: perEmpRows,
+    summary: {
+      totalLearners: Number(summary.totalLearners ?? 0),
+      mappedLearners: Number(summary.mappedLearners ?? 0),
+      activeBatches: (byBatchRows as any[]).length,
+      averageCourseCompletion: Number(summary.averageCourseCompletion ?? 0),
+      averageAssessmentPass: Number(summary.averageAssessmentPass ?? 0),
+      averageAttendance: 0,
+      certifiedCount: Number(summary.certifiedCount ?? 0),
+      ojtReadyCount: 0,
+      opsHandoverReadyCount: (byBatchRows as any[]).reduce((s: number, r: any) => s + Number(r.ready_count ?? 0), 0),
+      atRiskCount: (atRiskRows as any[]).length,
+      lastSyncAt: summary.lastSyncAt ?? null,
+    },
+    byBatch: byBatchRows,
+    atRiskLearners: atRiskRows,
+    syncStatus: syncStatusRows,
+  });
+}));
+
+// GET /api/lms/sso-session
+// HRMS2 backend calls LMS /api/auth/bridge with backend-only secret.
+router.get("/sso-session", h(async (req: AuthenticatedRequest, res: Response) => {
+  const ctx = await currentLmsContext(req, res);
+  if (!ctx) return;
+
+  const lmsApiUrl = env.LMS_API_URL;
+  const bridgeSecret = env.LMS_BRIDGE_SECRET;
+
+  if (!lmsApiUrl) {
+    return res.status(503).json({ success: false, message: "LMS_API_URL not configured on HRMS2 backend" });
+  }
+
+  const employeeCode = ctx.access.employeeCode;
+  const email = ctx.access.user.email;
+
+  const body: Record<string, string> = {};
+  if (employeeCode) body.employee_id = employeeCode;
+  if (email) body.email = email;
+  if (bridgeSecret) body.bridge_token = bridgeSecret;
+
+  let bridgeRes: any;
+  try {
+    const fetchRes = await fetch(`${lmsApiUrl}/api/auth/bridge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    bridgeRes = await fetchRes.json();
+    if (!fetchRes.ok || !bridgeRes.ok) {
+      throw new Error(bridgeRes.message || `Bridge responded ${fetchRes.status}`);
+    }
+  } catch (e: any) {
+    return res.status(502).json({ success: false, message: `LMS bridge failed: ${e.message}` });
+  }
+
+  const userType: string = bridgeRes.userType ?? (
+    ctx.access.access.admin ? "admin" :
+    ctx.access.access.coordinator ? "coordinator" : "trainee"
+  );
+
+  const personaMap: Record<string, { route: string; storageKey: string }> = {
+    trainee:     { route: "/lms",         storageKey: "lms_token_trainee" },
+    coordinator: { route: "/coordinator", storageKey: "lms_token_coordinator" },
+    admin:       { route: "/admin",       storageKey: "lms_token_admin" },
+    management:  { route: "/management",  storageKey: "lms_token_management" },
+  };
+  const persona = personaMap[userType] ?? personaMap.trainee;
+
+  await db.execute(
+    `INSERT INTO lms_sync_audit_log (id, sync_type, records_synced, errors_count, status, initiated_by)
+     VALUES (?, 'sso_session', 1, 0, 'success', ?)`,
+    [randomUUID(), req.authUser!.id]
+  );
+
+  return res.json({
+    success: true,
+    lmsToken: bridgeRes.lms_token,
+    lmsUserType: userType,
+    lmsUserId: bridgeRes.userId ?? employeeCode,
+    route: persona.route,
+    storageKey: persona.storageKey,
+    launchUrl: `${lmsApiUrl}${persona.route}`,
+  });
+}));
+
+router.get("/launch-audit",
+  requireRole("admin", "hr", "super_admin"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM lms_sync_audit_log WHERE sync_type = 'sso_session' ORDER BY created_at DESC LIMIT 50`
+    );
+    res.json({ success: true, data: rows });
+  })
+);
 
 // ── Save Integration Hub LMS credentials ──────────────────────────────────────
 // POST /api/lms/config  { host, port, database, username, password, db_type? }
@@ -247,6 +432,44 @@ router.get("/config", requireRole("admin", "hr", "super_admin"), h(async (_req: 
   }
   // Never return encrypted_credentials — return only non-sensitive config
   res.json({ success: true, data: row });
+}));
+
+// Absorbed from lms-dashboard.routes.ts
+router.get("/learner-progress/:employee_id", requireRole("admin", "hr", "trainer", "operations_head"), h(async (req: any, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM lms_learner_progress WHERE employee_id = ? LIMIT 1`,
+    [req.params.employee_id]
+  );
+  if (!rows.length) return res.status(404).json({ success: false, error: "No LMS record found" });
+  res.json({ success: true, data: rows[0] });
+}));
+
+router.get("/batch-progress/:batch_no", requireRole("admin", "hr", "trainer", "operations_head"), h(async (req: any, res: Response) => {
+  const [summary] = await db.execute<RowDataPacket[]>(`
+    SELECT batch_no,
+           COUNT(DISTINCT employee_id) AS total_learners,
+           AVG(mcq_best_score) AS avg_score,
+           AVG(readiness_score) AS avg_readiness,
+           SUM(CASE WHEN ops_handover_ready = 1 THEN 1 ELSE 0 END) AS ready_count,
+           SUM(CASE WHEN attrition_risk_signal = 'red' THEN 1 ELSE 0 END) AS high_risk_count
+    FROM lms_learner_progress WHERE batch_no = ? GROUP BY batch_no
+  `, [req.params.batch_no]);
+  res.json({ success: true, data: (summary as any[])[0] || {} });
+}));
+
+router.get("/assessment-history/:employee_id", h(async (req: any, res: Response) => {
+  const userId = req.authUser!.id;
+  const isAdminHr = await hasRole(userId, "admin", "hr");
+  if (!isAdminHr) {
+    const emp = await getEmployeeForUser(userId);
+    if (!emp || emp.id !== req.params.employee_id) return res.status(403).json({ success: false, message: "Forbidden" });
+  }
+  const [rows] = await db.execute<RowDataPacket[]>(`
+    SELECT id, employee_id, employee_code, assessment_name, attempt_no,
+           score, percentage, result, time_taken_seconds, attempted_at, synced_at
+    FROM lms_assessment_scores WHERE employee_id = ? ORDER BY attempted_at DESC LIMIT 50
+  `, [req.params.employee_id]);
+  res.json({ success: true, data: rows });
 }));
 
 export { router as lmsRouter };
