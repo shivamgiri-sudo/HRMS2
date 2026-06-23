@@ -12,6 +12,14 @@ router.get('/form-config/bootstrap', h(async (_req: any, res: any) => {
   res.json({ success: true, data });
 }));
 
+// PUBLIC — recruiters filtered by branch (for dynamic dropdown after branch selection)
+router.get('/form-config/recruiters-by-branch', h(async (req: any, res: any) => {
+  const branchDisplayName = String(req.query.branch || '').trim();
+  if (!branchDisplayName) return res.json({ success: true, data: [] });
+  const data = await svc.getRecruitersByBranch(branchDisplayName);
+  res.json({ success: true, data });
+}));
+
 // ADMIN/HR — all routes below require auth (applied per-route, not as catch-all)
 router.get('/form-config', requireAuth, requireRole('admin', 'hr'), h(async (_req: any, res: any) => {
   const configs = await svc.getAllConfigs();

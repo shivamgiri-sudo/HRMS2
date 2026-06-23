@@ -158,6 +158,62 @@ export const atsFormConfigService = {
     );
   },
 
+  async getRecruitersByBranch(branchDisplayName: string) {
+    // Resolve the canonical branch key from the display name
+    const [aliasRows] = await db.execute<RowDataPacket[]>(
+      `SELECT canonical_key FROM ats_branch_alias_master WHERE display_name = ? AND active_status = 1 LIMIT 1`,
+      [branchDisplayName]
+    );
+    const canonicalKey: string = (aliasRows as RowDataPacket[])[0]?.canonical_key ?? branchDisplayName;
+
+    // Look up the branch_name in branch_master matching this canonical key
+    const [branchRows] = await db.execute<RowDataPacket[]>(
+      `SELECT branch_name FROM branch_master WHERE active_status = 1 AND (branch_name = ? OR branch_code = ?) LIMIT 1`,
+      [canonicalKey, canonicalKey]
+    );
+    const branchName: string = (branchRows as RowDataPacket[])[0]?.branch_name ?? canonicalKey;
+
+    // 1. Try ats_recruiter_roster filtered by branch (active only)
+    const [rosterRows] = await db.execute<RowDataPacket[]>(
+      `SELECT name, email, mobile FROM ats_recruiter_roster
+       WHERE active_status = 1 AND (branch = ? OR branch = ?)
+       ORDER BY name ASC`,
+      [branchName, canonicalKey]
+    );
+    if ((rosterRows as RowDataPacket[]).length > 0) {
+      return (rosterRows as RowDataPacket[]).map((r: any) => ({
+        name: String(r.name),
+        email: r.email || null,
+        mobile: r.mobile || null,
+      }));
+    }
+
+    // 2. Fallback: employees in HR/Recruiter designations at this branch
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT
+         TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
+         COALESCE(e.office_email, e.official_email, e.email) AS email,
+         e.mobile
+       FROM employees e
+       JOIN branch_master b ON b.id = e.branch_id
+       JOIN designation_master des ON des.id = e.designation_id
+       WHERE e.active_status = 1
+         AND b.branch_name = ?
+         AND (
+           LOWER(des.designation_name) LIKE '%recruiter%'
+           OR LOWER(des.designation_name) LIKE '%hr%'
+           OR LOWER(des.designation_name) LIKE '%executive%'
+         )
+       ORDER BY name ASC`,
+      [branchName]
+    );
+    return (empRows as RowDataPacket[]).map((r: any) => ({
+      name: String(r.name),
+      email: r.email || null,
+      mobile: r.mobile || null,
+    }));
+  },
+
   async listRecruiters() {
     const [rows] = await db.execute<RowDataPacket[]>(
       'SELECT id, name, active_status, sort_order, created_at FROM ats_recruiter ORDER BY sort_order ASC, name ASC'
