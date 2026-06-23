@@ -1,112 +1,59 @@
 import { useState, useEffect, useCallback } from "react";
+import { hrmsApi } from "@/lib/hrmsApi";
 
-const SESSION_KEY = "lms_token";
-const LMS_API_URL = (import.meta.env.VITE_LMS_API_URL as string | undefined) ?? "";
-const BRIDGE_SECRET = (import.meta.env.VITE_LMS_BRIDGE_SECRET as string | undefined) ?? "";
-
-export type LMSSessionState = {
+interface LMSSessionState {
   lmsToken: string | null;
+  lmsUserType: string | null;
+  storageKey: string | null;
+  launchUrl: string | null;
+  route: string | null;
   isLoading: boolean;
   error: string | null;
   refresh: () => void;
-};
-
-function getHrmsToken(): string | null {
-  try {
-    const demo = localStorage.getItem("hrms_demo_session");
-    if (demo) {
-      const parsed = JSON.parse(demo);
-      if (parsed?.access_token) return parsed.access_token as string;
-    }
-  } catch {}
-  return localStorage.getItem("hrms_access_token");
 }
 
-export const useLMSSession = (): LMSSessionState => {
+export function useLMSSession(): LMSSessionState {
   const [lmsToken, setLmsToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [lmsUserType, setLmsUserType] = useState<string | null>(null);
+  const [storageKey, setStorageKey] = useState<string | null>(null);
+  const [launchUrl, setLaunchUrl] = useState<string | null>(null);
+  const [route, setRoute] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [trigger, setTrigger] = useState(0);
 
-  const refresh = useCallback(() => {
-    sessionStorage.removeItem(SESSION_KEY);
-    setLmsToken(null);
+  const fetchSession = useCallback(async () => {
+    setIsLoading(true);
     setError(null);
-    setTrigger((n) => n + 1);
+    try {
+      const res = await hrmsApi.get<{
+        success: boolean;
+        lmsToken: string;
+        lmsUserType: string;
+        storageKey: string;
+        launchUrl: string;
+        route: string;
+        message?: string;
+      }>("/api/lms/sso-session");
+
+      if (!res.success) {
+        throw new Error(res.message ?? "SSO session failed");
+      }
+
+      setLmsToken(res.lmsToken);
+      setLmsUserType(res.lmsUserType);
+      setStorageKey(res.storageKey);
+      setLaunchUrl(res.launchUrl);
+      setRoute(res.route);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "LMS session unavailable");
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    if (!LMS_API_URL) {
-      setIsLoading(false);
-      setError("LMS URL not configured (VITE_LMS_API_URL)");
-      return;
-    }
+    fetchSession();
+  }, [fetchSession]);
 
-    let cancelled = false;
-
-    const fetchToken = async () => {
-      const cached = sessionStorage.getItem(SESSION_KEY);
-      if (cached) {
-        if (!cancelled) { setLmsToken(cached); setIsLoading(false); setError(null); }
-        return;
-      }
-
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const hrmsToken = getHrmsToken();
-        if (!hrmsToken) {
-          if (!cancelled) { setLmsToken(null); setError("Not authenticated"); setIsLoading(false); }
-          return;
-        }
-
-        // Fetch employee_code + email from HRMS — LMS bridge needs these for lookup
-        const hrmsBase = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
-        const empRes = await fetch(`${hrmsBase}/api/employees/me`, {
-          headers: { Authorization: `Bearer ${hrmsToken}` },
-        });
-        const empJson = empRes.ok ? await empRes.json() : null;
-        const emp = empJson?.data ?? empJson;
-        const employeeCode = emp?.employee_code ?? emp?.employeeCode ?? null;
-        const email = emp?.email ?? emp?.official_email ?? null;
-
-        if (!employeeCode && !email) {
-          if (!cancelled) { setLmsToken(null); setError("No employee profile found"); setIsLoading(false); }
-          return;
-        }
-
-        // POST to LMS bridge with employee_id (code) + email
-        // LMS bridge: POST /api/auth/bridge { employee_id?, email?, bridge_token? }
-        const body: Record<string, string> = {};
-        if (employeeCode) body.employee_id = String(employeeCode);
-        if (email) body.email = String(email);
-        if (BRIDGE_SECRET) body.bridge_token = BRIDGE_SECRET;
-
-        const res = await fetch(`${LMS_API_URL}/api/auth/bridge`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const json = await res.json();
-
-        if (!res.ok || !json.ok) {
-          throw new Error(json.message || `Bridge failed (${res.status})`);
-        }
-
-        const token: string = json.lms_token;
-        sessionStorage.setItem(SESSION_KEY, token);
-        if (!cancelled) { setLmsToken(token); setError(null); }
-      } catch (err: any) {
-        if (!cancelled) { setLmsToken(null); setError(err.message || "Failed to obtain LMS session"); }
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    };
-
-    void fetchToken();
-    return () => { cancelled = true; };
-  }, [trigger]);
-
-  return { lmsToken, isLoading, error, refresh };
-};
+  return { lmsToken, lmsUserType, storageKey, launchUrl, route, isLoading, error, refresh: fetchSession };
+}
