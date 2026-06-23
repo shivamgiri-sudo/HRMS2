@@ -14,6 +14,11 @@ export interface AuditLogEntry {
   req?: Request;
   ip_address?: string;
   user_agent?: string | string[];
+  actor_role?: string;
+  reason?: string;
+  old_value_json?: Record<string, unknown>;
+  new_value_json?: Record<string, unknown>;
+  employee_id?: string;
 }
 
 function requestIdFrom(entry: AuditLogEntry): string | null {
@@ -74,8 +79,9 @@ export async function writeSensitiveActionLog(entry: AuditLogEntry): Promise<voi
     await db.execute(
       `INSERT INTO sensitive_action_log
          (id, actor_user_id, action_type, module_key, entity_type, entity_id,
-          ip_address, user_agent, change_summary, request_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ip_address, user_agent, change_summary, request_id,
+          actor_role, reason, old_value_json, new_value_json, employee_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         randomUUID(),
         entry.actor_user_id,
@@ -87,6 +93,11 @@ export async function writeSensitiveActionLog(entry: AuditLogEntry): Promise<voi
         userAgentFrom(entry),
         jsonOrNull(entry.change_summary ?? entry.metadata),
         requestIdFrom(entry),
+        entry.actor_role ?? null,
+        entry.reason ?? null,
+        entry.old_value_json ? JSON.stringify(entry.old_value_json) : null,
+        entry.new_value_json ? JSON.stringify(entry.new_value_json) : null,
+        entry.employee_id ?? null,
       ]
     );
   } catch (err) {

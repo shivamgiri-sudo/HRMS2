@@ -15,17 +15,295 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 
 router.use(requireAuth);
 
-// GET /api/employees/me — returns the employee record for the logged-in user
+// GET /api/employees/me — returns the employee record for the logged-in user with nested details
 router.get("/me", h(async (req: any, res: any) => {
   const userId = req.authUser?.id;
   if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
-  const { db } = await import("../../db/mysql.js");
+
   const [rows] = await db.execute(
     "SELECT * FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
     [userId]
   ) as any[];
   if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
-  return res.json({ success: true, data: rows[0] });
+
+  const emp = rows[0];
+  const empId = emp.id;
+
+  const [bankRows, statRows, emergRows, nomineeRows] = await Promise.all([
+    // Bank details
+    db.execute(
+      "SELECT bank_name, account_holder_name, bank_branch, ifsc_code, account_type, masked_account_number, verification_status FROM employee_bank_detail WHERE employee_id = ? LIMIT 1",
+      [empId]
+    ).then(([r]: any) => r).catch(() => []),
+
+    // Statutory details
+    db.execute(
+      "SELECT epf_number, esi_number, uan_number, pan_number, aadhaar_id, pf_eligible, esi_eligible, epf_date FROM employee_statutory_info WHERE employee_id = ? LIMIT 1",
+      [empId]
+    ).then(([r]: any) => r).catch(() => []),
+
+    // Emergency contact (primary)
+    db.execute(
+      "SELECT name, relationship, mobile, address FROM employee_emergency_contact WHERE employee_id = ? AND is_primary = 1 ORDER BY contact_seq ASC LIMIT 1",
+      [empId]
+    ).then(([r]: any) => r).catch(() => []),
+
+    // Nominee (primary / first)
+    db.execute(
+      "SELECT nominee_name, relationship, date_of_birth, mobile, address FROM employee_nominee WHERE employee_id = ? ORDER BY created_at ASC LIMIT 1",
+      [empId]
+    ).then(([r]: any) => r).catch(() => []),
+  ]);
+
+  // Build masked statutory
+  let statutory_details: Record<string, any> | null = null;
+  if (statRows.length) {
+    const s = statRows[0];
+    const maskPan = (v: string | null) => v ? v.slice(0, 5) + "***" + v.slice(-1) : null;
+    const maskLast4 = (v: string | null) => v ? "****" + v.slice(-4) : null;
+    const maskEpf = (v: string | null) => v ? v.slice(0, 2) + "/****/****" : null;
+    statutory_details = {
+      masked_pan_number: maskPan(s.pan_number),
+      masked_aadhaar_number: maskLast4(s.aadhaar_id),
+      masked_pf_number: maskEpf(s.epf_number),
+      masked_uan: maskLast4(s.uan_number),
+      esi_number: s.esi_number ? "****" + String(s.esi_number).slice(-4) : null,
+      pf_eligible: s.pf_eligible,
+      esi_eligible: s.esi_eligible,
+      epf_date: s.epf_date,
+      pan_verification_status: s.pan_number ? "not_provided" : "not_provided",
+      aadhaar_verification_status: s.aadhaar_id ? "not_provided" : "not_provided",
+      pf_uan_verification_status: s.uan_number ? "not_provided" : "not_provided",
+    };
+  }
+
+  return res.json({
+    success: true,
+    data: {
+      ...emp,
+      bank_details: bankRows.length ? bankRows[0] : null,
+      statutory_details,
+      emergency_contact: emergRows.length ? emergRows[0] : null,
+      nominee: nomineeRows.length ? {
+        nominee_name: nomineeRows[0].nominee_name,
+        relationship: nomineeRows[0].relationship,
+        date_of_birth: nomineeRows[0].date_of_birth,
+        mobile: nomineeRows[0].mobile,
+        address: nomineeRows[0].address,
+      } : null,
+    }
+  });
+}));
+
+// PATCH /api/employees/me — self-service update of non-sensitive personal fields
+router.patch("/me", h(async (req: any, res: any) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+  const [rows] = await db.execute(
+    "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    [userId]
+  ) as any[];
+  if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
+  const empId = rows[0].id;
+
+  const ALLOWED_FIELDS = [
+    "email", "phone", "personal_email", "personal_phone", "alternate_mobile",
+    "address", "city", "country", "date_of_birth", "gender", "marital_status",
+    "blood_group", "working_hours_start", "working_hours_end", "working_days"
+  ];
+
+  const updates: string[] = [];
+  const values: any[] = [];
+  for (const field of ALLOWED_FIELDS) {
+    if (req.body[field] !== undefined) {
+      updates.push(`\`${field}\` = ?`);
+      values.push(req.body[field]);
+    }
+  }
+  if (!updates.length) return res.status(400).json({ success: false, error: "No updatable fields provided" });
+
+  values.push(empId);
+  await db.execute(`UPDATE employees SET ${updates.join(", ")} WHERE id = ?`, values);
+  return res.json({ success: true, message: "Profile updated" });
+}));
+
+// GET /api/employees/me/journey — journey events for the logged-in user
+router.get("/me/journey", h(async (req: any, res: any) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+  const [rows] = await db.execute(
+    "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    [userId]
+  ) as any[];
+  if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
+  const empId = rows[0].id;
+
+  const data = await listJourneyEvents(empId, {
+    module:    req.query.module    as string | undefined,
+    eventType: req.query.eventType as string | undefined,
+    fromDate:  req.query.fromDate  as string | undefined,
+    toDate:    req.query.toDate    as string | undefined,
+  });
+  return res.json({ success: true, data });
+}));
+
+// PUT /api/employees/me/bank-details — upsert bank details for logged-in user
+router.put("/me/bank-details", h(async (req: any, res: any) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+  const [rows] = await db.execute(
+    "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    [userId]
+  ) as any[];
+  if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
+  const empId = rows[0].id;
+
+  const { bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number } = req.body;
+
+  const fields: string[] = ["employee_id", "bank_name", "account_holder_name", "bank_branch", "ifsc_code", "account_type", "verification_status"];
+  const vals: any[] = [empId, bank_name, account_holder_name, bank_branch, ifsc_code, account_type, "pending"];
+  const onDup: string[] = ["bank_name = VALUES(bank_name)", "account_holder_name = VALUES(account_holder_name)", "bank_branch = VALUES(bank_branch)", "ifsc_code = VALUES(ifsc_code)", "account_type = VALUES(account_type)", "verification_status = 'pending'"];
+
+  if (account_number) {
+    const masked = "****" + String(account_number).slice(-4);
+    fields.push("account_number", "masked_account_number");
+    vals.push(account_number, masked);
+    onDup.push("account_number = VALUES(account_number)", "masked_account_number = VALUES(masked_account_number)");
+  }
+
+  const placeholders = fields.map(() => "?").join(", ");
+  await db.execute(
+    `INSERT INTO employee_bank_detail (${fields.join(", ")}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${onDup.join(", ")}`,
+    vals
+  );
+  return res.json({ success: true, message: "Bank details saved" });
+}));
+
+// PUT /api/employees/me/statutory-details — upsert statutory info for logged-in user
+router.put("/me/statutory-details", h(async (req: any, res: any) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+  const [rows] = await db.execute(
+    "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    [userId]
+  ) as any[];
+  if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
+  const empId = rows[0].id;
+
+  const { epf_number, esi_number, uan_number, pan_number, aadhaar_id, pf_eligible, esi_eligible, epf_date } = req.body;
+
+  const STAT_FIELDS: string[] = ["employee_id"];
+  const statVals: any[] = [empId];
+  const statOnDup: string[] = [];
+
+  const addStat = (col: string, val: any) => {
+    if (val !== undefined) {
+      STAT_FIELDS.push(col);
+      statVals.push(val);
+      statOnDup.push(`${col} = VALUES(${col})`);
+    }
+  };
+  addStat("epf_number", epf_number);
+  addStat("esi_number", esi_number);
+  addStat("uan_number", uan_number);
+  addStat("pan_number", pan_number);
+  addStat("aadhaar_id", aadhaar_id);
+  addStat("pf_eligible", pf_eligible);
+  addStat("esi_eligible", esi_eligible);
+  addStat("epf_date", epf_date);
+
+  if (STAT_FIELDS.length > 1) {
+    const placeholders = STAT_FIELDS.map(() => "?").join(", ");
+    const dupClause = statOnDup.length ? `ON DUPLICATE KEY UPDATE ${statOnDup.join(", ")}` : "";
+    await db.execute(
+      `INSERT INTO employee_statutory_info (${STAT_FIELDS.join(", ")}) VALUES (${placeholders}) ${dupClause}`,
+      statVals
+    ).catch(() => {
+      // If ON DUPLICATE KEY not applicable (no unique key), fall through silently
+    });
+  }
+
+  // Also sync uan_number to employees table if provided
+  if (uan_number !== undefined) {
+    await db.execute("UPDATE employees SET uan_number = ? WHERE id = ?", [uan_number, empId]).catch(() => {});
+  }
+
+  return res.json({ success: true, message: "Statutory details saved" });
+}));
+
+// PUT /api/employees/me/emergency-contact — upsert primary emergency contact for logged-in user
+router.put("/me/emergency-contact", h(async (req: any, res: any) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+  const [rows] = await db.execute(
+    "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    [userId]
+  ) as any[];
+  if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
+  const empId = rows[0].id;
+
+  const { name, relationship, mobile, address } = req.body;
+  if (!name || !relationship || !mobile) {
+    return res.status(400).json({ success: false, error: "name, relationship, and mobile are required" });
+  }
+
+  await db.execute(
+    `INSERT INTO employee_emergency_contact (employee_id, contact_seq, is_primary, name, relationship, mobile, address)
+     VALUES (?, 1, 1, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE name = VALUES(name), relationship = VALUES(relationship), mobile = VALUES(mobile), address = VALUES(address)`,
+    [empId, name, relationship, mobile, address ?? null]
+  );
+  return res.json({ success: true, message: "Emergency contact saved" });
+}));
+
+// PUT /api/employees/me/nominee — upsert nominee for logged-in user (uses employee_nominee table)
+router.put("/me/nominee", h(async (req: any, res: any) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+  const [rows] = await db.execute(
+    "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    [userId]
+  ) as any[];
+  if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
+  const empId = rows[0].id;
+
+  const { nominee_name, relationship, date_of_birth, mobile, address } = req.body;
+  if (!nominee_name || !relationship) {
+    return res.status(400).json({ success: false, error: "nominee_name and relationship are required" });
+  }
+
+  try {
+    // Check if nominee already exists for this employee
+    const [existingRows] = await db.execute(
+      "SELECT id FROM employee_nominee WHERE employee_id = ? ORDER BY created_at ASC LIMIT 1",
+      [empId]
+    ) as any[];
+
+    if (existingRows.length) {
+      await db.execute(
+        `UPDATE employee_nominee SET nominee_name = ?, relationship = ?, date_of_birth = ?, mobile = ?, address = ? WHERE id = ?`,
+        [nominee_name, relationship, date_of_birth ?? null, mobile ?? null, address ?? null, existingRows[0].id]
+      );
+    } else {
+      await db.execute(
+        `INSERT INTO employee_nominee (employee_id, nominee_name, relationship, date_of_birth, mobile, address) VALUES (?, ?, ?, ?, ?, ?)`,
+        [empId, nominee_name, relationship, date_of_birth ?? null, mobile ?? null, address ?? null]
+      );
+    }
+  } catch (_e) {
+    // Fallback: update nominee columns on employees table if employee_nominee table unavailable
+    await db.execute(
+      "UPDATE employees SET nominee_name = ?, nominee_relation = ? WHERE id = ?",
+      [nominee_name, relationship, empId]
+    );
+  }
+  return res.json({ success: true, message: "Nominee saved" });
 }));
 
 // GET /api/employees/stats — aggregate counts (must be before /:id to avoid route collision)

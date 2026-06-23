@@ -327,3 +327,8 @@ export function useAuth() {
   }
   return context;
 }
+
+export function useIsReadOnly(): boolean {
+  const { user } = useAuth();
+  return (user as any)?.isReadOnly === true;
+}

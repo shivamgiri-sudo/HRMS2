@@ -31,9 +31,26 @@ function flattenKpis(data: AnyRecord | null, keys?: string[]) {
     .map(([key, value]) => ({ key: String(key), value }));
 }
 
+function isSimpleObject(val: unknown): boolean {
+  if (!val || typeof val !== "object" || Array.isArray(val)) return false;
+  return Object.values(val as AnyRecord).every(
+    (v) => v == null || typeof v === "string" || typeof v === "number" || typeof v === "boolean"
+  );
+}
+
 function Section({ title, value }: { title: string; value: unknown }) {
   if (value == null) return null;
-  const rows = Array.isArray(value) ? value : typeof value === "object" ? Object.entries(value as AnyRecord).map(([key, item]) => ({ key, item })) : [];
+
+  // Normalise to a list of items
+  const rows: unknown[] = Array.isArray(value)
+    ? value
+    : typeof value === "object"
+    ? Object.entries(value as AnyRecord).map(([key, item]) => ({ _key: key, ...( typeof item === "object" && item ? item : { value: item }) }))
+    : [];
+
+  // Detect whether every row in the array is a simple flat object (all scalar values)
+  const allSimple = rows.length > 0 && rows.every(isSimpleObject);
+
   return (
     <section className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="mb-4 flex items-center justify-between gap-3">
@@ -42,12 +59,26 @@ function Section({ title, value }: { title: string; value: unknown }) {
       </div>
       {rows.length === 0 ? (
         <pre className="overflow-auto rounded-xl bg-slate-950 p-4 text-xs text-slate-100">{valueText(value)}</pre>
+      ) : allSimple ? (
+        // Render flat object arrays as readable key-value cards instead of raw JSON
+        <div className="space-y-2">
+          {rows.slice(0, 12).map((row: any, index: number) => (
+            <div key={row.id ?? row.code ?? index} className="rounded-xl bg-slate-50 px-4 py-3 flex flex-wrap gap-x-6 gap-y-1">
+              {Object.entries(row as AnyRecord).map(([k, v]) => (
+                <span key={k} className="text-sm">
+                  <span className="text-xs font-black uppercase text-slate-400 mr-1">{k.replace(/_/g, " ")}:</span>
+                  <span className="text-slate-700">{valueText(v)}</span>
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
       ) : (
         <div className="space-y-3">
           {rows.slice(0, 12).map((row: any, index: number) => (
-            <div key={row.key ?? index} className="rounded-xl bg-slate-50 p-3">
-              {row.key && <p className="mb-1 text-xs font-black uppercase text-slate-400">{row.key}</p>}
-              <pre className="max-h-52 overflow-auto whitespace-pre-wrap text-xs leading-5 text-slate-700">{JSON.stringify(row.item ?? row, null, 2)}</pre>
+            <div key={row._key ?? row.id ?? index} className="rounded-xl bg-slate-50 p-3">
+              {row._key && <p className="mb-1 text-xs font-black uppercase text-slate-400">{String(row._key).replace(/_/g, " ")}</p>}
+              <pre className="max-h-52 overflow-auto whitespace-pre-wrap text-xs leading-5 text-slate-700">{JSON.stringify(row._key ? Object.fromEntries(Object.entries(row).filter(([k]) => k !== "_key")) : row, null, 2)}</pre>
             </div>
           ))}
         </div>

@@ -120,11 +120,13 @@ async function getAllAttendance(date: string): Promise<{ byDate: Map<string, num
 async function getAllPlannedHc(date: string): Promise<Map<string, number>> {
   const map = new Map<string, number>();
   if (await tableExists("roster_assignment")) {
+    // roster_assignment has no process_id column — join through employees
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT process_id, COUNT(DISTINCT employee_id) AS cnt
-         FROM roster_assignment
-        WHERE roster_date = ?
-        GROUP BY process_id`,
+      `SELECT e.process_id, COUNT(DISTINCT ra.employee_id) AS cnt
+         FROM roster_assignment ra
+         JOIN employees e ON e.id = ra.employee_id
+        WHERE ra.roster_date = ?
+        GROUP BY e.process_id`,
       [date]
     );
     for (const row of rows as any[]) {

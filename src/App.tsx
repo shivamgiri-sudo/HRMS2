@@ -267,7 +267,7 @@ const App = () => (
               <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
               <Route path="/employee-journey" element={<ProtectedRoute><EmployeeJourney /></ProtectedRoute>} />
               <Route path="/performance" element={<ProtectedRoute><Performance /></ProtectedRoute>} />
-              <Route path="/reviews-management" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><ReviewsManagement /></Gate></ProtectedRoute>} />
+              <Route path="/reviews-management" element={<Navigate to="/dashboard" replace />} />
               <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />
               <Route path="/attendance-regularization" element={<ProtectedRoute><Gate pageCode="ATTENDANCE_REGULARIZATION"><AttendanceRegularization /></Gate></ProtectedRoute>} />
               <Route path="/bulk-upload" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><BulkUploadHub /></Gate></ProtectedRoute>} />
@@ -369,15 +369,15 @@ const App = () => (
               <Route path="/org-masters/locations-policies" element={<ProtectedRoute><Gate pageCode="ORG_MASTERS"><NativeLocationPolicyMasters /></Gate></ProtectedRoute>} />
               <Route path="/workflow-admin" element={<ProtectedRoute><Gate pageCode="WORKFLOW_ADMIN"><NativeWorkflowAdmin /></Gate></ProtectedRoute>} />
               <Route path="/management/dashboard" element={<ProtectedRoute><Gate pageCode="MANAGEMENT_DASHBOARD"><NativeManagementDashboard /></Gate></ProtectedRoute>} />
-              <Route path="/management/ceo-command-center" element={<ProtectedRoute roles={['admin', 'hr', 'ceo', 'finance', 'process_manager', 'manager']}><NativeCEOCommandCenter /></ProtectedRoute>} />
+              <Route path="/management/ceo-command-center" element={<Navigate to="/dashboard" replace />} />
               <Route path="/benefits" element={<ProtectedRoute><Gate pageCode="BENEFITS"><NativeBenefitsClaims /></Gate></ProtectedRoute>} />
               <Route path="/career-planning" element={<ProtectedRoute><Gate pageCode="CAREER_PLANNING"><NativeCareerPlanning /></Gate></ProtectedRoute>} />
-              <Route path="/pip-management" element={<ProtectedRoute><Gate pageCode="PIP_MANAGEMENT"><NativePIPManagement /></Gate></ProtectedRoute>} />
+              <Route path="/pip-management" element={<Navigate to="/dashboard" replace />} />
               <Route path="/erp" element={<ProtectedRoute><Gate pageCode="ERP"><NativeERP /></Gate></ProtectedRoute>} />
-              <Route path="/goals" element={<ProtectedRoute><Gate pageCode="GOALS"><NativeGoalsAppraisal /></Gate></ProtectedRoute>} />
+              <Route path="/goals" element={<Navigate to="/dashboard" replace />} />
               <Route path="/work-inbox" element={<ProtectedRoute><Gate pageCode="WORK_INBOX"><NativeWorkInbox /></Gate></ProtectedRoute>} />
               <Route path="/mobility" element={<ProtectedRoute><Gate pageCode="MOBILITY"><NativeMobilityManagement /></Gate></ProtectedRoute>} />
-              <Route path="/jobs" element={<ProtectedRoute><Gate pageCode="JOBS_PORTAL"><NativeJobsPortal /></Gate></ProtectedRoute>} />
+              <Route path="/jobs" element={<Navigate to="/dashboard" replace />} />
               <Route path="/advanced-reports" element={<ProtectedRoute><Gate pageCode="ADVANCED_REPORTS"><NativeAdvancedReports /></Gate></ProtectedRoute>} />
               <Route path="/compliance/statutory" element={<ProtectedRoute><Gate pageCode="STATUTORY_COMPLIANCE"><NativeStatutoryCompliance /></Gate></ProtectedRoute>} />
               <Route path="/compliance/labour" element={<ProtectedRoute><Gate pageCode="LABOUR_COMPLIANCE"><NativeLabourCompliance /></Gate></ProtectedRoute>} />
@@ -419,7 +419,7 @@ const App = () => (
               <Route path="/roster-capacity-config" element={<ProtectedRoute><Gate pageCode="ROSTER_MASTER"><NativeRosterCapacityConfig /></Gate></ProtectedRoute>} />
               <Route path="/wfm/auto-roster" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWFMAutoRoster /></Gate></ProtectedRoute>} />
               <Route path="/workforce-planning" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWorkforcePlanning /></Gate></ProtectedRoute>} />
-              <Route path="/control-tower" element={<ProtectedRoute><Gate pageCode="CONTROL_TOWER"><NativeControlTower /></Gate></ProtectedRoute>} />
+              <Route path="/control-tower" element={<Navigate to="/dashboard" replace />} />
               <Route path="/rta-board" element={<ProtectedRoute><Gate pageCode="RTA_BOARD"><NativeRTABoard /></Gate></ProtectedRoute>} />
               <Route path="/attendance-rules-master" element={<ProtectedRoute roles={['admin', 'hr']}><NativeAttendanceRulesMaster /></ProtectedRoute>} />
               <Route path="/changelog" element={<ProtectedRoute><Changelog /></ProtectedRoute>} />

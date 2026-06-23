@@ -74,10 +74,12 @@ export function LeaveBalanceReport() {
     ]);
     const escape = (v: string | number) => { const s = String(v ?? ""); return s.includes(",") || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s; };
     const csv = [headers, ...rows].map((r) => r.map(escape).join(",")).join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    a.href = url;
     a.download = `Leave_Balance_Report_${report.year}.csv`;
     a.click();
+    URL.revokeObjectURL(url);
   };
 
   const exportToPDF = async () => {

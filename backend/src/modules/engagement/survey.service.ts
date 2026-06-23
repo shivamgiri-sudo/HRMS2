@@ -40,20 +40,17 @@ export async function createSurvey(data: CreateSurveyDTO, createdBy: string): Pr
   for (const question of data.questions) {
     await db.execute(
       `INSERT INTO survey_question
-         (question_id, survey_id, question_text, question_type, question_order,
-          is_required, options_json, scale_min, scale_max, scale_labels_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, survey_id, question_text, question_type, display_order,
+          is_required, options_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         randomUUID(),
         surveyId,
         question.question_text,
         question.question_type,
-        question.question_order,
+        question.display_order ?? question.question_order,
         question.is_required ?? false,
         question.options_json ? JSON.stringify(question.options_json) : null,
-        question.scale_min ?? null,
-        question.scale_max ?? null,
-        question.scale_labels_json ? JSON.stringify(question.scale_labels_json) : null,
       ]
     );
   }
@@ -98,7 +95,7 @@ export async function getSurvey(id: string): Promise<SurveyWithQuestionsResponse
   );
   if (!surveyRows[0]) return null;
   const [questionRows] = await db.execute<RowDataPacket[]>(
-    "SELECT * FROM survey_question WHERE survey_id = ? ORDER BY question_order",
+    "SELECT * FROM survey_question WHERE survey_id = ? ORDER BY display_order",
     [id]
   );
   return { ...(surveyRows[0] as SurveyMaster), questions: questionRows as SurveyQuestion[] };
@@ -116,7 +113,7 @@ export async function submitSurveyResponse(data: SubmitSurveyResponseDTO): Promi
     if (existing.length) throw new Error("Survey already completed");
   }
 
-  const validQuestions = new Set(survey.questions.map((question) => question.question_id));
+  const validQuestions = new Set(survey.questions.map((question) => question.id));
   for (const response of data.responses) {
     if (!validQuestions.has(response.question_id)) throw new Error("Invalid survey question");
     await db.execute(
@@ -152,14 +149,14 @@ export async function submitSurveyResponse(data: SubmitSurveyResponseDTO): Promi
 
 export async function getSurveyResults(id: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT sq.question_id, sq.question_text, sq.question_type,
+    `SELECT sq.id AS question_id, sq.question_text, sq.question_type,
             COUNT(sr.response_id) as response_count,
             AVG(sr.response_value) as average_value
        FROM survey_question sq
-       LEFT JOIN survey_response sr ON sr.question_id = sq.question_id
+       LEFT JOIN survey_response sr ON sr.question_id = sq.id
       WHERE sq.survey_id = ?
-      GROUP BY sq.question_id, sq.question_text, sq.question_type, sq.question_order
-      ORDER BY sq.question_order`,
+      GROUP BY sq.id, sq.question_text, sq.question_type, sq.display_order
+      ORDER BY sq.display_order`,
     [id]
   );
   return rows;

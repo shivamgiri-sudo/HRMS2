@@ -39,6 +39,8 @@ export function useAttendanceReportData(month: number, year: number, branchId?: 
 
   return useQuery({
     queryKey: ["attendance-report-data", month, year, branchId, processId, costCentreId],
+    staleTime: 5 * 60_000,   // 5 min — this report paginates 65K employees, avoid redundant refetches
+    gcTime: 10 * 60_000,
     queryFn: async (): Promise<AttendanceReportSummary> => {
       let empPage = 1;
       const allEmployees: any[] = [];

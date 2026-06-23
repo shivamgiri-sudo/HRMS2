@@ -147,16 +147,13 @@ export interface SurveyMaster {
 
 // 9. Survey Question
 export interface SurveyQuestion {
-  question_id: string;
+  id: string;
   survey_id: string;
   question_text: string;
   question_type: QuestionType;
-  question_order: number;
+  display_order: number;
   is_required: boolean;
   options_json: string[] | null;
-  scale_min: number | null;
-  scale_max: number | null;
-  scale_labels_json: Record<string, string> | null;
 }
 
 // 10. Survey Response
@@ -327,7 +324,8 @@ export interface CreateSurveyDTO {
 export interface CreateSurveyQuestionDTO {
   question_text: string;
   question_type: QuestionType;
-  question_order: number;
+  display_order?: number;
+  question_order?: number;
   is_required?: boolean;
   options_json?: string[];
   scale_min?: number;

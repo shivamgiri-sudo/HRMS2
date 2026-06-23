@@ -179,7 +179,27 @@ export const leaveService = {
        ORDER BY lt.leave_name ASC`,
       [employeeId, year]
     );
-    return rows as RowDataPacket[];
+
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth() + 1; // 1-12
+
+    return (rows as RowDataPacket[]).map((row: any) => {
+      const allocated = Number(row.allocated_days ?? 0);
+      const used = Number(row.used_days ?? 0);
+      const adjusted = Number(row.adjusted_days ?? 0);
+      const leaveCode: string = (row.leave_code ?? "").toUpperCase();
+
+      // For CL/ML in the current year, prorate allocated_days to months elapsed so far.
+      // This prevents showing the full annual credit when only part of the year has passed.
+      let effectiveAllocated = allocated;
+      if (["CL", "ML"].includes(leaveCode) && year === currentYear && allocated > 0) {
+        const monthsInYear = 12;
+        effectiveAllocated = Math.min(allocated, parseFloat(((allocated / monthsInYear) * currentMonth).toFixed(2)));
+      }
+
+      const available_days = Math.max(0, effectiveAllocated + adjusted - used);
+      return { ...row, available_days };
+    });
   },
 
   async listHolidays(year?: number): Promise<LeaveHoliday[]> {

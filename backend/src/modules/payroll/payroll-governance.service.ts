@@ -57,10 +57,12 @@ function runEmployeeScopeSql(run: any) {
 }
 
 async function countIssue(sql: string, params: unknown[], code: string, severity: PayrollReadinessSeverity, message: string): Promise<PayrollReadinessIssue | null> {
-  const [countRows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS count FROM (${sql}) issue_rows`, params);
+  // Use db.query (text protocol) instead of db.execute (prepared statements) to avoid
+  // "Incorrect arguments to mysqld_stmt_execute" when ? placeholders appear inside subqueries.
+  const [countRows] = await db.query<RowDataPacket[]>(`SELECT COUNT(*) AS count FROM (${sql}) issue_rows`, params);
   const count = Number(countRows[0]?.count ?? 0);
   if (count === 0) return null;
-  const [sample] = await db.execute<RowDataPacket[]>(`${sql} LIMIT 10`, params);
+  const [sample] = await db.query<RowDataPacket[]>(`${sql} LIMIT 10`, params);
   return { code, severity, count, message, sample: sample as Array<Record<string, unknown>> };
 }
 
