@@ -345,6 +345,7 @@ const Payroll = () => {
     link.href = URL.createObjectURL(blob);
     link.download = `payroll-export-${format(new Date(), "yyyy-MM-dd")}.csv`;
     link.click();
+    URL.revokeObjectURL(link.href);
 
     toast({
       title: "Export Complete",

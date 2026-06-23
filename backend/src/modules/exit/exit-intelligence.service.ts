@@ -2,18 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { calculateEmployeeEngagementHealth } from "../engagement/engagement-health.service.js";
-
-async function scalar(sql: string, params: unknown[] = [], fallback = 0): Promise<number> {
-  try {
-    const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-    const first = rows[0] ?? {};
-    const value = Object.values(first)[0];
-    const n = Number(value ?? fallback);
-    return Number.isFinite(n) ? n : fallback;
-  } catch {
-    return fallback;
-  }
-}
+import { scalar } from "../../shared/dbHelpers.js";
 
 function riskLabel(score: number): "low" | "medium" | "high" | "critical" {
   if (score >= 75) return "critical";

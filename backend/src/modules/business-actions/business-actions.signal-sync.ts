@@ -2,14 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { revenueRiskService } from "../revenue-risk/revenue-risk.service.js";
-
-async function tableExists(tableName: string): Promise<boolean> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1",
-    [tableName]
-  );
-  return rows.length > 0;
-}
+import { tableExists } from "../../shared/dbHelpers.js";
 
 function dueDate(days: number) {
   const date = new Date();

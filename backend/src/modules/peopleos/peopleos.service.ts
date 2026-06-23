@@ -13,6 +13,7 @@ import {
   type ScopeCondition,
 } from "../../shared/enterpriseScope.js";
 import { writeAuditLog, writeSensitiveActionLog } from "../../shared/auditLog.js";
+import { tableExists } from "../../shared/dbHelpers.js";
 
 type QueryFilters = {
   from?: string;
@@ -57,17 +58,6 @@ function and(base: string[], condition: ScopeCondition): { sql: string; params: 
   };
 }
 
-async function tableExists(tableName: string): Promise<boolean> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT 1 AS ok
-       FROM INFORMATION_SCHEMA.TABLES
-      WHERE TABLE_SCHEMA = DATABASE()
-        AND TABLE_NAME = ?
-      LIMIT 1`,
-    [tableName],
-  );
-  return rows.length > 0;
-}
 
 async function scopedEmployeeWhere(actor: Actor, filters: QueryFilters, alias = "e") {
   const scope = await resolveUserBusinessScope(actor);

@@ -1,4 +1,4 @@
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useMemo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -302,14 +302,15 @@ const Attendance = () => {
     return overtime > 0 ? overtime : 0;
   };
 
-  const calculateMonthlyOvertime = (): number => {
+  // useMemo: only recalculates when attendanceRecords or currentEmployee changes
+  const monthlyOvertime = useMemo((): number => {
     if (!attendanceRecords) return 0;
-
     return attendanceRecords.reduce(
       (total, record) => total + calculateOvertime(record),
       0
     );
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attendanceRecords, currentEmployee]);
 
   const calculateLateArrival = (
     clockInTime: string | null,
@@ -880,7 +881,7 @@ const Attendance = () => {
 
                   {isAdminOrHR && (
                     <Badge className="bg-sky-50 text-sky-700 hover:bg-sky-50">
-                      Overtime: {calculateMonthlyOvertime().toFixed(2)} hrs
+                      Overtime: {monthlyOvertime.toFixed(2)} hrs
                     </Badge>
                   )}
                 </div>

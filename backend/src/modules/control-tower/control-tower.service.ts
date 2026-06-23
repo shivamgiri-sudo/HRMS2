@@ -3,14 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { getUserRoleKeys, getUserAssignmentScopes } from "../../shared/scopeAccess.js";
-
-async function tableExists(tableName: string): Promise<boolean> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1`,
-    [tableName]
-  );
-  return rows.length > 0;
-}
+import { tableExists } from "../../shared/dbHelpers.js";
 
 async function columnsFor(tableName: string): Promise<Set<string>> {
   const [rows] = await db.execute<RowDataPacket[]>(

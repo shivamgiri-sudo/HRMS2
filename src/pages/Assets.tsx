@@ -396,6 +396,7 @@ const Assets = () => {
     }.csv`;
 
     link.click();
+    URL.revokeObjectURL(link.href);
 
     toast.success(`${dataToExport.length} assets exported to CSV`);
   };

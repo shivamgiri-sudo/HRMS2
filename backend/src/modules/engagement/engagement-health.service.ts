@@ -1,20 +1,9 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { tableExists, scalar } from "../../shared/dbHelpers.js";
 
-const schemaTableCache = new Map<string, Promise<boolean>>();
 const schemaColumnCache = new Map<string, Promise<boolean>>();
-
-async function tableExists(tableName: string): Promise<boolean> {
-  const cached = schemaTableCache.get(tableName);
-  if (cached) return cached;
-  const lookup = db.execute<RowDataPacket[]>(
-    `SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1`,
-    [tableName]
-  ).then(([rows]) => rows.length > 0);
-  schemaTableCache.set(tableName, lookup);
-  return lookup;
-}
 
 async function columnExists(tableName: string, columnName: string): Promise<boolean> {
   const cacheKey = `${tableName}.${columnName}`;
@@ -27,18 +16,6 @@ async function columnExists(tableName: string, columnName: string): Promise<bool
   ).then(([rows]) => rows.length > 0);
   schemaColumnCache.set(cacheKey, lookup);
   return lookup;
-}
-
-async function scalar(sql: string, params: unknown[] = [], fallback = 0): Promise<number> {
-  try {
-    const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-    const first = rows[0] ?? {};
-    const value = Object.values(first)[0];
-    const n = Number(value ?? fallback);
-    return Number.isFinite(n) ? n : fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 function clamp(value: number, min = 0, max = 100): number {

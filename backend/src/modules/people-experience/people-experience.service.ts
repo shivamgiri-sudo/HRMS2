@@ -2,28 +2,9 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { buildEmployeeScopeCondition, type PeopleExperienceScope } from "./people-experience.scope.js";
+import { tableExists, scalar } from "../../shared/dbHelpers.js";
 
 type FilterMap = Record<string, string | undefined>;
-
-async function tableExists(tableName: string): Promise<boolean> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1",
-    [tableName]
-  );
-  return rows.length > 0;
-}
-
-async function scalar(sql: string, params: unknown[] = [], fallback = 0): Promise<number> {
-  try {
-    const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-    const first = rows[0] ?? {};
-    const value = Object.values(first)[0];
-    const n = Number(value ?? fallback);
-    return Number.isFinite(n) ? n : fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 function clamp(value: number, min = 0, max = 100): number {
   return Math.max(min, Math.min(max, Number.isFinite(value) ? value : 0));

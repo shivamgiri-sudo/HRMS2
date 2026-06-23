@@ -8,6 +8,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import { authService } from "./auth.service.js";
 import { emailService } from "../communication/email.service.js";
+import { tableExists } from "../../shared/dbHelpers.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
@@ -81,13 +82,6 @@ function inviteEmailText(input: { name: string; employeeCode?: string | null; li
   return `Dear ${input.name},\n\nYour MAS Callnet HRMS login has been created.\n${input.employeeCode ? `Employee Code: ${input.employeeCode}\n` : ""}\nSet your password here: ${input.link}\n\nThis link is valid for 24 hours. After setting your password, you can login using your Employee Code or official email ID.\n\nMAS Callnet HRMS`;
 }
 
-async function tableExists(tableName: string): Promise<boolean> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT COUNT(*) AS total FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
-    [tableName]
-  );
-  return Number(rows[0]?.total ?? 0) > 0;
-}
 
 async function assignRole(userId: string, roleKey: string, _actorUserId: string) {
   const [roleRows] = await db.execute<RowDataPacket[]>("SELECT role_key FROM workforce_role_catalog WHERE role_key=? AND active_status=1 LIMIT 1", [roleKey]);

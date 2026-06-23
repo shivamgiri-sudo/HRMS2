@@ -5,6 +5,7 @@ import { db } from "../../db/mysql.js";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { calculateMetricScore } from "./kpi-score-engine.js";
+import { tableExists } from "../../shared/dbHelpers.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
@@ -37,7 +38,6 @@ function inferRoleCodes(row: EmployeeRow): string[] {
 }
 async function inbox(roleKey: string, title: string, description: string, priority = "normal") { try { const [users] = await db.execute<RowDataPacket[]>("SELECT DISTINCT user_id FROM user_roles WHERE role_key=? AND active_status=1 LIMIT 25", [roleKey]); for (const u of users) await db.execute("INSERT INTO work_inbox_item (id,user_id,type,title,description,entity_type,action_url,priority) VALUES (?,?, 'KPI_ACTION', ?, ?, 'kpi', '/kpi-config', ?)", [randomUUID(), u.user_id, title, description, priority]); } catch {} }
 async function journey(employeeId: string, eventType: string, description: string, userId?: string) { try { await db.execute("INSERT INTO employee_journey_log (id,employee_id,event_type,event_date,description,module,triggered_by,metadata) VALUES (?,?,?,CURDATE(),?,'KPI',?,?)", [randomUUID(), employeeId, eventType, description, userId ?? null, JSON.stringify({})]); } catch {} }
-async function tableExists(name: string) { const [rows] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?", [name]); return Number(rows[0]?.total ?? 0) > 0; }
 function json(v: unknown) { if (!v) return null; if (typeof v === "object") return v as Record<string, unknown>; try { return JSON.parse(String(v)); } catch { return null; } }
 
 router.get("/process-templates", requireRole("admin", "hr", "manager", "process_manager"), h(async (req, res) => {

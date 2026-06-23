@@ -5,9 +5,7 @@ import { db } from '../../db/mysql.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { env } from '../../config/env.js';
 
-// Use PORTAL_JWT_SECRET as base if JWT_SECRET not defined yet
-// This avoids breaking existing auth flows while adding new ones
-const JWT_SECRET = (process.env.JWT_SECRET || env.PORTAL_JWT_SECRET || 'change-me-jwt-secret-32characters!!');
+const JWT_SECRET = env.JWT_SECRET;
 const JWT_EXPIRES_IN = '15m';
 const REFRESH_EXPIRES_DAYS = 7;
 const RESET_EXPIRES_HOURS = 24;

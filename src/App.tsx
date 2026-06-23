@@ -68,7 +68,7 @@ const NativeATSExtensions = lazy(() => import("./pages/NativeATSExtensions"));
 const NativeATSFormConfig = lazy(() => import("./pages/NativeATSFormConfig"));
 const NativeATSFullParityCommandCenter = lazy(() => import("./pages/NativeATSFullParityCommandCenter"));
 const NativeRecruiterPortal = lazy(() => import("./pages/NativeRecruiterPortal"));
-const NativePayrollHRValidation = lazy(() => import("./pages/NativePayrollHRValidation"));
+
 const CandidatePortalLogin = lazy(() => import("./pages/CandidatePortalLogin"));
 const CandidatePortalDashboard = lazy(() => import("./pages/CandidatePortalDashboard"));
 const BranchHeadApproval = lazy(() => import("./pages/BranchHeadApproval"));
@@ -212,7 +212,16 @@ const PortalLogin = lazy(() => import("./pages/portal/PortalLogin"));
 const PortalOverview = lazy(() => import("./pages/portal/PortalOverview"));
 const PortalProcessDashboard = lazy(() => import("./pages/portal/PortalProcessDashboard"));
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,          // 30 s — avoids refetch on every window focus
+      gcTime: 5 * 60_000,         // 5 min cache retention after unmount
+      refetchOnWindowFocus: false, // prevent refetch storms on tab switch
+      retry: 1,
+    },
+  },
+});
 const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactNode }) => <WorkforcePageGate pageCode={pageCode}>{children}</WorkforcePageGate>;
 const PageLoader = () => <div className="flex h-screen items-center justify-center bg-slate-50"><div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-slate-800" /></div>;
 

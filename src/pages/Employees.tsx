@@ -323,6 +323,7 @@ const Employees = () => {
     }.csv`;
 
     link.click();
+    URL.revokeObjectURL(link.href);
 
     toast.success(`${dataToExport.length} employees exported to CSV`);
   };
@@ -428,6 +429,7 @@ const Employees = () => {
           new Date().toISOString().split("T")[0]
         }.csv`;
         link.click();
+        URL.revokeObjectURL(link.href);
 
         toast.success(`${selectedEmployees.length} employees exported`);
         setSelectedEmployeeIds([]);

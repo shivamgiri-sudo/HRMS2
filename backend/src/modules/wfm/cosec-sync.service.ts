@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getNcosecPool } from "../../db/ncosecDb.js";
 import { attendanceEngineService } from "./attendance-engine.service.js";
+import { tableExists } from "../../shared/dbHelpers.js";
 
 type PunchGroup = {
   cosecUserId: string;
@@ -147,17 +148,6 @@ async function pullCosecAttendance(from: string, to: string): Promise<PunchGroup
     );
 }
 
-async function tableExists(tableName: string): Promise<boolean> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT 1
-       FROM information_schema.TABLES
-      WHERE TABLE_SCHEMA = DATABASE()
-        AND TABLE_NAME = ?
-      LIMIT 1`,
-    [tableName],
-  );
-  return rows.length > 0;
-}
 
 async function pullMysqlAttendance(from: string, to: string): Promise<PunchGroup[]> {
   const groups = new Map<string, PunchGroup>();

@@ -446,6 +446,7 @@ const Leaves = () => {
     }.csv`;
 
     link.click();
+    URL.revokeObjectURL(link.href);
 
     toast({
       title: "Export Complete",
