@@ -3,6 +3,7 @@ import type { Response, NextFunction } from "express";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
+import { tableExists } from "../../shared/dbHelpers.js";
 import { businessCommandService } from "./business-command.service.js";
 import { revenueRiskService } from "../revenue-risk/revenue-risk.service.js";
 
@@ -11,14 +12,6 @@ businessCommandRouter.use(requireAuth);
 
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
-
-async function tableExists(tableName: string): Promise<boolean> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1",
-    [tableName]
-  );
-  return rows.length > 0;
-}
 
 businessCommandRouter.get("/overview", h(async (_req, res) => {
   res.json({ success: true, data: await businessCommandService.overview() });

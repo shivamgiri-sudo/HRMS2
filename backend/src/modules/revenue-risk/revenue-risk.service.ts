@@ -1,26 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-
-async function tableExists(tableName: string): Promise<boolean> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1",
-    [tableName]
-  );
-  return rows.length > 0;
-}
-
-async function scalar(sql: string, params: unknown[] = [], fallback = 0): Promise<number> {
-  try {
-    const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-    const first = rows[0] ?? {};
-    const value = Object.values(first)[0];
-    const n = Number(value ?? fallback);
-    return Number.isFinite(n) ? n : fallback;
-  } catch {
-    return fallback;
-  }
-}
+import { tableExists, scalar } from "../../shared/dbHelpers.js";
 
 function riskLevel(amount: number, shortageHc: number) {
   if (amount >= 100000 || shortageHc >= 20) return "critical";
@@ -52,90 +33,118 @@ async function getProcessRows() {
   return rows as any[];
 }
 
-async function getContract(processId: string, clientId: string | null, date: string) {
-  if (!(await tableExists("client_contract_master"))) return null;
+async function getAllContracts(date: string): Promise<Map<string, any>> {
+  if (!(await tableExists("client_contract_master"))) return new Map();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT *
        FROM client_contract_master
       WHERE status = 'active'
         AND effective_from <= ?
         AND (effective_to IS NULL OR effective_to >= ?)
-        AND (process_id = ? OR (? IS NOT NULL AND client_id = ?))
-      ORDER BY CASE WHEN process_id = ? THEN 0 ELSE 1 END, effective_from DESC
-      LIMIT 1`,
-    [date, date, processId, clientId, clientId, processId]
+      ORDER BY CASE WHEN process_id IS NOT NULL THEN 0 ELSE 1 END, effective_from DESC`,
+    [date, date]
   );
-  return (rows[0] as any) ?? null;
-}
-
-async function requiredHc(processId: string, date: string) {
-  if (await tableExists("workforce_mandate")) {
-    return scalar(
-      `SELECT COALESCE(SUM(mandated_hc), 0)
-         FROM workforce_mandate
-        WHERE process_id = ?
-          AND active_status = 1
-          AND (effective_from IS NULL OR effective_from <= ?)
-          AND (effective_to IS NULL OR effective_to >= ?)`,
-      [processId, date, date]
-    );
+  // Map: process_id → contract (process-specific wins over client-level)
+  const map = new Map<string, any>();
+  for (const row of rows as any[]) {
+    if (row.process_id && !map.has(row.process_id)) {
+      map.set(row.process_id, row);
+    }
   }
-  return 0;
+  // Second pass: client-level fallback for processes without a process-specific contract
+  for (const row of rows as any[]) {
+    if (!row.process_id && row.client_id) {
+      // stored by client_id as fallback key
+      const clientKey = `client:${row.client_id}`;
+      if (!map.has(clientKey)) map.set(clientKey, row);
+    }
+  }
+  return map;
 }
 
-async function plannedHc(processId: string, date: string) {
+async function getAllMandates(date: string): Promise<Map<string, number>> {
+  if (!(await tableExists("workforce_mandate"))) return new Map();
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT process_id, SUM(mandated_hc) AS total_hc
+       FROM workforce_mandate
+      WHERE active_status = 1
+        AND (effective_from IS NULL OR effective_from <= ?)
+        AND (effective_to IS NULL OR effective_to >= ?)
+      GROUP BY process_id`,
+    [date, date]
+  );
+  const map = new Map<string, number>();
+  for (const row of rows as any[]) {
+    map.set(String(row.process_id), Number(row.total_hc ?? 0));
+  }
+  return map;
+}
+
+async function getAllAttendance(date: string): Promise<{ byDate: Map<string, number>; byLatest: Map<string, number> }> {
+  if (!(await tableExists("attendance_daily_record"))) {
+    return { byDate: new Map(), byLatest: new Map() };
+  }
+
+  // Fetch for requested date
+  const [dateRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.process_id, COUNT(DISTINCT adr.employee_id) AS cnt
+       FROM attendance_daily_record adr
+       JOIN employees e ON e.id = adr.employee_id
+      WHERE adr.record_date = ?
+        AND adr.attendance_status IN ('present','half_day')
+      GROUP BY e.process_id`,
+    [date]
+  );
+  const byDate = new Map<string, number>();
+  for (const row of dateRows as any[]) {
+    if (row.process_id) byDate.set(String(row.process_id), Number(row.cnt ?? 0));
+  }
+
+  // Fetch for latest date (COSEC lags 1-2 days)
+  const [latestRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.process_id, COUNT(DISTINCT adr.employee_id) AS cnt
+       FROM attendance_daily_record adr
+       JOIN employees e ON e.id = adr.employee_id
+      WHERE adr.record_date = (SELECT MAX(record_date) FROM attendance_daily_record)
+        AND adr.attendance_status IN ('present','half_day')
+      GROUP BY e.process_id`
+  );
+  const byLatest = new Map<string, number>();
+  for (const row of latestRows as any[]) {
+    if (row.process_id) byLatest.set(String(row.process_id), Number(row.cnt ?? 0));
+  }
+
+  return { byDate, byLatest };
+}
+
+async function getAllPlannedHc(date: string): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
   if (await tableExists("roster_assignment")) {
-    return scalar(
-      `SELECT COUNT(DISTINCT employee_id)
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT process_id, COUNT(DISTINCT employee_id) AS cnt
          FROM roster_assignment
-        WHERE process_id = ?
-          AND roster_date = ?`,
-      [processId, date]
+        WHERE roster_date = ?
+        GROUP BY process_id`,
+      [date]
     );
+    for (const row of rows as any[]) {
+      if (row.process_id) map.set(String(row.process_id), Number(row.cnt ?? 0));
+    }
+    return map;
   }
   if (await tableExists("employees")) {
-    return scalar(
-      `SELECT COUNT(*)
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT process_id, COUNT(*) AS cnt
          FROM employees
-        WHERE process_id = ?
-          AND active_status = 1
-          AND LOWER(COALESCE(employment_status, 'active')) = 'active'`,
-      [processId]
+        WHERE active_status = 1
+          AND LOWER(COALESCE(employment_status, 'active')) = 'active'
+        GROUP BY process_id`
     );
+    for (const row of rows as any[]) {
+      if (row.process_id) map.set(String(row.process_id), Number(row.cnt ?? 0));
+    }
   }
-  return 0;
-}
-
-async function availableHc(processId: string, date: string) {
-  if (await tableExists("attendance_daily_record")) {
-    // Use requested date; fall back to latest date with data if no records for requested date
-    const countForDate = await scalar(
-      `SELECT COUNT(DISTINCT adr.employee_id)
-         FROM attendance_daily_record adr
-         JOIN employees e ON e.id = adr.employee_id
-        WHERE e.process_id = ?
-          AND adr.record_date = ?
-          AND adr.attendance_status IN ('present','half_day')`,
-      [processId, date]
-    );
-    if (countForDate > 0) return countForDate;
-
-    // Fallback: use latest date that has attendance data (COSEC may lag 1-2 days)
-    return scalar(
-      `SELECT COUNT(DISTINCT adr.employee_id)
-         FROM attendance_daily_record adr
-         JOIN employees e ON e.id = adr.employee_id
-        WHERE e.process_id = ?
-          AND adr.record_date = (
-            SELECT MAX(record_date) FROM attendance_daily_record adr2
-            JOIN employees e2 ON e2.id = adr2.employee_id
-            WHERE e2.process_id = ? AND adr2.attendance_status IN ('present','half_day')
-          )
-          AND adr.attendance_status IN ('present','half_day')`,
-      [processId, processId]
-    );
-  }
-  return plannedHc(processId, date);
+  return map;
 }
 
 function calculateRevenue(contract: any, required: number, available: number) {
@@ -214,16 +223,30 @@ export const revenueRiskService = {
 
   async calculate(date = new Date().toISOString().slice(0, 10), persist = false) {
     const processes = await getProcessRows();
-    const mandateAvailable = await tableExists("workforce_mandate");
-    const attendanceAvailable = await tableExists("attendance_daily_record");
-    const contractAvailable = await tableExists("client_contract_master");
-    const rows = [];
 
+    // Check table availability and batch-fetch all lookups in parallel — O(8 queries) total regardless of process count
+    const [mandateAvailable, attendanceAvailable, contractAvailable, persistAvailable,
+           contractMap, mandateMap, attendance, plannedMap] = await Promise.all([
+      tableExists("workforce_mandate"),
+      tableExists("attendance_daily_record"),
+      tableExists("client_contract_master"),
+      persist ? tableExists("process_revenue_daily") : Promise.resolve(false),
+      getAllContracts(date),
+      getAllMandates(date),
+      getAllAttendance(date),
+      getAllPlannedHc(date),
+    ]);
+
+    const rows = [];
     for (const process of processes) {
-      const contract = await getContract(String(process.process_id), process.client_id ? String(process.client_id) : null, date);
-      const required = await requiredHc(String(process.process_id), date);
-      const planned = await plannedHc(String(process.process_id), date);
-      const available = await availableHc(String(process.process_id), date);
+      const pid = String(process.process_id);
+      const clientKey = `client:${process.client_id}`;
+      const contract = contractMap.get(pid) ?? contractMap.get(clientKey) ?? null;
+      const required = mandateMap.get(pid) ?? 0;
+      const planned = plannedMap.get(pid) ?? 0;
+      const available = (attendance.byDate.get(pid) ?? 0) > 0
+        ? attendance.byDate.get(pid)!
+        : (attendance.byLatest.get(pid) ?? plannedMap.get(pid) ?? 0);
       const finalRequired = required || planned;
       const calc = calculateRevenue(contract, finalRequired, available);
       const conf = confidence({ contract: !!contract && contractAvailable, mandate: mandateAvailable && required > 0, attendance: attendanceAvailable });
@@ -257,7 +280,7 @@ export const revenueRiskService = {
       };
       rows.push(row);
 
-      if (persist && await tableExists("process_revenue_daily")) {
+      if (persist && persistAvailable) {
         await db.execute(
           `INSERT INTO process_revenue_daily
             (id, revenue_date, client_id, process_id, contract_id, required_hc, planned_hc, available_hc, shortage_hc,

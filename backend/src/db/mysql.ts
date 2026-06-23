@@ -33,8 +33,16 @@ export const db = {
   end: _pool.end.bind(_pool),
 };
 
+// Catch pool-level errors to avoid unhandled rejections
+((_pool as any).pool ?? _pool).on?.("error", (err: Error) => {
+  console.error("[mysql pool] unexpected error:", err.message);
+});
+
 export async function pingDb(): Promise<void> {
   const conn = await _pool.getConnection();
-  await conn.ping();
-  conn.release();
+  try {
+    await conn.ping();
+  } finally {
+    conn.release();
+  }
 }
