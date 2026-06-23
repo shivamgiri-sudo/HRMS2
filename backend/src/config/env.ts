@@ -26,6 +26,10 @@ const envSchema = z.object({
   LMS_DB_NAME:     z.string().default("lms_mcn"),
   LMS_DB_POOL_MAX: z.coerce.number().default(10),
 
+  // LMS SSO bridge — backend-only secret, never sent to frontend
+  LMS_BRIDGE_SECRET: z.string().default(""),
+  LMS_API_URL: z.string().default(""),
+
   // NCOSEC Biometric DB (Matrix Cosec SQL Server)
   NCOSEC_DB_HOST:     z.string().default(""),
   NCOSEC_DB_PORT:     z.coerce.number().default(1433),
