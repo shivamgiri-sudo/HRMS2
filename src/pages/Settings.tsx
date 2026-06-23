@@ -26,7 +26,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Building2, CalendarDays, Plus, Pencil, Trash2, Loader2, ShieldAlert, Users, Hash, Globe, MapPin } from "lucide-react";
+import { Building2, CalendarDays, Plus, Pencil, Trash2, Loader2, ShieldAlert, Users, Hash, Globe, MapPin, ShieldCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useDepartments } from "@/hooks/useEmployees";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -69,6 +69,78 @@ interface LeaveTypeForm {
   days_per_year: number;
   is_paid: boolean;
 }
+
+const SecuritySettings = () => {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const { data: setting, isLoading } = useQuery({
+    queryKey: ['org-setting', 'two_factor_enabled'],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: { setting_value: string } }>(
+        '/api/org/settings/two_factor_enabled'
+      );
+      return res.data?.setting_value !== 'false';
+    },
+  });
+
+  const mutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      await hrmsApi.put('/api/org/settings/two_factor_enabled', { setting_value: String(enabled) });
+    },
+    onSuccess: (_data, enabled) => {
+      queryClient.invalidateQueries({ queryKey: ['org-setting', 'two_factor_enabled'] });
+      toast({
+        title: enabled ? '2FA Enabled' : '2FA Disabled',
+        description: enabled
+          ? 'All users must complete two-factor authentication on login.'
+          : 'Two-factor authentication is disabled for all users.',
+      });
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to update setting.', variant: 'destructive' });
+    },
+  });
+
+  const enabled = setting ?? true;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5 text-blue-600" />
+          Security Settings
+        </CardTitle>
+        <CardDescription>Manage platform-wide security policies</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="flex items-center justify-between rounded-xl border p-5">
+          <div className="space-y-1">
+            <p className="font-semibold text-slate-900">Two-Factor Authentication (2FA)</p>
+            <p className="text-sm text-slate-500">
+              When enabled, all users are required to verify via OTP on every login.
+              Disable to allow direct login with password only.
+            </p>
+            <p className={`text-xs font-bold mt-1 ${enabled ? 'text-emerald-600' : 'text-rose-600'}`}>
+              {enabled ? '● Enabled — OTP required for all users' : '● Disabled — direct login allowed'}
+            </p>
+          </div>
+          <div className="ml-6 flex items-center gap-3">
+            {isLoading ? (
+              <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+            ) : (
+              <Switch
+                checked={enabled}
+                disabled={mutation.isPending}
+                onCheckedChange={(val) => mutation.mutate(val)}
+              />
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
 
 const Settings = () => {
   const [activeTab, setActiveTab] = useState("user-roles");
@@ -322,6 +394,13 @@ const Settings = () => {
                 <MapPin className="h-4 w-4" />
                 <span className="hidden sm:inline">Office Location</span>
                 <span className="sm:hidden">Office</span>
+              </TabsTrigger>
+            )}
+            {isAdmin && (
+              <TabsTrigger value="security" className="w-full justify-center gap-2 sm:w-auto">
+                <ShieldCheck className="h-4 w-4" />
+                <span className="hidden sm:inline">Security</span>
+                <span className="sm:hidden">Security</span>
               </TabsTrigger>
             )}
           </TabsList>
@@ -586,6 +665,13 @@ const Settings = () => {
           {isAdmin && (
             <TabsContent value="office-location" className="mt-6">
               <OfficeLocationSettings />
+            </TabsContent>
+          )}
+
+          {/* Security Tab - Admin Only */}
+          {isAdmin && (
+            <TabsContent value="security" className="mt-6">
+              <SecuritySettings />
             </TabsContent>
           )}
         </Tabs>

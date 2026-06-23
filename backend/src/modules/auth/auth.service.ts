@@ -139,7 +139,13 @@ export const authService = {
     );
 
     const mustChangePassword = Number(user.must_change_password ?? 0) === 1;
-    const twoFactorRequired = !mustChangePassword;
+
+    // Check global 2FA toggle in org_settings
+    const [tfaSettingRows] = await db.execute<RowDataPacket[]>(
+      "SELECT setting_value FROM org_settings WHERE setting_key = 'two_factor_enabled' LIMIT 1"
+    );
+    const tfaEnabled = (tfaSettingRows as RowDataPacket[])[0]?.setting_value !== 'false';
+    const twoFactorRequired = tfaEnabled && !mustChangePassword;
 
     return {
       accessToken,
