@@ -136,6 +136,7 @@ const NativeMasterReports           = lazy(() => import("./pages/NativeMasterRep
 const NativeAssetsManager           = lazy(() => import("./pages/NativeAssetsManager"));
 const NativeHelpdesk                = lazy(() => import("./pages/NativeHelpdesk"));
 const NativeLetters                 = lazy(() => import("./pages/NativeLetters"));
+const NativeLetterPreview           = lazy(() => import("./pages/NativeLetterPreview"));
 const NativeLifecycle               = lazy(() => import("./pages/NativeLifecycle"));
 const NativeEmployeeLifecycle       = lazy(() => import("./pages/NativeEmployeeLifecycle"));
 const NativeOrgMasters              = lazy(() => import("./pages/NativeOrgMasters"));
@@ -184,6 +185,7 @@ const NativeRosterPreference        = lazy(() => import("./pages/NativeRosterPre
 const Dashboard                     = lazy(() => import("./pages/Dashboard"));
 const SuperAdminDashboardV2         = lazy(() => import("./pages/SuperAdminDashboardV2"));
 const LMSProgressDashboard          = lazy(() => import("./pages/LMSProgressDashboard"));
+const LMSModuleLaunch               = lazy(() => import("./pages/LMSModuleLaunch"));
 const CandidatePortalDashboard      = lazy(() => import("./pages/CandidatePortalDashboard"));
 
 // System
@@ -218,6 +220,8 @@ const NativeBiometricCommandCenter  = lazy(() => import("./pages/NativeBiometric
 const NativeRTABoard                = lazy(() => import("./pages/NativeRTABoard"));
 const NativeWalkinQueue             = lazy(() => import("./pages/NativeWalkinQueueEnhanced"));
 const NativeAttendanceRulesMaster   = lazy(() => import("./pages/NativeAttendanceRulesMaster"));
+const NativeAttendanceMismatchQueue = lazy(() => import("./pages/NativeAttendanceMismatchQueue"));
+const NativeAttendanceBillingConfig = lazy(() => import("./pages/NativeAttendanceBillingConfig"));
 const NativeCustomizationManager    = lazy(() => import("./pages/customization/NativeCustomizationManager"));
 const NativeCustomizationRuleEditor = lazy(() => import("./pages/customization/NativeCustomizationRuleEditor"));
 
@@ -341,6 +345,8 @@ const App = () => (
               <Route path="/lms/admin" element={<ProtectedRoute><Gate pageCode="LMS_ADMIN"><LMSIntegrationAdmin /></Gate></ProtectedRoute>} />
               <Route path="/lms/management-dashboard" element={<ProtectedRoute><Gate pageCode="LMS_MANAGEMENT_DASHBOARD"><LMSIntegrationAdmin /></Gate></ProtectedRoute>} />
               <Route path="/lms/integration" element={<ProtectedRoute><Gate pageCode="LMS_INTEGRATION"><NativeLMSIntegration /></Gate></ProtectedRoute>} />
+              <Route path="/lms/progress-dashboard" element={<ProtectedRoute><Gate pageCode="LMS_PROGRESS_DASHBOARD"><LMSProgressDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/lms/module-launch" element={<ProtectedRoute><Gate pageCode="LMS_MODULE_LAUNCH"><LMSModuleLaunch /></Gate></ProtectedRoute>} />
 
               {/* WFM */}
               <Route path="/wfm/roster" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMRoster /></Gate></ProtectedRoute>} />
@@ -411,6 +417,7 @@ const App = () => (
               <Route path="/assets-manager" element={<ProtectedRoute><Gate pageCode="ASSETS_MANAGER"><NativeAssetsManager /></Gate></ProtectedRoute>} />
               <Route path="/helpdesk" element={<ProtectedRoute><Gate pageCode="HELPDESK"><NativeHelpdesk /></Gate></ProtectedRoute>} />
               <Route path="/letters" element={<ProtectedRoute><Gate pageCode="LETTERS"><NativeLetters /></Gate></ProtectedRoute>} />
+              <Route path="/letters/:id/preview" element={<ProtectedRoute><NativeLetterPreview /></ProtectedRoute>} />
               <Route path="/maternity-leave" element={<ProtectedRoute><NativeMaternityLeave /></ProtectedRoute>} />
               <Route path="/employee-lifecycle" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_LIFECYCLE"><NativeLifecycle /></Gate></ProtectedRoute>} />
               <Route path="/employee-lifecycle-v2" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_LIFECYCLE"><NativeEmployeeLifecycle /></Gate></ProtectedRoute>} />
@@ -488,6 +495,8 @@ const App = () => (
               <Route path="/rta-board" element={<ProtectedRoute><Gate pageCode="RTA_BOARD"><NativeRTABoard /></Gate></ProtectedRoute>} />
               <Route path="/ats/walkin-queue" element={<ProtectedRoute><Gate pageCode="ATS_WALKIN_QUEUE"><NativeWalkinQueue /></Gate></ProtectedRoute>} />
               <Route path="/attendance-rules-master" element={<ProtectedRoute><NativeAttendanceRulesMaster /></ProtectedRoute>} />
+              <Route path="/wfm/mismatch-queue" element={<ProtectedRoute><NativeAttendanceMismatchQueue /></ProtectedRoute>} />
+              <Route path="/attendance/billing-config" element={<ProtectedRoute><NativeAttendanceBillingConfig /></ProtectedRoute>} />
               <Route path="/changelog" element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
