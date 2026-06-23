@@ -333,7 +333,8 @@ router.get("/sso-session", h(async (req: AuthenticatedRequest, res: Response) =>
       throw new Error(bridgeRes.message || `Bridge responded ${fetchRes.status}`);
     }
   } catch (e: any) {
-    return res.status(502).json({ success: false, message: `LMS bridge failed: ${e.message}` });
+    console.error("[lms/sso-session] bridge error:", e?.message);
+    return res.status(502).json({ success: false, message: "LMS SSO unavailable. Please try again or contact support." });
   }
 
   const userType: string = bridgeRes.userType ?? (
