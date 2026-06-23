@@ -203,10 +203,9 @@ async function handleCandidateSelection(candidateId: string) {
 
   const candidate = rows[0];
 
-  // Always generate onboarding token regardless of whether email exists.
-  // HR can share the link manually for walk-in candidates without email.
+  // Send onboarding link immediately on selection — candidate fills BGV docs within the onboarding form.
   sendOnboardingToken(candidateId, 'system').catch((err) =>
-    console.error('[interview] Failed to generate onboarding token for', candidateId, err)
+    console.error('[interview] Failed to send onboarding token for', candidateId, err)
   );
 
   const tempPassword = generateTempPassword();

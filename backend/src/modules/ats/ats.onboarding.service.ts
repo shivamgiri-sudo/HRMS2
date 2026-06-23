@@ -13,6 +13,7 @@ import {
 } from './ats.email.service.js';
 import { createTemporaryPasswordCredential } from '../auth/tempPassword.service.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
+import { providerFactory } from '../communication/providers/provider.factory.js';
 
 // ── PII Helpers ───────────────────────────────────────────────────────────────
 
@@ -92,13 +93,35 @@ export async function sendOnboardingToken(
   );
 
   const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
+  const onboardingLink = `${baseUrl}/onboard-full?token=${rawToken}`;
+
   if (cand.email) {
     await sendOnboardingTokenEmail({
       candidateId,
       to: cand.email,
       candidateName: cand.full_name,
-      onboardingLink: `${baseUrl}/onboard-full?token=${rawToken}`,
+      onboardingLink,
     });
+  }
+
+  // SMS/WhatsApp fallback for candidates without email (walk-ins)
+  if (cand.mobile) {
+    const smsBody =
+      `Hi ${cand.full_name}, you have been selected! Complete your onboarding at: ${onboardingLink} (valid 7 days)`;
+    try {
+      const smsProvider = providerFactory.getProvider('sms');
+      await smsProvider.send(cand.mobile, 'Onboarding Link', smsBody);
+    } catch (smsErr) {
+      // SMS failure must not block token generation — log and continue
+      console.error('[onboarding] SMS delivery failed for', candidateId, smsErr instanceof Error ? smsErr.message : String(smsErr));
+    }
+    // WhatsApp delivery attempt (best-effort)
+    try {
+      const waProvider = providerFactory.getProvider('whatsapp');
+      await waProvider.send(cand.mobile, 'Onboarding Link', smsBody);
+    } catch (waErr) {
+      console.error('[onboarding] WhatsApp delivery failed for', candidateId, waErr instanceof Error ? waErr.message : String(waErr));
+    }
   }
 
   return { token: rawToken, expiresAt };
