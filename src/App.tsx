@@ -149,6 +149,8 @@ const NativeEnterpriseReports       = lazy(() => import("./pages/NativeEnterpris
 const NativeStatutoryCompliance     = lazy(() => import("./pages/NativeStatutoryCompliance"));
 const NativeLabourCompliance        = lazy(() => import("./pages/NativeLabourCompliance"));
 const NativeDPDPCompliance          = lazy(() => import("./pages/NativeDPDPCompliance"));
+const NativeDPDPWithdrawal          = lazy(() => import("./pages/NativeDPDPWithdrawal"));
+const NativeDPDPWithdrawalAdmin     = lazy(() => import("./pages/NativeDPDPWithdrawalAdmin"));
 const NativeMaternityLeave          = lazy(() => import("./pages/NativeMaternityLeave"));
 const NativeIntegrationHub          = lazy(() => import("./pages/NativeIntegrationHub"));
 const EnhancedClientMaster          = lazy(() => import("./pages/EnhancedClientMaster"));
@@ -200,6 +202,13 @@ const NativeAttendanceRulesMaster = lazy(() => import("./pages/NativeAttendanceR
 const NativeCustomizationManager = lazy(() => import("./pages/customization/NativeCustomizationManager"));
 const NativeCustomizationRuleEditor = lazy(() => import("./pages/customization/NativeCustomizationRuleEditor"));
 const EmployeeJourney = lazy(() => import("./pages/EmployeeJourney"));
+
+// Role dashboards
+const CeoDashboard          = lazy(() => import("./pages/dashboards/CeoDashboard"));
+const PayrollHrDashboard    = lazy(() => import("./pages/dashboards/PayrollHrDashboard"));
+const WfmDashboard          = lazy(() => import("./pages/dashboards/WfmDashboard"));
+const HrDashboard           = lazy(() => import("./pages/dashboards/HrDashboard"));
+const EmployeeSelfDashboard = lazy(() => import("./pages/dashboards/EmployeeSelfDashboard"));
 
 // Expenses
 const MyExpenses = lazy(() => import("./pages/expenses/MyExpenses"));
@@ -432,6 +441,31 @@ const App = () => (
               <Route path="/expenses/finance" element={<ProtectedRoute><FinanceQueue /></ProtectedRoute>} />
               <Route path="/expenses/reports" element={<ProtectedRoute><ExpenseReports /></ProtectedRoute>} />
               <Route path="/expenses/:claimId" element={<ProtectedRoute><NewExpenseClaim /></ProtectedRoute>} />
+
+              {/* Role dashboards */}
+              <Route path="/ceo/dashboard" element={<ProtectedRoute><Gate pageCode="CEO_DASHBOARD"><CeoDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/payroll-hr/dashboard" element={<ProtectedRoute><Gate pageCode="PAYROLL_HR_DASHBOARD"><PayrollHrDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/wfm/dashboard" element={<ProtectedRoute><Gate pageCode="WFM_DASHBOARD"><WfmDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/hr/dashboard" element={<ProtectedRoute><Gate pageCode="HR_DASHBOARD"><HrDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/my-dashboard" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_SELF_DASHBOARD"><EmployeeSelfDashboard /></Gate></ProtectedRoute>} />
+
+              {/* DPDP Withdrawal */}
+              <Route path="/privacy/dpdp-withdrawal" element={<ProtectedRoute><Gate pageCode="DPDP_WITHDRAWAL"><NativeDPDPWithdrawal /></Gate></ProtectedRoute>} />
+              <Route path="/compliance/dpdp-withdrawal-admin" element={<ProtectedRoute><Gate pageCode="DPDP_WITHDRAWAL_ADMIN"><NativeDPDPWithdrawalAdmin /></Gate></ProtectedRoute>} />
+
+              {/* Governance / TAT */}
+              <Route path="/governance/tat-matrix" element={<ProtectedRoute><Gate pageCode="TAT_MATRIX"><NativePlaceholderPage /></Gate></ProtectedRoute>} />
+              <Route path="/governance/tat-dashboard" element={<ProtectedRoute><Gate pageCode="TAT_DASHBOARD"><NativePlaceholderPage /></Gate></ProtectedRoute>} />
+
+              {/* ATS name consistency */}
+              <Route path="/ats/name-consistency" element={<ProtectedRoute><Gate pageCode="NAME_CONSISTENCY_MATRIX"><NativePlaceholderPage /></Gate></ProtectedRoute>} />
+
+              {/* Appointment e-sign */}
+              <Route path="/letters/appointment-esign" element={<ProtectedRoute><Gate pageCode="APPOINTMENT_ESIGN"><NativePlaceholderPage /></Gate></ProtectedRoute>} />
+
+              {/* Exit / Resignation */}
+              <Route path="/exit/resignation" element={<ProtectedRoute><Gate pageCode="RESIGNATION_MY_REQUEST"><NativePlaceholderPage /></Gate></ProtectedRoute>} />
+              <Route path="/exit/resignation-command-center" element={<ProtectedRoute><Gate pageCode="RESIGNATION_COMMAND_CENTER"><NativePlaceholderPage /></Gate></ProtectedRoute>} />
 
               <Route path="*" element={<NotFound />} />
             </Routes>

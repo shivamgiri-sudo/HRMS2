@@ -92,28 +92,76 @@ incentivesRouter.post('/apply-to-run', requireRole('admin', 'finance', 'payroll'
   res.json({ success: true, data });
 }));
 
-// ── 4-TIER APPROVAL CHAIN ─────────────────────────────────────────────────────
+// ── 3-TIER APPROVAL CHAIN ─────────────────────────────────────────────────────
+// Flow: WFM uploads → branch_head (step 1) → operations_head (step 2) → finance_head (step 3)
+// After finance_head approves → status = 'finance_approved'
+// Register action (separate) → status = 'fully_approved'
 
-// Step role mapping: step 1=branch_head, 2=operations_head, 3=finance_head, 4=payroll_hr
+// Step role mapping: step 1=branch_head, 2=operations_head, 3=finance_head
 const APPROVAL_STEPS: Record<number, string> = {
   1: 'branch_head',
   2: 'operations_head',
   3: 'finance_head',
-  4: 'payroll_hr',
 };
+const APPROVAL_STEP_COUNT = 3;
 
-// POST /batches/:batchId/approval-chain/init — initialize 4-step approval chain
+// Helper: insert a work_item for the next approver role
+async function createApprovalWorkItem(
+  batchId: string,
+  role: string,
+  createdBy: string,
+  batchRef?: string
+): Promise<void> {
+  const title = `Incentive batch approval required${batchRef ? ` — ${batchRef}` : ''}`;
+  await db.execute(
+    `INSERT INTO work_item
+       (id, item_type, title, module_code, entity_type, entity_id,
+        assigned_to_role, priority, status, created_by)
+     VALUES (UUID(), 'INCENTIVE_APPROVAL', ?, 'INCENTIVES', 'incentive_batch', ?, ?, 'high', 'open', ?)`,
+    [title, batchId, role, createdBy]
+  );
+}
+
+// Helper: write an audit log entry (prefers audit_log, falls back to work_item_audit_log)
+async function writeAuditLog(
+  userId: string,
+  action: string,
+  entityId: string,
+  meta: Record<string, unknown>
+): Promise<void> {
+  try {
+    await db.execute(
+      `INSERT INTO audit_log (id, user_id, action, entity_type, entity_id, meta, created_at)
+       VALUES (UUID(), ?, ?, 'incentive_batch', ?, ?, NOW())`,
+      [userId, action, entityId, JSON.stringify(meta)]
+    );
+  } catch {
+    // audit_log table may not exist; fall back to work_item_audit_log
+    try {
+      await db.execute(
+        `INSERT INTO work_item_audit_log (id, user_id, action, entity_type, entity_id, meta, created_at)
+         VALUES (UUID(), ?, ?, 'incentive_batch', ?, ?, NOW())`,
+        [userId, action, entityId, JSON.stringify(meta)]
+      );
+    } catch {
+      // Audit logging is best-effort; swallow if neither table exists
+    }
+  }
+}
+
+// POST /batches/:batchId/approval-chain/init — initialize 3-step approval chain
 incentivesRouter.post('/batches/:batchId/approval-chain/init',
-  requireRole('admin', 'hr', 'finance'),
+  requireRole('admin', 'hr', 'finance', 'wfm'),
   h(async (req: AuthenticatedRequest, res) => {
     const { batchId } = req.params;
+    const userId = req.authUser!.id;
     const batch = await svc.getBatchById(batchId);
     if (!batch) return res.status(404).json({ success: false, message: 'Batch not found' });
 
     // Remove any prior steps for idempotency
     await db.execute('DELETE FROM incentive_approval_step WHERE batch_id = ?', [batchId]);
 
-    for (let step = 1; step <= 4; step++) {
+    for (let step = 1; step <= APPROVAL_STEP_COUNT; step++) {
       await db.execute(
         `INSERT INTO incentive_approval_step (id, batch_id, step_number, required_role, status)
          VALUES (UUID(), ?, ?, ?, ?)`,
@@ -125,6 +173,14 @@ incentivesRouter.post('/batches/:batchId/approval-chain/init',
       `UPDATE incentive_upload_batch SET status = 'approval_chain_active' WHERE id = ?`,
       [batchId]
     );
+
+    // Create work_item for the first approver (branch_head)
+    await createApprovalWorkItem(batchId, 'branch_head', userId, (batch as any).batch_ref ?? batchId);
+
+    await writeAuditLog(userId, 'INCENTIVE_APPROVAL_CHAIN_INIT', batchId, {
+      batch_ref: (batch as any).batch_ref,
+      steps: APPROVAL_STEP_COUNT,
+    });
 
     const [steps] = await db.execute<RowDataPacket[]>(
       'SELECT * FROM incentive_approval_step WHERE batch_id = ? ORDER BY step_number',
@@ -170,19 +226,29 @@ incentivesRouter.post('/batches/:batchId/step-approve',
       [userId, remarks ?? null, step.id]
     );
 
-    // Activate next step if exists, else mark batch fully approved
+    // Activate next step if exists, else mark batch finance_approved
+    // (register action is a separate step that sets fully_approved)
     const nextStep = step.step_number + 1;
-    if (nextStep <= 4) {
+    if (nextStep <= APPROVAL_STEP_COUNT) {
       await db.execute(
         `UPDATE incentive_approval_step SET status = 'pending' WHERE batch_id = ? AND step_number = ?`,
         [batchId, nextStep]
       );
+      // Create work_item for the next approver role
+      await createApprovalWorkItem(batchId, APPROVAL_STEPS[nextStep], userId);
     } else {
+      // All 3 steps approved — finance_head is the last approver
       await db.execute(
-        `UPDATE incentive_upload_batch SET status = 'fully_approved' WHERE id = ?`,
+        `UPDATE incentive_upload_batch SET status = 'finance_approved' WHERE id = ?`,
         [batchId]
       );
     }
+
+    await writeAuditLog(userId, 'INCENTIVE_STEP_APPROVED', batchId, {
+      step_number: step.step_number,
+      required_role: step.required_role,
+      remarks: remarks ?? null,
+    });
 
     const [steps] = await db.execute<RowDataPacket[]>(
       'SELECT * FROM incentive_approval_step WHERE batch_id = ? ORDER BY step_number',
@@ -235,6 +301,12 @@ incentivesRouter.post('/batches/:batchId/step-reject',
       [batchId]
     );
 
+    await writeAuditLog(userId, 'INCENTIVE_STEP_REJECTED', batchId, {
+      step_number: step.step_number,
+      required_role: step.required_role,
+      reason,
+    });
+
     return res.json({ success: true, message: 'Step rejected, batch marked as rejected' });
   })
 );
@@ -285,8 +357,8 @@ incentivesRouter.post('/batches/:batchId/register',
     const { batchId } = req.params;
     const batch = await svc.getBatchById(batchId);
     if (!batch) return res.status(404).json({ success: false, message: 'Batch not found' });
-    if ((batch as any).status !== 'fully_approved') {
-      return res.status(400).json({ success: false, message: 'Batch must be fully_approved before registering' });
+    if ((batch as any).status !== 'finance_approved') {
+      return res.status(400).json({ success: false, message: 'Batch must be finance_approved before registering' });
     }
 
     const registerId = randomUUID();
@@ -306,10 +378,16 @@ incentivesRouter.post('/batches/:batchId/register',
       ]
     );
 
+    // Register action completes the workflow — set fully_approved
     await db.execute(
-      `UPDATE incentive_upload_batch SET status = 'registered' WHERE id = ?`,
+      `UPDATE incentive_upload_batch SET status = 'fully_approved' WHERE id = ?`,
       [batchId]
     );
+
+    await writeAuditLog(req.authUser!.id, 'INCENTIVE_REGISTER_CREATED', batchId, {
+      register_id: registerId,
+      register_ref: registerRef,
+    });
 
     return res.status(201).json({ success: true, data: { id: registerId, register_ref: registerRef } });
   })

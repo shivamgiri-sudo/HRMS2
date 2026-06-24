@@ -662,3 +662,142 @@ export async function saveProgress(token: string, stepIdx: number) {
   );
   return { candidateId, currentStepIdx: idx };
 }
+
+// ── New functions added by migration 298 ─────────────────────────────────────
+
+export async function saveFamilyMembers(
+  token: string,
+  members: Array<{
+    memberName?: string;
+    relation?: string;
+    dob?: string;
+    occupation?: string;
+    isDependent?: boolean;
+  }>
+) {
+  const { candidate_id } = await validateOnboardingToken(token);
+  if (!Array.isArray(members)) throw Object.assign(new Error("members must be an array"), { statusCode: 400 });
+  await db.execute(`DELETE FROM candidate_onboarding_family_member WHERE candidate_id = ?`, [candidate_id]);
+  for (const m of members) {
+    await db.execute(
+      `INSERT INTO candidate_onboarding_family_member
+         (id, candidate_id, member_name, relation, dob, occupation, is_dependent)
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?)`,
+      [
+        candidate_id,
+        m.memberName ?? null,
+        m.relation ?? null,
+        m.dob ?? null,
+        m.occupation ?? null,
+        m.isDependent ? 1 : 0,
+      ]
+    );
+  }
+  return { candidateId: candidate_id, inserted: members.length };
+}
+
+export async function saveNominees(
+  token: string,
+  nominees: Array<{
+    nomineeName?: string;
+    relation?: string;
+    dob?: string;
+    sharePercentage?: number;
+    aadharLast4?: string;
+    isPrimary?: boolean;
+  }>
+) {
+  const { candidate_id } = await validateOnboardingToken(token);
+  if (!Array.isArray(nominees)) throw Object.assign(new Error("nominees must be an array"), { statusCode: 400 });
+
+  const total = nominees.reduce((sum, n) => sum + (Number(n.sharePercentage) || 0), 0);
+  if (total > 100) {
+    throw Object.assign(
+      new Error(`Total nominee share percentage is ${total}% which exceeds 100%`),
+      { statusCode: 400 }
+    );
+  }
+
+  await db.execute(`DELETE FROM candidate_onboarding_nominee WHERE candidate_id = ?`, [candidate_id]);
+  for (const n of nominees) {
+    await db.execute(
+      `INSERT INTO candidate_onboarding_nominee
+         (id, candidate_id, nominee_name, relation, dob, share_percentage, aadhar_last4, is_primary)
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        candidate_id,
+        n.nomineeName ?? null,
+        n.relation ?? null,
+        n.dob ?? null,
+        n.sharePercentage != null ? n.sharePercentage : null,
+        n.aadharLast4 ?? null,
+        n.isPrimary ? 1 : 0,
+      ]
+    );
+  }
+  return { candidateId: candidate_id, inserted: nominees.length, totalSharePct: total };
+}
+
+export async function updateSectionStatus(
+  candidateId: string,
+  section: string,
+  isComplete: boolean
+) {
+  const id = randomUUID();
+  await db.execute(
+    `INSERT INTO candidate_onboarding_section_status
+       (id, candidate_id, section, is_complete, completed_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       is_complete = VALUES(is_complete),
+       completed_at = IF(VALUES(is_complete) = 1 AND completed_at IS NULL, NOW(), completed_at),
+       last_updated = NOW()`,
+    [id, candidateId, section, isComplete ? 1 : 0, isComplete ? new Date() : null]
+  );
+  return { candidateId, section, isComplete };
+}
+
+export async function getOnboardingBlockers(
+  candidateId: string
+): Promise<Array<{ code: string; message: string; severity: "hard" | "soft" }>> {
+  const blockers: Array<{ code: string; message: string; severity: "hard" | "soft" }> = [];
+
+  const [profileRows] = await db.execute<RowDataPacket[]>(
+    `SELECT otp_verified, statutory_declaration_accepted, dpdp_consent, bgv_consent
+       FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
+    [candidateId]
+  );
+  const profile = profileRows[0] as any ?? {};
+
+  if (!profile.otp_verified) {
+    blockers.push({ code: "OTP_NOT_VERIFIED", message: "Mobile OTP verification is required before submission.", severity: "hard" });
+  }
+  if (!profile.statutory_declaration_accepted) {
+    blockers.push({ code: "DECLARATION_NOT_ACCEPTED", message: "Statutory declaration must be accepted before submission.", severity: "hard" });
+  }
+  if (!profile.dpdp_consent) {
+    blockers.push({ code: "DPDP_CONSENT_MISSING", message: "DPDP data privacy consent is required.", severity: "hard" });
+  }
+
+  const [bankRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`,
+    [candidateId]
+  );
+  if (!bankRows.length) {
+    blockers.push({ code: "BANK_DETAILS_MISSING", message: "Bank account details must be saved before submission.", severity: "hard" });
+  }
+
+  const [qualRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM candidate_onboarding_qualification WHERE candidate_id = ? LIMIT 1`,
+    [candidateId]
+  );
+  if (!qualRows.length) {
+    blockers.push({ code: "QUALIFICATION_MISSING", message: "At least one qualification record is recommended.", severity: "soft" });
+  }
+
+  if (!profile.bgv_consent) {
+    blockers.push({ code: "BGV_CONSENT_MISSING", message: "BGV consent is recommended for faster background verification.", severity: "soft" });
+  }
+
+  return blockers;
+}

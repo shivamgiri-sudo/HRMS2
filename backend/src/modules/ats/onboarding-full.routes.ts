@@ -14,17 +14,21 @@ import {
   deleteOnboardingDocument,
   getFullOnboardingByCandidate,
   getFullOnboardingStatus,
+  getOnboardingBlockers,
   listFullOnboardingRequests,
   reviewFullOnboarding,
   saveBankDetails,
   saveEmployeeDetails,
   saveExperienceDetails,
   saveFamilyDetails,
+  saveFamilyMembers,
   saveFinalSection,
   saveLanguages,
+  saveNominees,
   saveProgress,
   saveStatutory,
   submitFullOnboarding,
+  updateSectionStatus,
   uploadOnboardingDocument,
   validateOnboardingToken,
 } from "./onboarding-full.service.js";
@@ -253,6 +257,42 @@ router.get("/candidate/:candidateId", requireAuth, requireRole("admin", "hr", "r
 
 router.patch("/candidate/:candidateId/review", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
   return res.json({ success: true, data: await reviewFullOnboarding(req.params.candidateId, req.body, req.authUser!.id) });
+}));
+
+// ── New routes added by migration 298 ────────────────────────────────────────
+
+// POST /family-members — replace all family member rows for a candidate
+router.post("/family-members", h(async (req, res) => {
+  const { token, members } = req.body;
+  if (!token) return res.status(400).json({ success: false, message: "token required" });
+  return res.json({ success: true, data: await saveFamilyMembers(token, members ?? []) });
+}));
+
+// POST /nominees — replace all nominee rows for a candidate
+router.post("/nominees", h(async (req, res) => {
+  const { token, nominees } = req.body;
+  if (!token) return res.status(400).json({ success: false, message: "token required" });
+  return res.json({ success: true, data: await saveNominees(token, nominees ?? []) });
+}));
+
+// GET /blockers?token=... — list submission blockers for a candidate
+router.get("/blockers", h(async (req, res) => {
+  const token = String(req.query.token ?? "");
+  if (!token) return res.status(400).json({ success: false, message: "token required" });
+  const tokenData = await validateOnboardingToken(token);
+  const blockers = await getOnboardingBlockers(String(tokenData.candidate_id));
+  return res.json({ success: true, data: blockers });
+}));
+
+// PUT /section-status — upsert section completion for a candidate
+router.put("/section-status", h(async (req, res) => {
+  const { token, section, isComplete } = req.body;
+  if (!token || !section) return res.status(400).json({ success: false, message: "token and section required" });
+  const tokenData = await validateOnboardingToken(token);
+  return res.json({
+    success: true,
+    data: await updateSectionStatus(String(tokenData.candidate_id), String(section), Boolean(isComplete)),
+  });
 }));
 
 export default router;

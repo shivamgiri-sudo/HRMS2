@@ -16,6 +16,7 @@ import {
   getExitCommandCenter,
   saveExitInterview,
 } from "./exit-intelligence.service.js";
+import { resignationRouter } from "./resignation.routes.js";
 
 export const exitRouter = Router();
 exitRouter.use(requireAuth);
@@ -211,135 +212,7 @@ exitRouter.get("/:id", h(async (req: AuthenticatedRequest, res: Response) => {
   return exitController.getExitRequest(req, res);
 }));
 
-// ── Resignation Discussion ─────────────────────────────────────────────────────
-
-// POST /resignation/:exitId/discussion — add a discussion record
-exitRouter.post(
-  "/resignation/:exitId/discussion",
-  requireRole("admin", "hr", "manager"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { discussion_type, outcome, remarks, employee_sentiment } = req.body as {
-      discussion_type: "manager" | "hr";
-      outcome?: string;
-      remarks?: string;
-      employee_sentiment?: string;
-    };
-    if (!discussion_type) {
-      return res.status(400).json({ success: false, message: "discussion_type is required" });
-    }
-    const id = randomUUID();
-    await db.execute(
-      `INSERT INTO resignation_discussion
-         (id, exit_request_id, discussion_type, discussed_by, outcome, remarks, employee_sentiment, discussed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [id, req.params.exitId, discussion_type, req.authUser!.id, outcome ?? null, remarks ?? null, employee_sentiment ?? null]
-    );
-    const [rows] = await db.execute(
-      `SELECT * FROM resignation_discussion WHERE id = ? LIMIT 1`,
-      [id]
-    );
-    return res.status(201).json({ success: true, data: (rows as any[])[0] ?? null });
-  })
-);
-
-// GET /resignation/:exitId/discussions — list discussions for an exit request
-exitRouter.get(
-  "/resignation/:exitId/discussions",
-  requireRole("admin", "hr", "manager"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute(
-      `SELECT rd.*, u.full_name AS discussed_by_name
-       FROM resignation_discussion rd
-       LEFT JOIN users u ON u.id = rd.discussed_by
-       WHERE rd.exit_request_id = ?
-       ORDER BY rd.discussed_at DESC`,
-      [req.params.exitId]
-    );
-    return res.json({ success: true, data: rows });
-  })
-);
-
-// POST /resignation/:exitId/discussion/:discId/note — add a note to a discussion
-exitRouter.post(
-  "/resignation/:exitId/discussion/:discId/note",
-  requireRole("admin", "hr", "manager"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { note_text } = req.body as { note_text?: string };
-    if (!note_text?.trim()) {
-      return res.status(400).json({ success: false, message: "note_text is required" });
-    }
-    const id = randomUUID();
-    await db.execute(
-      `INSERT INTO resignation_discussion_note
-         (id, discussion_id, note_text, added_by, added_at)
-       VALUES (?, ?, ?, ?, NOW())`,
-      [id, req.params.discId, note_text, req.authUser!.id]
-    );
-    return res.status(201).json({ success: true, data: { id } });
-  })
-);
-
-// POST /resignation/:exitId/retention-offer — create a structured retention offer
-exitRouter.post(
-  "/resignation/:exitId/retention-offer",
-  requireRole("admin", "hr", "manager"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { offer_type, offer_details } = req.body as {
-      offer_type: string;
-      offer_details?: Record<string, unknown>;
-    };
-    if (!offer_type) {
-      return res.status(400).json({ success: false, message: "offer_type is required" });
-    }
-    const id = randomUUID();
-    await db.execute(
-      `INSERT INTO retention_offer
-         (id, exit_request_id, offer_type, offer_details, offered_by, offered_at, employee_response)
-       VALUES (?, ?, ?, ?, ?, NOW(), 'pending')`,
-      [id, req.params.exitId, offer_type, JSON.stringify(offer_details ?? {}), req.authUser!.id]
-    );
-    const [rows] = await db.execute(
-      `SELECT * FROM retention_offer WHERE id = ? LIMIT 1`,
-      [id]
-    );
-    return res.status(201).json({ success: true, data: (rows as any[])[0] ?? null });
-  })
-);
-
-// GET /resignation/:exitId/retention-offers — list retention offers for an exit request
-exitRouter.get(
-  "/resignation/:exitId/retention-offers",
-  requireRole("admin", "hr", "manager"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute(
-      `SELECT ro.*, u.full_name AS offered_by_name
-       FROM retention_offer ro
-       LEFT JOIN users u ON u.id = ro.offered_by
-       WHERE ro.exit_request_id = ?
-       ORDER BY ro.offered_at DESC`,
-      [req.params.exitId]
-    );
-    return res.json({ success: true, data: rows });
-  })
-);
-
-// PATCH /resignation/:exitId/retention-offer/:offerId/respond — employee responds to offer
-exitRouter.patch(
-  "/resignation/:exitId/retention-offer/:offerId/respond",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { employee_response, response_remarks } = req.body as {
-      employee_response: "accept" | "reject";
-      response_remarks?: string;
-    };
-    if (!["accept", "reject"].includes(employee_response)) {
-      return res.status(400).json({ success: false, message: "employee_response must be 'accept' or 'reject'" });
-    }
-    await db.execute(
-      `UPDATE retention_offer
-       SET employee_response = ?, response_date = NOW(), response_remarks = ?
-       WHERE id = ? AND exit_request_id = ?`,
-      [employee_response, response_remarks ?? null, req.params.offerId, req.params.exitId]
-    );
-    return res.json({ success: true, message: `Offer ${employee_response}ed` });
-  })
-);
+// ── Resignation Routes (mounted sub-router) ───────────────────────────────────
+// All /resignation/* routes are handled by resignation.routes.ts
+// URL pattern: /exit/resignation/* → resignationRouter handles /:exitId/... and /my and /
+exitRouter.use("/resignation", resignationRouter);

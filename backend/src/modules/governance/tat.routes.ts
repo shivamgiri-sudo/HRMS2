@@ -5,6 +5,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
+import { createTatInstance, checkAndEscalate, completeTatInstance } from "./tat.service.js";
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -121,25 +122,32 @@ router.get("/tasks", h(async (req: AuthenticatedRequest, res: any) => {
   return res.json({ success: true, data: rows });
 }));
 
-// POST /tat/tasks/:id/complete — mark a task as completed
-router.post("/tasks/:id/complete", h(async (req: AuthenticatedRequest, res: any) => {
-  await db.execute(
-    `UPDATE task_tat_instance
-     SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-     WHERE id = ?`,
-    [req.params.id]
-  );
-  return res.json({ success: true });
+// POST /tat/tasks — create a new TAT instance
+router.post("/tasks", h(async (req: AuthenticatedRequest, res: any) => {
+  const { taskType, entityType, entityId, assignedTo, branchId } = req.body as {
+    taskType: string;
+    entityType: string;
+    entityId: string;
+    assignedTo: string;
+    branchId?: string;
+  };
+  if (!taskType || !entityType || !entityId || !assignedTo) {
+    return res.status(400).json({ success: false, message: "taskType, entityType, entityId and assignedTo are required" });
+  }
+  const id = await createTatInstance(taskType, entityType, entityId, assignedTo, branchId);
+  return res.status(201).json({ success: true, id });
 }));
 
-// POST /tat/tasks/recalculate — mark SLA-breached tasks (admin/hr only)
+// POST /tat/tasks/recalculate — check and escalate SLA-breached tasks (admin/hr only)
 router.post("/tasks/recalculate", requireRole("admin", "hr"), h(async (_req: any, res: any) => {
-  const [result] = await db.execute<any>(
-    `UPDATE task_tat_instance
-     SET status = 'sla_breached', updated_at = NOW()
-     WHERE status = 'open' AND due_at < NOW()`
-  );
-  return res.json({ success: true, affected: (result as any).affectedRows ?? 0 });
+  const affected = await checkAndEscalate();
+  return res.json({ success: true, affected });
+}));
+
+// POST /tat/tasks/:id/complete — mark a task as completed
+router.post("/tasks/:id/complete", h(async (req: AuthenticatedRequest, res: any) => {
+  await completeTatInstance(req.params.id, req.authUser!.id);
+  return res.json({ success: true });
 }));
 
 // GET /tat/dashboard — aggregated TAT stats by task type and status

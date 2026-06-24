@@ -1,0 +1,339 @@
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
+import { type DashboardScope, buildScopeWhere } from "../../shared/dashboardScope.js";
+
+// ─── Shared metric wrapper shape ──────────────────────────────────────────────
+export interface MetricResult {
+  value: number | null;
+  previousValue: null;
+  target: null;
+  variance: null;
+  variancePct: null;
+  status: "ok" | "warn" | "critical" | "unknown";
+  trend: null;
+  drilldownApi: string;
+  actionUrl: null;
+  detail: Record<string, number | null>;
+}
+
+function wrap(
+  metricCode: string,
+  value: number | null,
+  detail: Record<string, number | null>,
+  status: MetricResult["status"] = "ok"
+): MetricResult {
+  return {
+    value,
+    previousValue: null,
+    target: null,
+    variance: null,
+    variancePct: null,
+    status,
+    trend: null,
+    drilldownApi: `/api/dashboards/:dashboardCode/metric/${metricCode}/drilldown`,
+    actionUrl: null,
+    detail,
+  };
+}
+
+function nullResult(metricCode: string): MetricResult {
+  return wrap(metricCode, null, {}, "unknown");
+}
+
+// ─── Headcount ────────────────────────────────────────────────────────────────
+export async function getHeadcountMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS active FROM employees WHERE status = 'active' AND ${scopeSql}`,
+      scopeParams
+    );
+    const active = Number((rows[0] as any)?.active ?? 0);
+    const status: MetricResult["status"] = active === 0 ? "warn" : "ok";
+    return wrap("HEADCOUNT", active, { active, required: null, available: null, short: null }, status);
+  } catch {
+    return nullResult("HEADCOUNT");
+  }
+}
+
+// ─── Onboarding ───────────────────────────────────────────────────────────────
+export async function getOnboardingMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+
+    const [bridgeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN bridge_status = 'submitted' THEN 1 ELSE 0 END) AS submitted,
+         SUM(CASE WHEN bridge_status IN ('pending','initiated') THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN bridge_status = 'stuck' THEN 1 ELSE 0 END) AS stuck
+       FROM ats_onboarding_bridge
+       WHERE ${scopeSql}`,
+      scopeParams
+    ).catch(() => [[{ total: 0, submitted: 0, pending: 0, stuck: 0 }]] as any);
+
+    const [otpRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS otp_verified FROM candidate_onboarding_profile WHERE otp_verified = 1`
+    ).catch(() => [[{ otp_verified: 0 }]] as any);
+
+    const r = bridgeRows[0] as any;
+    const submitted = Number(r?.submitted ?? 0);
+    const pending = Number(r?.pending ?? 0);
+    const stuck = Number(r?.stuck ?? 0);
+    const otpPending = Number((otpRows[0] as any)?.otp_verified ?? 0);
+
+    const status: MetricResult["status"] = stuck > 0 ? "critical" : pending > 10 ? "warn" : "ok";
+    return wrap("ONBOARDING", submitted + pending, { submitted, pending, otpPending, stuck }, status);
+  } catch {
+    return nullResult("ONBOARDING");
+  }
+}
+
+// ─── Attendance ───────────────────────────────────────────────────────────────
+export async function getAttendanceMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(CASE WHEN attendance_status = 'present' THEN 1 ELSE 0 END) AS present,
+         SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END) AS absent,
+         SUM(CASE WHEN attendance_status = 'late' THEN 1 ELSE 0 END) AS late,
+         SUM(CASE WHEN attendance_status = 'missed_punch' THEN 1 ELSE 0 END) AS missedPunch,
+         COUNT(*) AS total
+       FROM wfm_attendance_session
+       WHERE DATE(session_date) = CURDATE() AND ${scopeSql}`,
+      scopeParams
+    ).catch(() => [[null]] as any);
+
+    if (!rows[0]) return nullResult("ATTENDANCE");
+
+    const r = rows[0] as any;
+    const present = Number(r.present ?? 0);
+    const absent = Number(r.absent ?? 0);
+    const late = Number(r.late ?? 0);
+    const missedPunch = Number(r.missedPunch ?? 0);
+    const total = Number(r.total ?? 0);
+    const attendanceRate = total > 0 ? Math.round((present / total) * 100) : null;
+
+    const status: MetricResult["status"] =
+      attendanceRate === null ? "unknown" : attendanceRate < 70 ? "critical" : attendanceRate < 85 ? "warn" : "ok";
+
+    return wrap("ATTENDANCE", attendanceRate, { present, absent, late, missedPunch, attendanceRate }, status);
+  } catch {
+    return nullResult("ATTENDANCE");
+  }
+}
+
+// ─── Payroll Readiness ────────────────────────────────────────────────────────
+export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN bank_account_number IS NULL OR bank_account_number = '' THEN 1 ELSE 0 END) AS missingBank,
+         SUM(CASE WHEN pan_number IS NULL OR pan_number = '' THEN 1 ELSE 0 END) AS missingPan,
+         SUM(CASE WHEN uan_number IS NULL OR uan_number = '' THEN 1 ELSE 0 END) AS missingUan,
+         SUM(CASE WHEN
+               (bank_account_number IS NOT NULL AND bank_account_number != '') AND
+               (pan_number IS NOT NULL AND pan_number != '')
+             THEN 1 ELSE 0 END) AS readyCount
+       FROM employees
+       WHERE status = 'active' AND ${scopeSql}`,
+      scopeParams
+    );
+
+    const r = rows[0] as any;
+    const total = Number(r.total ?? 0);
+    const readyCount = Number(r.readyCount ?? 0);
+    const missingBank = Number(r.missingBank ?? 0);
+    const missingPan = Number(r.missingPan ?? 0);
+    const missingUan = Number(r.missingUan ?? 0);
+    const blockerCount = total - readyCount;
+
+    const status: MetricResult["status"] =
+      blockerCount === 0 ? "ok" : blockerCount > 10 ? "critical" : "warn";
+
+    return wrap(
+      "PAYROLL_READINESS",
+      readyCount,
+      { readyCount, blockerCount, missingBank, missingPan, missingUan },
+      status
+    );
+  } catch {
+    return nullResult("PAYROLL_READINESS");
+  }
+}
+
+// ─── Incentive ────────────────────────────────────────────────────────────────
+export async function getIncentiveMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(CASE WHEN batch_status = 'pending' THEN 1 ELSE 0 END) AS pendingBatches,
+         SUM(CASE WHEN batch_status = 'pending' THEN total_amount ELSE 0 END) AS pendingAmount,
+         SUM(CASE WHEN batch_status = 'approved' THEN total_amount ELSE 0 END) AS approvedAmount,
+         SUM(CASE WHEN batch_status = 'rejected' THEN 1 ELSE 0 END) AS rejectedBatches
+       FROM incentive_upload_batch`
+    ).catch(() => [[{ pendingBatches: 0, pendingAmount: 0, approvedAmount: 0, rejectedBatches: 0 }]] as any);
+
+    const r = rows[0] as any;
+    const pendingBatches = Number(r.pendingBatches ?? 0);
+    const pendingAmount = Number(r.pendingAmount ?? 0);
+    const approvedAmount = Number(r.approvedAmount ?? 0);
+    const rejectedBatches = Number(r.rejectedBatches ?? 0);
+
+    const status: MetricResult["status"] =
+      rejectedBatches > 0 ? "warn" : pendingBatches > 5 ? "warn" : "ok";
+
+    return wrap(
+      "INCENTIVE",
+      pendingBatches,
+      { pendingBatches, pendingAmount, approvedAmount, rejectedBatches },
+      status
+    );
+  } catch {
+    return nullResult("INCENTIVE");
+  }
+}
+
+// ─── TAT ──────────────────────────────────────────────────────────────────────
+export async function getTatMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_count,
+         SUM(CASE WHEN due_at < NOW() AND status NOT IN ('closed','resolved') THEN 1 ELSE 0 END) AS overdue,
+         SUM(CASE WHEN status = 'sla_breached' THEN 1 ELSE 0 END) AS breached,
+         AVG(CASE WHEN status NOT IN ('closed','resolved')
+             THEN TIMESTAMPDIFF(HOUR, created_at, NOW()) ELSE NULL END) AS avgAgeHours
+       FROM task_tat_instance`
+    ).catch(() => [[{ open_count: 0, overdue: 0, breached: 0, avgAgeHours: null }]] as any);
+
+    const r = rows[0] as any;
+    const open = Number(r.open_count ?? 0);
+    const overdue = Number(r.overdue ?? 0);
+    const breached = Number(r.breached ?? 0);
+    const avgAgeHours = r.avgAgeHours !== null ? Math.round(Number(r.avgAgeHours)) : null;
+
+    const status: MetricResult["status"] =
+      breached > 0 ? "critical" : overdue > 0 ? "warn" : "ok";
+
+    return wrap("TAT", open, { open, overdue, breached, avgAgeHours }, status);
+  } catch {
+    return nullResult("TAT");
+  }
+}
+
+// ─── Resignation ──────────────────────────────────────────────────────────────
+export async function getResignationMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS totalActive,
+         SUM(CASE WHEN exit_status = 'pending_discussion' THEN 1 ELSE 0 END) AS pendingDiscussion,
+         SUM(CASE WHEN exit_status = 'accepted' THEN 1 ELSE 0 END) AS accepted,
+         SUM(CASE WHEN exit_status = 'withdrawn' THEN 1 ELSE 0 END) AS withdrawn
+       FROM exit_request
+       WHERE exit_status NOT IN ('completed','cancelled') AND ${scopeSql}`,
+      scopeParams
+    ).catch(() => [[{ totalActive: 0, pendingDiscussion: 0, accepted: 0, withdrawn: 0 }]] as any);
+
+    const r = rows[0] as any;
+    const totalActive = Number(r.totalActive ?? 0);
+    const pendingDiscussion = Number(r.pendingDiscussion ?? 0);
+    const accepted = Number(r.accepted ?? 0);
+    const withdrawn = Number(r.withdrawn ?? 0);
+
+    const status: MetricResult["status"] =
+      pendingDiscussion > 5 ? "critical" : pendingDiscussion > 0 ? "warn" : "ok";
+
+    return wrap(
+      "RESIGNATION",
+      totalActive,
+      { pendingDiscussion, accepted, withdrawn, totalActive },
+      status
+    );
+  } catch {
+    return nullResult("RESIGNATION");
+  }
+}
+
+// ─── BGV ──────────────────────────────────────────────────────────────────────
+export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    // Try candidate_bgv_check first, fall back to ats_onboarding_bridge bgv fields
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(CASE WHEN bgv_status = 'pending' OR bgv_status IS NULL THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN bgv_status = 'cleared' THEN 1 ELSE 0 END) AS cleared,
+         SUM(CASE WHEN bgv_status = 'flagged' THEN 1 ELSE 0 END) AS flagged,
+         SUM(CASE WHEN bgv_status = 'breached' THEN 1 ELSE 0 END) AS breached
+       FROM candidate_bgv_check`
+    ).catch(() => [[null]] as any);
+
+    if (!rows[0]) {
+      // Fallback: derive from ats_onboarding_bridge
+      const [bridgeRows] = await db.execute<RowDataPacket[]>(
+        `SELECT
+           SUM(CASE WHEN bgv_consent_given = 0 OR bgv_consent_given IS NULL THEN 1 ELSE 0 END) AS pending,
+           SUM(CASE WHEN bgv_consent_given = 1 THEN 1 ELSE 0 END) AS cleared,
+           0 AS flagged,
+           0 AS breached
+         FROM ats_onboarding_bridge`
+      ).catch(() => [[{ pending: 0, cleared: 0, flagged: 0, breached: 0 }]] as any);
+
+      const rb = bridgeRows[0] as any;
+      return wrap("BGV", Number(rb?.pending ?? 0), {
+        pending: Number(rb?.pending ?? 0),
+        cleared: Number(rb?.cleared ?? 0),
+        flagged: 0,
+        breached: 0,
+      }, "ok");
+    }
+
+    const r = rows[0] as any;
+    const pending = Number(r.pending ?? 0);
+    const cleared = Number(r.cleared ?? 0);
+    const flagged = Number(r.flagged ?? 0);
+    const breached = Number(r.breached ?? 0);
+
+    const status: MetricResult["status"] =
+      breached > 0 || flagged > 0 ? "critical" : pending > 20 ? "warn" : "ok";
+
+    return wrap("BGV", pending, { pending, cleared, flagged, breached }, status);
+  } catch {
+    return nullResult("BGV");
+  }
+}
+
+// ─── Name Mismatch ────────────────────────────────────────────────────────────
+export async function getNameMismatchMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(CASE WHEN match_status = 'mismatch' THEN 1 ELSE 0 END) AS mismatch,
+         SUM(CASE WHEN match_status = 'partial' THEN 1 ELSE 0 END) AS partial,
+         SUM(CASE WHEN match_status = 'pending' OR match_status IS NULL THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN is_blocking = 1 THEN 1 ELSE 0 END) AS blocking
+       FROM candidate_name_match_summary`
+    ).catch(() => [[{ mismatch: 0, partial: 0, pending: 0, blocking: 0 }]] as any);
+
+    const r = rows[0] as any;
+    const mismatch = Number(r.mismatch ?? 0);
+    const partial = Number(r.partial ?? 0);
+    const pending = Number(r.pending ?? 0);
+    const blocking = Number(r.blocking ?? 0);
+
+    const status: MetricResult["status"] =
+      blocking > 0 ? "critical" : mismatch > 0 ? "warn" : "ok";
+
+    return wrap("NAME_MISMATCH", mismatch + partial, { mismatch, partial, pending, blocking }, status);
+  } catch {
+    return nullResult("NAME_MISMATCH");
+  }
+}

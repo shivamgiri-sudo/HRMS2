@@ -95,6 +95,53 @@ export async function reassignWorkItem(id: string, toUserId: string, byUserId: s
   );
 }
 
+export async function createWorkItemIfNotExists(
+  input: WorkItemInput & { dedupKey?: string }
+): Promise<string | null> {
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM work_item WHERE entity_type=? AND entity_id=? AND item_type=? AND status='pending' LIMIT 1`,
+    [input.entityType, input.entityId, input.itemType]
+  );
+  if ((existing as RowDataPacket[]).length > 0) {
+    return (existing as RowDataPacket[])[0].id as string;
+  }
+  return createWorkItem(input);
+}
+
+export async function getWorkItemStats(userId: string, role: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT module_code,
+            COUNT(*) as count,
+            SUM(CASE WHEN priority='critical' THEN 1 ELSE 0 END) as critical_count
+     FROM work_item
+     WHERE (assigned_to_user_id=? OR assigned_to_role=?) AND status='pending'
+     GROUP BY module_code`,
+    [userId, role]
+  );
+  const byModule: Record<string, { count: number; critical: number }> = {};
+  let pending = 0;
+  let critical = 0;
+  for (const row of rows as RowDataPacket[]) {
+    byModule[row.module_code] = { count: Number(row.count), critical: Number(row.critical_count) };
+    pending += Number(row.count);
+    critical += Number(row.critical_count);
+  }
+  return { pending, critical, byModule };
+}
+
+export async function getOverdueItems(userId: string, role: string, limit = 50) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM work_item
+     WHERE (assigned_to_user_id=? OR assigned_to_role=?)
+       AND due_at < NOW()
+       AND status='pending'
+     ORDER BY due_at ASC
+     LIMIT ?`,
+    [userId, role, limit]
+  );
+  return rows;
+}
+
 export async function getDashboardWorkItems(branchId?: string, processId?: string) {
   const params: string[] = [];
   let where = "wi.status NOT IN ('completed','cancelled')";

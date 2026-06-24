@@ -57,12 +57,32 @@ router.post("/:candidateId/recalculate", h(async (req: AuthenticatedRequest, res
     [candidateId]
   );
 
+  // Education: institution_name is not a person name — check for a student/learner name field
+  const [education] = await db.execute<RowDataPacket[]>(
+    `SELECT applicant_name
+     FROM candidate_onboarding_education
+     WHERE candidate_id = ? AND applicant_name IS NOT NULL AND applicant_name != ''
+     LIMIT 1`,
+    [candidateId]
+  );
+
+  // Employee master: check if candidate has been converted to employee
+  const [empMaster] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_name
+     FROM employees
+     WHERE candidate_id = ? OR ats_candidate_id = ?
+     LIMIT 1`,
+    [candidateId, candidateId]
+  );
+
   if (!profile.length) {
     return res.status(404).json({ success: false, message: "Candidate not found" });
   }
 
   const p = profile[0] as any;
   const b = bank[0] as any;
+  const edu = education[0] as any;
+  const emp = empMaster[0] as any;
   const formName = p.employee_name || p.ats_name || "";
 
   const sources = [
@@ -70,6 +90,8 @@ router.post("/:candidateId/recalculate", h(async (req: AuthenticatedRequest, res
     { type: "aadhaar", name: p.aadhar_name || "" },
     { type: "pan", name: p.pan_name || "" },
     { type: "bank", name: b?.account_holder_name || "" },
+    ...(edu?.applicant_name ? [{ type: "education", name: edu.applicant_name as string }] : []),
+    ...(emp?.employee_name ? [{ type: "employee_master", name: emp.employee_name as string }] : []),
   ].filter((s) => s.name);
 
   // Delete existing detail rows, then recalculate fresh
@@ -144,7 +166,7 @@ router.get("/:candidateId", h(async (req: AuthenticatedRequest, res: any) => {
   return res.json({ success: true, data: { summary: summary[0] ?? null, details } });
 }));
 
-// POST /:candidateId/override-request — HR approves a name mismatch override
+// POST /:candidateId/override-request — HR logs a name mismatch override request
 router.post(
   "/:candidateId/override-request",
   requireRole("admin", "hr"),
@@ -175,6 +197,74 @@ router.post(
     );
 
     return res.json({ success: true });
+  })
+);
+
+// POST /:candidateId/override-approve — admin/hr formally approves the override, clears block
+router.post(
+  "/:candidateId/override-approve",
+  requireRole("admin", "hr"),
+  h(async (req: AuthenticatedRequest, res: any) => {
+    const { reason } = req.body as { reason?: string };
+    if (!reason?.trim()) {
+      return res.status(400).json({ success: false, message: "reason is required" });
+    }
+
+    await db.execute(
+      `UPDATE candidate_name_match_summary
+       SET is_override_approved = 1,
+           override_reason = ?,
+           override_by = ?,
+           override_at = NOW(),
+           blocks_employee_code = 0
+       WHERE candidate_id = ?`,
+      [reason, req.authUser!.id, req.params.candidateId]
+    );
+
+    await db.execute(
+      `INSERT INTO candidate_name_override_audit
+         (id, candidate_id, override_type, reason, approved_by, previous_status, new_status)
+       SELECT UUID(), candidate_id, 'override_approve', ?, ?, overall_status, 'override_approved'
+       FROM candidate_name_match_summary
+       WHERE candidate_id = ?`,
+      [reason, req.authUser!.id, req.params.candidateId]
+    );
+
+    return res.json({ success: true, message: "Override approved; employee code block removed" });
+  })
+);
+
+// POST /:candidateId/override-reject — admin/hr rejects the override, keeps/restores block
+router.post(
+  "/:candidateId/override-reject",
+  requireRole("admin", "hr"),
+  h(async (req: AuthenticatedRequest, res: any) => {
+    const { rejection_reason } = req.body as { rejection_reason?: string };
+    if (!rejection_reason?.trim()) {
+      return res.status(400).json({ success: false, message: "rejection_reason is required" });
+    }
+
+    await db.execute(
+      `UPDATE candidate_name_match_summary
+       SET is_override_approved = 0,
+           override_reason = ?,
+           override_by = ?,
+           override_at = NOW(),
+           blocks_employee_code = 1
+       WHERE candidate_id = ?`,
+      [rejection_reason, req.authUser!.id, req.params.candidateId]
+    );
+
+    await db.execute(
+      `INSERT INTO candidate_name_override_audit
+         (id, candidate_id, override_type, reason, approved_by, previous_status, new_status)
+       SELECT UUID(), candidate_id, 'override_reject', ?, ?, overall_status, 'override_rejected'
+       FROM candidate_name_match_summary
+       WHERE candidate_id = ?`,
+      [rejection_reason, req.authUser!.id, req.params.candidateId]
+    );
+
+    return res.json({ success: true, message: "Override rejected; employee code remains blocked" });
   })
 );
 
