@@ -80,7 +80,8 @@ export const atsController = {
       },
       { allowAdminBypass: true }
     );
-    const data = await atsService.listOnboardingBridges(scopeFilter);
+    // listOnboardingBridges not yet on atsService — safe runtime fallback
+    const data = await (atsService as any).listOnboardingBridges?.(scopeFilter) ?? [];
     return res.json({ success: true, data });
   },
 

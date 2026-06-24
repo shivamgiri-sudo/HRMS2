@@ -1,5 +1,6 @@
 import { db } from "../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { getUserRoleContext } from "./roleResolver.js";
 
 export type ScopeLevel =
   | "ORG_ALL"
@@ -61,11 +62,15 @@ export async function resolveDashboardScope(
   userId: string,
   role: string
 ): Promise<DashboardScope> {
-  if (ORG_ALL_ROLES.includes(role)) {
-    return { level: "ORG_ALL", branchIds: [], processIds: [], userId, role };
+  // Resolve role from DB for accuracy — JWT claim may be stale
+  const ctx = await getUserRoleContext(userId);
+  const effectiveRole = ctx.primaryRole;
+
+  if (ORG_ALL_ROLES.includes(effectiveRole)) {
+    return { level: "ORG_ALL", branchIds: [], processIds: [], userId, role: effectiveRole };
   }
 
-  if (BRANCH_ALL_ROLES.includes(role)) {
+  if (BRANCH_ALL_ROLES.includes(effectiveRole)) {
     let branchIds: string[] = [];
     try {
       const [rows] = await db.execute<RowDataPacket[]>(
@@ -81,10 +86,15 @@ export async function resolveDashboardScope(
     } catch {
       // graceful fallback — no assignment rows yet
     }
-    return { level: "BRANCH_ALL", branchIds, processIds: [], userId, role };
+    // No branch assignments found — fall back to SELF_ONLY to prevent seeing all data
+    if (branchIds.length === 0) {
+      console.warn(`[dashboardScope] BRANCH_ALL role=${effectiveRole} userId=${userId} has no branch assignments — falling back to SELF_ONLY`);
+      return { level: "SELF_ONLY", branchIds: [], processIds: [], userId, role: effectiveRole };
+    }
+    return { level: "BRANCH_ALL", branchIds, processIds: [], userId, role: effectiveRole };
   }
 
-  if (PROCESS_ALL_ROLES.includes(role) || role === TEAM_LEAD_ROLE) {
+  if (PROCESS_ALL_ROLES.includes(effectiveRole) || effectiveRole === TEAM_LEAD_ROLE) {
     let processIds: string[] = [];
     let branchIds: string[] = [];
     try {
@@ -114,19 +124,25 @@ export async function resolveDashboardScope(
     }
 
     // team_lead with no process_id resolves to TEAM_ONLY
-    if (role === TEAM_LEAD_ROLE && processIds.length === 0) {
-      return { level: "TEAM_ONLY", branchIds: [], processIds: [], userId, role };
+    if (effectiveRole === TEAM_LEAD_ROLE && processIds.length === 0) {
+      return { level: "TEAM_ONLY", branchIds: [], processIds: [], userId, role: effectiveRole };
     }
 
-    return { level: "PROCESS_ALL", branchIds, processIds, userId, role };
+    // No process assignments found — fall back to SELF_ONLY to prevent seeing all data
+    if (processIds.length === 0) {
+      console.warn(`[dashboardScope] PROCESS_ALL role=${effectiveRole} userId=${userId} has no process assignments — falling back to SELF_ONLY`);
+      return { level: "SELF_ONLY", branchIds: [], processIds: [], userId, role: effectiveRole };
+    }
+
+    return { level: "PROCESS_ALL", branchIds, processIds, userId, role: effectiveRole };
   }
 
-  if (SELF_ONLY_ROLES.includes(role)) {
-    return { level: "SELF_ONLY", branchIds: [], processIds: [], userId, role };
+  if (SELF_ONLY_ROLES.includes(effectiveRole)) {
+    return { level: "SELF_ONLY", branchIds: [], processIds: [], userId, role: effectiveRole };
   }
 
   // Default fallback for any unrecognised role
-  return { level: "SELF_ONLY", branchIds: [], processIds: [], userId, role };
+  return { level: "SELF_ONLY", branchIds: [], processIds: [], userId, role: effectiveRole };
 }
 
 /**
@@ -183,9 +199,9 @@ export function buildScopeWhere(
       }
       if (parts.length === 0) {
         console.warn(
-          `[dashboardScope] CUSTOM_SCOPE has no branchIds or processIds for userId=${scope.userId} role=${scope.role} — defaulting to 1=1`
+          `[dashboardScope] CUSTOM_SCOPE has no branchIds or processIds for userId=${scope.userId} role=${scope.role} — denying all rows`
         );
-        return { sql: "1=1", params: [] };
+        return { sql: "1=0", params: [] };
       }
       return { sql: `(${parts.join(" OR ")})`, params };
     }
@@ -245,9 +261,9 @@ export function buildScopeWhereEmployees(scope: DashboardScope): {
       }
       if (parts.length === 0) {
         console.warn(
-          `[dashboardScope] CUSTOM_SCOPE on employees table has no branchIds or processIds for userId=${scope.userId} role=${scope.role} — defaulting to 1=1`
+          `[dashboardScope] CUSTOM_SCOPE on employees table has no branchIds or processIds for userId=${scope.userId} role=${scope.role} — denying all rows`
         );
-        return { sql: "1=1", params: [] };
+        return { sql: "1=0", params: [] };
       }
       return { sql: `(${parts.join(" OR ")})`, params };
     }
@@ -277,7 +293,7 @@ export function scopeToSqlWhere(
   }
 
   if (scope.level === "BRANCH_ALL") {
-    if (scope.branchIds.length === 0) return { sql: "1=1", params: [] };
+    if (scope.branchIds.length === 0) return { sql: "1=0", params: [] };
     return {
       sql: `${tableAlias}.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`,
       params: scope.branchIds,
@@ -285,7 +301,7 @@ export function scopeToSqlWhere(
   }
 
   if (scope.level === "PROCESS_ALL") {
-    if (scope.processIds.length === 0) return { sql: "1=1", params: [] };
+    if (scope.processIds.length === 0) return { sql: "1=0", params: [] };
     return {
       sql: `${tableAlias}.process_id IN (${scope.processIds.map(() => "?").join(",")})`,
       params: scope.processIds,
@@ -309,13 +325,14 @@ export function scopeToSqlWhere(
     }
     if (parts.length === 0) {
       console.warn(
-        `[dashboardScope] scopeToSqlWhere CUSTOM_SCOPE has no branchIds or processIds for userId=${scope.userId} role=${scope.role} — defaulting to 1=1`
+        `[dashboardScope] scopeToSqlWhere CUSTOM_SCOPE has no branchIds or processIds for userId=${scope.userId} role=${scope.role} — denying all rows`
       );
-      return { sql: "1=1", params: [] };
+      return { sql: "1=0", params: [] };
     }
     return { sql: `(${parts.join(" OR ")})`, params };
   }
 
-  // Unknown scope level — safe default (no rows)
-  return { sql: "1=1", params: [] };
+  // Unknown scope level — deny all
+  console.warn("[dashboardScope] scopeToSqlWhere unknown scope level:", scope.level, "— denying");
+  return { sql: "1=0", params: [] };
 }

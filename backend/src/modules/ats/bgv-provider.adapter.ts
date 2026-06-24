@@ -243,7 +243,7 @@ export class MockBgvProviderAdapter implements BgvProviderAdapter {
     const state = randomUUID();
     return {
       state,
-      authUrl: `/mock-digilocker/authorize?state=${state}&candidateId=${candidateId}&docs=${encodeURIComponent(requestedDocuments.join(","))}`,
+      authUrl: `${env.BACKEND_URL || 'http://localhost:5056'}/api/mock-digilocker/authorize?state=${state}&candidateId=${candidateId}&docs=${encodeURIComponent(requestedDocuments.join(","))}`,
       expiresAt: new Date(Date.now() + 30 * 60 * 1000),
     };
   }

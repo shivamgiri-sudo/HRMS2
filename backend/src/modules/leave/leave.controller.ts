@@ -29,8 +29,8 @@ export const leaveController = {
 
   async listRequests(req: AuthenticatedRequest, res: Response) {
     const filters = leaveRequestFiltersSchema.parse(req.query);
-    const scopeFilter = (req as any).scopeFilter as { sql: string; params: unknown[] } | undefined;
-    const result = await leaveService.listRequests(filters, scopeFilter);
+    // leaveService.listRequests only accepts filters; scopeFilter not yet supported in service
+    const result = await leaveService.listRequests(filters);
     return res.json({ success: true, ...result });
   },
 

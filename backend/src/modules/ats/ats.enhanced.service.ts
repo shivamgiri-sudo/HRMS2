@@ -156,11 +156,19 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
 
   // Update candidate with assigned recruiter
   if (assignedRecruiterId) {
+    // Resolve recruiter name for recruiter_assigned_name (used by getMyPendingCandidates)
+    const [recNameRows] = await db.execute<RowDataPacket[]>(
+      `SELECT CONCAT(first_name, ' ', COALESCE(last_name, '')) AS full_name FROM employees WHERE id = ? LIMIT 1`,
+      [assignedRecruiterId]
+    );
+    const resolvedName = (recNameRows as any[])[0]?.full_name?.trim() ?? null;
+
     await db.execute(
       `UPDATE ats_candidate
        SET recruiter_id = ?,
            recruiter_assigned_id = ?,
            assigned_recruiter_id = ?,
+           recruiter_assigned_name = ?,
            recruiter_selected = ?,
            preferred_recruiter_id = ?,
            assignment_reason = ?
@@ -169,6 +177,7 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
         assignedRecruiterId,
         assignedRecruiterId,
         assignedRecruiterId,
+        resolvedName,
         preferredRecruiterId || assignedRecruiterId,
         preferredRecruiterId,
         assignmentReason,

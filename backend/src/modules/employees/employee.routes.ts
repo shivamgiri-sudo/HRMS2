@@ -21,7 +21,19 @@ router.get("/me", h(async (req: any, res: any) => {
   if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
 
   const [rows] = await db.execute(
-    "SELECT * FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    `SELECT e.*,
+            d.designation_name  AS designation,
+            dept.dept_name      AS department_name,
+            b.branch_name,
+            b.display_name      AS branch_display_name,
+            CONCAT(mgr.first_name, ' ', mgr.last_name) AS reporting_manager_name
+     FROM employees e
+     LEFT JOIN designation_master d    ON d.id    = e.designation_id
+     LEFT JOIN department_master  dept ON dept.id = e.department_id
+     LEFT JOIN branch_master      b    ON b.id    = e.branch_id
+     LEFT JOIN employees          mgr  ON mgr.id  = e.reporting_manager_id
+     WHERE e.user_id = ? AND e.active_status = 1
+     LIMIT 1`,
     [userId]
   ) as any[];
   if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
@@ -81,6 +93,8 @@ router.get("/me", h(async (req: any, res: any) => {
     success: true,
     data: {
       ...emp,
+      // Nested shapes expected by frontend
+      department: emp.department_name ? { name: emp.department_name } : null,
       bank_details: bankRows.length ? bankRows[0] : null,
       statutory_details,
       emergency_contact: emergRows.length ? emergRows[0] : null,
@@ -107,8 +121,9 @@ router.patch("/me", h(async (req: any, res: any) => {
   if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
   const empId = rows[0].id;
 
+  // official_email is the canonical login identity — keep it out of self-service
   const ALLOWED_FIELDS = [
-    "email", "phone", "personal_email", "personal_phone", "alternate_mobile",
+    "mobile", "personal_email", "personal_phone", "alternate_mobile",
     "address", "city", "country", "date_of_birth", "gender", "marital_status",
     "blood_group", "working_hours_start", "working_hours_end", "working_days"
   ];
@@ -121,10 +136,35 @@ router.patch("/me", h(async (req: any, res: any) => {
       values.push(req.body[field]);
     }
   }
+
+  // official_email update: sync to auth_user.email as login identity
+  const newOfficialEmail = req.body.official_email !== undefined
+    ? String(req.body.official_email).toLowerCase().trim()
+    : null;
+
+  if (newOfficialEmail) {
+    updates.push("`official_email` = ?");
+    values.push(newOfficialEmail);
+  }
+
   if (!updates.length) return res.status(400).json({ success: false, error: "No updatable fields provided" });
 
   values.push(empId);
   await db.execute(`UPDATE employees SET ${updates.join(", ")} WHERE id = ?`, values);
+
+  // Sync auth_user.email = official_email (login identity)
+  if (newOfficialEmail) {
+    const [conflict] = await db.execute(
+      "SELECT id FROM auth_user WHERE LOWER(email) = ? AND id != ? LIMIT 1",
+      [newOfficialEmail, userId]
+    ) as any[];
+    if (!(conflict as any[]).length) {
+      await db.execute("UPDATE auth_user SET email = ? WHERE id = ?", [newOfficialEmail, userId]);
+    } else {
+      return res.status(409).json({ success: false, error: "This official email is already used by another account." });
+    }
+  }
+
   return res.json({ success: true, message: "Profile updated" });
 }));
 
@@ -318,8 +358,7 @@ router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req
   res.json({ data: rows[0] });
 }));
 
-router.get("/", requireRole("admin", "hr", "manager"), h(async (req, res) => {
-  // Apply scope filtering
+router.get("/", requireRole("super_admin", "admin", "hr", "manager", "ceo"), h(async (req, res) => {
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
     ["hr", "manager"],
@@ -329,10 +368,9 @@ router.get("/", requireRole("admin", "hr", "manager"), h(async (req, res) => {
       departmentId: "e.department_id",
       managerEmployeeId: "e.reporting_manager_id"
     },
-    { allowCeoAllRead: true }
+    { allowAdminBypass: true, allowCeoAllRead: true }
   );
 
-  // Pass scope SQL to controller (will need service update for proper integration)
   (req as any).scopeFilter = scoped;
   return c.listEmployees(req, res);
 }));
@@ -345,9 +383,9 @@ router.post("/",
   })),
   h(c.createEmployee)
 );
-router.get("/:id", requireRole("admin", "hr", "manager"), h(c.getEmployee));  // TODO: Add self-scope check
+router.get("/:id", requireRole("super_admin", "admin", "hr", "manager"), h(c.getEmployee));
 router.patch("/:id",
-  requireRole("admin", "hr"),
+  requireRole("super_admin", "admin", "hr"),
   requireScopedRole(["hr"], async (req) => {
     // Resolve employee's branch/process from DB
     const [rows] = await db.execute(

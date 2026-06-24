@@ -122,6 +122,8 @@ async function drillOnboardingPending(scope: DashboardScope): Promise<DrilldownR
 // ─── TAT_BREACHED ─────────────────────────────────────────────────────────────
 async function drillTatBreached(scope: DashboardScope): Promise<DrilldownResult> {
   try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "t.branch_id", "t.process_id");
+
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          t.id AS taskId,
@@ -131,9 +133,10 @@ async function drillTatBreached(scope: DashboardScope): Promise<DrilldownResult>
          TIMESTAMPDIFF(HOUR, t.due_at, NOW()) AS ageHours,
          t.assigned_to_role AS assignedToRole
        FROM task_tat_instance t
-       WHERE t.status = 'sla_breached'
+       WHERE t.status = 'sla_breached' AND ${scopeSql}
        ORDER BY t.due_at ASC
-       LIMIT 100`
+       LIMIT 100`,
+      scopeParams
     );
 
     return {
@@ -156,6 +159,8 @@ async function drillTatBreached(scope: DashboardScope): Promise<DrilldownResult>
 // ─── NAME_MISMATCH ────────────────────────────────────────────────────────────
 async function drillNameMismatch(scope: DashboardScope): Promise<DrilldownResult> {
   try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "b.branch_id", "b.process_id");
+
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          nm.candidate_id AS candidateId,
@@ -166,9 +171,11 @@ async function drillNameMismatch(scope: DashboardScope): Promise<DrilldownResult
          nm.created_at AS detectedAt
        FROM candidate_name_match_summary nm
        LEFT JOIN ats_candidate c ON c.id = nm.candidate_id
-       WHERE nm.match_status IN ('mismatch','partial','pending')
+       LEFT JOIN ats_onboarding_bridge b ON b.candidate_id = nm.candidate_id
+       WHERE nm.match_status IN ('mismatch','partial','pending') AND ${scopeSql}
        ORDER BY nm.is_blocking DESC, nm.created_at ASC
-       LIMIT 100`
+       LIMIT 100`,
+      scopeParams
     );
 
     return {
@@ -191,6 +198,8 @@ async function drillNameMismatch(scope: DashboardScope): Promise<DrilldownResult
 // ─── INCENTIVE_PENDING ────────────────────────────────────────────────────────
 async function drillIncentivePending(scope: DashboardScope): Promise<DrilldownResult> {
   try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "b.branch_id", "b.process_id");
+
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          b.id AS batchId,
@@ -203,9 +212,10 @@ async function drillIncentivePending(scope: DashboardScope): Promise<DrilldownRe
        FROM incentive_upload_batch b
        LEFT JOIN incentive_approval_step s
          ON s.batch_id = b.id AND s.step_status = 'pending'
-       WHERE b.batch_status = 'pending'
+       WHERE b.batch_status = 'pending' AND ${scopeSql}
        ORDER BY b.created_at ASC
-       LIMIT 100`
+       LIMIT 100`,
+      scopeParams
     );
 
     return {

@@ -170,13 +170,17 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
 // ─── Incentive ────────────────────────────────────────────────────────────────
 export async function getIncentiveMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          SUM(CASE WHEN batch_status = 'pending' THEN 1 ELSE 0 END) AS pendingBatches,
          SUM(CASE WHEN batch_status = 'pending' THEN total_amount ELSE 0 END) AS pendingAmount,
          SUM(CASE WHEN batch_status = 'approved' THEN total_amount ELSE 0 END) AS approvedAmount,
          SUM(CASE WHEN batch_status = 'rejected' THEN 1 ELSE 0 END) AS rejectedBatches
-       FROM incentive_upload_batch`
+       FROM incentive_upload_batch
+       WHERE ${scopeSql}`,
+      scopeParams
     ).catch(() => [[{ pendingBatches: 0, pendingAmount: 0, approvedAmount: 0, rejectedBatches: 0 }]] as any);
 
     const r = rows[0] as any;
@@ -202,6 +206,8 @@ export async function getIncentiveMetrics(scope: DashboardScope): Promise<Metric
 // ─── TAT ──────────────────────────────────────────────────────────────────────
 export async function getTatMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_count,
@@ -209,7 +215,9 @@ export async function getTatMetrics(scope: DashboardScope): Promise<MetricResult
          SUM(CASE WHEN status = 'sla_breached' THEN 1 ELSE 0 END) AS breached,
          AVG(CASE WHEN status NOT IN ('closed','resolved')
              THEN TIMESTAMPDIFF(HOUR, created_at, NOW()) ELSE NULL END) AS avgAgeHours
-       FROM task_tat_instance`
+       FROM task_tat_instance
+       WHERE ${scopeSql}`,
+      scopeParams
     ).catch(() => [[{ open_count: 0, overdue: 0, breached: 0, avgAgeHours: null }]] as any);
 
     const r = rows[0] as any;
@@ -266,25 +274,32 @@ export async function getResignationMetrics(scope: DashboardScope): Promise<Metr
 // ─── BGV ──────────────────────────────────────────────────────────────────────
 export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
-    // Try candidate_bgv_check first, fall back to ats_onboarding_bridge bgv fields
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "b.branch_id", "b.process_id");
+
+    // Try candidate_bgv_check joined to ats_onboarding_bridge for scope columns
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
-         SUM(CASE WHEN bgv_status = 'pending' OR bgv_status IS NULL THEN 1 ELSE 0 END) AS pending,
-         SUM(CASE WHEN bgv_status = 'cleared' THEN 1 ELSE 0 END) AS cleared,
-         SUM(CASE WHEN bgv_status = 'flagged' THEN 1 ELSE 0 END) AS flagged,
-         SUM(CASE WHEN bgv_status = 'breached' THEN 1 ELSE 0 END) AS breached
-       FROM candidate_bgv_check`
+         SUM(CASE WHEN bgv.bgv_status = 'pending' OR bgv.bgv_status IS NULL THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN bgv.bgv_status = 'cleared' THEN 1 ELSE 0 END) AS cleared,
+         SUM(CASE WHEN bgv.bgv_status = 'flagged' THEN 1 ELSE 0 END) AS flagged,
+         SUM(CASE WHEN bgv.bgv_status = 'breached' THEN 1 ELSE 0 END) AS breached
+       FROM candidate_bgv_check bgv
+       LEFT JOIN ats_onboarding_bridge b ON b.candidate_id = bgv.candidate_id
+       WHERE ${scopeSql}`,
+      scopeParams
     ).catch(() => [[null]] as any);
 
     if (!rows[0]) {
-      // Fallback: derive from ats_onboarding_bridge
+      // Fallback: derive from ats_onboarding_bridge with scope
       const [bridgeRows] = await db.execute<RowDataPacket[]>(
         `SELECT
            SUM(CASE WHEN bgv_consent_given = 0 OR bgv_consent_given IS NULL THEN 1 ELSE 0 END) AS pending,
            SUM(CASE WHEN bgv_consent_given = 1 THEN 1 ELSE 0 END) AS cleared,
            0 AS flagged,
            0 AS breached
-         FROM ats_onboarding_bridge`
+         FROM ats_onboarding_bridge b
+         WHERE ${scopeSql}`,
+        scopeParams
       ).catch(() => [[{ pending: 0, cleared: 0, flagged: 0, breached: 0 }]] as any);
 
       const rb = bridgeRows[0] as any;
@@ -314,13 +329,18 @@ export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult
 // ─── Name Mismatch ────────────────────────────────────────────────────────────
 export async function getNameMismatchMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "b.branch_id", "b.process_id");
+
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
-         SUM(CASE WHEN match_status = 'mismatch' THEN 1 ELSE 0 END) AS mismatch,
-         SUM(CASE WHEN match_status = 'partial' THEN 1 ELSE 0 END) AS partial,
-         SUM(CASE WHEN match_status = 'pending' OR match_status IS NULL THEN 1 ELSE 0 END) AS pending,
-         SUM(CASE WHEN is_blocking = 1 THEN 1 ELSE 0 END) AS blocking
-       FROM candidate_name_match_summary`
+         SUM(CASE WHEN nm.match_status = 'mismatch' THEN 1 ELSE 0 END) AS mismatch,
+         SUM(CASE WHEN nm.match_status = 'partial' THEN 1 ELSE 0 END) AS partial,
+         SUM(CASE WHEN nm.match_status = 'pending' OR nm.match_status IS NULL THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN nm.is_blocking = 1 THEN 1 ELSE 0 END) AS blocking
+       FROM candidate_name_match_summary nm
+       LEFT JOIN ats_onboarding_bridge b ON b.candidate_id = nm.candidate_id
+       WHERE ${scopeSql}`,
+      scopeParams
     ).catch(() => [[{ mismatch: 0, partial: 0, pending: 0, blocking: 0 }]] as any);
 
     const r = rows[0] as any;

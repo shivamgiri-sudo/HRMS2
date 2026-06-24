@@ -3,7 +3,8 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import { resolveDashboardScope } from "../../shared/dashboardScope.js";
+import { resolveDashboardScope, scopeToSqlWhere } from "../../shared/dashboardScope.js";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { getDrilldown } from "./dashboard-drilldown.service.js";
 import {
   getHeadcountMetrics,
@@ -26,14 +27,26 @@ router.use(requireAuth);
 router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: any) => {
   const { dashboardCode } = req.params;
   const user = req.authUser!;
-  const role = (user as any).role ?? "employee";
-  const scope = await resolveDashboardScope(user.id, role);
+  const ctx = await getUserRoleContext(user.id);
+  const scope = await resolveDashboardScope(user.id, ctx.primaryRole);
 
   const [workItems] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) as pending_count, SUM(CASE WHEN due_at < NOW() AND status='pending' THEN 1 ELSE 0 END) as overdue_count
      FROM work_item WHERE (assigned_to_user_id = ? OR assigned_to_role = ?) AND status='pending'`,
-    [user.id, role]
+    [user.id, ctx.primaryRole]
   ).catch(() => [[{ pending_count: 0, overdue_count: 0 }]] as any);
+
+  const [hc, onb, att, payroll, incentive, tat, resign, bgv, nm] = await Promise.all([
+    getHeadcountMetrics(scope),
+    getOnboardingMetrics(scope),
+    getAttendanceMetrics(scope),
+    getPayrollReadinessMetrics(scope),
+    getIncentiveMetrics(scope),
+    getTatMetrics(scope),
+    getResignationMetrics(scope),
+    getBgvMetrics(scope),
+    getNameMismatchMetrics(scope),
+  ]);
 
   return res.json({
     success: true,
@@ -41,6 +54,7 @@ router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: a
       dashboardCode,
       scope,
       workItems: workItems[0] ?? { pending_count: 0, overdue_count: 0 },
+      metrics: { hc, onb, att, payroll, incentive, tat, resign, bgv, nm },
       generatedAt: new Date().toISOString(),
     },
   });
@@ -145,7 +159,32 @@ router.get("/:dashboardCode/metric/:metricCode/drilldown", h(async (req: Authent
 router.get("/:dashboardCode/metric/:metricCode/trend", h(async (req: AuthenticatedRequest, res: any) => {
   const { dashboardCode, metricCode } = req.params;
   const user = req.authUser!;
-  const role = (user as any).role ?? "employee";
+  const ctx = await getUserRoleContext(user.id);
+  const scope = await resolveDashboardScope(user.id, ctx.primaryRole);
+
+  // Scope snapshot rows by branch_id / process_id when not ORG_ALL
+  let scopeClause = "";
+  const baseParams: unknown[] = [dashboardCode, metricCode, ctx.primaryRole];
+  const extraParams: string[] = [];
+
+  if (scope.level === "BRANCH_ALL" && scope.branchIds.length > 0) {
+    scopeClause = ` AND branch_id IN (${scope.branchIds.map(() => "?").join(",")})`;
+    extraParams.push(...scope.branchIds);
+  } else if (scope.level === "PROCESS_ALL" && scope.processIds.length > 0) {
+    scopeClause = ` AND process_id IN (${scope.processIds.map(() => "?").join(",")})`;
+    extraParams.push(...scope.processIds);
+  } else if (scope.level === "CUSTOM_SCOPE") {
+    const parts: string[] = [];
+    if (scope.branchIds.length > 0) {
+      parts.push(`branch_id IN (${scope.branchIds.map(() => "?").join(",")})`);
+      extraParams.push(...scope.branchIds);
+    }
+    if (scope.processIds.length > 0) {
+      parts.push(`process_id IN (${scope.processIds.map(() => "?").join(",")})`);
+      extraParams.push(...scope.processIds);
+    }
+    if (parts.length > 0) scopeClause = ` AND (${parts.join(" OR ")})`;
+  }
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -155,8 +194,9 @@ router.get("/:dashboardCode/metric/:metricCode/trend", h(async (req: Authenticat
      FROM dashboard_metric_snapshot
      WHERE dashboard_code = ? AND metric_code = ? AND role_code = ?
        AND snapshot_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+       ${scopeClause}
      ORDER BY snapshot_date ASC`,
-    [dashboardCode, metricCode, role]
+    [...baseParams, ...extraParams]
   ).catch(() => [[]] as any);
 
   return res.json({
@@ -206,37 +246,46 @@ router.get("/:dashboardCode/filters", h(async (req: AuthenticatedRequest, res: a
 // ─── Root causes (top 3 blockers per domain) ─────────────────────────────────
 router.get("/:dashboardCode/root-causes", h(async (req: AuthenticatedRequest, res: any) => {
   const user = req.authUser!;
-  const role = (user as any).role ?? "employee";
-  const scope = await resolveDashboardScope(user.id, role);
+  const ctx = await getUserRoleContext(user.id);
+  const scope = await resolveDashboardScope(user.id, ctx.primaryRole);
 
-  // TAT top 3 breaches
+  const { sql: tatScopeSql, params: tatScopeParams } = scopeToSqlWhere(scope, "t");
+  const { sql: nmScopeSql, params: nmScopeParams } = scopeToSqlWhere(scope, "b");
+  const { sql: obScopeSql, params: obScopeParams } = scopeToSqlWhere(scope, "b");
+
+  // TAT top 3 breaches scoped to branch/process
   const [tatRows] = await db.execute<RowDataPacket[]>(
-    `SELECT task_type AS label, COUNT(*) AS count,
-            MAX(TIMESTAMPDIFF(HOUR, due_at, NOW())) AS maxAgeHours
-     FROM task_tat_instance WHERE status = 'sla_breached'
-     GROUP BY task_type ORDER BY count DESC LIMIT 3`
+    `SELECT t.task_type AS label, COUNT(*) AS count,
+            MAX(TIMESTAMPDIFF(HOUR, t.due_at, NOW())) AS maxAgeHours
+     FROM task_tat_instance t
+     WHERE t.status = 'sla_breached' AND ${tatScopeSql}
+     GROUP BY t.task_type ORDER BY count DESC LIMIT 3`,
+    tatScopeParams
   ).catch(() => [[]] as any);
 
-  // Name mismatch top 3 blocking candidates
+  // Name mismatch top 3 blocking candidates scoped via onboarding bridge
   const [nmRows] = await db.execute<RowDataPacket[]>(
     `SELECT nm.candidate_id AS entityId,
             CONCAT(c.first_name, ' ', c.last_name) AS label,
             nm.mismatch_fields AS detail
      FROM candidate_name_match_summary nm
      LEFT JOIN ats_candidate c ON c.id = nm.candidate_id
-     WHERE nm.is_blocking = 1
-     ORDER BY nm.created_at ASC LIMIT 3`
+     LEFT JOIN ats_onboarding_bridge b ON b.candidate_id = nm.candidate_id
+     WHERE nm.is_blocking = 1 AND ${nmScopeSql}
+     ORDER BY nm.created_at ASC LIMIT 3`,
+    nmScopeParams
   ).catch(() => [[]] as any);
 
-  // Onboarding top 3 stuck
+  // Onboarding top 3 stuck scoped to branch/process
   const [obRows] = await db.execute<RowDataPacket[]>(
     `SELECT b.id AS entityId,
             CONCAT(c.first_name, ' ', c.last_name) AS label,
             b.bridge_status AS detail
      FROM ats_onboarding_bridge b
      LEFT JOIN ats_candidate c ON c.id = b.candidate_id
-     WHERE b.bridge_status = 'stuck'
-     ORDER BY b.created_at ASC LIMIT 3`
+     WHERE b.bridge_status = 'stuck' AND ${obScopeSql}
+     ORDER BY b.created_at ASC LIMIT 3`,
+    obScopeParams
   ).catch(() => [[]] as any);
 
   const rootCauses = [
@@ -273,17 +322,23 @@ router.get("/:dashboardCode/root-causes", h(async (req: AuthenticatedRequest, re
 
 // ─── Owner accountability (work_item grouped by role) ────────────────────────
 router.get("/:dashboardCode/owner-accountability", h(async (req: AuthenticatedRequest, res: any) => {
+  const user = req.authUser!;
+  const ctx = await getUserRoleContext(user.id);
+  const scope = await resolveDashboardScope(user.id, ctx.primaryRole);
+  const { sql: scopeSql, params: scopeParams } = scopeToSqlWhere(scope, "wi");
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
-       assigned_to_role AS role,
+       wi.assigned_to_role AS role,
        COUNT(*) AS total,
-       SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
-       SUM(CASE WHEN status = 'pending' AND due_at < NOW() THEN 1 ELSE 0 END) AS overdue,
-       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed
-     FROM work_item
-     WHERE assigned_to_role IS NOT NULL
-     GROUP BY assigned_to_role
-     ORDER BY overdue DESC, pending DESC`
+       SUM(CASE WHEN wi.status = 'pending' THEN 1 ELSE 0 END) AS pending,
+       SUM(CASE WHEN wi.status = 'pending' AND wi.due_at < NOW() THEN 1 ELSE 0 END) AS overdue,
+       SUM(CASE WHEN wi.status = 'completed' THEN 1 ELSE 0 END) AS completed
+     FROM work_item wi
+     WHERE wi.assigned_to_role IS NOT NULL AND ${scopeSql}
+     GROUP BY wi.assigned_to_role
+     ORDER BY overdue DESC, pending DESC`,
+    scopeParams
   ).catch(() => [[]] as any);
 
   return res.json({

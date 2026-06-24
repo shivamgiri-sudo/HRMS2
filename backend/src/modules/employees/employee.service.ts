@@ -133,14 +133,14 @@ export const employeeService = {
 
   async getEmployee(id: string): Promise<Employee> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM employees WHERE id = ? LIMIT 1", [id]
+      "SELECT *, COALESCE(NULLIF(TRIM(official_email),''), email) AS email FROM employees WHERE id = ? LIMIT 1", [id]
     );
     const rec = (rows as Employee[])[0];
     if (!rec) throw new Error("Employee not found");
     return rec;
   },
 
-  async listEmployees(filters: EmployeeFilters & { scopeFilter?: string }): Promise<PaginatedResult<Employee>> {
+  async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } }): Promise<PaginatedResult<Employee>> {
     const { page, limit, status, processId, branchId, search, scopeFilter } = filters;
     const offset = (page - 1) * limit;
     const conds: string[] = ["active_status = 1"];
@@ -149,19 +149,22 @@ export const employeeService = {
     if (status)    { conds.push("employment_status = ?"); params.push(status); }
     if (processId) { conds.push("process_id = ?");        params.push(processId); }
     if (branchId)  { conds.push("branch_id = ?");         params.push(branchId); }
-    if (search)    { conds.push("(full_name LIKE ? OR employee_code LIKE ?)"); params.push(`%${search}%`, `%${search}%`); }
+    if (search)    { conds.push("(full_name LIKE ? OR employee_code LIKE ? OR email LIKE ? OR official_email LIKE ?)"); params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`); }
 
     // Apply scope filter from middleware
-    if (scopeFilter) {
-      const scopeClause = String(scopeFilter).replace(/^WHERE\s+/i, '').trim();
-      if (scopeClause) conds.push(`(${scopeClause})`);
+    if (scopeFilter?.sql) {
+      const scopeClause = scopeFilter.sql.replace(/^WHERE\s+/i, '').trim();
+      if (scopeClause) {
+        conds.push(`(${scopeClause})`);
+        params.push(...(scopeFilter.params ?? []));
+      }
     }
 
     const where = `WHERE ${conds.join(" AND ")}`;
 
     // Use string interpolation for LIMIT/OFFSET to avoid parameter binding issues
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM employees ${where} ORDER BY employee_code ASC LIMIT ${limit} OFFSET ${offset}`,
+      `SELECT *, COALESCE(NULLIF(TRIM(official_email),''), email) AS email FROM employees ${where} ORDER BY employee_code ASC LIMIT ${limit} OFFSET ${offset}`,
       params
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
@@ -178,6 +181,7 @@ export const employeeService = {
     if (input.firstName         !== undefined) { sets.push("first_name = ?");           params.push(input.firstName); }
     if (input.lastName          !== undefined) { sets.push("last_name = ?");            params.push(input.lastName ?? null); }
     if (input.email             !== undefined) { sets.push("email = ?");                params.push(input.email ?? null); }
+    if (input.officialEmail     !== undefined) { sets.push("official_email = ?");       params.push(input.officialEmail ?? null); }
     if (input.mobile            !== undefined) { sets.push("mobile = ?");               params.push(input.mobile ?? null); }
     if (input.gender            !== undefined) { sets.push("gender = ?");               params.push(input.gender); }
     if (input.dateOfBirth       !== undefined) { sets.push("date_of_birth = ?");        params.push(input.dateOfBirth ?? null); }
@@ -198,6 +202,24 @@ export const employeeService = {
       params.push(id);
       await db.execute(`UPDATE employees SET ${sets.join(", ")} WHERE id = ?`, params);
     }
+
+    // Sync auth_user.email = official_email when official_email updated
+    if (input.officialEmail) {
+      const newEmail = input.officialEmail.toLowerCase().trim();
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        'SELECT user_id FROM employees WHERE id = ? LIMIT 1', [id]
+      );
+      const userId = (empRows as any[])[0]?.user_id;
+      if (userId) {
+        const [conflict] = await db.execute<RowDataPacket[]>(
+          'SELECT id FROM auth_user WHERE LOWER(email) = ? AND id != ? LIMIT 1', [newEmail, userId]
+        );
+        if (!(conflict as any[]).length) {
+          await db.execute('UPDATE auth_user SET email = ? WHERE id = ?', [newEmail, userId]);
+        }
+      }
+    }
+
     return this.getEmployee(id);
   },
 

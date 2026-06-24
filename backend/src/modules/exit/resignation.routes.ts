@@ -103,8 +103,8 @@ resignationRouter.post(
     try {
       await db.execute(
         `INSERT INTO work_item
-           (id, item_type, reference_id, reference_type, assigned_to_role, status, created_by, created_at)
-         VALUES (UUID(), 'RESIGNATION_MANAGER_DISCUSSION', ?, 'exit_request', 'branch_head', 'open', ?, NOW())`,
+           (id, item_type, title, module_code, entity_type, entity_id, assigned_to_role, priority, status, created_by, created_at)
+         VALUES (UUID(), 'RESIGNATION_MANAGER_DISCUSSION', 'Manager discussion pending', 'exit', 'exit_request', ?, 'branch_head', 'high', 'pending', ?, NOW())`,
         [req.params.exitId, req.authUser!.id]
       );
     } catch (_wiErr) {
@@ -136,8 +136,8 @@ resignationRouter.post(
     try {
       await db.execute(
         `INSERT INTO work_item
-           (id, item_type, reference_id, reference_type, assigned_to_role, status, created_by, created_at)
-         VALUES (UUID(), 'RESIGNATION_HR_DISCUSSION', ?, 'exit_request', 'hr', 'open', ?, NOW())`,
+           (id, item_type, title, module_code, entity_type, entity_id, assigned_to_role, priority, status, created_by, created_at)
+         VALUES (UUID(), 'RESIGNATION_HR_DISCUSSION', 'HR discussion pending', 'exit', 'exit_request', ?, 'hr', 'high', 'pending', ?, NOW())`,
         [req.params.exitId, req.authUser!.id]
       );
     } catch (_wiErr) {
@@ -216,7 +216,7 @@ resignationRouter.patch(
 // POST /:exitId/accept — accept the resignation
 resignationRouter.post(
   "/:exitId/accept",
-  requireRole("admin", "hr", "manager"),
+  requireRole("admin", "hr", "branch_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     await db.execute(
       `UPDATE exit_request SET status = 'accepted', updated_at = NOW() WHERE id = ?`,
@@ -232,11 +232,26 @@ resignationRouter.post(
   })
 );
 
-// POST /:exitId/withdraw — withdraw the resignation
+// POST /:exitId/withdraw — employee withdraws own resignation; HR/admin may withdraw on behalf
 resignationRouter.post(
   "/:exitId/withdraw",
-  requireRole("admin", "hr", "manager"),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    const isPrivileged = await import("../../shared/accessGuard.js").then((m) =>
+      m.hasRole(userId, "admin", "hr", "manager")
+    );
+    if (!isPrivileged) {
+      // Employee may only withdraw their own exit request
+      const emp = await getEmployeeForUser(userId);
+      if (!emp) return res.status(403).json({ success: false, message: "Forbidden" });
+      const [check] = await db.execute(
+        `SELECT id FROM exit_request WHERE id = ? AND employee_id = ? LIMIT 1`,
+        [req.params.exitId, emp.id]
+      ) as any[];
+      if (!(check as any[]).length) {
+        return res.status(403).json({ success: false, message: "You may only withdraw your own resignation" });
+      }
+    }
     await db.execute(
       `UPDATE exit_request SET status = 'withdrawn', updated_at = NOW() WHERE id = ?`,
       [req.params.exitId]
@@ -245,7 +260,7 @@ resignationRouter.post(
       `INSERT INTO exit_retention_action
          (id, exit_request_id, action_type, action_summary, outcome, performed_by, performed_at)
        VALUES (UUID(), ?, 'status_change', 'Resignation withdrawn', 'withdrawn', ?, NOW())`,
-      [req.params.exitId, req.authUser!.id]
+      [req.params.exitId, userId]
     );
     return res.json({ success: true, message: "Resignation withdrawn" });
   })
@@ -254,7 +269,7 @@ resignationRouter.post(
 // POST /:exitId/mark-clearance-pending — move to clearance_pending
 resignationRouter.post(
   "/:exitId/mark-clearance-pending",
-  requireRole("admin", "hr", "manager"),
+  requireRole("admin", "hr"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     await db.execute(
       `UPDATE exit_request SET status = 'clearance_pending', updated_at = NOW() WHERE id = ?`,

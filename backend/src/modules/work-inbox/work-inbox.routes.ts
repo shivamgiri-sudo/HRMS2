@@ -81,17 +81,24 @@ router.get("/dashboard", h(async (req: AuthenticatedRequest, res: any) => {
 }));
 
 router.post("/:id/complete", h(async (req: AuthenticatedRequest, res: any) => {
+  await svc.assertWorkItemAccess(req.authUser!.id, req.params.id, 'complete');
   await svc.completeWorkItem(req.params.id, req.authUser!.id, req.body.remarks);
   return res.json({ success: true });
 }));
 
 router.post("/:id/escalate", h(async (req: AuthenticatedRequest, res: any) => {
+  await svc.assertWorkItemAccess(req.authUser!.id, req.params.id, 'escalate');
   await svc.escalateWorkItem(req.params.id, req.authUser!.id, req.body.remarks);
   return res.json({ success: true });
 }));
 
 router.post("/:id/reassign", h(async (req: AuthenticatedRequest, res: any) => {
-  await svc.reassignWorkItem(req.params.id, req.body.toUserId, req.authUser!.id, req.body.remarks);
+  const { toUserId, remarks } = req.body as { toUserId?: string; remarks?: string };
+  if (!toUserId) {
+    return res.status(400).json({ success: false, error: "toUserId is required" });
+  }
+  await svc.assertWorkItemAccess(req.authUser!.id, req.params.id, 'reassign');
+  await svc.reassignWorkItem(req.params.id, toUserId, req.authUser!.id, remarks);
   return res.json({ success: true });
 }));
 

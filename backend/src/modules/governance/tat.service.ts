@@ -107,7 +107,7 @@ export async function checkAndEscalate(): Promise<number> {
         await db.execute(
           `INSERT INTO work_item
              (id, item_type, entity_type, entity_id, assigned_role, due_at, priority, status, created_at, updated_at)
-           VALUES (UUID(), 'sla_breach_notify', ?, ?, ?, NOW(), 'high', 'pending', NOW(), NOW())`,
+           VALUES (UUID(), 'TAT_BREACH', ?, ?, ?, NOW(), 'high', 'pending', NOW(), NOW())`,
           [(task as any).entity_type, (task as any).entity_id, (esc as any).notify_role]
         );
       }

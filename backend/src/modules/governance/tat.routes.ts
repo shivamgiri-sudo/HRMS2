@@ -5,7 +5,9 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
-import { createTatInstance, checkAndEscalate, completeTatInstance } from "./tat.service.js";
+import { createTatInstance, checkAndEscalateTat, completeTatInstance } from "./tat.service.js";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { resolveDashboardScope, scopeToSqlWhere } from "../../shared/dashboardScope.js";
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -101,11 +103,19 @@ router.post("/escalation-matrix", requireRole("admin", "hr"), h(async (req: Auth
 
 // ── TAT Instances / Tasks ─────────────────────────────────────────────────────
 
-// GET /tat/tasks — list tasks with optional filters
+// GET /tat/tasks — list tasks with optional filters, scoped by role
 router.get("/tasks", h(async (req: AuthenticatedRequest, res: any) => {
   const { status, taskType, branchId } = req.query as Record<string, string>;
   const params: unknown[] = [];
   let where = "1=1";
+
+  // Role-based scope filter on branch_id / process_id
+  const ctx = await getUserRoleContext(req.authUser!.id);
+  const scope = await resolveDashboardScope(req.authUser!.id, ctx.primaryRole);
+  const scopeWhere = scopeToSqlWhere(scope, "t");
+  where += ` AND (${scopeWhere.sql})`;
+  params.push(...scopeWhere.params);
+
   if (status) { where += " AND t.status = ?"; params.push(status); }
   if (taskType) { where += " AND t.task_type = ?"; params.push(taskType); }
   if (branchId) { where += " AND t.branch_id = ?"; params.push(branchId); }
@@ -141,7 +151,7 @@ router.post("/tasks", h(async (req: AuthenticatedRequest, res: any) => {
 
 // POST /tat/tasks/recalculate — check and escalate SLA-breached tasks (admin/hr only)
 router.post("/tasks/recalculate", requireRole("admin", "hr"), h(async (_req: any, res: any) => {
-  const affected = await checkAndEscalate();
+  const affected = await checkAndEscalateTat();
   return res.json({ success: true, affected });
 }));
 

@@ -1,6 +1,7 @@
 import { db } from "../../db/mysql.js";
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
 
 export type WorkItemInput = {
   itemType: string;
@@ -17,6 +18,31 @@ export type WorkItemInput = {
   dueAt?: string;
   createdBy?: string;
 };
+
+export async function assertWorkItemAccess(
+  userId: string,
+  workItemId: string,
+  action: 'complete' | 'escalate' | 'reassign'
+): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    'SELECT assigned_to_user_id, assigned_to_role, status FROM work_item WHERE id = ? LIMIT 1',
+    [workItemId]
+  );
+  if (!(rows as any[]).length) {
+    throw Object.assign(new Error('Work item not found'), { statusCode: 404 });
+  }
+  const item = (rows as any)[0];
+  if (item.status === 'completed' || item.status === 'cancelled') {
+    throw Object.assign(new Error('Work item already ' + item.status), { statusCode: 400 });
+  }
+  const { roleKeys } = await getUserRoleContext(userId);
+  const isPrivileged = roleKeys.some(r =>
+    ['super_admin', 'admin', 'ho_hr', 'hr_branch', 'branch_head', 'operations_head'].includes(r)
+  );
+  if (item.assigned_to_user_id !== userId && !isPrivileged) {
+    throw Object.assign(new Error('Not authorized to ' + action + ' this work item'), { statusCode: 403 });
+  }
+}
 
 export async function createWorkItem(input: WorkItemInput): Promise<string> {
   const id = randomUUID();

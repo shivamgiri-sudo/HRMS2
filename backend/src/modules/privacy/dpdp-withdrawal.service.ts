@@ -61,14 +61,14 @@ export async function submitRequest(
 
   await insertAuditLog(id, "submitted", requesterId, "Request submitted by principal");
 
-  // Work item for HR/DPO to pick up
+  // Work item for compliance/DPO to pick up (DPDP Act §13 — 72-hour review SLA)
   await db.execute(
-    `INSERT INTO work_items
-       (id, item_type, reference_id, assigned_role, title, status, created_by, created_at)
-     VALUES (UUID(), 'dpdp_withdrawal', ?, 'hr', 'DPDP Withdrawal pending review', 'open', ?, NOW())`,
-    [id, requesterId]
+    `INSERT INTO work_item
+       (id, item_type, title, module_code, entity_type, entity_id, assigned_to_role, priority, status, created_at)
+     VALUES (UUID(), 'DPDP_WITHDRAWAL_REVIEW', ?, 'compliance', 'dpdp_withdrawal', ?, 'compliance', 'high', 'pending', NOW())`,
+    ["DPDP Withdrawal pending review", id]
   ).catch(() => {
-    // work_items table may not exist in all environments — non-fatal
+    // work_item table may not exist in all environments — non-fatal
   });
 
   return { id, request_ref: requestRef };
