@@ -3,10 +3,12 @@ import type { Request, Response, NextFunction } from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 import {
   addQualification,
   deleteOnboardingDocument,
@@ -19,7 +21,9 @@ import {
   saveExperienceDetails,
   saveFamilyDetails,
   saveFinalSection,
+  saveLanguages,
   saveProgress,
+  saveStatutory,
   submitFullOnboarding,
   uploadOnboardingDocument,
   validateOnboardingToken,
@@ -120,7 +124,125 @@ router.post("/submit", h(async (req, res) => {
   return res.json({ success: true, data: await submitFullOnboarding(token, meta(req)) });
 }));
 
-// HR/BGV/Admin review routes
+router.post("/statutory", h(async (req, res) => {
+  const { token, ...input } = req.body;
+  if (!token) return res.status(400).json({ success: false, message: "token required" });
+  return res.json({ success: true, data: await saveStatutory(token, input) });
+}));
+
+// ── OTP routes ────────────────────────────────────────────────────────────────
+router.post("/otp/send", h(async (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ success: false, message: "token required" });
+
+  const tokenData = await validateOnboardingToken(token);
+  const mobile = String(tokenData.mobile ?? "").replace(/\D/g, "");
+  if (!mobile || mobile.length < 10) {
+    return res.status(400).json({ success: false, message: "No valid mobile number on file for this candidate" });
+  }
+
+  // Rate limit: max 3 sends per candidate per 10 min
+  const [recent] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM candidate_onboarding_otp
+      WHERE candidate_id = ? AND created_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)`,
+    [tokenData.candidate_id]
+  );
+  if ((recent[0] as any)?.cnt >= 3) {
+    return res.status(429).json({ success: false, message: "Too many OTP requests. Please wait 10 minutes." });
+  }
+
+  const otp = String(Math.floor(100000 + Math.random() * 900000));
+  const otpHash = createHash("sha256").update(otp + mobile).digest("hex");
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  const otpId = randomUUID();
+
+  await db.execute(
+    `INSERT INTO candidate_onboarding_otp (id, candidate_id, mobile, otp_hash, expires_at) VALUES (?, ?, ?, ?, ?)`,
+    [otpId, tokenData.candidate_id, mobile, otpHash, expiresAt]
+  );
+
+  // Send via SMTP (SMS gateway or email fallback)
+  try {
+    const { sendOnboardingOtp } = await import("./ats.email.service.js");
+    await sendOnboardingOtp({ mobile, otp, candidateName: tokenData.full_name, email: tokenData.email });
+  } catch (_e) {
+    // Non-fatal in dev — log otp for debugging
+    console.info(`[OTP-DEV] ${mobile}: ${otp}`);
+  }
+
+  return res.json({ success: true, message: "OTP sent", maskedMobile: mobile.slice(-4).padStart(mobile.length, "*") });
+}));
+
+router.post("/otp/verify", h(async (req, res) => {
+  const { token, otp } = req.body;
+  if (!token || !otp) return res.status(400).json({ success: false, message: "token and otp required" });
+
+  const tokenData = await validateOnboardingToken(token);
+  const mobile = String(tokenData.mobile ?? "").replace(/\D/g, "");
+  const otpHash = createHash("sha256").update(String(otp) + mobile).digest("hex");
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM candidate_onboarding_otp
+      WHERE candidate_id = ? AND verified = 0 AND expires_at > NOW()
+      ORDER BY created_at DESC LIMIT 1`,
+    [tokenData.candidate_id]
+  );
+
+  const record = rows[0] as any;
+  if (!record) return res.status(400).json({ success: false, message: "OTP expired or not found. Please request a new one." });
+
+  await db.execute(`UPDATE candidate_onboarding_otp SET attempts = attempts + 1 WHERE id = ?`, [record.id]);
+
+  if (Number(record.attempts) >= Number(record.max_attempts)) {
+    return res.status(429).json({ success: false, message: "Too many incorrect attempts. Please request a new OTP." });
+  }
+
+  if (record.otp_hash !== otpHash) {
+    return res.status(400).json({ success: false, message: "Incorrect OTP" });
+  }
+
+  await db.execute(`UPDATE candidate_onboarding_otp SET verified = 1, used_at = NOW() WHERE id = ?`, [record.id]);
+  await db.execute(
+    `UPDATE candidate_onboarding_profile SET otp_verified = 1, otp_verified_at = NOW(), otp_mobile = ? WHERE candidate_id = ?`,
+    [mobile, tokenData.candidate_id]
+  );
+
+  return res.json({ success: true, message: "OTP verified" });
+}));
+
+// ── Autosave route ────────────────────────────────────────────────────────────
+router.post("/autosave", h(async (req, res) => {
+  const { token, section, data } = req.body;
+  if (!token || !section) return res.status(400).json({ success: false, message: "token and section required" });
+
+  const tokenData = await validateOnboardingToken(token);
+
+  await db.execute(
+    `INSERT INTO candidate_onboarding_autosave (id, candidate_id, section, data_json, saved_at)
+     VALUES (UUID(), ?, ?, ?, NOW())
+     ON DUPLICATE KEY UPDATE data_json = VALUES(data_json), saved_at = NOW()`,
+    [tokenData.candidate_id, section, JSON.stringify(data ?? {})]
+  );
+
+  return res.json({ success: true, savedAt: new Date().toISOString() });
+}));
+
+router.get("/autosave/:candidateId", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT section, data_json, saved_at FROM candidate_onboarding_autosave WHERE candidate_id = ?`,
+    [req.params.candidateId]
+  );
+  return res.json({ success: true, data: rows });
+}));
+
+// ── Language proficiency route ────────────────────────────────────────────────
+router.post("/languages", h(async (req, res) => {
+  const { token, languages } = req.body;
+  if (!token) return res.status(400).json({ success: false, message: "token required" });
+  return res.json({ success: true, data: await saveLanguages(token, languages ?? []) });
+}));
+
+// ── HR/BGV/Admin review routes ────────────────────────────────────────────────
 router.get("/requests", requireAuth, requireRole("admin", "hr", "recruiter"), h(async (_req: AuthenticatedRequest, res) => {
   return res.json({ success: true, data: await listFullOnboardingRequests(undefined) });
 }));

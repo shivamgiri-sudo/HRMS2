@@ -33,6 +33,7 @@ import { kpiProcessRoleRouter } from "./modules/kpi/kpi.process-role.routes.js";
 import { portalRouter } from "./modules/portal/portal.routes.js";
 import { atsRouter } from "./modules/ats/ats.routes.js";
 import { atsFormConfigRouter } from "./modules/ats/ats-form-config.routes.js";
+import mockDigilockerRouter from "./modules/ats/mock-digilocker.routes.js";
 import { queueRouter } from "./modules/ats/queue.routes.js";
 import { exitRouter } from "./modules/exit/exit.routes.js";
 import { exitSecureRouter } from "./modules/exit/exit.secure.routes.js";
@@ -122,6 +123,10 @@ import { expenseRouter } from "./modules/expenses/expense.routes.js";
 import { businessCommandRouter } from "./modules/business-command/business-command.routes.js";
 import { businessActionsRouter } from "./modules/business-actions/business-actions.routes.js";
 import { auditLogRouter } from "./modules/audit/audit.log.routes.js";
+import { workInboxRouter } from "./modules/work-inbox/work-inbox.routes.js";
+import { dashboardRouter } from "./modules/dashboards/dashboard.routes.js";
+import { tatRouter } from "./modules/governance/tat.routes.js";
+import { nameConsistencyRouter } from "./modules/ats/name-consistency.routes.js";
 
 export const app = express();
 
@@ -168,6 +173,7 @@ app.get("/", (_req, res) => res.json({ success: true, service: "MCN HRMS Backend
 
 app.use("/api/auth", authRouter);
 app.use("/api/auth", passwordResetRouter);
+app.use("/api/mock-digilocker", mockDigilockerRouter);
 app.use("/api/auth/launch", authLaunchRouter);
 app.use("/api/health", healthRouter);
 app.use("/api/admin", roleAssignmentRouter);
@@ -280,6 +286,10 @@ app.use("/api/executive", qualityExecutiveRouter);
 app.use("/api/performance-dashboard", performanceDashboardRouter);
 app.use("/api/legacy", legacyRouter);
 app.use("/api/expenses", expenseRouter);
+app.use("/api/work-inbox", workInboxRouter);
+app.use("/api/dashboards", dashboardRouter);
+app.use("/api/governance/tat", tatRouter);
+app.use("/api/ats/name-consistency", nameConsistencyRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

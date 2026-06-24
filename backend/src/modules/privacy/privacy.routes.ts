@@ -515,3 +515,226 @@ privacyRouter.patch(
     res.json({ success: true });
   })
 );
+
+// ─── DPDP Withdrawal Workflow ──────────────────────────────────────────────────
+
+// POST /dpdp-withdrawal/request — employee submits withdrawal request
+privacyRouter.post(
+  "/dpdp-withdrawal/request",
+  requireAuth,
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { purpose_code, withdrawal_reason, scope_description } = req.body as {
+      purpose_code: string;
+      withdrawal_reason: string;
+      scope_description?: string;
+    };
+    if (!purpose_code || !withdrawal_reason) {
+      return res.status(400).json({ success: false, message: "purpose_code and withdrawal_reason are required" });
+    }
+    const id = randomUUID();
+    const requestRef = `WDRAW-${Date.now().toString(36).toUpperCase()}`;
+    await db.execute(
+      `INSERT INTO dpdp_consent_withdrawal
+         (id, request_ref, principal_id, purpose_code, withdrawal_reason, scope_description, status, submitted_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'submitted', NOW())`,
+      [id, requestRef, req.authUser!.id, purpose_code, withdrawal_reason, scope_description ?? null]
+    );
+    await db.execute(
+      `INSERT INTO dpdp_withdrawal_audit_log
+         (id, withdrawal_id, action, performed_by, remarks)
+       VALUES (UUID(), ?, 'submitted', ?, 'Withdrawal request submitted by principal')`,
+      [id, req.authUser!.id]
+    );
+    return res.status(201).json({ success: true, data: { id, request_ref: requestRef } });
+  })
+);
+
+// GET /dpdp-withdrawal/my-requests — employee sees own requests
+privacyRouter.get(
+  "/dpdp-withdrawal/my-requests",
+  requireAuth,
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM dpdp_consent_withdrawal
+       WHERE principal_id = ?
+       ORDER BY submitted_at DESC`,
+      [req.authUser!.id]
+    );
+    return res.json({ success: true, data: rows });
+  })
+);
+
+// GET /dpdp-withdrawal — HR/compliance sees all requests
+privacyRouter.get(
+  "/dpdp-withdrawal",
+  requireAuth,
+  requireRole("admin", "hr", "dpo"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { status, purpose_code } = req.query as Record<string, string>;
+    const params: unknown[] = [];
+    let where = "1=1";
+    if (status) { where += " AND dcw.status = ?"; params.push(status); }
+    if (purpose_code) { where += " AND dcw.purpose_code = ?"; params.push(purpose_code); }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT dcw.*, u.full_name as principal_name
+       FROM dpdp_consent_withdrawal dcw
+       LEFT JOIN users u ON u.id = dcw.principal_id
+       WHERE ${where}
+       ORDER BY dcw.submitted_at DESC LIMIT 200`,
+      params
+    );
+    return res.json({ success: true, data: rows });
+  })
+);
+
+// GET /dpdp-withdrawal/:id — get specific request
+privacyRouter.get(
+  "/dpdp-withdrawal/:id",
+  requireAuth,
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT dcw.*, u.full_name as principal_name
+       FROM dpdp_consent_withdrawal dcw
+       LEFT JOIN users u ON u.id = dcw.principal_id
+       WHERE dcw.id = ? LIMIT 1`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, message: "Request not found" });
+    const record = rows[0] as any;
+    // Allow own requests or privileged roles
+    if (record.principal_id !== userId) {
+      // require hr/admin/dpo check via role in token
+      const userRole = (req as any).authUser?.role ?? "";
+      if (!["admin", "hr", "dpo"].includes(userRole)) {
+        return res.status(403).json({ success: false, message: "Forbidden" });
+      }
+    }
+    return res.json({ success: true, data: record });
+  })
+);
+
+// POST /dpdp-withdrawal/:id/start-review — HR starts review, sets processing hold
+privacyRouter.post(
+  "/dpdp-withdrawal/:id/start-review",
+  requireAuth,
+  requireRole("admin", "hr", "dpo"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { reviewer_notes } = req.body as { reviewer_notes?: string };
+    await db.execute(
+      `UPDATE dpdp_consent_withdrawal
+       SET status = 'in_review', reviewed_by = ?, review_started_at = NOW(), reviewer_notes = ?
+       WHERE id = ? AND status = 'submitted'`,
+      [req.authUser!.id, reviewer_notes ?? null, req.params.id]
+    );
+    // Insert processing hold
+    await db.execute(
+      `INSERT INTO dpdp_processing_hold
+         (id, withdrawal_id, held_by, hold_reason, held_at)
+       VALUES (UUID(), ?, ?, 'Withdrawal review in progress', NOW())`,
+      [req.params.id, req.authUser!.id]
+    );
+    await db.execute(
+      `INSERT INTO dpdp_withdrawal_audit_log
+         (id, withdrawal_id, action, performed_by, remarks)
+       VALUES (UUID(), ?, 'review_started', ?, ?)`,
+      [req.params.id, req.authUser!.id, reviewer_notes ?? "Review started, processing hold applied"]
+    );
+    return res.json({ success: true, message: "Review started and processing hold applied" });
+  })
+);
+
+// POST /dpdp-withdrawal/:id/approve — HR approves
+privacyRouter.post(
+  "/dpdp-withdrawal/:id/approve",
+  requireAuth,
+  requireRole("admin", "hr", "dpo"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { approval_notes, data_action } = req.body as {
+      approval_notes?: string;
+      data_action?: string;
+    };
+    await db.execute(
+      `UPDATE dpdp_consent_withdrawal
+       SET status = 'approved', approved_by = ?, approved_at = NOW(),
+           approval_notes = ?, data_action = ?
+       WHERE id = ?`,
+      [req.authUser!.id, approval_notes ?? null, data_action ?? "hold", req.params.id]
+    );
+    // Release hold
+    await db.execute(
+      `UPDATE dpdp_processing_hold
+       SET released_at = NOW(), release_reason = 'Withdrawal approved'
+       WHERE withdrawal_id = ? AND released_at IS NULL`,
+      [req.params.id]
+    );
+    await db.execute(
+      `INSERT INTO dpdp_withdrawal_audit_log
+         (id, withdrawal_id, action, performed_by, remarks)
+       VALUES (UUID(), ?, 'approved', ?, ?)`,
+      [req.params.id, req.authUser!.id, approval_notes ?? "Withdrawal approved"]
+    );
+
+    await logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "DPDP_WITHDRAWAL_APPROVED",
+      module_key: "privacy",
+      entity_type: "dpdp_consent_withdrawal",
+      entity_id: req.params.id,
+      change_summary: { data_action },
+      req,
+    });
+    return res.json({ success: true, message: "Withdrawal approved" });
+  })
+);
+
+// POST /dpdp-withdrawal/:id/reject — HR rejects with reason
+privacyRouter.post(
+  "/dpdp-withdrawal/:id/reject",
+  requireAuth,
+  requireRole("admin", "hr", "dpo"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { rejection_reason } = req.body as { rejection_reason?: string };
+    if (!rejection_reason?.trim()) {
+      return res.status(400).json({ success: false, message: "rejection_reason is required" });
+    }
+    await db.execute(
+      `UPDATE dpdp_consent_withdrawal
+       SET status = 'rejected', rejected_by = ?, rejected_at = NOW(), rejection_reason = ?
+       WHERE id = ?`,
+      [req.authUser!.id, rejection_reason, req.params.id]
+    );
+    // Release any active hold
+    await db.execute(
+      `UPDATE dpdp_processing_hold
+       SET released_at = NOW(), release_reason = 'Withdrawal rejected'
+       WHERE withdrawal_id = ? AND released_at IS NULL`,
+      [req.params.id]
+    );
+    await db.execute(
+      `INSERT INTO dpdp_withdrawal_audit_log
+         (id, withdrawal_id, action, performed_by, remarks)
+       VALUES (UUID(), ?, 'rejected', ?, ?)`,
+      [req.params.id, req.authUser!.id, rejection_reason]
+    );
+    return res.json({ success: true, message: "Withdrawal rejected" });
+  })
+);
+
+// GET /dpdp-withdrawal/:id/audit — audit trail
+privacyRouter.get(
+  "/dpdp-withdrawal/:id/audit",
+  requireAuth,
+  requireRole("admin", "hr", "dpo"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT dwal.*, u.full_name as performed_by_name
+       FROM dpdp_withdrawal_audit_log dwal
+       LEFT JOIN users u ON u.id = dwal.performed_by
+       WHERE dwal.withdrawal_id = ?
+       ORDER BY dwal.created_at ASC`,
+      [req.params.id]
+    );
+    return res.json({ success: true, data: rows });
+  })
+);

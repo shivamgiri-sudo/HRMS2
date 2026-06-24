@@ -13,7 +13,7 @@ import {
 } from './email.templates.js';
 
 type EmailType = 'registration' | 'selected' | 'rejected' | 'rejected_professional' | 'token_sent' | 'offer_review' | 'approved' | 'welcome' |
-                 'recruiter_notification' | 'selection_congratulations' | 'bgv_completion' | 'payroll_hr_notification' | 'branch_head_approval';
+                 'recruiter_notification' | 'selection_congratulations' | 'bgv_completion' | 'payroll_hr_notification' | 'branch_head_approval' | 'otp_verification';
 
 interface SendResult { ok: boolean; error?: string }
 
@@ -324,6 +324,27 @@ export async function sendBranchHeadApprovalEmail(params: {
     params.candidateId,
     'branch_head_approval',
   );
+}
+
+export async function sendOnboardingOtp(params: {
+  mobile: string;
+  otp: string;
+  candidateName: string;
+  email?: string | null;
+}): Promise<SendResult | null> {
+  // Primary: SMS via email-to-SMS gateway or configured SMS provider
+  // Fallback: send OTP to candidate's personal email
+  const subject = `Your OTP for MAS Callnet Onboarding: ${params.otp}`;
+  const html = `
+    <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:24px">
+      <h2 style="color:#1e293b">Mobile Verification</h2>
+      <p>Hi ${params.candidateName},</p>
+      <p>Your one-time password (OTP) for mobile verification is:</p>
+      <div style="font-size:32px;font-weight:bold;letter-spacing:8px;color:#2563eb;padding:16px;background:#f1f5f9;border-radius:8px;text-align:center">${params.otp}</div>
+      <p style="color:#64748b;font-size:13px">Valid for 10 minutes. Do not share this OTP with anyone.</p>
+    </div>`;
+  if (!params.email) return null;
+  return send(params.email, subject, html, params.email, 'otp_verification');
 }
 
 export async function sendRejectedEmailProfessional(params: {

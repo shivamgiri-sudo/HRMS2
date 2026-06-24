@@ -81,7 +81,7 @@ export async function validateOnboardingToken(token: string) {
     `SELECT b.candidate_id, b.onboarding_token_expires_at,
             c.id, c.candidate_code, c.full_name, c.mobile, c.email,
             c.gender, c.date_of_birth, c.applied_for_branch, c.applied_for_process,
-            c.sourcing_channel, c.source_type, c.source, c.resume_url, c.selfie_url,
+            c.sourcing_channel, c.source_details, c.resume_url, c.selfie_url,
             c.profile_status, br.branch_name, pm.process_name
        FROM ats_onboarding_bridge b
        JOIN ats_candidate c ON c.id = b.candidate_id
@@ -115,8 +115,8 @@ export async function validateOnboardingToken(token: string) {
     branch_name: row.branch_name,
     process_id: row.applied_for_process,
     process_name: row.process_name,
-    source_type: row.source_type ?? row.sourcing_channel,
-    source: row.source ?? row.sourcing_channel,
+    source_type: row.sourcing_channel ?? null,
+    source: row.source_details ?? row.sourcing_channel ?? null,
     resume_url: row.resume_url,
     selfie_url: row.selfie_url,
     profile_status: row.profile_status,
@@ -183,8 +183,10 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
         personal_email_id, official_email_id, pan_number_masked, pan_number_hash, aadhaar_number_masked,
         aadhaar_number_hash, passport_no, driving_license_no,
         uan_number, epf_number, esic_number,
-        source_type, source, profile_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'employee_details_saved')
+        source_type, source, profile_status,
+        mother_name, emergency_contact_name, emergency_contact_relation, emergency_contact_mobile,
+        nationality, religion, category, address_proof_type)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'employee_details_saved', ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
         title = VALUES(title), employee_name = VALUES(employee_name), relation = VALUES(relation),
         father_husband_name = VALUES(father_husband_name), gender = VALUES(gender), marital_status = VALUES(marital_status),
@@ -202,6 +204,10 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
         passport_no = VALUES(passport_no), driving_license_no = VALUES(driving_license_no),
         uan_number = VALUES(uan_number), epf_number = VALUES(epf_number), esic_number = VALUES(esic_number),
         source_type = VALUES(source_type), source = VALUES(source),
+        mother_name = VALUES(mother_name), emergency_contact_name = VALUES(emergency_contact_name),
+        emergency_contact_relation = VALUES(emergency_contact_relation), emergency_contact_mobile = VALUES(emergency_contact_mobile),
+        nationality = VALUES(nationality), religion = VALUES(religion), category = VALUES(category),
+        address_proof_type = VALUES(address_proof_type),
         profile_status = IF(profile_status='submitted', profile_status, 'employee_details_saved'), updated_at = NOW()`,
     [
       id,
@@ -246,6 +252,14 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       input.esicNumber ?? null,
       input.sourceType ?? tokenData.source_type ?? null,
       input.source ?? tokenData.source ?? null,
+      input.motherName ?? null,
+      input.emergencyContactName ?? null,
+      input.emergencyContactRelation ?? null,
+      input.emergencyContactMobile ?? null,
+      input.nationality ?? 'Indian',
+      input.religion ?? null,
+      input.category ?? null,
+      input.addressProofType ?? null,
     ]
   );
 
@@ -598,6 +612,44 @@ export async function syncOnboardingStatus(
     `UPDATE candidate_onboarding_profile SET profile_status = ?, updated_at = NOW() WHERE candidate_id = ?`,
     [profileStatus, candidateId]
   );
+}
+
+export async function saveLanguages(
+  token: string,
+  languages: Array<{ language_name: string; can_read?: boolean; can_write?: boolean; can_speak?: boolean; proficiency?: string }>
+) {
+  const { candidate_id } = await validateOnboardingToken(token);
+  if (!Array.isArray(languages) || languages.length === 0) return { deleted: 0, inserted: 0 };
+  const [del] = await db.execute(`DELETE FROM candidate_onboarding_language WHERE candidate_id = ?`, [candidate_id]);
+  for (const lang of languages) {
+    if (!lang.language_name?.trim()) continue;
+    await db.execute(
+      `INSERT INTO candidate_onboarding_language (id, candidate_id, language_name, can_read, can_write, can_speak, proficiency)
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?)`,
+      [candidate_id, lang.language_name.trim(), lang.can_read ? 1 : 0, lang.can_write ? 1 : 0, lang.can_speak ? 1 : 0, lang.proficiency ?? null]
+    );
+  }
+  return { candidateId: candidate_id, deleted: (del as any).affectedRows ?? 0, inserted: languages.length };
+}
+
+export async function saveStatutory(token: string, input: Record<string, unknown>) {
+  const { candidate_id } = await validateOnboardingToken(token);
+  await db.execute(
+    `UPDATE candidate_onboarding_profile SET
+       eps_member = ?, international_worker = ?, previous_pf_member = ?,
+       statutory_declaration_accepted = ?, statutory_declaration_at = IF(? = 1, NOW(), NULL),
+       updated_at = NOW()
+     WHERE candidate_id = ?`,
+    [
+      input.epsMember != null ? (input.epsMember ? 1 : 0) : null,
+      input.internationalWorker ? 1 : 0,
+      input.previousPfMember != null ? (input.previousPfMember ? 1 : 0) : null,
+      input.declarationAccepted ? 1 : 0,
+      input.declarationAccepted ? 1 : 0,
+      candidate_id,
+    ]
+  );
+  return { candidateId: candidate_id, saved: true };
 }
 
 export async function saveProgress(token: string, stepIdx: number) {
