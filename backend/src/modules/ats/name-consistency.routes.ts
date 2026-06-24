@@ -66,15 +66,6 @@ router.post("/:candidateId/recalculate", h(async (req: AuthenticatedRequest, res
     [candidateId]
   );
 
-  // Employee master: check if candidate has been converted to employee
-  const [empMaster] = await db.execute<RowDataPacket[]>(
-    `SELECT employee_name
-     FROM employees
-     WHERE candidate_id = ? OR ats_candidate_id = ?
-     LIMIT 1`,
-    [candidateId, candidateId]
-  );
-
   if (!profile.length) {
     return res.status(404).json({ success: false, message: "Candidate not found" });
   }
@@ -82,17 +73,33 @@ router.post("/:candidateId/recalculate", h(async (req: AuthenticatedRequest, res
   const p = profile[0] as any;
   const b = bank[0] as any;
   const edu = education[0] as any;
-  const emp = empMaster[0] as any;
   const formName = p.employee_name || p.ats_name || "";
 
-  const sources = [
+  const sources: { type: string; name: string }[] = [
     { type: "form", name: formName },
     { type: "aadhaar", name: p.aadhar_name || "" },
     { type: "pan", name: p.pan_name || "" },
     { type: "bank", name: b?.account_holder_name || "" },
     ...(edu?.applicant_name ? [{ type: "education", name: edu.applicant_name as string }] : []),
-    ...(emp?.employee_name ? [{ type: "employee_master", name: emp.employee_name as string }] : []),
   ].filter((s) => s.name);
+
+  // Source 5: Employee master (if candidate converted)
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    'SELECT employee_name FROM employees WHERE ats_candidate_id = ? OR id = (SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1) LIMIT 1',
+    [candidateId, candidateId]
+  ).catch(() => [[]]);
+  if ((empRows as any[]).length > 0) {
+    sources.push({ type: 'employee_master', name: (empRows as any)[0].employee_name ?? '' });
+  }
+
+  // Source 6: Appointment letter (if generated)
+  const [letterRows] = await db.execute<RowDataPacket[]>(
+    'SELECT candidate_name FROM appointment_letter_request WHERE candidate_id = ? LIMIT 1',
+    [candidateId]
+  ).catch(() => [[]]);
+  if ((letterRows as any[]).length > 0 && (letterRows as any)[0].candidate_name) {
+    sources.push({ type: 'appointment_letter', name: (letterRows as any)[0].candidate_name });
+  }
 
   // Delete existing detail rows, then recalculate fresh
   await db.execute(
@@ -129,6 +136,13 @@ router.post("/:candidateId/recalculate", h(async (req: AuthenticatedRequest, res
        blocks_employee_code = VALUES(blocks_employee_code)`,
     [candidateId, overallStatus, JSON.stringify(mismatches), mismatches.length > 0 ? 1 : 0]
   );
+
+  if (mismatches.length > 0) {
+    await db.execute(
+      'INSERT IGNORE INTO work_item (id,item_type,title,module_code,entity_type,entity_id,assigned_to_role,priority,status,created_at) VALUES (UUID(),\'NAME_MISMATCH\',?,\'ats\',\'candidate\',?,\'hr\',\'high\',\'pending\',NOW())',
+      ['Name mismatch: ' + candidateId, candidateId]
+    ).catch(() => {});
+  }
 
   return res.json({
     success: true,

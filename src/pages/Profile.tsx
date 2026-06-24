@@ -47,7 +47,7 @@ import {
 } from "@/components/profile/ProfileSensitiveDetails";
 
 interface ProfileForm {
-  email: string;
+  official_email: string;
   phone: string;
   personal_email: string;
   personal_phone: string;
@@ -136,7 +136,7 @@ const Profile = () => {
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [formData, setFormData] = useState<ProfileForm>({
-    email: "", phone: "", personal_email: "", personal_mobile: "", personal_phone: "", alternate_mobile: "", address: "", city: "", country: "",
+    official_email: "", phone: "", personal_email: "", personal_mobile: "", personal_phone: "", alternate_mobile: "", address: "", city: "", country: "",
     date_of_birth: "", gender: "", marital_status: "", blood_group: "",
     working_hours_start: "09:00", working_hours_end: "18:00",
     working_days: [1, 2, 3, 4, 5, 6], // Default: Mon-Sat (Sunday off)
@@ -173,7 +173,7 @@ const Profile = () => {
       if (!avatarUrl) setAvatarUrl(employee.avatar_url ?? null);
       const fmt = (t: string | null) => (t ? t.slice(0, 5) : "");
       setFormData({
-        email: employee.email || "",
+        official_email: employee.official_email || "",
         phone: employee.phone || "",
         personal_email: employee.personal_email || "",
         personal_phone: employee.personal_phone || "",
@@ -221,7 +221,7 @@ const Profile = () => {
     setIsEditing(false);
     const fmt = (t: string | null) => (t ? t.slice(0, 5) : "");
     if (employee) setFormData({
-      email: employee.email || "",
+      official_email: employee.official_email || "",
       phone: employee.phone || "",
       personal_email: employee.personal_email || "",
       personal_phone: employee.personal_phone || "",
@@ -326,7 +326,7 @@ const Profile = () => {
                   {[
                     { label: "Joined", value: formatDate(employee.hire_date) },
                     { label: "DOB", value: formatDate(employee.date_of_birth) },
-                    { label: "Email", value: employee.email },
+                    { label: "Email", value: employee.official_email || employee.email },
                     { label: "Phone", value: employee.phone || "—" },
                   ].map(({ label, value }) => (
                     <div key={label} className="rounded-2xl border border-white/20 bg-white/10 px-4 py-4">
@@ -375,7 +375,7 @@ const Profile = () => {
                     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                       <SectionTitle>Contact Info</SectionTitle>
                       <div className="divide-y divide-slate-50">
-                        <InfoRow icon={Mail}      label="Email"      value={employee.email} />
+                        <InfoRow icon={Mail}      label="Official Email" value={employee.official_email || employee.email} />
                         <InfoRow icon={Phone}     label="Phone"      value={employee.phone} />
                         <InfoRow icon={Phone}     label="Alternate"  value={employee.alternate_mobile} />
                         <InfoRow icon={MapPin}    label="City"       value={employee.city} />
@@ -483,8 +483,8 @@ const Profile = () => {
                             <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Official Email</Label>
                             <Input
                               type="email"
-                              value={formData.email}
-                              onChange={(e) => setFormData(p => ({ ...p, email: e.target.value.toLowerCase() }))}
+                              value={formData.official_email}
+                              onChange={(e) => setFormData(p => ({ ...p, official_email: e.target.value.toLowerCase() }))}
                               disabled={!isEditing}
                               placeholder="name@teammas.in"
                               className="rounded-xl"

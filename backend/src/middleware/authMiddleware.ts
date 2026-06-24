@@ -5,6 +5,7 @@ export interface AuthenticatedRequest extends Request {
   authUser?: {
     id: string;
     email?: string;
+    role?: string;
     isDemo?: boolean;
     isReadOnly?: boolean;
   };
@@ -72,7 +73,7 @@ export async function requireAuth(
       req.authUser = {
         id: mysqlUser.id,
         email: mysqlUser.email,
-        isReadOnly: mysqlUser.isReadOnly || false
+        isReadOnly: false
       };
       return next();
     }

@@ -46,7 +46,7 @@ incentivesRouter.get('/batches', h(async (req, res) => {
   res.json({ success: true, data: await svc.listBatches(month) });
 }));
 
-incentivesRouter.post('/batches', requireRole('admin', 'hr', 'finance'), h(async (req, res) => {
+incentivesRouter.post('/batches', requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'), h(async (req, res) => {
   const parsed = CreateBatchSchema.parse(req.body);
   const data = await svc.createBatch(parsed, req.authUser?.id ?? '');
   res.status(201).json({ success: true, data });
@@ -62,13 +62,13 @@ incentivesRouter.get('/batches/:id/lines', h(async (req, res) => {
   res.json({ success: true, data: await svc.getBatchLines(req.params.id) });
 }));
 
-incentivesRouter.post('/batches/:id/lines/import', requireRole('admin', 'hr', 'finance'), h(async (req, res) => {
+incentivesRouter.post('/batches/:id/lines/import', requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'), h(async (req, res) => {
   const parsed = ImportLinesSchema.parse(req.body);
   const data = await svc.importLines(req.params.id, parsed);
   res.json({ success: true, data });
 }));
 
-incentivesRouter.post('/batches/:id/submit', requireRole('admin', 'hr', 'finance'), h(async (req, res) => {
+incentivesRouter.post('/batches/:id/submit', requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'), h(async (req, res) => {
   const data = await svc.submitBatch(req.params.id, req.authUser?.id ?? '');
   res.json({ success: true, data });
 }));
@@ -210,15 +210,20 @@ incentivesRouter.post('/batches/:batchId/step-approve',
     const step = pendingRows[0] as any;
 
     // Check requesting user has the required role
+    // Step 1 accepts both 'branch_head' and 'bm' as equivalent roles
     const [userRoles] = await db.execute<RowDataPacket[]>(
       `SELECT role FROM users WHERE id = ? LIMIT 1`,
       [userId]
     );
     const userRole = (userRoles[0] as any)?.role ?? '';
-    if (userRole !== step.required_role && userRole !== 'admin') {
+    const requiredRoles = step.required_role === 'branch_head'
+      ? ['branch_head', 'bm']
+      : [step.required_role];
+    if (!requiredRoles.includes(userRole) && userRole !== 'admin') {
       return res.status(403).json({ success: false, message: `This step requires role: ${step.required_role}` });
     }
 
+    const prevStatus = step.status as string;
     await db.execute(
       `UPDATE incentive_approval_step
        SET status = 'approved', actioned_by = ?, actioned_at = NOW(), remarks = ?
@@ -237,18 +242,31 @@ incentivesRouter.post('/batches/:batchId/step-approve',
       // Create work_item for the next approver role
       await createApprovalWorkItem(batchId, APPROVAL_STEPS[nextStep], userId);
     } else {
-      // All 3 steps approved — finance_head is the last approver
+      // All 3 steps approved — finance_head is the last approver; status = finance_approved
       await db.execute(
         `UPDATE incentive_upload_batch SET status = 'finance_approved' WHERE id = ?`,
         [batchId]
       );
+      // Create work_item for payroll_hr to action the register step
+      await createApprovalWorkItem(batchId, 'payroll_hr', userId).catch(() => {});
     }
 
-    await writeAuditLog(userId, 'INCENTIVE_STEP_APPROVED', batchId, {
-      step_number: step.step_number,
-      required_role: step.required_role,
-      remarks: remarks ?? null,
-    });
+    // Audit log: use work_item_audit_log schema
+    try {
+      await db.execute(
+        `INSERT INTO work_item_audit_log
+           (id, work_item_id, action, from_status, to_status, remarks, performed_by, performed_at)
+         VALUES (UUID(), ?, 'INCENTIVE_STEP_APPROVED', ?, 'approved', ?, ?, NOW())`,
+        [step.id, prevStatus, remarks ?? null, userId]
+      );
+    } catch {
+      // best-effort; also try generic audit_log
+      await writeAuditLog(userId, 'INCENTIVE_STEP_APPROVED', batchId, {
+        step_number: step.step_number,
+        required_role: step.required_role,
+        remarks: remarks ?? null,
+      });
+    }
 
     const [steps] = await db.execute<RowDataPacket[]>(
       'SELECT * FROM incentive_approval_step WHERE batch_id = ? ORDER BY step_number',
@@ -280,15 +298,19 @@ incentivesRouter.post('/batches/:batchId/step-reject',
     }
     const step = pendingRows[0] as any;
 
-    const [userRoles] = await db.execute<RowDataPacket[]>(
+    const [userRolesR] = await db.execute<RowDataPacket[]>(
       `SELECT role FROM users WHERE id = ? LIMIT 1`,
       [userId]
     );
-    const userRole = (userRoles[0] as any)?.role ?? '';
-    if (userRole !== step.required_role && userRole !== 'admin') {
+    const userRoleR = (userRolesR[0] as any)?.role ?? '';
+    const requiredRolesR = step.required_role === 'branch_head'
+      ? ['branch_head', 'bm']
+      : [step.required_role];
+    if (!requiredRolesR.includes(userRoleR) && userRoleR !== 'admin') {
       return res.status(403).json({ success: false, message: `This step requires role: ${step.required_role}` });
     }
 
+    const prevStatusR = step.status as string;
     await db.execute(
       `UPDATE incentive_approval_step
        SET status = 'rejected', actioned_by = ?, actioned_at = NOW(), remarks = ?
@@ -301,11 +323,21 @@ incentivesRouter.post('/batches/:batchId/step-reject',
       [batchId]
     );
 
-    await writeAuditLog(userId, 'INCENTIVE_STEP_REJECTED', batchId, {
-      step_number: step.step_number,
-      required_role: step.required_role,
-      reason,
-    });
+    // Audit log: use work_item_audit_log schema
+    try {
+      await db.execute(
+        `INSERT INTO work_item_audit_log
+           (id, work_item_id, action, from_status, to_status, remarks, performed_by, performed_at)
+         VALUES (UUID(), ?, 'INCENTIVE_STEP_REJECTED', ?, 'rejected', ?, ?, NOW())`,
+        [step.id, prevStatusR, reason, userId]
+      );
+    } catch {
+      await writeAuditLog(userId, 'INCENTIVE_STEP_REJECTED', batchId, {
+        step_number: step.step_number,
+        required_role: step.required_role,
+        reason,
+      });
+    }
 
     return res.json({ success: true, message: 'Step rejected, batch marked as rejected' });
   })

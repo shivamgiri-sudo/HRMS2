@@ -62,8 +62,8 @@ export default function CeoDashboard() {
     metricName: "",
   });
 
-  const [, setBranchId] = useState<string>("");
-  const [, setProcessId] = useState<string>("");
+  const [branchId, setBranchId] = useState<string>("");
+  const [processId, setProcessId] = useState<string>("");
 
   const openDrilldown = useCallback((metricCode: string, metricName: string) => {
     setDrilldown({ open: true, metricCode, metricName });
@@ -79,7 +79,12 @@ export default function CeoDashboard() {
     setSummaryLoading(true);
     setFetchError(null);
 
-    fetch(`/api/dashboards/${DASHBOARD_CODE}/summary`)
+    const params = new URLSearchParams();
+    if (branchId) params.set("branchId", branchId);
+    if (processId) params.set("processId", processId);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+
+    fetch(`/api/dashboards/${DASHBOARD_CODE}/summary${qs}`)
       .then((res) => {
         if (!res.ok) throw new Error(`Summary fetch failed: ${res.status}`);
         return res.json();
@@ -95,7 +100,7 @@ export default function CeoDashboard() {
       });
 
     setInsightsLoading(true);
-    fetch(`/api/dashboards/${DASHBOARD_CODE}/good-bad-insights`)
+    fetch(`/api/dashboards/${DASHBOARD_CODE}/good-bad-insights${qs}`)
       .then((res) => {
         if (!res.ok) throw new Error(`Insights fetch failed: ${res.status}`);
         return res.json();
@@ -114,7 +119,7 @@ export default function CeoDashboard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [branchId, processId]);
 
   // Role check
   if (!roleLoading) {

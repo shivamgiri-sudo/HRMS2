@@ -124,17 +124,18 @@ router.get("/tasks", h(async (req: AuthenticatedRequest, res: any) => {
 
 // POST /tat/tasks — create a new TAT instance
 router.post("/tasks", h(async (req: AuthenticatedRequest, res: any) => {
-  const { taskType, entityType, entityId, assignedTo, branchId } = req.body as {
+  const { taskType, entityType, entityId, assignedTo, branchId, processId } = req.body as {
     taskType: string;
     entityType: string;
     entityId: string;
     assignedTo: string;
     branchId?: string;
+    processId?: string;
   };
   if (!taskType || !entityType || !entityId || !assignedTo) {
     return res.status(400).json({ success: false, message: "taskType, entityType, entityId and assignedTo are required" });
   }
-  const id = await createTatInstance(taskType, entityType, entityId, assignedTo, branchId);
+  const id = await createTatInstance(taskType, entityType, entityId, assignedTo, branchId, processId);
   return res.status(201).json({ success: true, id });
 }));
 

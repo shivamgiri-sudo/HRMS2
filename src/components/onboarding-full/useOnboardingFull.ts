@@ -269,28 +269,59 @@ export function useOnboardingFull(token: string) {
     }, 1500);
   }, [token]);
 
+  const updateSectionStatus = useCallback((section: string, isComplete: boolean) => {
+    return hrmsApi.put(`${API}/section-status`, { token, section, isComplete }).catch(() => {});
+  }, [token]);
+
+  const getBlockers = useCallback(() => {
+    return hrmsApi.get<{ data: Array<{ code: string; message: string; severity: "hard" | "soft" }> }>(
+      `${API}/blockers?token=${encodeURIComponent(token)}`
+    ).then((r) => r.data);
+  }, [token]);
+
+  const saveFamily = useCallback(async (members: Array<Record<string, unknown>>) => {
+    return hrmsApi.post(`${API}/family-members`, { token, members });
+  }, [token]);
+
+  const saveNominees = useCallback(async (nominees: Array<Record<string, unknown>>) => {
+    return hrmsApi.post(`${API}/nominees`, { token, nominees });
+  }, [token]);
+
   const saveEmployee = async () => {
     setSaving(true);
-    try { await hrmsApi.post(`${API}/employee-details`, { token, ...employee }); await load(); }
-    finally { setSaving(false); }
+    try {
+      await hrmsApi.post(`${API}/employee-details`, { token, ...employee });
+      updateSectionStatus("personal", true).catch(() => {});
+      await load();
+    } finally { setSaving(false); }
   };
 
   const saveStatutory = async () => {
     setSaving(true);
-    try { await hrmsApi.post(`${API}/statutory`, { token, ...statutory }); await load(); }
-    finally { setSaving(false); }
+    try {
+      await hrmsApi.post(`${API}/statutory`, { token, ...statutory });
+      updateSectionStatus("statutory", true).catch(() => {});
+      await load();
+    } finally { setSaving(false); }
   };
 
   const saveBank = async () => {
     setSaving(true);
-    try { await hrmsApi.post(`${API}/bank-details`, { token, ...bank }); await load(); }
-    finally { setSaving(false); }
+    try {
+      await hrmsApi.post(`${API}/bank-details`, { token, ...bank });
+      updateSectionStatus("bank", true).catch(() => {});
+      await load();
+    } finally { setSaving(false); }
   };
 
   const addQualification = async () => {
     setSaving(true);
-    try { await hrmsApi.post(`${API}/qualification`, { token, ...qual }); setQual(EMPTY_QUAL); await load(); }
-    finally { setSaving(false); }
+    try {
+      await hrmsApi.post(`${API}/qualification`, { token, ...qual });
+      setQual(EMPTY_QUAL);
+      updateSectionStatus("education", true).catch(() => {});
+      await load();
+    } finally { setSaving(false); }
   };
 
   const saveExperience = async () => {
@@ -299,6 +330,7 @@ export function useOnboardingFull(token: string) {
       await hrmsApi.post(`${API}/experience`, { token, ...experience });
       await hrmsApi.post(`${API}/family`, { token, ...family });
       if (languages.length > 0) await hrmsApi.post(`${API}/languages`, { token, languages });
+      updateSectionStatus("experience", true).catch(() => {});
       await load();
     } finally { setSaving(false); }
   };
@@ -421,5 +453,6 @@ export function useOnboardingFull(token: string) {
     saveEmployee, saveBank, addQualification, saveExperience, saveStatutory,
     sendOtp, verifyOtp, grantConsent, verifyPan, verifyBank, verifyAadhaar,
     startDigilocker, lookupIfsc, uploadDoc, deleteDoc, submit,
+    updateSectionStatus, getBlockers, saveFamily, saveNominees,
   };
 }

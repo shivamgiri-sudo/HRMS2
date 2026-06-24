@@ -207,12 +207,11 @@ export const appointmentEsignService = {
     if (!prev) throw Object.assign(new Error("Request not found"), { statusCode: 404 });
     await db.execute(
       `UPDATE appointment_letter_request
-          SET current_state              = 'override_approved',
+          SET current_state              = 'company_sign_pending',
               manual_override_approved   = 1,
               manual_override_by         = ?,
               manual_override_at         = NOW(),
-              candidate_esign_status     = 'override',
-              current_state              = 'company_sign_pending'
+              candidate_esign_status     = 'override'
         WHERE id = ?`,
       [approvedBy, requestId]
     );

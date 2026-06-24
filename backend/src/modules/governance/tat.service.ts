@@ -1,6 +1,6 @@
 import { db } from "../../db/mysql.js";
 import { randomUUID } from "crypto";
-import type { RowDataPacket } from "mysql2";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 
 /**
  * Create a TAT-tracked task instance and a corresponding work item.
@@ -12,7 +12,8 @@ export async function createTatInstance(
   entityType: string,
   entityId: string,
   assignedTo: string,
-  branchId?: string
+  branchId?: string,
+  processId?: string
 ): Promise<string> {
   // Look up TAT hours — prefer branch-specific, fall back to global
   const [matrixRows] = await db.execute<RowDataPacket[]>(
@@ -31,9 +32,9 @@ export async function createTatInstance(
 
   await db.execute(
     `INSERT INTO task_tat_instance
-       (id, task_type, entity_type, entity_id, assigned_to, branch_id, due_at, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR), 'open', NOW(), NOW())`,
-    [id, taskType, entityType, entityId, assignedTo, branchId ?? null, tatHours]
+       (id, task_type, entity_type, entity_id, assigned_to, branch_id, process_id, due_at, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR), 'open', NOW(), NOW())`,
+    [id, taskType, entityType, entityId, assignedTo, branchId ?? null, processId ?? null, tatHours]
   );
 
   // Insert a work item for the assignee
@@ -53,6 +54,10 @@ export async function createTatInstance(
  * log entries and work items for the notify_role.
  * Returns the count of newly breached tasks.
  */
+export async function checkAndEscalateTat(): Promise<number> {
+  return checkAndEscalate();
+}
+
 export async function checkAndEscalate(): Promise<number> {
   // Step 1: Mark overdue open tasks as sla_breached and capture their ids
   const [breachedRows] = await db.execute<RowDataPacket[]>(

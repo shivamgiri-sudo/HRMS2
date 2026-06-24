@@ -112,21 +112,24 @@ export async function getWorkItemStats(userId: string, role: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT module_code,
             COUNT(*) as count,
-            SUM(CASE WHEN priority='critical' THEN 1 ELSE 0 END) as critical_count
+            SUM(CASE WHEN priority='critical' THEN 1 ELSE 0 END) as critical_count,
+            SUM(CASE WHEN due_at < NOW() AND status='pending' THEN 1 ELSE 0 END) as overdue_count
      FROM work_item
      WHERE (assigned_to_user_id=? OR assigned_to_role=?) AND status='pending'
      GROUP BY module_code`,
     [userId, role]
   );
-  const byModule: Record<string, { count: number; critical: number }> = {};
+  const byModule: Record<string, number> = {};
   let pending = 0;
   let critical = 0;
+  let overdue = 0;
   for (const row of rows as RowDataPacket[]) {
-    byModule[row.module_code] = { count: Number(row.count), critical: Number(row.critical_count) };
+    byModule[row.module_code] = Number(row.count);
     pending += Number(row.count);
     critical += Number(row.critical_count);
+    overdue += Number(row.overdue_count);
   }
-  return { pending, critical, byModule };
+  return { pending, overdue, critical, byModule };
 }
 
 export async function getOverdueItems(userId: string, role: string, limit = 50) {

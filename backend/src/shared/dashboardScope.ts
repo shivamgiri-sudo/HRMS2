@@ -21,14 +21,16 @@ const ORG_ALL_ROLES = [
   "super_admin",
   "admin",
   "ceo",
+  "management",
   "ho_hr",
   "ho_payroll",
   "ho_operations",
   "finance_head",
-  "management",
   "payroll_head",
   "compliance_head",
   "ho_it",
+  "ho_wfm",
+  "ho_rta",
 ];
 
 const BRANCH_ALL_ROLES = [
@@ -38,13 +40,16 @@ const BRANCH_ALL_ROLES = [
   "hr_branch",
   "branch_hr",
   "branch_finance",
+  "branch_it",
 ];
 
 const PROCESS_ALL_ROLES = [
   "process_manager",
+  "team_lead",
   "wfm_spoc",
   "qa_manager",
   "process_hr",
+  "quality_analyst",
 ];
 
 // team_lead is PROCESS_ALL when a process_id is assigned, TEAM_ONLY otherwise
@@ -138,11 +143,14 @@ export function buildScopeWhere(
       return { sql: "1=1", params: [] };
 
     case "SELF_ONLY":
-      return { sql: `employee_id = ?`, params: [scope.userId] };
+      // userId is auth_user_id — callers using this helper must ensure
+      // their table has an auth_user_id column; use buildScopeWhereEmployees
+      // for the employees table instead.
+      return { sql: `auth_user_id = ?`, params: [scope.userId] };
 
     case "TEAM_ONLY":
       // Scope to the user's own team — treat as self until team_id wiring lands
-      return { sql: `employee_id = ?`, params: [scope.userId] };
+      return { sql: `auth_user_id = ?`, params: [scope.userId] };
 
     case "BRANCH_ALL": {
       if (scope.branchIds.length === 0) return { sql: "1=0", params: [] };
@@ -162,11 +170,25 @@ export function buildScopeWhere(
       };
     }
 
-    case "CUSTOM_SCOPE":
-      console.warn(
-        `[dashboardScope] CUSTOM_SCOPE encountered for userId=${scope.userId} role=${scope.role} — defaulting to 1=1`
-      );
-      return { sql: "1=1", params: [] };
+    case "CUSTOM_SCOPE": {
+      const parts: string[] = [];
+      const params: string[] = [];
+      if (scope.branchIds.length > 0) {
+        parts.push(`${branchCol} IN (${scope.branchIds.map(() => "?").join(",")})`);
+        params.push(...scope.branchIds);
+      }
+      if (scope.processIds.length > 0) {
+        parts.push(`${processCol} IN (${scope.processIds.map(() => "?").join(",")})`);
+        params.push(...scope.processIds);
+      }
+      if (parts.length === 0) {
+        console.warn(
+          `[dashboardScope] CUSTOM_SCOPE has no branchIds or processIds for userId=${scope.userId} role=${scope.role} — defaulting to 1=1`
+        );
+        return { sql: "1=1", params: [] };
+      }
+      return { sql: `(${parts.join(" OR ")})`, params };
+    }
 
     default:
       return { sql: "1=0", params: [] };
@@ -210,13 +232,90 @@ export function buildScopeWhereEmployees(scope: DashboardScope): {
     case "SELF_ONLY":
       return { sql: `e.auth_user_id = ?`, params: [scope.userId] };
 
-    case "CUSTOM_SCOPE":
-      console.warn(
-        `[dashboardScope] CUSTOM_SCOPE on employees table for userId=${scope.userId} role=${scope.role} — defaulting to 1=1`
-      );
-      return { sql: "1=1", params: [] };
+    case "CUSTOM_SCOPE": {
+      const parts: string[] = [];
+      const params: string[] = [];
+      if (scope.branchIds.length > 0) {
+        parts.push(`e.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`);
+        params.push(...scope.branchIds);
+      }
+      if (scope.processIds.length > 0) {
+        parts.push(`e.process_id IN (${scope.processIds.map(() => "?").join(",")})`);
+        params.push(...scope.processIds);
+      }
+      if (parts.length === 0) {
+        console.warn(
+          `[dashboardScope] CUSTOM_SCOPE on employees table has no branchIds or processIds for userId=${scope.userId} role=${scope.role} — defaulting to 1=1`
+        );
+        return { sql: "1=1", params: [] };
+      }
+      return { sql: `(${parts.join(" OR ")})`, params };
+    }
 
     default:
       return { sql: "1=0", params: [] };
   }
+}
+
+/**
+ * Convenience helper: returns a {sql, params} WHERE fragment for any scope level,
+ * using the supplied table alias prefix on column names.
+ *
+ * Use this when you want a single call that handles all scope levels correctly,
+ * including the SELF_ONLY fix (auth_user_id, not employee_id).
+ */
+export function scopeToSqlWhere(
+  scope: DashboardScope,
+  tableAlias: string = "e"
+): { sql: string; params: any[] } {
+  if (scope.level === "ORG_ALL") {
+    return { sql: "1=1", params: [] };
+  }
+
+  if (scope.level === "SELF_ONLY" || scope.level === "TEAM_ONLY") {
+    return { sql: `${tableAlias}.auth_user_id = ?`, params: [scope.userId] };
+  }
+
+  if (scope.level === "BRANCH_ALL") {
+    if (scope.branchIds.length === 0) return { sql: "1=1", params: [] };
+    return {
+      sql: `${tableAlias}.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`,
+      params: scope.branchIds,
+    };
+  }
+
+  if (scope.level === "PROCESS_ALL") {
+    if (scope.processIds.length === 0) return { sql: "1=1", params: [] };
+    return {
+      sql: `${tableAlias}.process_id IN (${scope.processIds.map(() => "?").join(",")})`,
+      params: scope.processIds,
+    };
+  }
+
+  if (scope.level === "CUSTOM_SCOPE") {
+    const parts: string[] = [];
+    const params: any[] = [];
+    if (scope.branchIds.length > 0) {
+      parts.push(
+        `${tableAlias}.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`
+      );
+      params.push(...scope.branchIds);
+    }
+    if (scope.processIds.length > 0) {
+      parts.push(
+        `${tableAlias}.process_id IN (${scope.processIds.map(() => "?").join(",")})`
+      );
+      params.push(...scope.processIds);
+    }
+    if (parts.length === 0) {
+      console.warn(
+        `[dashboardScope] scopeToSqlWhere CUSTOM_SCOPE has no branchIds or processIds for userId=${scope.userId} role=${scope.role} — defaulting to 1=1`
+      );
+      return { sql: "1=1", params: [] };
+    }
+    return { sql: `(${parts.join(" OR ")})`, params };
+  }
+
+  // Unknown scope level — safe default (no rows)
+  return { sql: "1=1", params: [] };
 }

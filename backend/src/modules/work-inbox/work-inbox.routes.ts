@@ -3,6 +3,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./work-inbox.service.js";
+import { resolveDashboardScope } from "../../shared/dashboardScope.js";
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -49,10 +50,33 @@ router.get("/team", h(async (req: AuthenticatedRequest, res: any) => {
 }));
 
 router.get("/dashboard", h(async (req: AuthenticatedRequest, res: any) => {
-  const items = await svc.getDashboardWorkItems(
-    req.query.branchId as string | undefined,
-    req.query.processId as string | undefined
-  );
+  const scope = await resolveDashboardScope(req.authUser!.id, (req.authUser as any).role ?? "");
+  const requestedBranchId = req.query.branchId as string | undefined;
+  const requestedProcessId = req.query.processId as string | undefined;
+
+  let effectiveBranchId: string | undefined;
+  let effectiveProcessId: string | undefined;
+
+  if (scope.level === "ORG_ALL") {
+    effectiveBranchId = requestedBranchId;
+    effectiveProcessId = requestedProcessId;
+  } else if (scope.level === "BRANCH_ALL") {
+    effectiveBranchId =
+      requestedBranchId && scope.branchIds.includes(requestedBranchId)
+        ? requestedBranchId
+        : undefined;
+    if (!effectiveBranchId && scope.branchIds.length > 0) {
+      effectiveBranchId = scope.branchIds[0];
+    }
+  } else if (scope.level === "PROCESS_ALL") {
+    effectiveProcessId =
+      requestedProcessId && scope.processIds.includes(requestedProcessId)
+        ? requestedProcessId
+        : undefined;
+  }
+  // SELF_ONLY / TEAM_ONLY: no branch/process filter — returns empty aggregate
+
+  const items = await svc.getDashboardWorkItems(effectiveBranchId, effectiveProcessId);
   return res.json({ success: true, data: items });
 }));
 

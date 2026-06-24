@@ -58,7 +58,8 @@ export function requireRole(...allowedRoles: string[]) {
       const allowed = expandedAllowed.some((role) => expandedUserRoles.includes(role));
 
       if (!allowed) {
-        return res.status(403).json({ success: false, message: "Forbidden" });
+        console.warn(`[requireRole] Denied: user role(s) [${userRoles.join(',')}] tried route requiring [${allowedRoles.join(',')}]`);
+        return res.status(403).json({ success: false, message: "Access denied. Required: " + allowedRoles.join(" or ") });
       }
 
       (req as AuthenticatedRequest & { userRoles: string[] }).userRoles = userRoles;
