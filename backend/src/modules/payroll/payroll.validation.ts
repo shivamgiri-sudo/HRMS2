@@ -31,6 +31,12 @@ export const bulkAssignSchema = z.object({
   effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
   processId: z.string().uuid().optional(),
   branchId: z.string().uuid().optional(),
+  // Salary governance fields
+  salarySlabId: z.string().nullable().optional(),
+  salaryProposalId: z.string().nullable().optional(),
+  approvalReferenceId: z.string().nullable().optional(),
+  migrationMode: z.boolean().optional(),
+  reason: z.string().trim().nullable().optional(),
 });
 
 export const createComponentSchema = z.object({
@@ -54,6 +60,12 @@ export const assignSalarySchema = z.object({
   ctcAnnual: z.number().min(0),
   effectiveFrom: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
   effectiveTo: z.string().regex(DATE_REGEX).nullable().optional(),
+  // Salary governance fields (required for bypass gate)
+  salarySlabId: z.string().nullable().optional(),
+  salaryProposalId: z.string().nullable().optional(),
+  approvalReferenceId: z.string().nullable().optional(),
+  migrationMode: z.boolean().optional(),
+  reason: z.string().trim().nullable().optional(),
 });
 
 export const createRunSchema = z.object({

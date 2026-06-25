@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
+import { assertSalaryAssignmentAllowed } from "./salary-governance.guard.js";
 import type {
   BulkAssignInput,
   BulkAssignResult,
@@ -67,8 +68,32 @@ export const payrollService = {
     return (rows as SalaryStructure[])[0];
   },
 
-  async bulkAssignSalary(input: BulkAssignInput, _userId: string): Promise<BulkAssignResult> {
+  async bulkAssignSalary(
+    input: BulkAssignInput,
+    userId: string,
+    actorRoles: string[] = []
+  ): Promise<BulkAssignResult> {
     await this.getStructure(input.structureId);
+
+    // ── Salary governance gate ────────────────────────────────────────────────
+    const govInput = input as any;
+    const govResult = await assertSalaryAssignmentAllowed({
+      salarySlabId: govInput.salarySlabId ?? null,
+      salaryProposalId: govInput.salaryProposalId ?? null,
+      approvalReferenceId: govInput.approvalReferenceId ?? null,
+      ctcAnnual: input.ctcAnnual,
+      actorUserId: userId,
+      actorRoles,
+      migrationMode: govInput.migrationMode,
+      reason: govInput.reason ?? null,
+    });
+    if (!govResult.allowed) {
+      throw Object.assign(new Error(govResult.message ?? "Salary assignment blocked"), {
+        statusCode: 400,
+        code: govResult.blockCode,
+      });
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     const conds = ["e.active_status = 1", "e.employment_status = 'Active'"];
     const params: unknown[] = [];
@@ -92,9 +117,17 @@ export const payrollService = {
     for (const emp of employees) {
       const asgId = randomUUID();
       await db.execute(
-        `INSERT INTO employee_salary_assignment (id, employee_id, structure_id, ctc_annual, effective_from)
-         VALUES (?, ?, ?, ?, ?)`,
-        [asgId, emp.id, input.structureId, input.ctcAnnual, input.effectiveFrom]
+        `INSERT INTO employee_salary_assignment
+           (id, employee_id, structure_id, ctc_annual, effective_from,
+            salary_slab_id, salary_proposal_id, governance_mode, assigned_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          asgId, emp.id, input.structureId, input.ctcAnnual, input.effectiveFrom,
+          govResult.salarySlabId ?? null,
+          govResult.salaryProposalId ?? null,
+          govResult.mode,
+          userId,
+        ]
       );
     }
 
@@ -140,16 +173,50 @@ export const payrollService = {
 
   // ─── Salary Assignment ─────────────────────────────────────────────────────
 
-  async assignSalary(input: AssignSalaryInput, _userId: string): Promise<EmployeeSalaryAssignment> {
+  async assignSalary(
+    input: AssignSalaryInput,
+    userId: string,
+    actorRoles: string[] = []
+  ): Promise<EmployeeSalaryAssignment> {
+    // ── Salary governance gate ────────────────────────────────────────────────
+    const govInput = input as any;
+    const govResult = await assertSalaryAssignmentAllowed({
+      employeeId: input.employeeId,
+      salarySlabId: govInput.salarySlabId ?? null,
+      salaryProposalId: govInput.salaryProposalId ?? null,
+      approvalReferenceId: govInput.approvalReferenceId ?? null,
+      ctcAnnual: input.ctcAnnual,
+      actorUserId: userId,
+      actorRoles,
+      migrationMode: govInput.migrationMode,
+      reason: govInput.reason ?? null,
+    });
+    if (!govResult.allowed) {
+      throw Object.assign(new Error(govResult.message ?? "Salary assignment blocked"), {
+        statusCode: 400,
+        code: govResult.blockCode,
+      });
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     await db.execute(
       "UPDATE employee_salary_assignment SET active_status = 0 WHERE employee_id = ? AND active_status = 1",
       [input.employeeId]
     );
     const id = randomUUID();
     await db.execute(
-      `INSERT INTO employee_salary_assignment (id, employee_id, structure_id, ctc_annual, effective_from, effective_to)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [id, input.employeeId, input.structureId, input.ctcAnnual, input.effectiveFrom, input.effectiveTo ?? null]
+      `INSERT INTO employee_salary_assignment
+         (id, employee_id, structure_id, ctc_annual, effective_from, effective_to,
+          salary_slab_id, salary_proposal_id, governance_mode, assigned_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id, input.employeeId, input.structureId, input.ctcAnnual,
+        input.effectiveFrom, input.effectiveTo ?? null,
+        govResult.salarySlabId ?? null,
+        govResult.salaryProposalId ?? null,
+        govResult.mode,
+        userId,
+      ]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_salary_assignment WHERE id = ? LIMIT 1", [id]

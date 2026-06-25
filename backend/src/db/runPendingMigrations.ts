@@ -217,6 +217,7 @@ const MIGRATION_MANIFEST: string[] = [
   "303_auth_password_reset_otp.sql",
   "304_missing_columns_fix.sql",
   "305_runtime_blockers_fix.sql",
+  "306_salary_bypass_control.sql",
   "1000_fix_engagement_schema_columns.sql",
 ];
 

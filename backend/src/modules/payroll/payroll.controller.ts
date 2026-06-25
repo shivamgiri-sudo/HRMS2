@@ -47,8 +47,17 @@ export const payrollController = {
   async assignSalary(req: Request, res: Response) {
     const parsed = assignSalarySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const data = await payrollService.assignSalary(parsed.data, (req as any).authUser?.id ?? "system");
-    res.status(201).json({ data });
+    const authUser = (req as any).authUser;
+    const actorRoles: string[] = Array.isArray(authUser?.roles) ? authUser.roles : (authUser?.role ? [authUser.role] : []);
+    try {
+      const data = await payrollService.assignSalary(parsed.data, authUser?.id ?? "system", actorRoles);
+      res.status(201).json({ data });
+    } catch (err: any) {
+      if (err?.code === "SALARY_BYPASS_BLOCKED") {
+        return res.status(400).json({ success: false, code: err.code, message: err.message });
+      }
+      throw err;
+    }
   },
 
   async getEmployeeSalary(req: Request, res: Response) {
@@ -177,8 +186,17 @@ export const payrollController = {
   async bulkAssignSalary(req: Request, res: Response) {
     const parsed = bulkAssignSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const data = await payrollService.bulkAssignSalary(parsed.data, (req as any).userId ?? "system");
-    res.json({ data });
+    const authUser = (req as any).authUser;
+    const actorRoles: string[] = Array.isArray(authUser?.roles) ? authUser.roles : (authUser?.role ? [authUser.role] : []);
+    try {
+      const data = await payrollService.bulkAssignSalary(parsed.data, authUser?.id ?? "system", actorRoles);
+      res.json({ data });
+    } catch (err: any) {
+      if (err?.code === "SALARY_BYPASS_BLOCKED") {
+        return res.status(400).json({ success: false, code: err.code, message: err.message });
+      }
+      throw err;
+    }
   },
 
   // ─── Statutory Config ──────────────────────────────────────────────────────
