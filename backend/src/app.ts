@@ -141,6 +141,9 @@ import { payrollHRRouter } from "./modules/ats/payroll-hr.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
 import { onboardingDataRouter } from "./modules/onboarding/onboarding-data.routes.js";
+import { pennyDropRouter } from "./modules/onboarding/penny-drop.routes.js";
+import { nameValidationRouter } from "./modules/onboarding/name-validation.routes.js";
+import { digiLockerRouter } from "./modules/onboarding/digilocker.routes.js";
 
 export const app = express();
 
@@ -242,6 +245,9 @@ app.use("/api/org", orgRouter);
 app.use("/api/org/events", eventsRouter);
 app.use("/api/org/settings", orgSettingsRouter);
 app.use("/api/onboarding/data", onboardingDataRouter);
+app.use("/api/onboarding/penny-drop", pennyDropRouter);
+app.use("/api/onboarding/name-validation", nameValidationRouter);
+app.use("/api/onboarding/digilocker", digiLockerRouter);
 app.use("/api/bulk-upload", bulkUploadRouter);
 app.use("/api/admin/email-templates", emailTemplatesRouter);
 app.use("/api/workflow", workflowRouter);

@@ -32,8 +32,8 @@ export function S5_BankDetails({ token, initialData, saveSection, verifyBgv, ban
   // Load master data
   useEffect(() => {
     Promise.all([
-      hrmsApi.get('/api/onboarding/data/banks').then(r => setBanks(r.data ?? [])).catch(() => {}),
-      hrmsApi.get('/api/onboarding/data/account-types').then(r => setAccountTypes(r.data ?? [])).catch(() => {}),
+      hrmsApi.get('/api/onboarding/data/banks').then(r => setBanks(Array.isArray(r.data) ? r.data : r.data?.data ?? [])).catch(() => {}),
+      hrmsApi.get('/api/onboarding/data/account-types').then(r => setAccountTypes(Array.isArray(r.data) ? r.data : r.data?.data ?? [])).catch(() => {}),
     ]);
   }, []);
 

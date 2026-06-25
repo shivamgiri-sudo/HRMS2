@@ -30,8 +30,8 @@ export function S2_Address({ token: _token, initialData, saveSection, verifyBgv,
   // Load master data
   useEffect(() => {
     Promise.all([
-      hrmsApi.get('/api/onboarding/data/states').then(r => setStates(r.data ?? [])).catch(() => {}),
-      hrmsApi.get('/api/onboarding/data/address-proof-types').then(r => setAddressProofTypes(r.data ?? [])).catch(() => {}),
+      hrmsApi.get('/api/onboarding/data/states').then(r => setStates(Array.isArray(r.data) ? r.data : r.data?.data ?? [])).catch(() => {}),
+      hrmsApi.get('/api/onboarding/data/address-proof-types').then(r => setAddressProofTypes(Array.isArray(r.data) ? r.data : r.data?.data ?? [])).catch(() => {}),
     ]);
   }, []);
 
