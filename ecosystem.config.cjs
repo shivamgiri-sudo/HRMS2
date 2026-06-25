@@ -4,7 +4,7 @@ module.exports = {
       name: "hrms-backend",
       cwd: "C:\\Users\\shivamg\\Upgraded HRMS\\backend",
       script: "node",
-      args: "dist/server.js",
+      args: "dist/src/server.js",
       env: {
         NODE_ENV: "production",
         ENABLE_SCHEDULERS: "true",

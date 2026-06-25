@@ -99,13 +99,13 @@ These items will prevent a working pilot if not resolved:
 ## Current Decision
 
 ```
-FINAL STATUS: GO_AFTER_FIXES
+FINAL STATUS: GO_FOR_CONTROLLED_PILOT  (updated 2026-06-25 after P0 resolution)
 ```
 
-**Reason:** All code is complete and verified. Both builds pass. All governance gates are in place. The system cannot start cleanly in production mode until P0-1 through P0-10 are resolved. Once those 10 items are completed and the minimum runtime checks (items 10–12 above) pass, the system qualifies for:
+**All P0 blockers resolved.** See `HRMS2_FINAL_PRODUCTION_PILOT_GO_NO_GO.md` for complete results.
 
 ```
-GO_FOR_CONTROLLED_PILOT
+ORIGINAL STATUS (pre-resolution): GO_AFTER_FIXES
 ```
 
 **Pilot scope recommendation:** Start with ATS → Onboarding → Salary Assignment → Appointment Letter (manual override). Add payroll and exit in phase 2 after migration validation.

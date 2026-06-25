@@ -35,3 +35,5 @@ backend/uploads/
 # Backend env files with credentials — never commit
 backend/.env.production
 backend/.env.test
+backups/
+.env
