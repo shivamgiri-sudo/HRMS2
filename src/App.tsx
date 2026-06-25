@@ -54,6 +54,8 @@ const NativeHROnboardingRequests    = lazy(() => import("./pages/NativeHROnboard
 const NativeBranchHeadApproval      = lazy(() => import("./pages/NativeBranchHeadApproval"));
 const NativeBGVVerificationCenter   = lazy(() => import("./pages/NativeBGVVerificationCenter"));
 const NativePayrollHRValidation     = lazy(() => import("./pages/NativePayrollHRValidation"));
+const NativePayrollHOQueues         = lazy(() => import("./pages/NativePayrollHOQueues"));
+const NativeGRNManagement           = lazy(() => import("./pages/NativeGRNManagement"));
 
 const NativeATSDashboardReplica = lazy(() => import("./pages/NativeATSDashboardReplica"));
 const NativeATSCandidateRegistration = lazy(() => import("./pages/NativeATSCandidateRegistration"));
@@ -142,6 +144,7 @@ const NativeBenefitsClaims          = lazy(() => import("./pages/NativeBenefitsC
 const NativeCareerPlanning          = lazy(() => import("./pages/NativeCareerPlanning"));
 const NativePIPManagement           = lazy(() => import("./pages/NativePIPManagement"));
 const NativeERP                     = lazy(() => import("./pages/NativeERP"));
+const NativeVendorPaymentTracking   = lazy(() => import("./pages/NativeVendorPaymentTracking"));
 const NativeGoalsAppraisal          = lazy(() => import("./pages/NativeGoalsAppraisal"));
 const NativeWorkInbox               = lazy(() => import("./pages/NativeWorkInbox"));
 const NativeMobilityManagement      = lazy(() => import("./pages/NativeMobilityManagement"));
@@ -387,6 +390,8 @@ const App = () => (
               <Route path="/career-planning" element={<ProtectedRoute><Gate pageCode="CAREER_PLANNING"><NativeCareerPlanning /></Gate></ProtectedRoute>} />
               <Route path="/pip-management" element={<Navigate to="/dashboard" replace />} />
               <Route path="/erp" element={<ProtectedRoute><Gate pageCode="ERP"><NativeERP /></Gate></ProtectedRoute>} />
+              <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute><NativeVendorPaymentTracking /></ProtectedRoute>} />
+              <Route path="/finance/grn" element={<ProtectedRoute><NativeGRNManagement /></ProtectedRoute>} />
               <Route path="/goals" element={<Navigate to="/dashboard" replace />} />
               <Route path="/work-inbox" element={<ProtectedRoute><Gate pageCode="WORK_INBOX"><NativeWorkInbox /></Gate></ProtectedRoute>} />
               <Route path="/mobility" element={<ProtectedRoute><Gate pageCode="MOBILITY"><NativeMobilityManagement /></Gate></ProtectedRoute>} />
@@ -406,6 +411,7 @@ const App = () => (
               <Route path="/payroll/full-final" element={<ProtectedRoute><Gate pageCode="FULL_FINAL"><NativeFullFinal /></Gate></ProtectedRoute>} />
               <Route path="/payroll/statutory-config" element={<ProtectedRoute><Gate pageCode="STATUTORY_CONFIG"><NativeStatutoryConfig /></Gate></ProtectedRoute>} />
               <Route path="/payroll/masters" element={<ProtectedRoute><Gate pageCode="PAYROLL_MASTERS"><NativePayrollMasters /></Gate></ProtectedRoute>} />
+              <Route path="/payroll/ho-queues" element={<ProtectedRoute><NativePayrollHOQueues /></ProtectedRoute>} />
               <Route path="/payroll/salary-packages" element={<ProtectedRoute><Gate pageCode="SALARY_PACKAGES"><NativeSalaryPackages /></Gate></ProtectedRoute>} />
               <Route path="/payroll/incentives" element={<ProtectedRoute><Gate pageCode="PAYROLL_INCENTIVES"><NativeIncentives /></Gate></ProtectedRoute>} />
               <Route path="/payroll/overtime" element={<ProtectedRoute roles={['admin', 'wfm']}><PayrollOvertimeManagement /></ProtectedRoute>} />

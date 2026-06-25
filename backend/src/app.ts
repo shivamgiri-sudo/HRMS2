@@ -138,6 +138,8 @@ import { jclrRouter } from "./modules/ats/jclr.routes.js";
 import { salaryComponentAssignmentRouter } from "./modules/ats/salary-component-assignment.routes.js";
 import { employeeCodeGateRouter } from "./modules/ats/employee-code-gate.routes.js";
 import { payrollHRRouter } from "./modules/ats/payroll-hr.routes.js";
+import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
+import { grnRouter } from "./modules/finance/grn.routes.js";
 
 export const app = express();
 
@@ -262,6 +264,8 @@ app.use("/api/lms", lmsRouter);
 app.use("/api/benefits", benefitsRouter);
 app.use("/api/career", careerRouter);
 app.use("/api/erp", erpRouter);
+app.use("/api/finance", vendorPaymentRouter);
+app.use("/api/finance", grnRouter);
 app.use("/api/inbox", inboxRouter);
 app.use("/api/it-provisioning", itProvisioningRouter);
 app.use("/api/onboarding-provisioning", itProvisioningRouter);

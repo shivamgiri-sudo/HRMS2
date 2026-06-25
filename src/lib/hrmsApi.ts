@@ -149,6 +149,26 @@ export function getAuthToken(): string | null {
   return null;
 }
 
+async function requestForm<T>(path: string, body: FormData): Promise<T> {
+  const headers = getAuthHeader();
+  const normalizedPath =
+    HRMS_API_URL === "/api" && path.startsWith("/api/")
+      ? path.replace(/^\/api/, "")
+      : path;
+  const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
+    method: "POST",
+    headers, // No Content-Type — browser sets multipart boundary automatically
+    body,
+  });
+  const payload = await parseResponse(res);
+  if (!res.ok) {
+    const errorPayload = payload as { error?: unknown; message?: unknown } | null;
+    const raw = errorPayload?.error ?? errorPayload?.message ?? null;
+    throw new Error(typeof raw === "string" ? raw : `HTTP ${res.status}`);
+  }
+  return payload as T;
+}
+
 export const hrmsApi = {
   get: <T>(path: string) => request<T>("GET", path),
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
@@ -156,4 +176,5 @@ export const hrmsApi = {
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
   delete: <T>(path: string) => request<T>("DELETE", path),
   getRaw: (path: string) => requestRaw("GET", path),
+  postForm: <T>(path: string, body: FormData) => requestForm<T>(path, body),
 };
