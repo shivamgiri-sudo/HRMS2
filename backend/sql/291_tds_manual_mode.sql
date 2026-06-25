@@ -1,12 +1,17 @@
 -- 291_tds_manual_mode.sql
 -- Adds per-run TDS mode control and a manual TDS upload table.
--- New runs default to 'manual' — auto-calculation is disabled by default.
--- Additive migration.
+-- Compatible with MySQL 5.7+ (no ADD COLUMN IF NOT EXISTS).
 
 -- ── salary_prep_run: add tds_mode column ─────────────────────────────────────
-ALTER TABLE salary_prep_run
-  ADD COLUMN IF NOT EXISTS tds_mode ENUM('auto','manual') NOT NULL DEFAULT 'manual'
-  COMMENT 'auto = engine calculates TDS projection; manual = Payroll HO uploads per-employee amounts';
+SET @col_exists = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'salary_prep_run' AND COLUMN_NAME = 'tds_mode'
+);
+SET @sql = IF(@col_exists = 0,
+  "ALTER TABLE salary_prep_run ADD COLUMN tds_mode ENUM('auto','manual') NOT NULL DEFAULT 'manual'",
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- ── Manual TDS entries per employee per run ───────────────────────────────────
 CREATE TABLE IF NOT EXISTS salary_run_manual_tds (
@@ -15,7 +20,7 @@ CREATE TABLE IF NOT EXISTS salary_run_manual_tds (
   employee_id  CHAR(36)      NOT NULL,
   tds_amount   DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   remarks      TEXT          NULL,
-  uploaded_by  CHAR(36)      NOT NULL,               -- auth_user.id of uploader
+  uploaded_by  CHAR(36)      NOT NULL,
   uploaded_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uq_run_emp_tds (run_id, employee_id),
