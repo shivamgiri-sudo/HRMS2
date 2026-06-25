@@ -121,6 +121,53 @@ router.patch(
   }),
 );
 
+// ── Send onboarding link (status=selected gate) ──────────────────────────────
+
+router.post(
+  '/candidates/:id/send-onboarding-link',
+  requireAuth,
+  requireRole('recruiter', 'hr', 'branch_hr', 'admin'),
+  h(async (req: AuthenticatedRequest, res) => {
+    const { id } = req.params!;
+    const { db: database } = await import('../../db/mysql.js');
+    const [rows] = await database.execute<RowDataPacket[]>(
+      'SELECT status FROM ats_candidate WHERE id = ? AND active_status = 1 LIMIT 1',
+      [id],
+    );
+    if (!Array.isArray(rows) || !rows.length) {
+      res.status(404).json({ success: false, message: 'Candidate not found' });
+      return;
+    }
+    const currentStatus = (rows[0] as any).status;
+    if (currentStatus !== 'selected') {
+      res.status(400).json({
+        success: false,
+        message: 'Candidate must be in selected status before sending onboarding link',
+        current_status: currentStatus,
+      });
+      return;
+    }
+    const { randomUUID } = await import('crypto');
+    const token = randomUUID();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 19)
+      .replace('T', ' ');
+    await database.execute(
+      `UPDATE ats_candidate
+          SET onboarding_token = ?,
+              onboarding_token_expires = ?,
+              status = 'onboarding_link_sent',
+              updated_at = NOW()
+        WHERE id = ?`,
+      [token, expiresAt, id],
+    );
+    const baseUrl = process.env.FRONTEND_URL ?? 'http://localhost:8085';
+    const link = `${baseUrl}/onboard-full?token=${token}`;
+    res.json({ success: true, link, token, expires_at: expiresAt });
+  }),
+);
+
 // ── Branch Head ───────────────────────────────────────────────────────────────
 
 router.get(

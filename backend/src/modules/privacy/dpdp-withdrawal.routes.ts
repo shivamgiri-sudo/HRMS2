@@ -4,6 +4,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import * as svc from "./dpdp-withdrawal.service.js";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
 
 export const dpdpWithdrawalRouter = Router();
 
@@ -68,7 +69,7 @@ dpdpWithdrawalRouter.get(
   "/dpdp-withdrawal/:id",
   requireAuth,
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const role = (req.authUser as any)?.role ?? "";
+    const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
     const isHr = ["admin", "hr", "compliance", "dpo"].includes(role);
     const record = await svc.getById(req.params.id, req.authUser!.id, isHr);
     if (!record) {
@@ -132,7 +133,7 @@ dpdpWithdrawalRouter.get(
   "/dpdp-withdrawal/:id/audit",
   requireAuth,
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const role = (req.authUser as any)?.role ?? "";
+    const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
     const isHr = ["admin", "hr", "compliance", "dpo"].includes(role);
     // Anyone can see audit for their own request; HR can see all
     const record = await svc.getById(req.params.id, req.authUser!.id, isHr);

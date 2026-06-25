@@ -5,6 +5,7 @@ import { expenseCategoryService } from './expenseCategory.service.js';
 import { expenseApprovalService } from './expenseApproval.service.js';
 import { expenseReportService } from './expenseReport.service.js';
 import { getEmployeeForUser } from '../../shared/accessGuard.js';
+import { getUserRoleContext } from '../../shared/roleResolver.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import type {
@@ -127,7 +128,7 @@ class ExpenseController {
   async getClaimDetails(req: AuthenticatedRequest, res: Response) {
     const claim = await expenseService.getClaimWithDetails(parseId(req.params.claimId));
     if (!claim) { res.status(404).json({ error: 'Claim not found' }); return; }
-    const role = (req.authUser as any)?.role ?? '';
+    const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
     if (!['finance', 'admin', 'manager'].includes(role)) {
       const employee = await getFullEmployee(req.authUser!.id);
       if (claim.employee_id !== employee.id) {
@@ -199,7 +200,7 @@ class ExpenseController {
 
   async exportForPayment(req: AuthenticatedRequest, res: Response) {
     const { status, start_date, end_date } = req.query;
-    const role = (req.authUser as any)?.role ?? '';
+    const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
     let processId: number | undefined;
     if (role !== 'admin') {
       const employee = await getFullEmployee(req.authUser!.id);
@@ -224,7 +225,7 @@ class ExpenseController {
   }
 
   async getExpenseSummary(req: AuthenticatedRequest, res: Response) {
-    const role = (req.authUser as any)?.role ?? '';
+    const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
     const query = req.query as ExpenseReportQuery;
     if (role !== 'admin') {
       const employee = await getFullEmployee(req.authUser!.id);
@@ -234,7 +235,7 @@ class ExpenseController {
   }
 
   async getMonthlyTrends(req: AuthenticatedRequest, res: Response) {
-    const role = (req.authUser as any)?.role ?? '';
+    const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
     let processId: number;
     if (role !== 'admin') {
       const employee = await getFullEmployee(req.authUser!.id);
@@ -251,7 +252,7 @@ class ExpenseController {
   }
 
   async getTopSpenders(req: AuthenticatedRequest, res: Response) {
-    const role = (req.authUser as any)?.role ?? '';
+    const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
     let processId: number;
     if (role !== 'admin') {
       const employee = await getFullEmployee(req.authUser!.id);
