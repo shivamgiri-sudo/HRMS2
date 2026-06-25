@@ -245,11 +245,17 @@ export const payrollService = {
     );
     if ((dup as RowDataPacket[]).length > 0) throw new Error("Payroll run already exists for this month");
 
+    // Compute payroll window close date: last day of run_month + 30 calendar days
+    const [runYear, runMo] = input.runMonth.split('-').map(Number);
+    const lastDayOfRunMonth = new Date(runYear, runMo, 0); // day=0 of next month = last day of this month
+    lastDayOfRunMonth.setDate(lastDayOfRunMonth.getDate() + 30);
+    const windowCloseDate = lastDayOfRunMonth.toISOString().slice(0, 10);
+
     const id = randomUUID();
     await db.execute(
-      `INSERT INTO salary_prep_run (id, run_month, branch_filter, process_filter, created_by)
-       VALUES (?, ?, ?, ?, ?)`,
-      [id, input.runMonth, input.branchFilter ?? null, input.processFilter ?? null, userId]
+      `INSERT INTO salary_prep_run (id, run_month, branch_filter, process_filter, window_close_date, created_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, input.runMonth, input.branchFilter ?? null, input.processFilter ?? null, windowCloseDate, userId]
     );
     return this.getRun(id);
   },
@@ -412,23 +418,22 @@ export const payrollService = {
 
     // PF: on Basic only, capped at pfWageLimit (statutory ceiling ₹15,000)
     // Variable allowances intentionally excluded from PF base
+    // Skipped entirely when employee has an approved PF opt-out (voluntary declaration).
     const pfBase = Math.min(basic, p.pfWageLimit);
-    const pfEmp = r2(pfBase * (p.pfEmployeePct / 100));
+    const pfEmp = p.pfOptOut ? 0 : r2(pfBase * (p.pfEmployeePct / 100));
 
     // Employer PF: EPF 3.67% + EPS 8.33% of min(Basic, ₹15,000 EPS ceiling)
     const epsCeiling = 15000;
     const epsBase = Math.min(basic, epsCeiling);
-    const pfEmrEpf = r2(pfBase * 0.0367);
-    const pfEmrEps = r2(epsBase * 0.0833);
+    const pfEmrEpf = p.pfOptOut ? 0 : r2(pfBase * 0.0367);
+    const pfEmrEps = p.pfOptOut ? 0 : r2(epsBase * 0.0833);
     const pfEmr = r2(pfEmrEpf + pfEmrEps);
 
     // ESIC: on full gross (including allowances), skip when gross > esicWageLimit
-    const esicEmp = gross <= p.esicWageLimit
-      ? r2(gross * (p.esicEmployeePct / 100))
-      : 0;
-    const esicEmr = gross <= p.esicWageLimit
-      ? r2(gross * 0.0325)
-      : 0;
+    // Also skipped when employee has an approved ESI opt-out (voluntary declaration).
+    const esicApplicable = !p.esicOptOut && gross <= p.esicWageLimit;
+    const esicEmp = esicApplicable ? r2(gross * (p.esicEmployeePct / 100)) : 0;
+    const esicEmr = esicApplicable ? r2(gross * 0.0325) : 0;
 
     // Gratuity: 4.81% of Basic — employer cost, not employee deduction
     const gratuity = r2(basic * 0.0481);
@@ -513,11 +518,11 @@ export const payrollService = {
     const run = Array.isArray(runRow) && runRow.length ? runRow[0] : null;
     const [stats] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as employee_count,
-              SUM(gross_pay) as total_gross,
-              SUM(net_pay) as total_net,
-              SUM(pf_employee) as total_pf,
-              SUM(esi_employee) as total_esi,
-              SUM(tds_deducted) as total_tds
+              SUM(spl.gross_salary) as total_gross,
+              SUM(spl.net_salary) as total_net,
+              SUM(spl.pf_employee) as total_pf,
+              SUM(spl.esic_employee) as total_esi,
+              SUM(spl.tds) as total_tds
        FROM salary_prep_line spl
        JOIN salary_prep_run spr ON spr.id = spl.run_id
        WHERE spr.run_month = ?`,

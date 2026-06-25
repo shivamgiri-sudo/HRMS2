@@ -85,8 +85,23 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const payload = await parseResponse(res);
 
   if (!res.ok) {
-    const errorPayload = payload as { error?: string; message?: string } | null;
-    const message = errorPayload?.error ?? errorPayload?.message ?? (typeof payload === "string" ? payload : `HTTP ${res.status}`);
+    const errorPayload = payload as { error?: unknown; message?: unknown } | null;
+    let raw = errorPayload?.error ?? errorPayload?.message ?? (typeof payload === "string" ? payload : null);
+    let message: string;
+    if (typeof raw === "string") {
+      message = raw;
+    } else if (raw && typeof raw === "object") {
+      // Zod validation error — extract first field-level message
+      const fieldErrors = (raw as Record<string, unknown>).fieldErrors;
+      if (fieldErrors && typeof fieldErrors === "object") {
+        const first = Object.values(fieldErrors as Record<string, unknown[]>).flat()[0];
+        message = typeof first === "string" ? first : `Validation error (${Object.keys(fieldErrors).join(", ")})`;
+      } else {
+        message = JSON.stringify(raw);
+      }
+    } else {
+      message = `HTTP ${res.status}`;
+    }
     throw new Error(message);
   }
 

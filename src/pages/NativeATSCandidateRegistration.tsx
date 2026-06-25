@@ -796,7 +796,7 @@ export default function NativeATSCandidateRegistration() {
         ...(preferredRecruiterId ? { preferredRecruiterId } : {}),
       };
       const apiRes = await hrmsApi.post<{ success: boolean; candidateId?: string; candidate_code?: string; branchName?: string; recruiter?: any; message?: string; data?: any }>(
-        "/api/ats/submit-enhanced",
+        "/api/ats/registration/submit-enhanced",
         payload
       );
 

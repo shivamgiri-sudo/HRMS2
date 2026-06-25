@@ -40,7 +40,8 @@ registrationEnhancedRouter.get("/recruiters/:branchName", async (req, res) => {
     return res.json({
       success: true,
       data: recruiters.map((r: any) => ({
-        id: r.id,
+        id: r.id,                      // roster id (FK-safe for ats_candidate.recruiter_id)
+        employee_id: r.id,             // alias used by frontend as preferredRecruiterId
         employee_code: r.employee_code,
         name: `${r.first_name} ${r.last_name}`.trim(),
         mobile: r.mobile,
@@ -113,24 +114,61 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
     }, null);
     const candidateId = candidate.id;
 
-    // Resolve recruiter UUID from name when only name was provided
+    // Resolve recruiter ID — must be an ats_recruiter_roster.id (FK target)
+    // preferredRecruiterId from the frontend is already a roster id (returned by getAvailableRecruiters).
+    // Fallback: look up by name → get roster id (upsert if needed).
     let resolvedRecruiterId = input.preferredRecruiterId || null;
     if (!resolvedRecruiterId && input.recruiterName) {
-      const nameParts = input.recruiterName.trim().split(' ');
-      const firstName = nameParts[0];
-      const lastName = nameParts.slice(1).join(' ');
-      const [recRows] = await db.execute<RowDataPacket[]>(
-        `SELECT e.id FROM employees e
-         JOIN branch_master b ON b.id = e.branch_id
-         WHERE e.active_status = 1
-           AND UPPER(e.first_name) = UPPER(?)
-           AND (? = '' OR UPPER(TRIM(e.last_name)) = UPPER(?))
-           AND (b.branch_name = ? OR b.branch_code = ?)
+      // Try roster first (fast path — most cases already seeded)
+      const [rosterRows] = await db.execute<RowDataPacket[]>(
+        `SELECT r.id FROM ats_recruiter_roster r
+         WHERE r.active_status = 1
+           AND UPPER(r.name) = UPPER(?)
+           AND (r.branch = ? OR r.branch = ?)
          LIMIT 1`,
-        [firstName, lastName, lastName, branchName, branchName]
+        [input.recruiterName.trim(), branchName, branchData.canonical_key]
       );
-      if ((recRows as RowDataPacket[]).length > 0) {
-        resolvedRecruiterId = (recRows as RowDataPacket[])[0].id;
+      if ((rosterRows as RowDataPacket[]).length > 0) {
+        resolvedRecruiterId = (rosterRows as RowDataPacket[])[0].id as string;
+      } else {
+        // Not in roster yet — find the employee and upsert into roster
+        const nameParts = input.recruiterName.trim().split(' ');
+        const firstName = nameParts[0];
+        const lastName = nameParts.slice(1).join(' ');
+        const [empRows] = await db.execute<RowDataPacket[]>(
+          `SELECT e.id, e.first_name, e.last_name, e.mobile, e.email, b.branch_name
+           FROM employees e
+           JOIN branch_master b ON b.id = e.branch_id
+           WHERE e.active_status = 1
+             AND UPPER(e.first_name) = UPPER(?)
+             AND (? = '' OR UPPER(TRIM(COALESCE(e.last_name,''))) = UPPER(?))
+             AND (b.branch_name = ? OR b.branch_code = ?)
+           LIMIT 1`,
+          [firstName, lastName, lastName, branchName, branchName]
+        );
+        if ((empRows as RowDataPacket[]).length > 0) {
+          const emp = (empRows as RowDataPacket[])[0] as any;
+          // ensureRecruiterInRoster is not exported — do inline upsert
+          const [existingRoster] = await db.execute<RowDataPacket[]>(
+            `SELECT id FROM ats_recruiter_roster WHERE employee_id = ? LIMIT 1`,
+            [emp.id]
+          );
+          if ((existingRoster as RowDataPacket[]).length > 0) {
+            resolvedRecruiterId = (existingRoster as RowDataPacket[])[0].id as string;
+          } else {
+            const { randomUUID } = await import('crypto');
+            const rosterId = randomUUID();
+            const fullName = `${emp.first_name} ${emp.last_name ?? ''}`.trim();
+            await db.execute(
+              `INSERT INTO ats_recruiter_roster
+                 (id, name, email, mobile, branch, employee_id, active_status, active_flag,
+                  available_today, daily_capacity, assigned_today)
+               VALUES (?, ?, ?, ?, ?, ?, 1, 'Y', 'Y', 999, 0)`,
+              [rosterId, fullName, emp.email ?? null, emp.mobile ?? null, emp.branch_name, emp.id]
+            );
+            resolvedRecruiterId = rosterId;
+          }
+        }
       }
     }
 
@@ -161,19 +199,22 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       );
     }
 
-    // 6. Get recruiter details
+    // 6. Get recruiter details — assignedRecruiterId is a roster id, join to employees for contact info
     let recruiterDetails = null;
     if (assignmentResult.assignedRecruiterId) {
       const [recRows] = await db.execute<RowDataPacket[]>(
-        `SELECT employee_code, first_name, last_name, mobile, email
-         FROM employees WHERE id = ?`,
+        `SELECT r.name, r.mobile, r.email, e.employee_code
+         FROM ats_recruiter_roster r
+         LEFT JOIN employees e ON e.id = r.employee_id
+         WHERE r.id = ?
+         LIMIT 1`,
         [assignmentResult.assignedRecruiterId]
       );
 
       if (recRows.length > 0) {
         const rec = recRows[0];
         recruiterDetails = {
-          name: `${rec.first_name} ${rec.last_name}`.trim(),
+          name: rec.name,
           mobile: rec.mobile,
           email: rec.email,
           employee_code: rec.employee_code,

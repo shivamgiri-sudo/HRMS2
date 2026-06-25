@@ -383,6 +383,48 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
     ]
   );
 
+  // Cheque name validation: compare name_on_cheque against account_holder_name.
+  // Mismatch is queued for Payroll HO review — onboarding is NEVER blocked.
+  const nameOnCheque = String(input.nameOnCheque ?? input.name_on_cheque ?? '').trim();
+  const accountHolderName = String(input.accountHolderName ?? '').trim();
+  const chequeDocId = (input.cancelledChequeDocumentId ?? null) as string | null;
+
+  if (nameOnCheque && accountHolderName) {
+    const namesMatch = nameOnCheque.toLowerCase() === accountHolderName.toLowerCase();
+
+    // Fetch the bank_detail row we just upserted
+    const [bdRows] = await db.execute(
+      `SELECT id FROM candidate_onboarding_bank_detail WHERE candidate_id = ? ORDER BY updated_at DESC LIMIT 1`,
+      [candidateId]
+    );
+    const bankDetailId = (bdRows as any[])[0]?.id ?? null;
+
+    if (namesMatch) {
+      await db.execute(
+        `UPDATE candidate_onboarding_bank_detail SET name_validation_status = 'matched' WHERE id = ?`,
+        [bankDetailId]
+      );
+    } else {
+      // Insert mismatch record and route to Payroll HO queue
+      const valId = randomUUID();
+      await db.execute(
+        `INSERT INTO cheque_name_validation
+           (id, candidate_id, bank_detail_id, cheque_document_id, name_on_cheque, name_in_profile, match_status)
+         VALUES (?, ?, ?, ?, ?, ?, 'mismatch')
+         ON DUPLICATE KEY UPDATE
+           name_on_cheque = VALUES(name_on_cheque), name_in_profile = VALUES(name_in_profile),
+           match_status = 'mismatch', validated_by = NULL, validated_at = NULL`,
+        [valId, candidateId, bankDetailId, chequeDocId, nameOnCheque, accountHolderName]
+      );
+      await db.execute(
+        `UPDATE candidate_onboarding_bank_detail
+            SET name_validation_status = 'pending_review', cheque_validation_id = ?
+          WHERE id = ?`,
+        [valId, bankDetailId]
+      );
+    }
+  }
+
   await logCandidateAction(candidateId, "SAVE_BANK_DETAILS", { bankName: input.bankName ?? input.bank_name, ifsc: input.ifscCode ?? input.bank_ifsc }, meta);
   return getFullOnboardingStatus(token);
 }

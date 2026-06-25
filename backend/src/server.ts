@@ -8,6 +8,7 @@ import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.boots
 import { legacySyncWorker } from "./workers/legacy-sync-worker.js";
 import { startAccessExpiryScheduler } from "./workers/access-expiry.worker.js";
 import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
+import { startPayrollWindowClosureScheduler } from "./modules/payroll/payroll-window.cron.js";
 import { startOfficialEmailComplianceScheduler } from "./workers/official-email-compliance.worker.js";
 import { startIntegrationScheduler } from "./workers/integration-scheduler.worker.js";
 import { startLeaveMonthlyWorker } from "./workers/leave-monthly-credit.worker.js";
@@ -28,7 +29,8 @@ function startServer() {
       startITProvisioningLockScheduler();
       startLeaveMonthlyWorker();
       startAnnualLeaveWorker();
-      console.log(`[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual started`);
+      startPayrollWindowClosureScheduler();
+      console.log(`[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window started`);
     } else {
       console.log(`[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)`);
     }

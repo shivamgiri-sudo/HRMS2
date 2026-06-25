@@ -16,7 +16,7 @@ interface S5Props {
 export function S5_BankDetails({ token, initialData, saveSection, verifyBgv, bankCheck }: S5Props) {
   const [form, setForm] = useState({
     bank_name: '', branch_name: '', account_holder_name: '',
-    account_no: '', ifsc_code: '', account_type: '',
+    account_no: '', ifsc_code: '', account_type: '', name_on_cheque: '',
   });
   const [verifying, setVerifying] = useState(false);
 
@@ -29,6 +29,7 @@ export function S5_BankDetails({ token, initialData, saveSection, verifyBgv, ban
         account_holder_name: String(initialData.account_holder_name ?? ''),
         ifsc_code: String(initialData.ifsc_code ?? ''),
         account_type: String(initialData.account_type ?? ''),
+        name_on_cheque: String(initialData.name_on_cheque ?? ''),
       }));
     }
   }, [initialData]);
@@ -42,6 +43,7 @@ export function S5_BankDetails({ token, initialData, saveSection, verifyBgv, ban
     account_holder_name: payload.account_holder_name,
     ifsc_code: payload.ifsc_code,
     account_type: payload.account_type,
+    name_on_cheque: payload.name_on_cheque,
   }), form);
 
   const doVerify = async () => {
@@ -115,6 +117,19 @@ export function S5_BankDetails({ token, initialData, saveSection, verifyBgv, ban
       </div>
 
       <InlineDocUpload token={token} docType="cancelled_cheque" label="Upload Cancelled Cheque / Passbook front page *" />
+
+      <div>
+        <label className={lbl}>Name as on Cheque</label>
+        <input
+          className={inp}
+          value={form.name_on_cheque}
+          onChange={set('name_on_cheque')}
+          placeholder="Enter name exactly as printed on cheque"
+        />
+        <p className="text-xs text-blue-600 mt-1 bg-blue-50 p-2 rounded-lg border border-blue-100">
+          If the name doesn't match your account holder name, it will be reviewed by Payroll HO — your onboarding will not be blocked.
+        </p>
+      </div>
     </div>
   );
 }

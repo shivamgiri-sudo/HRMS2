@@ -137,9 +137,11 @@ export async function getAuditLogExtended(req: any, res: any): Promise<void> {
     params.push(`%${String(req.query.reason)}%`);
   }
 
-  // Pagination
-  const limit = Math.min(parseInt(String(req.query.limit ?? 50)), 500);
-  const page = Math.max(parseInt(String(req.query.page ?? 1)), 1);
+  // Pagination — guard against NaN (MySQL rejects non-integer LIMIT/OFFSET params)
+  const limitRaw = parseInt(String(req.query.limit ?? "50"), 10);
+  const pageRaw  = parseInt(String(req.query.page  ?? "1"),  10);
+  const limit  = Math.min(isNaN(limitRaw) ? 50 : Math.max(1, limitRaw), 500);
+  const page   = isNaN(pageRaw)  ? 1 : Math.max(1, pageRaw);
   const offset = (page - 1) * limit;
 
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "WHERE 1=1";

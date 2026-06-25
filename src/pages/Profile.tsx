@@ -48,13 +48,12 @@ import {
 
 interface ProfileForm {
   official_email: string;
-  phone: string;
+  mobile: string;
   personal_email: string;
   personal_phone: string;
   alternate_mobile: string;
-  address: string;
+  address_line1: string;
   city: string;
-  country: string;
   date_of_birth: string;
   gender: string;
   marital_status: string;
@@ -136,7 +135,7 @@ const Profile = () => {
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [formData, setFormData] = useState<ProfileForm>({
-    official_email: "", phone: "", personal_email: "", personal_mobile: "", personal_phone: "", alternate_mobile: "", address: "", city: "", country: "",
+    official_email: "", mobile: "", personal_email: "", personal_phone: "", alternate_mobile: "", address_line1: "", city: "",
     date_of_birth: "", gender: "", marital_status: "", blood_group: "",
     working_hours_start: "09:00", working_hours_end: "18:00",
     working_days: [1, 2, 3, 4, 5, 6], // Default: Mon-Sat (Sunday off)
@@ -174,13 +173,12 @@ const Profile = () => {
       const fmt = (t: string | null) => (t ? t.slice(0, 5) : "");
       setFormData({
         official_email: employee.official_email || "",
-        phone: employee.phone || "",
+        mobile: employee.mobile || "",
         personal_email: employee.personal_email || "",
         personal_phone: employee.personal_phone || "",
         alternate_mobile: employee.alternate_mobile || "",
-        address: employee.address || "",
+        address_line1: employee.address_line1 || employee.address || "",
         city: employee.city || "",
-        country: employee.country || "",
         date_of_birth: employee.date_of_birth
           ? employee.date_of_birth.slice(0, 10)
           : "",
@@ -189,7 +187,7 @@ const Profile = () => {
         blood_group: employee.blood_group || "",
         working_hours_start: fmt(employee.working_hours_start) || "09:00",
         working_hours_end: fmt(employee.working_hours_end) || "18:00",
-        working_days: employee.working_days || [1, 2, 3, 4, 5, 6], // Default: Mon-Sat
+        working_days: employee.working_days || [1, 2, 3, 4, 5, 6],
       });
     }
   }, [employee]);
@@ -222,13 +220,12 @@ const Profile = () => {
     const fmt = (t: string | null) => (t ? t.slice(0, 5) : "");
     if (employee) setFormData({
       official_email: employee.official_email || "",
-      phone: employee.phone || "",
+      mobile: employee.mobile || "",
       personal_email: employee.personal_email || "",
       personal_phone: employee.personal_phone || "",
       alternate_mobile: employee.alternate_mobile || "",
-      address: employee.address || "",
+      address_line1: employee.address_line1 || employee.address || "",
       city: employee.city || "",
-      country: employee.country || "",
       date_of_birth: employee.date_of_birth ? employee.date_of_birth.slice(0, 10) : "",
       gender: employee.gender || "",
       marital_status: employee.marital_status || "",
@@ -324,10 +321,10 @@ const Profile = () => {
                 {/* Quick stats */}
                 <div className="grid shrink-0 grid-cols-2 gap-3 lg:w-[420px]">
                   {[
-                    { label: "Joined", value: formatDate(employee.hire_date) },
+                    { label: "Joined", value: formatDate(employee.date_of_joining) },
                     { label: "DOB", value: formatDate(employee.date_of_birth) },
                     { label: "Email", value: employee.official_email || employee.email },
-                    { label: "Phone", value: employee.phone || "—" },
+                    { label: "Phone", value: employee.mobile || "—" },
                   ].map(({ label, value }) => (
                     <div key={label} className="rounded-2xl border border-white/20 bg-white/10 px-4 py-4">
                       <p className="text-xs font-black uppercase tracking-widest text-blue-200">{label}</p>
@@ -376,10 +373,9 @@ const Profile = () => {
                       <SectionTitle>Contact Info</SectionTitle>
                       <div className="divide-y divide-slate-50">
                         <InfoRow icon={Mail}      label="Official Email" value={employee.official_email || employee.email} />
-                        <InfoRow icon={Phone}     label="Phone"      value={employee.phone} />
+                        <InfoRow icon={Phone}     label="Phone"      value={employee.mobile} />
                         <InfoRow icon={Phone}     label="Alternate"  value={employee.alternate_mobile} />
                         <InfoRow icon={MapPin}    label="City"       value={employee.city} />
-                        <InfoRow icon={MapPin}    label="Country"    value={employee.country} />
                       </div>
                     </div>
 
@@ -389,7 +385,7 @@ const Profile = () => {
                         <InfoRow icon={Briefcase}  label="Designation"        value={employee.designation} />
                         <InfoRow icon={Building2}  label="Department"         value={employee.department?.name} />
                         <InfoRow icon={Users}      label="Reporting Manager"  value={employee.reporting_manager_name} />
-                        <InfoRow icon={Calendar}   label="Date of Joining"    value={formatDate(employee.hire_date)} />
+                        <InfoRow icon={Calendar}   label="Date of Joining"    value={formatDate(employee.date_of_joining)} />
                       </div>
                       <div className="mt-4">
                         <Button
@@ -511,8 +507,8 @@ const Profile = () => {
                           <div className="space-y-1.5">
                             <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Phone</Label>
                             <Input
-                              value={formData.phone}
-                              onChange={(e) => setFormData(p => ({ ...p, phone: e.target.value }))}
+                              value={formData.mobile}
+                              onChange={(e) => setFormData(p => ({ ...p, mobile: e.target.value }))}
                               disabled={!isEditing}
                               placeholder="e.g. +91 98765 43210"
                               className="rounded-xl"
@@ -554,8 +550,8 @@ const Profile = () => {
                           <div className="space-y-1.5 sm:col-span-2">
                             <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Address</Label>
                             <Input
-                              value={formData.address}
-                              onChange={(e) => setFormData(p => ({ ...p, address: e.target.value }))}
+                              value={formData.address_line1}
+                              onChange={(e) => setFormData(p => ({ ...p, address_line1: e.target.value }))}
                               disabled={!isEditing}
                               placeholder="Street address"
                               className="rounded-xl"
@@ -572,12 +568,12 @@ const Profile = () => {
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Country</Label>
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">State</Label>
                             <Input
-                              value={formData.country}
-                              onChange={(e) => setFormData(p => ({ ...p, country: e.target.value }))}
+                              value={(formData as any).state || ""}
+                              onChange={(e) => setFormData(p => ({ ...p, state: e.target.value } as any))}
                               disabled={!isEditing}
-                              placeholder="India"
+                              placeholder="Delhi"
                               className="rounded-xl"
                             />
                           </div>

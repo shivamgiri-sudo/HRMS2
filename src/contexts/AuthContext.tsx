@@ -69,15 +69,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<HrmsUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSigningOut, setIsSigningOut] = useState(false);
-  const [mustChangePassword, setMustChangePassword] = useState(
-    localStorage.getItem('hrms_must_change_password') === 'true'
-  );
-  const [twoFactorRequired, setTwoFactorRequired] = useState(
-    localStorage.getItem('hrms_2fa_required') === 'true'
-  );
-  const [twoFactorVerified, setTwoFactorVerified] = useState(
-    localStorage.getItem('hrms_2fa_verified') === 'true'
-  );
+  const [mustChangePassword, setMustChangePassword] = useState(() => {
+    // Only honour the flag when a session token actually exists.
+    // Without a token there is no authenticated session, so the flag is stale.
+    const hasToken = !!localStorage.getItem('hrms_access_token') || !!localStorage.getItem('hrms_refresh_token');
+    if (!hasToken) {
+      localStorage.removeItem('hrms_must_change_password');
+      return false;
+    }
+    return localStorage.getItem('hrms_must_change_password') === 'true';
+  });
+  const [twoFactorRequired, setTwoFactorRequired] = useState(() => {
+    const hasToken = !!localStorage.getItem('hrms_access_token') || !!localStorage.getItem('hrms_refresh_token');
+    if (!hasToken) {
+      localStorage.removeItem('hrms_2fa_required');
+      localStorage.removeItem('hrms_2fa_verified');
+      return false;
+    }
+    return localStorage.getItem('hrms_2fa_required') === 'true';
+  });
+  const [twoFactorVerified, setTwoFactorVerified] = useState(() => {
+    const hasToken = !!localStorage.getItem('hrms_access_token') || !!localStorage.getItem('hrms_refresh_token');
+    if (!hasToken) return false;
+    return localStorage.getItem('hrms_2fa_verified') === 'true';
+  });
   const queryClient = useQueryClient();
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 

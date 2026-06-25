@@ -13,6 +13,7 @@ import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { payrollController as c } from "./payroll.controller.js";
 import { calculatePayrollRun } from "./payrollCalculate.service.js";
 import { payrollGovernanceService } from "./payroll-governance.service.js";
+import { assertRunEditable } from "./payrollWindowGuard.js";
 import { payslipService } from "./payslip.service.js";
 import { taxDeclarationService } from "./taxDeclaration.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -167,6 +168,7 @@ router.get("/runs/:id/readiness", requireRole("admin", "hr", "super_admin", "fin
 }));
 
 router.post("/runs/:id/freeze-attendance", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req, res) => {
+  await assertRunEditable(req.params.id);
   const actorId = req.authUser?.id ?? "system";
   const data = await payrollGovernanceService.freezeAttendance(req.params.id, actorId);
 
@@ -187,6 +189,7 @@ router.patch("/runs/:id/status", requireRole("admin", "super_admin", "finance", 
 router.get("/runs/:id/lines", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.listLines));
 router.post("/runs/:id/calculate", requireRole("admin", "super_admin", "finance", "payroll"), async (req: any, res: any, next: any) => {
   try {
+    await assertRunEditable(req.params.id);
     const actorId = req.authUser?.id ?? "system";
     if (process.env.PAYROLL_STRICT_READINESS === "true") {
       const readiness = await payrollGovernanceService.readiness(req.params.id);
@@ -215,14 +218,29 @@ router.post("/runs/:id/calculate", requireRole("admin", "super_admin", "finance"
 
 // ─── Run Lines ────────────────────────────────────────────────────────────────
 
-router.patch("/lines/:id", requireRole("admin", "super_admin", "finance", "payroll"), h(c.updateLine));
+router.patch("/lines/:id", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: any, res: any) => {
+  // Resolve run_id from line, then check window guard
+  const [lineRows] = await db.execute<RowDataPacket[]>(
+    `SELECT run_id FROM salary_prep_line WHERE id = ? LIMIT 1`, [req.params.id]
+  );
+  const runId = (lineRows[0] as any)?.run_id;
+  if (runId) await assertRunEditable(runId);
+  return c.updateLine(req, res);
+}));
 
 // ─── Overtime (WFM-only) ──────────────────────────────────────────────────────
 
 router.patch("/lines/:lineId/overtime",
   requireAuth,
   requireWFMAccess,
-  h(c.updateOvertime)
+  h(async (req: any, res: any) => {
+    const [lineRows] = await db.execute<RowDataPacket[]>(
+      `SELECT run_id FROM salary_prep_line WHERE id = ? LIMIT 1`, [req.params.lineId]
+    );
+    const runId = (lineRows[0] as any)?.run_id;
+    if (runId) await assertRunEditable(runId);
+    return c.updateOvertime(req, res);
+  })
 );
 
 // ─── Advances ─────────────────────────────────────────────────────────────────

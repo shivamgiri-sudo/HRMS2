@@ -90,6 +90,11 @@ SOURCE sql/250_lms_integration_schema.sql;
 SOURCE sql/251_lms_employee_mapping.sql;
 SOURCE sql/260_communication_preferences.sql;
 SOURCE sql/261_profile_update_approval.sql;
+SOURCE sql/290_pf_esic_optout.sql;
+SOURCE sql/291_tds_manual_mode.sql;
+SOURCE sql/292_cheque_name_validation.sql;
+SOURCE sql/293_bank_change_pennyDrop.sql;
+SOURCE sql/294_payroll_window_closure.sql;
 
 SELECT 'mas_hrms schema complete' AS status;
 SHOW TABLES;

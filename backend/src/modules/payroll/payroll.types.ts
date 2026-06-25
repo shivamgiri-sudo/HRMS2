@@ -141,6 +141,8 @@ export interface NetSalaryParams {
   basicPct: number;        // % of gross CTC allocated to Basic (default 40)
   hraPct: number;          // % of gross CTC allocated to HRA (default 20)
   allowances?: SalaryAllowance[]; // variable pay: night shift, incentives, etc.
+  pfOptOut?: boolean;      // true = employee voluntarily opted out of PF deduction
+  esicOptOut?: boolean;    // true = employee voluntarily opted out of ESI deduction
 }
 
 export interface PaginatedResult<T> {

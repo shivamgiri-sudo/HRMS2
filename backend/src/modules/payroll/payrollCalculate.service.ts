@@ -182,6 +182,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   if (LOCKED_STATUSES.has(run.status)) {
     throw new Error(`Cannot recalculate a ${run.status} run`);
   }
+  // TDS mode: 'manual' = skip auto-TDS projection; Payroll HO uploads amounts separately.
+  const tdsMode: 'auto' | 'manual' = (run as any).tds_mode ?? 'manual';
 
   // 2a. Load statutory config as flat key→value map (for TDS slab lookups)
   const [statKvRows] = await db.execute<RowDataPacket[]>(
@@ -356,15 +358,18 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     );
     const decl = (declRows as TaxDeclarationRow[])[0] ?? null;
 
-    // 5b. Compute TDS via annual projection — based on grossAfterLwp so LWP months don't over-tax
-    const annualGross = grossAfterLwp * 12;
-    const declHra  = decl ? Number(decl.declared_hra)  : 0;
-    const decl80c  = decl ? Number(decl.declared_80c)  : 0;
-    const decl80d  = decl ? Number(decl.declared_80d)  : 0;
-    // Standard deduction applied inside calculateTds; additional declaration deductions here
-    const taxableIncome = Math.max(0, annualGross - declHra - decl80c - decl80d);
-    const tdsResult = calculateTds(taxableIncome, statConfig);
-    const tdsMonthly = tdsResult.tds_monthly;
+    // 5b. TDS: skip auto-projection when run is in manual TDS mode.
+    // In manual mode, Payroll HO uploads per-employee TDS via POST /runs/:id/manual-tds.
+    // Those amounts are applied in a post-calculation pass (see applyManualTds below).
+    let tdsMonthly = 0;
+    if (tdsMode === 'auto') {
+      const annualGross = grossAfterLwp * 12;
+      const declHra  = decl ? Number(decl.declared_hra)  : 0;
+      const decl80c  = decl ? Number(decl.declared_80c)  : 0;
+      const decl80d  = decl ? Number(decl.declared_80d)  : 0;
+      const taxableIncome = Math.max(0, annualGross - declHra - decl80c - decl80d);
+      tdsMonthly = calculateTds(taxableIncome, statConfig).tds_monthly;
+    }
 
     // 5d. Salary advance monthly recovery
     const [advRows] = await db.execute<RowDataPacket[]>(
@@ -380,6 +385,16 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       ? await getPtFromSlab(emp.state_code, grossAfterLwp)
       : stat.professional_tax;
 
+    // Check for approved PF / ESI opt-outs (employee voluntary declaration approved by Payroll HO)
+    const [overrideRows] = await db.execute<RowDataPacket[]>(
+      `SELECT override_type FROM employee_statutory_override
+       WHERE employee_id = ? AND status = 'approved'
+         AND (effective_from_month IS NULL OR effective_from_month <= ?)`,
+      [emp.employee_id, run.run_month]
+    );
+    const pfOptOut   = (overrideRows as Array<{ override_type: string }>).some(r => r.override_type === 'pf_opt_out');
+    const esicOptOut = (overrideRows as Array<{ override_type: string }>).some(r => r.override_type === 'esic_opt_out');
+
     const calc = payrollService.calculateNetSalary({
       grossMonthlyCTC: grossAfterLwp,
       workingDays,
@@ -392,6 +407,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       tds: tdsMonthly,
       basicPct: emp.basic_pct ?? 40,
       hraPct: emp.hra_pct ?? 20,
+      pfOptOut,
+      esicOptOut,
     });
 
     // Net pay = payrollService net + advance recovery deducted on top
@@ -436,6 +453,39 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     totalGross += calc.gross_salary;
     totalDed   += totalDedFinal;
     totalNet   += netPayFinal;
+  }
+
+  // 7a. Apply manual TDS entries (only when tds_mode = 'manual')
+  // For each row in salary_run_manual_tds, update the salary_prep_line TDS fields
+  // and recalculate net_salary / total_deductions in-place.
+  if (tdsMode === 'manual') {
+    const [manualTdsRows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_id, tds_amount FROM salary_run_manual_tds WHERE run_id = ?`,
+      [runId]
+    );
+    for (const row of manualTdsRows as Array<{ employee_id: string; tds_amount: number }>) {
+      const tdsAmt = Number(row.tds_amount) || 0;
+      await db.execute(
+        `UPDATE salary_prep_line
+            SET tds = ?, tds_amount = ?,
+                total_deductions = total_deductions + ?,
+                net_salary = GREATEST(0, net_salary - ?)
+          WHERE run_id = ? AND employee_id = ?`,
+        [tdsAmt, tdsAmt, tdsAmt, tdsAmt, runId, row.employee_id]
+      );
+    }
+    // Recalculate run totals after TDS application
+    const [sumRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(gross_salary),0) AS tg,
+              COALESCE(SUM(total_deductions),0) AS td,
+              COALESCE(SUM(net_salary),0) AS tn
+       FROM salary_prep_line WHERE run_id = ?`,
+      [runId]
+    );
+    const sums = (sumRows[0] as any);
+    totalGross = Number(sums.tg);
+    totalDed   = Number(sums.td);
+    totalNet   = Number(sums.tn);
   }
 
   // 7. Update run totals + status

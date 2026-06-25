@@ -6,8 +6,9 @@ import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
 import { employeeController as c } from "./employee.controller.js";
-import { appendJourneyEvent, listJourneyEvents } from "./journeyLog.service.js";
+import { appendJourneyEvent, listJourneyEvents, listComprehensiveJourney } from "./journeyLog.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { profileApprovalService } from "./profile-approval.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -42,9 +43,9 @@ router.get("/me", h(async (req: any, res: any) => {
   const empId = emp.id;
 
   const [bankRows, statRows, emergRows, nomineeRows] = await Promise.all([
-    // Bank details
+    // Bank details — account_number is varbinary; read as Buffer then mask last-4
     db.execute(
-      "SELECT bank_name, account_holder_name, bank_branch, ifsc_code, account_type, masked_account_number, verification_status FROM employee_bank_detail WHERE employee_id = ? LIMIT 1",
+      "SELECT bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number, verified FROM employee_bank_detail WHERE employee_id = ? AND active_status = 1 LIMIT 1",
       [empId]
     ).then(([r]: any) => r).catch(() => []),
 
@@ -54,9 +55,9 @@ router.get("/me", h(async (req: any, res: any) => {
       [empId]
     ).then(([r]: any) => r).catch(() => []),
 
-    // Emergency contact (primary)
+    // Emergency contact — prefer is_primary=1, fall back to first row
     db.execute(
-      "SELECT name, relationship, mobile, address FROM employee_emergency_contact WHERE employee_id = ? AND is_primary = 1 ORDER BY contact_seq ASC LIMIT 1",
+      "SELECT name, relationship, mobile, address FROM employee_emergency_contact WHERE employee_id = ? ORDER BY is_primary DESC, contact_seq ASC LIMIT 1",
       [empId]
     ).then(([r]: any) => r).catch(() => []),
 
@@ -67,27 +68,42 @@ router.get("/me", h(async (req: any, res: any) => {
     ).then(([r]: any) => r).catch(() => []),
   ]);
 
-  // Build masked statutory
-  let statutory_details: Record<string, any> | null = null;
-  if (statRows.length) {
-    const s = statRows[0];
-    const maskPan = (v: string | null) => v ? v.slice(0, 5) + "***" + v.slice(-1) : null;
-    const maskLast4 = (v: string | null) => v ? "****" + v.slice(-4) : null;
-    const maskEpf = (v: string | null) => v ? v.slice(0, 2) + "/****/****" : null;
-    statutory_details = {
-      masked_pan_number: maskPan(s.pan_number),
-      masked_aadhaar_number: maskLast4(s.aadhaar_id),
-      masked_pf_number: maskEpf(s.epf_number),
-      masked_uan: maskLast4(s.uan_number),
-      esi_number: s.esi_number ? "****" + String(s.esi_number).slice(-4) : null,
-      pf_eligible: s.pf_eligible,
-      esi_eligible: s.esi_eligible,
-      epf_date: s.epf_date,
-      pan_verification_status: s.pan_number ? "not_provided" : "not_provided",
-      aadhaar_verification_status: s.aadhaar_id ? "not_provided" : "not_provided",
-      pf_uan_verification_status: s.uan_number ? "not_provided" : "not_provided",
-    };
-  }
+  // Build masked statutory — primary source is employees row (pan_number, uan_number,
+  // epf_number, esic_number, aadhaar_number/aadhaar_last4 columns); employee_statutory_info
+  // supplements with pf_eligible, esi_eligible, epf_date when a row exists.
+  const si = statRows[0] ?? null;
+  const maskPan    = (v: string | null | undefined) => v && v.trim() ? v.slice(0, 5) + "***" + v.slice(-1) : null;
+  const maskLast4  = (v: string | null | undefined) => v && v.trim() ? "****" + v.slice(-4) : null;
+  const maskEpf    = (v: string | null | undefined) => v && v.trim() ? v.slice(0, 2) + "/****/****" : null;
+
+  // Resolve each field: employees table takes priority, fall back to employee_statutory_info
+  const pan_number    = (emp.pan_number    && String(emp.pan_number).trim())    || (si?.pan_number    && String(si.pan_number).trim())    || null;
+  const uan_number    = (emp.uan_number    && String(emp.uan_number).trim())    || (si?.uan_number    && String(si.uan_number).trim())    || null;
+  const epf_number    = (emp.epf_number    && String(emp.epf_number).trim())    || (si?.epf_number    && String(si.epf_number).trim())    || null;
+  const esic_number   = (emp.esic_number   && String(emp.esic_number).trim())   || (si?.esi_number    && String(si.esi_number).trim())    || null;
+  // aadhaar: employees stores full number or last4 separately
+  const aadhaar_full  = (emp.aadhaar_number && String(emp.aadhaar_number).trim()) || (si?.aadhaar_id  && String(si.aadhaar_id).trim())    || null;
+  const aadhaar_last4 = (emp.aadhaar_last4  && String(emp.aadhaar_last4).trim()) || null;
+  // For masking: prefer full number (mask last4), fall back to last4 digits already stored
+  const aadhaar_for_mask = aadhaar_full || (aadhaar_last4 ? "XXXXXXXXXXXX".slice(0, -4) + aadhaar_last4 : null);
+
+  const pan_verified   = emp.pan_verified_on   ? "verified" : (pan_number    ? "pending" : "not_provided");
+  const aadhaar_verified = emp.aadhaar_verified_on ? "verified" : (aadhaar_for_mask ? "pending" : "not_provided");
+  const pf_uan_verified  = uan_number ? "pending" : "not_provided";
+
+  const statutory_details: Record<string, any> = {
+    masked_pan_number:      maskPan(pan_number),
+    masked_aadhaar_number:  maskLast4(aadhaar_for_mask),
+    masked_pf_number:       maskEpf(epf_number),
+    masked_uan:             maskLast4(uan_number),
+    esi_number:             esic_number ? "****" + esic_number.slice(-4) : null,
+    pf_eligible:            si?.pf_eligible ?? (epf_number ? 1 : 0),
+    esi_eligible:           si?.esi_eligible ?? (esic_number ? 1 : 0),
+    epf_date:               si?.epf_date ?? null,
+    pan_verification_status:     pan_verified,
+    aadhaar_verification_status: aadhaar_verified,
+    pf_uan_verification_status:  pf_uan_verified,
+  };
 
   return res.json({
     success: true,
@@ -95,7 +111,27 @@ router.get("/me", h(async (req: any, res: any) => {
       ...emp,
       // Nested shapes expected by frontend
       department: emp.department_name ? { name: emp.department_name } : null,
-      bank_details: bankRows.length ? bankRows[0] : null,
+      bank_details: (() => {
+        if (!bankRows.length) return null;
+        const b = bankRows[0];
+        // account_number is stored as varbinary — convert Buffer to string then mask
+        let rawAcct: string | null = null;
+        if (b.account_number) {
+          rawAcct = Buffer.isBuffer(b.account_number)
+            ? b.account_number.toString("utf8")
+            : String(b.account_number);
+        }
+        return {
+          bank_name: b.bank_name,
+          account_holder_name: b.account_holder_name ?? null,
+          bank_branch: b.bank_branch ?? null,
+          ifsc_code: b.ifsc_code,
+          account_type: b.account_type,
+          masked_account_number: rawAcct ? "****" + rawAcct.slice(-4) : null,
+          verified: !!b.verified,
+          verification_status: b.verified ? "verified" : "pending",
+        };
+      })(),
       statutory_details,
       emergency_contact: emergRows.length ? emergRows[0] : null,
       nominee: nomineeRows.length ? {
@@ -122,9 +158,11 @@ router.patch("/me", h(async (req: any, res: any) => {
   const empId = rows[0].id;
 
   // official_email is the canonical login identity — keep it out of self-service
+  // address→address_line1, no "address" or "country" column in prod schema
   const ALLOWED_FIELDS = [
     "mobile", "personal_email", "personal_phone", "alternate_mobile",
-    "address", "city", "country", "date_of_birth", "gender", "marital_status",
+    "address_line1", "address_line2", "city", "state", "pincode",
+    "date_of_birth", "gender", "marital_status",
     "blood_group", "working_hours_start", "working_hours_end", "working_days"
   ];
 
@@ -180,13 +218,60 @@ router.get("/me/journey", h(async (req: any, res: any) => {
   if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
   const empId = rows[0].id;
 
-  const data = await listJourneyEvents(empId, {
-    module:    req.query.module    as string | undefined,
-    eventType: req.query.eventType as string | undefined,
-    fromDate:  req.query.fromDate  as string | undefined,
-    toDate:    req.query.toDate    as string | undefined,
+  const data = await listComprehensiveJourney(empId, {
+    filters: {
+      module:    req.query.module    as string | undefined,
+      eventType: req.query.eventType as string | undefined,
+      fromDate:  req.query.fromDate  as string | undefined,
+      toDate:    req.query.toDate    as string | undefined,
+    },
   });
   return res.json({ success: true, data });
+}));
+
+// GET /api/employees/me/bank-change-status — check if a pending bank change request exists
+router.get("/me/bank-change-status", h(async (req: any, res: any) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT pua.requested_at FROM profile_update_approval pua
+     JOIN employees e ON e.id = pua.employee_id AND e.user_id = ? AND e.active_status = 1
+     WHERE pua.request_type = 'bank_details' AND pua.status = 'pending'
+     ORDER BY pua.requested_at DESC LIMIT 1`,
+    [userId]
+  );
+  return res.json({ success: true, pending: rows.length > 0, requested_at: rows[0]?.requested_at ?? null });
+}));
+
+// POST /api/employees/me/bank-change-request — submit bank change for Payroll HO approval
+router.post("/me/bank-change-request", h(async (req: any, res: any) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    [userId]
+  );
+  if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
+  const empId = rows[0].id;
+
+  const { bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number } = req.body;
+
+  // Fetch existing bank details for old_values record
+  const [existing] = await db.execute<RowDataPacket[]>(
+    "SELECT bank_name, account_holder_name, bank_branch, ifsc_code, account_type, masked_account_number FROM employee_bank_detail WHERE employee_id = ? AND is_primary = 1 LIMIT 1",
+    [empId]
+  );
+
+  const result = await profileApprovalService.submitBankDetailsForApproval(
+    userId,
+    empId,
+    { bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number },
+    existing[0] ?? {}
+  );
+
+  return res.json({ success: true, ...result });
 }));
 
 // PUT /api/employees/me/bank-details — upsert bank details for logged-in user

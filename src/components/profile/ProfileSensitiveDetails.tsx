@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BadgeCheck,
   Banknote,
   CircleAlert,
+  Clock,
   HeartHandshake,
   Landmark,
   Loader2,
@@ -164,13 +165,19 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
   });
   const [statutoryForm, setStatutoryForm] = useState({
     pan_number: "",
-    aadhaar_last4: "",
-    uan: "",
-    pf_number: "",
+    aadhaar_id: "",
+    uan_number: "",
+    epf_number: "",
+  });
+
+  const { data: pendingBankRequest } = useQuery({
+    queryKey: ["my-pending-bank-request"],
+    queryFn: () => hrmsApi.get<{ pending: boolean; requested_at?: string }>("/api/employees/me/bank-change-status"),
+    retry: false,
   });
 
   const bankMutation = useMutation({
-    mutationFn: () => hrmsApi.put("/api/employees/me/bank-details", {
+    mutationFn: () => hrmsApi.post("/api/employees/me/bank-change-request", {
       ...bankForm,
       bank_branch: bankForm.bank_branch || null,
       account_number: bankForm.account_number || undefined,
@@ -179,9 +186,10 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
       setBankError("");
       setBankForm((current) => ({ ...current, account_number: "" }));
       invalidateProfile(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ["my-pending-bank-request"] });
       toast({
-        title: "Bank details submitted",
-        description: "Payroll or HR can now verify the updated account.",
+        title: "Bank change request submitted",
+        description: "Your request has been routed to Payroll HO for approval. The new account will be effective from the next payroll run after approval.",
       });
     },
     onError: (error: Error) => setBankError(error.message),
@@ -192,7 +200,7 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
       const payload = Object.fromEntries(
         Object.entries(statutoryForm).filter(([key, value]) => {
           if (!value.trim()) return false;
-          if (!allowStatutoryEdit && (key === "pan_number" || key === "aadhaar_last4")) return false;
+          if (!allowStatutoryEdit && (key === "pan_number" || key === "aadhaar_id")) return false;
           return true;
         }),
       );
@@ -200,7 +208,7 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
     },
     onSuccess: () => {
       setStatutoryError("");
-      setStatutoryForm({ pan_number: "", aadhaar_last4: "", uan: "", pf_number: "" });
+      setStatutoryForm({ pan_number: "", aadhaar_id: "", uan_number: "", epf_number: "" });
       invalidateProfile(queryClient);
       toast({
         title: "Statutory details submitted",
@@ -225,6 +233,13 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
           />
           <DetailValue label="IFSC Code" value={bank?.ifsc_code} />
         </div>
+
+        {pendingBankRequest?.pending ? (
+          <div className="mt-4 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            <Clock className="size-4 shrink-0" />
+            <span>A bank account change request is pending Payroll HO approval{pendingBankRequest.requested_at ? ` (submitted ${new Date(pendingBankRequest.requested_at).toLocaleDateString()})` : ""}. New requests will replace the pending one.</span>
+          </div>
+        ) : null}
 
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
@@ -320,7 +335,7 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
           disabled={bankMutation.isPending}
         >
           {bankMutation.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Save className="mr-2 size-4" />}
-          Submit Bank Details
+          {bank ? "Request Bank Account Change" : "Submit Bank Details"}
         </Button>
       </SectionCard>
 
@@ -383,18 +398,18 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="profile-aadhaar-last4">Aadhaar Last 4 Digits</Label>
+                <Label htmlFor="profile-aadhaar-last4">Aadhaar Number</Label>
                 <Input
                   id="profile-aadhaar-last4"
                   inputMode="numeric"
                   autoComplete="off"
-                  value={statutoryForm.aadhaar_last4}
+                  value={statutoryForm.aadhaar_id}
                   onChange={(event) => setStatutoryForm((current) => ({
                     ...current,
-                    aadhaar_last4: event.target.value.replace(/\D/g, ""),
+                    aadhaar_id: event.target.value.replace(/\D/g, ""),
                   }))}
-                  placeholder="1234"
-                  maxLength={4}
+                  placeholder="12-digit Aadhaar number"
+                  maxLength={12}
                 />
               </div>
             </>
@@ -404,10 +419,10 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
             <Input
               id="profile-pf"
               autoComplete="off"
-              value={statutoryForm.pf_number}
+              value={statutoryForm.epf_number}
               onChange={(event) => setStatutoryForm((current) => ({
                 ...current,
-                pf_number: event.target.value.toUpperCase(),
+                epf_number: event.target.value.toUpperCase(),
               }))}
               placeholder="PF member number"
               maxLength={32}
@@ -419,10 +434,10 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
               id="profile-uan"
               inputMode="numeric"
               autoComplete="off"
-              value={statutoryForm.uan}
+              value={statutoryForm.uan_number}
               onChange={(event) => setStatutoryForm((current) => ({
                 ...current,
-                uan: event.target.value.replace(/\D/g, ""),
+                uan_number: event.target.value.replace(/\D/g, ""),
               }))}
               placeholder="12-digit UAN"
               maxLength={12}

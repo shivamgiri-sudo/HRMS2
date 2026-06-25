@@ -79,34 +79,51 @@ export const atsFormConfigService = {
       };
     });
     if (recruiterOptions.length === 0) {
-      const [employeeRecruiters] = await db.execute<RowDataPacket[]>(
+      // Primary: employees with hr/recruiter/branch_head roles via user_roles table
+      const [roleRecruiters] = await db.execute<RowDataPacket[]>(
         `SELECT DISTINCT
+           e.id AS employee_id,
            TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
            COALESCE(e.office_email, e.official_email, e.email) AS email,
            e.mobile
-         FROM employees e
-         JOIN department_master d ON d.id = e.department_id
-         JOIN designation_master des ON des.id = e.designation_id
-         WHERE e.active_status = 1
-           AND LOWER(d.dept_name) LIKE '%human resource%'
-           AND (
-             LOWER(des.designation_name) LIKE '%executive%'
-             OR LOWER(des.designation_name) LIKE '%recruiter%'
-             OR LOWER(des.designation_name) LIKE '%hr manager%'
-             OR LOWER(des.designation_name) LIKE '%hr%'
-           )
+         FROM user_roles ur
+         JOIN auth_user au ON au.id = ur.user_id
+         JOIN employees e  ON e.user_id = au.id
+         WHERE ur.active_status = 1
+           AND ur.role_key IN ('hr', 'recruitment_hr', 'recruiter', 'branch_head')
+           AND e.active_status = 1
          ORDER BY name`
       );
-      const empRows = employeeRecruiters as RowDataPacket[];
-      recruiterOptions = empRows.map((r: any) => String(r.name));
-      // Populate recruiterDetails from employees when ats_recruiter table is empty
-      recruiterDetails.length = 0;
-      for (const r of empRows) {
-        recruiterDetails.push({
-          name:   String(r.name),
-          email:  r.email  || null,
-          mobile: r.mobile || null,
-        });
+      const roleRows = roleRecruiters as RowDataPacket[];
+      if (roleRows.length > 0) {
+        recruiterOptions = roleRows.map((r: any) => String(r.name));
+        recruiterDetails.length = 0;
+        for (const r of roleRows) {
+          recruiterDetails.push({ name: String(r.name), email: r.email || null, mobile: r.mobile || null });
+        }
+      } else {
+        // Fallback: designation-name match
+        const [employeeRecruiters] = await db.execute<RowDataPacket[]>(
+          `SELECT DISTINCT
+             TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
+             COALESCE(e.office_email, e.official_email, e.email) AS email,
+             e.mobile
+           FROM employees e
+           LEFT JOIN department_master d  ON d.id  = e.department_id
+           LEFT JOIN designation_master des ON des.id = e.designation_id
+           WHERE e.active_status = 1
+             AND (
+               LOWER(COALESCE(des.designation_name,'')) LIKE '%recruiter%'
+               OR LOWER(COALESCE(des.designation_name,'')) LIKE '%hr%'
+             )
+           ORDER BY name`
+        );
+        const empRows = employeeRecruiters as RowDataPacket[];
+        recruiterOptions = empRows.map((r: any) => String(r.name));
+        recruiterDetails.length = 0;
+        for (const r of empRows) {
+          recruiterDetails.push({ name: String(r.name), email: r.email || null, mobile: r.mobile || null });
+        }
       }
     }
 
@@ -189,7 +206,34 @@ export const atsFormConfigService = {
       }));
     }
 
-    // 2. Fallback: employees in HR/Recruiter designations at this branch
+    // 2. Fallback: employees with hr/recruiter/branch_head roles at this branch (via user_roles)
+    const [roleRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT
+         e.id AS employee_id,
+         TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
+         COALESCE(e.office_email, e.official_email, e.email) AS email,
+         e.mobile
+       FROM user_roles ur
+       JOIN auth_user au ON au.id = ur.user_id
+       JOIN employees e  ON e.user_id = au.id
+       JOIN branch_master b ON b.id = e.branch_id
+       WHERE ur.active_status = 1
+         AND ur.role_key IN ('hr', 'recruitment_hr', 'recruiter', 'branch_head', 'admin', 'super_admin')
+         AND e.active_status = 1
+         AND b.branch_name = ?
+       ORDER BY name ASC`,
+      [branchName]
+    );
+    if ((roleRows as RowDataPacket[]).length > 0) {
+      return (roleRows as RowDataPacket[]).map((r: any) => ({
+        name: String(r.name),
+        email: r.email || null,
+        mobile: r.mobile || null,
+        employee_id: r.employee_id || null,
+      }));
+    }
+
+    // 3. Last resort: employees with HR/Recruiter designation names at this branch
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT
          e.id AS employee_id,
@@ -198,13 +242,12 @@ export const atsFormConfigService = {
          e.mobile
        FROM employees e
        JOIN branch_master b ON b.id = e.branch_id
-       JOIN designation_master des ON des.id = e.designation_id
+       LEFT JOIN designation_master des ON des.id = e.designation_id
        WHERE e.active_status = 1
          AND b.branch_name = ?
          AND (
-           LOWER(des.designation_name) LIKE '%recruiter%'
-           OR LOWER(des.designation_name) LIKE '%hr%'
-           OR LOWER(des.designation_name) LIKE '%executive%'
+           LOWER(COALESCE(des.designation_name,'')) LIKE '%recruiter%'
+           OR LOWER(COALESCE(des.designation_name,'')) LIKE '%hr%'
          )
        ORDER BY name ASC`,
       [branchName]

@@ -342,7 +342,9 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         workingHoursStart: data.working_hours_start,
         workingHoursEnd: data.working_hours_end,
         workingDays: data.working_days,
-        employmentStatus: data.status,
+        employmentStatus: data.status
+          ? data.status.split(" ").map((w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ")
+          : undefined,
       });
       return result;
 

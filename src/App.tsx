@@ -282,6 +282,7 @@ const App = () => (
               <Route path="/reviews-management" element={<Navigate to="/dashboard" replace />} />
               <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />
               <Route path="/attendance-regularization" element={<ProtectedRoute><Gate pageCode="ATTENDANCE_REGULARIZATION"><AttendanceRegularization /></Gate></ProtectedRoute>} />
+              <Route path="/attendance/regularizations" element={<ProtectedRoute><Gate pageCode="ATTENDANCE_REGULARIZATION"><AttendanceRegularization /></Gate></ProtectedRoute>} />
               <Route path="/bulk-upload" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><BulkUploadHub /></Gate></ProtectedRoute>} />
               <Route path="/departments" element={<ProtectedRoute><Gate pageCode="ORG_MASTERS"><Departments /></Gate></ProtectedRoute>} />
               <Route path="/calendar" element={<ProtectedRoute><CompanyCalendar /></ProtectedRoute>} />

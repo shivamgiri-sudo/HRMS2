@@ -947,8 +947,8 @@ wfmRouter.get(
 
     const { db: dbConn } = await import("../../db/mysql.js");
 
-    // Run all 3 queries in parallel for 3x faster response
-    const [[attRows], [cosecRows], [punchRows]] = await Promise.all([
+    // Run queries: cosec_daily_agg may not exist in all environments — catch its error gracefully
+    const [[attRows], [punchRows]] = await Promise.all([
       // 1. Attendance record + biometric log
       dbConn.execute(
         `SELECT adr.*,
@@ -968,18 +968,7 @@ wfmRouter.get(
           LIMIT 1`,
         [employeeId, date]
       ),
-      // 2. COSEC daily aggregate (authoritative work minutes)
-      dbConn.execute(
-        `SELECT cda.user_id, DATE_FORMAT(cda.first_punch_in, '%Y-%m-%d %H:%i:%s') AS first_punch_in,
-                DATE_FORMAT(cda.last_punch_out, '%Y-%m-%d %H:%i:%s') AS last_punch_out,
-                cda.work_minutes, cda.shift_date
-           FROM cosec_daily_agg cda
-           JOIN employees e ON (e.employee_code = cda.user_id OR e.biometric_code = cda.user_id)
-          WHERE e.id = ? AND cda.shift_date = ?
-          LIMIT 1`,
-        [employeeId, date]
-      ),
-      // 3. Individual punch events — handle night shift (prev-day punches before 06:00)
+      // 2. Individual punch events — handle night shift (prev-day punches before 06:00)
       dbConn.execute(
         `SELECT DATE_FORMAT(cps.punch_time, '%Y-%m-%d %H:%i:%s') AS punch_time,
                 cps.io_type,
@@ -997,11 +986,29 @@ wfmRouter.get(
       ),
     ]);
 
+    // cosec_daily_agg may not exist — query it separately with fallback to null
+    let cosecAgg: any = null;
+    try {
+      const [cosecRows] = await dbConn.execute(
+        `SELECT cda.user_id, DATE_FORMAT(cda.first_punch_in, '%Y-%m-%d %H:%i:%s') AS first_punch_in,
+                DATE_FORMAT(cda.last_punch_out, '%Y-%m-%d %H:%i:%s') AS last_punch_out,
+                cda.work_minutes, cda.shift_date
+           FROM cosec_daily_agg cda
+           JOIN employees e ON (e.employee_code = cda.user_id OR e.biometric_code = cda.user_id)
+          WHERE e.id = ? AND cda.shift_date = ?
+          LIMIT 1`,
+        [employeeId, date]
+      ) as any[];
+      cosecAgg = (cosecRows as any[])[0] ?? null;
+    } catch {
+      // Table doesn't exist in this environment — return null safely
+    }
+
     return res.json({
       success: true,
       data: {
         attendance_record: (attRows as any[])[0] ?? null,
-        cosec_daily_agg: (cosecRows as any[])[0] ?? null,
+        cosec_daily_agg: cosecAgg,
         raw_punches: punchRows as any[],
       },
     });

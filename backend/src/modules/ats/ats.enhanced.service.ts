@@ -28,15 +28,44 @@ export async function resolveBranchFromAlias(displayName: string) {
   return rows[0] ?? null;
 }
 
+// ── Recruiter Roster Upsert ────────────────────────────────────────────────────
+// Ensures an HR/Executive employee exists in ats_recruiter_roster (the FK target)
+// and returns their roster id. Uses INSERT … ON DUPLICATE KEY UPDATE so it's
+// idempotent — safe to call on every walk-in registration.
+async function ensureRecruiterInRoster(
+  employee: { id: string; first_name: string; last_name: string; mobile: string | null; email: string | null; branch_name: string }
+): Promise<string> {
+  const fullName = `${employee.first_name} ${employee.last_name ?? ''}`.trim();
+
+  // Check if already in roster (keyed by employee_id)
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM ats_recruiter_roster WHERE employee_id = ? LIMIT 1`,
+    [employee.id]
+  );
+  if ((existing as RowDataPacket[]).length > 0) {
+    return (existing as RowDataPacket[])[0].id as string;
+  }
+
+  // Insert new roster entry
+  const rosterId = randomUUID();
+  await db.execute(
+    `INSERT INTO ats_recruiter_roster
+       (id, name, email, mobile, branch, employee_id, active_status, active_flag,
+        available_today, daily_capacity, assigned_today)
+     VALUES (?, ?, ?, ?, ?, ?, 1, 'Y', 'Y', 999, 0)`,
+    [rosterId, fullName, employee.email ?? null, employee.mobile ?? null, employee.branch_name, employee.id]
+  );
+  return rosterId;
+}
+
 // ── Recruiter Assignment Logic ────────────────────────────────────────────────
 export async function getAvailableRecruiters(branchName: string) {
   const today = new Date().toISOString().split('T')[0];
 
-  // Include all active HR/Executive employees at this branch regardless of attendance clock-in.
-  // Walk-in recruiters often don't have attendance records during early morning registrations.
+  // Fetch HR/Executive employees at this branch (department = Human Resource, designation = Executive)
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT
-       e.id,
+       e.id AS employee_id,
        e.employee_code,
        e.first_name,
        e.last_name,
@@ -56,7 +85,7 @@ export async function getAvailableRecruiters(branchName: string) {
      INNER JOIN designation_master des ON e.designation_id = des.id
      INNER JOIN branch_master b ON b.id = e.branch_id
      LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ?
-     WHERE LOWER(d.dept_name) LIKE '%human resource%'
+     WHERE (LOWER(d.dept_name) LIKE '%human resource%' OR LOWER(d.dept_name) LIKE '%admin/hr%')
        AND (
          LOWER(des.designation_name) LIKE '%executive%'
          OR LOWER(des.designation_name) LIKE '%recruiter%'
@@ -68,7 +97,21 @@ export async function getAvailableRecruiters(branchName: string) {
     [today, branchName, branchName]
   );
 
-  return rows;
+  // Ensure every employee has a valid ats_recruiter_roster row (FK target for recruiter_id)
+  // and return the roster id as `id` so callers can write it directly into ats_candidate.recruiter_id
+  const result: any[] = [];
+  for (const row of rows as any[]) {
+    const rosterId = await ensureRecruiterInRoster({
+      id: row.employee_id,
+      first_name: row.first_name,
+      last_name: row.last_name,
+      mobile: row.mobile,
+      email: row.email,
+      branch_name: row.branch_name,
+    });
+    result.push({ ...row, id: rosterId });
+  }
+  return result;
 }
 
 export async function isRecruiterAvailableToday(recruiterId: string): Promise<boolean> {
@@ -156,9 +199,12 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
 
   // Update candidate with assigned recruiter
   if (assignedRecruiterId) {
-    // Resolve recruiter name for recruiter_assigned_name (used by getMyPendingCandidates)
+    // assignedRecruiterId is an ats_recruiter_roster.id — resolve the employee name via the roster
     const [recNameRows] = await db.execute<RowDataPacket[]>(
-      `SELECT CONCAT(first_name, ' ', COALESCE(last_name, '')) AS full_name FROM employees WHERE id = ? LIMIT 1`,
+      `SELECT COALESCE(r.name, CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS full_name
+       FROM ats_recruiter_roster r
+       LEFT JOIN employees e ON e.id = r.employee_id
+       WHERE r.id = ? LIMIT 1`,
       [assignedRecruiterId]
     );
     const resolvedName = (recNameRows as any[])[0]?.full_name?.trim() ?? null;
