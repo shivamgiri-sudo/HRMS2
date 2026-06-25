@@ -3,13 +3,27 @@ import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { inboxService } from "./inbox.service.js";
+import { inboxService, getMyPending, getTimeline } from "./inbox.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
+
+// GET /my-pending — platform-wide pending tasks for caller (role+branch scoped)
+router.get("/my-pending", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const result = await getMyPending(userId);
+  return res.json({ success: true, ...result });
+}));
+
+// GET /timeline/:referenceType/:referenceId — cross-module audit timeline
+router.get("/timeline/:referenceType/:referenceId", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { referenceType, referenceId } = req.params;
+  const events = await getTimeline(referenceType, referenceId);
+  return res.json({ success: true, events });
+}));
 
 // GET /count — unread count for caller
 router.get("/count", h(async (req: AuthenticatedRequest, res: Response) => {

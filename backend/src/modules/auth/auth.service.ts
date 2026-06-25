@@ -7,6 +7,7 @@ import { env } from '../../config/env.js';
 
 const JWT_SECRET = env.JWT_SECRET;
 const JWT_EXPIRES_IN = '15m';
+const PRE_AUTH_EXPIRES_IN = '10m'; // short-lived — only for 2FA challenge exchange
 const REFRESH_EXPIRES_DAYS = 7;
 const RESET_EXPIRES_HOURS = 24;
 
@@ -147,6 +148,30 @@ export const authService = {
     const tfaEnabled = (tfaSettingRows as RowDataPacket[])[0]?.setting_value !== 'false';
     const twoFactorRequired = tfaEnabled && !mustChangePassword;
 
+    if (twoFactorRequired) {
+      // Issue a scoped pre_auth token — NOT a full access token.
+      // This token ONLY allows calling /api/auth/2fa/* endpoints.
+      // The full accessToken is only issued after verifyTwoFactorChallenge().
+      const preAuthToken = jwt.sign(
+        { sub: user.id, email: user.email, scope: 'pre_auth' },
+        JWT_SECRET,
+        { expiresIn: PRE_AUTH_EXPIRES_IN }
+      );
+      return {
+        accessToken: preAuthToken,
+        refreshToken: rawRefresh,
+        user: {
+          id: user.id,
+          email: user.email,
+          isBlocked: user.is_blocked === 1,
+          mustChangePassword,
+          isReadOnly: false,
+          twoFactorRequired: true,
+          twoFactorVerified: false,
+        },
+      };
+    }
+
     return {
       accessToken,
       refreshToken: rawRefresh,
@@ -156,8 +181,8 @@ export const authService = {
         isBlocked: user.is_blocked === 1,
         mustChangePassword,
         isReadOnly: false,
-        twoFactorRequired,
-        twoFactorVerified: !twoFactorRequired,
+        twoFactorRequired: false,
+        twoFactorVerified: true,
       },
     };
   },
@@ -185,10 +210,40 @@ export const authService = {
     await db.execute('UPDATE auth_refresh_token SET revoked = 1 WHERE token_hash = ?', [tokenHash]);
   },
 
-  verifyAccessToken(token: string): { id: string; email: string } | null {
+  // Called after verifyTwoFactorChallenge() succeeds — trades pre_auth token for full access token.
+  async exchangePreAuthToken(preAuthToken: string): Promise<{ accessToken: string }> {
+    let payload: { sub: string; email: string; scope?: string };
     try {
-      const payload = jwt.verify(token, JWT_SECRET) as { sub: string; email: string };
-      return { id: payload.sub, email: payload.email };
+      payload = jwt.verify(preAuthToken, JWT_SECRET) as { sub: string; email: string; scope?: string };
+    } catch {
+      throw Object.assign(new Error('Invalid or expired pre-auth token'), { statusCode: 401 });
+    }
+    if (payload.scope !== 'pre_auth') {
+      throw Object.assign(new Error('Token is not a pre-auth token'), { statusCode: 400 });
+    }
+    // Confirm 2FA challenge is in verified state for this user
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM auth_two_factor_challenge
+        WHERE user_id = ? AND status = 'verified'
+          AND verified_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+        ORDER BY verified_at DESC LIMIT 1`,
+      [payload.sub]
+    );
+    if (!(rows as RowDataPacket[]).length) {
+      throw Object.assign(new Error('2FA not verified or verification expired'), { statusCode: 401 });
+    }
+    const accessToken = jwt.sign(
+      { sub: payload.sub, email: payload.email },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES_IN }
+    );
+    return { accessToken };
+  },
+
+  verifyAccessToken(token: string): { id: string; email: string; scope?: string } | null {
+    try {
+      const payload = jwt.verify(token, JWT_SECRET) as { sub: string; email: string; scope?: string };
+      return { id: payload.sub, email: payload.email, scope: payload.scope };
     } catch {
       return null;
     }
@@ -326,10 +381,10 @@ export const authService = {
       // Try employees by mobile if not found
       if (!userId) {
         const [byPhone] = await db.execute<RowDataPacket[]>(
-          'SELECT auth_user_id FROM employees WHERE mobile = ? AND auth_user_id IS NOT NULL LIMIT 1',
+          'SELECT user_id FROM employees WHERE mobile = ? AND user_id IS NOT NULL LIMIT 1',
           [phoneOrEmail.trim()]
         );
-        if (Array.isArray(byPhone) && byPhone.length) userId = (byPhone[0] as any).auth_user_id;
+        if (Array.isArray(byPhone) && byPhone.length) userId = (byPhone[0] as any).user_id;
       }
     } catch { /* intentional: don't leak existence */ }
 
@@ -339,12 +394,16 @@ export const authService = {
     }
 
     // Rate-limit: max 3 attempts in last 10 minutes
-    const [recent] = await db.execute<RowDataPacket[]>(
-      'SELECT COUNT(*) as cnt FROM auth_otp_reset WHERE user_id = ? AND created_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)',
-      [userId]
-    );
-    if ((recent as any[])[0]?.cnt >= 3) {
-      return { success: true, message: 'If an account exists, an OTP has been sent.' };
+    try {
+      const [recent] = await db.execute<RowDataPacket[]>(
+        'SELECT COUNT(*) as cnt FROM auth_otp_reset WHERE user_id = ? AND created_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)',
+        [userId]
+      );
+      if ((recent as any[])[0]?.cnt >= 3) {
+        return { success: true, message: 'If an account exists, an OTP has been sent.' };
+      }
+    } catch {
+      // Table not yet migrated — allow one-time OTP without rate-limit until 303 is applied
     }
 
     // Generate 6-digit OTP
@@ -353,10 +412,15 @@ export const authService = {
     const otpHash = crypto.createHash('sha256').update(otp + salt).digest('hex');
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
 
-    await db.execute(
-      'INSERT INTO auth_otp_reset (id, user_id, phone, otp_hash, expires_at, used, attempts) VALUES (UUID(), ?, ?, ?, ?, 0, 0)',
-      [userId, phoneOrEmail.trim(), otpHash, expiresAt]
-    );
+    try {
+      await db.execute(
+        'INSERT INTO auth_otp_reset (id, user_id, phone, otp_hash, expires_at, used, attempts) VALUES (UUID(), ?, ?, ?, ?, 0, 0)',
+        [userId, phoneOrEmail.trim(), otpHash, expiresAt]
+      );
+    } catch {
+      // Graceful: table not yet created — OTP can't be stored; return generic success
+      return { success: true, message: 'If an account exists, an OTP has been sent.' };
+    }
 
     // Log OTP in dev (NEVER in production)
     if (process.env.NODE_ENV !== 'production') {
@@ -377,10 +441,10 @@ export const authService = {
       if (Array.isArray(byEmail) && byEmail.length) userId = (byEmail[0] as any).id;
       if (!userId) {
         const [byPhone] = await db.execute<RowDataPacket[]>(
-          'SELECT auth_user_id FROM employees WHERE mobile = ? AND auth_user_id IS NOT NULL LIMIT 1',
+          'SELECT user_id FROM employees WHERE mobile = ? AND user_id IS NOT NULL LIMIT 1',
           [phoneOrEmail.trim()]
         );
-        if (Array.isArray(byPhone) && byPhone.length) userId = (byPhone[0] as any).auth_user_id;
+        if (Array.isArray(byPhone) && byPhone.length) userId = (byPhone[0] as any).user_id;
       }
     } catch { /* pass */ }
 

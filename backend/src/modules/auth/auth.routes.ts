@@ -2,7 +2,6 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import { v4 as uuidv4 } from "uuid";
 import type { RowDataPacket } from "mysql2";
 import { authService } from "./auth.service.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
@@ -337,7 +336,33 @@ router.post("/2fa/verify", requireAuth, twoFactorLimiter, h(async (req: any, res
     return res.status(400).json({ success: false, error: "A valid 6 digit code is required" });
   }
   await verifyTwoFactorChallenge(req.authUser.id, otp);
-  return res.json({ success: true, twoFactorVerified: true });
+
+  // Exchange the pre_auth token for a full access token.
+  // The authorization header still carries the pre_auth token at this point.
+  const preAuthToken = (req.headers.authorization ?? '').replace('Bearer ', '').trim();
+  let accessToken: string | null = null;
+  try {
+    const exchanged = await authService.exchangePreAuthToken(preAuthToken);
+    accessToken = exchanged.accessToken;
+  } catch {
+    // If exchange fails (e.g. already-verified challenge, race), the client will
+    // need to call POST /api/auth/2fa/exchange explicitly.
+  }
+
+  return res.json({ success: true, twoFactorVerified: true, ...(accessToken ? { accessToken } : {}) });
+}));
+
+// POST /api/auth/2fa/exchange — exchange a verified pre_auth token for a full access token
+// Separated out so clients can call this independently if /2fa/verify didn't return the token.
+router.post("/2fa/exchange", requireAuth, h(async (req: any, res: any) => {
+  const preAuthToken = (req.headers.authorization ?? '').replace('Bearer ', '').trim();
+  try {
+    const { accessToken } = await authService.exchangePreAuthToken(preAuthToken);
+    return res.json({ success: true, accessToken });
+  } catch (error: any) {
+    const status = error?.statusCode ?? 401;
+    return res.status(status).json({ success: false, error: error.message });
+  }
 }));
 
 // POST /api/auth/admin-reset-password — Admin password reset for employees
@@ -410,7 +435,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req: any, res: any) =
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.id AS employee_id, e.user_id,
               COALESCE(d.designation_name, e.emp_type, e.profile_type) AS designation,
-              COALESCE(NULLIF(TRIM(e.official_email),''), NULLIF(TRIM(e.office_email),''), NULLIF(TRIM(e.email),'')) AS emp_email,
+              COALESCE(NULLIF(TRIM(e.official_email),''), NULLIF(TRIM(e.email),'')) AS emp_email,
               au.email AS auth_email
        FROM employees e
        LEFT JOIN designation_master d ON d.id = e.designation_id
@@ -446,7 +471,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req: any, res: any) =
         newUserId = String(existingAuth[0].id);
       } else {
         // Create new auth_user with a temporary hash (will be overwritten below)
-        newUserId = uuidv4();
+        newUserId = crypto.randomUUID();
         await db.execute(
           `INSERT INTO auth_user (id, email, password_hash, must_change_password)
            VALUES (?, ?, '', 1)`,

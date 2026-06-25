@@ -32,8 +32,8 @@ resignationRouter.post(
     const id = randomUUID();
     await db.execute(
       `INSERT INTO resignation_discussion
-         (id, exit_request_id, discussion_type, discussed_by, outcome, remarks, employee_sentiment, discussed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+         (id, exit_request_id, discussion_type, discussed_by, outcome, remarks, employee_sentiment, discussion_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE())`,
       [id, req.params.exitId, discussion_type, req.authUser!.id, outcome ?? null, remarks ?? null, employee_sentiment ?? null]
     );
     const [rows] = await db.execute(
@@ -54,7 +54,7 @@ resignationRouter.get(
        FROM resignation_discussion rd
        LEFT JOIN users u ON u.id = rd.discussed_by
        WHERE rd.exit_request_id = ?
-       ORDER BY rd.discussed_at DESC`,
+       ORDER BY rd.discussion_date DESC, rd.created_at DESC`,
       [req.params.exitId]
     );
     return res.json({ success: true, data: rows });
@@ -73,8 +73,8 @@ resignationRouter.post(
     const id = randomUUID();
     await db.execute(
       `INSERT INTO resignation_discussion_note
-         (id, discussion_id, note_text, added_by, added_at)
-       VALUES (?, ?, ?, ?, NOW())`,
+         (id, discussion_id, note, noted_by)
+       VALUES (?, ?, ?, ?)`,
       [id, req.params.discId, note_text, req.authUser!.id]
     );
     return res.status(201).json({ success: true, data: { id } });
@@ -94,8 +94,8 @@ resignationRouter.post(
     const id = randomUUID();
     await db.execute(
       `INSERT INTO resignation_discussion
-         (id, exit_request_id, discussion_type, discussed_by, outcome, remarks, employee_sentiment, discussed_at)
-       VALUES (?, ?, 'manager', ?, ?, ?, ?, NOW())`,
+         (id, exit_request_id, discussion_type, discussed_by, outcome, remarks, employee_sentiment, discussion_date)
+       VALUES (?, ?, 'manager', ?, ?, ?, ?, CURDATE())`,
       [id, req.params.exitId, req.authUser!.id, outcome ?? null, remarks ?? null, employee_sentiment ?? null]
     );
     const [rows] = await db.execute(`SELECT * FROM resignation_discussion WHERE id = ? LIMIT 1`, [id]);
@@ -127,8 +127,8 @@ resignationRouter.post(
     const id = randomUUID();
     await db.execute(
       `INSERT INTO resignation_discussion
-         (id, exit_request_id, discussion_type, discussed_by, outcome, remarks, employee_sentiment, discussed_at)
-       VALUES (?, ?, 'hr', ?, ?, ?, ?, NOW())`,
+         (id, exit_request_id, discussion_type, discussed_by, outcome, remarks, employee_sentiment, discussion_date)
+       VALUES (?, ?, 'hr', ?, ?, ?, ?, CURDATE())`,
       [id, req.params.exitId, req.authUser!.id, outcome ?? null, remarks ?? null, employee_sentiment ?? null]
     );
     const [rows] = await db.execute(`SELECT * FROM resignation_discussion WHERE id = ? LIMIT 1`, [id]);
@@ -360,7 +360,9 @@ resignationRouter.get(
     if (branchId) { where += " AND e.branch_id = ?"; params.push(branchId); }
     params.push(Number(limit), Number(offset));
     const [rows] = await db.execute(
-      `SELECT er.*, e.employee_name, e.employee_code, e.branch_id
+      `SELECT er.*,
+              COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, e.last_name)) AS employee_name,
+              e.employee_code, e.branch_id
        FROM exit_request er
        LEFT JOIN employees e ON e.id = er.employee_id
        WHERE ${where}

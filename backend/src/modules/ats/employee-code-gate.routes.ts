@@ -38,11 +38,29 @@ router.post('/:candidateId/generate', requireAuth, requireWriteAccess, requireRo
   const seq = String(((countRow as any[])[0]?.cnt ?? 0) + 1).padStart(4, '0');
   const empCode = `MAS${yymm}${seq}`;
 
-  // Persist code on candidate
+  // Write employee_code back to ats_candidate and move to employee_code_generated stage
   await db.execute(
-    'UPDATE ats_candidate SET current_stage=\'employee_code_generated\', updated_at=NOW() WHERE id=?',
-    [candidateId]
+    'UPDATE ats_candidate SET employee_code = ?, current_stage = \'employee_code_generated\', updated_at = NOW() WHERE id = ?',
+    [empCode, candidateId]
   );
+
+  // Write employee_code to employees table if employee master already exists for this candidate
+  await db.execute(
+    `UPDATE employees e
+       JOIN ats_candidate c ON c.id = ?
+       SET e.employee_code = ?
+     WHERE e.employee_code IS NULL
+       AND (e.user_id = c.user_id OR e.user_id IN (
+             SELECT au.id FROM auth_user au WHERE au.email = c.email LIMIT 1
+           ))`,
+    [candidateId, empCode]
+  ).catch(() => { /* employee master may not exist yet — code stored on ats_candidate for bridging */ });
+
+  // Update onboarding bridge with the generated code
+  await db.execute(
+    'UPDATE ats_onboarding_bridge SET employee_code = ?, bridge_status = \'code_generated\', updated_at = NOW() WHERE candidate_id = ?',
+    [empCode, candidateId]
+  ).catch(() => {});
 
   // Log
   await db.execute(
@@ -57,6 +75,14 @@ router.post('/:candidateId/generate', requireAuth, requireWriteAccess, requireRo
       req.authUser.id,
     ]
   );
+
+  // Audit
+  await db.execute(
+    `INSERT INTO sensitive_action_log
+       (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, created_at)
+     VALUES (UUID(), ?, 'EMPLOYEE_CODE_GENERATED', 'ats', 'ats_candidate', ?, ?, NOW())`,
+    [req.authUser.id, candidateId, JSON.stringify({ employee_code: empCode })]
+  ).catch(() => {});
 
   // Work item for employee master creation
   await db.execute(

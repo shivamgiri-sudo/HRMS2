@@ -71,6 +71,20 @@ export async function requireAuth(
     // Verify MySQL JWT
     const mysqlUser = authService.verifyAccessToken(token);
     if (mysqlUser) {
+      // Enforce 2FA gate: pre_auth tokens ONLY reach the 2FA challenge/verify endpoints.
+      // Any other route must reject pre_auth tokens so 2FA cannot be bypassed.
+      if (mysqlUser.scope === 'pre_auth') {
+        const path = req.path ?? '';
+        const is2faEndpoint = /^\/2fa\//i.test(path);
+        if (!is2faEndpoint) {
+          return res.status(401).json({
+            success: false,
+            message: '2FA verification required',
+            twoFactorRequired: true,
+          });
+        }
+      }
+
       // Resolve primary role from DB so req.authUser.role is always populated
       let resolvedRole: string | undefined;
       try {

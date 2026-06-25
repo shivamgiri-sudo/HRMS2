@@ -211,11 +211,11 @@ incentivesRouter.post('/batches/:batchId/step-approve',
 
     // Check requesting user has the required role
     // Step 1 accepts both 'branch_head' and 'bm' as equivalent roles
-    const [userRoles] = await db.execute<RowDataPacket[]>(
-      `SELECT role FROM users WHERE id = ? LIMIT 1`,
+    const [userRolesRows] = await db.execute<RowDataPacket[]>(
+      `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1 LIMIT 1`,
       [userId]
     );
-    const userRole = (userRoles[0] as any)?.role ?? '';
+    const userRole = (userRolesRows[0] as any)?.role_key ?? '';
     const requiredRoles = step.required_role === 'branch_head'
       ? ['branch_head', 'bm']
       : [step.required_role];
@@ -226,7 +226,7 @@ incentivesRouter.post('/batches/:batchId/step-approve',
     const prevStatus = step.status as string;
     await db.execute(
       `UPDATE incentive_approval_step
-       SET status = 'approved', actioned_by = ?, actioned_at = NOW(), remarks = ?
+       SET status = 'approved', approver_user_id = ?, decided_at = NOW(), remarks = ?
        WHERE id = ?`,
       [userId, remarks ?? null, step.id]
     );
@@ -298,11 +298,11 @@ incentivesRouter.post('/batches/:batchId/step-reject',
     }
     const step = pendingRows[0] as any;
 
-    const [userRolesR] = await db.execute<RowDataPacket[]>(
-      `SELECT role FROM users WHERE id = ? LIMIT 1`,
+    const [userRolesRRows] = await db.execute<RowDataPacket[]>(
+      `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1 LIMIT 1`,
       [userId]
     );
-    const userRoleR = (userRolesR[0] as any)?.role ?? '';
+    const userRoleR = (userRolesRRows[0] as any)?.role_key ?? '';
     const requiredRolesR = step.required_role === 'branch_head'
       ? ['branch_head', 'bm']
       : [step.required_role];
@@ -313,7 +313,7 @@ incentivesRouter.post('/batches/:batchId/step-reject',
     const prevStatusR = step.status as string;
     await db.execute(
       `UPDATE incentive_approval_step
-       SET status = 'rejected', actioned_by = ?, actioned_at = NOW(), remarks = ?
+       SET status = 'rejected', approver_user_id = ?, decided_at = NOW(), remarks = ?
        WHERE id = ?`,
       [userId, reason, step.id]
     );
@@ -349,7 +349,7 @@ incentivesRouter.get('/batches/:batchId/approval-steps',
     const [steps] = await db.execute<RowDataPacket[]>(
       `SELECT ias.*, u.full_name as actioned_by_name
        FROM incentive_approval_step ias
-       LEFT JOIN users u ON u.id = ias.actioned_by
+       LEFT JOIN users u ON u.id = ias.approver_user_id
        WHERE ias.batch_id = ?
        ORDER BY ias.step_number`,
       [req.params.batchId]
@@ -362,11 +362,11 @@ incentivesRouter.get('/batches/:batchId/approval-steps',
 incentivesRouter.get('/approvals/pending',
   h(async (req: AuthenticatedRequest, res) => {
     const userId = req.authUser!.id;
-    const [userRoles] = await db.execute<RowDataPacket[]>(
-      `SELECT role FROM users WHERE id = ? LIMIT 1`,
+    const [userRolesRows] = await db.execute<RowDataPacket[]>(
+      `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1 LIMIT 1`,
       [userId]
     );
-    const userRole = (userRoles[0] as any)?.role ?? '';
+    const userRole = (userRolesRows[0] as any)?.role_key ?? '';
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT iub.*, ias.step_number as pending_step, ias.required_role,

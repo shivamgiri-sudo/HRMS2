@@ -303,10 +303,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) return { error: new Error(json.error || json.message || 'Verification failed') };
+
+      // Backend returns a full accessToken after successful 2FA.
+      // Replace the pre_auth token in localStorage so subsequent API calls work.
+      if (json.accessToken) {
+        localStorage.setItem('hrms_access_token', json.accessToken);
+      }
+
       localStorage.setItem('hrms_2fa_required', 'true');
       localStorage.setItem('hrms_2fa_verified', 'true');
       setTwoFactorRequired(true);
       setTwoFactorVerified(true);
+      scheduleRefresh();
       return { error: null };
     } catch (err) {
       return { error: err instanceof Error ? err : new Error('Network error') };

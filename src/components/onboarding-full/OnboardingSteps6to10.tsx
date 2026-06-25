@@ -335,22 +335,3 @@ export function Step10Statutory({
   );
 }
 
-function YNChip({ label, value, onChange }: { label: string; value: boolean | null; onChange: (v: boolean) => void }) {
-  return (
-    <div>
-      <Label>{label}</Label>
-      <div className="flex gap-2 mt-1">
-        {[{ l: "Yes", v: true }, { l: "No", v: false }].map(({ l, v }) => (
-          <button key={l} type="button" onClick={() => onChange(v)}
-            className={`rounded-full px-4 py-1.5 text-xs font-bold border transition-colors ${value === v ? "bg-slate-950 text-white border-slate-950" : "bg-white text-slate-700 border-slate-300 hover:border-slate-600"}`}>
-            {l}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function RO({ label, value }: { label: string; value?: any }) {
-  return <div className="rounded-xl border bg-slate-50 p-3"><p className="text-[11px] font-bold uppercase text-slate-500">{label}</p><p className="mt-1 font-semibold text-slate-900 text-sm">{value || "—"}</p></div>;
-}

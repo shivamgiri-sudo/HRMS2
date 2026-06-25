@@ -24,6 +24,38 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
   if (!f.effective_date) {
     return res.status(400).json({ success: false, message: 'effective_date required' });
   }
+
+  // SALARY BYPASS GATE: Custom amounts require an approval_reference
+  // OR amounts must come from an approved salary slab in payroll_salary_slabs/salary_grade_master.
+  const hasCustomAmounts = [f.basic, f.hra, f.gross, f.ctc].some((v) => v != null);
+  const hasSlab = !!f.salary_slab;
+  const hasApprovalRef = !!f.approval_reference;
+
+  if (hasCustomAmounts && !hasSlab && !hasApprovalRef) {
+    return res.status(400).json({
+      success: false,
+      code: 'SALARY_BYPASS_BLOCKED',
+      message: 'Manual salary amounts require either a salary_slab reference from the approved salary master or an approval_reference from an authorised approver. Direct custom amounts are not permitted without approval.',
+    });
+  }
+
+  // If salary_slab provided, verify it exists in payroll masters (non-blocking if table not yet created)
+  if (hasSlab) {
+    const [slabRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM salary_grade_master WHERE grade_code = ? AND active_status = 1 LIMIT 1
+       UNION
+       SELECT id FROM payroll_salary_slabs WHERE slab_code = ? AND active_status = 1 LIMIT 1`,
+      [f.salary_slab, f.salary_slab]
+    ).catch(() => [[]] as any);
+    if (!Array.isArray(slabRows) || !slabRows.length) {
+      return res.status(400).json({
+        success: false,
+        code: 'INVALID_SALARY_SLAB',
+        message: `Salary slab '${f.salary_slab}' is not found in the approved salary master. Add the slab first or provide an approval_reference for custom amounts.`,
+      });
+    }
+  }
+
   await db.execute(
     `INSERT INTO salary_component_assignments (
        id, candidate_id, effective_date, salary_slab, basic, hra, conveyance,
@@ -54,6 +86,19 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
     'UPDATE ats_candidate SET current_stage=\'salary_component_completed\', updated_at=NOW() WHERE id=? AND current_stage=\'salary_component_pending\'',
     [candidateId]
   );
+  // Audit
+  await db.execute(
+    `INSERT INTO sensitive_action_log
+       (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, created_at)
+     VALUES (UUID(), ?, 'SALARY_COMPONENTS_ASSIGNED', 'payroll', 'ats_candidate', ?, ?, NOW())`,
+    [req.authUser.id, candidateId, JSON.stringify({
+      salary_slab: f.salary_slab ?? null,
+      approval_reference: f.approval_reference ?? null,
+      gross: f.gross ?? null,
+      ctc: f.ctc ?? null,
+      custom_amounts: hasCustomAmounts,
+    })]
+  ).catch(() => {});
   // Work item for employee code gate
   await db.execute(
     `INSERT INTO work_item (id,item_type,title,module_code,entity_type,entity_id,assigned_to_role,priority,status,created_at)

@@ -132,6 +132,7 @@ import { nameConsistencyRouter } from "./modules/ats/name-consistency.routes.js"
 import { jclrRouter } from "./modules/ats/jclr.routes.js";
 import { salaryComponentAssignmentRouter } from "./modules/ats/salary-component-assignment.routes.js";
 import { employeeCodeGateRouter } from "./modules/ats/employee-code-gate.routes.js";
+import { payrollHRRouter } from "./modules/ats/payroll-hr.routes.js";
 
 export const app = express();
 
@@ -300,6 +301,7 @@ app.use("/api/ats/name-consistency", nameConsistencyRouter);
 app.use("/api/ats/jclr", jclrRouter);
 app.use("/api/ats/salary-components", salaryComponentAssignmentRouter);
 app.use("/api/ats/employee-code", employeeCodeGateRouter);
+app.use("/api/ats/payroll-hr", payrollHRRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

@@ -86,6 +86,8 @@ const NativeOperationsDashboard = lazy(() => import("./pages/NativeOperationsDas
 const NativeQualityDashboard = lazy(() => import("./pages/NativeQualityDashboard"));
 const NativeAgentPerformanceDashboard = lazy(() => import("./pages/NativeAgentPerformanceDashboard"));
 const NativeLMSIntegration = lazy(() => import("./pages/NativeLMSIntegration"));
+const NativeAppointmentEsign = lazy(() => import("./pages/NativeAppointmentEsign"));
+const NativeMyResignation = lazy(() => import("./pages/NativeMyResignation"));
 
 const NativeWFMRoster = lazy(() => import("./pages/NativeWFMRoster"));
 const NativeWFMExtensions = lazy(() => import("./pages/NativeWFMExtensions"));
@@ -461,10 +463,10 @@ const App = () => (
               <Route path="/ats/name-consistency" element={<ProtectedRoute><Gate pageCode="NAME_CONSISTENCY_MATRIX"><NativePlaceholderPage /></Gate></ProtectedRoute>} />
 
               {/* Appointment e-sign */}
-              <Route path="/letters/appointment-esign" element={<ProtectedRoute><Gate pageCode="APPOINTMENT_ESIGN"><NativePlaceholderPage /></Gate></ProtectedRoute>} />
+              <Route path="/letters/appointment-esign" element={<ProtectedRoute><Gate pageCode="APPOINTMENT_ESIGN"><NativeAppointmentEsign /></Gate></ProtectedRoute>} />
 
               {/* Exit / Resignation */}
-              <Route path="/exit/resignation" element={<ProtectedRoute><Gate pageCode="RESIGNATION_MY_REQUEST"><NativePlaceholderPage /></Gate></ProtectedRoute>} />
+              <Route path="/exit/resignation" element={<ProtectedRoute><Gate pageCode="RESIGNATION_MY_REQUEST"><NativeMyResignation /></Gate></ProtectedRoute>} />
               <Route path="/exit/resignation-command-center" element={<ProtectedRoute><Gate pageCode="RESIGNATION_COMMAND_CENTER"><NativePlaceholderPage /></Gate></ProtectedRoute>} />
 
               <Route path="*" element={<NotFound />} />
