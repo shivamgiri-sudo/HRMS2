@@ -18,7 +18,7 @@ export async function getUserRoleKeys(userId: string): Promise<string[]> {
   // Try user_roles table first
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT role_key FROM user_roles WHERE user_id = ? AND is_active = 1",
+      "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
       [userId]
     );
     if ((rows as any[]).length > 0) return (rows as any[]).map((r: any) => r.role_key);
@@ -43,6 +43,7 @@ export async function getUserRoleKeys(userId: string): Promise<string[]> {
       return [(rows as any)[0].role as string];
     }
   } catch {}
+  console.warn(`[roleResolver] Could not resolve roles for user ${userId} — falling back to 'employee'`);
   return ['employee'];
 }
 

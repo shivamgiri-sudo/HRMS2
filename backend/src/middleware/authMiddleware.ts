@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { authService } from '../modules/auth/auth.service.js';
+import { getUserRoleContext } from '../shared/roleResolver.js';
 
 export interface AuthenticatedRequest extends Request {
   authUser?: {
@@ -70,10 +71,29 @@ export async function requireAuth(
     // Verify MySQL JWT
     const mysqlUser = authService.verifyAccessToken(token);
     if (mysqlUser) {
+      // Resolve primary role from DB so req.authUser.role is always populated
+      let resolvedRole: string | undefined;
+      try {
+        const ctx = await getUserRoleContext(mysqlUser.id);
+        resolvedRole = ctx.primaryRole;
+      } catch {
+        // Non-fatal — role stays undefined; requireRole middleware does its own DB lookup
+      }
+      // Load isReadOnly from DB to ensure it's always current (not stale JWT)
+      let isReadOnly = false;
+      try {
+        const { db } = await import('../db/mysql.js');
+        const [rows] = await db.execute<import('mysql2').RowDataPacket[]>(
+          'SELECT is_read_only FROM auth_user WHERE id = ? LIMIT 1',
+          [mysqlUser.id]
+        );
+        isReadOnly = Array.isArray(rows) && rows.length > 0 ? !!(rows[0] as any).is_read_only : false;
+      } catch { /* keep false */ }
       req.authUser = {
         id: mysqlUser.id,
         email: mysqlUser.email,
-        isReadOnly: false
+        role: resolvedRole,
+        isReadOnly
       };
       return next();
     }

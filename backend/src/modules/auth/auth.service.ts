@@ -311,4 +311,113 @@ export const authService = {
       [hash, userId]
     );
   },
+
+  async forgotPasswordOtp(phoneOrEmail: string): Promise<{ success: boolean; message: string }> {
+    // Find user by phone (employees.mobile) or email
+    let userId: string | null = null;
+    try {
+      // Try auth_user by email
+      const [byEmail] = await db.execute<RowDataPacket[]>(
+        'SELECT id FROM auth_user WHERE email = ? LIMIT 1',
+        [phoneOrEmail.toLowerCase().trim()]
+      );
+      if (Array.isArray(byEmail) && byEmail.length) userId = (byEmail[0] as any).id;
+
+      // Try employees by mobile if not found
+      if (!userId) {
+        const [byPhone] = await db.execute<RowDataPacket[]>(
+          'SELECT auth_user_id FROM employees WHERE mobile = ? AND auth_user_id IS NOT NULL LIMIT 1',
+          [phoneOrEmail.trim()]
+        );
+        if (Array.isArray(byPhone) && byPhone.length) userId = (byPhone[0] as any).auth_user_id;
+      }
+    } catch { /* intentional: don't leak existence */ }
+
+    // Always return success to prevent phone/email enumeration
+    if (!userId) {
+      return { success: true, message: 'If an account exists, an OTP has been sent.' };
+    }
+
+    // Rate-limit: max 3 attempts in last 10 minutes
+    const [recent] = await db.execute<RowDataPacket[]>(
+      'SELECT COUNT(*) as cnt FROM auth_otp_reset WHERE user_id = ? AND created_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)',
+      [userId]
+    );
+    if ((recent as any[])[0]?.cnt >= 3) {
+      return { success: true, message: 'If an account exists, an OTP has been sent.' };
+    }
+
+    // Generate 6-digit OTP
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const salt = userId + phoneOrEmail;
+    const otpHash = crypto.createHash('sha256').update(otp + salt).digest('hex');
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+
+    await db.execute(
+      'INSERT INTO auth_otp_reset (id, user_id, phone, otp_hash, expires_at, used, attempts) VALUES (UUID(), ?, ?, ?, ?, 0, 0)',
+      [userId, phoneOrEmail.trim(), otpHash, expiresAt]
+    );
+
+    // Log OTP in dev (NEVER in production)
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[AUTH OTP DEV] OTP for ${phoneOrEmail}: ${otp}`);
+    }
+
+    return { success: true, message: 'If an account exists, an OTP has been sent.' };
+  },
+
+  async verifyOtpAndResetPassword(phoneOrEmail: string, otp: string, newPassword: string): Promise<void> {
+    // Find user
+    let userId: string | null = null;
+    try {
+      const [byEmail] = await db.execute<RowDataPacket[]>(
+        'SELECT id FROM auth_user WHERE email = ? LIMIT 1',
+        [phoneOrEmail.toLowerCase().trim()]
+      );
+      if (Array.isArray(byEmail) && byEmail.length) userId = (byEmail[0] as any).id;
+      if (!userId) {
+        const [byPhone] = await db.execute<RowDataPacket[]>(
+          'SELECT auth_user_id FROM employees WHERE mobile = ? AND auth_user_id IS NOT NULL LIMIT 1',
+          [phoneOrEmail.trim()]
+        );
+        if (Array.isArray(byPhone) && byPhone.length) userId = (byPhone[0] as any).auth_user_id;
+      }
+    } catch { /* pass */ }
+
+    if (!userId) throw Object.assign(new Error('Invalid OTP'), { statusCode: 400 });
+
+    // Increment attempts on all recent unused OTPs before checking
+    await db.execute(
+      'UPDATE auth_otp_reset SET attempts = attempts + 1 WHERE user_id = ? AND used = 0 AND expires_at > NOW()',
+      [userId]
+    );
+
+    // Check max attempts (5)
+    const [tooMany] = await db.execute<RowDataPacket[]>(
+      'SELECT id FROM auth_otp_reset WHERE user_id = ? AND used = 0 AND expires_at > NOW() AND attempts > 5 LIMIT 1',
+      [userId]
+    );
+    if (Array.isArray(tooMany) && tooMany.length) {
+      throw Object.assign(new Error('Too many attempts. Request a new OTP.'), { statusCode: 429 });
+    }
+
+    // Verify OTP hash
+    const salt = userId + phoneOrEmail;
+    const otpHash = crypto.createHash('sha256').update(otp + salt).digest('hex');
+
+    const [matching] = await db.execute<RowDataPacket[]>(
+      'SELECT id FROM auth_otp_reset WHERE user_id = ? AND otp_hash = ? AND used = 0 AND expires_at > NOW() LIMIT 1',
+      [userId, otpHash]
+    );
+    if (!Array.isArray(matching) || !matching.length) {
+      throw Object.assign(new Error('Invalid or expired OTP'), { statusCode: 400 });
+    }
+
+    // Mark OTP used
+    await db.execute('UPDATE auth_otp_reset SET used = 1 WHERE id = ?', [(matching[0] as any).id]);
+
+    // Hash new password and update
+    const newHash = await bcrypt.hash(newPassword, 12);
+    await db.execute('UPDATE auth_user SET password_hash = ?, updated_at = NOW() WHERE id = ?', [newHash, userId]);
+  },
 };

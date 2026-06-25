@@ -4,24 +4,47 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./work-inbox.service.js";
 import { resolveDashboardScope } from "../../shared/dashboardScope.js";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
+
+interface ResolvedRequest extends AuthenticatedRequest {
+  resolvedRole: string;
+  roleCtx?: { roleKeys: string[]; primaryRole: string; isSuperAdmin: boolean; isHO: boolean };
+}
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
 
-router.get("/stats", h(async (req: AuthenticatedRequest, res: any) => {
+// Attach DB-resolved role to every request in this router
+router.use(async (req: any, res: any, next: any) => {
+  try {
+    if (req.authUser?.id) {
+      const ctx = await getUserRoleContext(req.authUser.id);
+      req.resolvedRole = ctx.primaryRole;
+      req.roleCtx = ctx;
+    } else {
+      req.resolvedRole = "employee";
+    }
+    next();
+  } catch {
+    req.resolvedRole = "employee";
+    next();
+  }
+});
+
+router.get("/stats", h(async (req: ResolvedRequest, res: any) => {
   const stats = await svc.getWorkItemStats(
     req.authUser!.id,
-    (req.authUser as any).role ?? ""
+    req.resolvedRole
   );
   return res.json({ success: true, data: stats });
 }));
 
-router.get("/overdue", h(async (req: AuthenticatedRequest, res: any) => {
+router.get("/overdue", h(async (req: ResolvedRequest, res: any) => {
   const items = await svc.getOverdueItems(
     req.authUser!.id,
-    (req.authUser as any).role ?? ""
+    req.resolvedRole
   );
   return res.json({ success: true, data: items });
 }));
@@ -39,8 +62,8 @@ router.patch("/:id/priority", requireRole("admin", "hr"), h(async (req: Authenti
   return res.json({ success: true });
 }));
 
-router.get("/my", h(async (req: AuthenticatedRequest, res: any) => {
-  const items = await svc.getMyWorkItems(req.authUser!.id, (req.authUser as any).role ?? "");
+router.get("/my", h(async (req: ResolvedRequest, res: any) => {
+  const items = await svc.getMyWorkItems(req.authUser!.id, req.resolvedRole);
   return res.json({ success: true, data: items });
 }));
 
@@ -49,8 +72,8 @@ router.get("/team", h(async (req: AuthenticatedRequest, res: any) => {
   return res.json({ success: true, data: items });
 }));
 
-router.get("/dashboard", h(async (req: AuthenticatedRequest, res: any) => {
-  const scope = await resolveDashboardScope(req.authUser!.id, (req.authUser as any).role ?? "");
+router.get("/dashboard", h(async (req: ResolvedRequest, res: any) => {
+  const scope = await resolveDashboardScope(req.authUser!.id, req.resolvedRole);
   const requestedBranchId = req.query.branchId as string | undefined;
   const requestedProcessId = req.query.processId as string | undefined;
 

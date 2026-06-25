@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { sendSelectedEmail, sendRejectedEmail } from "./ats.email.service.js";
 import { sendOnboardingToken } from "./ats.onboarding.service.js";
+import { transitionCandidateState } from "./ats.status-machine.js";
 import type {
   AtsCandidate,
   AtsCandidateStageLog,
@@ -146,15 +147,17 @@ export const atsService = {
 
   async moveStage(candidateId: string, toStage: string, userId: string, remarks?: string): Promise<AtsCandidate> {
     const candidate = await this.getCandidate(candidateId);
-    await db.execute("UPDATE ats_candidate SET current_stage = ?, updated_at = NOW() WHERE id = ?", [toStage, candidateId]);
-    await db.execute(
-      `INSERT INTO ats_candidate_stage_log (id, candidate_id, from_stage, to_stage, remarks, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [randomUUID(), candidateId, candidate.current_stage, toStage, remarks ?? null, userId]
-    );
+
+    // Enforce state-machine transitions
+    const result = await transitionCandidateState(candidateId, toStage, userId, remarks);
+    if (!result.success) {
+      const err = new Error(result.message) as Error & { status?: number };
+      err.status = 422;
+      throw err;
+    }
 
     // Fire email side-effects after the stage is committed — failure must not break the stage move
-    if (toStage === 'Selected' && candidate.email) {
+    if ((toStage === 'Selected' || toStage === 'selected') && candidate.email) {
       sendSelectedEmail({
         candidateId,
         to: candidate.email,
@@ -164,7 +167,7 @@ export const atsService = {
         hrPhone: '',
       }).catch(() => { /* already logged in ats_email_log */ });
       sendOnboardingToken(candidateId, userId).catch(() => {});
-    } else if (toStage === 'Rejected' && candidate.email) {
+    } else if ((toStage === 'Rejected' || toStage === 'rejected') && candidate.email) {
       sendRejectedEmail({
         candidateId,
         to: candidate.email,
@@ -284,5 +287,27 @@ export const atsService = {
       conversion_rate: totalCount > 0 ? Math.round((convertedCount / totalCount) * 1000) / 10 : 0,
       time_to_hire_avg: Number(timeRows[0]?.avg_days ?? 0),
     };
+  },
+
+  async listOnboardingBridges(scopeFilter?: { branchId?: string; processId?: string }): Promise<any[]> {
+    let where = "1=1";
+    const params: any[] = [];
+    if (scopeFilter?.branchId) { where += " AND c.applied_for_branch = ?"; params.push(scopeFilter.branchId); }
+    if (scopeFilter?.processId) { where += " AND c.applied_for_process = ?"; params.push(scopeFilter.processId); }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ob.id, ob.candidate_id, ob.status AS bridge_status, ob.bridge_date, ob.joining_date,
+              c.full_name AS candidate_name, c.mobile, c.current_stage, c.applied_for_branch AS branch,
+              c.applied_for_process AS process,
+              (SELECT verification_status FROM ats_bgv_verification WHERE candidate_id = c.id ORDER BY created_at DESC LIMIT 1) AS bgv_status,
+              (SELECT overall_match_status FROM candidate_name_match_summary WHERE candidate_id = c.id LIMIT 1) AS name_status,
+              (SELECT validation_status FROM ats_payroll_hr_validation WHERE candidate_id = c.id LIMIT 1) AS payroll_hr_status,
+              ob.created_at, ob.updated_at
+       FROM ats_onboarding_bridge ob
+       JOIN ats_candidate c ON c.id = ob.candidate_id
+       WHERE ${where}
+       ORDER BY ob.created_at DESC`,
+      params
+    );
+    return Array.isArray(rows) ? rows : [];
   },
 };

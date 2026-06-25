@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireAuth, requireWriteAccess } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
@@ -137,8 +137,8 @@ atsRouter.get("/candidates", requireRole("admin", "hr", "recruiter", "manager"),
   return c.listCandidates.bind(c)(req, res);
 }));
 atsRouter.get("/candidates/:id",                 requireRole("admin", "hr", "recruiter", "manager"), h(c.getCandidate.bind(c)));
-atsRouter.put("/candidates/:id",                 requireRole("admin", "recruiter"), h(c.updateCandidate.bind(c)));
-atsRouter.post("/candidates/:id/move-stage",     requireRole("admin", "recruiter", "manager"), h(c.moveStage.bind(c)));
+atsRouter.put("/candidates/:id",                 requireWriteAccess, requireRole("admin", "recruiter"), h(c.updateCandidate.bind(c)));
+atsRouter.post("/candidates/:id/move-stage",     requireWriteAccess, requireRole("admin", "recruiter", "manager"), h(c.moveStage.bind(c)));
 atsRouter.get("/candidates/:id/stage-logs",      requireRole("admin", "hr", "recruiter", "manager"), h(c.listStageLogs.bind(c)));
 
 // Candidate → Employee conversion

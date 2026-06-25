@@ -62,7 +62,8 @@ router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: a
 
 // ─── Metrics catalog ──────────────────────────────────────────────────────────
 router.get("/:dashboardCode/metrics", h(async (req: AuthenticatedRequest, res: any) => {
-  const role = (req.authUser as any).role ?? "employee";
+  const ctx = await getUserRoleContext(req.authUser!.id);
+  const role = ctx.primaryRole;
   const [metrics] = await db.execute<RowDataPacket[]>(
     `SELECT dmc.metric_code, dmc.metric_name, dmc.unit, dmc.higher_is_better, drmc.is_primary, drmc.display_order
      FROM dashboard_metric_catalog dmc
@@ -77,7 +78,8 @@ router.get("/:dashboardCode/metrics", h(async (req: AuthenticatedRequest, res: a
 // ─── Good/Bad insights ────────────────────────────────────────────────────────
 router.get("/:dashboardCode/good-bad-insights", h(async (req: AuthenticatedRequest, res: any) => {
   const user = req.authUser!;
-  const role = (user as any).role ?? "employee";
+  const ctx = await getUserRoleContext(user.id);
+  const role = ctx.primaryRole;
 
   const [pending] = await db.execute<RowDataPacket[]>(
     `SELECT item_type, priority, COUNT(*) as count,
@@ -102,7 +104,8 @@ router.get("/:dashboardCode/good-bad-insights", h(async (req: AuthenticatedReque
 // ─── Real metric values ───────────────────────────────────────────────────────
 router.get("/:dashboardCode/metric-values", h(async (req: AuthenticatedRequest, res: any) => {
   const user = req.authUser!;
-  const role = (user as any).role ?? "employee";
+  const ctx = await getUserRoleContext(user.id);
+  const role = ctx.primaryRole;
   const scope = await resolveDashboardScope(user.id, role);
 
   const [headcount, onboarding, attendance, payroll, incentive, tat, resignation, bgv, nameMismatch] =
@@ -146,7 +149,8 @@ router.get("/:dashboardCode/metric-values", h(async (req: AuthenticatedRequest, 
 // ─── Drilldown ────────────────────────────────────────────────────────────────
 router.get("/:dashboardCode/metric/:metricCode/drilldown", h(async (req: AuthenticatedRequest, res: any) => {
   const user = req.authUser!;
-  const role = (user as any).role ?? "employee";
+  const ctx = await getUserRoleContext(user.id);
+  const role = ctx.primaryRole;
   const scope = await resolveDashboardScope(user.id, role);
   const { metricCode } = req.params;
   const filters = req.query as Record<string, unknown>;
@@ -213,8 +217,14 @@ router.get("/:dashboardCode/metric/:metricCode/trend", h(async (req: Authenticat
 // ─── Filters (branches and processes scoped to user) ─────────────────────────
 router.get("/:dashboardCode/filters", h(async (req: AuthenticatedRequest, res: any) => {
   const user = req.authUser!;
-  const role = (user as any).role ?? "employee";
+  const ctx = await getUserRoleContext(user.id);
+  const role = ctx.primaryRole;
   const scope = await resolveDashboardScope(user.id, role);
+
+  if (scope.level !== "ORG_ALL" && scope.branchIds.length === 0 && scope.level !== "SELF_ONLY") {
+    // No scope assigned — return nothing
+    return res.json({ success: true, data: { branches: [], processes: [], scope: { level: scope.level } } });
+  }
 
   let branchQuery = "SELECT id, branch_name AS name FROM branches WHERE is_active = 1 ORDER BY branch_name";
   let branchParams: unknown[] = [];

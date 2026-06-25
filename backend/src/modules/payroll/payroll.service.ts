@@ -391,4 +391,91 @@ export const payrollService = {
       ctc_monthly: ctcMonthly,
     };
   },
+
+  async getEmployeeSalaryHistory(employeeId: string): Promise<any[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT spr.run_month, spl.gross_pay, spl.net_pay, spl.basic_pay, spl.hra, spl.conveyance,
+              spl.pf_employee, spl.esi_employee, spl.professional_tax, spl.tds_deducted,
+              spl.total_deductions, spl.days_payable, spl.lop_days, spl.status
+       FROM salary_prep_line spl
+       JOIN salary_prep_run spr ON spr.id = spl.run_id
+       WHERE spl.employee_id = ?
+       ORDER BY spr.run_month DESC LIMIT 24`,
+      [employeeId]
+    );
+    return Array.isArray(rows) ? rows : [];
+  },
+
+  async listPayrollRecords(filters: {
+    page?: number; limit?: number; runMonth?: string; scopeFilter?: any;
+  }): Promise<{ data: any[]; total: number; page: number; limit: number }> {
+    const page = Math.max(1, filters.page ?? 1);
+    const limit = Math.min(100, filters.limit ?? 25);
+    const offset = (page - 1) * limit;
+    const params: any[] = [];
+    let where = "1=1";
+    if (filters.runMonth) { where += " AND spr.run_month = ?"; params.push(filters.runMonth); }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT spl.id, spl.employee_id, e.employee_name, spr.run_month,
+              spl.gross_pay, spl.net_pay, spl.status
+       FROM salary_prep_line spl
+       JOIN salary_prep_run spr ON spr.id = spl.run_id
+       LEFT JOIN employees e ON e.id = spl.employee_id
+       WHERE ${where}
+       ORDER BY spr.run_month DESC, e.employee_name ASC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
+    const [countRow] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) as total FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id WHERE ${where}`,
+      params
+    );
+    return {
+      data: Array.isArray(rows) ? rows : [],
+      total: (countRow as any[])[0]?.total ?? 0,
+      page,
+      limit,
+    };
+  },
+
+  async getPayrollOverview(runMonth: string): Promise<any> {
+    const [runRow] = await db.execute<RowDataPacket[]>(
+      "SELECT id, run_month, status, total_employees, total_gross, total_net FROM salary_prep_run WHERE run_month = ? LIMIT 1",
+      [runMonth]
+    );
+    const run = Array.isArray(runRow) && runRow.length ? runRow[0] : null;
+    const [stats] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) as employee_count,
+              SUM(gross_pay) as total_gross,
+              SUM(net_pay) as total_net,
+              SUM(pf_employee) as total_pf,
+              SUM(esi_employee) as total_esi,
+              SUM(tds_deducted) as total_tds
+       FROM salary_prep_line spl
+       JOIN salary_prep_run spr ON spr.id = spl.run_id
+       WHERE spr.run_month = ?`,
+      [runMonth]
+    );
+    return { run, stats: Array.isArray(stats) && stats.length ? stats[0] : null, runMonth };
+  },
+
+  async updateOvertime(
+    lineId: string,
+    data: { overtimeHours?: number; overtimePay?: number },
+    _updatedBy: string
+  ): Promise<any> {
+    const fields: string[] = [];
+    const params: any[] = [];
+    if (data.overtimeHours !== undefined) { fields.push("overtime_hours = ?"); params.push(data.overtimeHours); }
+    if (data.overtimePay !== undefined)   { fields.push("overtime_pay = ?");   params.push(data.overtimePay); }
+    if (!fields.length) throw Object.assign(new Error("No overtime fields to update"), { statusCode: 400 });
+    fields.push("updated_at = NOW()");
+    params.push(lineId);
+    await db.execute(`UPDATE salary_prep_line SET ${fields.join(", ")} WHERE id = ?`, params);
+    const [updated] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM salary_prep_line WHERE id = ? LIMIT 1",
+      [lineId]
+    );
+    return Array.isArray(updated) && updated.length ? updated[0] : null;
+  },
 };

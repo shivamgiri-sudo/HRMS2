@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireAuth, requireWriteAccess } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import {
   getPendingCandidates,
@@ -81,7 +81,7 @@ const salaryValidationSchema = z.object({
   remarks: z.string().optional(),
 });
 
-payrollHRRouter.post('/validate', async (req: any, res) => {
+payrollHRRouter.post('/validate', requireWriteAccess, async (req: any, res) => {
   try {
     const input = salaryValidationSchema.parse(req.body) as SalaryValidationInput;
 
