@@ -219,6 +219,7 @@ const MIGRATION_MANIFEST: string[] = [
   "305_runtime_blockers_fix.sql",
   "306_salary_bypass_control.sql",
   "307_fix_blocked_migrations.sql",
+  "308_email_templates_bulk_import.sql",
   "1000_fix_engagement_schema_columns.sql",
 ];
 

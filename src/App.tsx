@@ -169,7 +169,8 @@ const NativeIncentives              = lazy(() => import("./pages/NativeIncentive
 const PayrollOvertimeManagement     = lazy(() => import("./pages/PayrollOvertimeManagement"));
 
 // Communication
-const NativeTemplateManager         = lazy(() => import("./pages/NativeTemplateManager"));
+const NativeTemplateManager             = lazy(() => import("./pages/NativeTemplateManager"));
+const NativeEmailTemplateBulkImport     = lazy(() => import("./pages/NativeEmailTemplateBulkImport"));
 const NativeDispatchCenter          = lazy(() => import("./pages/NativeDispatchCenter"));
 const NativeDispatchHistory         = lazy(() => import("./pages/NativeDispatchHistory"));
 const NativeNotificationPreferences = lazy(() => import("./pages/NativeNotificationPreferences"));
@@ -410,6 +411,7 @@ const App = () => (
 
               {/* Communication */}
               <Route path="/communication/templates" element={<ProtectedRoute roles={['admin', 'hr']}><NativeTemplateManager /></ProtectedRoute>} />
+              <Route path="/settings/email-templates/bulk-import" element={<ProtectedRoute roles={['admin', 'super_admin']}><Suspense fallback={<PageLoader />}><NativeEmailTemplateBulkImport /></Suspense></ProtectedRoute>} />
               <Route path="/communication/dispatch" element={<ProtectedRoute roles={['admin', 'hr']}><NativeDispatchCenter /></ProtectedRoute>} />
               <Route path="/communication/history" element={<ProtectedRoute roles={['admin', 'hr']}><NativeDispatchHistory /></ProtectedRoute>} />
               <Route path="/communication/preferences" element={<ProtectedRoute><NativeNotificationPreferences /></ProtectedRoute>} />

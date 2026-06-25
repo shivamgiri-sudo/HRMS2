@@ -79,6 +79,7 @@ import { performanceFeedbackRouter } from "./modules/performance-feedback/perfor
 import { engagementRouter } from "./modules/engagement/engagement.routes.js";
 import { peopleExperienceRouter } from "./modules/people-experience/people-experience.routes.js";
 import { communicationRouter } from "./modules/communication/communication.routes.js";
+import { emailTemplatesRouter } from "./modules/email-templates/email-templates.routes.js";
 import { securityCenterRouter } from "./modules/security/security-center.routes.js";
 import { attendanceEngineRouter } from "./modules/wfm/attendance-engine.routes.js";
 import { attendanceDailyScopedRouter } from "./modules/wfm/attendance-daily-scoped.routes.js";
@@ -230,6 +231,7 @@ app.use("/api/org", orgRouter);
 app.use("/api/org/events", eventsRouter);
 app.use("/api/org/settings", orgSettingsRouter);
 app.use("/api/bulk-upload", bulkUploadRouter);
+app.use("/api/admin/email-templates", emailTemplatesRouter);
 app.use("/api/workflow", workflowRouter);
 app.use("/api/lifecycle", lifecycleRouter);
 app.use("/api/assets-mgmt", assetsRouter);
