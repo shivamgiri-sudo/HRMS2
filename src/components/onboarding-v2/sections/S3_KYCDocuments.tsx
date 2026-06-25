@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useAutoSave } from '../useAutoSave';
 import { VerificationBadge } from '../VerificationBadge';
 import { InlineDocUpload } from '../InlineDocUpload';
@@ -20,8 +20,11 @@ export function S3_KYCDocuments({ token, initialData, saveSection, verifyBgv, pa
   });
   const [verifying, setVerifying] = useState<string | null>(null);
 
+  const initializedRef = useRef(false);
+
   useEffect(() => {
-    if (initialData) {
+    if (initialData && !initializedRef.current) {
+      initializedRef.current = true;
       setForm(prev => ({
         ...prev,
         pan_number: String(initialData.pan_number_masked ?? ''),
@@ -50,17 +53,28 @@ export function S3_KYCDocuments({ token, initialData, saveSection, verifyBgv, pa
     }
   };
 
-  const lbl = 'block text-xs font-semibold text-gray-600 mb-1';
-  const inp = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400';
+  const lbl = 'block text-sm font-semibold text-slate-900 mb-1.5';
+  const inp = 'w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent';
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-lg font-bold text-gray-800">KYC Documents</h2>
+    <div className="space-y-6 font-lexend">
+      <div>
+        <h2 className="text-2xl font-bold text-slate-900">KYC Documents</h2>
+        <p className="text-sm text-slate-600 mt-1">Verify your identity documents for BGV compliance</p>
+      </div>
+
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 flex gap-3">
+        <AlertCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+        <div className="text-sm text-slate-700">
+          <p className="font-medium">Secure document verification</p>
+          <p className="text-slate-600 mt-1">All documents are encrypted and stored securely. BGV verification is done via authorized APIs.</p>
+        </div>
+      </div>
 
       {/* PAN */}
-      <div className="bg-gray-50 rounded-xl p-4 space-y-3">
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
         <div className="flex items-center gap-2">
-          <h3 className="font-semibold text-gray-700">PAN Card</h3>
+          <h3 className="font-semibold text-slate-900">PAN Card</h3>
           {panCheck && <VerificationBadge status={panCheck.status} summary={panCheck.result_summary} />}
         </div>
         <div className="flex items-end gap-2">
@@ -72,7 +86,7 @@ export function S3_KYCDocuments({ token, initialData, saveSection, verifyBgv, pa
             type="button"
             disabled={form.pan_number.length !== 10 || verifying === 'pan'}
             onClick={() => verify('pan')}
-            className="flex items-center gap-1.5 px-3 py-2 bg-purple-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50 hover:bg-purple-700"
+            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
           >
             {verifying === 'pan' ? <Loader2 size={13} className="animate-spin" /> : null}
             Verify PAN
@@ -82,18 +96,18 @@ export function S3_KYCDocuments({ token, initialData, saveSection, verifyBgv, pa
       </div>
 
       {/* Aadhaar */}
-      <div className="bg-gray-50 rounded-xl p-4 space-y-3">
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
         <div className="flex items-center gap-2">
-          <h3 className="font-semibold text-gray-700">Aadhaar Card</h3>
+          <h3 className="font-semibold text-slate-900">Aadhaar Card</h3>
           {aadhaarCheck && <VerificationBadge status={aadhaarCheck.status} summary={aadhaarCheck.result_summary} />}
         </div>
-        <p className="text-xs text-gray-500">Aadhaar number is stored as a masked value. Upload the document for verification.</p>
+        <p className="text-sm text-slate-600">Aadhaar number is stored as a masked value. Upload the document for verification.</p>
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
             disabled={verifying === 'aadhaar'}
             onClick={() => verify('aadhaar')}
-            className="flex items-center gap-1.5 px-3 py-2 bg-purple-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50 hover:bg-purple-700"
+            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
           >
             {verifying === 'aadhaar' ? <Loader2 size={13} className="animate-spin" /> : null}
             Verify Aadhaar
@@ -103,8 +117,8 @@ export function S3_KYCDocuments({ token, initialData, saveSection, verifyBgv, pa
       </div>
 
       {/* Passport */}
-      <div className="bg-gray-50 rounded-xl p-4 space-y-3">
-        <h3 className="font-semibold text-gray-700">Passport (if available)</h3>
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
+        <h3 className="font-semibold text-slate-900">Passport (if available)</h3>
         <div>
           <label className={lbl}>Passport Number</label>
           <input className={inp} value={form.passport_number} onChange={set('passport_number')} placeholder="A1234567" maxLength={20} />
@@ -113,8 +127,8 @@ export function S3_KYCDocuments({ token, initialData, saveSection, verifyBgv, pa
       </div>
 
       {/* DL */}
-      <div className="bg-gray-50 rounded-xl p-4 space-y-3">
-        <h3 className="font-semibold text-gray-700">Driving Licence (if available)</h3>
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
+        <h3 className="font-semibold text-slate-900">Driving Licence (if available)</h3>
         <div>
           <label className={lbl}>Driving Licence Number</label>
           <input className={inp} value={form.dl_number} onChange={set('dl_number')} placeholder="DL-1234567890" />

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAutoSave } from '../useAutoSave';
 
 interface S1Props {
@@ -16,8 +16,11 @@ export function S1_PersonalInfo({ token: _token, initialData, saveSection }: S1P
     nominee2_name: '', nominee2_relation: '', nominee2_date_of_birth: '',
   });
 
+  const initializedRef = useRef(false);
+
   useEffect(() => {
-    if (initialData) {
+    if (initialData && !initializedRef.current) {
+      initializedRef.current = true;
       setForm(prev => ({ ...prev, ...Object.fromEntries(Object.entries(initialData).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])) }));
     }
   }, [initialData]);
@@ -27,13 +30,14 @@ export function S1_PersonalInfo({ token: _token, initialData, saveSection }: S1P
 
   useAutoSave(payload => saveSection('employee-details', payload), form);
 
-  const lbl = 'block text-xs font-semibold text-gray-600 mb-1';
-  const inp = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white';
-  const sel = `${inp}`;
+  const lbl = 'block text-sm font-semibold text-slate-900 mb-1.5';
+  const inp = 'w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent';
+  const sel = `${inp} appearance-none bg-white`;
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-lg font-bold text-gray-800">Personal Information</h2>
+    <div className="space-y-6 font-lexend">
+      <h2 className="text-2xl font-bold text-slate-900">Personal Information</h2>
+      <p className="text-sm text-slate-600">Enter your personal details as per official documents</p>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div>
           <label className={lbl}>Title *</label>
@@ -90,8 +94,9 @@ export function S1_PersonalInfo({ token: _token, initialData, saveSection }: S1P
         </div>
       </div>
 
-      <hr className="border-gray-100" />
-      <h3 className="font-semibold text-gray-700 text-sm">Contact Details</h3>
+      <div className="border-t pt-6" />
+      <div>
+        <h3 className="text-lg font-semibold text-slate-900 mb-4">Contact Details</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div><label className={lbl}>Mobile Number *</label><input className={inp} value={form.mobile_number} onChange={set('mobile_number')} type="tel" /></div>
         <div><label className={lbl}>Alternate Mobile</label><input className={inp} value={form.alt_mobile_number} onChange={set('alt_mobile_number')} type="tel" /></div>
@@ -99,19 +104,24 @@ export function S1_PersonalInfo({ token: _token, initialData, saveSection }: S1P
         <div><label className={lbl}>Personal Email *</label><input className={inp} value={form.personal_email_id} onChange={set('personal_email_id')} type="email" /></div>
         <div className="md:col-span-2"><label className={lbl}>Official / Company Email</label><input className={inp} value={form.official_email_id} onChange={set('official_email_id')} type="email" placeholder="Will be assigned by IT" /></div>
       </div>
+      </div>
 
-      <hr className="border-gray-100" />
-      <h3 className="font-semibold text-gray-700 text-sm">Nominee 1</h3>
+      <div className="border-t pt-6">
+        <h3 className="text-lg font-semibold text-slate-900 mb-4">Nominee 1</h3>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="md:col-span-2"><label className={lbl}>Nominee Name</label><input className={inp} value={form.nominee_name} onChange={set('nominee_name')} /></div>
         <div><label className={lbl}>Relation</label><input className={inp} value={form.nominee_relation} onChange={set('nominee_relation')} /></div>
         <div><label className={lbl}>Nominee DOB</label><input type="date" className={inp} value={form.nominee_date_of_birth} onChange={set('nominee_date_of_birth')} /></div>
       </div>
-      <h3 className="font-semibold text-gray-700 text-sm">Nominee 2 (Optional)</h3>
+      </div>
+
+      <div className="border-t pt-6">
+        <h3 className="text-lg font-semibold text-slate-900 mb-4">Nominee 2 (Optional)</h3>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="md:col-span-2"><label className={lbl}>Nominee 2 Name</label><input className={inp} value={form.nominee2_name} onChange={set('nominee2_name')} /></div>
         <div><label className={lbl}>Relation</label><input className={inp} value={form.nominee2_relation} onChange={set('nominee2_relation')} /></div>
         <div><label className={lbl}>Nominee 2 DOB</label><input type="date" className={inp} value={form.nominee2_date_of_birth} onChange={set('nominee2_date_of_birth')} /></div>
+      </div>
       </div>
     </div>
   );

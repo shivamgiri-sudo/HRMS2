@@ -26,7 +26,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Building2, CalendarDays, Plus, Pencil, Trash2, Loader2, ShieldAlert, Users, Hash, Globe, MapPin, ShieldCheck } from "lucide-react";
+import { Building2, CalendarDays, Plus, Pencil, Trash2, Loader2, ShieldAlert, Users, Hash, Globe, MapPin, ShieldCheck, ShieldQuestion } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useDepartments } from "@/hooks/useEmployees";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -137,6 +137,126 @@ const SecuritySettings = () => {
             )}
           </div>
         </div>
+      </CardContent>
+    </Card>
+  );
+};
+
+const BGV_PROVIDERS = [
+  { value: "mock", label: "Mock (Dev/Test only)" },
+  { value: "infinity_ai", label: "Infinity AI (Live)" },
+  { value: "digio", label: "Digio (Live)" },
+];
+
+type BgvConfigRow = { setting_key: string; setting_value: string | null; label: string };
+
+const BgvProviderSettings = () => {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [initialized, setInitialized] = useState(false);
+
+  const { data: rows = [], isLoading } = useQuery<BgvConfigRow[]>({
+    queryKey: ['bgv-provider-config'],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: BgvConfigRow[] }>('/api/ats/bgv/admin/provider-config');
+      return res.data ?? [];
+    },
+  });
+
+  if (!initialized && rows.length > 0) {
+    const initial: Record<string, string> = {};
+    rows.forEach((r) => { initial[r.setting_key] = r.setting_value ?? ""; });
+    setForm(initial);
+    setInitialized(true);
+  }
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      await hrmsApi.put('/api/ats/bgv/admin/provider-config', form);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bgv-provider-config'] });
+      setInitialized(false);
+      toast({ title: "BGV config saved", description: "Provider adapter reinitialized." });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const provider = form.bgv_provider ?? "mock";
+
+  if (isLoading) return <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><ShieldQuestion className="h-5 w-5" /> BGV Provider Configuration</CardTitle>
+        <CardDescription>
+          Select the verification provider used in candidate onboarding. API keys are stored encrypted in org settings.
+          {provider === "mock" && <span className="ml-2 font-bold text-amber-600">⚠ Mock mode — all checks return fake results.</span>}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div>
+          <Label>Active Provider</Label>
+          <select
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm mt-1"
+            value={provider}
+            onChange={(e) => setForm((p) => ({ ...p, bgv_provider: e.target.value }))}
+          >
+            {BGV_PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
+        </div>
+
+        {provider === "infinity_ai" && (
+          <div className="space-y-3 rounded-xl border p-4 bg-slate-50">
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Infinity AI Settings</p>
+            {[
+              { key: "infinity_ai_api_url", label: "API Base URL", type: "text" },
+              { key: "infinity_ai_api_key", label: "API Key", type: "password" },
+              { key: "infinity_ai_client_id", label: "Client ID", type: "text" },
+              { key: "infinity_ai_portal_url", label: "Candidate Portal URL", type: "text" },
+            ].map(({ key, label, type }) => (
+              <div key={key}>
+                <Label>{label}</Label>
+                <Input
+                  type={type}
+                  value={form[key] ?? ""}
+                  onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))}
+                  placeholder={type === "password" ? "Enter to update" : undefined}
+                  className="mt-1"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {provider === "digio" && (
+          <div className="space-y-3 rounded-xl border p-4 bg-slate-50">
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Digio Settings</p>
+            {[
+              { key: "digio_api_url", label: "API Base URL", type: "text" },
+              { key: "digio_client_id", label: "Client ID", type: "text" },
+              { key: "digio_client_secret", label: "Client Secret", type: "password" },
+            ].map(({ key, label, type }) => (
+              <div key={key}>
+                <Label>{label}</Label>
+                <Input
+                  type={type}
+                  value={form[key] ?? ""}
+                  onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))}
+                  placeholder={type === "password" ? "Enter to update" : undefined}
+                  className="mt-1"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+          {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+          Save BGV Configuration
+        </Button>
       </CardContent>
     </Card>
   );
@@ -401,6 +521,13 @@ const Settings = () => {
                 <ShieldCheck className="h-4 w-4" />
                 <span className="hidden sm:inline">Security</span>
                 <span className="sm:hidden">Security</span>
+              </TabsTrigger>
+            )}
+            {isAdmin && (
+              <TabsTrigger value="bgv-config" className="w-full justify-center gap-2 sm:w-auto">
+                <ShieldQuestion className="h-4 w-4" />
+                <span className="hidden sm:inline">BGV Config</span>
+                <span className="sm:hidden">BGV</span>
               </TabsTrigger>
             )}
           </TabsList>
@@ -672,6 +799,13 @@ const Settings = () => {
           {isAdmin && (
             <TabsContent value="security" className="mt-6">
               <SecuritySettings />
+            </TabsContent>
+          )}
+
+          {/* BGV Config Tab - Admin Only */}
+          {isAdmin && (
+            <TabsContent value="bgv-config" className="mt-6">
+              <BgvProviderSettings />
             </TabsContent>
           )}
         </Tabs>

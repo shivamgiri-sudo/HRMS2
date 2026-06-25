@@ -34,6 +34,10 @@ type HistoryRow = {
   previous_submitted_time?: string;
   full_name?: string;
   mobile?: string;
+  email?: string;
+  onboarding_status?: string;
+  onboarding_token_expires_at?: string;
+  onboarding_joining_date?: string;
 };
 
 type RecruiterProfile = {
@@ -127,11 +131,14 @@ const fmt = (value?: string) => {
   return d.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
 };
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
-const monthStartIso = () => {
-  const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
+const localDateIso = (d = new Date()) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 };
+const todayIso = () => localDateIso();
+const monthStartIso = () => { const d = new Date(); return localDateIso(new Date(d.getFullYear(), d.getMonth(), 1)); };
 
 function Opts({ values }: { values: string[] }) {
   return <>{values.map((v) => <option key={v} value={v}>{v}</option>)}</>;
@@ -172,7 +179,7 @@ function validateForm(form: Form): string | null {
   return null;
 }
 
-// Auto-cascade round results when finalDecision = Selected
+// Auto-cascade round results when finalDecision = Selected; clear when not Selected
 function cascadeSelected(form: Form): Form {
   const rank = STAGE_RANK[form.stageName] ?? 0;
   const updated = { ...form };
@@ -180,6 +187,16 @@ function cascadeSelected(form: Form): Form {
     if (rank >= 1) updated.round1Result = "Selected";
     if (rank >= 3) updated.round2Result = "Selected";
     if (rank >= 4) updated.round3Result = "Selected";
+  } else {
+    // Clear cascaded fields so recruiter must fill them explicitly
+    if (updated.round1Result === "Selected") updated.round1Result = "";
+    if (updated.round2Result === "Selected") updated.round2Result = "";
+    if (updated.round3Result === "Selected") updated.round3Result = "";
+    updated.offerSalary = "";
+    updated.offerDoj = "";
+    updated.reportingTiming = "";
+    updated.otDetails = "";
+    updated.performanceIncentives = "";
   }
   return updated;
 }
@@ -197,8 +214,8 @@ export default function NativeATSRecruiterWorkspace() {
   const [msg, setMsg] = useState("");
   const [query, setQuery] = useState("");
   const [decision, setDecision] = useState("All");
-  const [fromDate] = useState(monthStartIso());
-  const [toDate] = useState(todayIso());
+  const [fromDate, setFromDate] = useState(monthStartIso());
+  const [toDate, setToDate] = useState(todayIso());
 
   const rank = STAGE_RANK[form.stageName] ?? 0;
 
@@ -336,12 +353,13 @@ export default function NativeATSRecruiterWorkspace() {
 
   const filteredHistory = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const from = fromDate ? new Date(fromDate).getTime() : 0;
-    const to = toDate ? new Date(toDate + "T23:59:59").getTime() : Infinity;
+    const decisionFilter = decision.replace(/^[^\w]+/, '').trim(); // strip emoji prefix
     return history.filter((h) => {
       const text = [h.candidate_id, h.full_name, h.mobile, h.final_decision, h.walkin_end_stage, h.interviewed_for_process].join(" ").toLowerCase();
-      const ts = h.submitted_at ? new Date(h.submitted_at).getTime() : 0;
-      return (!q || text.includes(q)) && (decision === "All" || h.final_decision === decision) && ts >= from && ts <= to;
+      const dateStr = h.submitted_at ? h.submitted_at.slice(0, 10) : '';
+      const inRange = (!fromDate || dateStr >= fromDate) && (!toDate || dateStr <= toDate);
+      const decisionMatch = decisionFilter === 'All' || h.final_decision === decisionFilter;
+      return (!q || text.includes(q)) && decisionMatch && inRange;
     });
   }, [history, query, decision, fromDate, toDate]);
 
@@ -373,39 +391,153 @@ export default function NativeATSRecruiterWorkspace() {
 
           {tab === "pending" && <div className="rw-card"><h3>Assigned Waiting Candidates</h3>{pending.length===0?<p className="rw-muted">No pending candidates.</p>:pending.map((c)=><div className="rw-item" key={c.candidateId}><div className="rw-row"><div><b>{c.fullName}</b><p className="rw-muted">{c.candidateId} • {c.mobile} • {c.branch} • Waiting {c.pendingMinutes||0} mins</p><Badge value={c.status}/></div><button style={{width:"auto"}} disabled={!recruiterProfile} onClick={()=>openForm(c)}>{recruiterProfile ? "Open" : "View Only"}</button></div></div>)}</div>}
 
-          {tab === "history" && <div className="rw-card"><h3>Past Submissions</h3><div className="rw-grid rw-2"><input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search name, number, candidate ID, process..."/><select value={decision} onChange={(e)=>setDecision(e.target.value)}><option>All</option><Opts values={config.decisionOptions}/></select><input type="date" value={fromDate} readOnly /><input type="date" value={toDate} readOnly /></div><button onClick={refresh} disabled={loading} style={{marginTop:10,width:"auto"}}>Refresh</button><div className="rw-scroll" style={{marginTop:12}}><table className="rw-table"><thead><tr><th>Candidate</th><th>Contact</th><th>Decision</th><th>Stage</th><th>Process</th><th>Submitted</th><th>Action</th></tr></thead><tbody>{filteredHistory.map((h)=>{const canResubmit=h.final_decision==='Client Round - Pending' && !!recruiterProfile;return <tr key={h.id}><td><b>{h.full_name||'-'}</b><br/><span className="rw-muted">{h.candidate_id}</span></td><td>{h.mobile||'-'}</td><td><Badge value={h.final_decision}/></td><td>{h.walkin_end_stage||'-'}</td><td>{h.interviewed_for_process||'-'}</td><td>{fmt(h.submitted_at)}</td><td><button disabled={!canResubmit} onClick={()=>openForm({candidateId:h.candidate_id,qToken:h.q_token??undefined,fullName:h.full_name??undefined,mobile:h.mobile??undefined},true,h)}>{canResubmit?'Resubmit':'View Only'}</button></td></tr>})}</tbody></table></div></div>}
+          {tab === "history" && <div className="rw-card">
+            <h3 style={{margin:'0 0 14px'}}>Submission History</h3>
+
+            {/* Filters */}
+            <div className="rw-grid rw-2" style={{marginBottom:10}}>
+              <input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search name, mobile, candidate ID…"/>
+              <select value={decision} onChange={(e)=>setDecision(e.target.value)}>
+                <option value="All">All Decisions</option>
+                <option value="Selected">✅ Selected</option>
+                <option value="Rejected">❌ Rejected</option>
+                <option value="Hold">⏸ Hold</option>
+                <option value="Client Round - Pending">🔄 Client Round - Pending</option>
+                <option value="No Show">👻 No Show</option>
+              </select>
+              <div><label>From</label><input type="date" value={fromDate} onChange={(e)=>setFromDate(e.target.value)} /></div>
+              <div><label>To</label><input type="date" value={toDate} onChange={(e)=>setToDate(e.target.value)} /></div>
+            </div>
+            <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+              <button onClick={()=>setDecision('Selected')} style={{width:'auto',padding:'6px 14px',fontSize:13,background:decision==='Selected'?'#047857':'#e2e8f0',color:decision==='Selected'?'#fff':'#0f172a'}}>Selected Only</button>
+              <button onClick={()=>setDecision('All')} style={{width:'auto',padding:'6px 14px',fontSize:13,background:decision==='All'?'#0f172a':'#e2e8f0',color:decision==='All'?'#fff':'#0f172a'}}>All</button>
+              <button onClick={refresh} disabled={loading} style={{width:'auto',padding:'6px 14px',fontSize:13}}>Refresh</button>
+            </div>
+
+            {/* Stats bar */}
+            <div className="rw-grid rw-3" style={{marginBottom:14}}>
+              <div className="rw-kpi"><span className="rw-muted">Showing</span><br/><b>{filteredHistory.length}</b></div>
+              <div className="rw-kpi"><span className="rw-muted">Selected</span><br/><b style={{color:'#047857'}}>{filteredHistory.filter(h=>h.final_decision==='Selected').length}</b></div>
+              <div className="rw-kpi"><span className="rw-muted">Onboarding Pending</span><br/><b style={{color:'#b45309'}}>{filteredHistory.filter(h=>h.final_decision==='Selected'&&h.onboarding_status==='pending').length}</b></div>
+            </div>
+
+            <div className="rw-scroll">
+              <table className="rw-table">
+                <thead><tr>
+                  <th>Candidate</th><th>Contact</th><th>Process</th>
+                  <th>Decision</th><th>Stage</th><th>Submitted</th>
+                  <th>Onboarding</th><th>Action</th>
+                </tr></thead>
+                <tbody>{filteredHistory.map((h)=>{
+                  const isSelected = h.final_decision === 'Selected';
+                  const canResubmit = h.final_decision === 'Client Round - Pending' && !!recruiterProfile;
+                  const canRectify = !!recruiterProfile;
+                  const obStatus = h.onboarding_status;
+                  const obBadge = !isSelected ? null :
+                    obStatus === 'completed' ? <span className="rw-badge ok">✓ Joined</span> :
+                    obStatus === 'submitted' ? <span className="rw-badge warn">📝 Form Submitted</span> :
+                    obStatus === 'approved' ? <span className="rw-badge ok">✓ Approved</span> :
+                    obStatus === 'pending' ? <span className="rw-badge warn">⏳ Link Sent</span> :
+                    <span className="rw-badge info">—</span>;
+                  return <tr key={h.id} style={isSelected?{background:'#f0fdf4'}:{}}>
+                    <td><b>{h.full_name||'-'}</b><br/><span className="rw-muted">{h.candidate_code||h.candidate_id}</span></td>
+                    <td>{h.mobile||'-'}<br/><span className="rw-muted" style={{fontSize:11}}>{h.email||''}</span></td>
+                    <td>{h.interviewed_for_process||'-'}</td>
+                    <td><Badge value={h.final_decision}/></td>
+                    <td style={{fontSize:12}}>{h.walkin_end_stage||'-'}</td>
+                    <td style={{fontSize:12,whiteSpace:'nowrap'}}>{fmt(h.submitted_at)}</td>
+                    <td>{obBadge ?? <span className="rw-muted" style={{fontSize:12}}>—</span>}
+                      {isSelected && h.onboarding_joining_date && <><br/><span className="rw-muted" style={{fontSize:11}}>DOJ: {h.onboarding_joining_date}</span></>}
+                    </td>
+                    <td style={{whiteSpace:'nowrap'}}>
+                      {canResubmit && <button style={{fontSize:12,padding:'6px 10px',marginBottom:4,display:'block'}} onClick={()=>openForm({candidateId:h.candidate_id,qToken:h.q_token??undefined,fullName:h.full_name??undefined,mobile:h.mobile??undefined},true,h)}>Resubmit</button>}
+                      {canRectify && <button style={{fontSize:12,padding:'6px 10px',background:'linear-gradient(135deg,#f59e0b,#d97706)',display:'block'}} onClick={()=>openForm({candidateId:h.candidate_id,qToken:h.q_token??undefined,fullName:h.full_name??undefined,mobile:h.mobile??undefined},false,h)}>Rectify</button>}
+                      {!canResubmit && !canRectify && <span className="rw-muted" style={{fontSize:12}}>—</span>}
+                    </td>
+                  </tr>;
+                })}</tbody>
+              </table>
+            </div>
+          </div>}
         </>}
 
         {screen === "form" && selected && <div className="rw-card">
-          <button onClick={()=>setScreen('workspace')} style={{width:"auto",background:'#e2e8f0',color:'#0f172a'}}>Back</button>
-          <h2>Update Candidate</h2>
-          <p className="rw-muted"><b>{selected.fullName}</b> • {selected.candidateId} • {selected.mobile}</p>
-          <div className="rw-grid rw-2">
-            {field('Interviewed for Process','processName','select',config.processOptions)}
-            {field('Final Decision','finalDecision','select',config.decisionOptions)}
-            {field('Walk-in End Stage','stageName','select',config.stageOptions)}
-            {rank>=1&&field('Round1 Result','round1Result','select',config.decisionOptions)}
-            {rank>=1&&form.round1Result==='Rejected'&&field('Round1 VOC','round1Voc','select',config.vocOptions)}
-            {rank>=1&&field('Round1 Remarks','round1Remarks','textarea')}
-            {rank>=2&&field('SkillTest Typing Score','skillTypingScore','input')}
-            {rank>=2&&field('SkillTest AI Score','skillAiScore','input')}
-            {rank>=2&&field('SkillTest Result (optional)','skillResult','select',config.decisionOptions)}
-            {rank>=2&&form.skillResult==='Rejected'&&field('SkillTest VOC','skillVoc','select',config.skillVocOptions)}
-            {rank>=2&&field('SkillTest Remarks','skillRemarks','textarea')}
-            {rank>=3&&field('Round2 Result','round2Result','select',config.decisionOptions)}
-            {rank>=3&&form.round2Result==='Rejected'&&field('Round2 VOC','round2Voc','select',config.vocOptions)}
-            {rank>=3&&field('Round2 Remarks','round2Remarks','textarea')}
-            {rank>=4&&field('Round3 Result','round3Result','select',config.decisionOptions)}
-            {rank>=4&&form.round3Result==='Rejected'&&field('Round3 VOC','round3Voc','select',config.vocOptions)}
-            {rank>=4&&field('Round3 Remarks','round3Remarks','textarea')}
-            {form.finalDecision==='Selected'&&field('Offer Salary','offerSalary','input')}
-            {form.finalDecision==='Selected'&&field('Date of Joining','offerDoj','input')}
-            {form.finalDecision==='Selected'&&field('Reporting Timing','reportingTiming','input')}
-            {form.finalDecision==='Selected'&&field('OT Details','otDetails','input')}
-            {form.finalDecision==='Selected'&&field('Performance Incentives','performanceIncentives','input')}
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}>
+            <button onClick={()=>setScreen('workspace')} style={{width:"auto",background:'#e2e8f0',color:'#0f172a',padding:'8px 16px'}}>← Back</button>
+            <div>
+              <h2 style={{margin:0,fontSize:20}}>Update Candidate</h2>
+              <p className="rw-muted" style={{margin:'2px 0 0'}}><b>{selected.fullName}</b> • {selected.mobile}</p>
+            </div>
           </div>
-          <button disabled={loading} onClick={submit} style={{marginTop:12}}>{loading?'Submitting...':'Submit Update'}</button>
-          {msg && <p className="rw-msg">{msg}</p>}
+
+          {/* SECTION 1: Walk-in Summary */}
+          <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:14,padding:16,marginBottom:16}}>
+            <div style={{fontWeight:800,fontSize:13,color:'#64748b',textTransform:'uppercase',letterSpacing:1,marginBottom:12}}>📋 Walk-in Summary</div>
+            <div className="rw-grid rw-3">
+              {field('Interviewed for Process *','processName','select',config.processOptions)}
+              {field('Walk-in End Stage *','stageName','select',config.stageOptions)}
+              {field('Final Decision *','finalDecision','select',config.decisionOptions)}
+            </div>
+          </div>
+
+          {/* SECTION 2: Round 1 — HR Screening */}
+          {rank>=1&&<div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:14,padding:16,marginBottom:16}}>
+            <div style={{fontWeight:800,fontSize:13,color:'#1d4ed8',textTransform:'uppercase',letterSpacing:1,marginBottom:12}}>🔵 Round 1 — HR Screening</div>
+            <div className="rw-grid rw-2">
+              {field('Round 1 Result *','round1Result','select',config.decisionOptions)}
+              {form.round1Result==='Rejected'&&field('Round 1 VOC *','round1Voc','select',config.vocOptions)}
+            </div>
+            <div style={{marginTop:10}}>{field('Round 1 Remarks','round1Remarks','textarea')}</div>
+          </div>}
+
+          {/* SECTION 3: Skill Test */}
+          {rank>=2&&<div style={{background:'#faf5ff',border:'1px solid #e9d5ff',borderRadius:14,padding:16,marginBottom:16}}>
+            <div style={{fontWeight:800,fontSize:13,color:'#7c3aed',textTransform:'uppercase',letterSpacing:1,marginBottom:12}}>🟣 Skill Test</div>
+            <div className="rw-grid rw-3">
+              {field('Typing Score','skillTypingScore','input')}
+              {field('AI Score','skillAiScore','input')}
+              {field('Skill Test Result','skillResult','select',config.decisionOptions)}
+            </div>
+            {form.skillResult==='Rejected'&&<div style={{marginTop:10}} className="rw-grid rw-2">{field('Skill Test VOC *','skillVoc','select',config.skillVocOptions)}</div>}
+            <div style={{marginTop:10}}>{field('Skill Test Remarks','skillRemarks','textarea')}</div>
+          </div>}
+
+          {/* SECTION 4: Round 2 — Operations */}
+          {rank>=3&&<div style={{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:14,padding:16,marginBottom:16}}>
+            <div style={{fontWeight:800,fontSize:13,color:'#047857',textTransform:'uppercase',letterSpacing:1,marginBottom:12}}>🟢 Round 2 — Operations</div>
+            <div className="rw-grid rw-2">
+              {field('Round 2 Result *','round2Result','select',config.decisionOptions)}
+              {form.round2Result==='Rejected'&&field('Round 2 VOC *','round2Voc','select',config.vocOptions)}
+            </div>
+            <div style={{marginTop:10}}>{field('Round 2 Remarks','round2Remarks','textarea')}</div>
+          </div>}
+
+          {/* SECTION 5: Round 3 — Client */}
+          {rank>=4&&<div style={{background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:14,padding:16,marginBottom:16}}>
+            <div style={{fontWeight:800,fontSize:13,color:'#c2410c',textTransform:'uppercase',letterSpacing:1,marginBottom:12}}>🟠 Round 3 — Client</div>
+            <div className="rw-grid rw-2">
+              {field('Round 3 Result *','round3Result','select',config.decisionOptions)}
+              {form.round3Result==='Rejected'&&field('Round 3 VOC *','round3Voc','select',config.vocOptions)}
+            </div>
+            <div style={{marginTop:10}}>{field('Round 3 Remarks','round3Remarks','textarea')}</div>
+          </div>}
+
+          {/* SECTION 6: Offer Details — only if Selected */}
+          {form.finalDecision==='Selected'&&<div style={{background:'#ecfdf5',border:'2px solid #6ee7b7',borderRadius:14,padding:16,marginBottom:16}}>
+            <div style={{fontWeight:800,fontSize:13,color:'#047857',textTransform:'uppercase',letterSpacing:1,marginBottom:12}}>✅ Offer Details (Required for Selected)</div>
+            <div className="rw-grid rw-3">
+              {field('Offer Salary *','offerSalary','input')}
+              {field('Date of Joining *','offerDoj','input')}
+              {field('Reporting Timing *','reportingTiming','input')}
+            </div>
+            <div className="rw-grid rw-2" style={{marginTop:10}}>
+              {field('OT Details','otDetails','input')}
+              {field('Performance Incentives','performanceIncentives','input')}
+            </div>
+          </div>}
+
+          {msg && <p className="rw-msg" style={{marginBottom:10}}>{msg}</p>}
+          <button disabled={loading} onClick={submit} style={{width:'100%',padding:16,fontSize:16}}>{loading?'Submitting...':'Submit Update'}</button>
         </div>}
       </div>
     </div>

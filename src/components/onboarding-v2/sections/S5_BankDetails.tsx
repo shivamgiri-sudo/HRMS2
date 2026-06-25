@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Loader2, Search, ChevronDown, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useAutoSave } from '../useAutoSave';
 import { VerificationBadge } from '../VerificationBadge';
 import { InlineDocUpload } from '../InlineDocUpload';
 import type { BgvCheck } from '../useOnboardingV2';
+import { hrmsApi } from '@/lib/hrmsApi';
 
+interface Bank { code: string; name: string; }
 interface S5Props {
   token: string;
   initialData: Record<string, unknown> | null;
@@ -16,26 +18,76 @@ interface S5Props {
 export function S5_BankDetails({ token, initialData, saveSection, verifyBgv, bankCheck }: S5Props) {
   const [form, setForm] = useState({
     bank_name: '', branch_name: '', account_holder_name: '',
-    account_no: '', ifsc_code: '', account_type: '', name_on_cheque: '',
+    account_no: '', ifsc_code: '', account_type: 'savings', name_on_cheque: '',
   });
+  const [banks, setBanks] = useState<Bank[]>([]);
+  const [bankSearch, setBankSearch] = useState('');
+  const [bankDropdownOpen, setBankDropdownOpen] = useState(false);
+  const [ifscLookupResult, setIfscLookupResult] = useState<any>(null);
+  const [lookingUpIFSC, setLookingUpIFSC] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [accountTypes, setAccountTypes] = useState<any[]>([]);
+  const initializedRef = useRef(false);
 
+  // Load master data
   useEffect(() => {
-    if (initialData) {
+    Promise.all([
+      hrmsApi.get('/api/onboarding/data/banks').then(r => setBanks(r.data ?? [])).catch(() => {}),
+      hrmsApi.get('/api/onboarding/data/account-types').then(r => setAccountTypes(r.data ?? [])).catch(() => {}),
+    ]);
+  }, []);
+
+  // Initialize from server data
+  useEffect(() => {
+    if (initialData && !initializedRef.current) {
+      initializedRef.current = true;
       setForm(prev => ({
         ...prev,
         bank_name: String(initialData.bank_name ?? ''),
         branch_name: String(initialData.branch_name ?? ''),
         account_holder_name: String(initialData.account_holder_name ?? ''),
         ifsc_code: String(initialData.ifsc_code ?? ''),
-        account_type: String(initialData.account_type ?? ''),
+        account_type: String(initialData.account_type ?? 'savings'),
         name_on_cheque: String(initialData.name_on_cheque ?? ''),
       }));
     }
   }, [initialData]);
 
-  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm(prev => ({ ...prev, [k]: e.target.value }));
+
+  const filteredBanks = bankSearch.trim()
+    ? banks.filter(b => b.name.toLowerCase().includes(bankSearch.toLowerCase()) || b.code.toLowerCase().includes(bankSearch.toLowerCase()))
+    : [];
+
+  const selectBank = (bank: Bank) => {
+    setForm(prev => ({ ...prev, bank_name: bank.name }));
+    setBankSearch('');
+    setBankDropdownOpen(false);
+  };
+
+  const lookupIFSC = async () => {
+    const code = form.ifsc_code.trim().toUpperCase();
+    if (!code || code.length < 4) return;
+    setLookingUpIFSC(true);
+    try {
+      const res = await hrmsApi.get(`/api/onboarding/data/ifsc/${code}`);
+      if (res.success && res.data) {
+        setIfscLookupResult(res.data);
+        setForm(prev => ({
+          ...prev,
+          bank_name: res.data.bankName || prev.bank_name,
+          branch_name: res.data.branchName || prev.branch_name,
+        }));
+      } else {
+        setIfscLookupResult(null);
+      }
+    } catch {
+      setIfscLookupResult(null);
+    } finally {
+      setLookingUpIFSC(false);
+    }
+  };
 
   useAutoSave(payload => saveSection('bank-details', {
     bank_name: payload.bank_name,
@@ -59,76 +111,170 @@ export function S5_BankDetails({ token, initialData, saveSection, verifyBgv, ban
     }
   };
 
-  const lbl = 'block text-xs font-semibold text-gray-600 mb-1';
-  const inp = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400';
-
   return (
     <div className="space-y-6">
-      <h2 className="text-lg font-bold text-gray-800">Bank Details</h2>
-      <p className="text-xs text-gray-500 bg-amber-50 p-3 rounded-lg border border-amber-100">
-        Salary will be credited to this account. Please ensure the account is in your name and is active.
-      </p>
+      <div>
+        <h2 className="text-2xl font-bold text-slate-900">Bank Account Details</h2>
+        <p className="text-sm text-slate-600 mt-1">Salary will be credited to this account. Ensure it's active and in your name.</p>
+      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label className={lbl}>Account Holder Name *</label>
-          <input className={inp} value={form.account_holder_name} onChange={set('account_holder_name')} placeholder="As per bank records" />
-        </div>
-        <div>
-          <label className={lbl}>Account Type *</label>
-          <select className={inp} value={form.account_type} onChange={set('account_type')}>
-            <option value="">Select</option>
-            <option value="savings">Savings</option>
-            <option value="current">Current</option>
-          </select>
-        </div>
-        <div className="md:col-span-2">
-          <label className={lbl}>Account Number *</label>
-          <input className={inp} value={form.account_no} onChange={set('account_no')} placeholder="Enter raw account number for verification" />
-          <p className="text-xs text-gray-400 mt-1">Number will be masked after verification. Enter carefully — verification is done via penny-less API.</p>
-        </div>
-        <div>
-          <label className={lbl}>IFSC Code *</label>
-          <input className={inp} value={form.ifsc_code} onChange={set('ifsc_code')} placeholder="SBIN0001234" maxLength={11} style={{ textTransform: 'uppercase' }} />
-        </div>
-        <div>
-          <label className={lbl}>Bank Name *</label>
-          <input className={inp} value={form.bank_name} onChange={set('bank_name')} />
-        </div>
-        <div>
-          <label className={lbl}>Bank Branch</label>
-          <input className={inp} value={form.branch_name} onChange={set('branch_name')} />
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 flex gap-3">
+        <AlertCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+        <div className="text-sm text-slate-700">
+          <p className="font-medium">Account Verification Required</p>
+          <p className="text-slate-600 mt-1">We'll verify your account via penny-less validation. Bank details are stored securely.</p>
         </div>
       </div>
 
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* Account Holder Name */}
+        <div>
+          <label className="block text-sm font-semibold text-slate-900 mb-1.5">Account Holder Name *</label>
+          <input
+            type="text"
+            value={form.account_holder_name}
+            onChange={set('account_holder_name')}
+            placeholder="As per bank records"
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+
+        {/* Account Type Dropdown */}
+        <div>
+          <label className="block text-sm font-semibold text-slate-900 mb-1.5">Account Type *</label>
+          <select
+            value={form.account_type}
+            onChange={set('account_type')}
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
+          >
+            <option value="">Select account type</option>
+            {accountTypes.map((t: any) => <option key={t.code} value={t.code.toLowerCase()}>{t.name}</option>)}
+          </select>
+        </div>
+
+        {/* Bank Name with Autocomplete */}
+        <div className="relative">
+          <label className="block text-sm font-semibold text-slate-900 mb-1.5">Bank Name *</label>
+          <div className="relative">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                value={bankSearch || form.bank_name}
+                onChange={(e) => { setBankSearch(e.target.value); setBankDropdownOpen(true); }}
+                onFocus={() => setBankDropdownOpen(true)}
+                placeholder="Search or type bank name"
+                className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            {bankDropdownOpen && filteredBanks.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-300 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto">
+                {filteredBanks.map(bank => (
+                  <button
+                    key={bank.code}
+                    type="button"
+                    onClick={() => selectBank(bank)}
+                    className="w-full text-left px-3 py-2 hover:bg-slate-100 text-sm text-slate-900 border-b border-slate-100 last:border-0"
+                  >
+                    <div className="font-medium">{bank.name}</div>
+                    <div className="text-xs text-slate-500">{bank.code}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {form.bank_name && !bankSearch && (
+            <div className="mt-1.5 text-xs text-green-700 flex items-center gap-1">
+              <CheckCircle2 className="h-3.5 w-3.5" /> {form.bank_name}
+            </div>
+          )}
+        </div>
+
+        {/* IFSC Code with Lookup */}
+        <div>
+          <label className="block text-sm font-semibold text-slate-900 mb-1.5">IFSC Code *</label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={form.ifsc_code}
+              onChange={(e) => { setForm(prev => ({ ...prev, ifsc_code: e.target.value.toUpperCase() })); setIfscLookupResult(null); }}
+              placeholder="e.g., SBIN0001234"
+              maxLength={11}
+              className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+            />
+            <button
+              type="button"
+              onClick={lookupIFSC}
+              disabled={form.ifsc_code.length < 4 || lookingUpIFSC}
+              className="px-3 py-2 bg-slate-200 hover:bg-slate-300 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+            >
+              {lookingUpIFSC ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Lookup'}
+            </button>
+          </div>
+          {ifscLookupResult && (
+            <div className="mt-1.5 text-xs bg-green-50 text-green-800 p-2 rounded border border-green-200">
+              ✓ {ifscLookupResult.branchName} • {ifscLookupResult.city}
+            </div>
+          )}
+        </div>
+
+        {/* Account Number */}
+        <div className="md:col-span-2">
+          <label className="block text-sm font-semibold text-slate-900 mb-1.5">Account Number *</label>
+          <input
+            type="text"
+            value={form.account_no}
+            onChange={set('account_no')}
+            placeholder="Enter your 11-18 digit account number"
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+          />
+          <p className="text-xs text-slate-600 mt-1">Your account number will be verified securely and masked afterward.</p>
+        </div>
+
+        {/* Branch Name */}
+        <div>
+          <label className="block text-sm font-semibold text-slate-900 mb-1.5">Branch Name</label>
+          <input
+            type="text"
+            value={form.branch_name}
+            onChange={set('branch_name')}
+            placeholder="Auto-filled from IFSC or enter manually"
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+
+        {/* Name on Cheque */}
+        <div>
+          <label className="block text-sm font-semibold text-slate-900 mb-1.5">Name as on Cheque</label>
+          <input
+            type="text"
+            value={form.name_on_cheque}
+            onChange={set('name_on_cheque')}
+            placeholder="Extracted from cheque or enter manually"
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+      </div>
+
+      {/* Verification Section */}
+      <div className="border-t pt-6">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
           <button
             type="button"
             disabled={!form.account_no || !form.ifsc_code || verifying}
             onClick={doVerify}
-            className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50 hover:bg-purple-700"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold text-sm hover:bg-blue-700 disabled:opacity-50 transition-colors"
           >
-            {verifying ? <Loader2 size={13} className="animate-spin" /> : null}
+            {verifying && <Loader2 className="h-4 w-4 animate-spin" />}
             Verify Bank Account
           </button>
           {bankCheck && <VerificationBadge status={bankCheck.status} summary={bankCheck.result_summary} />}
         </div>
       </div>
 
-      <InlineDocUpload token={token} docType="cancelled_cheque" label="Upload Cancelled Cheque / Passbook front page *" />
-
-      <div>
-        <label className={lbl}>Name as on Cheque</label>
-        <input
-          className={inp}
-          value={form.name_on_cheque}
-          onChange={set('name_on_cheque')}
-          placeholder="Enter name exactly as printed on cheque"
-        />
-        <p className="text-xs text-blue-600 mt-1 bg-blue-50 p-2 rounded-lg border border-blue-100">
-          If the name doesn't match your account holder name, it will be reviewed by Payroll HO — your onboarding will not be blocked.
-        </p>
+      {/* Document Upload */}
+      <div className="border-t pt-6">
+        <InlineDocUpload token={token} docType="cancelled_cheque" label="Upload Cancelled Cheque / Passbook Front Page *" />
       </div>
     </div>
   );

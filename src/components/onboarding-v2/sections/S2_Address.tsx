@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Loader2, AlertCircle, Info } from 'lucide-react';
 import { useAutoSave } from '../useAutoSave';
 import { VerificationBadge } from '../VerificationBadge';
 import type { BgvCheck } from '../useOnboardingV2';
+import { hrmsApi } from '@/lib/hrmsApi';
 
 interface S2Props {
   token: string;
@@ -22,14 +23,26 @@ export function S2_Address({ token: _token, initialData, saveSection, verifyBgv,
   const [dlNo, setDlNo] = useState('');
   const [voterNo, setVoterNo] = useState('');
   const [verifying, setVerifying] = useState<'dl' | 'voter' | null>(null);
+  const [states, setStates] = useState<string[]>([]);
+  const [addressProofTypes, setAddressProofTypes] = useState<any[]>([]);
+  const initializedRef = useRef(false);
+
+  // Load master data
+  useEffect(() => {
+    Promise.all([
+      hrmsApi.get('/api/onboarding/data/states').then(r => setStates(r.data ?? [])).catch(() => {}),
+      hrmsApi.get('/api/onboarding/data/address-proof-types').then(r => setAddressProofTypes(r.data ?? [])).catch(() => {}),
+    ]);
+  }, []);
 
   useEffect(() => {
-    if (initialData) {
+    if (initialData && !initializedRef.current) {
+      initializedRef.current = true;
       setForm(prev => ({ ...prev, ...Object.fromEntries(Object.entries(initialData).filter(([,v]) => v != null).map(([k,v]) => [k, String(v)])) }));
     }
   }, [initialData]);
 
-  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const val = e.target.value;
     setForm(prev => {
       const next = { ...prev, [k]: val };
@@ -59,6 +72,7 @@ export function S2_Address({ token: _token, initialData, saveSection, verifyBgv,
   useAutoSave(payload => saveSection('employee-details', payload), form);
 
   const doVerify = async (docType: 'driving_license' | 'voter_id', docNo: string) => {
+    if (!docNo.trim()) return;
     setVerifying(docType === 'driving_license' ? 'dl' : 'voter');
     try {
       await verifyBgv('verify/address-doc', { docType, documentNumber: docNo });
@@ -67,91 +81,198 @@ export function S2_Address({ token: _token, initialData, saveSection, verifyBgv,
     }
   };
 
-  const lbl = 'block text-xs font-semibold text-gray-600 mb-1';
-  const inp = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400';
-
   return (
-    <div className="space-y-6">
-      <h2 className="text-lg font-bold text-gray-800">Address Details</h2>
+    <div className="space-y-8">
+      <div>
+        <h2 className="text-2xl font-bold text-slate-900">Address & Address Proof</h2>
+        <p className="text-sm text-slate-600 mt-1">Provide your permanent and current addresses along with proof documents.</p>
+      </div>
 
-      <div className="space-y-3">
-        <h3 className="font-semibold text-gray-700 text-sm">Permanent Address</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="md:col-span-2"><label className={lbl}>Address Line *</label><input className={inp} value={form.permanent_address} onChange={set('permanent_address')} /></div>
-          <div><label className={lbl}>State *</label><input className={inp} value={form.permanent_state} onChange={set('permanent_state')} /></div>
-          <div><label className={lbl}>City *</label><input className={inp} value={form.permanent_city} onChange={set('permanent_city')} /></div>
-          <div><label className={lbl}>PIN Code *</label><input className={inp} value={form.permanent_pincode} onChange={set('permanent_pincode')} maxLength={6} /></div>
+      {/* Permanent Address Section */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <h3 className="text-lg font-semibold text-slate-900">Permanent Address</h3>
+          <span className="inline-block px-2 py-1 bg-slate-100 text-xs font-medium text-slate-700 rounded">Required</span>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <label className="block text-sm font-semibold text-slate-900 mb-1.5">Address Line *</label>
+            <textarea
+              value={form.permanent_address}
+              onChange={set('permanent_address')}
+              placeholder="House No., Street, Building Name"
+              rows={2}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-900 mb-1.5">State *</label>
+            <select
+              value={form.permanent_state}
+              onChange={set('permanent_state')}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
+            >
+              <option value="">Select state</option>
+              {states.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-900 mb-1.5">City *</label>
+            <input
+              type="text"
+              value={form.permanent_city}
+              onChange={set('permanent_city')}
+              placeholder="City name"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-900 mb-1.5">PIN Code *</label>
+            <input
+              type="text"
+              value={form.permanent_pincode}
+              onChange={set('permanent_pincode')}
+              placeholder="6 digits"
+              maxLength={6}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+            />
+          </div>
         </div>
       </div>
 
-      <div className="space-y-3">
-        <div className="flex items-center gap-3">
-          <h3 className="font-semibold text-gray-700 text-sm">Present / Correspondence Address</h3>
-          <label className="flex items-center gap-1.5 text-xs text-purple-600 cursor-pointer">
-            <input type="checkbox" checked={sameAsPermanent} onChange={copyToPermanent} className="accent-purple-600" />
-            Same as permanent
+      {/* Present Address Section */}
+      <div className="space-y-4 pt-6 border-t">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-slate-900">Current / Correspondence Address</h3>
+          <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 hover:text-slate-900 transition-colors">
+            <input type="checkbox" checked={sameAsPermanent} onChange={copyToPermanent} className="accent-blue-600 rounded cursor-pointer" />
+            <span className="font-medium">Same as permanent</span>
           </label>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="md:col-span-2"><label className={lbl}>Address Line *</label><input className={inp} value={form.present_address} onChange={set('present_address')} disabled={sameAsPermanent} /></div>
-          <div><label className={lbl}>State *</label><input className={inp} value={form.present_state} onChange={set('present_state')} disabled={sameAsPermanent} /></div>
-          <div><label className={lbl}>City *</label><input className={inp} value={form.present_city} onChange={set('present_city')} disabled={sameAsPermanent} /></div>
-          <div><label className={lbl}>PIN Code *</label><input className={inp} value={form.present_pincode} onChange={set('present_pincode')} disabled={sameAsPermanent} maxLength={6} /></div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <label className="block text-sm font-semibold text-slate-900 mb-1.5">Address Line *</label>
+            <textarea
+              value={form.present_address}
+              onChange={set('present_address')}
+              disabled={sameAsPermanent}
+              placeholder="House No., Street, Building Name"
+              rows={2}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none disabled:bg-slate-50 disabled:cursor-not-allowed"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-900 mb-1.5">State *</label>
+            <select
+              value={form.present_state}
+              onChange={set('present_state')}
+              disabled={sameAsPermanent}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white disabled:bg-slate-50 disabled:cursor-not-allowed"
+            >
+              <option value="">Select state</option>
+              {states.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-900 mb-1.5">City *</label>
+            <input
+              type="text"
+              value={form.present_city}
+              onChange={set('present_city')}
+              disabled={sameAsPermanent}
+              placeholder="City name"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-slate-50 disabled:cursor-not-allowed"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-900 mb-1.5">PIN Code *</label>
+            <input
+              type="text"
+              value={form.present_pincode}
+              onChange={set('present_pincode')}
+              disabled={sameAsPermanent}
+              placeholder="6 digits"
+              maxLength={6}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono disabled:bg-slate-50 disabled:cursor-not-allowed"
+            />
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label className={lbl}>Work Location Type</label>
-          <select className={inp} value={form.emp_location_type} onChange={set('emp_location_type')}>
-            <option value="">Select</option>
-            <option value="WFO">Work from Office</option>
-            <option value="WFH">Work from Home</option>
-            <option value="Hybrid">Hybrid</option>
-          </select>
-        </div>
-        <div><label className={lbl}>Sub-location</label><input className={inp} value={form.sub_location} onChange={set('sub_location')} placeholder="Floor / Wing / Seat" /></div>
-      </div>
-
-      <hr className="border-gray-100" />
-      <div className="space-y-3">
+      {/* Address Proof Documents */}
+      <div className="space-y-4 pt-6 border-t">
         <div className="flex items-center gap-2">
-          <h3 className="font-semibold text-gray-700 text-sm">Address Proof Verification</h3>
-          {addressDocCheck && <VerificationBadge status={addressDocCheck.status} />}
+          <h3 className="text-lg font-semibold text-slate-900">Address Proof Documents</h3>
+          <span className="inline-block px-2 py-1 bg-blue-100 text-xs font-medium text-blue-700 rounded">BGV Verified</span>
         </div>
-        <p className="text-xs text-gray-500">Verify your address via Driving Licence or Voter ID API. This is non-blocking — you can proceed without verifying.</p>
-        <div className="flex flex-wrap gap-4">
-          <div className="flex items-end gap-2">
-            <div className="flex-1">
-              <label className={lbl}>Driving Licence No.</label>
-              <input className={inp} value={dlNo} onChange={e => setDlNo(e.target.value)} placeholder="DL-1234567890" />
-            </div>
-            <button
-              type="button"
-              disabled={!dlNo || verifying === 'dl'}
-              onClick={() => doVerify('driving_license', dlNo)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-purple-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50 hover:bg-purple-700 whitespace-nowrap"
-            >
-              {verifying === 'dl' ? <Loader2 size={13} className="animate-spin" /> : null}
-              Verify DL
-            </button>
-          </div>
-          <div className="flex items-end gap-2">
-            <div className="flex-1">
-              <label className={lbl}>Voter ID (EPIC) No.</label>
-              <input className={inp} value={voterNo} onChange={e => setVoterNo(e.target.value)} placeholder="ABC1234567" />
-            </div>
-            <button
-              type="button"
-              disabled={!voterNo || verifying === 'voter'}
-              onClick={() => doVerify('voter_id', voterNo)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-purple-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50 hover:bg-purple-700 whitespace-nowrap"
-            >
-              {verifying === 'voter' ? <Loader2 size={13} className="animate-spin" /> : null}
-              Verify Voter ID
-            </button>
+
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 flex gap-3">
+          <Info className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+          <div className="text-sm text-slate-700">
+            <p className="font-medium">Government-accepted proof documents</p>
+            <p className="text-slate-600 mt-1">Upload any one of: Driving License, Voter ID, Passport, or Aadhaar. We'll verify using BGV APIs.</p>
           </div>
         </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          {/* Driving License */}
+          <div>
+            <label className="block text-sm font-semibold text-slate-900 mb-1.5">Driving License (DL) Number</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={dlNo}
+                onChange={(e) => setDlNo(e.target.value)}
+                placeholder="e.g., DL0199900512345"
+                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <button
+                type="button"
+                onClick={() => doVerify('driving_license', dlNo)}
+                disabled={!dlNo.trim() || verifying === 'dl'}
+                className="px-3 py-2 bg-slate-200 hover:bg-slate-300 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+              >
+                {verifying === 'dl' ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Verify'}
+              </button>
+            </div>
+          </div>
+
+          {/* Voter ID */}
+          <div>
+            <label className="block text-sm font-semibold text-slate-900 mb-1.5">Voter ID (EPIC) Number</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={voterNo}
+                onChange={(e) => setVoterNo(e.target.value)}
+                placeholder="e.g., 123456789012"
+                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <button
+                type="button"
+                onClick={() => doVerify('voter_id', voterNo)}
+                disabled={!voterNo.trim() || verifying === 'voter'}
+                className="px-3 py-2 bg-slate-200 hover:bg-slate-300 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+              >
+                {verifying === 'voter' ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Verify'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {addressDocCheck && (
+          <div className="mt-3">
+            <VerificationBadge status={addressDocCheck.status} summary={addressDocCheck.result_summary} />
+          </div>
+        )}
       </div>
     </div>
   );

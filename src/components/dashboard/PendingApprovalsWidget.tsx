@@ -52,7 +52,7 @@ export function PendingApprovalsWidget() {
                   </p>
                 </div>
                 <span className="text-xs text-muted-foreground whitespace-nowrap ml-2">
-                  {request.start_date ? format(new Date(normalizeDate(request.start_date)), "MMM d") : "—"}
+                  {format(new Date(normalizeDate(request.start_date)), "MMM d")}
                 </span>
               </div>
             ))}

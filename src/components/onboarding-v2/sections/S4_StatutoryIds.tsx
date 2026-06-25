@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAutoSave } from '../useAutoSave';
 
 interface S4Props {
@@ -13,8 +13,11 @@ export function S4_StatutoryIds({ token: _token, initialData, saveSection }: S4P
     esic_number: '', pf_eligible: '', esi_eligible: '',
   });
 
+  const initializedRef = useRef(false);
+
   useEffect(() => {
-    if (initialData) {
+    if (initialData && !initializedRef.current) {
+      initializedRef.current = true;
       setForm(prev => ({ ...prev, ...Object.fromEntries(Object.entries(initialData).filter(([,v]) => v != null).map(([k,v]) => [k, String(v)])) }));
     }
   }, [initialData]);

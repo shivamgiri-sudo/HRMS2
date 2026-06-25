@@ -169,9 +169,8 @@ export interface PendingCandidate {
 }
 
 export async function getMyPendingCandidates(recruiterName?: string): Promise<PendingCandidate[]> {
-  const params: unknown[] = [];
-  const recruiterClause = recruiterName ? "AND recruiter_assigned_name = ?" : "";
-  if (recruiterName) params.push(recruiterName);
+  if (!recruiterName) return [];
+  const params: unknown[] = [recruiterName];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        id,
@@ -188,7 +187,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
        ) AS pending_minutes
      FROM ats_candidate
      WHERE active_status = 1
-       ${recruiterClause}
+       AND recruiter_assigned_name = ?
        AND status = 'Waiting'
      ORDER BY pending_minutes DESC`,
     params
@@ -209,14 +208,17 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
 // ── Submission history ────────────────────────────────────────────────────────
 
 export async function getSubmissionHistory(recruiterCode?: string) {
-  const params: unknown[] = [];
-  const recruiterClause = recruiterCode ? "WHERE s.recruiter_code = ?" : "";
-  if (recruiterCode) params.push(recruiterCode);
+  if (!recruiterCode) return [];
+  const params = [recruiterCode];
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT s.*, c.full_name, c.candidate_code, c.mobile
+    `SELECT s.*, c.full_name, c.candidate_code, c.mobile, c.email,
+            ob.status AS onboarding_status,
+            ob.onboarding_token_expires_at,
+            ob.joining_date AS onboarding_joining_date
      FROM ats_interview_submission s
      JOIN ats_candidate c ON c.id = s.candidate_id
-     ${recruiterClause}
+     LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = s.candidate_id
+     WHERE s.recruiter_code = ?
      ORDER BY s.submitted_at DESC
      LIMIT 200`,
     params
@@ -408,14 +410,18 @@ export async function submitInterviewUpdate(
 
     const effectiveQToken = candidate.q_token ?? input.qToken ?? null;
 
-    // Check for existing submission (upsert)
+    // Check for existing submission (upsert) — q_token may be NULL
     const [existingRows] = await conn.execute(
-      `SELECT id, submitted_at, walkin_end_stage, final_decision
-       FROM ats_interview_submission
-       WHERE candidate_id = ? AND q_token = ?
-       LIMIT 1
-       FOR UPDATE`,
-      [candidate.id, effectiveQToken]
+      effectiveQToken
+        ? `SELECT id, submitted_at, walkin_end_stage, final_decision
+           FROM ats_interview_submission
+           WHERE candidate_id = ? AND q_token = ?
+           LIMIT 1 FOR UPDATE`
+        : `SELECT id, submitted_at, walkin_end_stage, final_decision
+           FROM ats_interview_submission
+           WHERE candidate_id = ? AND q_token IS NULL
+           LIMIT 1 FOR UPDATE`,
+      effectiveQToken ? [candidate.id, effectiveQToken] : [candidate.id]
     );
     const existing = (existingRows as any[])[0] ?? null;
 

@@ -140,6 +140,7 @@ import { employeeCodeGateRouter } from "./modules/ats/employee-code-gate.routes.
 import { payrollHRRouter } from "./modules/ats/payroll-hr.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
+import { onboardingDataRouter } from "./modules/onboarding/onboarding-data.routes.js";
 
 export const app = express();
 
@@ -240,6 +241,7 @@ app.use("/api/audit", auditLogRouter);
 app.use("/api/org", orgRouter);
 app.use("/api/org/events", eventsRouter);
 app.use("/api/org/settings", orgSettingsRouter);
+app.use("/api/onboarding/data", onboardingDataRouter);
 app.use("/api/bulk-upload", bulkUploadRouter);
 app.use("/api/admin/email-templates", emailTemplatesRouter);
 app.use("/api/workflow", workflowRouter);

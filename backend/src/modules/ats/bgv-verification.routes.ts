@@ -27,7 +27,7 @@ import {
   updateVendorResult,
 } from "./bgv-verification.service.js";
 import { overrideNameMatchReview, runNameMatchCheck } from "./bgv.enhanced.service.js";
-import { getBgvProviderAdapter } from "./bgv-provider.adapter.js";
+import { getBgvProviderAdapter, resetBgvProviderAdapterCache } from "./bgv-provider.adapter.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { atsService } from "./ats.service.js";
@@ -419,6 +419,61 @@ router.post("/report/initiate-portal", requireAuth, requireRole("admin", "hr"), 
       providerKey: result.providerKey,
     },
   });
+}));
+
+// ── BGV Provider Config (Super Admin only) ────────────────────────────────────
+
+const BGV_CONFIG_KEYS = [
+  "bgv_provider",
+  "infinity_ai_api_url", "infinity_ai_api_key", "infinity_ai_client_id", "infinity_ai_portal_url",
+  "digio_api_url", "digio_client_id", "digio_client_secret",
+];
+
+router.get("/admin/provider-config", requireAuth, requireRole("admin"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const placeholders = BGV_CONFIG_KEYS.map(() => "?").join(",");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT setting_key, setting_value, label FROM org_settings WHERE setting_key IN (${placeholders})`,
+    BGV_CONFIG_KEYS,
+  );
+  // Mask secrets in response
+  const masked = (rows as RowDataPacket[]).map((r) => ({
+    ...r,
+    setting_value: (r.setting_key as string).includes("key") || (r.setting_key as string).includes("secret")
+      ? (r.setting_value ? "••••••••" : null)
+      : r.setting_value,
+  }));
+  res.json({ success: true, data: masked });
+}));
+
+router.put("/admin/provider-config", requireAuth, requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const updates: Record<string, string | null> = req.body ?? {};
+  const allowedKeys = new Set(BGV_CONFIG_KEYS);
+  const entries = Object.entries(updates).filter(([k]) => allowedKeys.has(k));
+  if (!entries.length) return res.status(400).json({ success: false, message: "No valid keys to update" });
+
+  for (const [key, value] of entries) {
+    // Skip masked placeholder — means user didn't change the secret
+    if (value === "••••••••") continue;
+    const [existing] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM org_settings WHERE setting_key = ? LIMIT 1", [key]
+    );
+    if ((existing as RowDataPacket[]).length) {
+      await db.execute(
+        "UPDATE org_settings SET setting_value = ?, updated_by = ? WHERE setting_key = ?",
+        [value ?? null, req.authUser!.id, key]
+      );
+    } else {
+      await db.execute(
+        "INSERT INTO org_settings (id, setting_key, setting_value, updated_by) VALUES (UUID(), ?, ?, ?)",
+        [key, value ?? null, req.authUser!.id]
+      );
+    }
+  }
+
+  // Reset adapter cache so next call picks up new config
+  resetBgvProviderAdapterCache();
+
+  res.json({ success: true, message: "BGV provider configuration saved. Adapter reinitialized." });
 }));
 
 export default router;

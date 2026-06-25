@@ -750,3 +750,54 @@ export function getBgvProviderAdapter(): BgvProviderAdapter {
 export function resetBgvProviderAdapterCache(): void {
   _adapterCache = null;
 }
+
+// ── DB-config-aware adapter (reads org_settings at runtime) ──────────────────
+// Used when Super Admin updates provider via UI. Bypasses env defaults.
+
+export interface BgvDbConfig {
+  bgv_provider: string;
+  infinity_ai_api_url?: string;
+  infinity_ai_api_key?: string;
+  infinity_ai_client_id?: string;
+  infinity_ai_portal_url?: string;
+  digio_api_url?: string;
+  digio_client_id?: string;
+  digio_client_secret?: string;
+}
+
+export function buildAdapterFromDbConfig(cfg: BgvDbConfig): BgvProviderAdapter {
+  const provider = cfg.bgv_provider ?? "mock";
+  if (provider === "infinity_ai") {
+    if (!cfg.infinity_ai_api_key) throw new Error("Infinity AI API Key not configured in BGV settings.");
+    // Override env temporarily for this adapter instance
+    const savedKey = env.INFINITY_AI_API_KEY;
+    const savedUrl = env.INFINITY_AI_API_URL;
+    const savedClientId = env.INFINITY_AI_CLIENT_ID;
+    const savedPortalUrl = env.INFINITY_AI_PORTAL_URL;
+    (env as any).INFINITY_AI_API_KEY = cfg.infinity_ai_api_key;
+    (env as any).INFINITY_AI_API_URL = cfg.infinity_ai_api_url ?? env.INFINITY_AI_API_URL;
+    (env as any).INFINITY_AI_CLIENT_ID = cfg.infinity_ai_client_id ?? env.INFINITY_AI_CLIENT_ID;
+    (env as any).INFINITY_AI_PORTAL_URL = cfg.infinity_ai_portal_url ?? env.INFINITY_AI_PORTAL_URL;
+    const adapter = new InfinityAiBgvAdapter();
+    (env as any).INFINITY_AI_API_KEY = savedKey;
+    (env as any).INFINITY_AI_API_URL = savedUrl;
+    (env as any).INFINITY_AI_CLIENT_ID = savedClientId;
+    (env as any).INFINITY_AI_PORTAL_URL = savedPortalUrl;
+    return adapter;
+  }
+  if (provider === "digio") {
+    if (!cfg.digio_client_id || !cfg.digio_client_secret) throw new Error("Digio Client ID and Secret not configured in BGV settings.");
+    const savedId = env.DIGIO_CLIENT_ID;
+    const savedSecret = env.DIGIO_CLIENT_SECRET;
+    const savedUrl = env.DIGIO_API_URL;
+    (env as any).DIGIO_CLIENT_ID = cfg.digio_client_id;
+    (env as any).DIGIO_CLIENT_SECRET = cfg.digio_client_secret;
+    (env as any).DIGIO_API_URL = cfg.digio_api_url ?? env.DIGIO_API_URL;
+    const adapter = new DigioBgvAdapter();
+    (env as any).DIGIO_CLIENT_ID = savedId;
+    (env as any).DIGIO_CLIENT_SECRET = savedSecret;
+    (env as any).DIGIO_API_URL = savedUrl;
+    return adapter;
+  }
+  return new MockBgvProviderAdapter();
+}
