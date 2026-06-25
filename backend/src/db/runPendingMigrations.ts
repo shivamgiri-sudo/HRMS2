@@ -220,6 +220,7 @@ const MIGRATION_MANIFEST: string[] = [
   "306_salary_bypass_control.sql",
   "307_fix_blocked_migrations.sql",
   "308_email_templates_bulk_import.sql",
+  "309_super_admin_full_page_access.sql",
   "1000_fix_engagement_schema_columns.sql",
 ];
 
