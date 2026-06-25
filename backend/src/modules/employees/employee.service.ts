@@ -141,15 +141,16 @@ export const employeeService = {
   },
 
   async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } }): Promise<PaginatedResult<Employee>> {
-    const { page, limit, status, processId, branchId, search, scopeFilter } = filters;
+    const { page, limit, status, processId, branchId, departmentId, search, scopeFilter } = filters;
     const offset = (page - 1) * limit;
-    const conds: string[] = ["active_status = 1"];
+    const conds: string[] = ["e.active_status = 1"];
     const params: unknown[] = [];
 
-    if (status)    { conds.push("employment_status = ?"); params.push(status); }
-    if (processId) { conds.push("process_id = ?");        params.push(processId); }
-    if (branchId)  { conds.push("branch_id = ?");         params.push(branchId); }
-    if (search)    { conds.push("(full_name LIKE ? OR employee_code LIKE ? OR email LIKE ? OR official_email LIKE ?)"); params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`); }
+    if (status)       { conds.push("e.employment_status = ?"); params.push(status); }
+    if (processId)    { conds.push("e.process_id = ?");        params.push(processId); }
+    if (branchId)     { conds.push("e.branch_id = ?");         params.push(branchId); }
+    if (departmentId) { conds.push("e.department_id = ?");     params.push(departmentId); }
+    if (search)    { conds.push("(e.full_name LIKE ? OR e.employee_code LIKE ? OR e.email LIKE ? OR e.official_email LIKE ?)"); params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`); }
 
     // Apply scope filter from middleware
     if (scopeFilter?.sql) {
@@ -164,11 +165,26 @@ export const employeeService = {
 
     // Use string interpolation for LIMIT/OFFSET to avoid parameter binding issues
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT *, COALESCE(NULLIF(TRIM(official_email),''), email) AS email FROM employees ${where} ORDER BY employee_code ASC LIMIT ${limit} OFFSET ${offset}`,
+      `SELECT e.*,
+              COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS email,
+              desig.designation_name,
+              dept.dept_name        AS department_name,
+              cc.cost_centre_name,
+              pm.process_name,
+              bm.branch_name,
+              CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name,'')) AS reporting_manager_name
+       FROM employees e
+       LEFT JOIN designation_master  desig ON desig.id = e.designation_id
+       LEFT JOIN department_master   dept  ON dept.id  = e.department_id
+       LEFT JOIN cost_centre_master  cc    ON cc.id    = e.cost_centre_id
+       LEFT JOIN process_master      pm    ON pm.id    = e.process_id
+       LEFT JOIN branch_master       bm    ON bm.id    = e.branch_id
+       LEFT JOIN employees           mgr   ON mgr.id   = COALESCE(e.reporting_manager_id, e.manager_id)
+       ${where} ORDER BY e.employee_code ASC LIMIT ${limit} OFFSET ${offset}`,
       params
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM employees ${where}`, params
+      `SELECT COUNT(*) AS total FROM employees e ${where}`, params
     );
     return { data: rows as Employee[], total: (countRows as any)[0]?.total ?? 0, page, limit };
   },
