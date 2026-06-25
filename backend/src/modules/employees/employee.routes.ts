@@ -25,7 +25,7 @@ router.get("/me", h(async (req: any, res: any) => {
             d.designation_name  AS designation,
             dept.dept_name      AS department_name,
             b.branch_name,
-            b.display_name      AS branch_display_name,
+            b.branch_name       AS branch_display_name,
             CONCAT(mgr.first_name, ' ', mgr.last_name) AS reporting_manager_name
      FROM employees e
      LEFT JOIN designation_master d    ON d.id    = e.designation_id

@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 
 const MAX_BYTES = 3 * 1024 * 1024; // 3 MB
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const API_BASE = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_HRMS_API_URL ?? "http://localhost:5055").replace(/\/$/, "");
+const API_BASE = (import.meta.env.VITE_HRMS_API_URL || import.meta.env.VITE_API_URL || "http://localhost:5055").replace(/\/$/, "");
 
 interface PhotoUploadProps {
   /** Current avatar URL (from DB) */
