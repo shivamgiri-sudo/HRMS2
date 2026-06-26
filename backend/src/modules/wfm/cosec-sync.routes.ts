@@ -77,7 +77,7 @@ cosecSyncRouter.get(
     const [bioRows, attRows, unmappedRows, watermarkRows] = await Promise.all([
       db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS total_bio_logs,
-                MAX(attendance_date) AS latest_bio_date
+                MAX(punch_date) AS latest_bio_date
            FROM biometric_attendance_log`
       ),
       db.execute<RowDataPacket[]>(
