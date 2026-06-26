@@ -13,8 +13,12 @@ import {
   manualReview,
   providerCallback,
   saveBgvConsentByToken,
+  sendAadhaarOtpByToken,
+  sendAadhaarOtpForCandidate,
   startDigilockerByToken,
   verifyAadhaarOfflineByToken,
+  verifyAadhaarOtpByToken,
+  verifyAadhaarOtpForCandidate,
   verifyAddressDocByToken,
   verifyBankByToken,
   verifyBankForCandidate,
@@ -25,6 +29,7 @@ import {
   waiveCheck,
   dispatchToVendor,
   updateVendorResult,
+  getEmployeeBgvStatus,
 } from "./bgv-verification.service.js";
 import { overrideNameMatchReview, runNameMatchCheck } from "./bgv.enhanced.service.js";
 import { getBgvProviderAdapter, resetBgvProviderAdapterCache } from "./bgv-provider.adapter.js";
@@ -474,6 +479,64 @@ router.put("/admin/provider-config", requireAuth, requireRole("admin"), h(async 
   resetBgvProviderAdapterCache();
 
   res.json({ success: true, message: "BGV provider configuration saved. Adapter reinitialized." });
+}));
+
+// ── Aadhaar OTP flow (candidate token-based) ─────────────────────────────────
+
+router.post("/verify/aadhaar-otp/send", h(async (req, res) => {
+  const token = String(req.headers["x-bgv-token"] ?? req.query.token ?? "");
+  if (!token) return res.status(401).json({ success: false, message: "BGV token required" });
+  const result = await sendAadhaarOtpByToken(token, req.body, { ip: req.ip, userAgent: req.headers["user-agent"] });
+  return res.json(result);
+}));
+
+router.post("/verify/aadhaar-otp/verify", h(async (req, res) => {
+  const token = String(req.headers["x-bgv-token"] ?? req.query.token ?? "");
+  if (!token) return res.status(401).json({ success: false, message: "BGV token required" });
+  const result = await verifyAadhaarOtpByToken(token, req.body, { ip: req.ip, userAgent: req.headers["user-agent"] });
+  return res.json(result);
+}));
+
+// ── Aadhaar OTP flow (HR/admin scoped) ───────────────────────────────────────
+
+router.post("/candidates/:candidateId/verify/aadhaar-otp/send", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+  const result = await sendAadhaarOtpForCandidate(
+    req.params.candidateId,
+    req.body,
+    { actorType: "hr", actorId: req.authUser?.id, ip: req.ip }
+  );
+  return res.json(result);
+}));
+
+router.post("/candidates/:candidateId/verify/aadhaar-otp/verify", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+  const result = await verifyAadhaarOtpForCandidate(
+    req.params.candidateId,
+    req.body,
+    { actorType: "hr", actorId: req.authUser?.id, ip: req.ip }
+  );
+  return res.json(result);
+}));
+
+// ── Employee BGV status (for employee self-view and employer dashboard) ───────
+
+router.get("/employee/:employeeId", requireAuth, requireRole("admin", "hr", "payroll", "super_admin"), h(async (req: AuthenticatedRequest, res) => {
+  const result = await getEmployeeBgvStatus(req.params.employeeId);
+  return res.json(result);
+}));
+
+// Employee self-view (own BGV status only)
+router.get("/employee/me", requireAuth, h(async (req: AuthenticatedRequest, res) => {
+  if (!req.authUser?.id) return res.status(401).json({ success: false, message: "Unauthenticated" });
+  // Look up employee by user_id
+  const { db } = await import("../../db/mysql.js");
+  const [empRows] = await db.execute(
+    `SELECT id FROM employees WHERE user_id = ? LIMIT 1`,
+    [req.authUser.id]
+  );
+  const emp = (empRows as { id: string }[])[0];
+  if (!emp) return res.status(404).json({ success: false, message: "Employee record not found" });
+  const result = await getEmployeeBgvStatus(emp.id);
+  return res.json(result);
 }));
 
 export default router;

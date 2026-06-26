@@ -153,7 +153,8 @@ export async function getAuditLogExtended(req: any, res: any): Promise<void> {
   );
   const total = (countRows[0] as any)?.total ?? 0;
 
-  // Fetch rows
+  // Fetch rows — LIMIT/OFFSET must be passed as separate integer literals,
+  // not appended to a string-param array (mysql2 rejects mixed param types)
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT sal.id, sal.actor_user_id, sal.action_type, sal.module_key,
             sal.entity_type, sal.entity_id, sal.employee_id,
@@ -166,8 +167,8 @@ export async function getAuditLogExtended(req: any, res: any): Promise<void> {
        LEFT JOIN auth_user au ON au.id = sal.actor_user_id
        ${where}
       ORDER BY sal.acted_at DESC
-      LIMIT ? OFFSET ?`,
-    [...params, limit, offset],
+      LIMIT ${limit} OFFSET ${offset}`,
+    params,
   );
 
   return res.json({
