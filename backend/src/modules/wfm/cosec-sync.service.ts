@@ -287,17 +287,18 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
 
   await db.execute(
     `INSERT INTO biometric_attendance_log
-       (id, employee_id, cosec_user_id, punch_date, first_punch_in, last_punch_out,
+       (id, employee_id, employee_code, cosec_user_id, punch_date, first_punch_in, last_punch_out,
         total_punches, raw_minutes, source_system, migrated_at)
-     VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
      ON DUPLICATE KEY UPDATE
+       employee_code = VALUES(employee_code),
        cosec_user_id = VALUES(cosec_user_id),
        first_punch_in = VALUES(first_punch_in),
        last_punch_out = VALUES(last_punch_out),
        total_punches = VALUES(total_punches),
        raw_minutes = VALUES(raw_minutes),
        migrated_at = NOW()`,
-    [employee.employee_id, group.cosecUserId, group.punchDate, group.firstPunch, group.lastPunch, group.totalPunches, rawMinutes, group.sourceSystem],
+    [employee.employee_id, employee.employee_code, group.cosecUserId, group.punchDate, group.firstPunch, group.lastPunch, group.totalPunches, rawMinutes, group.sourceSystem],
   );
 
   await db.execute(
