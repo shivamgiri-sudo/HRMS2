@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getBgvProviderAdapter, type AddressDocInput, type EducationVerificationInput } from "./bgv-provider.adapter.js";
+import { getBgvProviderAdapter, roughNameMatchScore, type AddressDocInput, type EducationVerificationInput } from "./bgv-provider.adapter.js";
 import { validateOnboardingToken } from "./onboarding-full.service.js";
 
 const hashValue = (value: unknown) => {
@@ -595,6 +595,158 @@ export async function listVendorDispatches(candidateId: string) {
     [candidateId]
   );
   return rows;
+}
+
+// ── Aadhaar OTP flow (Befisc two-step) ───────────────────────────────────────
+
+export async function sendAadhaarOtpByToken(token: string, input: { aadhaarNo?: string }, meta?: { ip?: string; userAgent?: string }) {
+  const tokenData = await validateOnboardingToken(token);
+  return sendAadhaarOtpForCandidate(tokenData.candidate_id as string, input, { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent });
+}
+
+export async function sendAadhaarOtpForCandidate(
+  candidateId: string,
+  input: { aadhaarNo?: string },
+  meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }
+) {
+  await ensureConsent(candidateId);
+  const aadhaarNo = String(input.aadhaarNo ?? "").replace(/\s/g, "");
+  if (!/^\d{12}$/.test(aadhaarNo)) throw Object.assign(new Error("Aadhaar number must be exactly 12 digits"), { statusCode: 400 });
+
+  const adapter = getBgvProviderAdapter();
+  if (!("sendAadhaarOtp" in adapter)) {
+    throw Object.assign(new Error("Aadhaar OTP flow requires BGV_PROVIDER=befisc_luckpay"), { statusCode: 400 });
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await (adapter as any).sendAadhaarOtp(aadhaarNo) as { referenceId: string; raw: Record<string, unknown> };
+
+  // Store OTP session
+  await db.execute(
+    `INSERT INTO candidate_aadhaar_otp_session
+       (id, candidate_id, aadhaar_masked, reference_id, status, provider_key, raw_send_json, expires_at)
+     VALUES (?, ?, ?, ?, 'otp_sent', 'befisc', ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE))`,
+    [randomUUID(), candidateId, `XXXXXXXX${aadhaarNo.slice(-4)}`, result.referenceId, JSON.stringify(result.raw)]
+  );
+
+  await logEvent(candidateId, "AADHAAR_OTP_SENT", { referenceId: result.referenceId }, null, meta);
+  return { success: true, referenceId: result.referenceId, maskedAadhaar: `XXXXXXXX${aadhaarNo.slice(-4)}` };
+}
+
+export async function verifyAadhaarOtpByToken(
+  token: string,
+  input: { aadhaarNo?: string; otp?: string; referenceId?: string },
+  meta?: { ip?: string; userAgent?: string }
+) {
+  const tokenData = await validateOnboardingToken(token);
+  return verifyAadhaarOtpForCandidate(tokenData.candidate_id as string, input, { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent });
+}
+
+export async function verifyAadhaarOtpForCandidate(
+  candidateId: string,
+  input: { aadhaarNo?: string; otp?: string; referenceId?: string },
+  meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }
+) {
+  await ensureConsent(candidateId);
+  const aadhaarNo = String(input.aadhaarNo ?? "").replace(/\s/g, "");
+  const otp = String(input.otp ?? "").trim();
+  const referenceId = String(input.referenceId ?? "").trim();
+  if (!aadhaarNo || !otp || !referenceId) throw Object.assign(new Error("aadhaarNo, otp and referenceId are required"), { statusCode: 400 });
+
+  // Validate session exists and is not expired
+  const [sessionRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM candidate_aadhaar_otp_session
+      WHERE candidate_id = ? AND reference_id = ? AND status = 'otp_sent' AND expires_at > NOW()
+      LIMIT 1`,
+    [candidateId, referenceId]
+  );
+  if (!sessionRows.length) throw Object.assign(new Error("OTP session not found or expired. Please re-send OTP."), { statusCode: 400 });
+
+  const adapter = getBgvProviderAdapter();
+  if (!("verifyAadhaarOtp" in adapter)) {
+    throw Object.assign(new Error("Aadhaar OTP flow requires BGV_PROVIDER=befisc_luckpay"), { statusCode: 400 });
+  }
+  const candidate = await getCandidateIdentity(candidateId);
+  const started = Date.now();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await (adapter as any).verifyAadhaarOtp(aadhaarNo, otp, referenceId) as import("./bgv-provider.adapter.js").AadhaarOtpVerifyResult;
+
+  const checkId = await createOrUpdateCheck(candidateId, "aadhaar", result.status, {
+    providerKey: result.providerKey,
+    providerRequestId: result.providerRequestId,
+    providerReferenceId: result.providerReferenceId,
+    matchScore: roughNameMatchScore(candidate.employee_name ?? candidate.full_name, result.name),
+    matchedName: result.name,
+    matchedDob: result.dob,
+    resultSummary: result.resultSummary,
+    resultJson: result.raw,
+    riskFlags: result.riskFlags,
+  });
+
+  await db.execute(
+    `INSERT INTO candidate_bgv_api_request_log
+       (id, candidate_id, check_id, provider_key, endpoint_key, request_ref, request_payload_hash, response_status_code, response_payload, duration_ms, success_flag)
+     VALUES (?, ?, ?, ?, 'AADHAAR_OTP_VERIFY', ?, ?, 200, ?, ?, ?)`,
+    [randomUUID(), candidateId, checkId, result.providerKey, referenceId, hashValue(aadhaarNo), JSON.stringify(result.raw ?? result), Date.now() - started, result.status === "verified" ? 1 : 0]
+  );
+
+  // Update session status
+  await db.execute(
+    `UPDATE candidate_aadhaar_otp_session SET status = ?, raw_verify_json = ? WHERE candidate_id = ? AND reference_id = ?`,
+    [result.status === "verified" ? "verified" : "failed", JSON.stringify(result.raw), candidateId, referenceId]
+  );
+
+  // Store name returned from Aadhaar on the profile if verified
+  if (result.status === "verified" && result.name) {
+    await db.execute(
+      `UPDATE candidate_onboarding_profile SET aadhaar_number_masked = ?, aadhaar_number_hash = ?, updated_at = NOW() WHERE candidate_id = ?`,
+      [`XXXXXXXX${aadhaarNo.slice(-4)}`, hashValue(aadhaarNo), candidateId]
+    );
+    if (result.uan) {
+      await db.execute(
+        `UPDATE candidate_onboarding_profile SET uan_number = ? WHERE candidate_id = ? AND (uan_number IS NULL OR uan_number = '')`,
+        [result.uan, candidateId]
+      );
+    }
+  }
+
+  await logEvent(candidateId, "AADHAAR_OTP_VERIFIED", result, checkId, meta);
+  return { ...result, checkId };
+}
+
+// ── Employee BGV status (for employee self-view) ──────────────────────────────
+
+export async function getEmployeeBgvStatus(employeeId: string) {
+  // Find candidate linked to this employee
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.candidate_id, e.employee_name, e.branch_id
+       FROM employees e
+      WHERE e.id = ? OR e.user_id = ?
+      LIMIT 1`,
+    [employeeId, employeeId]
+  );
+  if (!empRows.length) throw Object.assign(new Error("Employee not found"), { statusCode: 404 });
+  const emp = empRows[0];
+  if (!emp.candidate_id) {
+    return { employeeId, candidateId: null, status: "no_bgv_record", message: "No BGV record linked to this employee.", checks: [], score: 0, report: null };
+  }
+
+  const status = await getBgvStatusForCandidate(emp.candidate_id as string);
+
+  // Fetch the HR-facing BGV report (verdict + checklist)
+  const [reportRows] = await db.execute<RowDataPacket[]>(
+    `SELECT overall_verdict, report_date, hr_comments, aadhaar_status, pan_status, bank_status,
+            education_status, employment_status, court_status, locked_at
+       FROM candidate_bgv_report WHERE candidate_id = ? LIMIT 1`,
+    [emp.candidate_id]
+  );
+
+  return {
+    employeeId,
+    candidateId: emp.candidate_id,
+    employeeName: emp.employee_name,
+    ...status,
+    report: reportRows[0] ?? null,
+  };
 }
 
 export async function listBgvQueueScoped(status: string | undefined, scopeClause: { sql: string; params: unknown[] }) {

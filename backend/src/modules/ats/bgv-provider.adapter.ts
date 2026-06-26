@@ -724,6 +724,316 @@ export class DigioBgvAdapter implements BgvProviderAdapter {
   }
 }
 
+// ── Befisc + Luckpay + Crimescan adapter ─────────────────────────────────────
+// Aadhaar: Befisc (two-step OTP)  PAN: Luckpay  Court: Crimescan
+// Bank penny-drop: Luckpay
+
+export interface AadhaarOtpSendResult {
+  referenceId: string;
+  raw: Record<string, unknown>;
+}
+
+export interface AadhaarOtpVerifyResult extends VerificationResult {
+  name?: string | null;
+  dob?: string | null;
+  gender?: string | null;
+  address?: string | null;
+  uan?: string | null;
+}
+
+export class BefiscLuckpayCrimescanAdapter implements BgvProviderAdapter {
+  readonly providerKey = "befisc_luckpay";
+
+  // ── Internal HTTP helpers ──────────────────────────────────────────────────
+
+  private get befiscHeaders() {
+    if (!env.BEFISC_API_KEY) throw new Error("BEFISC_API_KEY not configured");
+    return { authkey: env.BEFISC_API_KEY, "Content-Type": "application/json" };
+  }
+
+  private get crimescanHeaders() {
+    if (!env.CRIMESCAN_API_KEY) throw new Error("CRIMESCAN_API_KEY not configured");
+    return { Authorization: `Bearer ${env.CRIMESCAN_API_KEY}`, "Content-Type": "application/json" };
+  }
+
+  private async getLuckpayToken(): Promise<{ token: string; clientId: string }> {
+    if (!env.LUCKPAY_BASIC_TOKEN || !env.LUCKPAY_CLIENT_ID) {
+      throw new Error("LUCKPAY_BASIC_TOKEN and LUCKPAY_CLIENT_ID not configured");
+    }
+    const res = await axios.post(
+      "https://api-banking.luckpay.in/apibanking/api/v1/auth/token",
+      {},
+      { headers: { Authorization: `Basic ${env.LUCKPAY_BASIC_TOKEN}`, "Content-Type": "application/json" }, timeout: 15_000 }
+    );
+    const token = String(res.data?.access_token ?? res.data?.token ?? "");
+    if (!token) throw new Error("Luckpay: failed to get access token");
+    return { token, clientId: env.LUCKPAY_CLIENT_ID };
+  }
+
+  // ── Aadhaar: two-step OTP (exposed separately as well) ────────────────────
+
+  async sendAadhaarOtp(aadhaarNo: string): Promise<AadhaarOtpSendResult> {
+    const res = await axios.post(
+      "https://aadhaar-xml-send-otp.befisc.com/",
+      { aadharNo: aadhaarNo },
+      { headers: this.befiscHeaders, timeout: 20_000 }
+    );
+    const data = res.data ?? {};
+    const referenceId = String(data.referenceId ?? data.reference_id ?? data.ref_id ?? "");
+    if (!referenceId) throw new Error("Befisc: no referenceId in OTP send response");
+    return { referenceId, raw: data };
+  }
+
+  async verifyAadhaarOtp(aadhaarNo: string, otp: string, referenceId: string): Promise<AadhaarOtpVerifyResult> {
+    const requestId = randomUUID();
+    const res = await axios.post(
+      "https://aadhaar-xml-download.befisc.com/",
+      { aadharNo: aadhaarNo, otp, referenceId },
+      { headers: this.befiscHeaders, timeout: 25_000 }
+    );
+    const data = res.data ?? {};
+    const success = data.status === "1" || data.success === true || data.verified === true ||
+      String(data.code ?? "").startsWith("2");
+    const name = data.name ?? data.full_name ?? null;
+    return {
+      status: success ? "verified" : "failed",
+      providerKey: this.providerKey,
+      providerRequestId: requestId,
+      providerReferenceId: referenceId,
+      matchScore: null,
+      matchedName: name,
+      matchedDob: data.dob ?? data.date_of_birth ?? null,
+      resultSummary: success ? "Aadhaar OTP verified via Befisc" : (data.message ?? "Aadhaar OTP verification failed"),
+      riskFlags: success ? [] : ["AADHAAR_OTP_FAILED"],
+      name,
+      dob: data.dob ?? null,
+      gender: data.gender ?? null,
+      address: data.address ?? data.permanent_address ?? null,
+      uan: data.uan ?? null,
+      raw: data,
+    };
+  }
+
+  // ── BgvProviderAdapter interface ──────────────────────────────────────────
+
+  async verifyPan(input: PanVerificationInput): Promise<VerificationResult> {
+    const requestId = randomUUID();
+    const { token, clientId } = await this.getLuckpayToken();
+    const txnId = randomUUID().replace(/-/g, "").slice(0, 12);
+    const res = await axios.post(
+      "https://api-banking.luckpay.in/apibanking/api/v1/verifyPan",
+      { clientTransactionId: txnId, idNumber: input.panNumber.trim().toUpperCase(), mobileNumber: "9999999999" },
+      {
+        headers: { Authorization: clientId, "X-Access-Token": `Bearer ${token}`, "Content-Type": "application/json" },
+        timeout: 20_000,
+      }
+    );
+    const d = res.data ?? {};
+    const data = d.data ?? d;
+    const success = (String(d.code ?? "") === "200" || String(d.status ?? "").toLowerCase() === "success") &&
+      String(data.status ?? "").toUpperCase() === "SUCCESS";
+    const panName = data.name ?? data.pan_name ?? data.full_name ?? null;
+    const score = roughNameMatchScore(input.candidateName, panName);
+    return {
+      status: success ? (score >= 60 ? "verified" : "mismatch") : "failed",
+      providerKey: this.providerKey,
+      providerRequestId: requestId,
+      providerReferenceId: String(data.transactionId ?? txnId),
+      matchScore: score,
+      matchedName: panName,
+      matchedDob: data.dob ?? null,
+      resultSummary: success ? `PAN verified via Luckpay. Name match: ${score}%` : (d.message ?? "PAN verification failed"),
+      riskFlags: success && score >= 60 ? [] : success ? ["PAN_NAME_MISMATCH"] : ["PAN_VERIFICATION_FAILED"],
+      raw: d,
+    };
+  }
+
+  async verifyBank(input: BankVerificationInput): Promise<VerificationResult> {
+    const requestId = randomUUID();
+    const { token, clientId } = await this.getLuckpayToken();
+    const txnId = randomUUID().replace(/-/g, "").slice(0, 12);
+    const res = await axios.post(
+      "https://api-banking.luckpay.in/apibanking/api/v1/verifyPennyDrop",
+      {
+        clientTransactionId: txnId,
+        customerAccountNumber: input.accountNo.replace(/\s/g, ""),
+        customerAccountName: input.accountHolderName ?? input.candidateName ?? "",
+        customerIfscCode: input.ifscCode.trim().toUpperCase(),
+        verificationMode: "PENNY_DROP",
+      },
+      {
+        headers: { Authorization: clientId, "X-Access-Token": `Bearer ${token}`, "Content-Type": "application/json" },
+        timeout: 30_000,
+      }
+    );
+    const d = res.data ?? {};
+    const details = d.data?.details ?? d.details ?? d.data ?? {};
+    const verified = details.verified === true || String(details.validationMode ?? "").toUpperCase() === "SUCCESS";
+    const returnedName = details.beneficiaryNameWithBank ?? details.beneficiaryName ?? null;
+    const score = roughNameMatchScore(input.accountHolderName ?? input.candidateName, returnedName);
+    const fuzzyOk = (details.fuzzyMatchResult ?? "").toUpperCase() === "MATCH" || (details.fuzzyMatchScore ?? 0) >= 60;
+    return {
+      status: verified ? (fuzzyOk ? "verified" : "mismatch") : "failed",
+      providerKey: this.providerKey,
+      providerRequestId: requestId,
+      providerReferenceId: String(d.data?.transactionId ?? txnId),
+      matchScore: details.fuzzyMatchScore ?? score,
+      matchedName: returnedName,
+      resultSummary: verified
+        ? `Bank account verified. Fuzzy match: ${details.fuzzyMatchResult ?? score + "%"}`
+        : (d.message ?? "Bank verification failed"),
+      riskFlags: verified && fuzzyOk ? [] : verified ? ["BANK_NAME_MISMATCH"] : ["BANK_PENNY_DROP_FAILED"],
+      raw: d,
+    };
+  }
+
+  async verifyAadhaarOffline(input: AadhaarOfflineInput): Promise<VerificationResult> {
+    // Offline = document-only review. Live Aadhaar uses OTP flow (sendAadhaarOtp/verifyAadhaarOtp).
+    return {
+      status: input.documentId ? "manual_review" : "failed",
+      providerKey: this.providerKey,
+      providerRequestId: randomUUID(),
+      providerReferenceId: `BEFISC-OFFLINE-${Date.now()}`,
+      matchScore: input.documentId ? 50 : 0,
+      matchedName: input.candidateName ?? null,
+      resultSummary: input.documentId
+        ? "Aadhaar document uploaded. Use Aadhaar OTP flow for live verification via Befisc."
+        : "Aadhaar document missing.",
+      riskFlags: input.documentId ? ["AADHAAR_MANUAL_REVIEW"] : ["AADHAAR_DOCUMENT_MISSING"],
+      raw: { mode: "offline_doc_only" },
+    };
+  }
+
+  async verifyAddressDoc(input: AddressDocInput): Promise<VerificationResult> {
+    // Befisc/Luckpay do not offer DL/Voter ID check — route to manual review
+    return {
+      status: "manual_review",
+      providerKey: this.providerKey,
+      providerRequestId: randomUUID(),
+      providerReferenceId: `BLC-ADDR-${Date.now()}`,
+      matchScore: 50,
+      matchedName: input.candidateName ?? null,
+      resultSummary: `${input.docType} uploaded. Address doc verification is manual for befisc_luckpay provider.`,
+      riskFlags: ["ADDRESS_DOC_MANUAL_REVIEW"],
+      raw: { docType: input.docType },
+    };
+  }
+
+  async verifyEducation(input: EducationVerificationInput): Promise<VerificationResult> {
+    return {
+      status: "manual_review",
+      providerKey: this.providerKey,
+      providerRequestId: randomUUID(),
+      providerReferenceId: `BLC-EDU-${Date.now()}`,
+      matchScore: 50,
+      matchedName: input.candidateName ?? null,
+      resultSummary: `Education (${input.boardType}) submitted for manual review.`,
+      riskFlags: ["EDUCATION_MANUAL_REVIEW"],
+      raw: { boardType: input.boardType },
+    };
+  }
+
+  async verifyCourt(input: CourtVerificationInput): Promise<CourtVerificationResult> {
+    const requestId = randomUUID();
+
+    // Step 1: Submit search
+    const submitRes = await axios.post(
+      "https://prod.crimescan.ai/v1/crime_search/risk/exact/search",
+      {
+        name: input.candidateName,
+        father_name: input.fatherName ?? "",
+        address: input.address ?? "",
+        dob: input.dateOfBirth, // expected DD-MM-YYYY
+      },
+      { headers: this.crimescanHeaders, timeout: 30_000 }
+    );
+    const submitData = submitRes.data ?? {};
+    const csId = String(submitData.cs_id ?? submitData.data?.cs_id ?? submitData.result?.cs_id ?? "");
+    if (!csId) {
+      return {
+        status: "queued",
+        providerKey: this.providerKey,
+        providerRequestId: requestId,
+        providerReferenceId: "",
+        matchScore: null,
+        matchedName: input.candidateName,
+        resultSummary: "Court check submitted but no cs_id returned. Retry later.",
+        riskFlags: ["CRIMESCAN_NO_CS_ID"],
+        courtCases: null,
+        raw: submitData,
+      };
+    }
+
+    // Step 2: Poll for results (up to 6 retries, 10s apart)
+    let pollData: Record<string, unknown> = {};
+    for (let attempt = 0; attempt < 6; attempt++) {
+      await new Promise(r => setTimeout(r, 10_000));
+      try {
+        const pollRes = await axios.post(
+          "https://prod.crimescan.ai/v1/crime_search/results",
+          { cs_id: csId },
+          { headers: this.crimescanHeaders, timeout: 20_000 }
+        );
+        pollData = pollRes.data ?? {};
+        if (Number(pollData.status) === 1) break;
+      } catch {
+        // keep retrying
+      }
+    }
+
+    const isReady = Number(pollData.status) === 1;
+    const cases = Array.isArray(pollData.cases) ? pollData.cases : [];
+    const total = Number(pollData.total ?? cases.length);
+    const status: VerificationStatus = !isReady ? "queued" : total === 0 ? "verified" : "failed";
+
+    return {
+      status,
+      providerKey: this.providerKey,
+      providerRequestId: requestId,
+      providerReferenceId: csId,
+      matchScore: isReady ? (total === 0 ? 100 : 60) : null,
+      matchedName: input.candidateName,
+      resultSummary: !isReady
+        ? "Court check still processing. Check again later."
+        : total === 0
+          ? "No court records found via Crimescan."
+          : `${total} court record(s) found. Review required.`,
+      riskFlags: total > 0 ? ["COURT_RECORDS_FOUND"] : [],
+      courtCases: cases.map((c: Record<string, unknown>) => ({
+        caseType: String(c.case_type ?? c.type ?? ""),
+        caseNumber: String(c.case_number ?? c.number ?? ""),
+        court: String(c.court ?? c.court_name ?? ""),
+        year: Number(c.year ?? 0),
+        status: String(c.status ?? ""),
+      })),
+      raw: pollData,
+    };
+  }
+
+  async startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession> {
+    // befisc_luckpay does not support DigiLocker — fallback to mock URL
+    const state = randomUUID();
+    return {
+      state,
+      authUrl: `${env.BACKEND_URL || "http://localhost:5056"}/api/mock-digilocker/authorize?state=${state}&candidateId=${candidateId}&docs=${encodeURIComponent(requestedDocuments.join(","))}`,
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+    };
+  }
+
+  async initiateCandidateBgv(input: BgvCandidatePortalInput): Promise<BgvPortalInitiationResult> {
+    // No hosted portal for befisc_luckpay — generate a self-service token link
+    const token = Buffer.from(`BLC-${input.candidateId}-${Date.now()}`).toString("base64url");
+    return {
+      providerKey: this.providerKey,
+      caseId: `BLC-${input.candidateId}`,
+      portalLoginUrl: `${env.FRONTEND_URL ?? "http://localhost:5173"}/onboard-full?token=${token}`,
+      candidateEmail: input.email,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      raw: { note: "befisc_luckpay uses self-service onboarding portal" },
+    };
+  }
+}
+
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 let _adapterCache: BgvProviderAdapter | null = null;
@@ -737,9 +1047,12 @@ export function getBgvProviderAdapter(): BgvProviderAdapter {
     case "digio":
       _adapterCache = new DigioBgvAdapter();
       break;
+    case "befisc_luckpay":
+      _adapterCache = new BefiscLuckpayCrimescanAdapter();
+      break;
     default:
       if (env.NODE_ENV === "production") {
-        console.warn("[BGV] BGV_PROVIDER=mock in production — set BGV_PROVIDER=infinity_ai or digio for live verification.");
+        console.warn("[BGV] BGV_PROVIDER=mock in production — set BGV_PROVIDER=befisc_luckpay for live Befisc/Luckpay/Crimescan verification.");
       }
       _adapterCache = new MockBgvProviderAdapter();
   }

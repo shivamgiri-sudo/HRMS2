@@ -96,6 +96,7 @@ SOURCE sql/292_cheque_name_validation.sql;
 SOURCE sql/293_bank_change_pennyDrop.sql;
 SOURCE sql/294_payroll_window_closure.sql;
 SOURCE sql/310_vendor_payment_tracking.sql;
+SOURCE sql/320_bgv_missing_tables.sql;
 
 SELECT 'mas_hrms schema complete' AS status;
 SHOW TABLES;

@@ -94,7 +94,7 @@ const envSchema = z.object({
   DIALER_DB_NAME: z.string().default(""),
 
   BGV_WEBHOOK_SECRET: z.string().optional(),
-  BGV_PROVIDER: z.enum(["mock", "infinity_ai", "digio"]).default("mock"),
+  BGV_PROVIDER: z.enum(["mock", "infinity_ai", "digio", "befisc_luckpay"]).default("mock"),
   INFINITY_AI_API_URL: z.string().url().default("https://api.infinityai.in"),
   INFINITY_AI_API_KEY: z.string().optional(),
   INFINITY_AI_CLIENT_ID: z.string().optional(),
@@ -106,6 +106,12 @@ const envSchema = z.object({
   ATS_FORM_API_KEY: z.string().optional(),
   COURT_CHECK_API_URL: z.string().url().default("https://api.infinityai.in"),
   COURT_CHECK_API_KEY: z.string().optional(),
+  // Befisc + Luckpay + Crimescan (BGV_PROVIDER=befisc_luckpay)
+  BEFISC_API_KEY: z.string().optional(),
+  LUCKPAY_BASIC_TOKEN: z.string().optional(),
+  LUCKPAY_CLIENT_ID: z.string().optional(),
+  CRIMESCAN_API_KEY: z.string().optional(),
+  PRESCREENING_API_KEY: z.string().optional(),
 
   // Billing DB (db_bill) — optional, only needed when billing features are used
   BILL_DB_HOST:     z.string().default(""),

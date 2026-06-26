@@ -79,6 +79,7 @@ const SuperAdminDashboardV2 = lazy(() => import("./pages/SuperAdminDashboardV2")
 const ATSCommandCentre = lazy(() => import("./pages/ATSCommandCentre"));
 const NativeBGVEnhanced = lazy(() => import("./pages/NativeBGVEnhanced"));
 const NativeBGVReport = lazy(() => import("./pages/NativeBGVReport"));
+const NativeEmployeeBGVStatus = lazy(() => import("./pages/NativeEmployeeBGVStatus"));
 
 const NativeLMSMyLearning = lazy(() => import("./pages/NativeLMSMyLearning"));
 const NativeLMSCoordinator = lazy(() => import("./pages/NativeLMSCoordinator"));
@@ -315,6 +316,10 @@ const App = () => (
               <Route path="/ats/bgv" element={<ProtectedRoute><Gate pageCode="ATS_BGV"><NativeBGVVerificationCenter /></Gate></ProtectedRoute>} />
               <Route path="/ats/bgv-enhanced" element={<ProtectedRoute roles={['admin', 'hr']}><NativeBGVEnhanced /></ProtectedRoute>} />
               <Route path="/ats/bgv-report" element={<ProtectedRoute><Gate pageCode="ATS_BGV_REPORT"><NativeBGVReport /></Gate></ProtectedRoute>} />
+              {/* Employee self-view BGV status */}
+              <Route path="/employees/bgv-status" element={<ProtectedRoute><NativeEmployeeBGVStatus /></ProtectedRoute>} />
+              {/* HR/Payroll lookup by employee ID */}
+              <Route path="/employees/bgv-status/:employeeId" element={<ProtectedRoute roles={['admin','hr','payroll','super_admin']}><NativeEmployeeBGVStatus /></ProtectedRoute>} />
               <Route path="/ats/recruiter-portal" element={<ProtectedRoute><Gate pageCode="ATS_RECRUITER_PORTAL"><NativeRecruiterPortal /></Gate></ProtectedRoute>} />
               <Route path="/ats/walkin-queue" element={<ProtectedRoute><Gate pageCode="ATS_WALKIN_QUEUE"><NativeWalkinQueue /></Gate></ProtectedRoute>} />
               <Route path="/candidate-portal/login" element={<CandidatePortalLogin />} />
