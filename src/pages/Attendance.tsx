@@ -97,7 +97,10 @@ function getExpectedHours(workStart: string, workEnd: string): number {
 
 function safeFormatDate(value: string | null | undefined, fmt: string, fallback = "-"): string {
   if (!value) return fallback;
-  const d = new Date(value);
+  // DB returns IST strings like "2026-06-26 14:30:00" — parse as IST, not UTC
+  const d = new Date(value.replace(" ", "T") + ".000Z");
+  // Adjust for IST offset (+5:30)
+  d.setHours(d.getHours() + 5, d.getMinutes() + 30);
   return isNaN(d.getTime()) ? fallback : format(d, fmt);
 }
 
