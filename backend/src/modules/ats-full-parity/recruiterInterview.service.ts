@@ -2,8 +2,10 @@ import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { env } from "../../config/env.js";
 import { sendOnboardingToken } from "../ats/ats.onboarding.service.js";
 import { sendRejectedEmail } from "../ats/ats.email.service.js";
+import { sendDecisionEmail } from "../ats/ats-decision-emails.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -699,20 +701,47 @@ export async function submitInterviewUpdate(
 
     await conn.commit();
 
+    // Generate onboarding token for Selected decisions
+    let onboardingLink: string | null = null;
     if (finalDecision === "Selected") {
       try {
-        await sendOnboardingToken(candidate.id, actorUserId ?? "SYSTEM");
+        const tokenResult = await sendOnboardingToken(candidate.id, actorUserId ?? "SYSTEM");
+        if (tokenResult?.token) {
+          const baseUrl = env.FRONTEND_URL || "https://mcnhrms.teammas.in";
+          onboardingLink = `${baseUrl}/onboard-full?token=${tokenResult.token}`;
+        }
       } catch (e) {
-        console.error("[ats] automatic onboarding link failed:", e instanceof Error ? e.message : String(e));
+        console.error("[ats] automatic onboarding token failed:", e instanceof Error ? e.message : String(e));
       }
-    } else if ((finalDecision === "Rejected" || finalDecision === "No Show") && candidate.email) {
-      sendRejectedEmail({
-        candidateId: candidate.id,
-        to: candidate.email,
-        candidateName: candidate.full_name,
-        branchName: candidate.branch_display_name ?? candidate.applied_for_branch ?? "",
-      }).catch((e: unknown) => console.error("[ats] rejection email failed:", e instanceof Error ? e.message : String(e)));
     }
+
+    // Send decision email for ALL outcomes (Selected, Rejected, Hold, Client Round, No Show)
+    const [rosterMobileRows] = await db.execute<RowDataPacket[]>(
+      `SELECT mobile FROM ats_recruiter_roster WHERE id = ? LIMIT 1`,
+      [recruiterProfile.id]
+    );
+    const recruiterMobile = (rosterMobileRows as any[])[0]?.mobile ?? null;
+
+    sendDecisionEmail({
+      candidateId: candidate.id,
+      candidateName: candidate.full_name,
+      candidateEmail: candidate.email ?? null,
+      mobile: null,
+      process: process,
+      branch: candidate.branch_display_name ?? candidate.applied_for_branch ?? "",
+      queueToken: candidate.q_token ?? candidate.candidate_code ?? null,
+      stage: walkinEndStage,
+      finalDecision,
+      offerSalary: nvlNum(input.offerSalary),
+      offerDoj: nvl(input.offerDoj),
+      reportingTiming: nvl(input.reportingTiming),
+      otDetails: nvl(input.otDetails),
+      performanceIncentives: nvl(input.performanceIncentives),
+      onboardingLink,
+      recruiterName: recruiterProfile.name,
+      recruiterMobile,
+      recruiterEmail: recruiterProfile.email,
+    }).catch((e: unknown) => console.error("[ats] decision email failed:", e instanceof Error ? e.message : String(e)));
 
     // Fetch updated submission row for response (outside transaction)
     const [subRows] = await db.execute<RowDataPacket[]>(
