@@ -221,19 +221,23 @@ router.post("/forgot-password", authLimiter, h(async (req: any, res: any) => {
   }
 
   const normalizedEmail = String(email).trim().toLowerCase();
+  console.log("[HRMS] forgot-password called for:", normalizedEmail);
   const result = await authService.forgotPassword(normalizedEmail);
+  console.log("[HRMS] forgotPassword result:", result ? `token generated, deliverTo=${result.deliverTo}` : "null (no user found)");
 
   if (result) {
     try {
       const link = resetLink(result.token);
-      await emailService.send({
+      console.log("[HRMS] Sending reset email to:", result.deliverTo);
+      const sendResult = await emailService.send({
         to: result.deliverTo,
         subject: "Reset your MAS Callnet HRMS password",
         html: resetEmailHtml(link),
         text: resetEmailText(link),
       });
+      console.log("[HRMS] Email sent successfully, messageId:", sendResult.messageId);
     } catch (error) {
-      console.error("[HRMS] Password reset email delivery failed:", error instanceof Error ? error.message : "unknown error");
+      console.error("[HRMS] Password reset email delivery FAILED:", error instanceof Error ? error.stack : error);
     }
   }
 
