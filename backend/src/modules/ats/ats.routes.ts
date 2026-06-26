@@ -14,7 +14,7 @@ import multer from "multer";
 import path from "path";
 import { randomUUID } from "crypto";
 import { atsQueueService } from "./ats.queue.service.js";
-import { verifyRecruiter, resolveRecruiterForActor, getMyPendingCandidates, getSubmissionHistory } from "../ats-full-parity/recruiterInterview.service.js";
+import { verifyRecruiter, resolveRecruiterForActor, getMyPendingCandidates, getSubmissionHistory, getRecruiterDailyStats } from "../ats-full-parity/recruiterInterview.service.js";
 
 export const atsRouter = Router();
 
@@ -311,7 +311,8 @@ atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super
   const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
   const overrideCode = String(req.query.recruiterCode ?? "").trim();
 
-  let recruiterCode: string | undefined;
+  let recruiterCode: string | null = null;
+  let rosterId: string | null = null;
   let profile: Awaited<ReturnType<typeof resolveRecruiterForActor>> = null;
 
   if (isPrivileged && overrideCode) {
@@ -321,11 +322,28 @@ atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super
     if (!profile) {
       return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
     }
-    recruiterCode = profile.recruiterCode;
+    recruiterCode = profile.recruiterCode ?? null;
+    rosterId = profile.id ?? null;
   }
 
-  const data = await getSubmissionHistory(recruiterCode);
+  const data = await getSubmissionHistory(recruiterCode, rosterId);
   return res.json({ success: true, data, recruiter: profile });
+}));
+
+// GET /api/ats/recruiter/daily-stats — today's KPI summary for the authenticated recruiter.
+atsRouter.get("/recruiter/daily-stats", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: any, res: any) => {
+  const userRoles = (req.userRoles ?? []) as string[];
+  const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
+  let recruiterName: string | undefined;
+  if (isPrivileged && req.query.recruiterName) {
+    recruiterName = String(req.query.recruiterName).trim();
+  } else {
+    const profile = await resolveRecruiterForActor(req.authUser!.id);
+    if (!profile) return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
+    recruiterName = profile.name;
+  }
+  const stats = await getRecruiterDailyStats(recruiterName!);
+  return res.json({ success: true, data: stats });
 }));
 
 // Onboarding flow — token generation, profile submission, offer mgmt, approve/reject

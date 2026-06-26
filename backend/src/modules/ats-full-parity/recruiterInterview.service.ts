@@ -165,6 +165,7 @@ export interface PendingCandidate {
   process: string | null;
   branch: string | null;
   pendingMinutes: number;
+  createdAt: string | null;
   status: string;
 }
 
@@ -181,6 +182,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
        applied_for_process,
        applied_for_branch,
        status,
+       created_at,
        TIMESTAMPDIFF(MINUTE,
          CONCAT(COALESCE(created_date, DATE(created_at)), ' ', COALESCE(created_time, TIME(created_at))),
          NOW()
@@ -189,7 +191,8 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
      WHERE active_status = 1
        AND recruiter_assigned_name = ?
        AND status = 'Waiting'
-     ORDER BY pending_minutes DESC`,
+       AND (final_decision IS NULL OR final_decision NOT IN ('No Show', 'No-Show'))
+     ORDER BY created_at ASC`,
     params
   );
   return (rows as any[]).map((r) => ({
@@ -201,29 +204,77 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
     process: r.applied_for_process ?? null,
     branch: r.applied_for_branch ?? null,
     pendingMinutes: Number(r.pending_minutes ?? 0),
+    createdAt: r.created_at ? String(r.created_at) : null,
     status: r.status,
   }));
 }
 
 // ── Submission history ────────────────────────────────────────────────────────
 
-export async function getSubmissionHistory(recruiterCode?: string) {
-  if (!recruiterCode) return [];
-  const params = [recruiterCode];
+export async function getSubmissionHistory(recruiterCode?: string | null, rosterId?: string | null) {
+  if (!recruiterCode && !rosterId) return [];
+  const params = [recruiterCode ?? null, rosterId ?? null, rosterId ?? null];
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT s.*, c.full_name, c.candidate_code, c.mobile, c.email,
+    `SELECT s.*,
+            c.full_name, c.candidate_code, c.mobile, c.email,
             ob.status AS onboarding_status,
             ob.onboarding_token_expires_at,
-            ob.joining_date AS onboarding_joining_date
+            ob.joining_date AS onboarding_joining_date,
+            el.status AS email_dispatch_status,
+            el.sent_at AS email_sent_at
      FROM ats_interview_submission s
      JOIN ats_candidate c ON c.id = s.candidate_id
      LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = s.candidate_id
-     WHERE s.recruiter_code = ?
+     LEFT JOIN ats_email_log el
+       ON el.candidate_id = s.candidate_id
+      AND el.email_type = 'onboarding_token'
+      AND el.id = (
+            SELECT id FROM ats_email_log
+            WHERE candidate_id = s.candidate_id AND email_type = 'onboarding_token'
+            ORDER BY sent_at DESC LIMIT 1
+          )
+     WHERE (
+       (s.recruiter_code IS NOT NULL AND s.recruiter_code = ?)
+       OR
+       (? IS NOT NULL AND s.candidate_id IN (
+         SELECT id FROM ats_candidate WHERE recruiter_id = ?
+       ))
+     )
      ORDER BY s.submitted_at DESC
      LIMIT 200`,
     params
   );
   return rows as any[];
+}
+
+// ── Daily stats ───────────────────────────────────────────────────────────────
+
+export async function getRecruiterDailyStats(recruiterName: string) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COUNT(*) AS total_today,
+       SUM(CASE WHEN s.final_decision = 'Selected' THEN 1 ELSE 0 END) AS selected_today,
+       SUM(CASE WHEN s.final_decision = 'Rejected' THEN 1 ELSE 0 END) AS rejected_today,
+       SUM(CASE WHEN s.final_decision IN ('No Show','No-Show') THEN 1 ELSE 0 END) AS noshow_today,
+       SUM(CASE WHEN s.final_decision = 'Hold' THEN 1 ELSE 0 END) AS hold_today
+     FROM ats_interview_submission s
+     JOIN ats_candidate c ON c.id = s.candidate_id
+     WHERE DATE(s.submitted_at) = ?
+       AND c.recruiter_assigned_name = ?`,
+    [today, recruiterName]
+  );
+  const r = (rows as any[])[0] ?? {};
+  const total = Number(r.total_today ?? 0);
+  const selected = Number(r.selected_today ?? 0);
+  return {
+    total_today: total,
+    selected_today: selected,
+    rejected_today: Number(r.rejected_today ?? 0),
+    noshow_today: Number(r.noshow_today ?? 0),
+    hold_today: Number(r.hold_today ?? 0),
+    conversion_rate: total > 0 ? Math.round((selected / total) * 100) : 0,
+  };
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
