@@ -1,12 +1,21 @@
 import { useEffect, useState } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { RefreshCcw, ShieldCheck, AlertTriangle, CheckCircle2, Send, PackageCheck, ChevronDown, ChevronUp } from "lucide-react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Label } from "@/components/ui/label";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Textarea } from "@/components/ui/textarea";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 type QueueRow = {
   candidate_id: string;
@@ -371,7 +380,7 @@ export default function NativeBGVVerificationCenter() {
                             <div>
                               <p className="font-black text-slate-900">{d.vendor_name}</p>
                               <p className="text-xs text-slate-500">
-                                {CHECK_LABELS[d.check_type] ?? d.check_type} · Sent {new Date(d.sent_at).toLocaleDateString("en-IN")} by {d.sent_by_name ?? "HR"}
+                                {CHECK_LABELS[d.check_type] ?? d.check_type} · Sent {formatISTDate(d.sent_at)} by {d.sent_by_name ?? "HR"}
                               </p>
                               {d.dispatch_notes && <p className="mt-1 text-xs text-slate-600">{d.dispatch_notes}</p>}
                             </div>
@@ -384,7 +393,7 @@ export default function NativeBGVVerificationCenter() {
                               {d.vendor_reference_no && <p><span className="font-bold">Ref:</span> {d.vendor_reference_no}</p>}
                               {d.vendor_remarks && <p><span className="font-bold">Remarks:</span> {d.vendor_remarks}</p>}
                               <p className="text-xs text-slate-500">
-                                Received {d.result_received_at ? new Date(d.result_received_at).toLocaleDateString("en-IN") : "-"} · BGV synced: {d.bgv_check_updated ? "Yes" : "No"}
+                                Received {d.result_received_at ? formatISTDate(d.result_received_at) : "-"} · BGV synced: {d.bgv_check_updated ? "Yes" : "No"}
                               </p>
                             </div>
                           )}

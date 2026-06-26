@@ -162,7 +162,7 @@ export default function NativePerformanceFeedbackMyReports() {
                     {getTrendIcon(report.trend)}
                   </CardTitle>
                   <p className="text-sm text-gray-500">
-                    {new Date(report.report_generated_at).toLocaleDateString()}
+                    {formatISTDate(report.report_generated_at)}
                   </p>
                 </div>
                 <Badge className={getRatingBadgeColor(report.final_rating)}>

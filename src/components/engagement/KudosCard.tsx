@@ -1,6 +1,9 @@
 import { Heart } from "lucide-react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent } from "@/components/ui/card";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import type { Kudos } from "./types";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 export function KudosCard({ kudos }: { kudos: Kudos }) {
   return (
@@ -17,7 +20,7 @@ export function KudosCard({ kudos }: { kudos: Kudos }) {
             </p>
             <p className="mt-1 font-medium text-rose-700">{kudos.kudos_title ?? "Kudos"}</p>
             {kudos.custom_message && <p className="mt-1 text-sm text-slate-600">{kudos.custom_message}</p>}
-            <p className="mt-2 text-xs text-slate-400">{new Date(kudos.sent_at).toLocaleDateString()} · +{kudos.points_awarded} points</p>
+            <p className="mt-2 text-xs text-slate-400">{formatISTDate(kudos.sent_at)} · +{kudos.points_awarded} points</p>
           </div>
         </div>
       </CardContent>

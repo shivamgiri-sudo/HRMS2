@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
+import { formatISTDate } from '@/lib/utils';
 import {
   User, Phone, Mail, Briefcase, Building2, Calendar, DollarSign,
   CheckCircle, XCircle, Clock, Search, Filter, TrendingUp, Award,
@@ -382,18 +383,18 @@ export default function BranchHeadApproval() {
                       </td>
                       <td className="px-4 py-4">
                         <p className="text-sm text-gray-900">
-                          {new Date(approval.joining_date).toLocaleDateString('en-IN')}
+                          {formatISTDate(approval.joining_date)}
                         </p>
                         {approval.salary_start_date !== approval.joining_date && (
                           <p className="text-xs text-gray-500">
-                            Salary: {new Date(approval.salary_start_date).toLocaleDateString('en-IN')}
+                            Salary: {formatISTDate(approval.salary_start_date)}
                           </p>
                         )}
                       </td>
                       <td className="px-4 py-4">
                         <p className="text-sm text-gray-900">{approval.submitted_by}</p>
                         <p className="text-xs text-gray-500">
-                          {new Date(approval.submitted_at).toLocaleDateString('en-IN')}
+                          {formatISTDate(approval.submitted_at)}
                         </p>
                       </td>
                       <td className="px-4 py-4">

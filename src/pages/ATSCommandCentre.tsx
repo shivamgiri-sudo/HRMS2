@@ -1,3 +1,4 @@
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
@@ -210,7 +211,7 @@ export default function ATSCommandCentre() {
                 dataKey="date"
                 stroke="#6b7280"
                 fontSize={12}
-                tickFormatter={(date) => new Date(date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
+                tickFormatter={(date) => formatISTDate(date)}
               />
               <YAxis stroke="#6b7280" fontSize={12} />
               <Tooltip

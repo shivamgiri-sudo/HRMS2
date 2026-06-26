@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface CQScoreData {
   cq_score_current: number;
@@ -179,7 +180,7 @@ export const HeroCard: React.FC<HeroCardProps> = ({ data, isLoading = false }) =
       {/* Last Updated */}
       <div className="mt-4 pt-4 border-t border-gray-200">
         <p className="text-xs text-gray-500">
-          Last updated: {new Date(data.last_updated).toLocaleTimeString()}
+          Last updated: {formatISTTime(data.last_updated)}
         </p>
       </div>
     </div>

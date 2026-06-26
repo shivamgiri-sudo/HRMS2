@@ -127,7 +127,7 @@ function fmt(n: number | null | undefined) {
 
 function fmtDate(d: string | null | undefined) {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("en-IN");
+  return formatISTDate(d);
 }
 
 function copyText(text: string) {

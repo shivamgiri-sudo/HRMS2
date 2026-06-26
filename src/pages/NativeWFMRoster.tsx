@@ -225,7 +225,7 @@ export default function NativeWFMRoster() {
                     <tbody className="divide-y divide-slate-100">
                       {(generationRuns.data ?? []).map((r) => (
                         <tr key={r.id} className={`hover:bg-slate-50 ${auditRunId === r.id ? "bg-violet-50" : ""}`}>
-                          <td className="px-3 py-2 text-slate-700 whitespace-nowrap">{r.started_at ? new Date(r.started_at).toLocaleString("en-IN") : "—"}</td>
+                          <td className="px-3 py-2 text-slate-700 whitespace-nowrap">{r.started_at ? formatIST(r.started_at) : "—"}</td>
                           <td className="px-3 py-2 capitalize">{r.run_type.replace("_", " ")}</td>
                           <td className="px-3 py-2">
                             <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${r.status === "completed" ? "bg-emerald-100 text-emerald-700" : r.status === "running" ? "bg-blue-100 text-blue-700" : "bg-rose-100 text-rose-700"}`}>

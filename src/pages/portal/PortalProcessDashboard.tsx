@@ -118,7 +118,7 @@ export default function PortalProcessDashboard() {
             <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded-xl">
               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">Data Period</p>
               <p className="text-xs font-bold text-slate-300">
-                {new Date().toLocaleString("default", { month: "long", year: "numeric" })}
+                {formatIST()}
               </p>
             </div>
           </div>
@@ -296,7 +296,7 @@ function ActionPlansTab({ data, loading }: { data: any[]; loading: boolean }) {
                       </div>
                     </td>
                     <td className="px-5 py-4 text-slate-400 font-mono text-xs">
-                      {new Date(item.due_date).toLocaleDateString("default", { month: "short", day: "numeric", year: "numeric" })}
+                      {formatISTDate(item.due_date)}
                     </td>
                     <td className="px-5 py-4">
                       <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full border ${STATUS_TAG[item.status as keyof typeof STATUS_TAG]}`}>
@@ -611,7 +611,7 @@ function CommentaryTab({
             <div>
               <p className="text-sm font-bold text-white">{data.author_name}</p>
               <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
-                {data.author_designation} · {new Date(data.published_at).toLocaleDateString("default", { month: "long", day: "numeric", year: "numeric" })}
+                {data.author_designation} · {formatISTDate(data.published_at)}
               </p>
             </div>
           </div>
@@ -672,7 +672,7 @@ function CommentaryTab({
                     </span>
                   </div>
                   <span className="text-[10px] text-slate-500 font-mono">
-                    {new Date(r.created_at).toLocaleDateString("default", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    {formatISTDate(r.created_at)}
                   </span>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed font-medium">{r.reply_text}</p>

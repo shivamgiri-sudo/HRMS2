@@ -1,10 +1,17 @@
 import { useState } from 'react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Plus, Settings, ToggleLeft, ToggleRight, Trash2, Edit2, Eye } from 'lucide-react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useNavigate } from 'react-router-dom';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from '@/lib/hrmsApi';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from '../../components/ui/button';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Badge } from '../../components/ui/badge';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface CustomizationRule {
   id: string;
@@ -188,7 +195,7 @@ export default function NativeCustomizationManager() {
                         </p>
                       )}
                       <p className="text-xs text-gray-500">
-                        Created: {new Date(rule.created_at).toLocaleString()}
+                        Created: {formatIST(rule.created_at)}
                       </p>
                     </div>
                   </div>

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Activity,
   AlertTriangle,
   Award,
@@ -15,10 +17,15 @@ import {
   Users,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 type Summary = {
   employees_scanned: number;
@@ -329,7 +336,7 @@ export default function NativePeopleExperienceCommandCenter() {
             </Panel>
 
             <div className="text-xs font-semibold text-slate-400">
-              Generated: {new Date(data.generated_at).toLocaleString()} • Scope: {data.scope.label}
+              Generated: {formatIST(data.generated_at)} • Scope: {data.scope.label}
             </div>
           </>
         )}

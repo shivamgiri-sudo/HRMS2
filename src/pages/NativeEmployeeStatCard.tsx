@@ -1,7 +1,11 @@
 import { useState, useEffect, useRef } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useParams, useNavigate } from "react-router-dom";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useQuery } from "@tanstack/react-query";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   ArrowRightLeft,
   Award,
   CalendarDays,
@@ -16,14 +20,23 @@ import {
   Zap,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Badge } from "@/components/ui/badge";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Progress } from "@/components/ui/progress";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { cn } from "@/lib/utils";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -105,7 +118,7 @@ function calcTenure(dateOfJoining: string): string {
 }
 
 function fmtDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return formatISTDate(dateStr);
 }
 
 // ── Journey event icon / colour mapping ──────────────────────────────────────

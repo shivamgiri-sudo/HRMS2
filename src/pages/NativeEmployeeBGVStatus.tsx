@@ -8,9 +8,13 @@
  *  /employees/bgv-status/:employeeId → HR/admin lookup (GET /api/bgv/employee/:id)
  */
 import { useState, useRef } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useQuery } from "@tanstack/react-query";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useParams } from "react-router-dom";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   AlertTriangle,
   BadgeCheck,
   Banknote,
@@ -33,10 +37,15 @@ import {
   XCircle,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Badge } from "@/components/ui/badge";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -122,7 +131,7 @@ const VERDICT_CONFIG: Record<string, { color: string; label: string; icon: React
 
 function fmtDate(d?: string | null) {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return formatISTDate(d);
 }
 
 function CheckCard({ check }: { check: BgvCheck }) {
@@ -412,7 +421,7 @@ export default function NativeEmployeeBGVStatus() {
 
             {/* Print footer */}
             <div className="hidden print:block mt-8 pt-4 border-t border-slate-200 text-xs text-slate-400 text-center">
-              MAS Callnet PeopleOS — BGV Status Report — {new Date().toLocaleDateString("en-IN")} — Confidential
+              MAS Callnet PeopleOS — BGV Status Report — {formatISTDate()} — Confidential
             </div>
           </>
         )}

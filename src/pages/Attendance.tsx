@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 
+import { formatISTTime, formatISTDate } from "@/lib/utils";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { AttendanceCalendar } from "@/components/attendance/AttendanceCalendar";
 import { useAuth } from "@/contexts/AuthContext";
@@ -97,11 +98,9 @@ function getExpectedHours(workStart: string, workEnd: string): number {
 
 function safeFormatDate(value: string | null | undefined, fmt: string, fallback = "-"): string {
   if (!value) return fallback;
-  // DB returns IST strings like "2026-06-26 14:30:00" — parse as IST, not UTC
-  const d = new Date(value.replace(" ", "T") + ".000Z");
-  // Adjust for IST offset (+5:30)
-  d.setHours(d.getHours() + 5, d.getMinutes() + 30);
-  return isNaN(d.getTime()) ? fallback : format(d, fmt);
+  // Use IST timezone-aware formatting
+  if (fmt.includes("hh") || fmt.includes("HH")) return formatISTTime(value) || fallback;
+  return formatISTDate(value) || fallback;
 }
 
 interface EmployeeSchedule {

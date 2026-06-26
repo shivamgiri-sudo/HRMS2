@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   AlertTriangle, Briefcase, Calendar, ChevronDown,
   Clock, Loader, Plus, RefreshCcw, Users, X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -698,7 +702,7 @@ function WalkinQueueTab() {
                     <td className="p-4 font-mono text-slate-600">{e.mobile}</td>
                     <td className="p-4 text-slate-600">{e.applied_role ?? "—"}</td>
                     <td className="p-4 font-mono text-xs text-slate-500">
-                      {new Date(e.registered_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                      {formatISTTime(e.registered_at)}
                     </td>
                     <td className="p-4">
                       <Badge label={e.status} colorClass={WALKIN_STATUS_COLORS[e.status]} />

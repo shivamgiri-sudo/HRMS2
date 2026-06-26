@@ -1,10 +1,17 @@
 import { useEffect, useState, useCallback } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useSearchParams, useNavigate } from "react-router-dom";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Badge } from "@/components/ui/badge";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Separator } from "@/components/ui/separator";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -173,7 +180,7 @@ function AuditTimeline({ events }: { events: AuditEvent[] }) {
             <p className="text-xs text-gray-500 mt-0.5">{ev.notes}</p>
           )}
           <time className="text-xs text-gray-400">
-            {new Date(ev.created_at).toLocaleString()}
+            {formatIST(ev.created_at)}
           </time>
         </li>
       ))}
@@ -520,7 +527,7 @@ export default function NativeAppointmentEsign() {
                       <p className="text-xs text-amber-600 mt-1">
                         Requested by: {request.manual_override_by}
                         {request.manual_override_at
-                          ? ` · ${new Date(request.manual_override_at).toLocaleString()}`
+                          ? ` · ${formatIST(request.manual_override_at)}`
                           : ""}
                       </p>
                     )}

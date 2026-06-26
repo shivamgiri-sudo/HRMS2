@@ -1,10 +1,17 @@
 import { useEffect, useState } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Table,
   TableBody,
   TableCell,
@@ -13,8 +20,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Badge } from "@/components/ui/badge";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Download, Loader2 } from "lucide-react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface AuditEvent {
   id: string;
@@ -270,7 +280,7 @@ export default function NativeAuditLog() {
                     {events.map((event) => (
                       <TableRow key={event.id} className="hover:bg-gray-50">
                         <TableCell className="font-mono">
-                          {new Date(event.acted_at).toLocaleString()}
+                          {formatIST(event.acted_at)}
                         </TableCell>
                         <TableCell className="text-xs">{event.actor_email || event.actor_user_id}</TableCell>
                         <TableCell>

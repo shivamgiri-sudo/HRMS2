@@ -1,13 +1,23 @@
 import { useEffect, useState } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Textarea } from "@/components/ui/textarea";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Checkbox } from "@/components/ui/checkbox";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Badge } from "@/components/ui/badge";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Table,
   TableBody,
   TableCell,
@@ -16,7 +26,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Loader2, ShieldOff } from "lucide-react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Label } from "@/components/ui/label";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -117,7 +129,7 @@ export default function NativeDPDPWithdrawal() {
   };
 
   const formatDate = (d: string) =>
-    d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-";
+    d ? formatISTDate(d) : "-";
 
   const parseScopeJson = (raw: string | null): string => {
     if (!raw) return "-";

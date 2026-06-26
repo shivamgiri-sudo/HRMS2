@@ -62,7 +62,7 @@ const STATUS_LABEL: Record<QueueStatus, string> = {
 
 function formatTime(iso: string | null): string {
   if (!iso) return "-";
-  return new Date(iso).toLocaleTimeString('en-IN', { hour: "2-digit", minute: "2-digit" });
+  return formatISTTime(iso);
 }
 
 function formatWaitTime(minutes: number | null): string {

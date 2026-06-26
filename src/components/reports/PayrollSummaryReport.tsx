@@ -1,8 +1,13 @@
 import { useState, useMemo } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Select,
   SelectContent,
   SelectItem,
@@ -10,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Table,
   TableBody,
   TableCell,
@@ -19,12 +25,19 @@ import {
   TableFooter,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Skeleton } from "@/components/ui/skeleton";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Download, FileText, Loader2, Search, FileSpreadsheet } from "lucide-react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { usePayrollSummary } from "@/hooks/usePayrollSummary";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useReportMasters } from "@/hooks/useReportMasters";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import jsPDF from "jspdf";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import autoTable from "jspdf-autotable";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 const MONTHS = [
   { value: "1", label: "January" },
@@ -128,7 +141,7 @@ export function PayrollSummaryReport() {
       doc.setFont("helvetica", "normal");
       doc.text(summary.monthName, pageWidth / 2, 30, { align: "center" });
       doc.setFontSize(9);
-      doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, 45);
+      doc.text(`Generated on: ${formatISTDate()}`, 14, 45);
       doc.text(`Total Employees: ${filteredRecords.length}`, 14, 52);
       autoTable(doc, {
         startY: 62,

@@ -1,19 +1,35 @@
 import { useState } from 'react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from '../../components/ui/button';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Input } from '../../components/ui/input';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Label } from '../../components/ui/label';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { ExpenseStatusBadge } from '../../components/expenses/ExpenseStatusBadge';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { ExpenseApprovalActions } from '../../components/expenses/ExpenseApprovalActions';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { ExpenseItemsList } from '../../components/expenses/ExpenseItemsList';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useFinanceQueue, useClaimDetails, useFinanceApprove, useRejectClaim, useMarkAsPaid } from '../../integrations/expenses/hooks';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { ExpenseStatus } from '../../integrations/expenses/types';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import type { ExpenseClaim } from '../../integrations/expenses/types';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Download } from 'lucide-react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { toast } from 'sonner';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { expenseApi } from '../../integrations/expenses/api';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface ClaimRowProps {
   claim: ExpenseClaim;
@@ -37,7 +53,7 @@ function ClaimRow({ claim, onSelect, isSelected }: ClaimRowProps) {
             {claim.currency} {claim.total_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
           </span>
           <span className="text-xs text-muted-foreground">
-            {new Date(claim.manager_approved_date ?? claim.created_at).toLocaleDateString('en-IN')}
+            {formatISTDate(claim.manager_approved_date ?? claim.created_at)}
           </span>
         </div>
       </CardContent>

@@ -1,8 +1,13 @@
 import { useState, useMemo } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Select,
   SelectContent,
   SelectItem,
@@ -10,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Table,
   TableBody,
   TableCell,
@@ -19,12 +25,19 @@ import {
   TableFooter,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Skeleton } from "@/components/ui/skeleton";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Download, Clock, AlertTriangle, Timer, Loader2, Search, FileSpreadsheet } from "lucide-react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useAttendanceReportData } from "@/hooks/useAttendanceReport";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useReportMasters } from "@/hooks/useReportMasters";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import jsPDF from "jspdf";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import autoTable from "jspdf-autotable";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 const MONTHS = [
   { value: "1", label: "January" },
@@ -124,7 +137,7 @@ export function AttendanceReport() {
       doc.setFont("helvetica", "normal");
       doc.text(`Late Arrivals & Overtime - ${summary.monthName}`, pageWidth / 2, 30, { align: "center" });
       doc.setFontSize(9);
-      doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, 45);
+      doc.text(`Generated on: ${formatISTDate()}`, 14, 45);
       doc.text(`Total Employees: ${summary.totalEmployees}`, 14, 51);
       doc.text(`Total Late Arrivals: ${summary.totalLateArrivals}`, 14, 57);
       doc.text(`Total Overtime: ${formatHours(summary.totalOvertimeHours)}`, 14, 63);

@@ -1,18 +1,33 @@
 import { useState } from 'react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useQuery, useMutation } from '@tanstack/react-query';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from '@/lib/hrmsApi';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Textarea } from '@/components/ui/textarea';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { FilePen, CheckCircle, ChevronRight, Search, Copy } from 'lucide-react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { cn } from '@/lib/utils';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -430,13 +445,13 @@ export default function NativeOfferLetterGeneration() {
                             <TableCell className="font-medium text-sm">{letter.template_name}</TableCell>
                             <TableCell><Badge variant="secondary">{letter.letter_type}</Badge></TableCell>
                             <TableCell className="text-sm text-slate-500">
-                              {new Date(letter.created_at).toLocaleDateString('en-IN')}
+                              {formatISTDate(letter.created_at)}
                             </TableCell>
                             <TableCell>
                               {letter.acknowledged_at ? (
                                 <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
                                   <CheckCircle className="h-3 w-3 mr-1" />
-                                  {new Date(letter.acknowledged_at).toLocaleDateString('en-IN')}
+                                  {formatISTDate(letter.acknowledged_at)}
                                 </Badge>
                               ) : (
                                 <Badge variant="outline" className="text-slate-400">Pending</Badge>

@@ -1,5 +1,7 @@
 import React from 'react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface SubMetric {
   name: string;
@@ -162,7 +164,7 @@ export const WeaknessPanel: React.FC<WeaknessPanelProps> = ({
                               </span>
                             </div>
                             <p className="text-xs text-gray-500">
-                              {new Date(call.date).toLocaleDateString()}
+                              {formatISTDate(call.date)}
                             </p>
                           </button>
                         ))}

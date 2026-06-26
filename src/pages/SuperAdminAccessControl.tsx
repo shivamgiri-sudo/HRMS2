@@ -532,7 +532,7 @@ export default function SuperAdminAccessControl() {
                           </TableCell>
                           <TableCell className="text-sm">{assignment.assigned_by_email}</TableCell>
                           <TableCell className="text-sm">
-                            {new Date(assignment.assigned_at).toLocaleDateString()}
+                            {formatISTDate(assignment.assigned_at)}
                           </TableCell>
                         </TableRow>
                       ))}

@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { CheckCircle2, Clock, AlertCircle, Upload } from 'lucide-react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 export interface DocumentStatus {
   docType: string;
@@ -102,7 +104,7 @@ export function DocumentSubmissionTracker({ documents, section }: DocumentSubmis
                 </p>
                 {doc.uploadedAt && (
                   <p className="text-xs text-slate-600">
-                    Uploaded: {new Date(doc.uploadedAt).toLocaleDateString()}
+                    Uploaded: {formatISTDate(doc.uploadedAt)}
                   </p>
                 )}
               </div>

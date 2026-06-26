@@ -122,7 +122,7 @@ export default function NativePerformanceFeedbackAssignments() {
                   <div>
                     <p className="text-xs text-gray-500">Deadline</p>
                     <p className={`text-sm font-medium ${isUrgent ? "text-orange-600" : ""}`}>
-                      {new Date(assignment.deadline).toLocaleDateString()} ({daysUntilDeadline} days)
+                      {formatISTDate(assignment.deadline)} ({daysUntilDeadline} days)
                     </p>
                   </div>
                   <Button

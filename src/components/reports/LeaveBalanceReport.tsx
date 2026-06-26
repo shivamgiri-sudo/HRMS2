@@ -1,8 +1,13 @@
 import { useState, useMemo, Fragment } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Select,
   SelectContent,
   SelectItem,
@@ -10,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Table,
   TableBody,
   TableCell,
@@ -18,11 +24,17 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Download, Calendar, Loader2, Search, FileSpreadsheet } from "lucide-react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useLeaveBalanceReport } from "@/hooks/useLeaveBalanceReport";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useReportMasters } from "@/hooks/useReportMasters";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import jsPDF from "jspdf";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import autoTable from "jspdf-autotable";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 const currentYear = new Date().getFullYear();
 const YEARS = Array.from({ length: 5 }, (_, i) => ({ value: String(currentYear - i), label: String(currentYear - i) }));
@@ -95,7 +107,7 @@ export function LeaveBalanceReport() {
       doc.setFont("helvetica", "normal");
       doc.text(`Year: ${report.year}`, pageWidth / 2, 30, { align: "center" });
       doc.setFontSize(9);
-      doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, 45);
+      doc.text(`Generated on: ${formatISTDate()}`, 14, 45);
       doc.text(`Total Employees: ${filteredRecords.length}`, 14, 52);
       const headers = ["Employee", "Code", "Branch", "Process", "Cost Centre", "Department"];
       report.leaveTypes.forEach((lt) => headers.push(`${lt} Total`, `${lt} Used`, `${lt} Left`));

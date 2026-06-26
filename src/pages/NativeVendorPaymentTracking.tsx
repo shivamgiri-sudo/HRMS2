@@ -625,7 +625,7 @@ export default function NativeVendorPaymentTracking() {
 
                     {/* Due Date */}
                     <td className={`px-2 py-1.5 whitespace-nowrap font-mono ${overdue ? "text-rose-600 font-semibold" : "text-slate-600"}`}>
-                      {row.due_date ? new Date(row.due_date).toLocaleDateString("en-IN") : "—"}
+                      {row.due_date ? formatISTDate(row.due_date) : "—"}
                       {overdue && <span className="ml-1 text-[9px] text-rose-500">+{aging}d</span>}
                     </td>
 

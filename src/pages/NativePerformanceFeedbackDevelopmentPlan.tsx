@@ -301,7 +301,7 @@ export default function NativePerformanceFeedbackDevelopmentPlan() {
                                     <div className="flex items-center space-x-1">
                                       <Calendar className="w-4 h-4" />
                                       <span>
-                                        Target: {new Date(goal.target_date).toLocaleDateString()}
+                                        Target: {formatISTDate(goal.target_date)}
                                       </span>
                                     </div>
                                     {isOverdue && (
@@ -324,7 +324,7 @@ export default function NativePerformanceFeedbackDevelopmentPlan() {
 
                               {goal.completion_date && (
                                 <p className="text-xs text-green-600 mb-3">
-                                  Completed on {new Date(goal.completion_date).toLocaleDateString()}
+                                  Completed on {formatISTDate(goal.completion_date)}
                                 </p>
                               )}
 

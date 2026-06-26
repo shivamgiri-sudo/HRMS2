@@ -1,12 +1,21 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Badge } from "@/components/ui/badge";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Skeleton } from "@/components/ui/skeleton";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Download, Package } from "lucide-react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useAssetReport } from "@/hooks/useAssetReport";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import jsPDF from "jspdf";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import autoTable from "jspdf-autotable";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat("en-IN", {
@@ -39,7 +48,7 @@ export function AssetInventoryReport() {
     doc.text("Asset Inventory Report", pageWidth / 2, 20, { align: "center" });
 
     doc.setFontSize(10);
-    doc.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth / 2, 28, {
+    doc.text(`Generated: ${formatISTDate()}`, pageWidth / 2, 28, {
       align: "center",
     });
 

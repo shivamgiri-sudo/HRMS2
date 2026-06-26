@@ -1,11 +1,14 @@
 import { Award } from "lucide-react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface BadgeIconProps {
   badge_name: string;
@@ -79,7 +82,7 @@ export function BadgeIcon({
               <p className="text-xs text-slate-600">{badge_description}</p>
             )}
             <p className="text-xs text-slate-400">
-              Earned: {new Date(earned_at).toLocaleDateString()}
+              Earned: {formatISTDate(earned_at)}
             </p>
           </div>
         </TooltipContent>

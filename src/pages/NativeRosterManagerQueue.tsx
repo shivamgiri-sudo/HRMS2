@@ -33,7 +33,7 @@ interface DisputedAssignment {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return formatISTDate(iso);
 }
 function fmtTime(t: string | null): string {
   return t ? t.slice(0, 5) : "";

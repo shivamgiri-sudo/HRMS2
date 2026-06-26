@@ -146,7 +146,7 @@ function ModuleHealthCard({ module }: ModuleCardProps) {
         </div>
         {module.lastActivity && (
           <div className="text-xs text-slate-500">
-            Last activity: {new Date(module.lastActivity).toLocaleString()}
+            Last activity: {formatIST(module.lastActivity)}
           </div>
         )}
       </CardContent>
@@ -286,7 +286,7 @@ export default function SuperAdminDashboardV2() {
                       <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
                         <span className="font-medium">{activity.user}</span>
                         <span>•</span>
-                        <span>{new Date(activity.timestamp).toLocaleString()}</span>
+                        <span>{formatIST(activity.timestamp)}</span>
                       </div>
                     </div>
                     <Badge

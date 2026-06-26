@@ -1,7 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { TrendingUp, Award, BookOpen, Clock } from "lucide-react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface EmployeeProgress {
   employee_id: string;
@@ -165,7 +169,7 @@ export default function LMSProgressDashboard() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-slate-500">
-                        {new Date(progress.last_activity).toLocaleDateString()}
+                        {formatISTDate(progress.last_activity)}
                       </td>
                     </tr>
                   ))}

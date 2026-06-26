@@ -120,7 +120,7 @@ const PrivacyPolicy = () => {
             We are committed to protecting your privacy and ensuring the security of your personal information.
           </p>
           <p className="text-sm text-muted-foreground">
-            Last updated: {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+            Last updated: {formatISTDate()}
           </p>
         </div>
       </section>

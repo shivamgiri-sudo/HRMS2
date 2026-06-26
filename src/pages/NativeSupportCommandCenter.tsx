@@ -125,7 +125,7 @@ export default function NativeSupportCommandCenter() {
         setAging(res.data.data.aging ?? null);
         setRootCauses(res.data.data.root_causes ?? []);
       }
-      setLastRefresh(new Date().toLocaleTimeString("en-IN"));
+      setLastRefresh(formatISTTime());
     } catch (e: any) {
       setError(e.message ?? "Failed to load");
     } finally {

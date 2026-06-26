@@ -889,7 +889,7 @@ export default function UnifiedAccessControl() {
                 <div className={`mt-4 rounded-xl p-4 ${rbacStatus?.synced ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`}>
                   <div className="text-2xl font-black">{rbacStatus?.synced ? "Synced" : `${rbacStatus?.conflicts_count ?? 0} conflicts`}</div>
                   <div className="mt-1 text-xs font-semibold">
-                    Last checked: {rbacStatus?.last_sync ? new Date(rbacStatus.last_sync).toLocaleString() : "Not checked yet"}
+                    Last checked: {rbacStatus?.last_sync ? formatIST(rbacStatus.last_sync) : "Not checked yet"}
                   </div>
                 </div>
               </div>
@@ -910,7 +910,7 @@ export default function UnifiedAccessControl() {
                       <div key={item.id} className="rounded-xl border border-slate-200 p-3">
                         <div className="text-sm font-bold text-slate-950">{item.action}</div>
                         <div className="text-xs text-slate-500">{item.description}</div>
-                        <div className="mt-1 text-[11px] text-slate-400">{new Date(item.created_at).toLocaleString()}</div>
+                        <div className="mt-1 text-[11px] text-slate-400">{formatIST(item.created_at)}</div>
                       </div>
                     ))
                   )}

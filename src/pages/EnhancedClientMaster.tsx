@@ -1,19 +1,31 @@
 import { useState } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Building2, Users, Activity, Upload, Plus, Search, Edit2, X,
   Shield, ChevronRight, TrendingUp, Download, AlertCircle, CheckCircle2,
   Clock, Globe, Mail, Phone, MapPin, Calendar, BarChart3
 } from "lucide-react";
 import { toast } from "sonner";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Badge } from "@/components/ui/badge";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Table,
   TableBody,
   TableCell,
@@ -22,6 +34,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Dialog,
   DialogContent,
   DialogDescription,
@@ -30,8 +43,11 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Textarea } from "@/components/ui/textarea";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Select,
   SelectContent,
   SelectItem,
@@ -565,7 +581,7 @@ export default function EnhancedClientMaster() {
                           <TableCell>
                             {user.last_login_at ? (
                               <div className="text-sm">
-                                {new Date(user.last_login_at).toLocaleDateString()}
+                                {formatISTDate(user.last_login_at)}
                               </div>
                             ) : (
                               <span className="text-muted-foreground">Never</span>
@@ -688,7 +704,7 @@ export default function EnhancedClientMaster() {
                         <TableCell>{usage.report_views}</TableCell>
                         <TableCell>
                           {usage.last_activity
-                            ? new Date(usage.last_activity).toLocaleDateString()
+                            ? formatISTDate(usage.last_activity)
                             : "N/A"}
                         </TableCell>
                       </TableRow>

@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface Call {
   call_id: string;
@@ -151,7 +153,7 @@ export const CallsTable: React.FC<CallsTableProps> = ({
                   <td className="px-4 md:px-6 py-4 text-sm">
                     <div>
                       <p className="font-medium text-gray-900">
-                        {new Date(call.date).toLocaleDateString()}
+                        {formatISTDate(call.date)}
                       </p>
                       <p className="text-xs text-gray-500">
                         {new Date(call.date).toLocaleTimeString([], {

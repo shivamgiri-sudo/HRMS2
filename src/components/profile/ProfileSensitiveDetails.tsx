@@ -1,6 +1,9 @@
 import { useState } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   BadgeCheck,
   Banknote,
   CircleAlert,
@@ -15,12 +18,19 @@ import {
   UserRoundCheck,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useToast } from "@/hooks/use-toast";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Badge } from "@/components/ui/badge";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Label } from "@/components/ui/label";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Select,
   SelectContent,
   SelectItem,
@@ -28,6 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 type VerificationStatus = "verified" | "pending" | "rejected" | "not_provided";
 
@@ -237,7 +248,7 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
         {pendingBankRequest?.pending ? (
           <div className="mt-4 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             <Clock className="size-4 shrink-0" />
-            <span>A bank account change request is pending Payroll HO approval{pendingBankRequest.requested_at ? ` (submitted ${new Date(pendingBankRequest.requested_at).toLocaleDateString()})` : ""}. New requests will replace the pending one.</span>
+            <span>A bank account change request is pending Payroll HO approval{pendingBankRequest.requested_at ? ` (submitted ${formatISTDate(pendingBankRequest.requested_at)})` : ""}. New requests will replace the pending one.</span>
           </div>
         ) : null}
 

@@ -189,7 +189,7 @@ export default function NativeSecurityCenter() {
                 <tbody>
                   {filteredEvents.map((event) => (
                     <tr key={event.id} className="border-t hover:bg-slate-50">
-                      <td className="p-4 font-mono text-xs text-slate-500">{new Date(event.created_at).toLocaleString()}</td>
+                      <td className="p-4 font-mono text-xs text-slate-500">{formatIST(event.created_at)}</td>
                       <td className="p-4"><Badge value={event.severity} /></td>
                       <td className="p-4 font-bold text-slate-800">{event.event_type.replace(/_/g, " ")}</td>
                       <td className="p-4 text-slate-600">{event.module_key ?? "—"}</td>

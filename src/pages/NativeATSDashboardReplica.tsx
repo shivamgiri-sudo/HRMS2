@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { getAtsDashboardReplicaData, type AtsDashCandidateRow, type AtsDashPayload, type AtsDashQueueRow } from "@/lib/atsDashboardReplicaAdapter";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 type TabKey = "cover" | "dashboard" | "trends" | "rejections" | "recruiters" | "sourcing" | "queue" | "journey" | "intelligence";
 type PeriodKey = "FTD" | "WTD" | "MTD" | "ALL";
@@ -30,7 +32,7 @@ const emptyPayload: AtsDashPayload = {
 const num = (v: any) => Number(v || 0);
 const fmt = (n: any) => Number(n || 0).toLocaleString("en-IN");
 const pct = (n: number, d: number) => (d ? `${Math.round((n / d) * 1000) / 10}%` : "0%");
-const todayKey = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+const todayKey = () => formatISTDate();
 const monthKey = () => todayKey().slice(0, 7);
 const weekStartKey = () => {
   const d = new Date();

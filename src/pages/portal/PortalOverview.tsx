@@ -68,7 +68,7 @@ export default function PortalOverview() {
                 ))}
               </div>
               {p.last_updated && (
-                <p className="text-xs text-slate-600 mt-4">Updated {new Date(p.last_updated).toLocaleDateString()}</p>
+                <p className="text-xs text-slate-600 mt-4">Updated {formatISTDate(p.last_updated)}</p>
               )}
             </div>
           ))}

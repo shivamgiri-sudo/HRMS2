@@ -1,11 +1,16 @@
 import { useEffect, useState, useCallback } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   AlertTriangle, EyeOff, FileText, Loader, Lock, RefreshCcw,
   Shield, ShieldAlert, TrendingUp, Users, X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { DashboardLoading, FilterField, KpiTile, SelectFilter } from "@/components/command-center/CommandCenterUi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -338,10 +343,10 @@ export default function NativeGrievanceCommandCenter() {
                             {g.assigned_committee ?? g.assigned_to ?? "—"}
                           </td>
                           <td className="px-4 py-3 text-gray-500 text-xs">
-                            {g.due_date ? new Date(g.due_date + "T00:00:00").toLocaleDateString("en-IN") : "—"}
+                            {g.due_date ? formatISTDate(g.due_date + "T00:00:00") : "—"}
                           </td>
                           <td className="px-4 py-3 text-gray-400 text-xs">
-                            {new Date(g.created_at).toLocaleDateString("en-IN")}
+                            {formatISTDate(g.created_at)}
                           </td>
                         </tr>
                       );

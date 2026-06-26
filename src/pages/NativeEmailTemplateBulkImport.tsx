@@ -1,5 +1,7 @@
 import { useCallback, useRef, useState } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   AlertCircle,
   CheckCircle2,
   ChevronDown,
@@ -15,7 +17,9 @@ import {
   Send,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -438,7 +442,7 @@ export default function NativeEmailTemplateBulkImport() {
                   <div>
                     <p className="font-medium text-slate-700">{h.original_file_name}</p>
                     <p className="text-xs text-slate-400">
-                      {h.upload_batch_no} · {new Date(h.created_at).toLocaleString("en-IN")}
+                      {h.upload_batch_no} · {formatIST(h.created_at)}
                     </p>
                   </div>
                   <div className="flex items-center gap-3 text-right">

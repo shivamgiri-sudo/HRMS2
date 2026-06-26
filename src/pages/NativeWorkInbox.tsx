@@ -131,7 +131,7 @@ function Timeline({ events, loading }: { events: TimelineEvent[]; loading: boole
       {events.map((e) => (
         <li key={e.id} className="mb-4 ml-4">
           <div className="absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full border-2 border-white bg-slate-400" />
-          <p className="text-[11px] text-slate-400">{new Date(e.event_time).toLocaleString("en-IN")}</p>
+          <p className="text-[11px] text-slate-400">{formatIST(e.event_time)}</p>
           <p className="text-sm font-semibold text-slate-800">{e.action}</p>
           {e.actor && <p className="text-xs text-slate-500">by {e.actor}</p>}
           {e.details && <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{e.details}</p>}

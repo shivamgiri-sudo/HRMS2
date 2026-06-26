@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   AlertTriangle,
   CheckCircle2,
   Clock,
@@ -13,9 +15,13 @@ import {
   X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 type ExitRequest = {
   id: string;
@@ -264,7 +270,7 @@ export default function NativeExitManagement() {
                       <td className="p-4 text-xs text-slate-600">
                         <div>{r.submitted_by ?? r.initiated_by ?? "—"}</div>
                         {r.submitted_at && (
-                          <div className="text-slate-400">{new Date(r.submitted_at).toLocaleDateString()}</div>
+                          <div className="text-slate-400">{formatISTDate(r.submitted_at)}</div>
                         )}
                         {r.notification_sent ? (
                           <span className="mt-0.5 inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-xs text-emerald-700">Notified</span>

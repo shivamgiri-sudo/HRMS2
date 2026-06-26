@@ -423,7 +423,7 @@ export default function SuperAdminModuleAccess() {
                           </td>
                           <td className="px-4 py-4">
                             <p className="text-sm text-gray-900">
-                              {new Date(access.granted_at).toLocaleDateString('en-IN')}
+                              {formatISTDate(access.granted_at)}
                             </p>
                             <p className="text-xs text-gray-500">
                               {new Date(access.granted_at).toLocaleTimeString('en-IN', {

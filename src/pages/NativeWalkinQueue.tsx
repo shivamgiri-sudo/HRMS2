@@ -62,7 +62,7 @@ const TOKEN_CHIP_BG: Record<QueueStatus, string> = {
 const ALL_STATUSES: QueueStatus[] = ["waiting", "called", "in_interview", "completed", "no_show"];
 
 function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return formatISTTime(iso);
 }
 
 function today(): string {

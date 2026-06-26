@@ -441,7 +441,7 @@ export default function NativeTaxDeclaration() {
             {declaration?.submitted_at && (
               <div className="flex items-center gap-2 text-xs text-emerald-700 font-semibold bg-emerald-50 rounded-xl px-3 py-1.5">
                 <CheckCircle2 className="h-4 w-4" />
-                Last submitted {new Date(declaration.submitted_at).toLocaleDateString("en-IN")}
+                Last submitted {formatISTDate(declaration.submitted_at)}
               </div>
             )}
           </div>
@@ -648,7 +648,7 @@ export default function NativeTaxDeclaration() {
                         </span>
                       </td>
                       <td className="p-4 text-xs text-slate-500 font-mono">
-                        {new Date(doc.uploaded_at).toLocaleDateString("en-IN")}
+                        {formatISTDate(doc.uploaded_at)}
                       </td>
                       <td className="p-4">
                         <div className="flex gap-2">
@@ -710,8 +710,8 @@ export default function NativeTaxDeclaration() {
                       <td className="p-4 font-mono font-semibold text-slate-800">{INR(h.total_investment)}</td>
                       <td className="p-4 font-mono text-amber-700">{INR(h.tds_projected)}</td>
                       <td className="p-4 text-xs text-slate-400 font-mono">
-                        {h.submitted_at ? new Date(h.submitted_at).toLocaleDateString("en-IN") :
-                         h.created_at ? new Date(h.created_at).toLocaleDateString("en-IN") : "—"}
+                        {h.submitted_at ? formatISTDate(h.submitted_at) :
+                         h.created_at ? formatISTDate(h.created_at) : "—"}
                       </td>
                     </tr>
                   ))}

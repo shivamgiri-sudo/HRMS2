@@ -75,3 +75,73 @@ export function formatDateTime(dateString: string | null | undefined): string {
     return dateString;
   }
 }
+
+/** Format date/time for display in IST timezone (never UTC) */
+export function formatIST(
+  date: Date | string | null | undefined,
+  fmt: string = "MMM d, yyyy h:mm a"
+): string {
+  if (!date) return "";
+
+  try {
+    const d = typeof date === "string" ? parseISO(date) : date;
+    if (!isValid(d)) return String(date);
+
+    // Use Intl API with Asia/Kolkata timezone for consistent IST display
+    return d.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return String(date);
+  }
+}
+
+/** Format time only in IST (HH:MM AM/PM) */
+export function formatISTTime(
+  date: Date | string | null | undefined,
+  showSeconds = false
+): string {
+  if (!date) return "";
+
+  try {
+    const d = typeof date === "string" ? parseISO(date) : date;
+    if (!isValid(d)) return String(date);
+
+    return d.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: showSeconds ? "2-digit" : undefined,
+      hour12: true,
+    });
+  } catch {
+    return String(date);
+  }
+}
+
+/** Format date only in IST (MMM d, yyyy) */
+export function formatISTDate(
+  date: Date | string | null | undefined
+): string {
+  if (!date) return "";
+
+  try {
+    const d = typeof date === "string" ? parseISO(date) : date;
+    if (!isValid(d)) return String(date);
+
+    return d.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return String(date);
+  }
+}

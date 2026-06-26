@@ -1,3 +1,4 @@
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { hrmsApi } from '@/lib/hrmsApi';
@@ -292,7 +293,7 @@ export default function CandidatePortalDashboard() {
                           )}
                           {task.is_completed && task.completed_at && (
                             <p className="text-xs text-green-600 mt-1">
-                              Completed on {new Date(task.completed_at).toLocaleDateString()}
+                              Completed on {formatISTDate(task.completed_at)}
                             </p>
                           )}
                         </div>

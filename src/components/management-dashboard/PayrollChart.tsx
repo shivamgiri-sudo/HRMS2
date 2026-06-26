@@ -2,7 +2,9 @@
  * PayrollChart — Recharts LineChart showing 30-day projected payroll cost trend.
  */
 import { Loader, AlertTriangle, TrendingUp } from "lucide-react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   LineChart,
   Line,
   XAxis,
@@ -15,6 +17,7 @@ import {
   Legend,
 } from "recharts";
 import { usePayrollProjection } from "@/hooks/useManagementDashboard";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 function inrShort(v: number) {
   if (v >= 10_000_000) return `₹${(v / 10_000_000).toFixed(1)}Cr`;
@@ -75,7 +78,7 @@ export function PayrollChart() {
   // Format date labels: show DD-Mon
   const chartData = data.days.map((d) => ({
     ...d,
-    label: new Date(d.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }),
+    label: formatISTDate(d.date),
   }));
 
   return (

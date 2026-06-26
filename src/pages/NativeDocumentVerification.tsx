@@ -1,19 +1,30 @@
 import { useState } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useToast } from "@/hooks/use-toast";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useAuth } from "@/contexts/AuthContext";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Card,
   CardContent,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Badge } from "@/components/ui/badge";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Table,
   TableBody,
   TableCell,
@@ -22,6 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { FileCheck, Clock, Eye, RefreshCw } from "lucide-react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface UnverifiedDoc {
   id: string;
@@ -79,7 +91,7 @@ function DaysRemainingBadge({ expiryDate }: { expiryDate?: string }) {
 
 function formatDate(str?: string): string {
   if (!str) return "—";
-  try { return new Date(str).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
+  try { return formatISTDate(str); }
   catch { return str; }
 }
 

@@ -1,6 +1,9 @@
 import React from 'react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { BarChart, Bar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { X, Play, Volume2 } from 'lucide-react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface SubScores {
   opening: number;
@@ -140,10 +143,10 @@ export const CallDetailModal: React.FC<CallDetailModalProps> = ({
                   <div>
                     <p className="text-xs font-semibold text-gray-600 uppercase">Date</p>
                     <p className="text-lg font-bold text-gray-900 mt-1">
-                      {new Date(call.date).toLocaleDateString()}
+                      {formatISTDate(call.date)}
                     </p>
                     <p className="text-sm text-gray-500">
-                      {new Date(call.date).toLocaleTimeString()}
+                      {formatISTTime(call.date)}
                     </p>
                   </div>
                   <div>

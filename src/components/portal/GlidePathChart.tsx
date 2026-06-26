@@ -1,4 +1,5 @@
 import { Target, Calendar, BarChart2 } from "lucide-react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 export function GlidePathChart({ path }: { path: any }) {
   const points = path.points as Array<{ month: string; actual: number | null; committed: number | null; target: number }>;
@@ -139,7 +140,7 @@ export function GlidePathChart({ path }: { path: any }) {
                 fontWeight={isToday ? "bold" : "normal"}
                 fill={isToday ? "#f8fafc" : "#64748b"}
               >
-                {new Date(p.month + "-02").toLocaleString("default", { month: "short", year: "2-digit" })}
+                {formatIST(p.month + "-02")}
               </text>
             );
           })}

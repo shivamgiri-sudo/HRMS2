@@ -1,13 +1,22 @@
 /** Manager Quality Dashboard — team-level quality monitoring. Fetches GET /api/manager/team-quality */
 import { useState } from "react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useAuth } from "@/contexts/AuthContext";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useQuery } from "@tanstack/react-query";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card } from "@/components/ui/card";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Badge } from "@/components/ui/badge";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Users, TrendingUp, Phone, AlertCircle, Loader2 } from "lucide-react";
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   BarChart,
   Bar,
   Cell,
@@ -334,7 +343,7 @@ export default function ManagerQualityDashboard() {
               </div>
               {data.last_updated && (
                 <div className="px-6 py-2 border-t border-slate-100 text-xs text-slate-400 text-right">
-                  Last updated: {new Date(data.last_updated).toLocaleString()}
+                  Last updated: {formatIST(data.last_updated)}
                 </div>
               )}
             </Card>

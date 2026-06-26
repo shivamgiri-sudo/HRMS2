@@ -95,7 +95,7 @@ export default function NativePerformanceFeedbackReportDetail() {
         .slice(0, 5)
         .reverse()
         .map((r: Report) => ({
-          name: r.cycle_name || new Date(r.report_generated_at).toLocaleDateString(),
+          name: r.cycle_name || formatISTDate(r.report_generated_at),
           rating: r.final_rating,
         }));
 
@@ -174,7 +174,7 @@ export default function NativePerformanceFeedbackReportDetail() {
           <div>
             <h1 className="text-3xl font-bold text-gray-900">{report.cycle_name}</h1>
             <p className="text-gray-500 mt-1">
-              Report generated on {new Date(report.report_generated_at).toLocaleDateString()}
+              Report generated on {formatISTDate(report.report_generated_at)}
             </p>
           </div>
           <Badge className={getRatingBadgeColor(report.final_rating)}>
@@ -380,7 +380,7 @@ export default function NativePerformanceFeedbackReportDetail() {
                   </div>
 
                   <p className="text-xs text-gray-400">
-                    Submitted on {new Date(feedback.submitted_at).toLocaleDateString()}
+                    Submitted on {formatISTDate(feedback.submitted_at)}
                   </p>
                 </CardContent>
               </Card>

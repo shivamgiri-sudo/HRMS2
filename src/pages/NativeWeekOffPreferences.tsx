@@ -183,7 +183,7 @@ export default function NativeWeekOffPreferences() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <CardTitle>Your Latest Preference</CardTitle>
-                  <CardDescription>Submitted on {new Date(latest.created_at).toLocaleDateString()}</CardDescription>
+                  <CardDescription>Submitted on {formatISTDate(latest.created_at)}</CardDescription>
                 </div>
                 <Badge className={statusTone[latest.status] ?? statusTone.submitted}>
                   {latest.status === "accepted" || latest.status === "applied" ? <CheckCircle2 className="mr-1 h-4 w-4" /> : <Clock className="mr-1 h-4 w-4" />}

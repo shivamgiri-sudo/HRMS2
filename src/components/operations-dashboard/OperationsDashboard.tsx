@@ -1,12 +1,21 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { AlertCircle, RefreshCw } from 'lucide-react';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { HeatmapGrid } from './HeatmapGrid';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { RosterChart } from './RosterChart';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { RiskList } from './RiskList';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { QueueMetrics } from './QueueMetrics';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { getOperationsWebSocketClient } from '@/lib/operations-websocket';
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import type {
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   AgentStatus,
   OperationsSummary,
   ProcessUtilization,
@@ -174,7 +183,7 @@ export const OperationsDashboard: React.FC = () => {
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Operations Dashboard</h1>
           <p className="text-sm text-gray-600 mt-1">
-            Last updated: {new Date(state.lastUpdated).toLocaleTimeString()}
+            Last updated: {formatISTTime(state.lastUpdated)}
           </p>
         </div>
         <Button
