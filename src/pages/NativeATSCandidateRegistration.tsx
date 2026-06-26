@@ -435,7 +435,7 @@ export default function NativeATSCandidateRegistration() {
         branchOptions,
         branchAliases:           data.branchAliases       ?? [],
         yesNoOptions:            ["Yes","No"],
-        preferredShiftOptions:   data.preferredShiftOptions   ?? ["Morning (6AM-2PM)","Afternoon (2PM-10PM)","Night (10PM-6AM)","Rotational"],
+        preferredShiftOptions:   data.preferredShiftOptions   ?? ["Morning","Afternoon","Night","Rotational"],
         nightShiftComfortOptions:data.nightShiftComfortOptions ?? ["Comfortable","Not Comfortable","On Request"],
       });
     } else {
@@ -449,7 +449,7 @@ export default function NativeATSCandidateRegistration() {
         branchOptions:            ["Mumbai","Delhi","Bangalore","Hyderabad","Chennai","Pune"],
         branchAliases:            [],
         yesNoOptions:             ["Yes","No"],
-        preferredShiftOptions:    ["Morning (6AM-2PM)","Afternoon (2PM-10PM)","Night (10PM-6AM)","Rotational"],
+        preferredShiftOptions:    ["Morning","Afternoon","Night","Rotational"],
         nightShiftComfortOptions: ["Comfortable","Not Comfortable","On Request"],
       });
     }

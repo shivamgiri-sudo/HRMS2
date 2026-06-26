@@ -62,7 +62,7 @@ const DEFAULT_OPTIONS: Record<string, string[]> = {
   roleOptions:            ['Inbound Agent','Outbound Agent','Back Office','Team Leader','Quality Analyst'],
   educationOptions:       ['10th Pass','12th Pass','Graduate','Post Graduate','Diploma'],
   experienceOptions:      ['Fresher','0-1 Year','1-2 Years','2-3 Years','3+ Years'],
-  preferredShiftOptions:  ['Morning (6AM-2PM)','Afternoon (2PM-10PM)','Night (10PM-6AM)','Rotational'],
+  preferredShiftOptions:  ['Morning','Afternoon','Night','Rotational'],
   nightShiftComfortOptions: ['Comfortable','Not Comfortable','On Request'],
   genderOptions:          ['Male','Female','Other'],
 };
@@ -240,8 +240,8 @@ export const atsFormConfigService = {
        JOIN branch_master b ON b.id = e.branch_id
        WHERE e.active_status = 1
          AND (b.branch_name = ? OR b.branch_code = ?)
-         AND (LOWER(d.dept_name) LIKE '%human resource%' OR LOWER(d.dept_name) LIKE '%admin/hr%')
-         AND (LOWER(des.designation_name) LIKE '%executive%' OR LOWER(des.designation_name) LIKE '%recruiter%')
+         AND LOWER(d.dept_name) = 'human resource and development'
+         AND LOWER(des.designation_name) = 'executive'
        ORDER BY name ASC`,
       [branchName, canonicalKey]
     );
@@ -271,43 +271,8 @@ export const atsFormConfigService = {
       return toRosterList(empRows as any[], branchName);
     }
 
-    // Fallback: no HR+Executive at this branch — show global HR+Executive list (from any branch)
-    const [globalRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DISTINCT
-         e.id AS employee_id,
-         TRIM(CONCAT(e.first_name, IF(e.last_name IS NULL OR TRIM(e.last_name)='', '', CONCAT(' ', TRIM(e.last_name))))) AS name,
-         COALESCE(e.official_email, e.office_email, e.email)  AS email,
-         COALESCE(e.mobile, e.alternate_mobile)               AS mobile,
-         b.branch_name
-       FROM employees e
-       JOIN department_master d ON d.id = e.department_id
-       JOIN designation_master des ON des.id = e.designation_id
-       JOIN branch_master b ON b.id = e.branch_id
-       WHERE e.active_status = 1
-         AND (LOWER(d.dept_name) LIKE '%human resource%' OR LOWER(d.dept_name) LIKE '%admin/hr%')
-         AND (LOWER(des.designation_name) LIKE '%executive%' OR LOWER(des.designation_name) LIKE '%recruiter%')
-       ORDER BY name ASC
-       LIMIT 30`
-    );
-    if ((globalRows as RowDataPacket[]).length > 0) {
-      return toRosterList(globalRows as any[], (globalRows as any[])[0].branch_name);
-    }
-
-    // Last resort: any active employee already in ats_recruiter_roster — still prefer live employee contact
-    const [rosterRows] = await db.execute<RowDataPacket[]>(
-      `SELECT r.id, r.name,
-              COALESCE(e.official_email, e.office_email, e.email, r.email) AS email,
-              COALESCE(e.mobile, r.mobile)                                 AS mobile
-       FROM ats_recruiter_roster r
-       LEFT JOIN employees e ON e.id = r.employee_id
-       WHERE r.active_status = 1 AND r.employee_id IS NOT NULL ORDER BY r.name ASC`
-    );
-    return (rosterRows as RowDataPacket[]).map((r: any) => ({
-      name: String(r.name),
-      email: r.email || null,
-      mobile: r.mobile || null,
-      employee_id: String(r.id),
-    }));
+    // No HR+Executive found at this branch — return empty list (never cross-pollinate branches)
+    return [];
   },
 
   async listRecruiters() {
