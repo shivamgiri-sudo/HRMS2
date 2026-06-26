@@ -80,29 +80,27 @@ jobs:
     environment: production
 
     steps:
-      - uses: actions/checkout@v4
-
       # Download the artifacts built by ci-gate (avoids rebuilding on server)
       - name: Download backend dist
         uses: actions/download-artifact@v4
         with:
           name: backend-dist
-          path: backend/dist/
+          path: /tmp/deploy/backend/dist/
 
       - name: Download frontend dist
         uses: actions/download-artifact@v4
         with:
           name: frontend-dist
-          path: dist/
+          path: /tmp/deploy/dist/
 
       - name: Copy backend dist to serve dir
         run: |
-          rsync -a --delete backend/dist/ /var/www/HRMS1/backend/dist/
+          rsync -a --delete /tmp/deploy/backend/dist/ /var/www/HRMS1/backend/dist/
           echo "Backend files synced"
 
       - name: Copy frontend dist to serve dir
         run: |
-          rsync -a --delete dist/ /var/www/HRMS1/dist/
+          rsync -a --delete /tmp/deploy/dist/ /var/www/HRMS1/dist/
           echo "Frontend files synced"
 
       - name: Restart backend with PM2
