@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { getNcosecPool } from "../../db/ncosecDb.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { cosecSyncService } from "./cosec-sync.service.js";
@@ -102,6 +103,66 @@ cosecSyncRouter.get(
         unmapped_users: unmappedRows[0][0] ?? {},
         watermarks: watermarkRows[0],
       },
+    });
+  })
+);
+
+// GET /api/cosec-sync/schema
+// List all NCOSEC tables and their columns (admin/debug only)
+cosecSyncRouter.get(
+  "/schema",
+  requireRole("admin"),
+  h(async (_req: any, res: any) => {
+    const pool = await getNcosecPool();
+
+    // Get all tables
+    const tablesResult = await pool.request().query(`
+      SELECT TABLE_NAME
+      FROM INFORMATION_SCHEMA.TABLES
+      WHERE TABLE_TYPE='BASE TABLE'
+      ORDER BY TABLE_NAME
+    `);
+
+    const allTables = tablesResult.recordset.map((r: any) => r.TABLE_NAME);
+
+    // Filter to attendance-related
+    const attendanceKeywords = ['atd', 'attend', 'punch', 'summary', 'bio'];
+    const relevantTables = allTables.filter((t: string) =>
+      attendanceKeywords.some(kw => t.toLowerCase().includes(kw))
+    );
+
+    // Get column details for relevant tables
+    const tableSchemas: Record<string, any> = {};
+
+    for (const tableName of relevantTables) {
+      const colResult = await pool.request().query(`
+        SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = '${tableName}'
+        ORDER BY ORDINAL_POSITION
+      `);
+
+      const countResult = await pool.request().query(`
+        SELECT COUNT(*) as cnt FROM [${tableName}]
+      `);
+
+      tableSchemas[tableName] = {
+        rowCount: countResult.recordset[0].cnt,
+        columns: colResult.recordset.map((c: any) => ({
+          name: c.COLUMN_NAME,
+          type: c.DATA_TYPE,
+          nullable: c.IS_NULLABLE === 'YES'
+        }))
+      };
+    }
+
+    return res.json({
+      success: true,
+      allTableCount: allTables.length,
+      allTables,
+      relevantTableCount: relevantTables.length,
+      relevantTables,
+      tableSchemas
     });
   })
 );

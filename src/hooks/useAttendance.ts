@@ -88,6 +88,8 @@ export function useAttendance(month?: Date, employeeId?: string) {
     retry: 2,
     retryDelay: 1000,
     staleTime: 30000,
+    refetchInterval: 5 * 60 * 1000,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -128,6 +130,9 @@ export function useTodayAttendance(employeeId?: string) {
       return null;
     },
     enabled: !!employeeId,
+    staleTime: 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
+    refetchIntervalInBackground: false,
   });
 }
 

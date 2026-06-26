@@ -95,6 +95,9 @@ function getConfig() {
     database: process.env.NCOSEC_DB_NAME?.trim() || "NCOSEC",
     encrypt: boolEnv("NCOSEC_DB_ENCRYPT", false),
     trustServerCertificate: boolEnv("NCOSEC_DB_TRUST_CERT", true),
+    // Primary source: Mx_DATDTrn (daily summary — one row per user per day, pre-calculated by NCOSEC)
+    dailyTable: process.env.NCOSEC_DAILY_TABLE?.trim() || "dbo.Mx_DATDTrn",
+    // Legacy event table kept for testConnection fallback only
     table: process.env.NCOSEC_EVENT_TABLE?.trim() || "dbo.Mx_ATDEventTrn",
     userColumn: process.env.NCOSEC_USER_ID_COLUMN?.trim() || "UserID",
     datetimeColumn: process.env.NCOSEC_DATETIME_COLUMN?.trim() || "Edatetime",
@@ -105,46 +108,58 @@ function getConfig() {
 
 async function pullCosecAttendance(from: string, to: string): Promise<PunchGroup[]> {
   const cfg = getConfig();
-  const table = quoteTable(cfg.table);
-  const userColumn = quoteColumn(cfg.userColumn);
-  const datetimeColumn = quoteColumn(cfg.datetimeColumn);
+  const dailyTable = quoteTable(cfg.dailyTable);
   const pool = await getNcosecPool();
   const request = pool.request();
   request.input("fromDate", sql.Date, from);
   request.input("toDate", sql.Date, to);
+
+  // Query Mx_DATDTrn: NCOSEC's pre-calculated daily summary table.
+  // One row per (PDate, UserID). Punch1 = first punch, OutPunch = last punch,
+  // WorkTime = total working minutes. PDate is the NCOSEC roster date which
+  // correctly attributes night shifts (22:00–06:00) to the shift start date.
+  // We exclude today and future rows — NCOSEC pre-creates placeholder rows for
+  // future dates with NULL punches; only past dates have finalised data.
   const result = await request.query(`
-      SELECT
-        CAST(${userColumn} AS NVARCHAR(100)) AS user_id,
-        CONVERT(CHAR(10), CAST(${datetimeColumn} AS DATE), 23) AS attendance_date,
-        CONVERT(CHAR(19), MIN(${datetimeColumn}), 120) AS first_punch,
-        CONVERT(CHAR(19), MAX(${datetimeColumn}), 120) AS last_punch,
-        COUNT_BIG(*) AS total_punches,
-        DATEDIFF(MINUTE, MIN(${datetimeColumn}), MAX(${datetimeColumn})) AS working_minutes
-      FROM ${table}
-      WHERE ${datetimeColumn} >= @fromDate
-        AND ${datetimeColumn} < DATEADD(DAY, 1, @toDate)
-        AND ${userColumn} IS NOT NULL
-      GROUP BY ${userColumn}, CAST(${datetimeColumn} AS DATE)
-      ORDER BY ${userColumn}, attendance_date
-    `);
+    SELECT
+      CAST([UserID] AS NVARCHAR(100))            AS user_id,
+      CONVERT(CHAR(10), [PDate], 23)             AS attendance_date,
+      CONVERT(CHAR(19), [Punch1], 120)           AS first_punch,
+      CONVERT(CHAR(19), [OutPunch], 120)         AS last_punch,
+      ISNULL([WorkTime], 0)                      AS working_minutes
+    FROM ${dailyTable}
+    WHERE [PDate] >= @fromDate
+      AND [PDate] < DATEADD(DAY, 1, @toDate)
+      AND [PDate] < CAST(GETDATE() AS DATE)
+      AND [UserID] IS NOT NULL
+      AND [Punch1] IS NOT NULL
+      AND [OutPunch] IS NOT NULL
+      AND [WorkTime] IS NOT NULL
+      AND [WorkTime] > 0
+    ORDER BY [UserID], [PDate]
+  `);
+
   return result.recordset
     .map((row: any) => {
       const cosecUserId = String(row.user_id ?? "").trim();
+      const attendanceDate = String(row.attendance_date ?? "").trim();
       const firstPunch = String(row.first_punch ?? "").trim();
-      // Use first punch date (not grouping date) to handle night shifts correctly
-      // Night shifts: first punch 2026-06-25 22:00, last 2026-06-26 04:00 → stored as 2026-06-25
-      const punchDateFromFirstPunch = firstPunch.substring(0, 10);
       const lastPunch = String(row.last_punch ?? "").trim();
+      const workingMinutes = Math.max(0, Number(row.working_minutes ?? 0));
 
+      // Night shift detection: Mx_DATDTrn uses PDate as the roster/shift start date.
+      // If Punch1 hour >= 18 (evening) and OutPunch crosses to next calendar day,
+      // punchDate stays as PDate (NCOSEC already handled this correctly).
+      // We trust PDate as the authoritative shift date from NCOSEC.
       return {
         cosecUserId,
-        punchDate: punchDateFromFirstPunch,
+        punchDate: attendanceDate,
         firstPunch,
         lastPunch,
-        totalPunches: Math.max(0, Number(row.total_punches ?? 0)),
-        workingMinutes: Math.max(0, Number(row.working_minutes ?? 0)),
+        totalPunches: firstPunch === lastPunch ? 1 : 2,
+        workingMinutes,
         sourceSystem: "cosec_sqlserver",
-        sourceTable: cfg.table,
+        sourceTable: cfg.dailyTable,
       };
     })
     .filter((row: PunchGroup) =>
@@ -152,7 +167,6 @@ async function pullCosecAttendance(from: string, to: string): Promise<PunchGroup
       && /^\d{4}-\d{2}-\d{2}$/.test(row.punchDate)
       && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(row.firstPunch)
       && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(row.lastPunch)
-      && Number.isFinite(row.totalPunches)
       && Number.isFinite(row.workingMinutes)
     );
 }
@@ -366,9 +380,22 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
 }
 
 /**
- * Night shift rollover: when an employee's first punch is after 18:00 on day N
- * and they have punches before 10:00 on day N+1, merge day N+1 into day N.
- * This attributes the full shift to the roster start date for payroll purposes.
+ * Night shift safety merge for Mx_DATDTrn source.
+ *
+ * Mx_DATDTrn uses PDate as the NCOSEC roster/shift date, so night shifts
+ * (e.g. 22:00 Day N → 06:00 Day N+1) are normally already attributed to Day N
+ * by NCOSEC itself. This function handles the rare edge case where NCOSEC's
+ * shift configuration causes it to split a night shift across two consecutive
+ * PDate rows for the same employee:
+ *   Row 1: PDate=N,   Punch1=22:00, OutPunch=23:59, WorkTime=59
+ *   Row 2: PDate=N+1, Punch1=00:00, OutPunch=06:00, WorkTime=360
+ *
+ * Detection criteria (both must be true):
+ *   1. Current row's Punch1 hour >= 18 (evening start)
+ *   2. Next row is exactly the next calendar date AND its OutPunch hour < 10
+ *
+ * On merge: PDate stays as Day N (shift start), OutPunch becomes next row's
+ * OutPunch, WorkTime sums both rows plus the gap between OutPunch→Punch1.
  */
 function mergeNightShiftRollover(groups: PunchGroup[]): PunchGroup[] {
   const byUser = new Map<string, PunchGroup[]>();
@@ -388,7 +415,6 @@ function mergeNightShiftRollover(groups: PunchGroup[]): PunchGroup[] {
       const current = userGroups[i];
       const firstHour = parseInt(current.firstPunch.substring(11, 13), 10);
 
-      // If first punch is after 18:00, check if next day has early punches to merge
       if (firstHour >= 18 && i + 1 < userGroups.length) {
         const next = userGroups[i + 1];
         const nextDate = new Date(current.punchDate);
@@ -397,11 +423,11 @@ function mergeNightShiftRollover(groups: PunchGroup[]): PunchGroup[] {
 
         if (next.punchDate === expectedNextDate) {
           const nextLastHour = parseInt(next.lastPunch.substring(11, 13), 10);
-          // Merge if next day's last punch is before 10:00 (shift ended by morning)
           if (nextLastHour < 10) {
             consumed.add(i + 1);
-            const totalMinutes = current.workingMinutes + next.workingMinutes +
-              diffMinutes(current.lastPunch, next.firstPunch);
+            // Gap between end of Day N and start of Day N+1 (e.g. continuous shift)
+            const gapMinutes = diffMinutes(current.lastPunch, next.firstPunch);
+            const totalMinutes = current.workingMinutes + next.workingMinutes + gapMinutes;
             merged.push({
               ...current,
               lastPunch: next.lastPunch,
@@ -441,7 +467,7 @@ export const cosecSyncService = {
     const config = getConfig();
     const sourceTable = config.sourceMode === "mysql"
       ? "mas_hrms.integration_biometric_daily,wfm_external_punch_staging,stg_legacy_attendance"
-      : config.table;
+      : config.dailyTable;
 
     const result: SyncResult = {
       success: true,
