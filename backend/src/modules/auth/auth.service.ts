@@ -298,7 +298,7 @@ export const authService = {
     const rawToken = crypto.randomBytes(32).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     await db.execute(
-      'INSERT INTO auth_password_reset (user_id, token_hash, expires_at) VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? HOUR))',
+      'INSERT INTO auth_password_reset (user_id, token_hash, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR))',
       [userId, tokenHash, hours]
     );
     return rawToken;
@@ -342,7 +342,7 @@ export const authService = {
   async resetPassword(rawToken: string, newPassword: string): Promise<void> {
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT user_id FROM auth_password_reset WHERE token_hash = ? AND used = 0 AND expires_at > UTC_TIMESTAMP() LIMIT 1',
+      'SELECT user_id FROM auth_password_reset WHERE token_hash = ? AND used = 0 AND expires_at > NOW() LIMIT 1',
       [tokenHash]
     );
     if (!rows[0]) throw new Error('Invalid or expired reset token');
