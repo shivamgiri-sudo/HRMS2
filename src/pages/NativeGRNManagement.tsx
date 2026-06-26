@@ -6,16 +6,21 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertCircle,
+  Building2,
   CheckCircle2,
-  ChevronDown,
+  ChevronRight,
   ClipboardList,
+  Eye,
   FilePlus,
   FileText,
+  IndianRupee,
   Loader2,
   Plus,
   RefreshCw,
+  RotateCcw,
+  Search,
   Send,
-  Trash2,
   Upload,
   X,
   XCircle,
@@ -46,40 +51,237 @@ import {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const EXPENSE_HEADS = [
-  "Rent", "Salaries & Wages", "Utilities", "Office Supplies", "Travel & Conveyance",
-  "Marketing & Advertising", "IT & Software", "Repairs & Maintenance", "Training",
+  "Rent",
+  "Salaries & Wages",
+  "Utilities",
+  "Office Supplies",
+  "Travel & Conveyance",
+  "Marketing & Advertising",
+  "IT & Software",
+  "Repairs & Maintenance",
+  "Training",
   "Miscellaneous",
 ];
 
+const SUB_HEAD_MAP: Record<string, string[]> = {
+  Rent: ["Head Office Rent", "Branch Rent", "Warehouse Rent", "Guest House Rent"],
+  "Salaries & Wages": ["Regular Staff", "Contract Staff", "Overtime", "Incentives & Bonuses"],
+  Utilities: ["Electricity", "Water", "Internet & Broadband", "Telephone / Mobile"],
+  "Office Supplies": ["Stationery", "Printing & Cartridges", "Furniture", "Equipment"],
+  "Travel & Conveyance": [
+    "Local Conveyance",
+    "Outstation Travel",
+    "Fuel",
+    "Cab / Auto",
+    "Air Travel",
+    "Hotel",
+  ],
+  "Marketing & Advertising": [
+    "Digital Marketing",
+    "Print Media",
+    "Events & Sponsorship",
+    "Branding",
+  ],
+  "IT & Software": ["Software Licenses", "Hardware", "Cloud Services", "IT Support & AMC"],
+  "Repairs & Maintenance": [
+    "Building Maintenance",
+    "Equipment Maintenance",
+    "Vehicle Maintenance",
+    "AMC Contracts",
+  ],
+  Training: ["Internal Training", "External Training", "Online Courses", "Workshop / Seminar"],
+  Miscellaneous: [
+    "Bank Charges",
+    "Professional Fees",
+    "Legal Expenses",
+    "Audit Fees",
+    "Other",
+  ],
+};
+
 const PAYMENT_TERMS_OPTIONS = [7, 15, 30, 45, 60, 90];
 
-const STATUS_CHIP: Record<string, string> = {
-  draft:     "bg-slate-50 text-slate-600 border-slate-200",
-  submitted: "bg-amber-50 text-amber-700 border-amber-200",
-  approved:  "bg-emerald-50 text-emerald-700 border-emerald-200",
-  rejected:  "bg-rose-50 text-rose-700 border-rose-200",
-  cancelled: "bg-slate-100 text-slate-400 border-slate-200",
+const STATUS_CONFIG: Record<
+  string,
+  { dot: string; badge: string; label: string }
+> = {
+  draft: {
+    dot: "bg-slate-400",
+    badge: "bg-slate-50 text-slate-600 border-slate-200",
+    label: "Draft",
+  },
+  submitted: {
+    dot: "bg-amber-400",
+    badge: "bg-amber-50 text-amber-700 border-amber-200",
+    label: "Submitted",
+  },
+  approved: {
+    dot: "bg-emerald-500",
+    badge: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    label: "Approved",
+  },
+  rejected: {
+    dot: "bg-rose-500",
+    badge: "bg-rose-50 text-rose-700 border-rose-200",
+    label: "Rejected",
+  },
+  cancelled: {
+    dot: "bg-slate-300",
+    badge: "bg-slate-100 text-slate-400 border-slate-200",
+    label: "Cancelled",
+  },
 };
 
 function StatusBadge({ status }: { status: string }) {
+  const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.draft;
   return (
-    <Badge variant="outline" className={`rounded-full text-[10px] font-semibold capitalize ${STATUS_CHIP[status] ?? ""}`}>
-      {status}
-    </Badge>
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${cfg.badge}`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
+      {cfg.label}
+    </span>
   );
 }
 
 const fmtDate = (d?: string | null) =>
-  d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+  d
+    ? new Date(d).toLocaleDateString("en-IN", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      })
+    : "—";
 
 const fmt = (n: number | null | undefined) =>
-  Number(n ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  Number(n ?? 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 
-function TH({ children }: { children: React.ReactNode }) {
-  return <th className="px-3 py-2 text-left text-[11px] font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200">{children}</th>;
+function getCurrentFinancialYear(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  if (month >= 4) return `${year}-${String(year + 1).slice(2)}`;
+  return `${year - 1}-${String(year).slice(2)}`;
 }
-function TD({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <td className={`px-3 py-2 text-xs text-slate-700 border-b border-slate-100 align-top ${className ?? ""}`}>{children}</td>;
+
+// ── Sub Head Field ─────────────────────────────────────────────────────────────
+
+interface SubHeadFieldProps {
+  head: string;
+  value: string;
+  onChange: (v: string) => void;
+}
+
+function SubHeadField({ head, value, onChange }: SubHeadFieldProps) {
+  const options = head ? (SUB_HEAD_MAP[head] ?? []) : [];
+  const [showCustom, setShowCustom] = useState(false);
+
+  if (!head || options.length === 0) {
+    return (
+      <Input
+        className="h-9 text-sm mt-1"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Optional sub-category"
+      />
+    );
+  }
+
+  if (showCustom) {
+    return (
+      <div className="mt-1 flex gap-2">
+        <Input
+          className="h-9 text-sm flex-1"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Type custom sub-head…"
+          autoFocus
+        />
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 px-3 text-xs"
+          onClick={() => {
+            setShowCustom(false);
+            onChange("");
+          }}
+        >
+          <RotateCcw className="size-3.5" />
+        </Button>
+      </div>
+    );
+  }
+
+  const selectedIsCustom = value && !options.includes(value);
+
+  return (
+    <Select
+      value={selectedIsCustom ? "_other" : value || "_none"}
+      onValueChange={(v) => {
+        if (v === "_other") {
+          setShowCustom(true);
+          onChange("");
+        } else if (v === "_none") {
+          onChange("");
+        } else {
+          onChange(v);
+        }
+      }}
+    >
+      <SelectTrigger className="h-9 text-sm mt-1">
+        <SelectValue placeholder="Select sub-head" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="_none">— Select sub-head —</SelectItem>
+        {options.map((o) => (
+          <SelectItem key={o} value={o}>
+            {o}
+          </SelectItem>
+        ))}
+        <SelectItem value="_other">Other (specify)</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
+// ── Section Divider ────────────────────────────────────────────────────────────
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="col-span-2 flex items-center gap-3 pt-2">
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-[#073f78]">
+        {children}
+      </span>
+      <div className="flex-1 h-px bg-slate-100" />
+    </div>
+  );
+}
+
+// ── Form Field Wrapper ─────────────────────────────────────────────────────────
+
+function Field({
+  label,
+  required,
+  children,
+  span2,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+  span2?: boolean;
+}) {
+  return (
+    <div className={span2 ? "col-span-2" : "col-span-1"}>
+      <Label className="text-xs font-semibold text-slate-700">
+        {label}
+        {required && <span className="ml-0.5 text-rose-500"> *</span>}
+      </Label>
+      {children}
+    </div>
+  );
 }
 
 // ── GRN Form (Create / Submit) ─────────────────────────────────────────────────
@@ -112,14 +314,6 @@ const EMPTY_FORM: GrnFormState = {
   financialYear: getCurrentFinancialYear(),
 };
 
-function getCurrentFinancialYear(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
-  if (month >= 4) return `${year}-${String(year + 1).slice(2)}`;
-  return `${year - 1}-${String(year).slice(2)}`;
-}
-
 function CreateGrnTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -141,13 +335,14 @@ function CreateGrnTab() {
   const vendors: any[] = vendorData?.data ?? vendorData ?? [];
 
   const set = (k: keyof GrnFormState) => (v: string) =>
-    setForm(prev => ({ ...prev, [k]: v }));
+    setForm((prev) => ({ ...prev, [k]: v }));
 
   const createMutation = useMutation({
     mutationFn: async () => {
       if (!form.branchId) throw new Error("Branch is required");
       if (!form.head) throw new Error("Expense head is required");
-      if (!form.amount || isNaN(Number(form.amount))) throw new Error("Valid amount is required");
+      if (!form.amount || isNaN(Number(form.amount)))
+        throw new Error("Valid amount is required");
 
       const payload = {
         grnType: form.grnType,
@@ -158,11 +353,16 @@ function CreateGrnTab() {
         subHead: form.subHead || undefined,
         amount: Number(form.amount),
         billDate: form.billDate || undefined,
-        paymentTermsDays: form.paymentTermsDays ? Number(form.paymentTermsDays) : undefined,
+        paymentTermsDays: form.paymentTermsDays
+          ? Number(form.paymentTermsDays)
+          : undefined,
         remarks: form.remarks || undefined,
         financialYear: form.financialYear,
       };
-      const result = await hrmsApi.post<{ id: string; grnNumber: string }>("/api/finance/grns", payload);
+      const result = await hrmsApi.post<{ id: string; grnNumber: string }>(
+        "/api/finance/grns",
+        payload
+      );
 
       if (file) {
         const fd = new FormData();
@@ -179,173 +379,325 @@ function CreateGrnTab() {
       setFile(null);
       void qc.invalidateQueries({ queryKey: ["grn-list"] });
     },
-    onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+    onError: (e: Error) =>
+      toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
   const submitMutation = useMutation({
-    mutationFn: (id: string) => hrmsApi.post(`/api/finance/grns/${id}/submit`, {}),
+    mutationFn: (id: string) =>
+      hrmsApi.post(`/api/finance/grns/${id}/submit`, {}),
     onSuccess: () => {
       toast({ title: "GRN submitted for approval" });
       setCreatedId(null);
       setCreatedGrnNumber(null);
       void qc.invalidateQueries({ queryKey: ["grn-list"] });
     },
-    onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+    onError: (e: Error) =>
+      toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
   return (
-    <div className="max-w-2xl">
-      <h2 className="text-sm font-semibold text-slate-800 flex items-center gap-2 mb-5">
-        <FilePlus className="size-4 text-[#073f78]" /> Create New GRN
-      </h2>
-
+    <div className="max-w-3xl mx-auto">
+      {/* Success banner */}
       {createdId && (
-        <div className="mb-5 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-          <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
-          <span>GRN <strong>{createdGrnNumber}</strong> created as draft.</span>
+        <div className="mb-6 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 shadow-sm">
+          <CheckCircle2 className="size-5 shrink-0 text-emerald-600" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-emerald-900">
+              GRN <span className="font-mono">{createdGrnNumber}</span> saved as draft
+            </p>
+            <p className="text-xs text-emerald-700 mt-0.5">
+              Submit for approval to proceed with payment processing.
+            </p>
+          </div>
           <Button
             size="sm"
-            className="ml-auto bg-emerald-600 hover:bg-emerald-700 h-7 text-xs"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white h-9 px-4 text-sm font-medium gap-1.5 shadow-sm"
             onClick={() => submitMutation.mutate(createdId)}
             disabled={submitMutation.isPending}
           >
-            {submitMutation.isPending ? <Loader2 className="size-3.5 mr-1 animate-spin" /> : <Send className="size-3.5 mr-1" />}
+            {submitMutation.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Send className="size-4" />
+            )}
             Submit for Approval
           </Button>
-          <button onClick={() => { setCreatedId(null); setCreatedGrnNumber(null); }} className="text-emerald-600 hover:text-emerald-800">
+          <button
+            onClick={() => {
+              setCreatedId(null);
+              setCreatedGrnNumber(null);
+            }}
+            className="rounded-full p-1 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-800 transition-colors"
+          >
             <X className="size-4" />
           </button>
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        {/* GRN Type */}
-        <div>
-          <Label className="text-xs">GRN Type <span className="text-rose-500">*</span></Label>
-          <Select value={form.grnType} onValueChange={set("grnType")}>
-            <SelectTrigger className="h-8 text-xs mt-1"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="vendor">Vendor GRN</SelectItem>
-              <SelectItem value="imprest">Imprest GRN</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {/* Financial Year */}
-        <div>
-          <Label className="text-xs">Financial Year <span className="text-rose-500">*</span></Label>
-          <Input className="h-8 text-xs mt-1" value={form.financialYear} onChange={e => set("financialYear")(e.target.value)} placeholder="e.g. 2526" />
-        </div>
-
-        {/* Branch */}
-        <div>
-          <Label className="text-xs">Branch <span className="text-rose-500">*</span></Label>
-          <Select value={form.branchId} onValueChange={set("branchId")}>
-            <SelectTrigger className="h-8 text-xs mt-1"><SelectValue placeholder="Select branch" /></SelectTrigger>
-            <SelectContent>
-              {branches.map((b: any) => (
-                <SelectItem key={b.id} value={b.id}>{b.name ?? b.branch_name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        {/* Vendor */}
-        {form.grnType === "vendor" ? (
-          <div>
-            <Label className="text-xs">Vendor</Label>
-            <Select value={form.vendorId} onValueChange={v => { set("vendorId")(v); const vendor = vendors.find((x: any) => x.id === v); if (vendor) set("vendorName")(vendor.vendor_name ?? vendor.name ?? ""); }}>
-              <SelectTrigger className="h-8 text-xs mt-1"><SelectValue placeholder="Select vendor" /></SelectTrigger>
-              <SelectContent>
-                {vendors.map((v: any) => (
-                  <SelectItem key={v.id} value={v.id}>{v.vendor_name ?? v.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Input className="h-7 text-xs mt-1.5" value={form.vendorName} onChange={e => set("vendorName")(e.target.value)} placeholder="Or type vendor name manually" />
+      {/* Form card */}
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+        {/* Card header */}
+        <div className="flex items-center gap-3 border-b border-slate-100 bg-gradient-to-r from-[#073f78]/5 to-transparent px-6 py-4">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-[#073f78]/10">
+            <FilePlus className="size-4.5 text-[#073f78]" />
           </div>
-        ) : (
           <div>
-            <Label className="text-xs">Imprest Holder / Purpose</Label>
-            <Input className="h-8 text-xs mt-1" value={form.vendorName} onChange={e => set("vendorName")(e.target.value)} placeholder="Name / purpose" />
+            <h2 className="text-sm font-bold text-slate-900">Create New GRN</h2>
+            <p className="text-xs text-slate-500">
+              Fill in all required fields to create a Goods Receipt Note
+            </p>
           </div>
-        )}
-
-        {/* Head */}
-        <div>
-          <Label className="text-xs">Expense Head <span className="text-rose-500">*</span></Label>
-          <Select value={form.head} onValueChange={set("head")}>
-            <SelectTrigger className="h-8 text-xs mt-1"><SelectValue placeholder="Select head" /></SelectTrigger>
-            <SelectContent>
-              {EXPENSE_HEADS.map(h => <SelectItem key={h} value={h}>{h}</SelectItem>)}
-            </SelectContent>
-          </Select>
         </div>
 
-        {/* Sub Head */}
-        <div>
-          <Label className="text-xs">Sub Head</Label>
-          <Input className="h-8 text-xs mt-1" value={form.subHead} onChange={e => set("subHead")(e.target.value)} placeholder="Optional sub-category" />
-        </div>
+        <div className="p-6">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-5">
+            {/* ── Section: GRN Details ── */}
+            <SectionLabel>GRN Details</SectionLabel>
 
-        {/* Amount */}
-        <div>
-          <Label className="text-xs">Amount (₹) <span className="text-rose-500">*</span></Label>
-          <Input type="number" step="0.01" className="h-8 text-xs mt-1" value={form.amount} onChange={e => set("amount")(e.target.value)} placeholder="0.00" />
-        </div>
+            <Field label="GRN Type" required>
+              <Select value={form.grnType} onValueChange={set("grnType")}>
+                <SelectTrigger className="h-9 text-sm mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="vendor">Vendor GRN</SelectItem>
+                  <SelectItem value="imprest">Imprest GRN</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
 
-        {/* Bill Date */}
-        <div>
-          <Label className="text-xs">Bill / Invoice Date</Label>
-          <Input type="date" className="h-8 text-xs mt-1" value={form.billDate} onChange={e => set("billDate")(e.target.value)} />
-        </div>
+            <Field label="Financial Year" required>
+              <Input
+                className="h-9 text-sm mt-1"
+                value={form.financialYear}
+                onChange={(e) => set("financialYear")(e.target.value)}
+                placeholder="e.g. 2025-26"
+              />
+            </Field>
 
-        {/* Payment Terms */}
-        {form.grnType === "vendor" && (
-          <div>
-            <Label className="text-xs">Payment Terms (days)</Label>
-            <Select value={form.paymentTermsDays} onValueChange={set("paymentTermsDays")}>
-              <SelectTrigger className="h-8 text-xs mt-1"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {PAYMENT_TERMS_OPTIONS.map(d => <SelectItem key={d} value={String(d)}>{d} days</SelectItem>)}
-                <SelectItem value="0">Immediate</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+            {/* ── Section: Party Details ── */}
+            <SectionLabel>Party Details</SectionLabel>
 
-        {/* Attachment */}
-        <div>
-          <Label className="text-xs">Invoice / Bill Attachment</Label>
-          <label className="mt-1 flex items-center gap-2 cursor-pointer rounded-lg border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 px-3 py-2 text-xs text-slate-600 transition-colors">
-            <Upload className="size-3.5 text-slate-400" />
-            {file ? <span className="truncate max-w-[180px] text-slate-800">{file.name}</span> : "Upload PDF / Image"}
-            <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" className="hidden" onChange={e => setFile(e.target.files?.[0] ?? null)} />
-            {file && (
-              <button type="button" onClick={e => { e.preventDefault(); setFile(null); }} className="ml-auto text-slate-400 hover:text-rose-500">
-                <X className="size-3" />
-              </button>
+            <Field label="Branch" required>
+              <Select value={form.branchId} onValueChange={set("branchId")}>
+                <SelectTrigger className="h-9 text-sm mt-1">
+                  <SelectValue placeholder="Select branch" />
+                </SelectTrigger>
+                <SelectContent>
+                  {branches.map((b: any) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.name ?? b.branch_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+
+            {form.grnType === "vendor" ? (
+              <Field label="Vendor">
+                <Select
+                  value={form.vendorId || "_none"}
+                  onValueChange={(v) => {
+                    if (v === "_none") {
+                      set("vendorId")("");
+                      return;
+                    }
+                    set("vendorId")(v);
+                    const vendor = vendors.find((x: any) => x.id === v);
+                    if (vendor)
+                      set("vendorName")(vendor.vendor_name ?? vendor.name ?? "");
+                  }}
+                >
+                  <SelectTrigger className="h-9 text-sm mt-1">
+                    <SelectValue placeholder="Select vendor" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none">— Select vendor —</SelectItem>
+                    {vendors.map((v: any) => (
+                      <SelectItem key={v.id} value={v.id}>
+                        {v.vendor_name ?? v.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  className="h-9 text-sm mt-2"
+                  value={form.vendorName}
+                  onChange={(e) => set("vendorName")(e.target.value)}
+                  placeholder="Or type vendor name manually"
+                />
+              </Field>
+            ) : (
+              <Field label="Imprest Holder / Purpose">
+                <Input
+                  className="h-9 text-sm mt-1"
+                  value={form.vendorName}
+                  onChange={(e) => set("vendorName")(e.target.value)}
+                  placeholder="Name / purpose"
+                />
+              </Field>
             )}
-          </label>
+
+            {/* ── Section: Expense Classification ── */}
+            <SectionLabel>Expense Classification</SectionLabel>
+
+            <Field label="Expense Head" required>
+              <Select
+                value={form.head || "_none"}
+                onValueChange={(v) => {
+                  if (v === "_none") {
+                    set("head")("");
+                    set("subHead")("");
+                  } else {
+                    set("head")(v);
+                    set("subHead")("");
+                  }
+                }}
+              >
+                <SelectTrigger className="h-9 text-sm mt-1">
+                  <SelectValue placeholder="Select expense head" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_none">— Select head —</SelectItem>
+                  {EXPENSE_HEADS.map((h) => (
+                    <SelectItem key={h} value={h}>
+                      {h}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+
+            <Field label="Sub Head">
+              <SubHeadField
+                head={form.head}
+                value={form.subHead}
+                onChange={set("subHead")}
+              />
+            </Field>
+
+            {/* ── Section: Amount & Dates ── */}
+            <SectionLabel>Amount &amp; Dates</SectionLabel>
+
+            <Field label="Amount (₹)" required>
+              <div className="relative mt-1">
+                <IndianRupee className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
+                <Input
+                  type="number"
+                  step="0.01"
+                  className="h-9 pl-7 text-sm"
+                  value={form.amount}
+                  onChange={(e) => set("amount")(e.target.value)}
+                  placeholder="0.00"
+                />
+              </div>
+            </Field>
+
+            <Field label="Bill / Invoice Date">
+              <Input
+                type="date"
+                className="h-9 text-sm mt-1"
+                value={form.billDate}
+                onChange={(e) => set("billDate")(e.target.value)}
+              />
+            </Field>
+
+            {/* ── Payment Terms & Attachment ── */}
+            {form.grnType === "vendor" && (
+              <Field label="Payment Terms">
+                <Select
+                  value={form.paymentTermsDays}
+                  onValueChange={set("paymentTermsDays")}
+                >
+                  <SelectTrigger className="h-9 text-sm mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">Immediate</SelectItem>
+                    {PAYMENT_TERMS_OPTIONS.map((d) => (
+                      <SelectItem key={d} value={String(d)}>
+                        {d} days
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
+
+            <Field label="Invoice / Bill Attachment">
+              <label className="mt-1 flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-600 transition-colors hover:bg-slate-100 hover:border-[#073f78]/30">
+                <Upload className="size-4 shrink-0 text-slate-400" />
+                {file ? (
+                  <span className="truncate max-w-[180px] text-slate-800 text-xs font-medium">
+                    {file.name}
+                  </span>
+                ) : (
+                  <span className="text-xs">
+                    Upload PDF / Image{" "}
+                    <span className="text-slate-400">(optional)</span>
+                  </span>
+                )}
+                <input
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png,.webp"
+                  className="hidden"
+                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                />
+                {file && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setFile(null);
+                    }}
+                    className="ml-auto rounded-full p-0.5 text-slate-400 hover:text-rose-500 transition-colors"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                )}
+              </label>
+            </Field>
+
+            {/* ── Remarks ── */}
+            <SectionLabel>Notes</SectionLabel>
+            <Field label="Remarks" span2>
+              <Textarea
+                className="mt-1 text-sm min-h-[72px] resize-none"
+                value={form.remarks}
+                onChange={(e) => set("remarks")(e.target.value)}
+                placeholder="Internal notes or additional context…"
+              />
+            </Field>
+          </div>
         </div>
 
-        {/* Remarks — full width */}
-        <div className="sm:col-span-2">
-          <Label className="text-xs">Remarks</Label>
-          <Textarea className="mt-1 text-xs min-h-[60px]" value={form.remarks} onChange={e => set("remarks")(e.target.value)} placeholder="Internal notes…" />
+        {/* Footer actions */}
+        <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/60 px-6 py-4">
+          <Button
+            variant="outline"
+            className="h-9 gap-2 text-slate-600 border-slate-200 hover:bg-slate-100"
+            onClick={() => {
+              setForm(EMPTY_FORM);
+              setFile(null);
+            }}
+          >
+            <RotateCcw className="size-4" />
+            Reset
+          </Button>
+          <Button
+            className="h-9 bg-[#073f78] hover:bg-[#052d57] text-white gap-2 px-6 shadow-sm"
+            onClick={() => createMutation.mutate()}
+            disabled={createMutation.isPending}
+          >
+            {createMutation.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Plus className="size-4" />
+            )}
+            Save as Draft
+          </Button>
         </div>
-      </div>
-
-      <div className="mt-5 flex gap-3">
-        <Button
-          className="bg-[#073f78] hover:bg-[#052d57] text-white"
-          onClick={() => createMutation.mutate()}
-          disabled={createMutation.isPending}
-        >
-          {createMutation.isPending ? <Loader2 className="size-4 mr-2 animate-spin" /> : <Plus className="size-4 mr-2" />}
-          Save as Draft
-        </Button>
-        <Button variant="outline" onClick={() => setForm(EMPTY_FORM)}>Reset</Button>
       </div>
     </div>
   );
@@ -353,22 +705,33 @@ function CreateGrnTab() {
 
 // ── Approval Queue Tab ─────────────────────────────────────────────────────────
 
+const STATUS_TABS = [
+  { value: "_all", label: "All" },
+  { value: "draft", label: "Draft" },
+  { value: "submitted", label: "Submitted" },
+  { value: "approved", label: "Approved" },
+  { value: "rejected", label: "Rejected" },
+  { value: "cancelled", label: "Cancelled" },
+];
+
 function ApprovalQueueTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [statusFilter, setStatusFilter] = useState("submitted");
-  const [grnTypeFilter, setGrnTypeFilter] = useState("");
+  const [grnTypeFilter, setGrnTypeFilter] = useState("_all");
   const [search, setSearch] = useState("");
   const [reviewTarget, setReviewTarget] = useState<any | null>(null);
-  const [reviewDecision, setReviewDecision] = useState<"approved" | "rejected">("approved");
+  const [reviewDecision, setReviewDecision] = useState<"approved" | "rejected">(
+    "approved"
+  );
   const [reviewNote, setReviewNote] = useState("");
 
   const { data, isFetching } = useQuery({
     queryKey: ["grn-list", statusFilter, grnTypeFilter, search],
     queryFn: () => {
       const qs = new URLSearchParams();
-      if (statusFilter) qs.set("status", statusFilter);
-      if (grnTypeFilter) qs.set("grnType", grnTypeFilter);
+      if (statusFilter !== "_all") qs.set("status", statusFilter);
+      if (grnTypeFilter !== "_all") qs.set("grnType", grnTypeFilter);
       if (search) qs.set("search", search);
       qs.set("limit", "50");
       return hrmsApi.get<any>(`/api/finance/grns?${qs}`);
@@ -377,9 +740,14 @@ function ApprovalQueueTab() {
   const rows: any[] = data?.data ?? [];
 
   const submitMutation = useMutation({
-    mutationFn: (id: string) => hrmsApi.post(`/api/finance/grns/${id}/submit`, {}),
-    onSuccess: () => { toast({ title: "GRN submitted" }); void qc.invalidateQueries({ queryKey: ["grn-list"] }); },
-    onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+    mutationFn: (id: string) =>
+      hrmsApi.post(`/api/finance/grns/${id}/submit`, {}),
+    onSuccess: () => {
+      toast({ title: "GRN submitted" });
+      void qc.invalidateQueries({ queryKey: ["grn-list"] });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
   const reviewMutation = useMutation({
@@ -391,116 +759,236 @@ function ApprovalQueueTab() {
       setReviewNote("");
       void qc.invalidateQueries({ queryKey: ["grn-list"] });
     },
-    onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+    onError: (e: Error) =>
+      toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
   const cancelMutation = useMutation({
-    mutationFn: (id: string) => hrmsApi.post(`/api/finance/grns/${id}/cancel`, {}),
-    onSuccess: () => { toast({ title: "GRN cancelled" }); void qc.invalidateQueries({ queryKey: ["grn-list"] }); },
-    onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+    mutationFn: (id: string) =>
+      hrmsApi.post(`/api/finance/grns/${id}/cancel`, {}),
+    onSuccess: () => {
+      toast({ title: "GRN cancelled" });
+      void qc.invalidateQueries({ queryKey: ["grn-list"] });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <h2 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
-          <ClipboardList className="size-4 text-[#073f78]" /> GRN Approval Queue
-        </h2>
+      {/* Toolbar */}
+      <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-sm font-bold text-slate-900">GRN Approval Queue</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Review, submit, approve or reject GRN entries
+          </p>
+        </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Input
-            className="h-7 text-xs w-44"
-            placeholder="Search GRN / vendor / head…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+          {/* Search */}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
+            <Input
+              className="h-9 pl-8 text-sm w-52"
+              placeholder="Search GRN / vendor / head…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          {/* Type filter */}
           <Select value={grnTypeFilter} onValueChange={setGrnTypeFilter}>
-            <SelectTrigger className="h-7 text-xs w-28"><SelectValue placeholder="All types" /></SelectTrigger>
+            <SelectTrigger className="h-9 text-sm w-32">
+              <SelectValue placeholder="All types" />
+            </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All types</SelectItem>
+              <SelectItem value="_all">All types</SelectItem>
               <SelectItem value="vendor">Vendor</SelectItem>
               <SelectItem value="imprest">Imprest</SelectItem>
             </SelectContent>
           </Select>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-7 text-xs w-28"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {["", "draft", "submitted", "approved", "rejected", "cancelled"].map(s => (
-                <SelectItem key={s || "_all"} value={s}>{s || "All statuses"}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => qc.invalidateQueries({ queryKey: ["grn-list"] })}>
-            <RefreshCw className={`size-3.5 ${isFetching ? "animate-spin" : ""}`} />
+          {/* Refresh */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 w-9 p-0 border-slate-200"
+            onClick={() => qc.invalidateQueries({ queryKey: ["grn-list"] })}
+          >
+            <RefreshCw
+              className={`size-4 text-slate-500 ${isFetching ? "animate-spin" : ""}`}
+            />
           </Button>
         </div>
       </div>
 
+      {/* Status pill tabs */}
+      <div className="mb-4 flex items-center gap-1 flex-wrap">
+        {STATUS_TABS.map((tab) => {
+          const active = statusFilter === tab.value;
+          const cfg =
+            tab.value !== "_all" ? STATUS_CONFIG[tab.value] : null;
+          return (
+            <button
+              key={tab.value}
+              onClick={() => setStatusFilter(tab.value)}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
+                active
+                  ? "bg-[#073f78] border-[#073f78] text-white shadow-sm"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300"
+              }`}
+            >
+              {cfg && !active && (
+                <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
+              )}
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Table */}
       {rows.length === 0 ? (
-        <div className="py-14 text-center text-slate-400 text-sm">
-          <FileText className="size-8 mx-auto mb-2 opacity-30" />
-          No GRNs for selected filters
+        <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white py-16 shadow-sm">
+          <div className="flex size-14 items-center justify-center rounded-2xl bg-slate-100 mb-4">
+            <FileText className="size-6 text-slate-400" />
+          </div>
+          <p className="text-sm font-medium text-slate-600">No GRNs found</p>
+          <p className="text-xs text-slate-400 mt-1">
+            Try adjusting your filters or create a new GRN
+          </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-200">
-          <table className="w-full">
-            <thead className="bg-slate-50">
-              <tr>{["GRN No.", "Type", "Branch", "Vendor / Holder", "Head", "Amount", "Bill Date", "Due Date", "FY", "Status", "Actions"].map(h => <TH key={h}>{h}</TH>)}</tr>
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm">
+          <table className="w-full min-w-[900px]">
+            <thead>
+              <tr className="bg-[#073f78]">
+                {[
+                  "GRN No.",
+                  "Type",
+                  "Branch",
+                  "Vendor / Holder",
+                  "Head",
+                  "Amount (₹)",
+                  "Bill Date",
+                  "Due Date",
+                  "FY",
+                  "Status",
+                  "Actions",
+                ].map((h) => (
+                  <th
+                    key={h}
+                    className="px-4 py-3 text-left text-[11px] font-semibold text-white/90 whitespace-nowrap first:rounded-tl-2xl last:rounded-tr-2xl"
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
             </thead>
-            <tbody>
+            <tbody className="bg-white divide-y divide-slate-50">
               {rows.map((r: any) => (
-                <tr key={r.id} className="hover:bg-slate-50">
-                  <TD className="font-mono font-semibold text-[#073f78] whitespace-nowrap">{r.grn_number}</TD>
-                  <TD>
-                    <Badge variant="outline" className="text-[10px] capitalize">{r.grn_type}</Badge>
-                  </TD>
-                  <TD>{r.branch_name ?? r.branch_id}</TD>
-                  <TD className="max-w-[120px] truncate">{r.vendor_name ?? "—"}</TD>
-                  <TD>{r.head}</TD>
-                  <TD className="text-right font-mono font-semibold">₹{fmt(r.amount)}</TD>
-                  <TD>{fmtDate(r.bill_date)}</TD>
-                  <TD>{fmtDate(r.due_date)}</TD>
-                  <TD className="font-mono">{r.financial_year}</TD>
-                  <TD><StatusBadge status={r.status} /></TD>
-                  <TD>
-                    <div className="flex items-center gap-1 flex-wrap">
+                <tr
+                  key={r.id}
+                  className="group hover:bg-slate-50/70 transition-colors"
+                >
+                  <td className="px-4 py-3 text-xs font-mono font-bold text-[#073f78] whitespace-nowrap border-b border-slate-100">
+                    {r.grn_number}
+                  </td>
+                  <td className="px-4 py-3 border-b border-slate-100">
+                    <span
+                      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold capitalize ${
+                        r.grn_type === "vendor"
+                          ? "bg-blue-50 text-blue-700 border-blue-200"
+                          : "bg-purple-50 text-purple-700 border-purple-200"
+                      }`}
+                    >
+                      {r.grn_type}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-700 border-b border-slate-100">
+                    <div className="flex items-center gap-1.5">
+                      <Building2 className="size-3 text-slate-400 shrink-0" />
+                      {r.branch_name ?? r.branch_id}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-700 border-b border-slate-100 max-w-[140px]">
+                    <span className="truncate block">{r.vendor_name ?? "—"}</span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-700 border-b border-slate-100">
+                    {r.head}
+                    {r.sub_head && (
+                      <span className="block text-[10px] text-slate-400">
+                        {r.sub_head}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-xs font-mono font-semibold text-slate-900 text-right border-b border-slate-100">
+                    {fmt(r.amount)}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-600 border-b border-slate-100 whitespace-nowrap">
+                    {fmtDate(r.bill_date)}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-600 border-b border-slate-100 whitespace-nowrap">
+                    {fmtDate(r.due_date)}
+                  </td>
+                  <td className="px-4 py-3 text-xs font-mono text-slate-600 border-b border-slate-100">
+                    {r.financial_year}
+                  </td>
+                  <td className="px-4 py-3 border-b border-slate-100">
+                    <StatusBadge status={r.status} />
+                  </td>
+                  <td className="px-4 py-3 border-b border-slate-100">
+                    <div className="flex items-center gap-1">
                       {r.status === "draft" && (
                         <Button
                           size="sm"
                           variant="outline"
-                          className="h-6 text-[10px] text-blue-700 border-blue-200 hover:bg-blue-50"
+                          className="h-7 px-2.5 text-[11px] text-blue-700 border-blue-200 hover:bg-blue-50 hover:border-blue-300 gap-1"
                           onClick={() => submitMutation.mutate(r.id)}
                           disabled={submitMutation.isPending}
                         >
-                          <Send className="size-2.5 mr-1" /> Submit
+                          <Send className="size-3" /> Submit
                         </Button>
                       )}
                       {r.status === "submitted" && (
                         <Button
                           size="sm"
-                          className="h-6 text-[10px] bg-emerald-600 hover:bg-emerald-700"
-                          onClick={() => { setReviewTarget(r); setReviewDecision("approved"); setReviewNote(""); }}
+                          className="h-7 px-2.5 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+                          onClick={() => {
+                            setReviewTarget(r);
+                            setReviewDecision("approved");
+                            setReviewNote("");
+                          }}
                         >
-                          Review
+                          <Eye className="size-3" /> Review
                         </Button>
                       )}
                       {r.attachment_path && (
                         <button
-                          onClick={() => window.open(`/api/finance/grns/${r.id}/attachment`, "_blank")}
-                          className="text-blue-600 hover:text-blue-800 p-1 rounded"
+                          onClick={() =>
+                            window.open(
+                              `/api/finance/grns/${r.id}/attachment`,
+                              "_blank"
+                            )
+                          }
+                          className="flex size-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-100 hover:text-blue-600 transition-colors"
+                          title="View attachment"
                         >
                           <FileText className="size-3.5" />
                         </button>
                       )}
                       {["draft", "submitted"].includes(r.status) && (
                         <button
-                          onClick={() => { if (confirm("Cancel this GRN?")) cancelMutation.mutate(r.id); }}
-                          className="text-slate-400 hover:text-rose-500 p-1 rounded"
+                          onClick={() => {
+                            if (confirm("Cancel this GRN?"))
+                              cancelMutation.mutate(r.id);
+                          }}
+                          className="flex size-7 items-center justify-center rounded-md border border-slate-200 text-slate-400 hover:bg-rose-50 hover:text-rose-500 hover:border-rose-200 transition-colors"
+                          title="Cancel GRN"
                         >
                           <XCircle className="size-3.5" />
                         </button>
                       )}
                     </div>
-                  </TD>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -509,51 +997,165 @@ function ApprovalQueueTab() {
       )}
 
       {/* Review Dialog */}
-      <Dialog open={!!reviewTarget} onOpenChange={v => !v && setReviewTarget(null)}>
-        <DialogContent className="max-w-md">
+      <Dialog
+        open={!!reviewTarget}
+        onOpenChange={(v) => !v && setReviewTarget(null)}
+      >
+        <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-base">
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-900">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-emerald-100">
+                <ClipboardList className="size-4 text-emerald-700" />
+              </div>
               Review GRN — {reviewTarget?.grn_number}
             </DialogTitle>
           </DialogHeader>
+
           {reviewTarget && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-50 p-3 border border-slate-200 text-sm">
-                <div><p className="text-xs text-slate-500">Vendor / Holder</p><p className="font-medium">{reviewTarget.vendor_name ?? "—"}</p></div>
-                <div><p className="text-xs text-slate-500">Head</p><p>{reviewTarget.head}</p></div>
-                <div><p className="text-xs text-slate-500">Amount</p><p className="font-semibold text-[#073f78]">₹{fmt(reviewTarget.amount)}</p></div>
-                <div><p className="text-xs text-slate-500">Due Date</p><p>{fmtDate(reviewTarget.due_date)}</p></div>
+            <div className="space-y-4">
+              {/* GRN details grid */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3">
+                  GRN Details
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-[10px] text-slate-500 mb-0.5">
+                      Vendor / Holder
+                    </p>
+                    <p className="text-sm font-medium text-slate-800">
+                      {reviewTarget.vendor_name ?? "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-slate-500 mb-0.5">
+                      GRN Type
+                    </p>
+                    <p className="text-sm font-medium capitalize text-slate-800">
+                      {reviewTarget.grn_type}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-slate-500 mb-0.5">
+                      Expense Head
+                    </p>
+                    <p className="text-sm text-slate-800">{reviewTarget.head}</p>
+                    {reviewTarget.sub_head && (
+                      <p className="text-[11px] text-slate-500">
+                        {reviewTarget.sub_head}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-slate-500 mb-0.5">Amount</p>
+                    <p className="text-base font-bold text-[#073f78]">
+                      ₹{fmt(reviewTarget.amount)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-slate-500 mb-0.5">
+                      Bill Date
+                    </p>
+                    <p className="text-sm text-slate-800">
+                      {fmtDate(reviewTarget.bill_date)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-slate-500 mb-0.5">
+                      Due Date
+                    </p>
+                    <p className="text-sm text-slate-800">
+                      {fmtDate(reviewTarget.due_date)}
+                    </p>
+                  </div>
+                </div>
+                {reviewTarget.remarks && (
+                  <div className="mt-3 pt-3 border-t border-slate-200">
+                    <p className="text-[10px] text-slate-500 mb-0.5">Remarks</p>
+                    <p className="text-xs text-slate-700">{reviewTarget.remarks}</p>
+                  </div>
+                )}
               </div>
+
+              {/* Decision */}
               <div>
-                <Label className="text-xs">Decision</Label>
-                <Select value={reviewDecision} onValueChange={(v: any) => setReviewDecision(v)}>
-                  <SelectTrigger className="h-8 text-xs mt-1"><SelectValue /></SelectTrigger>
+                <Label className="text-xs font-semibold text-slate-700">
+                  Decision <span className="text-rose-500">*</span>
+                </Label>
+                <Select
+                  value={reviewDecision}
+                  onValueChange={(v: any) => setReviewDecision(v)}
+                >
+                  <SelectTrigger className="h-9 text-sm mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="approved">Approve</SelectItem>
-                    <SelectItem value="rejected">Reject</SelectItem>
+                    <SelectItem value="approved">Approve GRN</SelectItem>
+                    <SelectItem value="rejected">Reject GRN</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* Review note */}
               <div>
-                <Label className="text-xs">Review Note (optional)</Label>
-                <Textarea className="mt-1 text-xs min-h-[60px]" value={reviewNote} onChange={e => setReviewNote(e.target.value)} placeholder="Notes for the record…" />
+                <Label className="text-xs font-semibold text-slate-700">
+                  Review Note{" "}
+                  <span className="font-normal text-slate-400">(optional)</span>
+                </Label>
+                <Textarea
+                  className="mt-1 text-sm min-h-[72px] resize-none"
+                  value={reviewNote}
+                  onChange={(e) => setReviewNote(e.target.value)}
+                  placeholder="Notes for the record…"
+                />
               </div>
-              {reviewDecision === "approved" && reviewTarget.grn_type === "vendor" && (
-                <div className="rounded-xl bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800">
-                  Approving this vendor GRN will automatically create a payment tracking entry in Vendor Payment Tracking.
-                </div>
-              )}
+
+              {/* Info banner for vendor approval */}
+              {reviewDecision === "approved" &&
+                reviewTarget.grn_type === "vendor" && (
+                  <div className="flex items-start gap-2.5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+                    <AlertCircle className="size-4 text-blue-600 mt-0.5 shrink-0" />
+                    <p className="text-xs text-blue-800">
+                      Approving this vendor GRN will automatically create a
+                      payment tracking entry in Vendor Payment Tracking.
+                    </p>
+                  </div>
+                )}
             </div>
           )}
-          <DialogFooter className="gap-2">
-            <Button variant="outline" size="sm" onClick={() => setReviewTarget(null)}>Cancel</Button>
+
+          <DialogFooter className="gap-2 pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9"
+              onClick={() => setReviewTarget(null)}
+            >
+              Cancel
+            </Button>
             <Button
               size="sm"
-              className={reviewDecision === "approved" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"}
-              onClick={() => reviewMutation.mutate({ id: reviewTarget.id, decision: reviewDecision, reviewNote })}
+              className={`h-9 px-5 gap-1.5 ${
+                reviewDecision === "approved"
+                  ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                  : "bg-rose-600 hover:bg-rose-700 text-white"
+              }`}
+              onClick={() =>
+                reviewMutation.mutate({
+                  id: reviewTarget.id,
+                  decision: reviewDecision,
+                  reviewNote,
+                })
+              }
               disabled={reviewMutation.isPending}
             >
-              {reviewMutation.isPending && <Loader2 className="size-3.5 mr-1 animate-spin" />}
+              {reviewMutation.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : reviewDecision === "approved" ? (
+                <CheckCircle2 className="size-4" />
+              ) : (
+                <XCircle className="size-4" />
+              )}
               {reviewDecision === "approved" ? "Approve GRN" : "Reject GRN"}
             </Button>
           </DialogFooter>
@@ -568,33 +1170,66 @@ function ApprovalQueueTab() {
 export default function NativeGRNManagement() {
   return (
     <div className="min-h-screen bg-slate-50">
-      <div className="bg-white border-b border-slate-200 shadow-sm px-6 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-[#e8f2fc] text-[#073f78]">
-            <FilePlus className="size-5" />
-          </div>
-          <div>
-            <h1 className="text-base font-bold text-slate-900">GRN Management</h1>
-            <p className="text-xs text-slate-500">Goods Receipt Notes — create, submit and approve vendor / imprest GRNs</p>
+      {/* Page header */}
+      <div className="relative overflow-hidden border-b border-slate-200 bg-white shadow-sm">
+        <div
+          className="pointer-events-none absolute inset-0 opacity-[0.04]"
+          style={{
+            backgroundImage:
+              "repeating-linear-gradient(45deg, #073f78 0, #073f78 1px, transparent 0, transparent 50%)",
+            backgroundSize: "8px 8px",
+          }}
+        />
+        <div className="relative px-6 py-5">
+          {/* Breadcrumb */}
+          <nav className="mb-2 flex items-center gap-1 text-[11px] text-slate-400">
+            <span>Finance</span>
+            <ChevronRight className="size-3" />
+            <span className="text-[#073f78] font-medium">GRN Management</span>
+          </nav>
+          <div className="flex items-center gap-4">
+            <div className="flex size-11 items-center justify-center rounded-xl bg-[#073f78] shadow-md shadow-[#073f78]/20">
+              <FilePlus className="size-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold text-slate-900 leading-tight">
+                GRN Management
+              </h1>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Create, submit and approve Goods Receipt Notes for vendor and
+                imprest transactions
+              </p>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="p-6">
+      {/* Content */}
+      <div className="px-6 py-6">
         <Tabs defaultValue="create">
-          <TabsList className="grid grid-cols-2 h-auto mb-6 bg-white border border-slate-200 rounded-xl p-1 gap-1 w-fit">
-            <TabsTrigger value="create"  className="text-[11px] rounded-lg py-2 px-5 data-[state=active]:bg-[#073f78] data-[state=active]:text-white">
-              <FilePlus className="size-3.5 mr-1.5" /> Create GRN
+          <TabsList className="mb-6 h-auto bg-white border border-slate-200 rounded-xl p-1 gap-1 w-fit shadow-sm">
+            <TabsTrigger
+              value="create"
+              className="rounded-lg px-5 py-2 text-xs font-semibold text-slate-600 gap-1.5 data-[state=active]:bg-[#073f78] data-[state=active]:text-white data-[state=active]:shadow-sm transition-all"
+            >
+              <FilePlus className="size-3.5" /> Create GRN
             </TabsTrigger>
-            <TabsTrigger value="queue"   className="text-[11px] rounded-lg py-2 px-5 data-[state=active]:bg-[#073f78] data-[state=active]:text-white">
-              <ClipboardList className="size-3.5 mr-1.5" /> Approval Queue
+            <TabsTrigger
+              value="queue"
+              className="rounded-lg px-5 py-2 text-xs font-semibold text-slate-600 gap-1.5 data-[state=active]:bg-[#073f78] data-[state=active]:text-white data-[state=active]:shadow-sm transition-all"
+            >
+              <ClipboardList className="size-3.5" /> Approval Queue
             </TabsTrigger>
           </TabsList>
 
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-            <TabsContent value="create"><CreateGrnTab /></TabsContent>
-            <TabsContent value="queue"><ApprovalQueueTab /></TabsContent>
-          </div>
+          <TabsContent value="create">
+            <CreateGrnTab />
+          </TabsContent>
+          <TabsContent value="queue">
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-6">
+              <ApprovalQueueTab />
+            </div>
+          </TabsContent>
         </Tabs>
       </div>
     </div>

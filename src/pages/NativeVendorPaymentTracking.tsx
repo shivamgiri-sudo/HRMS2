@@ -292,8 +292,26 @@ export default function NativeVendorPaymentTracking() {
     window.open(`/api/finance/vendor-payments/export?${qs}`, "_blank");
   }
 
-  const inp = "h-8 text-xs px-2 border-slate-200 rounded focus:ring-1 focus:ring-blue-400";
-  const sel = "h-8 text-xs";
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+
+  // Summary totals computed from current page rows
+  const totalDue     = rows.reduce((sum, r) => sum + Number(r.due_amount ?? 0), 0);
+  const totalPaid    = rows.reduce((sum, r) => {
+    const edit = editRows[r.id];
+    return sum + (edit?.paid_amount !== "" && edit?.paid_amount != null
+      ? Number(edit.paid_amount)
+      : Number(r.paid_amount ?? 0));
+  }, 0);
+  const totalBalance = rows.reduce((sum, r) => {
+    const edit = editRows[r.id];
+    const paid = edit?.paid_amount !== "" && edit?.paid_amount != null
+      ? Number(edit.paid_amount)
+      : Number(r.paid_amount ?? 0);
+    return sum + Math.max(0, Number(r.due_amount ?? 0) - paid);
+  }, 0);
+
+  const inp = "h-9 text-xs px-2 border-slate-200 rounded focus:ring-1 focus:ring-blue-400";
+  const sel = "h-9 text-xs";
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -310,51 +328,86 @@ export default function NativeVendorPaymentTracking() {
       <div className="sticky top-0 z-20 bg-white border-b border-slate-200 shadow-sm">
         <div className="px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-xl bg-[#e8f2fc] text-[#073f78]">
-              <FileText className="size-5" />
+            {/* gradient left border accent */}
+            <div className="border-l-4 border-l-[#073f78] pl-3 flex items-center gap-3">
+              <div className="flex size-9 items-center justify-center rounded-xl bg-[#e8f2fc] text-[#073f78]">
+                <FileText className="size-5" />
+              </div>
+              <div>
+                <h1 className="text-base font-bold text-slate-900 leading-tight">GRN Payment Processing</h1>
+                <p className="text-xs text-slate-500">Vendor Payment Tracking</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-base font-bold text-slate-900">GRN Payment Processing</h1>
-              <p className="text-xs text-slate-500">
-                {total > 0 ? `${total} record${total !== 1 ? "s" : ""}` : "No records"} · Vendor Payment Tracking
-              </p>
+            {/* Stats chips */}
+            <div className="hidden sm:flex items-center gap-1.5 ml-2">
+              <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-600 border border-slate-200">
+                {total} record{total !== 1 ? "s" : ""}
+              </span>
+              {dirtyIds.size > 0 && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 border border-amber-200">
+                  {dirtyIds.size} unsaved
+                </span>
+              )}
             </div>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 text-xs gap-1"
-              onClick={() => setPage(p => Math.max(1, p - 1))}
-              disabled={page <= 1}
-            >
-              <ArrowLeft className="size-3.5" /> Back
-            </Button>
-            <span className="text-xs text-slate-500">
-              {page} / {Math.max(1, totalPages)}
-            </span>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 text-xs gap-1"
-              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-              disabled={page >= totalPages}
-            >
-              Next <ArrowRight className="size-3.5" />
-            </Button>
+            {/* Pagination controls */}
+            <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-1 py-0.5">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 w-7 p-0"
+                onClick={() => setPage(1)}
+                disabled={page <= 1}
+                title="First page"
+              >
+                «
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs gap-1"
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page <= 1}
+              >
+                <ArrowLeft className="size-3.5" />
+              </Button>
+              <span className="text-xs font-medium text-slate-600 px-1.5 tabular-nums">
+                {page} / {Math.max(1, totalPages)}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs gap-1"
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+              >
+                <ArrowRight className="size-3.5" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 w-7 p-0"
+                onClick={() => setPage(totalPages)}
+                disabled={page >= totalPages}
+                title="Last page"
+              >
+                »
+              </Button>
+            </div>
 
             <Button
               size="sm"
               variant="outline"
-              className="h-8 text-xs gap-1"
+              className={`h-8 text-xs gap-1.5 ${showFilters ? "bg-blue-50 border-blue-300 text-blue-700" : ""}`}
               onClick={() => setShowFilters(f => !f)}
             >
               <Filter className="size-3.5" />
-              {showFilters ? "Hide" : "Filters"}
-              {Object.values(filters).some(Boolean) && (
-                <span className="ml-1 size-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center">
-                  {Object.values(filters).filter(Boolean).length}
+              Filters
+              {activeFilterCount > 0 && (
+                <span className="ml-0.5 size-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold">
+                  {activeFilterCount}
                 </span>
               )}
             </Button>
@@ -362,21 +415,21 @@ export default function NativeVendorPaymentTracking() {
             {dirtyIds.size > 0 && (
               <Button
                 size="sm"
-                className="h-8 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700"
+                className="h-8 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 shadow-sm"
                 onClick={() => bulkSaveMutation.mutate()}
                 disabled={bulkSaveMutation.isPending}
               >
                 {bulkSaveMutation.isPending
                   ? <Loader2 className="size-3.5 animate-spin" />
                   : <Save className="size-3.5" />}
-                Bulk Save ({dirtyIds.size})
+                Save All ({dirtyIds.size})
               </Button>
             )}
 
             <Button
               size="sm"
               variant="outline"
-              className="h-8 text-xs gap-1"
+              className="h-8 text-xs gap-1.5"
               onClick={handleExport}
             >
               <Download className="size-3.5" /> Export
@@ -385,8 +438,9 @@ export default function NativeVendorPaymentTracking() {
             <Button
               size="sm"
               variant="ghost"
-              className="h-8 text-xs gap-1"
+              className="h-8 w-8 p-0"
               onClick={() => void queryClient.invalidateQueries({ queryKey: ["vendor-payments"] })}
+              title="Refresh"
             >
               <RefreshCw className={`size-3.5 ${isFetching ? "animate-spin" : ""}`} />
             </Button>
@@ -395,63 +449,81 @@ export default function NativeVendorPaymentTracking() {
 
         {/* ── Filters panel ─────────────────────────────────────────────────── */}
         {showFilters && (
-          <div className="border-t border-slate-100 bg-slate-50 px-4 py-3 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-            <div>
-              <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Financial Year</Label>
-              <Select value={filters.financialYear} onValueChange={setFilter("financialYear")}>
-                <SelectTrigger className={sel}><SelectValue placeholder="All years" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">All years</SelectItem>
-                  {FINANCIAL_YEARS.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Month</Label>
-              <Input type="month" className={inp} value={filters.month} onChange={e => setFilter("month")(e.target.value)} />
-            </div>
-            <div>
-              <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Head</Label>
-              <Input className={inp} placeholder="Budget head" value={filters.head} onChange={e => setFilter("head")(e.target.value)} />
-            </div>
-            <div>
-              <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Sub Head</Label>
-              <Input className={inp} placeholder="Sub head" value={filters.subHead} onChange={e => setFilter("subHead")(e.target.value)} />
-            </div>
-            <div>
-              <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Payment Status</Label>
-              <Select value={filters.paymentStatus} onValueChange={setFilter("paymentStatus")}>
-                <SelectTrigger className={sel}><SelectValue placeholder="All statuses" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">All statuses</SelectItem>
-                  {PAYMENT_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Due Date From</Label>
-              <Input type="date" className={inp} value={filters.dueDateFrom} onChange={e => setFilter("dueDateFrom")(e.target.value)} />
-            </div>
-            <div>
-              <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Due Date To</Label>
-              <Input type="date" className={inp} value={filters.dueDateTo} onChange={e => setFilter("dueDateTo")(e.target.value)} />
-            </div>
-            <div className="col-span-2 md:col-span-2">
-              <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Search GRN No. / Vendor</Label>
-              <Input className={inp} placeholder="Search…" value={filters.search} onChange={e => setFilter("search")(e.target.value)} />
-            </div>
-            <div className="flex items-end">
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-8 text-xs gap-1 text-slate-500"
-                onClick={() => {
-                  setFilters({ financialYear: "", month: "", branchId: "", head: "", subHead: "", vendorId: "", paymentStatus: "", dueDateFrom: "", dueDateTo: "", search: "" });
-                  setPage(1);
-                }}
-              >
-                <X className="size-3" /> Clear
-              </Button>
+          <div className="border-t border-slate-200 bg-white px-4 py-4">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                <div className="space-y-1.5">
+                  <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Financial Year</Label>
+                  <Select
+                    value={filters.financialYear || "_all"}
+                    onValueChange={v => setFilter("financialYear")(v === "_all" ? "" : v)}
+                  >
+                    <SelectTrigger className={sel}><SelectValue placeholder="All years" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="_all">All years</SelectItem>
+                      {FINANCIAL_YEARS.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Month</Label>
+                  <Input type="month" className={inp} value={filters.month} onChange={e => setFilter("month")(e.target.value)} />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Budget Head</Label>
+                  <Input className={inp} placeholder="Enter budget head" value={filters.head} onChange={e => setFilter("head")(e.target.value)} />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Sub Head</Label>
+                  <Input className={inp} placeholder="Enter sub head" value={filters.subHead} onChange={e => setFilter("subHead")(e.target.value)} />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Payment Status</Label>
+                  <Select
+                    value={filters.paymentStatus || "_all"}
+                    onValueChange={v => setFilter("paymentStatus")(v === "_all" ? "" : v)}
+                  >
+                    <SelectTrigger className={sel}><SelectValue placeholder="All statuses" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="_all">All statuses</SelectItem>
+                      {PAYMENT_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Due Date From</Label>
+                  <Input type="date" className={inp} value={filters.dueDateFrom} onChange={e => setFilter("dueDateFrom")(e.target.value)} />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Due Date To</Label>
+                  <Input type="date" className={inp} value={filters.dueDateTo} onChange={e => setFilter("dueDateTo")(e.target.value)} />
+                </div>
+
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Search GRN No. / Vendor</Label>
+                  <Input className={inp} placeholder="Search GRN number, vendor name…" value={filters.search} onChange={e => setFilter("search")(e.target.value)} />
+                </div>
+              </div>
+
+              <div className="mt-4 flex justify-end">
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-8 text-xs gap-1.5 bg-rose-500 hover:bg-rose-600"
+                  onClick={() => {
+                    setFilters({ financialYear: "", month: "", branchId: "", head: "", subHead: "", vendorId: "", paymentStatus: "", dueDateFrom: "", dueDateTo: "", search: "" });
+                    setPage(1);
+                  }}
+                >
+                  <X className="size-3.5" /> Clear All Filters
+                </Button>
+              </div>
             </div>
           </div>
         )}
@@ -464,15 +536,19 @@ export default function NativeVendorPaymentTracking() {
             <Loader2 className="size-6 animate-spin mr-2" /> Loading…
           </div>
         ) : rows.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-slate-400">
-            <FileText className="size-12 mb-3 opacity-30" />
-            <p className="text-sm font-medium">No vendor payment records found</p>
-            <p className="text-xs mt-1">Approved vendor GRNs will appear here</p>
+          <div className="flex flex-col items-center justify-center py-24 gap-3 text-slate-400">
+            <div className="flex size-24 items-center justify-center rounded-2xl bg-slate-100">
+              <FileText className="size-16 opacity-30" />
+            </div>
+            <div className="text-center">
+              <p className="text-sm font-semibold text-slate-500">No vendor payment records found</p>
+              <p className="text-xs text-slate-400 mt-1">Approved vendor GRNs will appear here once available.</p>
+            </div>
           </div>
         ) : (
           <table className="w-full text-xs border-collapse">
-            <thead>
-              <tr className="bg-[#073f78] text-white">
+            <thead className="sticky top-[57px] z-10">
+              <tr className="bg-[#073f78] text-white select-none">
                 {[
                   "Sr.", "Branch", "GRN No.", "Vendor", "Head", "Sub Head",
                   "Due Amount", "Due Date", "GRN File",
@@ -480,7 +556,7 @@ export default function NativeVendorPaymentTracking() {
                   "Transaction ID / Cheque No.", "Paid Amount",
                   "Balance", "Status", "Remarks", "Actions",
                 ].map(h => (
-                  <th key={h} className="px-2 py-2.5 text-left font-semibold whitespace-nowrap text-[11px] border-r border-blue-900/30 last:border-0">
+                  <th key={h} className="px-2 py-3 text-left font-semibold whitespace-nowrap text-[11px] border-r border-blue-900/30 last:border-0">
                     {h}
                   </th>
                 ))}
@@ -498,12 +574,19 @@ export default function NativeVendorPaymentTracking() {
                 const aging = agingDays(row.due_date);
                 const overdue = aging > 0 && row.payment_status !== "Paid" && row.payment_status !== "Closed";
 
+                // Row background: dirty > overdue > alternating
+                const rowBg = isDirty
+                  ? "bg-amber-50/40 border-l-2 border-l-amber-400"
+                  : overdue
+                  ? "bg-rose-50/20"
+                  : idx % 2 === 0
+                  ? "bg-white"
+                  : "bg-slate-50/50";
+
                 return (
                   <tr
                     key={row.id}
-                    className={`border-b border-slate-100 hover:bg-slate-50 transition-colors
-                      ${isDirty ? "bg-amber-50/40" : ""}
-                      ${idx % 2 === 0 ? "" : "bg-slate-50/30"}`}
+                    className={`border-b border-slate-100 hover:brightness-95 transition-colors ${rowBg}`}
                   >
                     {/* Sr. */}
                     <td className="px-2 py-1.5 text-slate-500 font-mono whitespace-nowrap">
@@ -710,27 +793,57 @@ export default function NativeVendorPaymentTracking() {
                 );
               })}
             </tbody>
+
+            {/* ── Summary totals row ──────────────────────────────────────────── */}
+            <tfoot>
+              <tr className="bg-slate-100 border-t-2 border-slate-300">
+                {/* Sr. through Sub Head — 6 cols */}
+                <td colSpan={6} className="px-3 py-2 text-xs font-semibold text-slate-600 whitespace-nowrap">
+                  Page Totals ({rows.length} rows)
+                </td>
+                {/* Due Amount */}
+                <td className="px-2 py-2 text-right font-mono font-semibold text-slate-800 whitespace-nowrap text-xs">
+                  ₹{fmt(totalDue)}
+                </td>
+                {/* Due Date through GRN File — 2 cols */}
+                <td colSpan={2} className="px-2 py-2" />
+                {/* Payment Mode through Transaction ID — 4 cols */}
+                <td colSpan={4} className="px-2 py-2" />
+                {/* Paid Amount */}
+                <td className="px-2 py-2 text-right font-mono font-semibold text-emerald-700 whitespace-nowrap text-xs">
+                  ₹{fmt(totalPaid)}
+                </td>
+                {/* Balance */}
+                <td className="px-2 py-2 text-right font-mono font-semibold text-rose-700 whitespace-nowrap text-xs">
+                  ₹{fmt(totalBalance)}
+                </td>
+                {/* Status + Remarks + Actions — 3 cols */}
+                <td colSpan={3} className="px-2 py-2" />
+              </tr>
+            </tfoot>
           </table>
         )}
       </div>
 
       {/* ── Footer ───────────────────────────────────────────────────────────── */}
       {rows.length > 0 && (
-        <div className="sticky bottom-0 bg-white border-t border-slate-200 px-4 py-2 flex items-center justify-between text-xs text-slate-500">
+        <div className="sticky bottom-0 bg-white/95 backdrop-blur-sm border-t border-slate-200 px-4 py-2 flex items-center justify-between text-xs text-slate-500 shadow-[0_-2px_8px_rgba(0,0,0,0.06)]">
           <span>
             Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} of {total} records
-            {dirtyIds.size > 0 && <span className="ml-2 text-amber-600 font-semibold">· {dirtyIds.size} unsaved</span>}
+            {dirtyIds.size > 0 && (
+              <span className="ml-2 text-amber-600 font-semibold">· {dirtyIds.size} unsaved</span>
+            )}
           </span>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => setPage(1)} disabled={page <= 1}>«</Button>
-            <Button size="sm" variant="ghost" className="h-6 text-[10px] gap-1" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}>
+          <div className="flex items-center gap-1">
+            <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-[11px]" onClick={() => setPage(1)} disabled={page <= 1}>«</Button>
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] gap-1" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}>
               <ArrowLeft className="size-3" /> Prev
             </Button>
-            <span className="px-2 font-medium">{page} / {Math.max(1, totalPages)}</span>
-            <Button size="sm" variant="ghost" className="h-6 text-[10px] gap-1" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+            <span className="px-2 font-medium tabular-nums">{page} / {Math.max(1, totalPages)}</span>
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] gap-1" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
               Next <ArrowRight className="size-3" />
             </Button>
-            <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => setPage(totalPages)} disabled={page >= totalPages}>»</Button>
+            <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-[11px]" onClick={() => setPage(totalPages)} disabled={page >= totalPages}>»</Button>
           </div>
         </div>
       )}
