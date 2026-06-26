@@ -961,9 +961,9 @@ export default function NativeATSCandidateRegistration() {
     }
 
     if (f.t === "select") {
-      // For recruiter dropdown: use branch-filtered list when available
-      const options: string[] = f.k === "recruiterName" && branchRecruiters.length > 0
-        ? branchRecruiters
+      // Recruiter dropdown: ONLY show branch-scoped recruiters (must select branch first)
+      const options: string[] = f.k === "recruiterName"
+        ? (form.branch ? branchRecruiters : [])
         : (f.ok ? (bootstrap[f.ok] as string[]) || [] : []);
       const hasValue = String(value || "").length > 0;
       const isValid = hasValue;
@@ -974,8 +974,8 @@ export default function NativeATSCandidateRegistration() {
           <label className="native-ats-fl">{f.lb}</label>
           <div className="native-ats-iw native-ats-sw">
             <span className="native-ats-ii">{f.ic}</span>
-            <select className={selectClass} value={String(value || "")} onChange={(e) => update(f.k, e.target.value)}>
-              <option value="">-- Select {f.lb} --</option>
+            <select className={selectClass} value={String(value || "")} onChange={(e) => update(f.k, e.target.value)} disabled={f.k === "recruiterName" && !form.branch}>
+              <option value="">{f.k === "recruiterName" && !form.branch ? "-- Select Branch First --" : `-- Select ${f.lb} --`}</option>
               {options.map((opt) => (
                 <option key={opt} value={opt}>
                   {opt}
