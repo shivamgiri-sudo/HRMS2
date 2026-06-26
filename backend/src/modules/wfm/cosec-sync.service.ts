@@ -128,16 +128,25 @@ async function pullCosecAttendance(from: string, to: string): Promise<PunchGroup
       ORDER BY ${userColumn}, attendance_date
     `);
   return result.recordset
-    .map((row: any) => ({
-      cosecUserId: String(row.user_id ?? "").trim(),
-      punchDate: String(row.attendance_date ?? "").trim(),
-      firstPunch: String(row.first_punch ?? "").trim(),
-      lastPunch: String(row.last_punch ?? "").trim(),
-      totalPunches: Math.max(0, Number(row.total_punches ?? 0)),
-      workingMinutes: Math.max(0, Number(row.working_minutes ?? 0)),
-      sourceSystem: "cosec_sqlserver",
-      sourceTable: cfg.table,
-    }))
+    .map((row: any) => {
+      const cosecUserId = String(row.user_id ?? "").trim();
+      const firstPunch = String(row.first_punch ?? "").trim();
+      // Use first punch date (not grouping date) to handle night shifts correctly
+      // Night shifts: first punch 2026-06-25 22:00, last 2026-06-26 04:00 → stored as 2026-06-25
+      const punchDateFromFirstPunch = firstPunch.substring(0, 10);
+      const lastPunch = String(row.last_punch ?? "").trim();
+
+      return {
+        cosecUserId,
+        punchDate: punchDateFromFirstPunch,
+        firstPunch,
+        lastPunch,
+        totalPunches: Math.max(0, Number(row.total_punches ?? 0)),
+        workingMinutes: Math.max(0, Number(row.working_minutes ?? 0)),
+        sourceSystem: "cosec_sqlserver",
+        sourceTable: cfg.table,
+      };
+    })
     .filter((row: PunchGroup) =>
       row.cosecUserId
       && /^\d{4}-\d{2}-\d{2}$/.test(row.punchDate)
