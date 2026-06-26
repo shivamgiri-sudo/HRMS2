@@ -5,7 +5,7 @@ import {
   FileText, GraduationCap, Heart, Home, Landmark,
   Network, Package, Server, Settings, Settings2, ShieldCheck, Sparkles,
   Target, TrendingUp, User, UserMinus, UserPlus, Users, Wallet,
-  Zap,
+  Zap, DollarSign, ShoppingCart,
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
 
@@ -106,6 +106,7 @@ export const navGroups: NavGroup[] = [
           { label: "Document Verification",href: "/document-verification",   icon: ic(FileCheck),   roles: ["admin","hr"],         description: "Documents" },
           { label: "BGV Verification",    href: "/ats/bgv",                  icon: ic(FileCheck),   pageCode: "ATS_BGV",           roles: ["admin","hr"], description: "BGV center" },
           { label: "BGV Reports",         href: "/ats/bgv-report",           icon: ic(FileCheck),   roles: ["admin","hr"],         description: "BGV" },
+          { label: "Employee BGV Status", href: "/employees/bgv-status",     icon: ic(ShieldCheck), roles: ["admin","hr","super_admin"], description: "Employee BGV status" },
           { label: "Bulk Upload",         href: "/bulk-upload",              icon: ic(Package),     pageCode: "EMPLOYEE_MANAGEMENT", roles: ["admin","hr"], description: "Bulk data import" },
         ],
       },
@@ -194,12 +195,20 @@ export const navGroups: NavGroup[] = [
         children: [
           { label: "Payroll",               href: "/payroll",                      icon: ic(CreditCard), roles: ["admin","hr","finance","payroll"],                    description: "Payroll" },
           { label: "Payroll Readiness",     href: "/payroll/readiness",            icon: ic(CreditCard), pageCode: "PAYROLL",  roles: ["admin","hr","finance","payroll"], description: "Payroll readiness" },
+          { label: "HO Queues",             href: "/payroll/ho-queues",            icon: ic(ClipboardList), roles: ["admin","hr","finance","payroll","super_admin"],   description: "HO approval queues" },
           { label: "Full & Final",          href: "/payroll/full-final",           icon: ic(Zap),        roles: ["admin","hr","finance","payroll"],                    description: "F&F" },
           { label: "Salary Packages",       href: "/payroll/salary-packages",      icon: ic(Wallet),     roles: ["admin","finance"],                                  description: "Pay matrix" },
           { label: "Att. Overrides",        href: "/payroll/attendance-overrides", icon: ic(Settings2),  roles: ["admin","super_admin","payroll_head","payroll_admin"],description: "Override attendance" },
           { label: "Statutory Config",      href: "/payroll/statutory-config",     icon: ic(Landmark),   roles: ["admin","hr","finance"],                             description: "Statutory" },
           { label: "Compliance",            href: "/compliance/statutory",         icon: ic(Landmark),   roles: ["admin","hr","finance"],                             description: "Compliance" },
           { label: "Labour Compliance",     href: "/compliance/labour",            icon: ic(Landmark),   pageCode: "LABOUR_COMPLIANCE", roles: ["admin","hr","finance"], description: "Labour" },
+        ],
+      },
+      {
+        label: "Finance",      href: "/finance/grn", icon: ic(DollarSign), roles: ["admin","finance","super_admin"], description: "Finance & procurement",
+        children: [
+          { label: "GRN Management",          href: "/finance/grn",                      icon: ic(ShoppingCart), roles: ["admin","finance","super_admin"], description: "Goods receipt notes" },
+          { label: "Vendor Payments",         href: "/finance/vendor-payment-tracking",  icon: ic(DollarSign),   roles: ["admin","finance","super_admin"], description: "Vendor payment tracking" },
         ],
       },
       {
