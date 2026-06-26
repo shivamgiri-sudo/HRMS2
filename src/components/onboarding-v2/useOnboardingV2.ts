@@ -21,13 +21,22 @@ export interface BgvCheck {
   verified_at?: string;
 }
 
+export interface OnboardingDocument {
+  id: string;
+  doc_type: string;
+  doc_name: string;
+  file_original_name: string;
+  document_status: 'pending' | 'verified' | 'rejected' | 'name_mismatch';
+  uploaded_at: string;
+}
+
 export interface OnboardingStatus {
   profile: Record<string, unknown> | null;
   bank: Record<string, unknown> | null;
   qualifications: unknown[];
   experience: Record<string, unknown> | null;
   family: Record<string, unknown> | null;
-  documents: unknown[];
+  documents: OnboardingDocument[];
   submission_log: unknown[];
 }
 

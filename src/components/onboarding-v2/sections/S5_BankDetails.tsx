@@ -106,6 +106,17 @@ export function S5_BankDetails({ token, initialData, saveSection, verifyBgv, ban
         ifscCode: form.ifsc_code,
         accountHolderName: form.account_holder_name,
       });
+      // Trigger name validation cross-check (non-blocking)
+      if (token) {
+        fetch(
+          `${import.meta.env.VITE_HRMS_API_URL ?? 'http://localhost:5055'}/api/onboarding/name-validation/validate`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token }),
+          }
+        ).catch(() => {});
+      }
     } finally {
       setVerifying(false);
     }

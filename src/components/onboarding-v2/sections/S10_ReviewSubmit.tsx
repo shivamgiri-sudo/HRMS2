@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { CheckCircle, Loader2, Send } from 'lucide-react';
 import { VerificationBadge } from '../VerificationBadge';
-import type { OnboardingStatus, BgvStatus } from '../useOnboardingV2';
+import { DocumentSubmissionTracker, type DocumentStatus } from '../DocumentSubmissionTracker';
+import type { OnboardingStatus, BgvStatus, OnboardingDocument } from '../useOnboardingV2';
 
 interface S10Props {
   status: OnboardingStatus | null;
@@ -18,11 +19,68 @@ const CHECKS = [
   { key: 'court',        label: 'Court Check' },
 ];
 
+// Map backend doc_type to human labels and required flag
+const DOC_META: Record<string, { label: string; required: boolean }> = {
+  cancelled_cheque:     { label: 'Cancelled Cheque / Passbook',   required: true },
+  pan_card:             { label: 'PAN Card',                       required: true },
+  aadhaar_front:        { label: 'Aadhaar Front',                  required: true },
+  aadhaar_back:         { label: 'Aadhaar Back',                   required: false },
+  passport:             { label: 'Passport',                       required: false },
+  driving_license:      { label: 'Driving License',               required: false },
+  voter_id:             { label: 'Voter ID',                       required: false },
+  education_certificate:{ label: 'Education Certificate',          required: false },
+  experience_letter:    { label: 'Experience Letter',              required: false },
+  photo:                { label: 'Photograph',                     required: true },
+};
+
+function buildDocStatuses(rawDocs: OnboardingDocument[]): DocumentStatus[] {
+  // Start from all expected docs (required ones shown even if not uploaded)
+  const result: DocumentStatus[] = Object.entries(DOC_META).map(([docType, meta]) => {
+    const uploaded = rawDocs.find(d => d.doc_type === docType);
+    if (!uploaded) {
+      return { docType, label: meta.label, required: meta.required, status: 'not_started' };
+    }
+    const status: DocumentStatus['status'] =
+      uploaded.document_status === 'verified'      ? 'verified' :
+      uploaded.document_status === 'rejected'      ? 'failed' :
+      uploaded.document_status === 'name_mismatch' ? 'name_mismatch' :
+      'uploaded';
+    return {
+      docType,
+      label: meta.label,
+      required: meta.required,
+      status,
+      uploadedAt: uploaded.uploaded_at,
+      verificationStatus: uploaded.document_status === 'verified' ? 'verified' :
+                          uploaded.document_status === 'name_mismatch' ? 'name_mismatch' : 'pending',
+    };
+  });
+  // Also surface any uploaded docs not in the meta map
+  rawDocs.forEach(d => {
+    if (!DOC_META[d.doc_type]) {
+      const status: DocumentStatus['status'] =
+        d.document_status === 'verified'      ? 'verified' :
+        d.document_status === 'rejected'      ? 'failed' :
+        d.document_status === 'name_mismatch' ? 'name_mismatch' :
+        'uploaded';
+      result.push({
+        docType: d.doc_type,
+        label: d.doc_name || d.doc_type,
+        required: false,
+        status,
+        uploadedAt: d.uploaded_at,
+      });
+    }
+  });
+  return result;
+}
+
 export function S10_ReviewSubmit({ status, bgv, submitOnboarding }: S10Props) {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const docStatuses = buildDocStatuses((status?.documents ?? []) as OnboardingDocument[]);
   const profile = status?.profile as Record<string, unknown> | null;
   const isAlreadySubmitted = String(profile?.profile_status ?? '') === 'submitted';
 
@@ -77,6 +135,11 @@ export function S10_ReviewSubmit({ status, bgv, submitOnboarding }: S10Props) {
           <div><span className="text-gray-500">DOB:</span> <strong>{String(profile?.date_of_birth ?? '—')}</strong></div>
         </div>
       </div>
+
+      {/* Document Submission Tracker */}
+      {docStatuses.length > 0 && (
+        <DocumentSubmissionTracker documents={docStatuses} section={10} />
+      )}
 
       {/* BGV status table */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">

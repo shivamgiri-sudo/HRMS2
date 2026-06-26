@@ -257,6 +257,52 @@ const BgvProviderSettings = () => {
           {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
           Save BGV Configuration
         </Button>
+
+        {/* Webhook / Callback Endpoint Reference */}
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3 mt-2">
+          <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Integration Endpoint Reference</p>
+          <p className="text-xs text-slate-500">Register these URLs in Integration Hub and your BGV provider portal.</p>
+          {[
+            {
+              label: "Penny Drop Webhook",
+              desc: "Provider sends bank verification result here",
+              path: "/api/onboarding/penny-drop/webhook",
+              method: "POST",
+            },
+            {
+              label: "DigiLocker Callback",
+              desc: "DigiLocker sends authorized documents here",
+              path: "/api/onboarding/digilocker/callback",
+              method: "POST",
+            },
+            {
+              label: "BGV Result Webhook",
+              desc: "General BGV check result callback",
+              path: "/api/ats/bgv/webhook",
+              method: "POST",
+            },
+          ].map(({ label, desc, path, method }) => (
+            <div key={path} className="rounded-lg bg-white border border-slate-200 px-3 py-2.5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">{label}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{desc}</p>
+                </div>
+                <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">{method}</span>
+              </div>
+              <div className="mt-1.5 flex items-center gap-2">
+                <code className="text-xs font-mono text-slate-700 bg-slate-100 px-2 py-1 rounded flex-1 truncate">{path}</code>
+                <button
+                  type="button"
+                  className="text-xs text-slate-500 hover:text-slate-900 px-2 py-1 rounded hover:bg-slate-200 transition-colors"
+                  onClick={() => navigator.clipboard?.writeText(path)}
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       </CardContent>
     </Card>
   );
