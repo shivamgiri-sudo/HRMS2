@@ -395,6 +395,7 @@ export function useOnboardingFull(token: string) {
     if (saving) return;
     try {
       if (step === 2) await saveEmployee();
+      else if (step === 3) await saveEmployee();
       else if (step === 7) await saveBank();
       else if (step === 9) await saveExperience();
       else if (step === 10) await saveStatutory();

@@ -111,18 +111,8 @@ export default function CandidateOnboardingFullPage() {
         />
       )}
 
-      {/* Step 4: Identity Docs — placeholder (maps to Document upload step) */}
-      {onb.step === 4 && (
-        <Step5Documents
-          status={onb.status}
-          saving={onb.saving}
-          consentAccepted={onb.consentAccepted}
-          onUpload={onb.uploadDoc}
-          onDelete={onb.deleteDoc}
-        />
-      )}
-
-      {onb.step === 5 && (
+      {/* Steps 4 & 5: Document Upload (combined) */}
+      {(onb.step === 4 || onb.step === 5) && (
         <Step5Documents
           status={onb.status}
           saving={onb.saving}
