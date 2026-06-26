@@ -54,8 +54,9 @@ export function UpcomingCelebrations() {
         }
 
         // Check work anniversary
-        if (emp.hire_date) {
-          const hireDateStr = /^\d{4}-\d{2}-\d{2}$/.test(emp.hire_date) ? `${emp.hire_date}T00:00:00` : emp.hire_date;
+        const joiningDate = emp.date_of_joining ?? emp.hire_date;
+        if (joiningDate) {
+          const hireDateStr = /^\d{4}-\d{2}-\d{2}$/.test(joiningDate) ? `${joiningDate}T00:00:00` : joiningDate;
           const hireDate = parseISO(hireDateStr);
           const anniversaryThisYear = new Date(currentYear, hireDate.getMonth(), hireDate.getDate());
           

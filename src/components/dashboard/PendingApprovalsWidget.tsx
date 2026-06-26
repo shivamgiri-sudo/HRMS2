@@ -45,14 +45,14 @@ export function PendingApprovalsWidget() {
               >
                 <div className="min-w-0">
                   <p className="text-sm font-medium truncate">
-                    {request.employees?.first_name} {request.employees?.last_name}
+                    {request.first_name ?? request.employees?.first_name} {request.last_name ?? request.employees?.last_name}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {request.leave_types?.name} · {request.days_count} day{request.days_count !== 1 ? 's' : ''}
+                    {request.leave_type_name ?? request.leave_types?.name ?? "Leave"} · {(request.total_days ?? request.days_count ?? 1)} day{(request.total_days ?? request.days_count ?? 1) !== 1 ? 's' : ''}
                   </p>
                 </div>
                 <span className="text-xs text-muted-foreground whitespace-nowrap ml-2">
-                  {format(new Date(normalizeDate(request.start_date)), "MMM d")}
+                  {(request.from_date ?? request.start_date) ? format(new Date(normalizeDate(request.from_date ?? request.start_date)), "MMM d") : ""}
                 </span>
               </div>
             ))}
