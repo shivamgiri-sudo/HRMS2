@@ -35,18 +35,28 @@ export async function resolveBranchFromAlias(displayName: string) {
 async function ensureRecruiterInRoster(
   employee: { id: string; first_name: string; last_name: string; mobile: string | null; email: string | null; branch_name: string }
 ): Promise<string> {
-  const fullName = `${employee.first_name} ${employee.last_name ?? ''}`.trim();
+  const fullName = [employee.first_name, employee.last_name].filter(Boolean).join(' ').trim();
 
-  // Check if already in roster (keyed by employee_id)
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM ats_recruiter_roster WHERE employee_id = ? LIMIT 1`,
     [employee.id]
   );
   if ((existing as RowDataPacket[]).length > 0) {
-    return (existing as RowDataPacket[])[0].id as string;
+    const rosterId = (existing as RowDataPacket[])[0].id as string;
+    // Refresh stale contact details from the live employee record
+    if (employee.email || employee.mobile) {
+      await db.execute(
+        `UPDATE ats_recruiter_roster
+         SET email  = COALESCE(?, email),
+             mobile = COALESCE(?, mobile),
+             name   = ?
+         WHERE id = ?`,
+        [employee.email ?? null, employee.mobile ?? null, fullName, rosterId]
+      );
+    }
+    return rosterId;
   }
 
-  // Insert new roster entry
   const rosterId = randomUUID();
   await db.execute(
     `INSERT INTO ats_recruiter_roster
@@ -62,15 +72,15 @@ async function ensureRecruiterInRoster(
 export async function getAvailableRecruiters(branchName: string) {
   const today = new Date().toISOString().split('T')[0];
 
-  // Fetch HR/Executive employees at this branch (department = Human Resource, designation = Executive)
+  // Fetch HR/Executive employees at this branch — use official_email > office_email > personal email
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT
        e.id AS employee_id,
        e.employee_code,
        e.first_name,
        e.last_name,
-       e.mobile,
-       e.email,
+       COALESCE(e.mobile, e.alternate_mobile)                  AS mobile,
+       COALESCE(e.official_email, e.office_email, e.email)     AS email,
        b.branch_name,
        d.dept_name AS department_name,
        des.designation_name,
@@ -97,10 +107,40 @@ export async function getAvailableRecruiters(branchName: string) {
     [today, branchName, branchName]
   );
 
+  // If no local HR+Executive found, fall back to global HR+Executive list
+  let sourceRows = rows as any[];
+  if (sourceRows.length === 0) {
+    const [globalRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT
+         e.id AS employee_id,
+         e.employee_code,
+         e.first_name,
+         e.last_name,
+         COALESCE(e.mobile, e.alternate_mobile)                  AS mobile,
+         COALESCE(e.official_email, e.office_email, e.email)     AS email,
+         b.branch_name,
+         d.dept_name AS department_name,
+         des.designation_name,
+         0 AS present_today,
+         NULL AS clock_in_time
+       FROM employees e
+       INNER JOIN department_master d ON e.department_id = d.id
+       INNER JOIN designation_master des ON e.designation_id = des.id
+       INNER JOIN branch_master b ON b.id = e.branch_id
+       WHERE e.active_status = 1
+         AND (LOWER(d.dept_name) LIKE '%human resource%' OR LOWER(d.dept_name) LIKE '%admin/hr%')
+         AND (LOWER(des.designation_name) LIKE '%executive%' OR LOWER(des.designation_name) LIKE '%recruiter%')
+       ORDER BY e.first_name, e.last_name
+       LIMIT 30`,
+      []
+    );
+    sourceRows = globalRows as any[];
+  }
+
   // Ensure every employee has a valid ats_recruiter_roster row (FK target for recruiter_id)
   // and return the roster id as `id` so callers can write it directly into ats_candidate.recruiter_id
   const result: any[] = [];
-  for (const row of rows as any[]) {
+  for (const row of sourceRows) {
     const rosterId = await ensureRecruiterInRoster({
       id: row.employee_id,
       first_name: row.first_name,
@@ -272,25 +312,25 @@ export async function generateEmployeeCode(companyPrefix: 'MAS' | 'IDC', isOffro
   try {
     await connection.beginTransaction();
 
-    // Lock row and get next sequence
+    // Lock row and get next sequence (column is current_sequence, not last_sequence_number)
     const [rows] = await connection.execute<RowDataPacket[]>(
-      `SELECT last_sequence_number FROM employee_code_sequence
-       WHERE company_prefix = ? FOR UPDATE`,
-      [companyPrefix]
+      `SELECT current_sequence FROM employee_code_sequence
+       WHERE company_prefix = ? AND is_offrole = ? FOR UPDATE`,
+      [companyPrefix, isOffrole ? 1 : 0]
     );
 
     if (rows.length === 0) {
       throw new Error(`Sequence not found for company ${companyPrefix}`);
     }
 
-    const nextSequence = rows[0].last_sequence_number + 1;
+    const nextSequence = (rows[0].current_sequence as number) + 1;
 
     // Update sequence
     await connection.execute(
       `UPDATE employee_code_sequence
-       SET last_sequence_number = ?
-       WHERE company_prefix = ?`,
-      [nextSequence, companyPrefix]
+       SET current_sequence = ?, last_generated_at = NOW()
+       WHERE company_prefix = ? AND is_offrole = ?`,
+      [nextSequence, companyPrefix, isOffrole ? 1 : 0]
     );
 
     // Generate employee code

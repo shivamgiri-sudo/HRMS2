@@ -645,9 +645,9 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
 
     await conn.execute(
       `UPDATE ats_onboarding_bridge
-       SET status = 'joined', hr_approved_by = ?, hr_approved_at = NOW()
+       SET status = 'joined', employee_id = ?, hr_approved_by = ?, hr_approved_at = NOW()
        WHERE candidate_id = ?`,
-      [approverId, candidateId],
+      [employeeId, approverId, candidateId],
     );
 
     await conn.execute(

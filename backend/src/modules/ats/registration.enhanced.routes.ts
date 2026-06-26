@@ -43,7 +43,7 @@ registrationEnhancedRouter.get("/recruiters/:branchName", async (req, res) => {
         id: r.id,                      // roster id (FK-safe for ats_candidate.recruiter_id)
         employee_id: r.id,             // alias used by frontend as preferredRecruiterId
         employee_code: r.employee_code,
-        name: `${r.first_name} ${r.last_name}`.trim(),
+        name: [r.first_name, r.last_name].filter(Boolean).join(' ').trim(),
         mobile: r.mobile,
         email: r.email,
         present_today: Boolean(r.present_today),
@@ -60,8 +60,8 @@ const enhancedRegistrationSchema = z.object({
   mobile: z.string().regex(/^[6-9]\d{9}$/, "Valid 10-digit Indian mobile number required"),
   email: z.string().email().nullable().optional(),
   branchDisplayName: z.string().min(1),
-  preferredRecruiterId: z.string().uuid().optional(),
-  recruiterName: z.string().optional(), // fallback when UUID not available
+  preferredRecruiterId: z.string().uuid().nullable().optional(),
+  recruiterName: z.string().nullable().optional(),
   roleApplied: z.string().min(1),
   address: z.string().optional(),
   education: z.string().min(1),
@@ -110,6 +110,12 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       walkInDate: new Date().toISOString().slice(0, 10),
       address: input.address ?? null,
       preferredShift: input.preferredShift ?? null,
+      rotationalShift: input.rotationalShift != null ? String(input.rotationalShift) : null,
+      nightShiftOk: input.nightShiftOk != null ? String(input.nightShiftOk) : null,
+      leavesIn3months: input.leavesIn3months != null ? String(input.leavesIn3months) : null,
+      ownsTwoWheeler: input.ownsTwoWheeler != null ? String(input.ownsTwoWheeler) : null,
+      idProofAvailable: input.idProofAvailable != null ? String(input.idProofAvailable) : null,
+      educationProofAvailable: input.educationProofAvailable != null ? String(input.educationProofAvailable) : null,
       profileStatus: "registered",
     }, null);
     const candidateId = candidate.id;
@@ -199,11 +205,14 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       );
     }
 
-    // 6. Get recruiter details — assignedRecruiterId is a roster id, join to employees for contact info
+    // 6. Get recruiter details — prefer official employee contact over stale roster row
     let recruiterDetails = null;
     if (assignmentResult.assignedRecruiterId) {
       const [recRows] = await db.execute<RowDataPacket[]>(
-        `SELECT r.name, r.mobile, r.email, e.employee_code
+        `SELECT r.name,
+                COALESCE(e.mobile, r.mobile)                                         AS mobile,
+                COALESCE(e.official_email, e.office_email, e.email, r.email)         AS email,
+                e.employee_code
          FROM ats_recruiter_roster r
          LEFT JOIN employees e ON e.id = r.employee_id
          WHERE r.id = ?

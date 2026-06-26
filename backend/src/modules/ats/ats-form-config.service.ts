@@ -1,5 +1,40 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { randomUUID } from 'crypto';
+
+// Upsert an employee into ats_recruiter_roster and return the roster id.
+// ats_candidate.recruiter_id FK points to ats_recruiter_roster.id — never write employees.id there.
+async function ensureRosterEntry(emp: {
+  employee_id: string; name: string; mobile: string | null;
+  email: string | null; branch_name: string;
+}): Promise<string> {
+  const [existing] = await db.execute<RowDataPacket[]>(
+    'SELECT id FROM ats_recruiter_roster WHERE employee_id = ? LIMIT 1', [emp.employee_id]
+  );
+  if ((existing as RowDataPacket[]).length > 0) {
+    const rosterId = (existing as RowDataPacket[])[0].id as string;
+    // Refresh stale contact details from the live employee record
+    if (emp.email || emp.mobile) {
+      await db.execute(
+        `UPDATE ats_recruiter_roster
+         SET email  = COALESCE(?, email),
+             mobile = COALESCE(?, mobile),
+             name   = ?
+         WHERE id = ?`,
+        [emp.email ?? null, emp.mobile ?? null, emp.name, rosterId]
+      );
+    }
+    return rosterId;
+  }
+  const rosterId = randomUUID();
+  await db.execute(
+    `INSERT INTO ats_recruiter_roster
+       (id, name, email, mobile, branch, employee_id, active_status, active_flag, available_today, daily_capacity, assigned_today)
+     VALUES (?, ?, ?, ?, ?, ?, 1, 'Y', 'Y', 999, 0)`,
+    [rosterId, emp.name, emp.email ?? null, emp.mobile ?? null, emp.branch_name, emp.employee_id]
+  );
+  return rosterId;
+}
 
 const DEFAULT_FIELDS = [
   { k:'name',       lb:'Full Name',       t:'text',     ic:'👤', ph:'Enter your full name',    ok:null,                      section:'Basic Details', visible:true, required:true,  sort_order:1  },
@@ -183,80 +218,95 @@ export const atsFormConfigService = {
     );
     const canonicalKey: string = (aliasRows as RowDataPacket[])[0]?.canonical_key ?? branchDisplayName;
 
-    // Look up the branch_name in branch_master matching this canonical key
     const [branchRows] = await db.execute<RowDataPacket[]>(
       `SELECT branch_name FROM branch_master WHERE active_status = 1 AND (branch_name = ? OR branch_code = ?) LIMIT 1`,
       [canonicalKey, canonicalKey]
     );
     const branchName: string = (branchRows as RowDataPacket[])[0]?.branch_name ?? canonicalKey;
 
-    // 1. Try ats_recruiter_roster filtered by branch (active only)
-    const [rosterRows] = await db.execute<RowDataPacket[]>(
-      `SELECT r.id, r.name, r.email, r.mobile, r.employee_id FROM ats_recruiter_roster r
-       WHERE r.active_status = 1 AND (r.branch = ? OR r.branch = ?)
-       ORDER BY r.name ASC`,
-      [branchName, canonicalKey]
-    );
-    if ((rosterRows as RowDataPacket[]).length > 0) {
-      return (rosterRows as RowDataPacket[]).map((r: any) => ({
-        name: String(r.name),
-        email: r.email || null,
-        mobile: r.mobile || null,
-        employee_id: r.employee_id || null,
-      }));
-    }
-
-    // 2. Fallback: employees with hr/recruiter/branch_head roles at this branch (via user_roles)
-    const [roleRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DISTINCT
-         e.id AS employee_id,
-         TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
-         COALESCE(e.office_email, e.official_email, e.email) AS email,
-         e.mobile
-       FROM user_roles ur
-       JOIN auth_user au ON au.id = ur.user_id
-       JOIN employees e  ON e.user_id = au.id
-       JOIN branch_master b ON b.id = e.branch_id
-       WHERE ur.active_status = 1
-         AND ur.role_key IN ('hr', 'recruitment_hr', 'recruiter', 'branch_head', 'admin', 'super_admin')
-         AND e.active_status = 1
-         AND b.branch_name = ?
-       ORDER BY name ASC`,
-      [branchName]
-    );
-    if ((roleRows as RowDataPacket[]).length > 0) {
-      return (roleRows as RowDataPacket[]).map((r: any) => ({
-        name: String(r.name),
-        email: r.email || null,
-        mobile: r.mobile || null,
-        employee_id: r.employee_id || null,
-      }));
-    }
-
-    // 3. Last resort: employees with HR/Recruiter designation names at this branch
+    // Primary: employees in Human Resource department with Executive/Recruiter designation
+    // Returns roster id as employee_id so frontend can send it as preferredRecruiterId (FK-safe)
+    // email priority: official_email > office_email > personal email
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT
          e.id AS employee_id,
-         TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
-         COALESCE(e.office_email, e.official_email, e.email) AS email,
-         e.mobile
+         TRIM(CONCAT(e.first_name, IF(e.last_name IS NULL OR TRIM(e.last_name)='', '', CONCAT(' ', TRIM(e.last_name))))) AS name,
+         COALESCE(e.official_email, e.office_email, e.email)  AS email,
+         COALESCE(e.mobile, e.alternate_mobile)               AS mobile,
+         b.branch_name
        FROM employees e
+       JOIN department_master d ON d.id = e.department_id
+       JOIN designation_master des ON des.id = e.designation_id
        JOIN branch_master b ON b.id = e.branch_id
-       LEFT JOIN designation_master des ON des.id = e.designation_id
        WHERE e.active_status = 1
-         AND b.branch_name = ?
-         AND (
-           LOWER(COALESCE(des.designation_name,'')) LIKE '%recruiter%'
-           OR LOWER(COALESCE(des.designation_name,'')) LIKE '%hr%'
-         )
+         AND (b.branch_name = ? OR b.branch_code = ?)
+         AND (LOWER(d.dept_name) LIKE '%human resource%' OR LOWER(d.dept_name) LIKE '%admin/hr%')
+         AND (LOWER(des.designation_name) LIKE '%executive%' OR LOWER(des.designation_name) LIKE '%recruiter%')
        ORDER BY name ASC`,
-      [branchName]
+      [branchName, canonicalKey]
     );
-    return (empRows as RowDataPacket[]).map((r: any) => ({
+
+    // Helper: upsert into roster (refreshing contact details), return roster-id-keyed list
+    async function toRosterList(rows: any[], fallbackBranch: string) {
+      const result = [];
+      for (const r of rows) {
+        const rosterId = await ensureRosterEntry({
+          employee_id: r.employee_id,
+          name: r.name,
+          mobile: r.mobile || null,
+          email: r.email || null,
+          branch_name: fallbackBranch,
+        });
+        result.push({
+          name: String(r.name),
+          email: r.email || null,
+          mobile: r.mobile || null,
+          employee_id: rosterId,  // roster id — FK-safe for ats_candidate.recruiter_id
+        });
+      }
+      return result;
+    }
+
+    if ((empRows as RowDataPacket[]).length > 0) {
+      return toRosterList(empRows as any[], branchName);
+    }
+
+    // Fallback: no HR+Executive at this branch — show global HR+Executive list (from any branch)
+    const [globalRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT
+         e.id AS employee_id,
+         TRIM(CONCAT(e.first_name, IF(e.last_name IS NULL OR TRIM(e.last_name)='', '', CONCAT(' ', TRIM(e.last_name))))) AS name,
+         COALESCE(e.official_email, e.office_email, e.email)  AS email,
+         COALESCE(e.mobile, e.alternate_mobile)               AS mobile,
+         b.branch_name
+       FROM employees e
+       JOIN department_master d ON d.id = e.department_id
+       JOIN designation_master des ON des.id = e.designation_id
+       JOIN branch_master b ON b.id = e.branch_id
+       WHERE e.active_status = 1
+         AND (LOWER(d.dept_name) LIKE '%human resource%' OR LOWER(d.dept_name) LIKE '%admin/hr%')
+         AND (LOWER(des.designation_name) LIKE '%executive%' OR LOWER(des.designation_name) LIKE '%recruiter%')
+       ORDER BY name ASC
+       LIMIT 30`
+    );
+    if ((globalRows as RowDataPacket[]).length > 0) {
+      return toRosterList(globalRows as any[], (globalRows as any[])[0].branch_name);
+    }
+
+    // Last resort: any active employee already in ats_recruiter_roster — still prefer live employee contact
+    const [rosterRows] = await db.execute<RowDataPacket[]>(
+      `SELECT r.id, r.name,
+              COALESCE(e.official_email, e.office_email, e.email, r.email) AS email,
+              COALESCE(e.mobile, r.mobile)                                 AS mobile
+       FROM ats_recruiter_roster r
+       LEFT JOIN employees e ON e.id = r.employee_id
+       WHERE r.active_status = 1 AND r.employee_id IS NOT NULL ORDER BY r.name ASC`
+    );
+    return (rosterRows as RowDataPacket[]).map((r: any) => ({
       name: String(r.name),
       email: r.email || null,
       mobile: r.mobile || null,
-      employee_id: r.employee_id || null,
+      employee_id: String(r.id),
     }));
   },
 
