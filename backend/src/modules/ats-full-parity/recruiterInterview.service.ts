@@ -211,9 +211,13 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
 
 // ── Submission history ────────────────────────────────────────────────────────
 
-export async function getSubmissionHistory(recruiterCode?: string | null, rosterId?: string | null) {
-  if (!recruiterCode && !rosterId) return [];
-  const params = [recruiterCode ?? null, rosterId ?? null, rosterId ?? null];
+export async function getSubmissionHistory(recruiterCode?: string | null, rosterId?: string | null, userId?: string | null) {
+  if (!recruiterCode && !rosterId && !userId) return [];
+  const params = [
+    recruiterCode ?? null,
+    rosterId ?? null, rosterId ?? null,
+    userId ?? null,
+  ];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT s.*,
             c.full_name, c.candidate_code, c.mobile, c.email,
@@ -239,10 +243,12 @@ export async function getSubmissionHistory(recruiterCode?: string | null, roster
        (? IS NOT NULL AND s.candidate_id IN (
          SELECT id FROM ats_candidate WHERE recruiter_id = ?
        ))
+       OR
+       (? IS NOT NULL AND s.recruiter_user_id = ?)
      )
      ORDER BY s.submitted_at DESC
      LIMIT 200`,
-    params
+    [...params, userId ?? null]
   );
   return rows as any[];
 }

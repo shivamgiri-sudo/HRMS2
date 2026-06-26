@@ -326,7 +326,8 @@ atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super
     rosterId = profile.id ?? null;
   }
 
-  const data = await getSubmissionHistory(recruiterCode, rosterId);
+  const userId = req.authUser?.id ?? null;
+  const data = await getSubmissionHistory(recruiterCode, rosterId, userId);
   return res.json({ success: true, data, recruiter: profile });
 }));
 
