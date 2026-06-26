@@ -9,29 +9,34 @@ async function ensureRosterEntry(emp: {
   email: string | null; branch_name: string;
 }): Promise<string> {
   const [existing] = await db.execute<RowDataPacket[]>(
-    'SELECT id FROM ats_recruiter_roster WHERE employee_id = ? LIMIT 1', [emp.employee_id]
+    'SELECT id, recruiter_code FROM ats_recruiter_roster WHERE employee_id = ? LIMIT 1', [emp.employee_id]
   );
   if ((existing as RowDataPacket[]).length > 0) {
-    const rosterId = (existing as RowDataPacket[])[0].id as string;
-    // Refresh stale contact details from the live employee record
-    if (emp.email || emp.mobile) {
-      await db.execute(
-        `UPDATE ats_recruiter_roster
-         SET email  = COALESCE(?, email),
-             mobile = COALESCE(?, mobile),
-             name   = ?
-         WHERE id = ?`,
-        [emp.email ?? null, emp.mobile ?? null, emp.name, rosterId]
-      );
-    }
+    const row = (existing as RowDataPacket[])[0];
+    const rosterId = row.id as string;
+    // Refresh stale contact details + ensure recruiter_code is populated
+    const needsCode = !row.recruiter_code;
+    const code = needsCode ? emp.name.split(' ')[0].toUpperCase() + '-' + emp.employee_id.slice(0, 4).toUpperCase() : null;
+    await db.execute(
+      `UPDATE ats_recruiter_roster
+       SET email  = COALESCE(?, email),
+           mobile = COALESCE(?, mobile),
+           name   = ?
+           ${needsCode ? ', recruiter_code = ?' : ''}
+       WHERE id = ?`,
+      needsCode
+        ? [emp.email ?? null, emp.mobile ?? null, emp.name, code, rosterId]
+        : [emp.email ?? null, emp.mobile ?? null, emp.name, rosterId]
+    );
     return rosterId;
   }
   const rosterId = randomUUID();
+  const code = emp.name.split(' ')[0].toUpperCase() + '-' + emp.employee_id.slice(0, 4).toUpperCase();
   await db.execute(
     `INSERT INTO ats_recruiter_roster
-       (id, name, email, mobile, branch, employee_id, active_status, active_flag, available_today, daily_capacity, assigned_today)
-     VALUES (?, ?, ?, ?, ?, ?, 1, 'Y', 'Y', 999, 0)`,
-    [rosterId, emp.name, emp.email ?? null, emp.mobile ?? null, emp.branch_name, emp.employee_id]
+       (id, name, recruiter_code, email, mobile, branch, employee_id, active_status, active_flag, available_today, daily_capacity, assigned_today)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'Y', 'Y', 999, 0)`,
+    [rosterId, emp.name, code, emp.email ?? null, emp.mobile ?? null, emp.branch_name, emp.employee_id]
   );
   return rosterId;
 }

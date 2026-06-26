@@ -91,10 +91,20 @@ export async function resolveRecruiterForActor(userId: string): Promise<Recruite
   );
   const rec = (rows as any[])[0];
   if (!rec) return null;
+
+  let code = rec.recruiter_code as string | null;
+  if (!code) {
+    code = (rec.name as string).split(" ")[0].toUpperCase() + "-" + (rec.id as string).slice(0, 4).toUpperCase();
+    await db.execute(
+      `UPDATE ats_recruiter_roster SET recruiter_code = ? WHERE id = ? AND (recruiter_code IS NULL OR recruiter_code = '')`,
+      [code, rec.id]
+    );
+  }
+
   return {
     id: rec.id,
     name: rec.name,
-    recruiterCode: rec.recruiter_code,
+    recruiterCode: code,
     branch: rec.branch ?? "",
     email: rec.email ?? null,
     employeeId: rec.employee_id ?? null,
