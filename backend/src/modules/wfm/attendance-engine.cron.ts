@@ -1,9 +1,11 @@
 import { attendanceEngineService } from './attendance-engine.service.js';
 
-const RUN_HOUR = 23;
+// Run every 5 minutes to keep attendance data fresh
+const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 let nextRun: NodeJS.Timeout | undefined;
 
 export async function runAttendanceSweep(): Promise<{ processed: number; skipped: number; failed: number }> {
+  // Process yesterday's data for today's attendance record
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
   const date = yesterday.toISOString().split('T')[0]!;
@@ -20,11 +22,9 @@ export async function runAttendanceSweep(): Promise<{ processed: number; skipped
   return result;
 }
 
-export function millisecondsUntilNextAttendanceSweep(now = new Date()): number {
-  const next = new Date(now);
-  next.setHours(RUN_HOUR, 0, 0, 0);
-  if (next <= now) next.setDate(next.getDate() + 1);
-  return next.getTime() - now.getTime();
+export function millisecondsUntilNextAttendanceSweep(): number {
+  // Run every 5 minutes, starting from the next 5-minute interval
+  return SYNC_INTERVAL_MS;
 }
 
 export function startAttendanceEngineScheduler(): void {
