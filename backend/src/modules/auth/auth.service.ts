@@ -29,10 +29,6 @@ function mysqlDateTime(date: Date): string {
   return date.toISOString().slice(0, 19).replace('T', ' ');
 }
 
-// All DATETIME values in mas_hrms are stored as IST strings (pool timezone:"local").
-// Use this offset when constructing datetime parameters from JS Date.
-const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-
 function normalizeEmail(value: string): string {
   return value.toLowerCase().trim();
 }
@@ -301,10 +297,9 @@ export const authService = {
   async createPasswordResetTokenByUserId(userId: string, hours = RESET_EXPIRES_HOURS): Promise<string> {
     const rawToken = crypto.randomBytes(32).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-    const expiresAt = mysqlDateTime(new Date(Date.now() + IST_OFFSET_MS + hours * 60 * 60 * 1000));
     await db.execute(
-      'INSERT INTO auth_password_reset (user_id, token_hash, expires_at) VALUES (?, ?, ?)',
-      [userId, tokenHash, expiresAt]
+      'INSERT INTO auth_password_reset (user_id, token_hash, expires_at) VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? HOUR))',
+      [userId, tokenHash, hours]
     );
     return rawToken;
   },
@@ -347,8 +342,8 @@ export const authService = {
   async resetPassword(rawToken: string, newPassword: string): Promise<void> {
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT user_id FROM auth_password_reset WHERE token_hash = ? AND used = 0 AND expires_at > ? LIMIT 1',
-      [tokenHash, mysqlDateTime(new Date(Date.now() + IST_OFFSET_MS))]
+      'SELECT user_id FROM auth_password_reset WHERE token_hash = ? AND used = 0 AND expires_at > UTC_TIMESTAMP() LIMIT 1',
+      [tokenHash]
     );
     if (!rows[0]) throw new Error('Invalid or expired reset token');
     const hash = await bcrypt.hash(newPassword, 10);
