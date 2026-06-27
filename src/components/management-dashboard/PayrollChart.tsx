@@ -4,7 +4,6 @@
 import { Loader, AlertTriangle, TrendingUp } from "lucide-react";
 import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   LineChart,
   Line,
   XAxis,
@@ -17,7 +16,6 @@ import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Legend,
 } from "recharts";
 import { usePayrollProjection } from "@/hooks/useManagementDashboard";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 function inrShort(v: number) {
   if (v >= 10_000_000) return `₹${(v / 10_000_000).toFixed(1)}Cr`;

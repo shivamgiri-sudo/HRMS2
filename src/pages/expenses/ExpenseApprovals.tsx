@@ -1,19 +1,12 @@
 import { useState } from 'react';
 import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { ExpenseStatusBadge } from '../../components/expenses/ExpenseStatusBadge';
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { ExpenseApprovalActions } from '../../components/expenses/ExpenseApprovalActions';
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { ExpenseItemsList } from '../../components/expenses/ExpenseItemsList';
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { usePendingApprovals, useClaimDetails, useManagerApprove, useRejectClaim } from '../../integrations/expenses/hooks';
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { ClipboardList } from 'lucide-react';
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { toast } from 'sonner';
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface ClaimDetailProps {
   claimId: number;

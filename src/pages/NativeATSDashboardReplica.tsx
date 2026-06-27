@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { getAtsDashboardReplicaData, type AtsDashCandidateRow, type AtsDashPayload, type AtsDashQueueRow } from "@/lib/atsDashboardReplicaAdapter";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 type TabKey = "cover" | "dashboard" | "trends" | "rejections" | "recruiters" | "sourcing" | "queue" | "journey" | "intelligence";
 type PeriodKey = "FTD" | "WTD" | "MTD" | "ALL";

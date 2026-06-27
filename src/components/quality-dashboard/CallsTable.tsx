@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface Call {
   call_id: string;
