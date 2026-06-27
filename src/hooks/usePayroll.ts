@@ -204,8 +204,11 @@ export function useGeneratePayroll() {
       }
 
       if (!runId) throw new Error("Could not find or create payroll run");
-      const calculated = await hrmsApi.post<{ success: boolean; data: any }>(
-        `/api/payroll/runs/${runId}/calculate`
+      // Payroll calculation can take 30-120s for large tenants — use extended timeout
+      const calculated = await hrmsApi.post<{ success: boolean; data: any; message?: string }>(
+        `/api/payroll/runs/${runId}/calculate`,
+        undefined,
+        120_000
       );
       return {
         count: Number(calculated.data?.employees_processed ?? 0),

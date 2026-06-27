@@ -68,7 +68,7 @@ async function parseResponse(res: Response): Promise<unknown> {
   return text;
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, timeoutMs = 30000): Promise<T> {
   const headers = getAuthHeader();
 
   const normalizedPath =
@@ -76,11 +76,25 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       ? path.replace(/^\/api/, "")
       : path;
 
-  const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
-    method,
-    headers: { "Content-Type": "application/json", ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let res: Response;
+  try {
+    res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
+      method,
+      headers: { "Content-Type": "application/json", ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s. The server is still processing — please refresh to check the result.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   const payload = await parseResponse(res);
 
@@ -171,7 +185,7 @@ async function requestForm<T>(path: string, body: FormData): Promise<T> {
 
 export const hrmsApi = {
   get: <T>(path: string) => request<T>("GET", path),
-  post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
+  post: <T>(path: string, body?: unknown, timeoutMs?: number) => request<T>("POST", path, body, timeoutMs),
   put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
   delete: <T>(path: string) => request<T>("DELETE", path),

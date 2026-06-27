@@ -489,7 +489,8 @@ export const payrollService = {
     if (filters.runMonth) { where += " AND spr.run_month = ?"; params.push(filters.runMonth); }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT spl.id, spl.employee_id, e.employee_name, spr.run_month,
-              spl.gross_pay, spl.net_pay, spl.status
+              spl.gross_salary, spl.net_salary, spl.basic,
+              spl.total_deductions, spl.status AS line_status, spr.status AS run_status
        FROM salary_prep_line spl
        JOIN salary_prep_run spr ON spr.id = spl.run_id
        LEFT JOIN employees e ON e.id = spl.employee_id
