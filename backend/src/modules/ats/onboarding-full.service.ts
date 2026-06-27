@@ -473,12 +473,15 @@ export async function saveExperienceDetails(token: string, input: Record<string,
   await db.execute(
     `INSERT INTO candidate_onboarding_experience
        (id, candidate_id, working_experience, experience_year, experience_doc_type,
-        experience_document_id, employer_name, last_designation, last_ctc)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        experience_document_id, employer_name, last_designation, last_ctc,
+        from_date, to_date, reason_for_leaving)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        working_experience = VALUES(working_experience), experience_year = VALUES(experience_year),
        experience_doc_type = VALUES(experience_doc_type), experience_document_id = VALUES(experience_document_id),
-       employer_name = VALUES(employer_name), last_designation = VALUES(last_designation), last_ctc = VALUES(last_ctc), updated_at = NOW()`,
+       employer_name = VALUES(employer_name), last_designation = VALUES(last_designation), last_ctc = VALUES(last_ctc),
+       from_date = VALUES(from_date), to_date = VALUES(to_date), reason_for_leaving = VALUES(reason_for_leaving),
+       updated_at = NOW()`,
     [
       randomUUID(),
       candidateId,
@@ -489,6 +492,9 @@ export async function saveExperienceDetails(token: string, input: Record<string,
       input.employerName ?? null,
       input.lastDesignation ?? null,
       input.lastCtc ?? null,
+      (input.fromDate as string | null) || null,
+      (input.toDate as string | null) || null,
+      (input.reasonForLeaving as string | null) || null,
     ]
   );
   await logCandidateAction(candidateId, "SAVE_EXPERIENCE_DETAILS", input, meta);
