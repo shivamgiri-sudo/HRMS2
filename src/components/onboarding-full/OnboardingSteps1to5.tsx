@@ -368,10 +368,28 @@ export function Step2Personal({
           <F label="Share %" value={employee.nominee2SharePct} onChange={(v) => upd("nominee2SharePct", v)} mode="numeric" />
         </div>
 
+        {(() => {
+          const s1 = parseFloat(employee.nominee1SharePct || "0");
+          const s2 = parseFloat(employee.nominee2SharePct || "0");
+          const total = s1 + s2;
+          if (employee.nominee2Name && total !== 100) {
+            return (
+              <div className="mt-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2 text-sm font-semibold text-amber-800">
+                ⚠ Nominee share % total is {total}% — must equal 100% when two nominees are added.
+              </div>
+            );
+          }
+          return null;
+        })()}
+
         <div className="mt-6 flex gap-3 justify-end">
           <Button
             onClick={onSave}
-            disabled={saving || Boolean(dobError)}
+            disabled={saving || Boolean(dobError) || (() => {
+              const s1 = parseFloat(employee.nominee1SharePct || "0");
+              const s2 = parseFloat(employee.nominee2SharePct || "0");
+              return Boolean(employee.nominee2Name) && (s1 + s2) !== 100;
+            })()}
             size="lg"
             className="min-h-[52px] px-8 text-base font-bold bg-blue-600 hover:bg-blue-700 rounded-xl shadow-lg"
           >
@@ -395,7 +413,14 @@ export function Step3AddressKyc({
   onSave: () => void;
 }) {
   const upd = (k: keyof EmployeeForm, v: string) => setEmployee((p) => ({ ...p, [k]: v }));
-  const [sameAddr, setSameAddr] = useState(false);
+  const [sameAddr, setSameAddr] = useState(() =>
+    Boolean(employee.permanentAddress && employee.presentAddress &&
+      employee.permanentAddress === employee.presentAddress &&
+      employee.permanentState === employee.presentState &&
+      employee.permanentCity === employee.presentCity &&
+      employee.permanentPincode === employee.presentPincode)
+  );
+  const pinOk = (v: string) => !v || /^\d{6}$/.test(v);
 
   const syncPermanent = (field: keyof EmployeeForm, v: string) => {
     upd(field, v);
@@ -446,7 +471,8 @@ export function Step3AddressKyc({
             <F label="City / District" value={employee.permanentCity}
               onChange={(v) => syncPermanent("permanentCity", v)} required placeholder="City" />
             <F label="PIN Code" value={employee.permanentPincode}
-              onChange={(v) => syncPermanent("permanentPincode", v)} mode="numeric" required placeholder="6 digits" />
+              onChange={(v) => syncPermanent("permanentPincode", v)} mode="numeric" required placeholder="6 digits"
+              error={employee.permanentPincode && !pinOk(employee.permanentPincode) ? "Must be 6 digits" : ""} />
           </div>
         </div>
 
@@ -474,7 +500,8 @@ export function Step3AddressKyc({
               <F label="City / District" value={employee.presentCity}
                 onChange={(v) => { setSameAddr(false); upd("presentCity", v); }} required placeholder="City" />
               <F label="PIN Code" value={employee.presentPincode}
-                onChange={(v) => { setSameAddr(false); upd("presentPincode", v); }} mode="numeric" required placeholder="6 digits" />
+                onChange={(v) => { setSameAddr(false); upd("presentPincode", v); }} mode="numeric" required placeholder="6 digits"
+                error={employee.presentPincode && !pinOk(employee.presentPincode) ? "Must be 6 digits" : ""} />
             </div>
           </div>
         )}
@@ -939,8 +966,8 @@ export function Step6Bank({
   onLookupIfsc: (ifsc: string) => void;
 }) {
   const upd = (k: keyof BankForm, v: string) => setBank((p) => ({ ...p, [k]: v }));
-
   const mismatch = Boolean(bank.accountNo && bank.confirmAccountNo && bank.accountNo !== bank.confirmAccountNo);
+  const bankPreviouslySaved = Boolean(bank.bankName && !bank.accountNo);
   const ifscOk = !bank.ifscCode || /^[A-Z]{4}0[A-Z0-9]{6}$/.test(bank.ifscCode.toUpperCase());
   const nameMatch = !bank.nameOnCheque || !bank.accountHolderName ||
     bank.nameOnCheque.trim().toLowerCase() === bank.accountHolderName.trim().toLowerCase();
@@ -952,7 +979,11 @@ export function Step6Bank({
         <p className="text-sm text-green-100 mt-0.5">For salary credit and statutory payment compliance</p>
       </CardHeader>
       <CardContent className="pt-5 px-4">
-
+        {bankPreviouslySaved && (
+          <div className="mb-4 rounded-xl border-2 border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 flex items-center gap-2">
+            ✓ Bank details previously saved ({bank.bankName}). Re-enter account number to update or skip to proceed.
+          </div>
+        )}
         <InfoBox variant="info">
           <p className="text-xs">
             The account must be a <strong>personal salary/savings account</strong> in your name.

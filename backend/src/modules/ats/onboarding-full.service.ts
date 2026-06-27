@@ -156,7 +156,10 @@ export async function getFullOnboardingStatus(token: string) {
     [candidateId]
   );
   const [bankRows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`,
+    `SELECT id, bank_name, branch_name, account_holder_name, account_no_masked, ifsc_code,
+            account_type, verification_status, name_validation_status, cancelled_cheque_document_id,
+            name_on_cheque, updated_at
+       FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`,
     [candidateId]
   );
   const [qualificationRows] = await db.execute<RowDataPacket[]>(
@@ -171,6 +174,12 @@ export async function getFullOnboardingStatus(token: string) {
     `SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? LIMIT 1`,
     [candidateId]
   );
+  // GAP FIX: fetch saved languages so candidate can resume without re-entering
+  const [languageRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, language_name, can_read, can_write, can_speak, proficiency
+       FROM candidate_onboarding_language WHERE candidate_id = ? ORDER BY created_at ASC`,
+    [candidateId]
+  ).catch(() => [[]] as [RowDataPacket[]]);
 
   return {
     token: tokenData,
@@ -179,8 +188,15 @@ export async function getFullOnboardingStatus(token: string) {
     qualifications: qualificationRows,
     family: familyRows[0] ?? null,
     experience: experienceRows[0] ?? null,
+    languages: languageRows,
   };
 }
+
+// Normalize date — empty string causes NOT NULL MySQL crash on DATE columns
+const safeDate = (v: unknown): string | null => {
+  const s = String(v ?? "").trim();
+  return s && s !== "null" ? s : null;
+};
 
 export async function saveEmployeeDetails(token: string, input: Record<string, unknown>, meta?: { ip?: string; userAgent?: string }) {
   const tokenData = await validateOnboardingToken(token);
@@ -238,15 +254,15 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       input.fatherHusbandName ?? input.father_name ?? null,
       input.gender ?? tokenData.gender ?? null,
       input.maritalStatus ?? null,
-      input.dateOfBirth ?? tokenData.date_of_birth ?? null,
+      safeDate(input.dateOfBirth ?? tokenData.date_of_birth),
       input.bloodGroup ?? null,
       input.nominee ?? input.nomineeName ?? null,
       input.nomineeRelation ?? null,
-      input.nomineeDateOfBirth ?? null,
+      safeDate(input.nomineeDateOfBirth),           // was crashing on empty string
       input.nominee1SharePct ?? null,
       input.nominee2Name ?? null,
       input.nominee2Relation ?? null,
-      input.nominee2Dob ?? null,
+      safeDate(input.nominee2Dob),                  // was crashing on empty string
       input.nominee2SharePct ?? null,
       input.permanentAddress ?? null,
       input.permanentState ?? null,
@@ -300,11 +316,11 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       input.fatherHusbandName ?? input.father_name ?? null,
       input.gender ?? tokenData.gender ?? null,
       input.maritalStatus ?? null,
-      input.dateOfBirth ?? tokenData.date_of_birth ?? null,
+      safeDate(input.dateOfBirth ?? tokenData.date_of_birth),
       input.bloodGroup ?? null,
       input.nominee ?? input.nomineeName ?? null,
       input.nomineeRelation ?? null,
-      input.nomineeDateOfBirth ?? null,
+      safeDate(input.nomineeDateOfBirth),
       input.permanentAddress ?? null,
       input.permanentState ?? null,
       input.permanentCity ?? null,
@@ -356,15 +372,17 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
   const accountNo = input.accountNo ?? input.bank_account_no ?? input.account_no;
   const id = randomUUID();
 
+  const nameOnCheque = String(input.nameOnCheque ?? input.name_on_cheque ?? '').trim() || null;
   await db.execute(
     `INSERT INTO candidate_onboarding_bank_detail
        (id, candidate_id, bank_name, branch_name, account_holder_name, account_no_masked,
-        account_no_hash, ifsc_code, account_type, cancelled_cheque_document_id, verification_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'not_started')
+        account_no_hash, ifsc_code, account_type, cancelled_cheque_document_id, name_on_cheque, verification_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'not_started')
      ON DUPLICATE KEY UPDATE
        bank_name = VALUES(bank_name), branch_name = VALUES(branch_name), account_holder_name = VALUES(account_holder_name),
        account_no_masked = VALUES(account_no_masked), account_no_hash = VALUES(account_no_hash), ifsc_code = VALUES(ifsc_code),
        account_type = VALUES(account_type), cancelled_cheque_document_id = VALUES(cancelled_cheque_document_id),
+       name_on_cheque = VALUES(name_on_cheque),
        updated_at = NOW()`,
     [
       id,
@@ -377,6 +395,7 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
       String(input.ifscCode ?? input.bank_ifsc ?? "").trim().toUpperCase() || null,
       input.accountType ?? null,
       input.cancelledChequeDocumentId ?? null,
+      nameOnCheque,
     ]
   );
 
@@ -455,8 +474,8 @@ export async function addQualification(token: string, input: Record<string, unkn
   await db.execute(
     `INSERT INTO candidate_onboarding_qualification
       (id, candidate_id, qualification, specialization_course_name, passed_out_year,
-       passed_out_state, passed_out_city, passed_out_percentage, document_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       passed_out_state, passed_out_city, passed_out_percentage, board_type, institution_name, document_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       candidateId,
@@ -466,6 +485,8 @@ export async function addQualification(token: string, input: Record<string, unkn
       input.passedOutState ?? null,
       input.passedOutCity ?? null,
       input.passedOutPercentage ?? input.percentage ?? null,
+      input.boardType ?? input.board_type ?? null,
+      input.institutionName ?? input.institution_name ?? null,
       input.documentId ?? null,
     ]
   );

@@ -31,7 +31,7 @@ export function useOnboardingRequests() {
   const requestsQuery = useQuery({
     queryKey: ["onboarding-requests"],
     queryFn: async () => {
-      const res = await hrmsApi.get<unknown>("/api/ats/onboarding/requests");
+      const res = await hrmsApi.get<unknown>("/api/ats/onboarding-full/requests");
       return unwrapRows(res) as OnboardingRequest[];
     },
   });

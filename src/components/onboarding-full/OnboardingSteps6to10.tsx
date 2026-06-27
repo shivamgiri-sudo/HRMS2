@@ -244,6 +244,8 @@ export function Step8Experience({
 }) {
   const updExp = (k: keyof ExperienceForm, v: string) => setExperience((p) => ({ ...p, [k]: v }));
   const isFresher = experience.workingExperience === "Fresher (No Experience)" || experience.workingExperience === "fresher";
+  const dateOrderError = experience.fromDate && experience.toDate && experience.fromDate >= experience.toDate
+    ? "From date must be before To date" : "";
 
   return (
     <Card className="shadow-md border-0 overflow-hidden">
@@ -284,7 +286,7 @@ export function Step8Experience({
               <F label="Last CTC / Annual Salary (₹)" value={experience.lastCtc} onChange={(v) => updExp("lastCtc", v)}
                 mode="numeric" placeholder="Annual CTC in rupees" />
               <F label="From Date" value={experience.fromDate} onChange={(v) => updExp("fromDate", v)} type="date" required />
-              <F label="To Date" value={experience.toDate} onChange={(v) => updExp("toDate", v)} type="date" required />
+              <F label="To Date" value={experience.toDate} onChange={(v) => updExp("toDate", v)} type="date" required error={dateOrderError} />
               <F label="Reason for Leaving" value={experience.reasonForLeaving} onChange={(v) => updExp("reasonForLeaving", v)}
                 placeholder="e.g. Better opportunity, Relocation" />
               <F label="Document Type Available" value={experience.experienceDocType} onChange={(v) => updExp("experienceDocType", v)}
@@ -331,7 +333,13 @@ export function Step9FamilyLang({
   const [newLang, setNewLang] = useState({ language_name: "", can_read: false, can_write: false, can_speak: false, proficiency: "Intermediate" });
 
   const addLanguage = () => {
-    if (!newLang.language_name.trim()) return;
+    const name = newLang.language_name.trim();
+    if (!name) return;
+    if (languages.some((l) => l.language_name.toLowerCase() === name.toLowerCase())) return;
+    if (!newLang.can_read && !newLang.can_write && !newLang.can_speak) {
+      setNewLang((p) => ({ ...p, can_speak: true }));
+      return;
+    }
     setLanguages((prev) => [...prev, { ...newLang, id: String(Date.now()) }]);
     setNewLang({ language_name: "", can_read: false, can_write: false, can_speak: false, proficiency: "Intermediate" });
   };
