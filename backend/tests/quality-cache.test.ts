@@ -387,8 +387,9 @@ describe('QualityCache', () => {
       let result = await cache.get(key);
       expect(result).toBeNull(); // Should expire immediately
 
-      // Zero TTL
+      // Zero TTL — expiresAt = Date.now()+0; need at least 1ms before get()
       await cache.set(key, value, 0);
+      await new Promise(r => setTimeout(r, 1));
       result = await cache.get(key);
       expect(result).toBeNull(); // Should expire immediately
     });

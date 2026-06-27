@@ -147,7 +147,8 @@ export class QualityAggregationService {
               peer_avg: row.peer_avg || 0,
               gap: (row.peer_avg || 0) - (row.score || 0),
               sub_metrics: this.getSubMetricsForCategory(row.category),
-              related_calls: row.related_calls ? JSON.parse(row.related_calls) : [],
+              related_calls: Array.isArray(row.related_calls) ? row.related_calls :
+                             (typeof row.related_calls === 'string' ? JSON.parse(row.related_calls) : []),
             }))
             .sort((a, b) => (b.gap || 0) - (a.gap || 0))
             .slice(0, 5),

@@ -30,6 +30,7 @@ export function buildCQScoreQuery(employeeCode: string, daysBack: number = 7): Q
     ),
     agent_stats AS (
       SELECT
+        1 as dummy_group,
         ROUND(AVG(quality_percentage), 2) as cq_current,
         ROUND(AVG(CASE
           WHEN quality_percentage < 50 AND (professionalism_maintained = 0 OR active_listening = 0)
@@ -38,6 +39,7 @@ export function buildCQScoreQuery(employeeCode: string, daysBack: number = 7): Q
         COUNT(*) as total_calls,
         MIN(CallDate) as period_start
       FROM agent_scores
+      GROUP BY dummy_group
     ),
     weekly_breakdown AS (
       SELECT
@@ -46,7 +48,7 @@ export function buildCQScoreQuery(employeeCode: string, daysBack: number = 7): Q
         ROUND(AVG(quality_percentage), 2) as avg_score,
         COUNT(*) as calls
       FROM agent_scores
-      GROUP BY DAYNAME(CallDate)
+      GROUP BY day_name, day_order
     ),
     peer_stats AS (
       SELECT
@@ -69,7 +71,7 @@ export function buildCQScoreQuery(employeeCode: string, daysBack: number = 7): Q
     )
     SELECT
       ast.cq_current,
-      ROUND(AVG(cqa.quality_percentage), 2) as cq_7day_avg,
+      ast.cq_current as cq_7day_avg,
       (SELECT ROUND(AVG(quality_percentage), 2) FROM db_audit.call_quality_assessment
        WHERE User = ? AND Campaign LIKE 'INBOUND%' AND CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY)) as cq_30day_avg,
       ast.cq_clean,
@@ -84,26 +86,24 @@ export function buildCQScoreQuery(employeeCode: string, daysBack: number = 7): Q
         ELSE 'Risk'
       END as status,
       NOW() as last_updated,
-      JSON_ARRAYAGG(
-        JSON_OBJECT(
-          'day', wb.day_name,
-          'avg', wb.avg_score,
-          'calls', wb.calls
-        )
-        ORDER BY wb.day_order
+      COALESCE(
+        (SELECT JSON_ARRAYAGG(
+          JSON_OBJECT(
+            'day', day_name,
+            'avg', avg_score,
+            'calls', calls
+          )
+        ) FROM (SELECT day_name, avg_score, calls FROM weekly_breakdown ORDER BY day_order) AS ordered_wb),
+        JSON_ARRAY()
       ) as weekly_breakdown
     FROM agent_stats ast
     CROSS JOIN peer_stats ps
     LEFT JOIN agent_rank ar ON ar.User = ?
-    LEFT JOIN weekly_breakdown wb ON 1=1
-    LEFT JOIN db_audit.call_quality_assessment cqa ON cqa.User = ?
-      AND cqa.Campaign LIKE 'INBOUND%'
-      AND cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 7 DAY)
   `;
 
   return {
     query: query.replace(/\n\s+/g, ' ').trim(),
-    params: [employeeCode, employeeCode, employeeCode, employeeCode]
+    params: [employeeCode, employeeCode, employeeCode]
   };
 }
 
@@ -244,9 +244,9 @@ export function buildCallsReviewQuery(
     SELECT
       id as call_id,
       CallDate as date,
-      lead_id,
-      lead_name,
-      scenario,
+      COALESCE(lead_id, '') as lead_id,
+      COALESCE(Campaign, '') as lead_name,
+      COALESCE(scenario, Campaign) as scenario,
       quality_percentage as cq_pct,
       CASE
         WHEN quality_percentage < 50 AND (professionalism_maintained = 0 OR active_listening = 0)
@@ -285,9 +285,9 @@ export function buildCallDetailQuery(callId: string): QueryResult {
     SELECT
       id as call_id,
       CallDate as date,
-      lead_id,
-      lead_name,
-      scenario,
+      COALESCE(lead_id, '') as lead_id,
+      COALESCE(Campaign, '') as lead_name,
+      COALESCE(scenario, Campaign) as scenario,
       quality_percentage as cq_pct,
       CASE
         WHEN quality_percentage < 50 AND (professionalism_maintained = 0 OR active_listening = 0)

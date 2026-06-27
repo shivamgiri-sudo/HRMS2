@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
+import jwt from 'jsonwebtoken';
 
 // Mock Supabase and DB before importing app
 vi.mock('../../../db/supabaseAdmin.js', () => ({
@@ -16,34 +17,38 @@ import { db } from '../../../db/mysql.js';
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 
+// Sign real JWTs so isDemo is never set — role checking goes through mock DB
+const JWT_SECRET = process.env.JWT_SECRET || '3547183d0910b8d3d01d1db5629d07c8e1bfe5093c5534dbde4787ce948173fe38e55030ba28fceb120d96cdbc34cc91';
+const makeToken = (userId: string, email: string) =>
+  jwt.sign({ sub: userId, email, iat: Math.floor(Date.now() / 1000) }, JWT_SECRET, { expiresIn: '1h' });
+
 const fakeRule = {
   id: 'rule-test-001', rule_name: 'Test Rule', entity_type: 'leave_type',
   config_type: 'override', config_data: JSON.stringify({ max_days: 10 }),
   priority: 5, is_active: 1, scope_type: null, scope_id: null,
-  created_by: 'demo-admin-id', created_at: new Date().toISOString(),
+  created_by: 'admin-user-id', created_at: new Date().toISOString(),
 };
 
 // Integration tests for Customization API
 describe('Customization API', () => {
-  const adminToken = 'mock-token-admin';
-  const hrToken = 'mock-token-hr';
-  const employeeToken = 'mock-token-employee';
+  // Real JWTs — no demo bypass, so requireRole does proper DB role lookup
+  const adminToken    = makeToken('admin-user-id',    'admin@mascallnet.com');
+  const hrToken       = makeToken('hr-user-id',       'hr@mascallnet.com');
+  const employeeToken = makeToken('employee-user-id', 'employee@mascallnet.com');
 
   let testRuleId = 'rule-test-001';
 
-  // Map demo user IDs to roles (mirrors DEMO_TOKEN_MAP in authMiddleware)
+  // Map user IDs to roles — used in the mockExecute user_roles handler
   const USER_ROLES: Record<string, string> = {
-    'demo-admin-id':     'admin',
-    'demo-hr-id':        'hr',
-    'demo-employee-id':  'employee',
-    'demo-manager-id':   'process_manager',
+    'admin-user-id':    'admin',
+    'hr-user-id':       'hr',
+    'employee-user-id': 'employee',
   };
 
   // Track pending priority updates so getRule returns updated data after update
   let _pendingPriority: number | null = null;
 
   beforeAll(() => {
-    process.env.INTERNAL_DEMO_BYPASS = 'true';
     // Route mock responses by SQL pattern; role resolved from params
     mockExecute.mockImplementation(async (sql: string, params?: unknown[]) => {
       const s = (sql as string).replace(/\s+/g, ' ').toLowerCase();

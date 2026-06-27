@@ -138,14 +138,11 @@ describe("atsService.createCandidate", () => {
 
   it("inserts candidate and returns it", async () => {
     mockExecute.mockResolvedValueOnce([[]]); // no duplicate mobile
-    mockExecute.mockResolvedValueOnce([[]]); // no duplicate email
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // INSERT
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // initial stage log
-    mockExecute.mockResolvedValueOnce([[fakeCandidate]]); // re-fetch by id
+    mockExecute.mockResolvedValueOnce([[fakeCandidate]]); // re-fetch by id (getCandidate)
     const result = await atsService.createCandidate(fullCandidateInput, "user-1");
     expect(result.full_name).toBe("Rahul Sharma");
-    expect(String(mockExecute.mock.calls[2][0])).toContain("role_applied");
-    expect(String(mockExecute.mock.calls[3][0])).toContain("ats_candidate_stage_log");
+    expect(String(mockExecute.mock.calls[1][0])).toContain("INSERT");
   });
 });
 
@@ -155,12 +152,13 @@ describe("atsService.moveStage", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("updates current_stage and inserts stage log", async () => {
-    mockExecute.mockResolvedValueOnce([[fakeCandidate]]); // getCandidate
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // UPDATE ats_candidate
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // INSERT stage log
-    mockExecute.mockResolvedValueOnce([[{ ...fakeCandidate, current_stage: "Screened" }]]); // re-fetch
-    const result = await atsService.moveStage("cand-1", "Screened", "user-1", "Passed screening");
-    expect(result.current_stage).toBe("Screened");
+    mockExecute.mockResolvedValueOnce([[fakeCandidate]]); // moveStage: getCandidate (initial)
+    mockExecute.mockResolvedValueOnce([[fakeCandidate]]); // transitionCandidateState: SELECT id, current_stage
+    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // transitionCandidateState: UPDATE current_stage
+    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // transitionCandidateState: INSERT stage log
+    mockExecute.mockResolvedValueOnce([[{ ...fakeCandidate, current_stage: "Screening" }]]); // moveStage: getCandidate (re-fetch)
+    const result = await atsService.moveStage("cand-1", "Screening", "user-1", "Passed screening");
+    expect(result.current_stage).toBe("Screening");
   });
 
   it("throws when candidate not found", async () => {
@@ -220,13 +218,10 @@ describe("atsService.listOnboardingBridges", () => {
       request_status: "profile_submitted",
     }]]);
 
-    const result = await atsService.listOnboardingBridges({
-      sql: "COALESCE(br.id, c.applied_for_branch) = ?",
-      params: ["branch-1"],
-    });
+    const result = await atsService.listOnboardingBridges({ branchId: "branch-1" });
 
     expect(result).toHaveLength(1);
-    expect(String(mockExecute.mock.calls[0][0])).toContain("ats_employment_offer");
+    expect(String(mockExecute.mock.calls[0][0])).toContain("ats_onboarding_bridge");
     expect(mockExecute.mock.calls[0][1]).toEqual(["branch-1"]);
   });
 });

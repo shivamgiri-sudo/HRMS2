@@ -58,7 +58,7 @@ describe("requireRole middleware", () => {
 
     const res = await request(buildApp(["admin"])).get("/admin-only");
     expect(res.status).toBe(403);
-    expect(res.body.message).toMatch(/Forbidden/i);
+    expect(res.body.message).toMatch(/Access denied/i);
   });
 
   it("calls next when user has a matching role", async () => {

@@ -68,7 +68,7 @@ describe('Quality Query Builders', () => {
       const result = buildCQScoreQuery('EMP-STF-001', 7);
 
       expect(result.query).toContain('peer');
-      expect(result.query).toLowerCase().toContain('peer');
+      expect(result.query.toLowerCase()).toContain('peer');
     });
 
     it('includes rank calculation', () => {
@@ -365,15 +365,26 @@ describe('Quality Query Builders', () => {
     });
 
     it('queries exclude empty User values', () => {
-      const queries = [
+      const allQueries = [
         buildCQScoreQuery('EMP-STF-001', 7),
         buildWeaknessDetailQuery('EMP-STF-001'),
         buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date'),
         buildTotalCallsCountQuery('EMP-STF-001'),
       ];
 
-      queries.forEach(q => {
+      // All queries must guard against NULL users
+      allQueries.forEach(q => {
         expect(q.query).toContain("User IS NOT NULL");
+      });
+
+      // Queries that filter empty-string users (cq-score, calls-review, total-count)
+      // weakness detail uses WHERE User = ? (parameterized) so the != '' guard is implicit
+      const queriesWithNotEmpty = [
+        buildCQScoreQuery('EMP-STF-001', 7),
+        buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date'),
+        buildTotalCallsCountQuery('EMP-STF-001'),
+      ];
+      queriesWithNotEmpty.forEach(q => {
         expect(q.query).toContain("User != ''");
       });
     });

@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
-import { toIST } from "../../shared/timezone.js";
+import { toIST, mysqlDatetimeToIST } from "../../shared/timezone.js";
 import { getRealTimePunchesToday, getRealTimePunchesRange } from "./attendance-realtime-ncosec.service.js";
 
 export const attendanceDailyScopedRouter = Router();
@@ -107,10 +107,10 @@ attendanceDailyScopedRouter.get("/daily", h(async (req, res) => {
 
   const data = rows.map((r: any) => ({
     ...r,
-    clock_in_time:  toIST(r.clock_in_time),
-    clock_out_time: toIST(r.clock_out_time),
-    clock_in:       toIST(r.clock_in),
-    clock_out:      toIST(r.clock_out),
+    clock_in_time:  mysqlDatetimeToIST(r.clock_in_time),
+    clock_out_time: mysqlDatetimeToIST(r.clock_out_time),
+    clock_in:       mysqlDatetimeToIST(r.clock_in),
+    clock_out:      mysqlDatetimeToIST(r.clock_out),
     employee: {
       first_name: r.first_name ?? "",
       last_name: r.last_name ?? "",
@@ -174,8 +174,8 @@ attendanceDailyScopedRouter.get("/today-live", h(async (req, res) => {
     success: true,
     data: {
       punch_date: todayStr,
-      first_punch_in: toIST(row.first_punch_in),
-      last_punch_out: toIST(row.last_punch_out),
+      first_punch_in: mysqlDatetimeToIST(row.first_punch_in),
+      last_punch_out: mysqlDatetimeToIST(row.last_punch_out),
       raw_minutes: row.raw_minutes ?? 0,
       total_punches: row.total_punches ?? 0,
       source: "biometric_synced",

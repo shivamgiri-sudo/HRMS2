@@ -11,6 +11,24 @@ export function nowIST(): string {
   return ist.toISOString().slice(0, 19).replace('T', ' ');
 }
 
+/**
+ * Convert MySQL DATETIME to ISO8601 IST string.
+ * MySQL DATETIME columns store wall-clock time with no timezone (e.g., "2026-06-27 09:15:00").
+ * mysql2 driver returns these as Date objects where .getHours()/.getMinutes() reflect the
+ * stored digits directly (NOT UTC). This function reads those digits and tags with +05:30.
+ *
+ * CRITICAL: Do NOT use toIST(Date) on MySQL datetime values - it would add +5:30 offset
+ * on top of the IST wall-clock, producing times 5.5 hours ahead (double-IST bug).
+ */
+export function mysqlDatetimeToIST(d: Date | null | undefined): string | null {
+  if (!d) return null;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}+05:30`
+  );
+}
+
 export function toIST(value: Date | string | null | undefined): string | null {
   if (value === null || value === undefined || value === '') return null;
 

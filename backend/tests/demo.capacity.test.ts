@@ -210,7 +210,7 @@ describe("accountControlService.requestPasswordReset", () => {
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     const result = await accountControlService.requestPasswordReset("user-1", "user@example.com", "admin-1", "10.0.0.1");
     expect(result.logged).toBe(true);
-    expect(result.message).toMatch(/Supabase Auth/i);
+    expect(result.message).toMatch(/Reset request logged/i);
   });
 });
 

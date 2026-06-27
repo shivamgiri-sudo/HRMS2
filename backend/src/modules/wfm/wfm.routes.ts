@@ -8,7 +8,7 @@ import { wfmService } from "./wfm.service.js";
 import { getLiveTracker } from "./liveTracker.service.js";
 import { rosterPreferenceService } from "./roster-preference.service.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
-import { toIST } from "../../shared/timezone.js";
+import { toIST, mysqlDatetimeToIST } from "../../shared/timezone.js";
 import { planningRuleService } from "./planningRule.service.js";
 import { slotRequirementService } from "./slotRequirement.service.js";
 import { weekoffDayRuleService } from "./weekoffDayRule.service.js";
@@ -976,20 +976,20 @@ wfmRouter.get(
     const adrRaw = (attRows as any[])[0] ?? null;
     const adr = adrRaw ? {
       ...adrRaw,
-      clock_in_time:  toIST(adrRaw.clock_in_time),
-      clock_out_time: toIST(adrRaw.clock_out_time),
-      processed_at:   toIST(adrRaw.processed_at),
+      clock_in_time:  mysqlDatetimeToIST(adrRaw.clock_in_time),
+      clock_out_time: mysqlDatetimeToIST(adrRaw.clock_out_time),
+      processed_at:   mysqlDatetimeToIST(adrRaw.processed_at),
     } : null;
 
     const agg = cosecAgg ? {
       ...cosecAgg,
-      first_punch_in:  toIST(cosecAgg.first_punch_in),
-      last_punch_out:  toIST(cosecAgg.last_punch_out),
+      first_punch_in:  mysqlDatetimeToIST(cosecAgg.first_punch_in),
+      last_punch_out:  mysqlDatetimeToIST(cosecAgg.last_punch_out),
     } : null;
 
     const punches = (punchRows as any[]).map((p: any) => ({
       ...p,
-      punch_time: toIST(p.punch_time),
+      punch_time: mysqlDatetimeToIST(p.punch_time),
     }));
 
     return res.json({

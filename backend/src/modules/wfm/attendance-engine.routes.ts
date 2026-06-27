@@ -9,7 +9,7 @@ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { getEmployeeForUser, hasRole } from '../../shared/accessGuard.js';
-import { toIST, nowIST } from '../../shared/timezone.js';
+import { toIST, nowIST, mysqlDatetimeToIST } from '../../shared/timezone.js';
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -230,10 +230,10 @@ router.post('/clock-in', h(async (req: AuthenticatedRequest, res: Response) => {
   );
   const row = (rows as RowDataPacket[])[0] as any;
   if (row) {
-    row.clock_in_time  = toIST(row.clock_in_time);
-    row.clock_out_time = toIST(row.clock_out_time);
-    row.clock_in       = toIST(row.clock_in);
-    row.clock_out      = toIST(row.clock_out);
+    row.clock_in_time  = mysqlDatetimeToIST(row.clock_in_time);
+    row.clock_out_time = mysqlDatetimeToIST(row.clock_out_time);
+    row.clock_in       = mysqlDatetimeToIST(row.clock_in);
+    row.clock_out      = mysqlDatetimeToIST(row.clock_out);
   }
   res.status(201).json({ success: true, data: row });
 }));
@@ -272,10 +272,10 @@ router.post('/clock-out', h(async (req: AuthenticatedRequest, res: Response) => 
   );
   const out = (rows as RowDataPacket[])[0] as any;
   if (out) {
-    out.clock_in_time  = toIST(out.clock_in_time);
-    out.clock_out_time = toIST(out.clock_out_time);
-    out.clock_in       = toIST(out.clock_in);
-    out.clock_out      = toIST(out.clock_out);
+    out.clock_in_time  = mysqlDatetimeToIST(out.clock_in_time);
+    out.clock_out_time = mysqlDatetimeToIST(out.clock_out_time);
+    out.clock_in       = mysqlDatetimeToIST(out.clock_in);
+    out.clock_out      = mysqlDatetimeToIST(out.clock_out);
   }
   res.json({ success: true, data: out });
 }));
