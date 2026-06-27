@@ -11,6 +11,20 @@ import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { profileApprovalService } from "./profile-approval.service.js";
 import { checkDpdpRestriction } from "../privacy/dpdpRestrictionGuard.js";
 
+let _addrCols: { col1: string; col2: string } | null = null;
+async function getAddrCols(): Promise<{ col1: string; col2: string }> {
+  if (_addrCols) return _addrCols;
+  const [cols] = await db.execute<RowDataPacket[]>(
+    "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employees' AND COLUMN_NAME IN ('address1','address_line1','address','address2','address_line2')"
+  );
+  const names = (cols as any[]).map((c: any) => c.COLUMN_NAME);
+  _addrCols = {
+    col1: names.includes("address1") ? "address1" : names.includes("address_line1") ? "address_line1" : "address",
+    col2: names.includes("address2") ? "address2" : names.includes("address_line2") ? "address_line2" : "address2",
+  };
+  return _addrCols;
+}
+
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -158,11 +172,11 @@ router.patch("/me", h(async (req: any, res: any) => {
   if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
   const empId = rows[0].id;
 
+  const { col1, col2 } = await getAddrCols();
   // official_email is the canonical login identity — keep it out of self-service
-  // address→address_line1, no "address" or "country" column in prod schema
   const ALLOWED_FIELDS = [
     "mobile", "personal_email", "personal_phone", "alternate_mobile",
-    "address_line1", "address_line2", "city", "state", "pincode",
+    col1, col2, "city", "state", "pincode",
     "date_of_birth", "gender", "marital_status",
     "blood_group", "working_hours_start", "working_hours_end", "working_days"
   ];

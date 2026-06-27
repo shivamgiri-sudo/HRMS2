@@ -3,6 +3,16 @@ import { createEmployeeSchema, employeeFiltersSchema, updateEmployeeSchema } fro
 import { employeeService } from "./employee.service.js";
 import { db } from "../../db/mysql.js";
 
+let _addrCol1: string | null = null;
+async function getAddrCol1(): Promise<string> {
+  if (_addrCol1) return _addrCol1;
+  const [cols] = await db.execute<any[]>(
+    "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employees' AND COLUMN_NAME IN ('address1','address_line1','address')"
+  );
+  _addrCol1 = (cols[0]?.COLUMN_NAME === "address1") ? "address1" : (cols[0]?.COLUMN_NAME === "address_line1") ? "address_line1" : "address";
+  return _addrCol1;
+}
+
 export const employeeController = {
   async createEmployee(req: Request, res: Response) {
     const parsed = createEmployeeSchema.safeParse(req.body);
@@ -48,13 +58,14 @@ export const employeeController = {
     if (!rows.length) return res.status(404).json({ success: false, error: 'No employee record' });
     const empId = rows[0].id;
 
+    const addrCol = await getAddrCol1();
     // Whitelist: only these fields may be self-edited.
     // Maps frontend field name -> DB column name where they differ.
     const fieldMap: Record<string, string> = {
       phone:               'mobile',
       mobile:              'mobile',
-      address:             'address1',
-      address1:            'address1',
+      address:             addrCol,
+      address1:            addrCol,
       city:                'city',
       country:             'country',
       date_of_birth:       'date_of_birth',

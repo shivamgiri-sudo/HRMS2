@@ -13,6 +13,20 @@ import type {
 } from "./employee.profile.validation.js";
 import { isOfficialEmail } from "../../shared/officialEmail.js";
 
+// Detect actual address column names in employees table (address1 vs address_line1 vs address)
+let _addrCol1: string | null = null;
+let _addrCol2: string | null = null;
+async function getAddrCols(): Promise<{ col1: string; col2: string }> {
+  if (_addrCol1) return { col1: _addrCol1, col2: _addrCol2! };
+  const [cols] = await db.execute<RowDataPacket[]>(
+    "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employees' AND COLUMN_NAME IN ('address1','address_line1','address','address2','address_line2')"
+  );
+  const names = (cols as any[]).map((c: any) => c.COLUMN_NAME);
+  _addrCol1 = names.includes("address1") ? "address1" : names.includes("address_line1") ? "address_line1" : "address";
+  _addrCol2 = names.includes("address2") ? "address2" : names.includes("address_line2") ? "address_line2" : "address2";
+  return { col1: _addrCol1, col2: _addrCol2 };
+}
+
 function notFound(message = "No employee record for this user"): Error {
   return Object.assign(new Error(message), { statusCode: 404 });
 }
@@ -56,6 +70,7 @@ async function auditProfileChange(
 
 export const employeeProfileService = {
   async getMyProfile(userId: string) {
+    const { col1, col2 } = await getAddrCols();
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          e.id, e.employee_code, e.user_id,
@@ -71,7 +86,7 @@ export const employeeProfileService = {
          DATE_FORMAT(e.date_of_joining, '%Y-%m-%d') AS date_of_joining,
          e.employment_status, e.employment_type,
          e.branch_id, e.department_id, e.process_id, e.designation_id,
-         e.reporting_manager_id, e.address1, e.address2, e.city, e.state,
+         e.reporting_manager_id, e.${col1} AS address1, e.${col2} AS address2, e.city, e.state,
          e.country, e.pincode, e.marital_status, e.blood_group,
          e.working_hours_start, e.working_hours_end, e.working_days,
          e.pan_verified_on, e.aadhaar_last4, e.aadhaar_verified_on,
@@ -234,13 +249,14 @@ export const employeeProfileService = {
     req?: Request,
   ) {
     const employeeId = await employeeIdForUser(userId);
+    const { col1 } = await getAddrCols();
     const mapping: Record<keyof SelfProfileUpdateInput, string> = {
       email: "email",
       phone: "mobile",
       personal_email: "personal_email",
       personal_phone: "personal_phone",
       alternate_mobile: "alternate_mobile",
-      address: "address1",
+      address: col1,
       city: "city",
       country: "country",
       date_of_birth: "date_of_birth",
