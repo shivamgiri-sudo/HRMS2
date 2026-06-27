@@ -144,8 +144,8 @@ attendanceDailyScopedRouter.get("/today-live", h(async (req, res) => {
         success: true,
         data: {
           punch_date: realtimeData.punch_date,
-          first_punch_in: toIST(realtimeData.first_punch_in),
-          last_punch_out: toIST(realtimeData.last_punch_out),
+          first_punch_in: realtimeData.first_punch_in,   // already IST-tagged by service
+          last_punch_out: realtimeData.last_punch_out,   // already IST-tagged by service
           raw_minutes: realtimeData.raw_minutes,
           total_punches: realtimeData.total_punches,
           source: realtimeData.source,
@@ -208,8 +208,8 @@ attendanceDailyScopedRouter.get("/calendar-live", h(async (req, res) => {
 
     const data = realtimeData.map(punch => ({
       punch_date: punch.punch_date,
-      first_punch_in: toIST(punch.first_punch_in),
-      last_punch_out: toIST(punch.last_punch_out),
+      first_punch_in: punch.first_punch_in,   // already IST-tagged by service
+      last_punch_out: punch.last_punch_out,   // already IST-tagged by service
       raw_minutes: punch.raw_minutes,
       total_punches: punch.total_punches,
       source: punch.source,

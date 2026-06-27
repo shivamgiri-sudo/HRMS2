@@ -16,11 +16,26 @@ import { env } from '../../config/env.js';
 
 interface RealTimePunch {
   punch_date: string;
-  first_punch_in: Date | null;
-  last_punch_out: Date | null;
+  first_punch_in: string | null;   // already IST-tagged: "YYYY-MM-DDTHH:mm:ss+05:30"
+  last_punch_out: string | null;   // already IST-tagged: "YYYY-MM-DDTHH:mm:ss+05:30"
   total_punches: number;
   raw_minutes: number;
   source: 'ncosec_realtime';
+}
+
+/**
+ * NCOSEC/mssql returns DATETIME columns as JS Date objects whose .getTime()
+ * represents the literal IST wall-clock value interpreted as UTC.
+ * To convert correctly: read the wall-clock digits and tag with +05:30.
+ * Do NOT call toIST() here — that adds another +5:30 offset.
+ */
+function mssqlDateToIST(d: Date | null | undefined): string | null {
+  if (!d) return null;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}+05:30`
+  );
 }
 
 interface EmployeeCosecMapping {
@@ -96,8 +111,8 @@ export async function getRealTimePunchesToday(employeeId: string): Promise<RealT
 
     return {
       punch_date: todayStr,
-      first_punch_in: row.first_punch ? new Date(row.first_punch) : null,
-      last_punch_out: row.last_punch && row.total_punches > 1 ? new Date(row.last_punch) : null,
+      first_punch_in: mssqlDateToIST(row.first_punch),
+      last_punch_out: row.total_punches > 1 ? mssqlDateToIST(row.last_punch) : null,
       total_punches: row.total_punches || 0,
       raw_minutes: row.raw_minutes || 0,
       source: 'ncosec_realtime',
@@ -155,8 +170,8 @@ export async function getRealTimePunchesRange(
       punch_date: row.punch_date instanceof Date
         ? row.punch_date.toISOString().split('T')[0]
         : String(row.punch_date),
-      first_punch_in: row.first_punch ? new Date(row.first_punch) : null,
-      last_punch_out: row.last_punch && row.total_punches > 1 ? new Date(row.last_punch) : null,
+      first_punch_in: mssqlDateToIST(row.first_punch),
+      last_punch_out: row.total_punches > 1 ? mssqlDateToIST(row.last_punch) : null,
       total_punches: row.total_punches || 0,
       raw_minutes: row.raw_minutes || 0,
       source: 'ncosec_realtime',
