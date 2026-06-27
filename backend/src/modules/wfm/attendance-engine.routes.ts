@@ -9,7 +9,7 @@ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { getEmployeeForUser, hasRole } from '../../shared/accessGuard.js';
-import { toIST } from '../../shared/timezone.js';
+import { toIST, nowIST } from '../../shared/timezone.js';
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -205,9 +205,8 @@ router.post('/clock-in', h(async (req: AuthenticatedRequest, res: Response) => {
   const employee_id = emp.id;
 
   const { work_mode, latitude, longitude, location_name } = req.body;
-  const nowDate = new Date();
-  const today = nowDate.toISOString().slice(0, 10);
-  const now   = nowDate.toISOString();
+  const now   = nowIST(); // IST naive datetime "YYYY-MM-DD HH:mm:ss" for DATETIME column
+  const today = now.slice(0, 10);
   const id = randomUUID();
   const [existing] = await db.execute<RowDataPacket[]>(
     'SELECT id FROM attendance_daily_record WHERE employee_id = ? AND record_date = ? LIMIT 1',
@@ -257,7 +256,7 @@ router.post('/clock-out', h(async (req: AuthenticatedRequest, res: Response) => 
     return res.status(403).json({ success: false, error: 'Forbidden: record does not belong to you' });
   }
 
-  const now = new Date().toISOString();
+  const now = nowIST(); // IST naive datetime "YYYY-MM-DD HH:mm:ss" for DATETIME column
   await db.execute(
     `UPDATE attendance_daily_record
      SET clock_out_time = ?, clock_out_lat = ?, clock_out_lng = ?, clock_out_location = ?

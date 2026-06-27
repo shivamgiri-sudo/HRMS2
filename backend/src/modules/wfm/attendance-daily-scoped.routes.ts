@@ -121,3 +121,40 @@ attendanceDailyScopedRouter.get("/daily", h(async (req, res) => {
 
   return res.json({ success: true, data, total: Number(countRows[0]?.total ?? 0), page, limit });
 }));
+
+// GET /today-live — returns today's raw biometric first_punch_in / last_punch_out
+// for the calling employee directly from biometric_attendance_log.
+// Used as a live preview when the attendance engine hasn't processed today yet.
+attendanceDailyScopedRouter.get("/today-live", h(async (req, res) => {
+  const userId = req.authUser!.id;
+  const callerEmp = await getEmployeeForUser(userId);
+  if (!callerEmp?.id) return res.status(403).json({ success: false, error: "No employee record" });
+
+  const today = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT first_punch_in, last_punch_out, raw_minutes, total_punches
+       FROM biometric_attendance_log
+      WHERE employee_id = ? AND punch_date = ?
+      ORDER BY migrated_at DESC
+      LIMIT 1`,
+    [callerEmp.id, todayStr],
+  );
+
+  const row = (rows as any[])[0] ?? null;
+  if (!row) return res.json({ success: true, data: null });
+
+  return res.json({
+    success: true,
+    data: {
+      punch_date: todayStr,
+      first_punch_in: toIST(row.first_punch_in),
+      last_punch_out: toIST(row.last_punch_out),
+      raw_minutes: row.raw_minutes ?? 0,
+      total_punches: row.total_punches ?? 0,
+      source: "biometric_live",
+    },
+  });
+}));
