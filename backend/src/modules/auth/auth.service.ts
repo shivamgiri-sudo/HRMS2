@@ -122,10 +122,20 @@ export const authService = {
     const valid = await bcrypt.compare(password, user.password_hash as string);
     if (!valid) throw new Error('Invalid credentials');
 
-    await db.execute(
-      'UPDATE auth_user SET last_login_at = NOW(), last_login_lat = ?, last_login_lng = ? WHERE id = ?',
-      [loginGeo?.lat ?? null, loginGeo?.lng ?? null, user.id]
-    );
+    // Update last_login_at unconditionally; geo columns are additive (migration 324) —
+    // if they haven't been applied yet on a given deployment, skip silently.
+    try {
+      await db.execute(
+        'UPDATE auth_user SET last_login_at = NOW(), last_login_lat = ?, last_login_lng = ? WHERE id = ?',
+        [loginGeo?.lat ?? null, loginGeo?.lng ?? null, user.id]
+      );
+    } catch (geoErr: any) {
+      if (geoErr?.code === 'ER_BAD_FIELD_ERROR') {
+        await db.execute('UPDATE auth_user SET last_login_at = NOW() WHERE id = ?', [user.id]);
+      } else {
+        throw geoErr;
+      }
+    }
 
     const accessToken = jwt.sign(
       { sub: user.id, email: user.email },

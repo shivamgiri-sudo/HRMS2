@@ -222,6 +222,7 @@ const MIGRATION_MANIFEST: string[] = [
   "308_email_templates_bulk_import.sql",
   "309_super_admin_full_page_access.sql",
   "1000_fix_engagement_schema_columns.sql",
+  "324_login_geo.sql",
 ];
 
 export type MigrationHealth = {
