@@ -114,23 +114,22 @@ export default function NativeHROnboardingRequests() {
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
-    // Load all master dropdown data from org endpoints
-    hrmsApi.get<unknown>('/api/org/departments').then(r => setDepartments(masterFrom(r, 'department_name'))).catch(() =>
-      hrmsApi.get<unknown>('/api/departments').then(r => setDepartments(masterFrom(r, 'department_name'))).catch(() => {})
+    // Load ONLY active master data from org endpoints
+    hrmsApi.get<unknown>('/api/org/departments?active=1').then(r => setDepartments(masterFrom(r, 'department_name'))).catch(() =>
+      hrmsApi.get<unknown>('/api/departments?active_status=1').then(r => setDepartments(masterFrom(r, 'department_name'))).catch(() => {})
     );
-    hrmsApi.get<unknown>('/api/org/designations').then(r => setDesignations(masterFrom(r, 'designation_name'))).catch(() =>
-      hrmsApi.get<unknown>('/api/designations').then(r => setDesignations(masterFrom(r, 'designation_name'))).catch(() => {})
+    hrmsApi.get<unknown>('/api/org/designations?active=1').then(r => setDesignations(masterFrom(r, 'designation_name'))).catch(() =>
+      hrmsApi.get<unknown>('/api/designations?active_status=1').then(r => setDesignations(masterFrom(r, 'designation_name'))).catch(() => {})
     );
-    hrmsApi.get<unknown>('/api/org/cost-centres').then(r => setCostCentres(masterFrom(r, 'cost_centre_name'))).catch(() => {});
-    hrmsApi.get<unknown>('/api/org/processes').then(r => setProcesses(masterFrom(r, 'process_name'))).catch(() =>
-      hrmsApi.get<unknown>('/api/processes').then(r => setProcesses(masterFrom(r, 'process_name'))).catch(() => {})
+    hrmsApi.get<unknown>('/api/org/cost-centres?active=1').then(r => setCostCentres(masterFrom(r, 'cost_centre_name'))).catch(() => {});
+    hrmsApi.get<unknown>('/api/org/processes?active=1').then(r => setProcesses(masterFrom(r, 'process_name'))).catch(() =>
+      hrmsApi.get<unknown>('/api/processes?active_status=1').then(r => setProcesses(masterFrom(r, 'process_name'))).catch(() => {})
     );
     // Salary bands from DB
-    hrmsApi.get<unknown>('/api/payroll-masters/salary-bands').then(r => {
+    hrmsApi.get<unknown>('/api/payroll-masters/salary-bands?active=1').then(r => {
       const arr = Array.isArray(r) ? r : (r as any)?.data ?? [];
       setSalaryBands(Array.isArray(arr) ? arr : []);
     }).catch(() => {
-      // Fallback hardcoded if API not available
       setSalaryBands([
         { id: '1', band_code: 'D', band_name: 'Band D (Entry)', min_ctc: 80000, max_ctc: 150000, basic_pct: 40, hra_pct: 40 },
         { id: '2', band_code: 'C', band_name: 'Band C (Junior)', min_ctc: 150000, max_ctc: 300000, basic_pct: 40, hra_pct: 40 },
@@ -139,9 +138,16 @@ export default function NativeHROnboardingRequests() {
         { id: '5', band_code: 'M', band_name: 'Band M (Management)', min_ctc: 1200000, max_ctc: 5000000, basic_pct: 50, hra_pct: 50 },
       ]);
     });
-    // Managers
-    hrmsApi.get<unknown>('/api/org/filter-options').then((r: any) => {
-      if (r?.data?.managers) setManagers(r.data.managers.map((m: any) => ({ id: m.id, name: m.name || `${m.first_name} ${m.last_name}` })));
+    // Managers — use employees endpoint with proper name resolution
+    hrmsApi.get<unknown>('/api/employees?active_status=1&limit=500').then((r: any) => {
+      const emps = Array.isArray(r) ? r : r?.data ?? [];
+      setManagers((Array.isArray(emps) ? emps : [])
+        .filter((e: any) => e.first_name || e.last_name)
+        .map((e: any) => ({
+          id: e.id,
+          name: [e.first_name, e.last_name].filter(Boolean).join(' '),
+          code: e.employee_code || '',
+        })));
     }).catch(() => {});
   }, []);
 
@@ -389,7 +395,7 @@ export default function NativeHROnboardingRequests() {
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div>
                   <Label className="text-xs font-semibold text-slate-600">Employment Type *</Label>
-                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.emp_type} onChange={e => setF('emp_type', e.target.value)}>
+                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.emp_type} onChange={e => setF('emp_type', e.target.value)}>
                     {EMP_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
@@ -404,40 +410,41 @@ export default function NativeHROnboardingRequests() {
                 </div>
                 <div>
                   <Label className="text-xs font-semibold text-slate-600">Department *</Label>
-                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.department_id} onChange={e => setF('department_id', e.target.value)}>
+                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.department_id} onChange={e => setF('department_id', e.target.value)}>
                     <option value="">Select Department</option>
                     {departments.map(d => <option key={d.id} value={d.id}>{d.name}{d.code ? ` (${d.code})` : ''}</option>)}
                   </select>
                 </div>
                 <div>
                   <Label className="text-xs font-semibold text-slate-600">Designation *</Label>
-                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.designation_id} onChange={e => setF('designation_id', e.target.value)}>
+                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.designation_id} onChange={e => setF('designation_id', e.target.value)}>
                     <option value="">Select Designation</option>
                     {designations.map(d => <option key={d.id} value={d.id}>{d.name}{d.code ? ` (${d.code})` : ''}</option>)}
                   </select>
                 </div>
                 <div>
                   <Label className="text-xs font-semibold text-slate-600">Cost Centre</Label>
-                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.cost_centre} onChange={e => setF('cost_centre', e.target.value)}>
+                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.cost_centre} onChange={e => setF('cost_centre', e.target.value)}>
                     <option value="">Select Cost Centre</option>
                     {costCentres.map(c => <option key={c.id} value={c.id}>{c.name}{c.code ? ` (${c.code})` : ''}</option>)}
                   </select>
                   {!costCentres.length && <Input className="mt-1 h-10" value={offer.cost_centre} onChange={e => setF('cost_centre', e.target.value)} placeholder="Enter cost centre" />}
                 </div>
                 <div>
-                  <Label className="text-xs font-semibold text-slate-600">Profile / Role Title</Label>
-                  <Input className="mt-1 h-10" value={offer.profile} onChange={e => setF('profile', e.target.value)} placeholder="e.g. Customer Care Executive" />
+                  <Label className="text-xs font-semibold text-slate-600">Process / LOB</Label>
+                  <Input className="mt-1 h-10 bg-slate-50 font-medium" value={selected?.process_name || '—'} readOnly />
+                  <p className="text-[10px] text-slate-400 mt-0.5">From candidate profile (read-only)</p>
                 </div>
                 <div>
                   <Label className="text-xs font-semibold text-slate-600">Reporting Manager</Label>
-                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.reporting_manager_id} onChange={e => setF('reporting_manager_id', e.target.value)}>
+                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.reporting_manager_id} onChange={e => setF('reporting_manager_id', e.target.value)}>
                     <option value="">Select Manager</option>
-                    {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    {managers.map(m => <option key={m.id} value={m.id}>{m.name}{m.code ? ` (${m.code})` : ''}</option>)}
                   </select>
                 </div>
                 <div>
                   <Label className="text-xs font-semibold text-slate-600">Role Type</Label>
-                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.role_type} onChange={e => setF('role_type', e.target.value)}>
+                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.role_type} onChange={e => setF('role_type', e.target.value)}>
                     <option value="Analyst">Analyst</option>
                     <option value="SupportStaff">Support Staff</option>
                   </select>
@@ -455,7 +462,7 @@ export default function NativeHROnboardingRequests() {
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div>
                   <Label className="text-xs font-semibold text-slate-600">Salary Band *</Label>
-                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.salary_band} onChange={e => setF('salary_band', e.target.value)}>
+                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.salary_band} onChange={e => setF('salary_band', e.target.value)}>
                     <option value="">Select Band</option>
                     {salaryBands.map(b => (
                       <option key={b.band_code} value={b.band_code}>

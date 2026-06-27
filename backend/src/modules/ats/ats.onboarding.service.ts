@@ -254,13 +254,16 @@ export async function saveOffer(
   if (!reqRows.length) throw Object.assign(new Error('Request not found'), { statusCode: 404 });
   const req = reqRows[0];
 
-  // Fetch branch head email separately to avoid complex role joins
+  // Fetch branch head email — auth_user has no branch_id, so join through employees
   let bhEmail: string | null = null;
   if (submit && req.branch_id) {
     const [bhRows] = await db.execute<RowDataPacket[]>(
       `SELECT u.email FROM auth_user u
        JOIN user_roles ur ON ur.user_id = u.id
-       WHERE ur.role_key IN ('branch_head', 'admin') AND u.branch_id = ?
+       JOIN employees e ON e.user_id = u.id
+       WHERE ur.role_key IN ('branch_head', 'admin')
+         AND e.branch_id = ?
+         AND e.active_status = 1
        LIMIT 1`,
       [req.branch_id],
     );
