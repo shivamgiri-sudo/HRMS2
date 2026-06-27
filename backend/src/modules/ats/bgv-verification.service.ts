@@ -83,6 +83,15 @@ export async function saveBgvConsentByToken(token: string, input: { consentText?
      VALUES (?, ?, 'BGV-DPDP-v1', ?, ?, 'granted', ?, ?)`,
     [randomUUID(), candidateId, consentTextHash, input.purposes ? JSON.stringify(input.purposes) : null, meta?.ip ?? null, meta?.userAgent ?? null]
   );
+  // Also stamp bgv_consent and dpdp_consent on the onboarding profile so
+  // getOnboardingBlockers() can verify both flags without joining bgv table
+  await db.execute(
+    `UPDATE candidate_onboarding_profile
+        SET bgv_consent = 1, bgv_consent_at = NOW(),
+            dpdp_consent = 1, dpdp_consent_at = NOW()
+      WHERE candidate_id = ?`,
+    [candidateId]
+  ).catch(() => { /* profile row may not exist yet — non-fatal */ });
   await logEvent(candidateId, "BGV_CONSENT_GRANTED", { status: "granted", purposes: input.purposes }, null, { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent });
   return getBgvStatusForCandidate(candidateId);
 }

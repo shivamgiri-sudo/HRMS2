@@ -11,20 +11,21 @@ import type {
 import { EMPTY_QUAL } from "./useOnboardingFull";
 
 // ── Mobile-first form primitives with touch-friendly sizing ───────────────────
-function F({ label, value, onChange, type = "text", opts, mode, placeholder, required }: {
+function F({ label, value, onChange, type = "text", opts, mode, placeholder, required, error: fieldError }: {
   label: string; value: string; onChange: (v: string) => void;
-  type?: string; opts?: string[]; mode?: string; placeholder?: string; required?: boolean;
+  type?: string; opts?: string[]; mode?: string; placeholder?: string; required?: boolean; error?: string;
 }) {
   return (
     <div>
       <Label className="text-sm font-semibold">{label}{required && <span className="text-red-500 ml-0.5">*</span>}</Label>
       {opts
-        ? <select className="flex min-h-[44px] w-full rounded-lg border border-input bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={value || ""} onChange={(e) => onChange(e.target.value)}>
+        ? <select className={`flex min-h-[44px] w-full rounded-lg border bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${fieldError ? "border-red-400" : "border-input"}`} value={value || ""} onChange={(e) => onChange(e.target.value)}>
             <option value="">Select…</option>
             {opts.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
-        : <Input type={type} inputMode={mode as any} value={value || ""} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="min-h-[44px] text-base" />
+        : <Input type={type} inputMode={mode as any} value={value || ""} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={`min-h-[44px] text-base ${fieldError ? "border-red-400" : ""}`} />
       }
+      {fieldError && <p className="text-xs text-red-600 font-semibold mt-1">⚠ {fieldError}</p>}
     </div>
   );
 }
@@ -128,10 +129,24 @@ export function Step9ExperienceLang({
   const updExp = (k: keyof ExperienceForm, v: string) => setExperience((p) => ({ ...p, [k]: v }));
   const updFam = (k: keyof FamilyForm, v: string) => setFamily((p) => ({ ...p, [k]: v }));
   const [newLang, setNewLang] = useState({ language_name: "", can_read: false, can_write: false, can_speak: false, proficiency: "basic" });
-  const isFresher = experience.workingExperience === "fresher";
+  const isFresher = experience.workingExperience === "fresher" || experience.workingExperience === "Fresher (No Experience)";
+
+  // Date order validation — from must be before to
+  const dateOrderError = experience.fromDate && experience.toDate && experience.fromDate >= experience.toDate
+    ? "From date must be before To date"
+    : "";
 
   const addLanguage = () => {
-    if (!newLang.language_name.trim()) return;
+    const name = newLang.language_name.trim();
+    if (!name) return;
+    // Prevent duplicate languages
+    if (languages.some((l) => l.language_name.toLowerCase() === name.toLowerCase())) return;
+    // At least one skill must be selected
+    if (!newLang.can_read && !newLang.can_write && !newLang.can_speak) {
+      // Default to can_speak if nothing selected
+      setNewLang((p) => ({ ...p, can_speak: true }));
+      return;
+    }
     setLanguages((prev) => [...prev, { ...newLang, id: Date.now().toString() }]);
     setNewLang({ language_name: "", can_read: false, can_write: false, can_speak: false, proficiency: "basic" });
   };
@@ -163,7 +178,8 @@ export function Step9ExperienceLang({
             <F label="Last CTC (Annual ₹)" value={experience.lastCtc} onChange={(v) => updExp("lastCtc", v)} mode="numeric" />
             <F label="Experience Doc Type" value={experience.experienceDocType} onChange={(v) => updExp("experienceDocType", v)} />
             <F label="From Date" value={experience.fromDate} onChange={(v) => updExp("fromDate", v)} type="date" />
-            <F label="To Date" value={experience.toDate} onChange={(v) => updExp("toDate", v)} type="date" />
+            <F label="To Date" value={experience.toDate} onChange={(v) => updExp("toDate", v)} type="date"
+              error={dateOrderError} />
             <div className="lg:col-span-3">
               <Label className="text-sm font-semibold">Reason for Leaving</Label>
               <Input value={experience.reasonForLeaving} onChange={(e) => updExp("reasonForLeaving", e.target.value)} className="min-h-[44px] text-base" />

@@ -150,7 +150,7 @@ export function Step2Personal({
           <F label="Nominee Name" value={employee.nominee} onChange={(v) => upd("nominee", v)} required />
           <F label="Relation" value={employee.nomineeRelation} onChange={(v) => upd("nomineeRelation", v)} opts={NOM_RELS} />
           <F label="Date of Birth" value={employee.nomineeDateOfBirth} onChange={(v) => upd("nomineeDateOfBirth", v)} type="date" />
-          <F label="Share %" value={employee.nominee1SharePct} onChange={(v) => upd("nominee1SharePct", v)} mode="numeric" />
+          <F label="Share %" value={employee.nominee1SharePct} onChange={(v) => upd("nominee1SharePct", v)} mode="numeric" placeholder="e.g. 100" />
         </div>
 
         <SectionHead>Nominee 2 (Optional)</SectionHead>
@@ -158,11 +158,34 @@ export function Step2Personal({
           <F label="Nominee 2 Name" value={employee.nominee2Name} onChange={(v) => upd("nominee2Name", v)} />
           <F label="Relation" value={employee.nominee2Relation} onChange={(v) => upd("nominee2Relation", v)} opts={NOM_RELS} />
           <F label="Date of Birth" value={employee.nominee2Dob} onChange={(v) => upd("nominee2Dob", v)} type="date" />
-          <F label="Share %" value={employee.nominee2SharePct} onChange={(v) => upd("nominee2SharePct", v)} mode="numeric" />
+          <F label="Share %" value={employee.nominee2SharePct} onChange={(v) => upd("nominee2SharePct", v)} mode="numeric" placeholder="e.g. 0" />
         </div>
 
+        {(() => {
+          const s1 = parseFloat(employee.nominee1SharePct || "0");
+          const s2 = parseFloat(employee.nominee2SharePct || "0");
+          const total = s1 + s2;
+          if (employee.nominee2Name && total !== 100) {
+            return (
+              <div className="mt-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2 text-sm font-semibold text-amber-800">
+                ⚠ Nominee share % total is {total}% — must equal 100% when two nominees are added.
+              </div>
+            );
+          }
+          return null;
+        })()}
+
         <div className="mt-6 flex justify-end">
-          <Button onClick={onSave} disabled={saving} size="lg" className="min-h-[48px] px-8 text-base font-semibold">
+          <Button
+            onClick={onSave}
+            disabled={saving || (() => {
+              const s1 = parseFloat(employee.nominee1SharePct || "0");
+              const s2 = parseFloat(employee.nominee2SharePct || "0");
+              return Boolean(employee.nominee2Name) && (s1 + s2) !== 100;
+            })()}
+            size="lg"
+            className="min-h-[48px] px-8 text-base font-semibold"
+          >
             {saving ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : null}
             Save Personal Details
           </Button>
@@ -182,7 +205,19 @@ export function Step3AddressKyc({
   onSave: () => void;
 }) {
   const upd = (k: keyof EmployeeForm, v: string) => setEmployee((p) => ({ ...p, [k]: v }));
-  const [sameAddr, setSameAddr] = useState(false);
+
+  // Derive sameAddr from address equality when form loads — so the checkbox reflects saved state
+  const [sameAddr, setSameAddr] = useState(() => {
+    if (!employee.permanentAddress || !employee.presentAddress) return false;
+    return (
+      employee.permanentAddress === employee.presentAddress &&
+      employee.permanentState === employee.presentState &&
+      employee.permanentCity === employee.presentCity &&
+      employee.permanentPincode === employee.presentPincode
+    );
+  });
+
+  const pinOk = (v: string) => !v || /^\d{6}$/.test(v);
 
   const syncPresent = (field: keyof EmployeeForm, v: string) => {
     upd(field, v);
@@ -229,10 +264,12 @@ export function Step3AddressKyc({
         <div className="grid gap-5 sm:grid-cols-3 lg:grid-cols-6">
           <F label="Perm. State" value={employee.permanentState} onChange={(v) => syncPresent("permanentState", v)} />
           <F label="Perm. City" value={employee.permanentCity} onChange={(v) => syncPresent("permanentCity", v)} />
-          <F label="Perm. Pincode" value={employee.permanentPincode} onChange={(v) => syncPresent("permanentPincode", v)} mode="numeric" />
+          <F label="Perm. Pincode" value={employee.permanentPincode} onChange={(v) => syncPresent("permanentPincode", v)} mode="numeric"
+            error={employee.permanentPincode && !pinOk(employee.permanentPincode) ? "Must be 6 digits" : ""} />
           <F label="Present State" value={employee.presentState} onChange={(v) => { setSameAddr(false); upd("presentState", v); }} />
           <F label="Present City" value={employee.presentCity} onChange={(v) => { setSameAddr(false); upd("presentCity", v); }} />
-          <F label="Present Pincode" value={employee.presentPincode} onChange={(v) => { setSameAddr(false); upd("presentPincode", v); }} mode="numeric" />
+          <F label="Present Pincode" value={employee.presentPincode} onChange={(v) => { setSameAddr(false); upd("presentPincode", v); }} mode="numeric"
+            error={employee.presentPincode && !pinOk(employee.presentPincode) ? "Must be 6 digits" : ""} />
         </div>
 
         <SectionHead>Address Proof Type</SectionHead>
@@ -456,6 +493,8 @@ export function Step7Bank({
 }) {
   const upd = (k: keyof BankForm, v: string) => setBank((p) => ({ ...p, [k]: v }));
   const mismatch = bank.accountNo && bank.confirmAccountNo && bank.accountNo !== bank.confirmAccountNo;
+  // Bank was previously saved when bankName is pre-filled but accountNo is blank
+  const bankPreviouslySaved = Boolean(bank.bankName && !bank.accountNo);
 
   return (
     <Card className="shadow-md">
@@ -464,6 +503,11 @@ export function Step7Bank({
         <p className="text-sm text-green-100 mt-1">For salary credit and statutory payments</p>
       </CardHeader>
       <CardContent className="pt-5">
+        {bankPreviouslySaved && (
+          <div className="mb-4 rounded-xl border-2 border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 flex items-center gap-2">
+            ✓ Bank details previously saved ({bank.bankName}). Re-enter account number to update or skip to proceed.
+          </div>
+        )}
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           <F label="IFSC Code" value={bank.ifscCode} onChange={(v) => upd("ifscCode", v.toUpperCase())} onBlur={() => onLookupIfsc(bank.ifscCode)} placeholder="ABCD0123456" required />
           <F label="Bank Name" value={bank.bankName} onChange={(v) => upd("bankName", v)} required />

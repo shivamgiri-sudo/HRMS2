@@ -231,6 +231,11 @@ export function useOnboardingFull(token: string) {
           accountHolderName: s.bank!.account_holder_name ?? "",
           ifscCode: s.bank!.ifsc_code ?? "",
           accountType: s.bank!.account_type ?? "Savings",
+          nameOnCheque: s.bank!.name_on_cheque ?? "",
+          cancelledChequeDocumentId: s.bank!.cancelled_cheque_document_id ?? "",
+          // accountNo intentionally NOT pre-filled — user must re-enter for security
+          accountNo: "",
+          confirmAccountNo: "",
         }));
       }
       if (s.experience) {
@@ -397,14 +402,15 @@ export function useOnboardingFull(token: string) {
   const advanceStep = async () => {
     if (saving) return;
     try {
-      if (step === 2) await saveEmployee();
-      else if (step === 3) await saveEmployee();
-      else if (step === 7) await saveBank();
-      else if (step === 9) await saveExperience();
-      else if (step === 10) await saveStatutory();
-    } catch { /* banner shown, still advance */ }
+      if (step === 2) await saveEmployee();      // Personal
+      else if (step === 3) await saveEmployee(); // Address & KYC
+      else if (step === 6) await saveBank();     // Bank
+      else if (step === 8) await saveExperience(); // Experience
+      else if (step === 9) await saveExperience(); // Family & Language
+      else if (step === 10) await saveStatutory(); // Statutory
+    } catch { /* error shown in banner; still allow advance */ }
     setStep((s) => Math.min(10, s + 1) as Step);
-    await hrmsApi.post(`${API}/progress`, { token, stepIdx: Math.min(10, step) }).catch(() => {});
+    hrmsApi.post(`${API}/progress`, { token, stepIdx: Math.min(10, step) }).catch(() => {});
   };
 
   const uploadDoc = async (file: File, docType: string, docName: string, pageNo: string) => {
@@ -415,8 +421,17 @@ export function useOnboardingFull(token: string) {
     const res = await fetch(UPLOAD_URL, { method: "POST", body: fd });
     const json = await res.json();
     if (!res.ok) throw new Error(json.message || "Upload failed");
+    const docId: string | undefined = json.data?.id;
+
+    // Auto-link cancelled cheque / bank passbook to the bank detail record
+    const isCheque = /cancelled.?cheque|bank.?passbook|passbook/i.test(docType);
+    if (isCheque && docId) {
+      setBank((prev) => ({ ...prev, cancelledChequeDocumentId: docId }));
+      // Persist linkage immediately so it's saved with next bank save
+      hrmsApi.post(`${API}/bank-details`, { token, ...bank, cancelledChequeDocumentId: docId }).catch(() => {});
+    }
+
     if (consentAccepted) {
-      const docId = json.data?.id;
       try {
         if (docType.toLowerCase().includes("aadhaar") && employee.aadhaarNumber)
           await hrmsApi.post(`${BGV}/verify/aadhaar-offline`, { token, documentId: docId, aadhaarLast4: employee.aadhaarNumber.slice(-4) });
