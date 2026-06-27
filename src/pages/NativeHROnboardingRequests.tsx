@@ -83,17 +83,20 @@ export default function NativeHROnboardingRequests() {
   // Master data from DB
   const [departments, setDepartments] = useState<MasterItem[]>([]);
   const [designations, setDesignations] = useState<MasterItem[]>([]);
-  const [costCentres, setCostCentres] = useState<MasterItem[]>([]);
-  const [processes, setProcesses] = useState<MasterItem[]>([]);
-  const [salaryBands, setSalaryBands] = useState<SalaryBand[]>([]);
   const [managers, setManagers] = useState<MasterItem[]>([]);
+
+  // Cascading salary package system
+  const [salaryBands, setSalaryBands] = useState<SalaryBand[]>([]);
+  const [costCentres, setCostCentres] = useState<Array<{ id: string; cost_centre_code: string; display_name: string; category: string; client_name: string; process_name: string }>>([]);
+  const [packages, setPackages] = useState<Array<{ id: string; package_amount: number; basic: number; hra: number; conveyance: number; gross: number; epf_employee: number; esic_employee: number; net_in_hand: number; ctc: number; bonus: number; special_allowance: number; other_allowance: number; epf_employer: number; esic_employer: number; admin_charges: number; professional_tax: number; pli: number; portfolio: number; medical: number }>>([]);
+  const [selectedPackage, setSelectedPackage] = useState<typeof packages[0] | null>(null);
 
   // Offer form
   const [offer, setOffer] = useState({
     emp_type: 'OnRoll', date_of_joining: '', date_of_salary: '',
-    profile: '', cost_centre: '', role_type: 'Analyst', salary_band: '',
+    cost_centre: '', role_type: 'Analyst', salary_band: '',
     offered_ctc: '', department_id: '', designation_id: '', reporting_manager_id: '',
-    kpi: '', pf_eligible: true, esi_eligible: true,
+    pf_eligible: true, esi_eligible: true, selected_package_id: '',
   });
   // Proposed (exception) offer — different amount from band
   const [proposedCtc, setProposedCtc] = useState('');
@@ -113,63 +116,90 @@ export default function NativeHROnboardingRequests() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // ── Load master data (one-time) ──────────────────────────────────────────
   useEffect(() => {
-    // Load ONLY active master data from org endpoints
     hrmsApi.get<unknown>('/api/org/departments?active=1').then(r => setDepartments(masterFrom(r, 'department_name'))).catch(() =>
       hrmsApi.get<unknown>('/api/departments?active_status=1').then(r => setDepartments(masterFrom(r, 'department_name'))).catch(() => {})
     );
     hrmsApi.get<unknown>('/api/org/designations?active=1').then(r => setDesignations(masterFrom(r, 'designation_name'))).catch(() =>
       hrmsApi.get<unknown>('/api/designations?active_status=1').then(r => setDesignations(masterFrom(r, 'designation_name'))).catch(() => {})
     );
-    hrmsApi.get<unknown>('/api/org/cost-centres?active=1').then(r => setCostCentres(masterFrom(r, 'cost_centre_name'))).catch(() => {});
-    hrmsApi.get<unknown>('/api/org/processes?active=1').then(r => setProcesses(masterFrom(r, 'process_name'))).catch(() =>
-      hrmsApi.get<unknown>('/api/processes?active_status=1').then(r => setProcesses(masterFrom(r, 'process_name'))).catch(() => {})
-    );
-    // Salary bands from DB
-    hrmsApi.get<unknown>('/api/payroll-masters/salary-bands?active=1').then(r => {
-      const arr = Array.isArray(r) ? r : (r as any)?.data ?? [];
-      setSalaryBands(Array.isArray(arr) ? arr : []);
+    // Salary bands from new payroll-masters API
+    hrmsApi.get<unknown>('/api/payroll-masters/bands').then((r: any) => {
+      const arr = r?.data ?? (Array.isArray(r) ? r : []);
+      setSalaryBands(arr.map((b: any) => ({ ...b, min_ctc: b.slab_from, max_ctc: b.slab_to })));
     }).catch(() => {
       setSalaryBands([
-        { id: '1', band_code: 'D', band_name: 'Band D (Entry)', min_ctc: 80000, max_ctc: 150000, basic_pct: 40, hra_pct: 40 },
-        { id: '2', band_code: 'C', band_name: 'Band C (Junior)', min_ctc: 150000, max_ctc: 300000, basic_pct: 40, hra_pct: 40 },
-        { id: '3', band_code: 'B', band_name: 'Band B (Mid)', min_ctc: 300000, max_ctc: 600000, basic_pct: 45, hra_pct: 40 },
-        { id: '4', band_code: 'A', band_name: 'Band A (Senior)', min_ctc: 600000, max_ctc: 1200000, basic_pct: 50, hra_pct: 50 },
-        { id: '5', band_code: 'M', band_name: 'Band M (Management)', min_ctc: 1200000, max_ctc: 5000000, basic_pct: 50, hra_pct: 50 },
+        { id: '1', band_code: 'A', band_name: 'Band A', min_ctc: 0, max_ctc: 4000, basic_pct: 40, hra_pct: 40 },
+        { id: '2', band_code: 'B', band_name: 'Band B', min_ctc: 4001, max_ctc: 6000, basic_pct: 40, hra_pct: 40 },
+        { id: '3', band_code: 'C', band_name: 'Band C', min_ctc: 6001, max_ctc: 7500, basic_pct: 40, hra_pct: 40 },
+        { id: '4', band_code: 'D', band_name: 'Band D', min_ctc: 7501, max_ctc: 9000, basic_pct: 40, hra_pct: 40 },
+        { id: '5', band_code: 'E', band_name: 'Band E', min_ctc: 9001, max_ctc: 11000, basic_pct: 40, hra_pct: 40 },
+        { id: '6', band_code: 'F', band_name: 'Band F', min_ctc: 11001, max_ctc: 15000, basic_pct: 40, hra_pct: 40 },
+        { id: '7', band_code: 'G', band_name: 'Band G', min_ctc: 15001, max_ctc: 18000, basic_pct: 40, hra_pct: 40 },
+        { id: '8', band_code: 'H', band_name: 'Band H', min_ctc: 18001, max_ctc: 25000, basic_pct: 40, hra_pct: 40 },
+        { id: '9', band_code: 'I', band_name: 'Band I', min_ctc: 25001, max_ctc: 35000, basic_pct: 40, hra_pct: 40 },
+        { id: '10', band_code: 'J', band_name: 'Band J', min_ctc: 35001, max_ctc: 50000, basic_pct: 40, hra_pct: 40 },
+        { id: '11', band_code: 'K', band_name: 'Band K', min_ctc: 50001, max_ctc: 75000, basic_pct: 45, hra_pct: 40 },
+        { id: '12', band_code: 'L', band_name: 'Band L', min_ctc: 75001, max_ctc: 100000, basic_pct: 45, hra_pct: 40 },
+        { id: '13', band_code: 'M', band_name: 'Band M', min_ctc: 100001, max_ctc: 125000, basic_pct: 50, hra_pct: 50 },
+        { id: '14', band_code: 'N', band_name: 'Band N', min_ctc: 125001, max_ctc: 500000, basic_pct: 50, hra_pct: 50 },
       ]);
     });
-    // Managers — use employees endpoint with proper name resolution
+    // Managers
     hrmsApi.get<unknown>('/api/employees?active_status=1&limit=500').then((r: any) => {
       const emps = Array.isArray(r) ? r : r?.data ?? [];
       setManagers((Array.isArray(emps) ? emps : [])
         .filter((e: any) => e.first_name || e.last_name)
-        .map((e: any) => ({
-          id: e.id,
-          name: [e.first_name, e.last_name].filter(Boolean).join(' '),
-          code: e.employee_code || '',
-        })));
+        .map((e: any) => ({ id: e.id, name: [e.first_name, e.last_name].filter(Boolean).join(' '), code: e.employee_code || '' })));
     }).catch(() => {});
   }, []);
 
-  // ── Auto-calculate salary when band selected ──────────────────────────────
+  // ── Cascading: Load cost centres when candidate selected (branch-based) ────
+  useEffect(() => {
+    if (!selected?.branch_name) { setCostCentres([]); return; }
+    hrmsApi.get<unknown>(`/api/payroll-masters/cost-centres?branch=${encodeURIComponent(selected.branch_name)}`).then((r: any) => {
+      setCostCentres(r?.data ?? []);
+    }).catch(() => setCostCentres([]));
+  }, [selected?.branch_name]);
+
+  // ── Cascading: Load packages when branch + cost centre + band all selected ─
+  useEffect(() => {
+    if (!selected?.branch_name || !offer.salary_band) { setPackages([]); setSelectedPackage(null); return; }
+    const params = new URLSearchParams({ branch: selected.branch_name, band: offer.salary_band });
+    if (offer.cost_centre) params.set('costCentre', offer.cost_centre);
+    hrmsApi.get<unknown>(`/api/payroll-masters/packages?${params}`).then((r: any) => {
+      setPackages(r?.data ?? []);
+      setSelectedPackage(null);
+      setSalaryPreview(null);
+    }).catch(() => setPackages([]));
+  }, [selected?.branch_name, offer.cost_centre, offer.salary_band]);
+
+  // ── When a package is selected, auto-fill salary preview (locked) ────────
   const selectedBand = salaryBands.find(b => b.band_code === offer.salary_band);
 
-  useEffect(() => {
-    if (!selectedBand) { setSalaryPreview(null); return; }
-    // Auto-populate CTC from band's max_ctc (monthly)
-    const monthlyCTC = Math.round(selectedBand.max_ctc / 12);
-    setOffer(p => ({ ...p, offered_ctc: String(monthlyCTC) }));
-    // Trigger calculation
-    void calcSalaryForBand(selectedBand.band_code, monthlyCTC);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [offer.salary_band]);
+  const selectPackage = (pkgId: string) => {
+    const pkg = packages.find(p => p.id === pkgId);
+    if (!pkg) { setSelectedPackage(null); setSalaryPreview(null); return; }
+    setSelectedPackage(pkg);
+    setOffer(p => ({ ...p, offered_ctc: String(pkg.package_amount), selected_package_id: pkgId }));
+    setSalaryPreview({
+      gross: pkg.gross, basic: pkg.basic, hra: pkg.hra, net_in_hand: pkg.net_in_hand,
+      pf_employee: pkg.epf_employee, pf_employer: pkg.epf_employer,
+      esic_employee: pkg.esic_employee, esic_employer: pkg.esic_employer,
+      professional_tax: pkg.professional_tax, bonus: pkg.bonus, conveyance: pkg.conveyance,
+      da: 0, special_allowance: pkg.special_allowance, other_allowance: pkg.other_allowance,
+      gratuity: 0, admin_charges: pkg.admin_charges,
+    });
+  };
 
-  const calcSalaryForBand = async (bandCode: string, monthlyCTC: number) => {
-    if (!monthlyCTC || !bandCode) return;
+  // Fallback: calculate manually if no packages exist in DB for this combination
+  const calcSalaryManual = async () => {
+    if (!offer.offered_ctc || !offer.salary_band) return;
     setCalcLoading(true);
     try {
       const r = await hrmsApi.post<{ components?: SalaryPreview }>('/api/ats/onboarding/calculate-salary', {
-        ctc: monthlyCTC * 12, bandCode,
+        ctc: Number(offer.offered_ctc) * 12, bandCode: offer.salary_band,
       });
       setSalaryPreview(r.components ?? null);
     } catch { /* non-fatal */ }
@@ -423,12 +453,16 @@ export default function NativeHROnboardingRequests() {
                   </select>
                 </div>
                 <div>
-                  <Label className="text-xs font-semibold text-slate-600">Cost Centre</Label>
-                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.cost_centre} onChange={e => setF('cost_centre', e.target.value)}>
+                  <Label className="text-xs font-semibold text-slate-600">Cost Centre *</Label>
+                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.cost_centre} onChange={e => { setF('cost_centre', e.target.value); setSelectedPackage(null); setSalaryPreview(null); }}>
                     <option value="">Select Cost Centre</option>
-                    {costCentres.map(c => <option key={c.id} value={c.id}>{c.name}{c.code ? ` (${c.code})` : ''}</option>)}
+                    {costCentres.map(c => (
+                      <option key={c.cost_centre_code} value={c.cost_centre_code}>
+                        {c.cost_centre_code}{c.display_name ? ` (${c.display_name})` : c.process_name ? ` (${c.process_name})` : c.category ? ` (${c.category})` : ''}
+                      </option>
+                    ))}
                   </select>
-                  {!costCentres.length && <Input className="mt-1 h-10" value={offer.cost_centre} onChange={e => setF('cost_centre', e.target.value)} placeholder="Enter cost centre" />}
+                  {!costCentres.length && selected?.branch_name && <p className="text-[10px] text-amber-500 mt-1">No cost centres found for {selected.branch_name}. Contact Payroll Head to add.</p>}
                 </div>
                 <div>
                   <Label className="text-xs font-semibold text-slate-600">Process / LOB</Label>
@@ -462,35 +496,57 @@ export default function NativeHROnboardingRequests() {
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div>
                   <Label className="text-xs font-semibold text-slate-600">Salary Band *</Label>
-                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.salary_band} onChange={e => setF('salary_band', e.target.value)}>
+                  <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.salary_band} onChange={e => { setF('salary_band', e.target.value); setSelectedPackage(null); setSalaryPreview(null); }}>
                     <option value="">Select Band</option>
                     {salaryBands.map(b => (
                       <option key={b.band_code} value={b.band_code}>
-                        {b.band_name || `Band ${b.band_code}`} ({fmt(b.min_ctc/12)} – {fmt(b.max_ctc/12)}/mo)
+                        Band {b.band_code} ({fmt(b.min_ctc)} – {fmt(b.max_ctc)}/mo)
                       </option>
                     ))}
                   </select>
                   {selectedBand && (
                     <p className="text-[10px] text-slate-400 mt-1">
-                      Annual: {fmt(selectedBand.min_ctc)} – {fmt(selectedBand.max_ctc)} · Basic: {selectedBand.basic_pct}% · HRA: {selectedBand.hra_pct}%
+                      Monthly range: {fmt(selectedBand.min_ctc)} – {fmt(selectedBand.max_ctc)}
                     </p>
                   )}
                 </div>
 
                 {offerTab === 'standard' ? (
                   <div>
-                    <Label className="text-xs font-semibold text-slate-600">Monthly CTC (₹)</Label>
-                    <div className="relative mt-1">
-                      <Input type="number" className="h-10 bg-slate-50 font-bold pl-3 pr-8" value={offer.offered_ctc} readOnly />
-                      <Lock className="absolute right-2.5 top-2.5 h-4 w-4 text-slate-300" />
-                    </div>
-                    <p className="text-[10px] text-slate-400 mt-1">Auto-set from band max. Switch to "Proposed Exception" for custom amount.</p>
+                    <Label className="text-xs font-semibold text-slate-600">Select Package *</Label>
+                    {packages.length > 0 ? (
+                      <select className="mt-1 flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400" value={offer.selected_package_id} onChange={e => selectPackage(e.target.value)}>
+                        <option value="">Choose a package</option>
+                        {packages.map(p => (
+                          <option key={p.id} value={p.id}>
+                            {fmt(p.package_amount)}/mo | Gross {fmt(p.gross)} | Net {fmt(p.net_in_hand)}
+                          </option>
+                        ))}
+                      </select>
+                    ) : offer.salary_band ? (
+                      <div className="mt-1">
+                        <Input type="number" className="h-10" value={offer.offered_ctc} onChange={e => setF('offered_ctc', e.target.value)} placeholder="Enter monthly CTC" />
+                        <p className="text-[10px] text-amber-500 mt-1">No pre-defined packages for this combination. Enter CTC manually.</p>
+                        <Button variant="outline" size="sm" onClick={calcSalaryManual} disabled={calcLoading || !offer.offered_ctc} className="mt-2 gap-1.5 text-xs">
+                          {calcLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Calculator className="h-3.5 w-3.5" />}
+                          Calculate Breakdown
+                        </Button>
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-xs text-slate-400">Select a band first</p>
+                    )}
+                    {selectedPackage && (
+                      <div className="mt-1.5 flex items-center gap-1.5">
+                        <Lock className="h-3.5 w-3.5 text-emerald-500" />
+                        <p className="text-[10px] text-emerald-600 font-semibold">Package locked: {fmt(selectedPackage.package_amount)}/mo — all components auto-filled</p>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div>
                     <Label className="text-xs font-semibold text-amber-600">Proposed Monthly CTC (₹) *</Label>
-                    <Input type="number" className="mt-1 h-10 border-amber-300 focus:ring-amber-400" value={proposedCtc} onChange={e => setProposedCtc(e.target.value)} placeholder="Enter proposed amount" />
-                    <p className="text-[10px] text-amber-600 mt-1">Different from band. Requires Branch Head + Payroll Head approval.</p>
+                    <Input type="number" className="mt-1 h-10 border-amber-300 focus:ring-amber-400 text-slate-900" value={proposedCtc} onChange={e => setProposedCtc(e.target.value)} placeholder="Enter proposed amount" />
+                    <p className="text-[10px] text-amber-600 mt-1">Different from pre-defined packages. Requires Branch Head + Payroll Head approval.</p>
                   </div>
                 )}
 
