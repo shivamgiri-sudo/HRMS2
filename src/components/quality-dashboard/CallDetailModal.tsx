@@ -1,9 +1,7 @@
 import React from 'react';
 import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { BarChart, Bar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { X, Play, Volume2 } from 'lucide-react';
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface SubScores {
   opening: number;

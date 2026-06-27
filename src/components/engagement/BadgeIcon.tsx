@@ -1,14 +1,12 @@
 import { Award } from "lucide-react";
 import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface BadgeIconProps {
   badge_name: string;

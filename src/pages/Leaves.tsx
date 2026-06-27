@@ -1,9 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   ArrowUpDown,
   Calendar,
   CalendarDays,
@@ -18,11 +16,8 @@ import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   XCircle,
 } from "lucide-react";
 import jsPDF from "jspdf";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import autoTable from "jspdf-autotable";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   format,
   parseISO,
   isWithinInterval,
@@ -30,47 +25,29 @@ import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   isBefore,
 } from "date-fns";
 import { normalizeDate } from "@/lib/utils";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   LeaveRequestCard,
   type LeaveRequest,
 } from "@/components/leaves/LeaveRequestCard";
 import { LeaveRequestForm } from "@/components/profile/LeaveRequestForm";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { LeaveCalendarView } from "@/components/leaves/LeaveCalendarView";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { LeaveTrends } from "@/components/leaves/LeaveTrends";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { DateRangeExportDialog } from "@/components/export/DateRangeExportDialog";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 import { usePagination } from "@/hooks/usePagination";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useSorting } from "@/hooks/useSorting";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useToast } from "@/hooks/use-toast";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useAuth } from "@/contexts/AuthContext";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useLeaveRequests, useLeaveStats } from "@/hooks/useLeaves";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 import { Badge } from "@/components/ui/badge";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent } from "@/components/ui/card";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Dialog,
   DialogContent,
   DialogDescription,
@@ -79,14 +56,12 @@ import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Pagination,
   PaginationContent,
   PaginationEllipsis,
@@ -96,7 +71,6 @@ import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   PaginationPrevious,
 } from "@/components/ui/pagination";
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Select,
   SelectContent,
   SelectItem,
@@ -104,11 +78,8 @@ import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Textarea } from "@/components/ui/textarea";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface LeaveMetricCardProps {
   label: string;

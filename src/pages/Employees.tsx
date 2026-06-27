@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Link } from "react-router-dom";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Bar,
   BarChart,
   CartesianGrid,
@@ -13,7 +11,6 @@ import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   YAxis,
 } from "recharts";
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Building2,
   CheckCircle2,
   Download,
@@ -24,39 +21,23 @@ import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   X,
 } from "lucide-react";
 import jsPDF from "jspdf";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import autoTable from "jspdf-autotable";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { format, isWithinInterval, parse } from "date-fns";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { toast } from "sonner";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { EmployeeTable, type Employee } from "@/components/employees/EmployeeTable";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { EmployeeDocuments } from "@/components/documents/EmployeeDocuments";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { EmployeeViewDialog } from "@/components/employees/EmployeeViewDialog";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { EmployeeEditDialog } from "@/components/employees/EmployeeEditDialog";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { AdminPasswordResetDialog } from "@/components/admin/AdminPasswordResetDialog";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { BulkDeleteDialog } from "@/components/employees/BulkDeleteDialog";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { BulkAssignManagerDialog } from "@/components/employees/BulkAssignManagerDialog";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { DateRangeExportDialog } from "@/components/export/DateRangeExportDialog";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { ProcessWiseChart } from "@/components/employees/ProcessWiseChart";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   useBulkDeleteEmployees,
   useBulkUpdateEmployeeStatus,
   useDepartments,
@@ -66,27 +47,19 @@ import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   useEmployeeSearchOptions,
 } from "@/hooks/useEmployees";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useSorting } from "@/hooks/useSorting";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useDebounce } from "@/hooks/useDebounce";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 import { Button } from "@/components/ui/button";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent } from "@/components/ui/card";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Pagination,
   PaginationContent,
   PaginationItem,
@@ -95,7 +68,6 @@ import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   PaginationPrevious,
 } from "@/components/ui/pagination";
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Select,
   SelectContent,
   SelectItem,
@@ -103,7 +75,6 @@ import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 interface EmployeeMetricCardProps {
   title: string;

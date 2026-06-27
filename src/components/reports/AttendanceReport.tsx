@@ -1,13 +1,9 @@
 import { useState, useMemo } from "react";
 import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Select,
   SelectContent,
   SelectItem,
@@ -15,7 +11,6 @@ import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   SelectValue,
 } from "@/components/ui/select";
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Table,
   TableBody,
   TableCell,
@@ -25,19 +20,12 @@ import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   TableFooter,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Download, Clock, AlertTriangle, Timer, Loader2, Search, FileSpreadsheet } from "lucide-react";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useAttendanceReportData } from "@/hooks/useAttendanceReport";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useReportMasters } from "@/hooks/useReportMasters";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import jsPDF from "jspdf";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import autoTable from "jspdf-autotable";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 const MONTHS = [
   { value: "1", label: "January" },

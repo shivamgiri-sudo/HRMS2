@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Activity,
   AlertTriangle,
   Award,
@@ -17,15 +16,10 @@ import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
   Users,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { hrmsApi } from "@/lib/hrmsApi";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Button } from "@/components/ui/button";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 type Summary = {
   employees_scanned: number;
