@@ -82,23 +82,52 @@ export const atsFormConfigService = {
       configMap[row.config_key as string] = row.config_value;
     }
 
+    // Only return branches that have at least one active HR+Executive employee (a recruiter)
     const [branchRows] = await db.execute<RowDataPacket[]>(
-      'SELECT DISTINCT branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name ASC'
+      `SELECT DISTINCT b.branch_name
+       FROM branch_master b
+       WHERE b.active_status = 1
+         AND EXISTS (
+           SELECT 1
+           FROM employees e
+           JOIN department_master d    ON d.id  = e.department_id
+           JOIN designation_master des ON des.id = e.designation_id
+           WHERE e.active_status = 1
+             AND e.branch_id = b.id
+             AND LOWER(d.dept_name) = 'human resource and development'
+             AND LOWER(des.designation_name) = 'executive'
+         )
+       ORDER BY b.branch_name ASC`
     );
     const branchOptions = (branchRows as RowDataPacket[]).map((r: any) => r.branch_name as string);
 
-    // Get branch aliases (display names like Trapezoid, Okaya, etc.)
+    // Only return aliases for branches that actually have recruiters
     const [aliasRows] = await db.execute<RowDataPacket[]>(
-      `SELECT canonical_key, MAX(display_name) AS display_name, MIN(alias_text) AS alias_text
-       FROM ats_branch_alias_master
-       WHERE active_status = 1
-       GROUP BY canonical_key
-       ORDER BY display_name ASC`
+      `SELECT aba.id, aba.canonical_key, aba.display_name, aba.alias_text
+       FROM ats_branch_alias_master aba
+       WHERE aba.active_status = 1
+         AND aba.canonical_key IN (
+           SELECT DISTINCT b.branch_name
+           FROM branch_master b
+           WHERE b.active_status = 1
+             AND EXISTS (
+               SELECT 1
+               FROM employees e
+               JOIN department_master d    ON d.id  = e.department_id
+               JOIN designation_master des ON des.id = e.designation_id
+               WHERE e.active_status = 1
+                 AND e.branch_id = b.id
+                 AND LOWER(d.dept_name) = 'human resource and development'
+                 AND LOWER(des.designation_name) = 'executive'
+             )
+         )
+       ORDER BY aba.display_name ASC`
     );
     const branchAliases = (aliasRows as RowDataPacket[]).map((r: any) => ({
+      id: r.id,
       canonical: r.canonical_key,
       display: r.display_name,
-      alias: r.alias_text
+      alias: r.alias_text,
     }));
 
     const [recruiterRows] = await db.execute<RowDataPacket[]>(
