@@ -4,6 +4,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { toIST } from "../../shared/timezone.js";
+import { getRealTimePunchesToday, getRealTimePunchesRange } from "./attendance-realtime-ncosec.service.js";
 
 export const attendanceDailyScopedRouter = Router();
 attendanceDailyScopedRouter.use(requireAuth);
@@ -122,9 +123,10 @@ attendanceDailyScopedRouter.get("/daily", h(async (req, res) => {
   return res.json({ success: true, data, total: Number(countRows[0]?.total ?? 0), page, limit });
 }));
 
-// GET /today-live — returns today's raw biometric first_punch_in / last_punch_out
-// for the calling employee directly from biometric_attendance_log.
-// Used as a live preview when the attendance engine hasn't processed today yet.
+// GET /today-live — returns today's real-time punch data
+// PRIMARY: Direct NCOSEC query for real-time visibility (5-10s latency)
+// FALLBACK: Synced biometric_attendance_log if NCOSEC unavailable
+// NOTE: This is DISPLAY ONLY - payroll calculations use validated sync pipeline
 attendanceDailyScopedRouter.get("/today-live", h(async (req, res) => {
   const userId = req.authUser!.id;
   const callerEmp = await getEmployeeForUser(userId);
@@ -134,6 +136,28 @@ attendanceDailyScopedRouter.get("/today-live", h(async (req, res) => {
   const pad = (n: number) => String(n).padStart(2, "0");
   const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
 
+  // Try real-time NCOSEC first
+  try {
+    const realtimeData = await getRealTimePunchesToday(callerEmp.id);
+    if (realtimeData) {
+      return res.json({
+        success: true,
+        data: {
+          punch_date: realtimeData.punch_date,
+          first_punch_in: toIST(realtimeData.first_punch_in),
+          last_punch_out: toIST(realtimeData.last_punch_out),
+          raw_minutes: realtimeData.raw_minutes,
+          total_punches: realtimeData.total_punches,
+          source: realtimeData.source,
+        },
+      });
+    }
+  } catch (ncosecError) {
+    console.warn('[today-live] Real-time NCOSEC query failed, falling back to synced data:',
+                 ncosecError instanceof Error ? ncosecError.message : String(ncosecError));
+  }
+
+  // Fallback to synced biometric_attendance_log
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT first_punch_in, last_punch_out, raw_minutes, total_punches
        FROM biometric_attendance_log
@@ -154,7 +178,59 @@ attendanceDailyScopedRouter.get("/today-live", h(async (req, res) => {
       last_punch_out: toIST(row.last_punch_out),
       raw_minutes: row.raw_minutes ?? 0,
       total_punches: row.total_punches ?? 0,
-      source: "biometric_live",
+      source: "biometric_synced",
     },
   });
+}));
+
+// GET /calendar-live — returns real-time punch data for date range (max 7 days)
+// For attendance calendar display - bypasses sync for immediate visibility
+attendanceDailyScopedRouter.get("/calendar-live", h(async (req, res) => {
+  const userId = req.authUser!.id;
+  const callerEmp = await getEmployeeForUser(userId);
+  if (!callerEmp?.id) return res.status(403).json({ success: false, error: "No employee record" });
+
+  const fromDate = String(req.query.fromDate || '');
+  const toDate = String(req.query.toDate || '');
+
+  if (!fromDate || !toDate) {
+    return res.status(400).json({ success: false, error: "fromDate and toDate required" });
+  }
+
+  // Validate date format
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(fromDate) || !dateRegex.test(toDate)) {
+    return res.status(400).json({ success: false, error: "Dates must be in YYYY-MM-DD format" });
+  }
+
+  try {
+    const realtimeData = await getRealTimePunchesRange(callerEmp.id, fromDate, toDate);
+
+    const data = realtimeData.map(punch => ({
+      punch_date: punch.punch_date,
+      first_punch_in: toIST(punch.first_punch_in),
+      last_punch_out: toIST(punch.last_punch_out),
+      raw_minutes: punch.raw_minutes,
+      total_punches: punch.total_punches,
+      source: punch.source,
+    }));
+
+    return res.json({
+      success: true,
+      data,
+      count: data.length,
+    });
+  } catch (error) {
+    console.error('[calendar-live] Error:', error instanceof Error ? error.message : String(error));
+
+    if (error instanceof Error && error.message.includes('limited to 7 days')) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+
+    return res.status(503).json({
+      success: false,
+      error: "Real-time attendance data unavailable",
+      message: "NCOSEC connection failed. Please try again or contact IT support.",
+    });
+  }
 }));
