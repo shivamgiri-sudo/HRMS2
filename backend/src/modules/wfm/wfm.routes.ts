@@ -35,39 +35,7 @@ wfmRouter.post("/shifts",         requireRole("admin", "wfm"), h(wfmController.c
 wfmRouter.get("/shifts/:id",      requireRole("admin", "wfm", "manager"), h(wfmController.getShift.bind(wfmController)));
 wfmRouter.put("/shifts/:id",      requireRole("admin", "wfm"), h(wfmController.updateShift.bind(wfmController)));
 
-// Attendance calendar - daily attendance data for date range
-wfmRouter.get("/attendance/daily", h(async (req: any, res: any) => {
-  const { employeeId, fromDate, toDate } = req.query;
-  if (!employeeId) {
-    return res.status(400).json({ success: false, error: "employeeId is required" });
-  }
-
-  const { db } = await import("../../db/mysql.js");
-  let sql = `SELECT record_date AS date,
-                   attendance_status AS status,
-                   clock_in_time AS clock_in,
-                   clock_out_time AS clock_out,
-                   raw_minutes,
-                   COALESCE(clock_in_location, clock_out_location) AS location,
-                   attendance_source AS source
-            FROM attendance_daily_record
-            WHERE employee_id = ?`;
-  const params: unknown[] = [employeeId];
-
-  if (fromDate) {
-    sql += " AND record_date >= ?";
-    params.push(fromDate);
-  }
-  if (toDate) {
-    sql += " AND record_date <= ?";
-    params.push(toDate);
-  }
-
-  sql += " ORDER BY record_date ASC";
-  const [rows] = await db.execute(sql, params);
-
-  return res.json({ success: true, data: rows });
-}));
+// attendance/daily route handled by attendanceDailyScopedRouter (mounted at /api/wfm/attendance in app.ts)
 
 // Attendance sessions
 wfmRouter.post("/sessions/clock-in",  h(wfmController.clockIn.bind(wfmController)));  // Employee self-service
