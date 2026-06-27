@@ -9,6 +9,7 @@ import { employeeController as c } from "./employee.controller.js";
 import { appendJourneyEvent, listJourneyEvents, listComprehensiveJourney } from "./journeyLog.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { profileApprovalService } from "./profile-approval.service.js";
+import { checkDpdpRestriction } from "../privacy/dpdpRestrictionGuard.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -468,7 +469,7 @@ router.post("/",
   })),
   h(c.createEmployee)
 );
-router.get("/:id", requireRole("super_admin", "admin", "hr", "manager"), h(c.getEmployee));
+router.get("/:id", requireRole("super_admin", "admin", "hr", "manager"), checkDpdpRestriction, h(c.getEmployee));
 router.patch("/:id",
   requireRole("super_admin", "admin", "hr"),
   requireScopedRole(["hr"], async (req) => {
@@ -523,7 +524,7 @@ router.post("/:id/journey", requireRole("admin", "hr"), async (req: any, res: an
 });
 
 // GET /api/employees/:id/stat-card — comprehensive employee profile aggregate
-router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
+router.get("/:id/stat-card", requireAuth, checkDpdpRestriction, h(async (req: any, res: any) => {
   const { db } = await import("../../db/mysql.js");
   const targetId = req.params.id;
   const isAdminOrHR = await hasRole(req.authUser!.id, "admin", "hr", "ceo");
