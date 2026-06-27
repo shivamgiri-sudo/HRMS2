@@ -125,7 +125,8 @@ router.post("/progress", h(async (req, res) => {
 router.post("/submit", h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
-  return res.json({ success: true, data: await submitFullOnboarding(token, meta(req)) });
+  const geo = { submit_lat: req.body.submit_lat ?? null, submit_lng: req.body.submit_lng ?? null };
+  return res.json({ success: true, data: await submitFullOnboarding(token, meta(req), geo) });
 }));
 
 router.post("/statutory", h(async (req, res) => {

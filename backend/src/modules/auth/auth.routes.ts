@@ -98,7 +98,8 @@ router.post("/login", authLimiter, h(async (req: any, res: any) => {
   if (!identifier || !password) return res.status(400).json({ error: "identifier (email or employee code) and password required" });
 
   try {
-    const tokens = await authService.login(identifier, password);
+    const loginGeo = { lat: req.body.login_lat ?? null, lng: req.body.login_lng ?? null };
+    const tokens = await authService.login(identifier, password, loginGeo);
     return res.json({ data: tokens });
   } catch (error: any) {
     return res.status(401).json({ error: error.message || "Authentication failed" });

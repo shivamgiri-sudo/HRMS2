@@ -62,10 +62,11 @@ export const leaveService = {
   async submitRequest(input: LeaveRequestInput): Promise<LeaveRequest> {
     const id = randomUUID();
     await db.execute(
-      `INSERT INTO leave_request (id, employee_id, leave_type_id, from_date, to_date, total_days, reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO leave_request (id, employee_id, leave_type_id, from_date, to_date, total_days, reason, latitude, longitude)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, input.employeeId, input.leaveTypeId, input.fromDate, input.toDate,
-       input.totalDays, input.reason ?? null]
+       input.totalDays, input.reason ?? null,
+       (input as any).latitude ?? null, (input as any).longitude ?? null]
     );
     return this.getRequest(id);
   },

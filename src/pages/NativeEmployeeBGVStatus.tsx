@@ -8,7 +8,6 @@
  *  /employees/bgv-status/:employeeId → HR/admin lookup (GET /api/bgv/employee/:id)
  */
 import { useState, useRef } from "react";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
 import {

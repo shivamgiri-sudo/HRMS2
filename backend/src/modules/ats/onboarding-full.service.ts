@@ -507,7 +507,7 @@ export async function saveFinalSection(token: string, input: Record<string, unkn
   return getFullOnboardingStatus(token);
 }
 
-export async function submitFullOnboarding(token: string, meta?: { ip?: string; userAgent?: string }) {
+export async function submitFullOnboarding(token: string, meta?: { ip?: string; userAgent?: string }, geo?: { submit_lat?: number | null; submit_lng?: number | null }) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
 
@@ -524,10 +524,13 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
   );
   if (!bankRows.length) throw Object.assign(new Error("Bank details are required before submit"), { statusCode: 400 });
 
+  const submitLat = geo?.submit_lat ?? null;
+  const submitLng = geo?.submit_lng ?? null;
   await db.execute(
-    `UPDATE candidate_onboarding_profile SET profile_status = 'submitted', submitted_at = NOW(), updated_at = NOW()
+    `UPDATE candidate_onboarding_profile SET profile_status = 'submitted', submitted_at = NOW(), updated_at = NOW(),
+      submit_lat = ?, submit_lng = ?
       WHERE candidate_id = ?`,
-    [candidateId]
+    [submitLat, submitLng, candidateId]
   );
   // Keep all three status tables in sync via syncOnboardingStatus
   await syncOnboardingStatus(candidateId, 'submitted', 'profile_submitted', 'profile_submitted');

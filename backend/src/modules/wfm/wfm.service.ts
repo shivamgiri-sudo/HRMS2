@@ -229,8 +229,8 @@ export const wfmService = {
           requested_by_type, branch_id, supporting_note,
           dispute_type, old_status, new_status,
           old_punch_in, old_punch_out, new_punch_in, new_punch_out,
-          supporting_doc_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          supporting_doc_id, latitude, longitude)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, input.employeeId, input.sessionDate,
        inp.requestedStatus ?? null,
        input.reason,
@@ -245,7 +245,9 @@ export const wfmService = {
        inp.oldPunchOut ?? null,
        inp.newPunchIn ?? null,
        inp.newPunchOut ?? null,
-       inp.supportingDocId ?? null]
+       inp.supportingDocId ?? null,
+       inp.latitude ?? null,
+       inp.longitude ?? null]
     );
 
     // Notify WFM lead(s) for this branch via work inbox
