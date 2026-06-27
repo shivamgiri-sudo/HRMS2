@@ -457,6 +457,31 @@ export function usePayrollAnalytics(
   });
 }
 
+export interface PayrollRunSummary {
+  id: string;
+  run_month: string;
+  status: string;
+  total_employees: number;
+}
+
+export function usePayrollRunSummaries() {
+  return useQuery<PayrollRunSummary[]>({
+    queryKey: ["payroll-run-summaries"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+        "/api/payroll/runs?limit=50"
+      );
+      return (res.data ?? []).map((r: any) => ({
+        id: String(r.id),
+        run_month: String(r.run_month ?? ""),
+        status: String(r.status ?? ""),
+        total_employees: Number(r.total_employees ?? 0),
+      }));
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 export function usePayrollTrends(months = 6) {
   return useQuery<PayrollTrendRow[]>({
     queryKey: ["payroll-trends", months],
