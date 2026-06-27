@@ -66,9 +66,9 @@ const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
 const EMP_TYPES = ['OnRoll', 'OffRoll', 'MGMT. TRAINEE', 'CONTRACT'];
 const fmt = (v: number) => `₹${Math.round(v).toLocaleString('en-IN')}`;
 
-// Shared select style — white bg, slate-900 text, ensures readable on all browsers
+// Shared select style — explicit inline styles for dropdown color override
 const SELECT_CLS =
-  'mt-1 flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 ' +
+  'mt-1 flex h-10 w-full rounded-md border border-slate-300 px-3 py-2 text-sm ' +
   'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ' +
   'disabled:opacity-50 disabled:cursor-not-allowed appearance-none cursor-pointer ' +
   'shadow-sm transition-colors hover:border-slate-400';
@@ -87,11 +87,12 @@ export default function NativeHROnboardingRequests() {
 
   const [departments, setDepartments] = useState<MasterItem[]>([]);
   const [designations, setDesignations] = useState<MasterItem[]>([]);
-  const [managers, setManagers] = useState<MasterItem[]>([]);
+  const [managers, setManagers] = useState<Array<{ id: string; name: string; code?: string; branch_id?: string; department_id?: string; }>>([]);
+  const [allManagers, setAllManagers] = useState<Array<{ id: string; name: string; code?: string; branch_id?: string; department_id?: string; }>>([]);
   const [salaryBands, setSalaryBands] = useState<SalaryBand[]>([]);
   const [costCentres, setCostCentres] = useState<Array<{
     id: string; cost_centre_code: string; display_name: string;
-    category: string; client_name: string; process_name: string;
+    category: string; client_name: string; process_name: string; branch_name?: string;
   }>>([]);
   const [packages, setPackages] = useState<Array<{
     id: string; package_amount: number; basic: number; hra: number; conveyance: number;
@@ -164,23 +165,37 @@ export default function NativeHROnboardingRequests() {
 
     hrmsApi.get<unknown>('/api/employees?active_status=1&limit=500').then((r: any) => {
       const emps = Array.isArray(r) ? r : r?.data ?? [];
-      setManagers((Array.isArray(emps) ? emps : [])
+      const mgrs = (Array.isArray(emps) ? emps : [])
         .filter((e: any) => e.first_name || e.last_name)
         .map((e: any) => ({
           id: e.id,
           name: [e.first_name, e.last_name].filter(Boolean).join(' '),
           code: e.employee_code || '',
-        })));
+          branch_id: e.branch_id,
+          department_id: e.department_id,
+        }));
+      setAllManagers(mgrs);
+      setManagers(mgrs);
     }).catch(() => {});
   }, []);
 
-  // Cascading: cost centres by branch
+  // Cascading: cost centres by branch + filter managers by branch
   useEffect(() => {
-    if (!selected?.branch_name) { setCostCentres([]); return; }
+    if (!selected?.branch_name) {
+      setCostCentres([]);
+      setManagers(allManagers);
+      return;
+    }
     hrmsApi.get<unknown>(`/api/payroll-masters/cost-centres?branch=${encodeURIComponent(selected.branch_name)}`)
-      .then((r: any) => setCostCentres(r?.data ?? []))
+      .then((r: any) => setCostCentres((r?.data ?? []).map((c: any) => ({ ...c, branch_name: selected.branch_name }))))
       .catch(() => setCostCentres([]));
-  }, [selected?.branch_name]);
+
+    // Filter managers by branch
+    if (selected.branch_name) {
+      const branchId = selected.branch_name; // might be branch_name or branch_id
+      setManagers(allManagers.filter(m => !m.branch_id || m.branch_id === branchId || m.name));
+    }
+  }, [selected?.branch_name, allManagers]);
 
   // Cascading: packages by branch + cost centre + band
   useEffect(() => {
@@ -250,13 +265,18 @@ export default function NativeHROnboardingRequests() {
     }
     setSaving(true);
     try {
-      await hrmsApi.post(`/api/ats/onboarding/requests/${selected.id}/offer`, {
+      // Convert empty strings to null for FK fields
+      const payload = {
         ...offer,
+        reporting_manager_id: offer.reporting_manager_id || null,
+        department_id: offer.department_id || null,
+        designation_id: offer.designation_id || null,
         offered_ctc: ctcToUse * 12,
         submit,
         is_proposed_exception: Boolean(isProposed),
         proposed_reason: isProposed ? proposedReason : null,
-      });
+      };
+      await hrmsApi.post(`/api/ats/onboarding/requests/${selected.id}/offer`, payload);
       await load();
       setSelected(null);
       setSalaryPreview(null);
@@ -480,7 +500,7 @@ export default function NativeHROnboardingRequests() {
               <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
 
                 <FormField label="Employment Type" required>
-                  <select className={SELECT_CLS} value={offer.emp_type} onChange={e => setF('emp_type', e.target.value)}>
+                  <select className={SELECT_CLS} style={{ backgroundColor: 'white', color: '#1e293b' }} value={offer.emp_type} onChange={e => setF('emp_type', e.target.value)}>
                     {EMP_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </FormField>
@@ -504,14 +524,14 @@ export default function NativeHROnboardingRequests() {
                 </FormField>
 
                 <FormField label="Department" required>
-                  <select className={SELECT_CLS} value={offer.department_id} onChange={e => setF('department_id', e.target.value)}>
+                  <select className={SELECT_CLS} style={{ backgroundColor: 'white', color: '#1e293b' }} value={offer.department_id} onChange={e => setF('department_id', e.target.value)}>
                     <option value="">— Select Department —</option>
                     {departments.map(d => <option key={d.id} value={d.id}>{d.name}{d.code ? ` (${d.code})` : ''}</option>)}
                   </select>
                 </FormField>
 
                 <FormField label="Designation" required>
-                  <select className={SELECT_CLS} value={offer.designation_id} onChange={e => setF('designation_id', e.target.value)}>
+                  <select className={SELECT_CLS} style={{ backgroundColor: 'white', color: '#1e293b' }} value={offer.designation_id} onChange={e => setF('designation_id', e.target.value)}>
                     <option value="">— Select Designation —</option>
                     {designations.map(d => <option key={d.id} value={d.id}>{d.name}{d.code ? ` (${d.code})` : ''}</option>)}
                   </select>
@@ -520,6 +540,7 @@ export default function NativeHROnboardingRequests() {
                 <FormField label="Cost Centre" required hint={!costCentres.length && selected?.branch_name ? `No cost centres for ${selected.branch_name}` : undefined}>
                   <select
                     className={SELECT_CLS}
+                    style={{ backgroundColor: 'white', color: '#1e293b' }}
                     value={offer.cost_centre}
                     onChange={e => { setF('cost_centre', e.target.value); setSelectedPackage(null); setSalaryPreview(null); }}
                   >
@@ -541,14 +562,15 @@ export default function NativeHROnboardingRequests() {
                 </FormField>
 
                 <FormField label="Reporting Manager">
-                  <select className={SELECT_CLS} value={offer.reporting_manager_id} onChange={e => setF('reporting_manager_id', e.target.value)}>
+                  <select className={SELECT_CLS} style={{ backgroundColor: 'white', color: '#1e293b' }} value={offer.reporting_manager_id} onChange={e => setF('reporting_manager_id', e.target.value)}>
                     <option value="">— Select Manager —</option>
-                    {managers.map(m => <option key={m.id} value={m.id}>{m.name}{m.code ? ` · ${m.code}` : ''}</option>)}
+                    {managers.length > 0 ? managers.map(m => <option key={m.id} value={m.id}>{m.name}{m.code ? ` · ${m.code}` : ''}</option>) : <option disabled>No managers found</option>}
                   </select>
+                  {managers.length === 0 && <p className="text-xs text-amber-600 mt-1">No managers available for this branch</p>}
                 </FormField>
 
                 <FormField label="Role Type">
-                  <select className={SELECT_CLS} value={offer.role_type} onChange={e => setF('role_type', e.target.value)}>
+                  <select className={SELECT_CLS} style={{ backgroundColor: 'white', color: '#1e293b' }} value={offer.role_type} onChange={e => setF('role_type', e.target.value)}>
                     <option value="Analyst">Analyst</option>
                     <option value="SupportStaff">Support Staff</option>
                   </select>
@@ -567,6 +589,7 @@ export default function NativeHROnboardingRequests() {
                 <FormField label="Salary Band" required hint={selectedBand ? `Monthly: ${fmt(selectedBand.min_ctc)} – ${fmt(selectedBand.max_ctc)}` : undefined}>
                   <select
                     className={SELECT_CLS}
+                    style={{ backgroundColor: 'white', color: '#1e293b' }}
                     value={offer.salary_band}
                     onChange={e => { setF('salary_band', e.target.value); setSelectedPackage(null); setSalaryPreview(null); }}
                   >
@@ -585,6 +608,7 @@ export default function NativeHROnboardingRequests() {
                       <>
                         <select
                           className={SELECT_CLS}
+                          style={{ backgroundColor: 'white', color: '#1e293b' }}
                           value={offer.selected_package_id}
                           onChange={e => selectPackage(e.target.value)}
                         >
