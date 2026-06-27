@@ -270,15 +270,15 @@ export async function saveOffer(
     bhEmail = (bhRows as RowDataPacket[])[0]?.email ?? null;
   }
 
-  const [bandRows] = await db.execute<RowDataPacket[]>(
-    `SELECT basic_pct, hra_pct FROM salary_band_master WHERE band_code = ?`,
-    [offerData.salary_band ?? 'D'],
-  );
-  const band = (bandRows as RowDataPacket[])[0] ?? { basic_pct: 40, hra_pct: 40 };
+  // salary_band_master stores slabs only (slab_from/slab_to) — no basic_pct/hra_pct columns.
+  // If a pre-defined package was selected, use its components; otherwise derive at 40/50% basic.
+  const bandCode = String(offerData.salary_band ?? 'D').toUpperCase();
+  const basicPct = ['M', 'N'].includes(bandCode) ? 50 : 40;
+  const hraPct = 40;
   const components: SalaryComponents = calculateSalary(
     Number(offerData.offered_ctc),
-    Number(band.basic_pct),
-    Number(band.hra_pct),
+    basicPct,
+    hraPct,
     false,
   );
 
