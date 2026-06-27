@@ -423,12 +423,12 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
 
   // Cheque name validation: compare name_on_cheque against account_holder_name.
   // Mismatch is queued for Payroll HO review — onboarding is NEVER blocked.
-  const nameOnCheque = String(input.nameOnCheque ?? input.name_on_cheque ?? '').trim();
+  const chequeNameForValidation = String(input.nameOnCheque ?? input.name_on_cheque ?? '').trim();
   const accountHolderName = String(input.accountHolderName ?? '').trim();
   const chequeDocId = (input.cancelledChequeDocumentId ?? null) as string | null;
 
-  if (nameOnCheque && accountHolderName) {
-    const namesMatch = nameOnCheque.toLowerCase() === accountHolderName.toLowerCase();
+  if (chequeNameForValidation && accountHolderName) {
+    const namesMatch = chequeNameForValidation.toLowerCase() === accountHolderName.toLowerCase();
 
     // Fetch the bank_detail row we just upserted
     const [bdRows] = await db.execute(
@@ -452,7 +452,7 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
          ON DUPLICATE KEY UPDATE
            name_on_cheque = VALUES(name_on_cheque), name_in_profile = VALUES(name_in_profile),
            match_status = 'mismatch', validated_by = NULL, validated_at = NULL`,
-        [valId, candidateId, bankDetailId, chequeDocId, nameOnCheque, accountHolderName]
+        [valId, candidateId, bankDetailId, chequeDocId, chequeNameForValidation, accountHolderName]
       );
       await db.execute(
         `UPDATE candidate_onboarding_bank_detail

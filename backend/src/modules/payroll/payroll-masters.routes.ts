@@ -2,9 +2,8 @@ import { Router } from "express";
 import type { Request, Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { requireAuth } from "../../middleware/requireAuth.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import type { AuthenticatedRequest } from "../../middleware/requireAuth.js";
 import { randomUUID } from "crypto";
 
 const router = Router();
