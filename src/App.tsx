@@ -271,7 +271,7 @@ const App = () => (
               <Route path="/employees" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><Employees /></Gate></ProtectedRoute>} />
               <Route path="/employees/:id/360" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployee360 /></Gate></ProtectedRoute>} />
               <Route path="/employees/:id" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployeeStatCard /></Gate></ProtectedRoute>} />
-              <Route path="/onboarding" element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><Onboarding /></Gate></ProtectedRoute>} />
+              <Route path="/onboarding" element={<ProtectedRoute roles={['admin','hr']}><Onboarding /></ProtectedRoute>} />
               <Route path="/onboarding-requests" element={<Navigate to="/onboarding?tab=requests" replace />} />
               <Route path="/leaves" element={<ProtectedRoute><Leaves /></ProtectedRoute>} />
               <Route path="/leave-approvals" element={<Navigate to="/leaves" replace />} />

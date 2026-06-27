@@ -151,23 +151,26 @@ export function usePayrollStats() {
         const res = await hrmsApi.get<{ success: boolean; data: any }>(
           `/api/payroll/overview?runMonth=${runMonth}`
         );
+        // Backend returns { data: { run, stats: { total_net, employee_count, ... }, runMonth } }
         const overview = res.data || {};
-        const totalPayroll = Number(overview.totalNet ?? 0);
-        const activeEmployees = Number(overview.activeEmployees ?? 0);
-        const payrollEmployees = Number(overview.payrollEmployees ?? 0);
+        const stats = overview.stats || {};
+        const run   = overview.run   || {};
+
+        const totalPayroll    = Number(stats.total_net      ?? run.total_net      ?? 0);
+        const payrollEmployees = Number(stats.employee_count ?? run.total_employees ?? 0);
         const avgSalary = payrollEmployees > 0 ? totalPayroll / payrollEmployees : 0;
 
         return {
           totalPayroll,
-          employeeCount: activeEmployees,
+          employeeCount: payrollEmployees,
           avgSalary,
-          pending: Number(overview.missingPayrollEmployees ?? 0),
-          salaryAssignedEmployees: Number(overview.salaryAssignedEmployees ?? 0),
+          pending: 0,
+          salaryAssignedEmployees: payrollEmployees,
           payrollEmployees,
-          missingPayrollEmployees: Number(overview.missingPayrollEmployees ?? 0),
-          totalBasic: Number(overview.totalBasic ?? 0),
-          totalAllowances: Number(overview.totalAllowances ?? 0),
-          totalDeductions: Number(overview.totalDeductions ?? 0),
+          missingPayrollEmployees: 0,
+          totalBasic: Number(stats.total_basic ?? 0),
+          totalAllowances: Number(stats.total_allowances ?? 0),
+          totalDeductions: Number(stats.total_deductions ?? stats.total_pf ?? 0),
         };
       } catch (error) {
         console.error("Failed to fetch payroll stats:", error);
