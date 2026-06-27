@@ -111,6 +111,8 @@ export const regularizationSchema = z.object({
   newPunchIn:      z.string().regex(TIME_REGEX, "Time must be HH:MM").nullable().optional(),
   newPunchOut:     z.string().regex(TIME_REGEX, "Time must be HH:MM").nullable().optional(),
   supportingDocId: z.string().trim().nullable().optional(),
+  latitude:  z.number().nullable().optional(),
+  longitude: z.number().nullable().optional(),
 }).refine(d => {
   const today = new Date();
   today.setHours(23, 59, 59, 999);

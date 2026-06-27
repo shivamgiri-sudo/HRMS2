@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useGeoCapture } from "@/hooks/useGeoCapture";
 import { useSearchParams } from "react-router-dom";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -101,6 +102,7 @@ const emptyForm = {
 };
 
 export default function AttendanceRegularization() {
+  const geoCapture = useGeoCapture();
   const [requests, setRequests] = useState<EmployeeRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -179,10 +181,13 @@ export default function AttendanceRegularization() {
     }
 
     try {
+      const geo = await geoCapture();
       await hrmsApi.post('/api/wfm/regularizations', {
         sessionDate: form.attendanceDate,
         reason: (form.reason ?? '').trim() || `Login: ${form.requestedLoginTime ?? ''} Logout: ${form.requestedLogoutTime ?? ''}`.trim(),
         supportingNote: (form.reason ?? '').trim() || null,
+        latitude: geo.latitude,
+        longitude: geo.longitude,
       });
       setForm(emptyForm);
       setActionMessage("Regularization request submitted successfully.");

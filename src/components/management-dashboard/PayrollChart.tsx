@@ -2,7 +2,6 @@
  * PayrollChart — Recharts LineChart showing 30-day projected payroll cost trend.
  */
 import { Loader, AlertTriangle, TrendingUp } from "lucide-react";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import {
   LineChart,
   Line,

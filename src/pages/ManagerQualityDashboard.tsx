@@ -1,6 +1,6 @@
+import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 /** Manager Quality Dashboard — team-level quality monitoring. Fetches GET /api/manager/team-quality */
 import { useState } from "react";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";

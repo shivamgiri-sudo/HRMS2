@@ -90,7 +90,7 @@ async function createOrRepairEmployeeAuthUser(employee: RowDataPacket, email: st
 }
 
 export const authService = {
-  async login(identifier: string, password: string): Promise<AuthTokens> {
+  async login(identifier: string, password: string, loginGeo?: { lat?: number | null; lng?: number | null }): Promise<AuthTokens> {
     // identifier can be email OR employee_code — try both
     const trimmed = identifier.trim();
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -122,7 +122,10 @@ export const authService = {
     const valid = await bcrypt.compare(password, user.password_hash as string);
     if (!valid) throw new Error('Invalid credentials');
 
-    await db.execute('UPDATE auth_user SET last_login_at = NOW() WHERE id = ?', [user.id]);
+    await db.execute(
+      'UPDATE auth_user SET last_login_at = NOW(), last_login_lat = ?, last_login_lng = ? WHERE id = ?',
+      [loginGeo?.lat ?? null, loginGeo?.lng ?? null, user.id]
+    );
 
     const accessToken = jwt.sign(
       { sub: user.id, email: user.email },

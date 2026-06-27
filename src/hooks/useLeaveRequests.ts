@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useGeoCapture } from "@/hooks/useGeoCapture";
 import { eachDayOfInterval, isWeekend, parseISO, isSameDay } from "date-fns";
 import { normalizeDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -30,6 +31,7 @@ export function useLeaveTypes() {
 
 export function useSubmitLeaveRequest() {
   const queryClient = useQueryClient();
+  const geoCapture = useGeoCapture();
 
   return useMutation({
     mutationFn: async ({
@@ -72,6 +74,7 @@ export function useSubmitLeaveRequest() {
       const fromDate = formatLocalDate(startDate);
       const toDate = formatLocalDate(endDate);
 
+      const geo = await geoCapture();
       const res = await hrmsApi.post<{ success: boolean; data: any }>("/api/leave/requests", {
         employeeId,
         leaveTypeId,
@@ -79,6 +82,8 @@ export function useSubmitLeaveRequest() {
         toDate,
         totalDays: daysCount,
         reason: reason.trim() || null,
+        latitude: geo.latitude,
+        longitude: geo.longitude,
       });
 
       const data = res.data;

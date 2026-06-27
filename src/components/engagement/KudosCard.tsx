@@ -1,5 +1,4 @@
 import { Heart } from "lucide-react";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { Card, CardContent } from "@/components/ui/card";
 import type { Kudos } from "./types";
 

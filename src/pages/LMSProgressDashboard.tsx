@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { TrendingUp, Award, BookOpen, Clock } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";

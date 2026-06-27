@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useGeoCapture } from "@/hooks/useGeoCapture";
 
 const API = "/api/ats/onboarding-full";
 const BGV = "/api/ats/bgv";
@@ -158,6 +159,7 @@ export function useOnboardingFull(token: string) {
   const [otpCode, setOtpCode] = useState("");
   const [consentAccepted, setConsentAccepted] = useState(false);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const geoCapture = useGeoCapture();
 
   const load = useCallback(async () => {
     if (!token) { setError("No onboarding token."); setLoading(false); return; }
@@ -386,7 +388,8 @@ export function useOnboardingFull(token: string) {
 
   const submit = async () => {
     setSaving(true);
-    try { await hrmsApi.post(`${API}/submit`, { token }); setSubmitted(true); }
+    const geo = await geoCapture();
+    try { await hrmsApi.post(`${API}/submit`, { token, submit_lat: geo.latitude, submit_lng: geo.longitude }); setSubmitted(true); }
     catch (e: any) { setError(e.message || "Submit failed"); }
     finally { setSaving(false); }
   };

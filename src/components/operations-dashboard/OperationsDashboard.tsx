@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { HeatmapGrid } from './HeatmapGrid';

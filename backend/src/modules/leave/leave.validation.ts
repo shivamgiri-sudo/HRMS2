@@ -20,6 +20,8 @@ export const leaveRequestSchema = z
     toDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
     totalDays: z.number().min(0.5).max(182),
     reason: z.string().trim().nullable().optional(),
+    latitude:  z.number().nullable().optional(),
+    longitude: z.number().nullable().optional(),
   })
   .refine((d) => d.toDate >= d.fromDate, { message: "toDate must be >= fromDate" })
   .refine(d => {
