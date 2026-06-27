@@ -8,8 +8,7 @@
 -- Safe: ALTER MODIFY only changes NULL constraint, no data loss
 ALTER TABLE candidate_onboarding_profile
   MODIFY COLUMN nominee_date_of_birth DATE NULL DEFAULT NULL,
-  MODIFY COLUMN nominee2_dob          DATE NULL DEFAULT NULL,
-  MODIFY COLUMN nomineeDateOfBirth    DATE NULL DEFAULT NULL;
+  MODIFY COLUMN nominee2_dob          DATE NULL DEFAULT NULL;
 
 -- Also fix ats_candidate if it has these columns non-nullable
 ALTER TABLE ats_candidate
