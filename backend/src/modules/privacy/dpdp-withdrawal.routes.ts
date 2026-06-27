@@ -4,6 +4,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import * as svc from "./dpdp-withdrawal.service.js";
+import { executeErasure } from "./dpdpErasure.service.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 
 export const dpdpWithdrawalRouter = Router();
@@ -125,6 +126,20 @@ dpdpWithdrawalRouter.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     await svc.releaseHold(req.params.id, req.authUser!.id);
     return res.json({ success: true, message: "Processing hold released" });
+  })
+);
+
+// POST /erasure-requests/:id/execute — DPO/admin executes approved erasure (DPDP §12)
+dpdpWithdrawalRouter.post(
+  "/erasure-requests/:id/execute",
+  requireAuth,
+  requireRole("dpo", "admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    await executeErasure(req.params.id, req.authUser!.id);
+    return res.json({
+      success: true,
+      message: "Erasure executed: non-payroll PII has been anonymized",
+    });
   })
 );
 

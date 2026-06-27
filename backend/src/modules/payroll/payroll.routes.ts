@@ -19,6 +19,7 @@ import { taxDeclarationService } from "./taxDeclaration.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
+import { checkDpdpRestriction } from "../privacy/dpdpRestrictionGuard.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
@@ -93,8 +94,8 @@ router.post("/salary-assignments",
   h(c.assignSalary)
 );
 router.post("/salary-assignments/bulk", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.bulkAssignSalary));
-router.get("/salary-assignments/:employeeId", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.getEmployeeSalary));
-router.get("/salary-assignments/:employeeId/history", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.getEmployeeSalaryHistory));
+router.get("/salary-assignments/:employeeId", requireRole("admin", "hr", "super_admin", "finance", "payroll"), checkDpdpRestriction, h(c.getEmployeeSalary));
+router.get("/salary-assignments/:employeeId/history", requireRole("admin", "hr", "super_admin", "finance", "payroll"), checkDpdpRestriction, h(c.getEmployeeSalaryHistory));
 
 // ─── Payroll Runs — static paths before :id ───────────────────────────────────
 
@@ -262,7 +263,7 @@ router.post("/advances",
   }),
   h(c.createAdvance)
 );
-router.get("/advances/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/advances/:employeeId", checkDpdpRestriction, h(async (req: AuthenticatedRequest, res: Response) => {
   const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
   if (!isPayrollRole) {
     const callerEmp = await getEmployeeForUser(req.authUser!.id);
@@ -373,7 +374,7 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
 }));
 
 // GET /api/payroll/payslip/:runId/:employeeId — admin/hr/finance/payroll or employee own
-router.get("/payslip/:runId/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/payslip/:runId/:employeeId", checkDpdpRestriction, h(async (req: AuthenticatedRequest, res: Response) => {
   const { runId, employeeId } = req.params;
 
   const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");

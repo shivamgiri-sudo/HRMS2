@@ -11,6 +11,7 @@ import { leaveController } from "./leave.controller.js";
 import { leaveService } from "./leave.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { checkDpdpRestriction } from "../privacy/dpdpRestrictionGuard.js";
 
 export const leaveRouter = Router();
 leaveRouter.use(requireAuth);
@@ -192,7 +193,7 @@ leaveRouter.get("/requests/legacy", h(async (req: AuthenticatedRequest, res: Res
 }));
 
 // Employee self-scope: employees can view only their own leave balance.
-leaveRouter.get("/balance/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
+leaveRouter.get("/balance/:employeeId", checkDpdpRestriction, h(async (req: AuthenticatedRequest, res: Response) => {
   const privileged = await isLeavePrivileged(req.authUser!.id);
   if (!privileged) {
     const callerEmp = await getEmployeeForUser(req.authUser!.id);
@@ -233,7 +234,7 @@ leaveRouter.post("/balance/seed", requireRole("admin", "hr", "super_admin"), h(a
 }));
 
 // GET /eligibility/:employeeId — returns leave types eligible for this employee (gender-filtered)
-leaveRouter.get("/eligibility/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
+leaveRouter.get("/eligibility/:employeeId", checkDpdpRestriction, h(async (req: AuthenticatedRequest, res: Response) => {
   const { employeeId } = req.params;
   const [empRows] = await db.execute<RowDataPacket[]>(
     "SELECT gender FROM employees WHERE id = ? LIMIT 1", [employeeId]
