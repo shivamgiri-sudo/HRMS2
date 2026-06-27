@@ -98,7 +98,6 @@ export const navGroups: NavGroup[] = [
       {
         label: "Onboarding",   href: "/onboarding",  icon: ic(UserPlus), roles: ["admin","hr"], description: "Onboarding & BGV",
         children: [
-          { label: "Onboarding",          href: "/onboarding",               icon: ic(UserPlus),    roles: ["admin","hr"],          description: "Onboarding" },
           { label: "Onboarding Bridge",   href: "/ats/onboarding-bridge",    icon: ic(UserPlus),    pageCode: "ATS_ONBOARDING_BRIDGE", roles: ["admin","hr"], description: "Bridge" },
           { label: "Onboarding Requests", href: "/ats/onboarding-requests",  icon: ic(ClipboardList),pageCode: "ATS_ONBOARDING_BRIDGE", roles: ["admin","hr"], description: "HR onboarding" },
           { label: "Offer Letters",       href: "/offer-letter",             icon: ic(FileText),    pageCode: "ATS_OFFER",         roles: ["admin","hr"], description: "Generate offers" },
@@ -198,7 +197,6 @@ export const navGroups: NavGroup[] = [
           { label: "HO Queues",             href: "/payroll/ho-queues",            icon: ic(ClipboardList), roles: ["admin","hr","finance","payroll","super_admin"],   description: "HO approval queues" },
           { label: "Full & Final",          href: "/payroll/full-final",           icon: ic(Zap),        roles: ["admin","hr","finance","payroll"],                    description: "F&F" },
           { label: "Salary Packages",       href: "/payroll/salary-packages",      icon: ic(Wallet),     roles: ["admin","finance"],                                  description: "Pay matrix" },
-          { label: "Att. Overrides",        href: "/payroll/attendance-overrides", icon: ic(Settings2),  roles: ["admin","super_admin","payroll_head","payroll_admin"],description: "Override attendance" },
           { label: "Statutory Config",      href: "/payroll/statutory-config",     icon: ic(Landmark),   roles: ["admin","hr","finance"],                             description: "Statutory" },
           { label: "Compliance",            href: "/compliance/statutory",         icon: ic(Landmark),   roles: ["admin","hr","finance"],                             description: "Compliance" },
           { label: "Labour Compliance",     href: "/compliance/labour",            icon: ic(Landmark),   pageCode: "LABOUR_COMPLIANCE", roles: ["admin","hr","finance"], description: "Labour" },

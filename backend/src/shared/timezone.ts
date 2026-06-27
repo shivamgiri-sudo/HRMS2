@@ -1,3 +1,16 @@
+/**
+ * Return current time as a MySQL-safe naive IST datetime string: "YYYY-MM-DD HH:mm:ss"
+ * Use this instead of new Date().toISOString() when inserting into DATETIME columns.
+ * DATETIME has no timezone info — it stores the wall-clock time literally, so we must
+ * supply IST time so that toIST() reading it back produces the correct tagged value.
+ */
+export function nowIST(): string {
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const ist = new Date(Date.now() + IST_OFFSET_MS);
+  // ISO string is UTC; shifting by +5:30 makes it IST wall-clock, then strip the Z
+  return ist.toISOString().slice(0, 19).replace('T', ' ');
+}
+
 export function toIST(value: Date | string | null | undefined): string | null {
   if (value === null || value === undefined || value === '') return null;
 

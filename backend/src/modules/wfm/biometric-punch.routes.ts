@@ -29,17 +29,27 @@ router.post(
       return res.status(400).json({ error: 'user_id and event_datetime are required' });
     }
 
-    const punchTime = new Date(event_datetime);
-    if (isNaN(punchTime.getTime())) {
+    const punchTimeForValidation = new Date(event_datetime);
+    if (isNaN(punchTimeForValidation.getTime())) {
       return res.status(400).json({ error: 'Invalid event_datetime — use ISO 8601 format' });
     }
 
-    const punchDate = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Kolkata',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(punchTime);
+    // Convert event_datetime to IST naive "YYYY-MM-DD HH:mm:ss" for safe MySQL DATETIME storage.
+    // NCOSEC sends bare IST strings without timezone suffix (e.g. "2026-06-26T10:15:04").
+    // new Date() on a tz-naive ISO string treats it as UTC, then mysql2 timezone:'local' adds +5:30
+    // again — double-offset bug. Fix: treat no-tz strings as IST wall-clock directly.
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const dtStr = event_datetime.trim();
+    let punchIST: string;
+    if (dtStr.endsWith('Z')) {
+      // Explicit UTC → add 5:30 to get IST
+      const d = new Date(dtStr);
+      punchIST = new Date(d.getTime() + IST_OFFSET_MS).toISOString().slice(0, 19).replace('T', ' ');
+    } else {
+      // No TZ or already offset-tagged IST — take the wall-clock part as-is (IST)
+      punchIST = dtStr.replace('T', ' ').slice(0, 19);
+    }
+    const punchDate = punchIST.slice(0, 10);
 
     // Resolve employee from enrollment table
     const [enrollRows] = await db.execute<RowDataPacket[]>(
@@ -78,7 +88,7 @@ router.post(
           )
         ),
         updated_at = NOW()
-    `, [emp.employee_code, punchDate, punchTime, punchTime]);
+    `, [emp.employee_code, punchDate, punchIST, punchIST]);
 
     const [logRow] = await db.execute<RowDataPacket[]>(
       `SELECT first_punch, last_punch, biometric_minutes

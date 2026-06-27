@@ -77,12 +77,17 @@ async function triggerBgvAfterOnboardingSubmit(candidateId: string, meta?: { ip?
 }
 
 export async function validateOnboardingToken(token: string) {
+  // applied_for_branch and applied_for_process can be either a UUID (FK to master table)
+  // or a plain name string (older records saved the name directly).
+  // The JOIN handles the UUID case; we resolve name-string case below.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT b.candidate_id, b.onboarding_token_expires_at,
             c.id, c.candidate_code, c.full_name, c.mobile, c.email,
             c.gender, c.date_of_birth, c.applied_for_branch, c.applied_for_process,
             c.sourcing_channel, c.source_details, c.resume_url, c.selfie_url,
-            c.profile_status, br.branch_name, pm.process_name
+            c.profile_status,
+            c.branch_display_name, c.branch_text, c.process_text,
+            br.branch_name, pm.process_name
        FROM ats_onboarding_bridge b
        JOIN ats_candidate c ON c.id = b.candidate_id
        LEFT JOIN branch_master br ON br.id = c.applied_for_branch
@@ -103,6 +108,20 @@ export async function validateOnboardingToken(token: string) {
     [row.candidate_id]
   );
 
+  // Resolve branch name: JOIN result → branch_display_name column → raw string stored in applied_for_branch
+  const isUuid = (v: unknown) => typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v);
+  const branchName: string | null =
+    row.branch_name ??
+    row.branch_display_name ??
+    row.branch_text ??
+    (isUuid(row.applied_for_branch) ? null : row.applied_for_branch as string | null) ??
+    null;
+  const processName: string | null =
+    row.process_name ??
+    row.process_text ??
+    (isUuid(row.applied_for_process) ? null : row.applied_for_process as string | null) ??
+    null;
+
   return {
     candidate_id: row.candidate_id,
     candidate_code: row.candidate_code,
@@ -112,9 +131,9 @@ export async function validateOnboardingToken(token: string) {
     gender: row.gender,
     date_of_birth: row.date_of_birth,
     branch_id: row.applied_for_branch,
-    branch_name: row.branch_name,
+    branch_name: branchName,
     process_id: row.applied_for_process,
-    process_name: row.process_name,
+    process_name: processName,
     source_type: row.sourcing_channel ?? null,
     source: row.source_details ?? row.sourcing_channel ?? null,
     resume_url: row.resume_url,
@@ -494,12 +513,15 @@ export async function saveExperienceDetails(token: string, input: Record<string,
   await db.execute(
     `INSERT INTO candidate_onboarding_experience
        (id, candidate_id, working_experience, experience_year, experience_doc_type,
-        experience_document_id, employer_name, last_designation, last_ctc)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        experience_document_id, employer_name, last_designation, last_ctc,
+        from_date, to_date, reason_for_leaving)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        working_experience = VALUES(working_experience), experience_year = VALUES(experience_year),
        experience_doc_type = VALUES(experience_doc_type), experience_document_id = VALUES(experience_document_id),
-       employer_name = VALUES(employer_name), last_designation = VALUES(last_designation), last_ctc = VALUES(last_ctc), updated_at = NOW()`,
+       employer_name = VALUES(employer_name), last_designation = VALUES(last_designation), last_ctc = VALUES(last_ctc),
+       from_date = VALUES(from_date), to_date = VALUES(to_date), reason_for_leaving = VALUES(reason_for_leaving),
+       updated_at = NOW()`,
     [
       randomUUID(),
       candidateId,
@@ -510,6 +532,9 @@ export async function saveExperienceDetails(token: string, input: Record<string,
       input.employerName ?? null,
       input.lastDesignation ?? null,
       input.lastCtc ?? null,
+      (input.fromDate as string | null) || null,
+      (input.toDate as string | null) || null,
+      (input.reasonForLeaving as string | null) || null,
     ]
   );
   await logCandidateAction(candidateId, "SAVE_EXPERIENCE_DETAILS", input, meta);

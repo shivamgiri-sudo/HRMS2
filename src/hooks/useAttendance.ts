@@ -177,6 +177,31 @@ export function useClockOut() {
   });
 }
 
+export interface LivePunchData {
+  punch_date: string;
+  first_punch_in: string | null;
+  last_punch_out: string | null;
+  raw_minutes: number;
+  total_punches: number;
+  source: "biometric_live";
+}
+
+export function useTodayLivePunch(employeeId?: string) {
+  return useQuery({
+    queryKey: ["attendance-today-live", employeeId],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: LivePunchData | null }>(
+        "/api/wfm/attendance/today-live"
+      );
+      return res.data ?? null;
+    },
+    enabled: !!employeeId,
+    staleTime: 30 * 1000,
+    refetchInterval: 60 * 1000,
+    refetchIntervalInBackground: false,
+  });
+}
+
 export function useAttendanceReport(month: Date) {
   const start = format(startOfMonth(month), "yyyy-MM-dd");
   const end = format(endOfMonth(month), "yyyy-MM-dd");

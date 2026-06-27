@@ -37,6 +37,7 @@ export type StatusData = {
   qualifications: any[];
   family?: any;
   experience?: any;
+  languages?: any[];
   saved_profile?: Record<string, any>;
 };
 
@@ -69,6 +70,7 @@ export type EmployeeForm = {
 export type BankForm = {
   bankName: string; branchName: string; accountHolderName: string;
   accountNo: string; confirmAccountNo: string; ifscCode: string; accountType: string;
+  nameOnCheque: string; cancelledChequeDocumentId: string;
 };
 
 export type QualForm = {
@@ -112,6 +114,7 @@ export const EMPTY_EMPLOYEE: EmployeeForm = {
 export const EMPTY_BANK: BankForm = {
   bankName: "", branchName: "", accountHolderName: "", accountNo: "",
   confirmAccountNo: "", ifscCode: "", accountType: "Savings",
+  nameOnCheque: "", cancelledChequeDocumentId: "",
 };
 
 export const EMPTY_QUAL: QualForm = {
@@ -134,9 +137,9 @@ export const EMPTY_STATUTORY: StatutoryForm = {
 
 export type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 export const STEP_LABELS: Record<Step, string> = {
-  1: "Welcome", 2: "Personal", 3: "Address & KYC", 4: "Identity Docs",
-  5: "Documents", 6: "BGV", 7: "Bank", 8: "Education", 9: "Experience & Language",
-  10: "Statutory & Submit",
+  1: "Welcome", 2: "Personal", 3: "Address & KYC", 4: "Documents",
+  5: "BGV Consent", 6: "Bank", 7: "Education", 8: "Experience",
+  9: "Family & Language", 10: "Statutory & Submit",
 };
 
 export function useOnboardingFull(token: string) {
@@ -158,6 +161,7 @@ export function useOnboardingFull(token: string) {
   const [otpVerified, setOtpVerified] = useState(false);
   const [otpCode, setOtpCode] = useState("");
   const [consentAccepted, setConsentAccepted] = useState(false);
+  const [bgvApiAvailable, setBgvApiAvailable] = useState(true);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const geoCapture = useGeoCapture();
 
@@ -165,16 +169,21 @@ export function useOnboardingFull(token: string) {
     if (!token) { setError("No onboarding token."); setLoading(false); return; }
     setLoading(true);
     try {
-      const [statusRes, bgvRes] = await Promise.all([
-        hrmsApi.get<{ data: StatusData }>(`${API}/status?token=${encodeURIComponent(token)}`),
-        hrmsApi.get<{ data: BgvStatus }>(`${BGV}/status?token=${encodeURIComponent(token)}`),
-      ]);
+      const statusRes = await hrmsApi.get<{ data: StatusData }>(`${API}/status?token=${encodeURIComponent(token)}`);
       const s = statusRes.data;
       const sp = s.saved_profile ?? (s.token as any).saved_profile ?? {};
       setStatus(s);
-      setBgv(bgvRes.data);
-      setConsentAccepted(Boolean(bgvRes.data?.consent));
       setOtpVerified(Boolean(sp.otp_verified));
+
+      // Try BGV status separately — if it fails we note it and continue (non-blocking)
+      try {
+        const bgvRes = await hrmsApi.get<{ data: BgvStatus }>(`${BGV}/status?token=${encodeURIComponent(token)}`);
+        setBgv(bgvRes.data);
+        setConsentAccepted(Boolean(bgvRes.data?.consent));
+        setBgvApiAvailable(true);
+      } catch {
+        setBgvApiAvailable(false);
+      }
 
       setEmployee((prev) => ({
         ...prev,
@@ -206,7 +215,8 @@ export function useOnboardingFull(token: string) {
         presentState: sp.present_state ?? "",
         presentCity: sp.present_city ?? "",
         presentPincode: sp.present_pincode ?? "",
-        panNumber: sp.pan_number_masked ? "" : "",
+        // PAN and Aadhaar are never pre-filled from server (security); user must re-enter
+        panNumber: "",
         aadhaarNumber: "",
         passportNo: sp.passport_no ?? "",
         drivingLicenseNo: sp.driving_license_no ?? "",
@@ -241,18 +251,28 @@ export function useOnboardingFull(token: string) {
       if (s.experience) {
         setExperience((prev) => ({
           ...prev,
-          workingExperience: s.experience.working_experience ?? "fresher",
-          experienceYear: s.experience.experience_year ?? "",
-          employerName: s.experience.employer_name ?? "",
-          lastDesignation: s.experience.last_designation ?? "",
-          lastCtc: s.experience.last_ctc ?? "",
-          fromDate: (s.experience.from_date ?? "").slice(0, 10),
-          toDate: (s.experience.to_date ?? "").slice(0, 10),
-          reasonForLeaving: s.experience.reason_for_leaving ?? "",
+          workingExperience: s.experience!.working_experience ?? "fresher",
+          experienceYear: s.experience!.experience_year ?? "",
+          employerName: s.experience!.employer_name ?? "",
+          lastDesignation: s.experience!.last_designation ?? "",
+          lastCtc: s.experience!.last_ctc ?? "",
+          fromDate: (s.experience!.from_date ?? "").slice(0, 10),
+          toDate: (s.experience!.to_date ?? "").slice(0, 10),
+          reasonForLeaving: s.experience!.reason_for_leaving ?? "",
         }));
       }
       if (s.family) {
         setFamily({ annualIncome: s.family.annual_income ?? "", countOfDependents: s.family.count_of_dependents ?? "" });
+      }
+      if (s.languages?.length) {
+        setLanguages(s.languages.map((l: any) => ({
+          id: l.id ?? String(Math.random()),
+          language_name: l.language_name ?? "",
+          can_read: Boolean(l.can_read),
+          can_write: Boolean(l.can_write),
+          can_speak: Boolean(l.can_speak),
+          proficiency: l.proficiency ?? "basic",
+        })));
       }
       setStatutory({
         previousPfMember: sp.previous_pf_member != null ? Boolean(sp.previous_pf_member) : null,
@@ -300,6 +320,9 @@ export function useOnboardingFull(token: string) {
       await hrmsApi.post(`${API}/employee-details`, { token, ...employee });
       updateSectionStatus("personal", true).catch(() => {});
       await load();
+    } catch (e: any) {
+      setError(e?.message || "Failed to save personal details");
+      throw e;
     } finally { setSaving(false); }
   };
 
@@ -309,6 +332,8 @@ export function useOnboardingFull(token: string) {
       await hrmsApi.post(`${API}/statutory`, { token, ...statutory });
       updateSectionStatus("statutory", true).catch(() => {});
       await load();
+    } catch (e: any) {
+      setError(e?.message || "Failed to save statutory details");
     } finally { setSaving(false); }
   };
 
@@ -318,6 +343,9 @@ export function useOnboardingFull(token: string) {
       await hrmsApi.post(`${API}/bank-details`, { token, ...bank });
       updateSectionStatus("bank", true).catch(() => {});
       await load();
+    } catch (e: any) {
+      setError(e?.message || "Failed to save bank details");
+      throw e;
     } finally { setSaving(false); }
   };
 
@@ -328,6 +356,8 @@ export function useOnboardingFull(token: string) {
       setQual(EMPTY_QUAL);
       updateSectionStatus("education", true).catch(() => {});
       await load();
+    } catch (e: any) {
+      setError(e?.message || "Failed to add qualification");
     } finally { setSaving(false); }
   };
 
@@ -339,12 +369,16 @@ export function useOnboardingFull(token: string) {
       if (languages.length > 0) await hrmsApi.post(`${API}/languages`, { token, languages });
       updateSectionStatus("experience", true).catch(() => {});
       await load();
+    } catch (e: any) {
+      setError(e?.message || "Failed to save experience details");
+      throw e;
     } finally { setSaving(false); }
   };
 
   const sendOtp = async () => {
     setSaving(true);
     try { await hrmsApi.post(`${API}/otp/send`, { token }); setOtpSent(true); }
+    catch (e: any) { setError(e?.message || "Failed to send OTP"); }
     finally { setSaving(false); }
   };
 
@@ -353,31 +387,52 @@ export function useOnboardingFull(token: string) {
     try {
       await hrmsApi.post(`${API}/otp/verify`, { token, otp: otpCode });
       setOtpVerified(true); setOtpCode("");
-    } finally { setSaving(false); }
+    } catch (e: any) { setError(e?.message || "OTP verification failed"); }
+    finally { setSaving(false); }
   };
 
   const grantConsent = async () => {
     setSaving(true);
     try {
       await hrmsApi.post(`${BGV}/consent`, { token, purposes: ["identity_verification", "employment_onboarding", "payroll_readiness", "statutory_compliance"] });
+      setConsentAccepted(true);
       await load();
+    } catch (e: any) {
+      // BGV consent API might not be available — mark as locally accepted so form isn't blocked
+      setConsentAccepted(true);
+      setBgvApiAvailable(false);
     } finally { setSaving(false); }
   };
 
-  const verifyPan = async () => { setSaving(true); try { await hrmsApi.post(`${BGV}/verify/pan`, { token, panNumber: employee.panNumber }); await load(); } finally { setSaving(false); } };
-  const verifyBank = async () => { setSaving(true); try { await hrmsApi.post(`${BGV}/verify/bank`, { token, accountNo: bank.accountNo, ifscCode: bank.ifscCode, accountHolderName: bank.accountHolderName }); await load(); } finally { setSaving(false); } };
+  const verifyPan = async () => {
+    setSaving(true);
+    try { await hrmsApi.post(`${BGV}/verify/pan`, { token, panNumber: employee.panNumber }); await load(); }
+    catch (e: any) { setError(e?.message || "PAN verification failed"); }
+    finally { setSaving(false); }
+  };
+
+  const verifyBank = async () => {
+    setSaving(true);
+    try { await hrmsApi.post(`${BGV}/verify/bank`, { token, accountNo: bank.accountNo, ifscCode: bank.ifscCode, accountHolderName: bank.accountHolderName }); await load(); }
+    catch (e: any) { setError(e?.message || "Bank verification failed"); }
+    finally { setSaving(false); }
+  };
+
   const verifyAadhaar = async () => {
     const doc = status?.documents.find((d) => d.doc_type.toLowerCase().includes("aadhaar"));
     setSaving(true);
     try { await hrmsApi.post(`${BGV}/verify/aadhaar-offline`, { token, documentId: doc?.id, aadhaarLast4: employee.aadhaarNumber.slice(-4) }); await load(); }
+    catch (e: any) { setError(e?.message || "Aadhaar verification failed"); }
     finally { setSaving(false); }
   };
+
   const startDigilocker = async () => {
     setSaving(true);
     try {
       const res = await hrmsApi.post<{ data: { authUrl: string } }>(`${BGV}/digilocker/start`, { token, requestedDocuments: ["AADHAAR", "PAN"] });
       window.location.href = res.data.authUrl;
-    } finally { setSaving(false); }
+    } catch (e: any) { setError(e?.message || "DigiLocker link failed"); }
+    finally { setSaving(false); }
   };
 
   const lookupIfsc = async (ifsc: string) => {
@@ -394,8 +449,10 @@ export function useOnboardingFull(token: string) {
   const submit = async () => {
     setSaving(true);
     const geo = await geoCapture();
-    try { await hrmsApi.post(`${API}/submit`, { token, submit_lat: geo.latitude, submit_lng: geo.longitude }); setSubmitted(true); }
-    catch (e: any) { setError(e.message || "Submit failed"); }
+    try {
+      await hrmsApi.post(`${API}/submit`, { token, submit_lat: geo.latitude, submit_lng: geo.longitude });
+      setSubmitted(true);
+    } catch (e: any) { setError(e.message || "Submit failed"); }
     finally { setSaving(false); }
   };
 
@@ -455,16 +512,16 @@ export function useOnboardingFull(token: string) {
       bank.ifscCode,
     ];
     let done = checks.filter((v) => String(v || "").trim()).length;
-    let total = checks.length + 3;
+    const total = checks.length + 3;
     if (status?.documents.length) done++;
-    if (bgv?.consent) done++;
+    if (consentAccepted) done++;
     if (otpVerified) done++;
     return Math.round((done / total) * 100);
   })();
 
   return {
     step, setStep, loading, saving, error, setError, submitted,
-    status, bgv, employee, setEmployee, bank, setBank, qual, setQual,
+    status, bgv, bgvApiAvailable, employee, setEmployee, bank, setBank, qual, setQual,
     experience, setExperience, family, setFamily, languages, setLanguages,
     statutory, setStatutory, otpSent, otpVerified, otpCode, setOtpCode,
     consentAccepted, completion,
