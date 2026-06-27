@@ -26,6 +26,7 @@ import {
   useBulkUpdatePayrollStatus,
   useGeneratePayroll,
   usePayrollRecords,
+  usePayrollRunSummaries,
   usePayrollStats,
   useUpdatePayrollStatus,
   type PayrollRecord,
@@ -178,13 +179,24 @@ const Payroll = () => {
   const currentMonth = currentDate.getMonth() + 1;
   const currentYear = currentDate.getFullYear();
 
-  const { data: records = [], isLoading } = usePayrollRecords(
-    monthFilter === "current" ? currentMonth : undefined,
-    monthFilter === "current" ? currentYear : undefined
-  );
+  const currentMonthFilters = useMemo(() => ({
+    month: monthFilter === "current" ? currentMonth : undefined,
+    year:  monthFilter === "current" ? currentYear  : undefined,
+  }), [monthFilter, currentMonth, currentYear]);
+  const { data: recordsPage, isLoading } = usePayrollRecords(currentMonthFilters);
+  const records = recordsPage?.records ?? [];
 
-  const { data: allRecords = [], isLoading: isLoadingHistory } =
-    usePayrollRecords();
+  // Lightweight run summaries — used for availableYears/Months without fetching all 19k lines
+  const { data: runSummaries = [], isLoading: isLoadingHistory } = usePayrollRunSummaries();
+
+  // History records: fetch with selected year/month filters (paginated to avoid full table scan)
+  const historyFilters = useMemo(() => ({
+    month: historyMonth !== "all" ? parseInt(historyMonth) : undefined,
+    year:  historyYear  !== "all" ? parseInt(historyYear)  : undefined,
+    limit: 200,
+  }), [historyMonth, historyYear]);
+  const { data: historyPage } = usePayrollRecords(historyFilters);
+  const allRecords = historyPage?.records ?? [];
 
   const { data: stats } = usePayrollStats();
 
@@ -203,15 +215,20 @@ const Payroll = () => {
 
   const availableYears = useMemo(() => {
     const years = new Set<number>();
-
-    allRecords.forEach((record) => {
-      if (record.year) {
-        years.add(record.year);
-      }
+    runSummaries.forEach((r) => {
+      const yr = Number(String(r.run_month).split("-")[0]);
+      if (yr) years.add(yr);
     });
-
     return Array.from(years).sort((a, b) => b - a);
-  }, [allRecords]);
+  }, [runSummaries]);
+
+  const availableMonths = useMemo(() => {
+    return runSummaries
+      .map((r) => r.run_month)
+      .filter(Boolean)
+      .sort()
+      .reverse();
+  }, [runSummaries]);
 
   const filteredRecords = records.filter((record) => {
     const search = searchQuery.trim().toLowerCase();
@@ -1106,7 +1123,7 @@ const Payroll = () => {
             </TabsContent>
 
             <TabsContent value="analytics" className="mt-0">
-              <PayrollAnalytics />
+              <PayrollAnalytics availableMonths={availableMonths} />
             </TabsContent>
 
             <TabsContent value="salary" className="mt-0">

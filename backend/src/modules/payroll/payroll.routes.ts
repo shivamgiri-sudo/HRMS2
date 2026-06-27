@@ -878,7 +878,7 @@ router.get("/analytics", requireRole("admin", "hr", "super_admin", "finance", "p
     `SELECT ${d.sel},
             COUNT(DISTINCT spl.employee_id)                                                           AS headcount,
             ROUND(SUM(spl.basic),2)                                                                   AS total_basic,
-            ROUND(SUM(COALESCE(spl.hra,0)+COALESCE(spl.special_allowance,0)+COALESCE(spl.incentive_total,0)),2) AS total_allowances,
+            ROUND(SUM(COALESCE(spl.hra,0)+COALESCE(spl.special_allowance,0)),2) AS total_allowances,
             ROUND(SUM(spl.gross_salary),2)                                                            AS total_gross,
             ROUND(SUM(spl.total_deductions),2)                                                        AS total_deductions,
             ROUND(SUM(spl.net_salary),2)                                                              AS total_net,
