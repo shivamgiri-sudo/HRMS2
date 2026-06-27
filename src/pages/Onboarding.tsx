@@ -569,12 +569,12 @@ const Onboarding = () => {
   };
 
   const getInitials = (name: string) => {
-    return name
+    return (name || "?")
       .split(" ")
-      .map((n) => n[0])
+      .map((n) => n[0] ?? "")
       .join("")
       .toUpperCase()
-      .slice(0, 2);
+      .slice(0, 2) || "?";
   };
 
   const handleApproveRequest = (request: OnboardingRequest) => {
@@ -1203,7 +1203,7 @@ const Onboarding = () => {
                             <div>
                               <h3 className="font-semibold text-foreground">{request.full_name}</h3>
                               <p className="text-sm text-muted-foreground">
-                                {request.email} · Approved on {format(new Date(request.reviewed_at || request.updated_at), "MMM d, yyyy")}
+                                {request.email} · Approved on {(request.reviewed_at || request.updated_at) ? format(new Date(request.reviewed_at || request.updated_at), "MMM d, yyyy") : "—"}
                               </p>
                               {request.message && (
                                 <p className="text-xs text-muted-foreground mt-1 italic">"{request.message}"</p>
@@ -1394,7 +1394,7 @@ const Onboarding = () => {
                               {request.message || "-"}
                             </TableCell>
                             <TableCell className="hidden sm:table-cell text-muted-foreground">
-                              {format(new Date(request.created_at), "MMM d, yyyy")}
+                              {request.created_at ? format(new Date(request.created_at), "MMM d, yyyy") : "—"}
                             </TableCell>
                             <TableCell>{getRequestStatusBadge(request.status)}</TableCell>
                             <TableCell className="text-right">
