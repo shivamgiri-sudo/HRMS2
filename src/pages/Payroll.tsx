@@ -19,6 +19,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { PayrollTable } from "@/components/payroll/PayrollTable";
 import { PayslipViewDialog } from "@/components/payroll/PayslipViewDialog";
 import { SalaryStructureManager } from "@/components/payroll/SalaryStructureManager";
+import { PayrollAnalytics } from "@/components/payroll/PayrollAnalytics";
 import { DateRangeExportDialog } from "@/components/export/DateRangeExportDialog";
 
 import {
@@ -894,9 +895,10 @@ const Payroll = () => {
                 </p>
               </div>
 
-              <TabsList className="grid w-full grid-cols-3 lg:w-[520px]">
+              <TabsList className="grid w-full grid-cols-4 lg:w-[640px]">
                 <TabsTrigger value="current">Current Payroll</TabsTrigger>
                 <TabsTrigger value="history">Payroll History</TabsTrigger>
+                <TabsTrigger value="analytics">Analytics</TabsTrigger>
                 <TabsTrigger value="salary">Salary Structure</TabsTrigger>
               </TabsList>
             </div>
@@ -1101,6 +1103,10 @@ const Payroll = () => {
                   {renderHistoryPagination()}
                 </>
               )}
+            </TabsContent>
+
+            <TabsContent value="analytics" className="mt-0">
+              <PayrollAnalytics />
             </TabsContent>
 
             <TabsContent value="salary" className="mt-0">
