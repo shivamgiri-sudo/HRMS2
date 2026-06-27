@@ -285,11 +285,11 @@ export function Step2Personal({
 
   return (
     <Card className="shadow-md border-0 overflow-hidden">
-      <CardHeader className="bg-gradient-to-r from-slate-800 to-slate-700 text-white rounded-t-none px-5 py-4">
-        <CardTitle className="text-lg flex items-center gap-2">👤 Personal Information</CardTitle>
-        <p className="text-sm text-slate-300 mt-0.5">Complete your personal and contact details</p>
+      <CardHeader className="bg-gradient-to-r from-slate-800 to-slate-700 rounded-t-none px-5 py-4">
+        <CardTitle className="text-lg flex items-center gap-2 text-white">👤 Personal Information</CardTitle>
+        <p className="text-sm text-slate-200 mt-0.5">Complete your personal and contact details</p>
       </CardHeader>
-      <CardContent className="pt-5 px-4">
+      <CardContent className="pt-5 px-3 max-w-lg mx-auto w-full sm:max-w-none sm:px-4">
 
         <SectionHead sub="Exactly as on Aadhaar card">Basic Details</SectionHead>
         <div className="grid gap-4 grid-cols-2 sm:grid-cols-3">
