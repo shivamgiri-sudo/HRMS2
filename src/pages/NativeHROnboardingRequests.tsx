@@ -46,8 +46,8 @@ function masterFrom(payload: unknown, nameKey = 'name'): MasterItem[] {
   const arr = Array.isArray(payload) ? payload : (payload as any)?.data ?? [];
   return (Array.isArray(arr) ? arr : []).map((r: any) => ({
     id: r.id,
-    name: r[nameKey] || r.department_name || r.designation_name || r.process_name || r.band_name || '',
-    code: r.department_code || r.designation_code || r.band_code || '',
+    name: r[nameKey] || r.dept_name || r.department_name || r.designation_name || r.process_name || r.band_name || '',
+    code: r.dept_code || r.department_code || r.designation_code || r.band_code || '',
   }));
 }
 

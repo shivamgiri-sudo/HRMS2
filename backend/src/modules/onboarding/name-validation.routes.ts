@@ -22,11 +22,11 @@ router.post("/validate", h(async (req: any, res: Response) => {
     // Get candidate profile data
     const [candidateRows] = await db.execute<RowDataPacket[]>(
       `SELECT c.id, op.employee_name, op.father_husband_name,
-              ob.account_holder_name, ob.name_on_cheque
+              ob.account_holder_name
        FROM ats_candidate c
        JOIN ats_onboarding_bridge aob ON aob.candidate_id = c.id
        LEFT JOIN candidate_onboarding_profile op ON op.candidate_id = c.id
-       LEFT JOIN candidate_onboarding_bank ob ON ob.candidate_id = c.id
+       LEFT JOIN candidate_onboarding_bank_detail ob ON ob.candidate_id = c.id
        WHERE aob.onboarding_token = ? LIMIT 1`,
       [token]
     );
@@ -40,7 +40,6 @@ router.post("/validate", h(async (req: any, res: Response) => {
       employee_name: row.employee_name as string | undefined,
       father_husband_name: row.father_husband_name as string | undefined,
       account_holder_name: row.account_holder_name as string | undefined,
-      name_on_cheque: row.name_on_cheque as string | undefined,
     });
 
     // If validation fails, flag for Payroll review

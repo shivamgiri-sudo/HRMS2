@@ -16,6 +16,12 @@ import autoTable from "jspdf-autotable";
 import { format } from "date-fns";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import {
+  EnterprisePageHeader,
+  ExceptionPanel,
+  KpiCard,
+  KpiCardGrid,
+} from "@/components/enterprise";
 import { PayrollTable } from "@/components/payroll/PayrollTable";
 import { PayslipViewDialog } from "@/components/payroll/PayslipViewDialog";
 import { SalaryStructureManager } from "@/components/payroll/SalaryStructureManager";
@@ -35,7 +41,6 @@ import { useCanAccessPayroll } from "@/hooks/useUserRole";
 import { usePagination } from "@/hooks/usePagination";
 import { useToast } from "@/hooks/use-toast";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -72,63 +77,6 @@ const months = [
   { value: "11", label: "November" },
   { value: "12", label: "December" },
 ];
-
-interface PayrollMetricCardProps {
-  label: string;
-  value: string;
-  description: string;
-  icon: ReactNode;
-  tone: "sky" | "emerald" | "indigo" | "amber";
-}
-
-const metricToneMap = {
-  sky: {
-    card: "border-sky-100 bg-gradient-to-br from-white via-white to-sky-50",
-    icon: "bg-sky-50 text-sky-700 ring-sky-100",
-  },
-  emerald: {
-    card: "border-emerald-100 bg-gradient-to-br from-white via-white to-emerald-50",
-    icon: "bg-emerald-50 text-emerald-700 ring-emerald-100",
-  },
-  indigo: {
-    card: "border-indigo-100 bg-gradient-to-br from-white via-white to-indigo-50",
-    icon: "bg-indigo-50 text-indigo-700 ring-indigo-100",
-  },
-  amber: {
-    card: "border-amber-100 bg-gradient-to-br from-white via-white to-amber-50",
-    icon: "bg-amber-50 text-amber-700 ring-amber-100",
-  },
-};
-
-const PayrollMetricCard = ({
-  label,
-  value,
-  description,
-  icon,
-  tone,
-}: PayrollMetricCardProps) => {
-  const style = metricToneMap[tone];
-
-  return (
-    <div className={`rounded-2xl border p-4 shadow-sm hover:shadow-2xl hover:-translate-y-0.5 transition-all duration-200 cursor-pointer ${style.card}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
-            {label}
-          </p>
-
-          <h3 className="mt-2 truncate text-2xl font-semibold tracking-tight text-slate-950">
-            {value}
-          </h3>
-        </div>
-
-        <div className={`rounded-xl p-2.5 ring-1 ${style.icon}`}>{icon}</div>
-      </div>
-
-      <p className="mt-3 text-xs leading-5 text-slate-500">{description}</p>
-    </div>
-  );
-};
 
 const EmptyState = ({
   title,
@@ -196,7 +144,7 @@ const Payroll = () => {
     limit: 200,
   }), [historyMonth, historyYear]);
   const { data: historyPage } = usePayrollRecords(historyFilters);
-  const allRecords = historyPage?.records ?? [];
+  const allRecords = useMemo(() => historyPage?.records ?? [], [historyPage?.records]);
 
   const { data: stats } = usePayrollStats();
 
@@ -625,28 +573,28 @@ const Payroll = () => {
       value: formatCurrency(stats?.totalPayroll || currentPayrollNet || 0),
       description: "Current month net salary total.",
       icon: <IndianRupee className="h-5 w-5" />,
-      tone: "sky" as const,
+      tone: "payroll" as const,
     },
     {
       label: "Employees",
       value: String(stats?.employeeCount || 0),
       description: "Active employees in payroll scope.",
       icon: <Users className="h-5 w-5" />,
-      tone: "emerald" as const,
+      tone: "people" as const,
     },
     {
       label: "Average Salary",
       value: formatCurrency(stats?.avgSalary || 0),
       description: "Average salary for current payroll.",
       icon: <TrendingUp className="h-5 w-5" />,
-      tone: "indigo" as const,
+      tone: "brand" as const,
     },
     {
       label: "Pending",
       value: String(stats?.pending || currentPending || 0),
       description: "Payroll records awaiting processing.",
       icon: <CreditCard className="h-5 w-5" />,
-      tone: "amber" as const,
+      tone: "warning" as const,
     },
   ];
 
@@ -798,37 +746,24 @@ const Payroll = () => {
   return (
     <DashboardLayout>
       <div className="space-y-5">
-        {/* Header */}
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="grid gap-0 lg:grid-cols-[1fr_auto]">
-            <div className="relative p-5 sm:p-6">
-              <div className="absolute inset-y-0 left-0 w-1 bg-slate-950" />
-
-              <div className="pl-2">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-400">
-                  Payroll Management
-                </p>
-
-                <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
-                  Payroll
-                </h1>
-
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                  Generate, process, pay and review monthly payroll records.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-col justify-center gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:flex-row sm:items-center lg:border-l lg:border-t-0">
+        <EnterprisePageHeader
+          eyebrow="Payroll Management"
+          title="Payroll Command Center"
+          description="Generate, process, pay and review monthly payroll records with a consistent enterprise workspace."
+          status="info"
+          secondaryActions={
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <DateRangeExportDialog
                 title="Export Payroll Records"
                 description="Export payroll records with optional month/year date range."
                 onExportCSV={exportToCSV}
                 onExportPDF={exportToPDF}
               />
-
+            </div>
+          }
+          primaryAction={
               <Button
-                className="h-10 rounded-xl bg-slate-950 px-4 text-xs font-semibold text-white hover:bg-slate-800"
+                className="h-10 rounded-[var(--r-md)] bg-[var(--brand-500)] px-4 text-xs font-semibold text-white hover:bg-[var(--brand-600)]"
                 onClick={handleGeneratePayroll}
                 disabled={generatePayroll.isPending}
               >
@@ -839,65 +774,46 @@ const Payroll = () => {
                 )}
                 {generatePayroll.isPending ? "Generating..." : "Generate Payroll"}
               </Button>
-            </div>
-          </div>
-        </section>
+          }
+        />
 
-        {/* Metrics */}
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiCardGrid>
           {payrollStats.map((stat) => (
-            <PayrollMetricCard
+            <KpiCard
               key={stat.label}
-              label={stat.label}
+              title={stat.label}
               value={stat.value}
               description={stat.description}
               icon={stat.icon}
               tone={stat.tone}
             />
           ))}
-        </section>
+        </KpiCardGrid>
 
-        {/* Status Strip */}
-        <section className="grid gap-3 sm:grid-cols-3">
-          <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 cursor-pointer">
-            <div>
-              <p className="text-xs font-semibold text-slate-500">Pending</p>
-              <p className="mt-1 text-lg font-semibold text-slate-950">
-                {currentPending}
-              </p>
-            </div>
-
-            <Badge className="bg-amber-50 text-amber-700 hover:bg-amber-50">
-              Draft
-            </Badge>
-          </div>
-
-          <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 cursor-pointer">
-            <div>
-              <p className="text-xs font-semibold text-slate-500">Processed</p>
-              <p className="mt-1 text-lg font-semibold text-slate-950">
-                {currentProcessing}
-              </p>
-            </div>
-
-            <Badge className="bg-sky-50 text-sky-700 hover:bg-sky-50">
-              Processing
-            </Badge>
-          </div>
-
-          <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 cursor-pointer">
-            <div>
-              <p className="text-xs font-semibold text-slate-500">Paid</p>
-              <p className="mt-1 text-lg font-semibold text-slate-950">
-                {currentPaid}
-              </p>
-            </div>
-
-            <Badge className="bg-emerald-50 text-emerald-700 hover:bg-emerald-50">
-              Completed
-            </Badge>
-          </div>
-        </section>
+        <ExceptionPanel
+          title="Payroll status checkpoints"
+          severity={currentPending > 0 ? "warning" : "info"}
+          items={[
+            {
+              id: "pending",
+              title: `${currentPending} pending`,
+              description: "Payroll records awaiting processing.",
+              meta: "Draft",
+            },
+            {
+              id: "processing",
+              title: `${currentProcessing} processed`,
+              description: "Records currently in payroll processing.",
+              meta: "Processing",
+            },
+            {
+              id: "paid",
+              title: `${currentPaid} paid`,
+              description: "Completed payroll records for this view.",
+              meta: "Completed",
+            },
+          ]}
+        />
 
         {/* Tabs */}
         <section className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm">

@@ -146,6 +146,7 @@ const BGV_PROVIDERS = [
   { value: "mock", label: "Mock (Dev/Test only)" },
   { value: "infinity_ai", label: "Infinity AI (Live)" },
   { value: "digio", label: "Digio (Live)" },
+  { value: "befisc_luckpay", label: "Befisc + Luckpay + Crimescan (Live)" },
 ];
 
 type BgvConfigRow = { setting_key: string; setting_value: string | null; label: string };
@@ -238,6 +239,32 @@ const BgvProviderSettings = () => {
               { key: "digio_api_url", label: "API Base URL", type: "text" },
               { key: "digio_client_id", label: "Client ID", type: "text" },
               { key: "digio_client_secret", label: "Client Secret", type: "password" },
+            ].map(({ key, label, type }) => (
+              <div key={key}>
+                <Label>{label}</Label>
+                <Input
+                  type={type}
+                  value={form[key] ?? ""}
+                  onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))}
+                  placeholder={type === "password" ? "Enter to update" : undefined}
+                  className="mt-1"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {provider === "befisc_luckpay" && (
+          <div className="space-y-3 rounded-xl border p-4 bg-slate-50">
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Befisc + Luckpay + Crimescan Settings</p>
+            <p className="text-xs text-slate-500">
+              Befisc handles Aadhaar OTP · Luckpay handles PAN &amp; Bank penny-drop · Crimescan handles court records.
+            </p>
+            {[
+              { key: "befisc_api_key", label: "Befisc API Key", type: "password" },
+              { key: "luckpay_basic_token", label: "Luckpay Basic Token (Base64)", type: "password" },
+              { key: "luckpay_client_id", label: "Luckpay Client ID", type: "text" },
+              { key: "crimescan_api_key", label: "Crimescan API Key", type: "password" },
             ].map(({ key, label, type }) => (
               <div key={key}>
                 <Label>{label}</Label>

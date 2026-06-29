@@ -4,7 +4,8 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { toIST, mysqlDatetimeToIST } from "../../shared/timezone.js";
-import { getRealTimePunchesToday, getRealTimePunchesRange } from "./attendance-realtime-ncosec.service.js";
+import { getRealTimePunchesToday, getRealTimePunchesRange, getMonthlyAttendanceFromNcosec, getBulkCosecMappings } from "./attendance-realtime-ncosec.service.js";
+import { isOperationsExecutive } from "./attendance-engine.service.js";
 
 export const attendanceDailyScopedRouter = Router();
 attendanceDailyScopedRouter.use(requireAuth);
@@ -233,4 +234,158 @@ attendanceDailyScopedRouter.get("/calendar-live", h(async (req, res) => {
       message: "NCOSEC connection failed. Please try again or contact IT support.",
     });
   }
+}));
+
+/**
+ * GET /ncosec-monthly
+ * Direct NCOSEC Mx_DATDTrn query for a date range (typically a full month).
+ * Applies night-shift merge, leave/holiday/regularization overrides.
+ * Returns same response shape as /daily so frontend needs no changes.
+ * APR/Operations Executive employees fall back to attendance_daily_record.
+ */
+attendanceDailyScopedRouter.get("/ncosec-monthly", h(async (req, res) => {
+  const userId = req.authUser!.id;
+  const isAdminHrWfm = await hasRole(userId, "admin", "hr", "wfm", "ceo", "super_admin");
+  const isManager = await hasRole(userId, "manager", "assistant_manager", "tl");
+  const callerEmp = await getEmployeeForUser(userId);
+
+  const fromDate = String(req.query.fromDate || '');
+  const toDate = String(req.query.toDate || '');
+  if (!fromDate || !toDate) {
+    return res.status(400).json({ success: false, error: "fromDate and toDate are required" });
+  }
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(fromDate) || !dateRegex.test(toDate)) {
+    return res.status(400).json({ success: false, error: "Dates must be in YYYY-MM-DD format" });
+  }
+
+  const page = Math.max(1, Number(req.query.page ?? 1) || 1);
+  const limit = Math.min(Math.max(1, Number(req.query.limit ?? 500) || 500), 500);
+
+  // Build employee ID set based on role
+  let targetEmployeeIds: string[] = [];
+
+  if (isAdminHrWfm) {
+    // Admin/HR/WFM: get all active employees, optionally filtered
+    const params: unknown[] = [];
+    const where: string[] = ['e.active_status = 1'];
+    if (req.query.employeeId) {
+      const qEmpId = safeId(req.query.employeeId, 'employeeId');
+      if (qEmpId) { where.push('e.id = ?'); params.push(qEmpId); }
+    }
+    const branchId = safeId(req.query.branchId, 'branchId');
+    const processId = safeId(req.query.processId, 'processId');
+    if (branchId) { where.push('e.branch_id = ?'); params.push(branchId); }
+    if (processId) { where.push('e.process_id = ?'); params.push(processId); }
+
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id FROM employees e WHERE ${where.join(' AND ')} ORDER BY e.employee_code`,
+      params,
+    );
+    targetEmployeeIds = (empRows as any[]).map(r => r.id);
+  } else if (isManager && callerEmp?.id) {
+    // Manager: own team + self
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT e.id FROM employees e
+       WHERE e.active_status = 1
+         AND (e.reporting_manager_id = ? OR e.manager_id = ? OR e.id = ?)`,
+      [callerEmp.id, callerEmp.id, callerEmp.id],
+    );
+    targetEmployeeIds = (empRows as any[]).map(r => r.id);
+  } else {
+    // Self-only
+    if (!callerEmp?.id) return res.status(403).json({ success: false, error: "No employee record" });
+    targetEmployeeIds = [callerEmp.id];
+  }
+
+  if (targetEmployeeIds.length === 0) {
+    return res.json({ success: true, data: [], total: 0, page, limit });
+  }
+
+  // Fetch dept + designation to split APR vs NCOSEC employees
+  const ph = targetEmployeeIds.map(() => '?').join(', ');
+  const [deptRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id,
+            LOWER(COALESCE(dm.dept_name, '')) AS dept_name,
+            LOWER(COALESCE(desig.designation_name, '')) AS designation_name
+     FROM employees e
+     LEFT JOIN department_master dm ON dm.id = e.department_id
+     LEFT JOIN designation_master desig ON desig.id = e.designation_id
+     WHERE e.id IN (${ph})`,
+    targetEmployeeIds,
+  );
+  const deptMap = new Map((deptRows as any[]).map(r => [r.id, r]));
+  const aprIds = targetEmployeeIds.filter(id => {
+    const d = deptMap.get(id);
+    return d ? isOperationsExecutive(d.dept_name, d.designation_name) : false;
+  });
+  const ncosecIds = targetEmployeeIds.filter(id => !aprIds.includes(id));
+
+  // --- NCOSEC direct path ---
+  const ncosecMappings = await getBulkCosecMappings(ncosecIds);
+  let ncosecRecords: any[] = [];
+  if (ncosecMappings.length > 0) {
+    try {
+      ncosecRecords = await getMonthlyAttendanceFromNcosec(ncosecMappings, fromDate, toDate);
+    } catch (ncosecErr) {
+      console.warn('[ncosec-monthly] NCOSEC query failed, falling back to attendance_daily_record for NCOSEC employees:',
+        ncosecErr instanceof Error ? ncosecErr.message : String(ncosecErr));
+      // Fall through to ADR query for ncosecIds too
+      aprIds.push(...ncosecIds);
+    }
+  }
+
+  // --- APR / fallback path: read from attendance_daily_record ---
+  let aprRecords: any[] = [];
+  if (aprIds.length > 0) {
+    const aprPh = aprIds.map(() => '?').join(', ');
+    const adrParams: unknown[] = [...aprIds, fromDate, toDate];
+    const [adrRows] = await db.execute<RowDataPacket[]>(
+      `SELECT adr.*,
+              DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
+              DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS date,
+              adr.clock_in_time AS clock_in,
+              adr.clock_out_time AS clock_out,
+              ROUND(COALESCE(adr.raw_minutes, adr.biometric_minutes, adr.dialler_minutes, 0) / 60, 2) AS total_hours,
+              adr.attendance_status AS status,
+              COALESCE(NULLIF(e.full_name,''), CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,''))) AS employee_name,
+              COALESCE(e.first_name, '') AS first_name,
+              COALESCE(e.last_name, '') AS last_name,
+              e.employee_code,
+              e.working_hours_start, e.working_hours_end,
+              dm.dept_name AS department_name,
+              bm.branch_name, pm.process_name
+       FROM attendance_daily_record adr
+       LEFT JOIN employees e ON e.id = adr.employee_id
+       LEFT JOIN department_master dm ON dm.id = e.department_id
+       LEFT JOIN branch_master bm ON bm.id = COALESCE(adr.branch_id, e.branch_id)
+       LEFT JOIN process_master pm ON pm.id = COALESCE(adr.process_id, e.process_id)
+       WHERE adr.employee_id IN (${aprPh})
+         AND adr.record_date >= ? AND adr.record_date <= ?
+       ORDER BY adr.record_date DESC`,
+      adrParams,
+    );
+    aprRecords = (adrRows as any[]).map(r => ({
+      ...r,
+      clock_in_time: mysqlDatetimeToIST(r.clock_in_time),
+      clock_out_time: mysqlDatetimeToIST(r.clock_out_time),
+      clock_in: mysqlDatetimeToIST(r.clock_in),
+      clock_out: mysqlDatetimeToIST(r.clock_out),
+      employee: {
+        first_name: r.first_name ?? '',
+        last_name: r.last_name ?? '',
+        employee_code: r.employee_code ?? '',
+        working_hours_start: r.working_hours_start ?? null,
+        working_hours_end: r.working_hours_end ?? null,
+      },
+    }));
+  }
+
+  // Merge and paginate
+  const combined = [...ncosecRecords, ...aprRecords];
+  const total = combined.length;
+  const offset = (page - 1) * limit;
+  const data = combined.slice(offset, offset + limit);
+
+  return res.json({ success: true, data, total, page, limit });
 }));
