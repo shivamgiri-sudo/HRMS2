@@ -158,10 +158,24 @@
       "Bash(python \"C:\\\\tmp\\\\deploy-all-fixes.py\")",
       "Bash(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no masadmin@192.168.11.225 \"tail -50 /tmp/deploy-fixes.log 2>/dev/null || echo 'log not found'\")",
       "Bash(code --version)",
-      "Bash(code --list-extensions)"
+      "Bash(code --list-extensions)",
+      "Bash(python \"C:\\\\tmp\\\\deploy-final.py\")",
+      "Bash(node test-live-site.mjs)",
+      "Bash(node verify-deployment.mjs)",
+      "Bash(python \"C:\\\\tmp\\\\check-ncosec-raw.py\")",
+      "Bash(mysql -h 192.168.10.6 -u shivam_user -p\"qwersdfg!@#hjk\" mas_hrms -e \"SELECT u.email, u.password_hash FROM auth_user u JOIN user_roles r ON r.user_id = u.id WHERE r.role_key IN \\('admin','super_admin','hr_admin'\\) LIMIT 3;\")",
+      "Bash(ssh masadmin@192.168.11.225 \"mysql -h 192.168.10.6 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms -e \\\\\"SELECT u.email FROM auth_user u JOIN user_roles r ON r.user_id = u.id WHERE r.role_key IN \\('admin','super_admin','hr_admin'\\) LIMIT 3;\\\\\" 2>&1\")",
+      "Bash(sshpass -p 'Support#123' ssh -o StrictHostKeyChecking=no masadmin@192.168.11.225 \"mysql -h 192.168.10.6 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms -e \\\\\"SELECT u.email FROM auth_user u JOIN user_roles r ON r.user_id = u.id WHERE r.role_key IN \\('admin','super_admin','hr_admin'\\) LIMIT 3;\\\\\" 2>&1\")",
+      "Bash(curl -sk -X POST https://mcnhrms.teammas.in/api/auth/login -H 'Content-Type: application/json' -d '{\"identifier\":\"admin@mashrms.com\",\"password\":\"Admin@123\"}')",
+      "Bash(curl -sk https://mcnhrms.teammas.in/api/auth/login -X POST -H 'Content-Type: application/json' -d '{\"identifier\":\"admin@mas.in\",\"password\":\"Admin@123\"}')",
+      "Bash(curl -sk -X POST https://mcnhrms.teammas.in/api/auth/login -H 'Content-Type: application/json' -d '{\"identifier\":\"admin@mas.in\",\"password\":\"Admin@12345\"}')",
+      "Bash(node test-onboarding-auth.mjs)",
+      "Bash(mkdir -p \"c:\\\\Users\\\\shivamg\\\\Upgraded HRMS\\\\pictures\" && mv \"c:\\\\Users\\\\shivamg\\\\Upgraded HRMS\"/*.png \"c:\\\\Users\\\\shivamg\\\\Upgraded HRMS\\\\pictures/\" 2>&1 && ls \"c:\\\\Users\\\\shivamg\\\\Upgraded HRMS\\\\pictures/\")",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\).on\\('end',\\(\\)=>{const r=JSON.parse\\(d\\);const rows=Array.isArray\\(r\\)?r:r.data||[];if\\(rows[0]\\)console.log\\('Keys:',Object.keys\\(rows[0]\\).join\\(', '\\)\\);console.log\\('Sample:',JSON.stringify\\(rows[0],null,2\\)\\)}\\)\")"
     ],
     "additionalDirectories": [
-      "/home/shuvam/Desktop"
+      "/home/shuvam/Desktop",
+      "c:\\Users\\shivamg\\Upgraded HRMS"
     ]
   }
 }

@@ -20,8 +20,18 @@ export function nowIST(): string {
  * CRITICAL: Do NOT use toIST(Date) on MySQL datetime values - it would add +5:30 offset
  * on top of the IST wall-clock, producing times 5.5 hours ahead (double-IST bug).
  */
-export function mysqlDatetimeToIST(d: Date | null | undefined): string | null {
+export function mysqlDatetimeToIST(d: Date | string | null | undefined): string | null {
   if (!d) return null;
+  // mysql2 with dateStrings:true returns DATETIME as "YYYY-MM-DD HH:mm:ss" strings
+  if (typeof d === 'string') {
+    const s = d.trim();
+    if (!s) return null;
+    // Already has timezone — return as-is
+    if (s.includes('T') || s.includes('+') || s.endsWith('Z')) return s;
+    // "YYYY-MM-DD HH:mm:ss" → tag with +05:30, no arithmetic (already IST wall-clock)
+    return s.replace(' ', 'T') + '+05:30';
+  }
+  // Date object path (mysql2 without dateStrings, or non-DB sources)
   const pad = (n: number) => String(n).padStart(2, '0');
   return (
     `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +

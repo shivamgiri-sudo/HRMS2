@@ -100,7 +100,7 @@ attendanceDailyScopedRouter.get("/daily", h(async (req, res) => {
             ccm.cost_centre_name
        ${fromSql}
        ${whereSql}
-      ORDER BY adr.record_date DESC, e.employee_code ASC
+      ORDER BY adr.record_date DESC
       LIMIT ${limit} OFFSET ${offset}`,
     params,
   );

@@ -574,7 +574,9 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
         employeeId, offer.date_of_joining,
         offer.offered_ctc, offer.basic, offer.hra, offer.conveyance,
         offer.da, offer.special_allowance, offer.other_allowance, offer.bonus, offer.gross,
-        offer.pf_employee, offer.pf_employer, offer.esic_employee, offer.esic_employer,
+        // ats_employment_offer stores as pf_employee; employee_salary_snapshot uses epf_employee
+        offer.pf_employee ?? offer.epf_employee, offer.pf_employer ?? offer.epf_employer,
+        offer.esic_employee, offer.esic_employer,
         offer.professional_tax, offer.gratuity, offer.admin_charges, offer.net_in_hand,
       ],
     );
