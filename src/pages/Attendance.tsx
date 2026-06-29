@@ -344,9 +344,16 @@ const Attendance = () => {
       "09:00:00";
 
     const [startHour, startMin] = workStart.split(":").map(Number);
-    const clockInDate = new Date(clockInTime);
-    const clockInHour = clockInDate.getHours();
-    const clockInMinute = clockInDate.getMinutes();
+    // Parse clock-in in IST: tag naive "YYYY-MM-DD HH:mm:ss" with +05:30 so
+    // the Intl formatter can extract IST hours/minutes regardless of browser timezone.
+    const istStr = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(clockInTime)
+      ? clockInTime.replace(' ', 'T') + '+05:30'
+      : clockInTime;
+    const clockInDate = new Date(istStr);
+    const istTime = clockInDate.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+    const [hStr, mStr] = istTime.split(':');
+    const clockInHour = parseInt(hStr ?? '0', 10);
+    const clockInMinute = parseInt(mStr ?? '0', 10);
 
     const scheduledMinutes = startHour * 60 + startMin;
     const actualMinutes = clockInHour * 60 + clockInMinute;

@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { LogIn, LogOut, MapPin, Loader2 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useQueryClient } from "@tanstack/react-query";
+import { formatISTTime } from "@/lib/utils";
 
 interface WebPunchState {
   punch_in: string | null;
@@ -93,9 +94,9 @@ export function WebPunchButton({ employeeId, initialState, onPunch }: Props) {
 
       {state.punch_in && (
         <p className="text-[11px] text-slate-500">
-          In: {new Date(state.punch_in).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+          In: {formatISTTime(state.punch_in)}
           {state.punch_out && (
-            <> · Out: {new Date(state.punch_out).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</>
+            <> · Out: {formatISTTime(state.punch_out)}</>
           )}
         </p>
       )}
