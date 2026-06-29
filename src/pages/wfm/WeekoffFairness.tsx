@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/contexts/AuthContext";
 
 const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
@@ -150,7 +150,7 @@ export default function WeekoffFairness() {
                       {inp && (
                         <div className="flex gap-1 items-center">
                           <Input className="w-14 h-7 text-xs" type="number" min={0} max={6} placeholder="0-6" value={inp.day} onChange={(e) => setInline((p) => ({ ...p, [row.employee_id]: { ...p[row.employee_id], day: e.target.value } }))} />
-                          <Input className="w-24 h-7 text-xs" placeholder="reason" value={inp.reason} onChange={(e) => setInline((p) => ({ ...p, [row.employee_id]: { ...p[row.employee_id], reason: e.target.value } })} />
+                          <Input className="w-24 h-7 text-xs" placeholder="reason" value={inp.reason} onChange={(e) => setInline((p) => ({ ...p, [row.employee_id]: { ...p[row.employee_id], reason: e.target.value } }))} />
                           <Button size="sm" className="h-7 text-xs" onClick={() => recordAllocation(row)}>Save</Button>
                         </div>
                       )}
