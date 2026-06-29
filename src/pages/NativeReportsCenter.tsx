@@ -119,6 +119,9 @@ const CATALOG: ReportDef[] = [
   { code: "form16-data", name: "Form 16 Data (Part B)", category: "Statutory & Compliance", subcategory: "TDS & Income Tax", filters: [{ key: "financialYear", label: "Financial Year", type: "text", placeholder: "2025-26" }, BRANCH_FILTER] },
   { code: "gratuity-liability-register", name: "Gratuity Liability Register", category: "Statutory & Compliance", subcategory: "Gratuity", filters: [BRANCH_FILTER, { key: "minYears", label: "Min Service Years", type: "number", placeholder: "5" }] },
   { code: "gratuity-monthly-accrual", name: "Gratuity Monthly Accrual", category: "Statutory & Compliance", subcategory: "Gratuity", filters: [MONTH_FILTER, BRANCH_FILTER] },
+  { code: "statutory-compliance-calendar", name: "Statutory Compliance Calendar", category: "Statutory & Compliance", subcategory: "Compliance Register", filters: [MONTH_FILTER, { key: "state", label: "State", type: "text" }, STATUS_FILTER] },
+  { code: "posh-compliance-register", name: "POSH Compliance Register", category: "Statutory & Compliance", subcategory: "Compliance Register", filters: [YEAR_FILTER, BRANCH_FILTER] },
+  { code: "labour-compliance-register", name: "Labour Compliance Register", category: "Statutory & Compliance", subcategory: "Compliance Register", filters: [YEAR_FILTER, BRANCH_FILTER] },
 
   // ── CAT 6: RECRUITMENT & ATS ───────────────────────────────────────────────
   { code: "ats-pipeline-summary", name: "ATS Pipeline Summary", category: "Recruitment & ATS", subcategory: "Pipeline", filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, PROCESS_FILTER, { key: "stage", label: "Stage", type: "text" }] },
@@ -131,9 +134,12 @@ const CATALOG: ReportDef[] = [
   { code: "recruiter-performance-report", name: "Recruiter Performance Report", category: "Recruitment & ATS", subcategory: "TAT & Quality", filters: [DATE_FROM, DATE_TO, { key: "recruiterId", label: "Recruiter", type: "text" }] },
   { code: "interview-slot-utilization", name: "Interview Slot Utilization", category: "Recruitment & ATS", subcategory: "TAT & Quality", filters: [DATE_FROM, DATE_TO, BRANCH_FILTER] },
   { code: "cheque-name-mismatch-report", name: "Cheque Name Mismatch Queue", category: "Recruitment & ATS", subcategory: "TAT & Quality", filters: [STATUS_FILTER, BRANCH_FILTER] },
+  { code: "onboarding-doc-checklist", name: "Onboarding Document Checklist", category: "Recruitment & ATS", subcategory: "BGV & Onboarding", filters: [BRANCH_FILTER, STATUS_FILTER, DATE_FROM, DATE_TO] },
+  { code: "bgv-completion-rate", name: "BGV Completion Rate by Branch / Process", category: "Recruitment & ATS", subcategory: "BGV & Onboarding", filters: [BRANCH_FILTER, PROCESS_FILTER, DATE_FROM, DATE_TO] },
+  { code: "esign-digilocker-status", name: "eSign / DigiLocker Appointment Letter Status", category: "Recruitment & ATS", subcategory: "BGV & Onboarding", filters: [BRANCH_FILTER, STATUS_FILTER, DATE_FROM, DATE_TO] },
 
   // ── CAT 7: EXIT & ATTRITION ────────────────────────────────────────────────
-  { code: "employee-movement", name: "Exit / Movement Report", category: "Exit & Attrition", subcategory: "Exit Analysis", filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, { key: "exitType", label: "Exit Type", type: "text" }] },
+  { code: "exit-movement-report", name: "Exit / Movement Report", category: "Exit & Attrition", subcategory: "Exit Analysis", filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, { key: "exitType", label: "Exit Type", type: "text" }] },
   { code: "notice-period-adherence", name: "Notice Period Adherence", category: "Exit & Attrition", subcategory: "Exit Analysis", filters: [DATE_FROM, DATE_TO, BRANCH_FILTER] },
   { code: "exit-interview-summary", name: "Exit Interview Summary", category: "Exit & Attrition", subcategory: "Exit Analysis", filters: [DATE_FROM, DATE_TO, BRANCH_FILTER] },
   { code: "rehire-eligibility-register", name: "Rehire Eligibility Register", category: "Exit & Attrition", subcategory: "Exit Analysis", filters: [BRANCH_FILTER] },
@@ -177,13 +183,35 @@ const CATALOG: ReportDef[] = [
   // ── CAT 12: HELPDESK & GRIEVANCE ──────────────────────────────────────────
   { code: "helpdesk-ticket-summary", name: "Helpdesk Ticket Summary", category: "Helpdesk & Grievance", subcategory: "Helpdesk", filters: [DATE_FROM, DATE_TO, { key: "ticketCategory", label: "Category", type: "text" }, STATUS_FILTER, BRANCH_FILTER] },
   { code: "grievance-register", name: "Grievance Register", category: "Helpdesk & Grievance", subcategory: "Grievance", filters: [DATE_FROM, DATE_TO, STATUS_FILTER] },
-  { code: "dpdp-consent-status", name: "Employee Consent / DPDP Status", category: "Helpdesk & Grievance", subcategory: "Grievance", filters: [BRANCH_FILTER] },
+  { code: "grievance-tat-report", name: "Grievance TAT Report", category: "Helpdesk & Grievance", subcategory: "Grievance", filters: [DATE_FROM, DATE_TO, STATUS_FILTER] },
+  { code: "grievance-category-analysis", name: "Grievance Category Analysis", category: "Helpdesk & Grievance", subcategory: "Grievance", filters: [DATE_FROM, DATE_TO] },
+  { code: "dpdp-consent-status", name: "Employee Consent / DPDP Status", category: "Helpdesk & Grievance", subcategory: "DPDP", filters: [BRANCH_FILTER] },
 
   // ── CAT 13: CLIENT PORTAL GOVERNANCE ─────────────────────────────────────
   { code: "portal-kpi-commitment-vs-actual", name: "Process KPI Commitment vs Actual", category: "Client Portal", subcategory: "KPI Governance", filters: [MONTH_FILTER, PROCESS_FILTER] },
   { code: "action-plan-status", name: "Action Plan Status", category: "Client Portal", subcategory: "KPI Governance", filters: [MONTH_FILTER, PROCESS_FILTER, STATUS_FILTER] },
   { code: "governance-checklist-completion", name: "Governance Checklist Completion", category: "Client Portal", subcategory: "Operations", filters: [MONTH_FILTER, PROCESS_FILTER] },
   { code: "portal-access-log", name: "Client Portal Access Log", category: "Client Portal", subcategory: "Operations", filters: [DATE_FROM, DATE_TO, { key: "clientId", label: "Client", type: "text" }] },
+
+  // ── CAT 14: PRODUCTIVITY ANALYTICS (CEO / All Levels) ─────────────────────
+  // Individual Level
+  { code: "productivity-individual-scorecard", name: "Individual Productivity Scorecard", category: "Productivity", subcategory: "Individual", filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, PROCESS_FILTER, { key: "costCentreId", label: "Cost Centre", type: "text" }, { key: "employeeId", label: "Employee", type: "text" }, { key: "shiftCode", label: "Shift", type: "text" }] },
+  { code: "productivity-daily-heatmap", name: "Daily Productivity Heatmap", category: "Productivity", subcategory: "Individual", filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, PROCESS_FILTER, { key: "costCentreId", label: "Cost Centre", type: "text" }, { key: "managerId", label: "Reporting Manager", type: "text" }] },
+  { code: "productivity-top-bottom-performers", name: "Top / Bottom Performer List", category: "Productivity", subcategory: "Individual", filters: [MONTH_FILTER, BRANCH_FILTER, PROCESS_FILTER, { key: "costCentreId", label: "Cost Centre", type: "text" }, { key: "topN", label: "Top / Bottom N", type: "number", placeholder: "10" }] },
+  // Team Level
+  { code: "productivity-team-rollup", name: "Team Productivity Roll-Up", category: "Productivity", subcategory: "Team", filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, PROCESS_FILTER, { key: "managerId", label: "Reporting Manager", type: "text" }, { key: "costCentreId", label: "Cost Centre", type: "text" }] },
+  // Process / LOB Level
+  { code: "productivity-process-summary", name: "Process / LOB Productivity Summary", category: "Productivity", subcategory: "Process & LOB", filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, PROCESS_FILTER, { key: "costCentreId", label: "Cost Centre", type: "text" }] },
+  { code: "productivity-aht-trend", name: "AHT Trend by Process", category: "Productivity", subcategory: "Process & LOB", filters: [DATE_FROM, DATE_TO, PROCESS_FILTER, BRANCH_FILTER] },
+  // Branch Level
+  { code: "productivity-branch-summary", name: "Branch Productivity Summary", category: "Productivity", subcategory: "Branch", filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, { key: "costCentreId", label: "Cost Centre", type: "text" }] },
+  // Cost Centre Level
+  { code: "productivity-cost-centre-summary", name: "Cost Centre Productivity Summary", category: "Productivity", subcategory: "Cost Centre", filters: [DATE_FROM, DATE_TO, { key: "costCentreId", label: "Cost Centre", type: "text" }, BRANCH_FILTER, PROCESS_FILTER] },
+  // Org Level (CEO View)
+  { code: "productivity-org-summary", name: "Org-Wide Productivity Overview", category: "Productivity", subcategory: "Organisation", filters: [DATE_FROM, DATE_TO, BRANCH_FILTER] },
+  { code: "productivity-occupancy-utilization", name: "Occupancy & Utilization Report", category: "Productivity", subcategory: "Organisation", filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, PROCESS_FILTER, { key: "costCentreId", label: "Cost Centre", type: "text" }] },
+  { code: "productivity-adherence-vs-kpi", name: "Schedule Adherence vs KPI Correlation", category: "Productivity", subcategory: "Organisation", filters: [MONTH_FILTER, BRANCH_FILTER, PROCESS_FILTER, { key: "costCentreId", label: "Cost Centre", type: "text" }] },
+  { code: "productivity-shrinkage-impact", name: "Shrinkage Impact on Productivity", category: "Productivity", subcategory: "Organisation", filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, PROCESS_FILTER, { key: "costCentreId", label: "Cost Centre", type: "text" }] },
 ];
 
 // ─── Category metadata ──────────────────────────────────────────────────────
@@ -202,6 +230,7 @@ const CATEGORY_META: Record<string, { icon: React.ReactNode; color: string; bg: 
   "Integration & Audit":   { icon: <Link2 size={14} />,        color: "text-slate-700",  bg: "bg-slate-50" },
   "Helpdesk & Grievance":  { icon: <HelpCircle size={14} />,   color: "text-rose-700",   bg: "bg-rose-50" },
   "Client Portal":         { icon: <Globe size={14} />,        color: "text-indigo-700", bg: "bg-indigo-50" },
+  "Productivity":          { icon: <BarChart3 size={14} />,     color: "text-emerald-700",bg: "bg-emerald-50" },
 };
 
 const CATEGORY_ORDER = Object.keys(CATEGORY_META);
