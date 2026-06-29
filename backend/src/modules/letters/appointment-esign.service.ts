@@ -1,6 +1,9 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
+import axios from "axios";
 import { db } from "../../db/mysql.js";
+import { env } from "../../config/env.js";
+import { emailService } from "../communication/email.service.js";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -27,6 +30,179 @@ async function _getState(requestId: string): Promise<string | null> {
   );
   const row = (rows as RowDataPacket[])[0];
   return row ? (row.current_state as string) : null;
+}
+
+/** Read active BGV provider from org_settings (Super Admin override) or fall back to env */
+async function _activeProvider(): Promise<string> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT setting_value FROM org_settings WHERE setting_key = 'bgv_provider' LIMIT 1"
+  );
+  const dbProvider = (rows as RowDataPacket[])[0]?.setting_value as string | undefined;
+  return dbProvider || env.BGV_PROVIDER || "mock";
+}
+
+/** Read a single org_settings key */
+async function _orgSetting(key: string): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT setting_value FROM org_settings WHERE setting_key = ? LIMIT 1",
+    [key]
+  );
+  return ((rows as RowDataPacket[])[0]?.setting_value as string | undefined) ?? null;
+}
+
+// ── eSign provider implementations ───────────────────────────────────────────
+
+interface EsignInitResult {
+  requestId: string;      // provider's own transaction/request ID
+  esignUrl: string;       // URL sent to candidate (Aadhaar OTP signing page)
+  providerKey: string;
+}
+
+/**
+ * Call Digio's Aadhaar-based eSign API to create a signing request.
+ * Docs: POST /v2/client/esign/create_request
+ */
+async function _initiateDigioEsign(
+  signerName: string,
+  signerEmail: string,
+  signerMobile: string,
+  pdfUrl: string,
+  referenceId: string
+): Promise<EsignInitResult> {
+  const clientId = (await _orgSetting("digio_client_id")) ?? (env as any).DIGIO_CLIENT_ID ?? "";
+  const clientSecret = (await _orgSetting("digio_client_secret")) ?? (env as any).DIGIO_CLIENT_SECRET ?? "";
+  const apiUrl = (await _orgSetting("digio_api_url")) ?? (env as any).DIGIO_API_URL ?? "https://api.digio.in";
+
+  if (!clientId || !clientSecret) throw new Error("Digio Client ID and Secret not configured in BGV settings.");
+
+  const auth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+
+  const payload = {
+    reference_id: referenceId,
+    send_sign_link: true,
+    signers: [
+      {
+        identifier: signerEmail,
+        name: signerName,
+        phone: signerMobile,
+        sign_type: "aadhaar",         // Aadhaar OTP-based eSign
+        reason: "Appointment Letter Signing",
+      },
+    ],
+    display_on_page: "all",
+    expire_in_days: 7,
+  };
+
+  const res = await axios.post(`${apiUrl}/v2/client/esign/create_request`, payload, {
+    headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+    timeout: 15_000,
+  });
+
+  const data = res.data;
+  if (!data?.id) throw new Error(`Digio eSign initiation failed: ${JSON.stringify(data)}`);
+
+  // Digio returns the signing URL inside signer details
+  const signerInfo = data.signing_parties?.[0] ?? {};
+  const esignUrl: string = signerInfo.sign_link ?? `${apiUrl}/esign/${data.id}`;
+
+  return { requestId: data.id as string, esignUrl, providerKey: "digio" };
+}
+
+/**
+ * Call Infinity AI's signing API to create an Aadhaar eSign request.
+ * Uses their candidate portal flow for document signing.
+ */
+async function _initiateInfinityEsign(
+  signerName: string,
+  signerEmail: string,
+  signerMobile: string,
+  pdfUrl: string,
+  referenceId: string
+): Promise<EsignInitResult> {
+  const apiKey = (await _orgSetting("infinity_ai_api_key")) ?? (env as any).INFINITY_AI_API_KEY ?? "";
+  const apiUrl = (await _orgSetting("infinity_ai_api_url")) ?? (env as any).INFINITY_AI_API_URL ?? "https://api.infinityai.in";
+  const clientId = (await _orgSetting("infinity_ai_client_id")) ?? (env as any).INFINITY_AI_CLIENT_ID ?? "";
+
+  if (!apiKey) throw new Error("Infinity AI API Key not configured in BGV settings.");
+
+  const payload = {
+    reference_id: referenceId,
+    document_url: pdfUrl,
+    signer: { name: signerName, email: signerEmail, mobile: signerMobile },
+    sign_type: "aadhaar_otp",
+    validity_days: 7,
+    client_id: clientId || undefined,
+  };
+
+  const res = await axios.post(`${apiUrl}/v1/esign/create`, payload, {
+    headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
+    timeout: 15_000,
+  });
+
+  const data = res.data;
+  if (!data?.request_id) throw new Error(`Infinity AI eSign initiation failed: ${JSON.stringify(data)}`);
+
+  const esignUrl: string = data.sign_url ?? data.esign_url ?? `${apiUrl}/esign/${data.request_id}`;
+  return { requestId: data.request_id as string, esignUrl, providerKey: "infinity_ai" };
+}
+
+/**
+ * Mock eSign — returns a local sign page URL. Used when BGV_PROVIDER=mock or Befisc
+ * (Befisc handles Aadhaar OTP auth but not document signing; fall back to Digio for signing
+ * or use mock in development).
+ */
+function _initiateMockEsign(
+  requestId: string,
+  signerName: string
+): EsignInitResult {
+  const esignUrl = `/sign/appointment/${requestId}?signer=${encodeURIComponent(signerName)}`;
+  return { requestId: `mock-${randomUUID()}`, esignUrl, providerKey: "mock" };
+}
+
+/** Send eSign link to candidate via email */
+async function _sendEsignEmail(
+  signerName: string,
+  signerEmail: string,
+  esignUrl: string,
+  providerKey: string
+): Promise<void> {
+  if (!emailService.isConfigured()) {
+    console.warn("[eSign] SMTP not configured — skipping eSign email notification.");
+    return;
+  }
+  const isAbsolute = esignUrl.startsWith("http");
+  const fullUrl = isAbsolute ? esignUrl : `https://mcnhrms.teammas.in${esignUrl}`;
+  const providerLabel = providerKey === "digio" ? "Digio (Aadhaar OTP)" : providerKey === "infinity_ai" ? "Infinity AI (Aadhaar OTP)" : "HRMS Sign Page";
+
+  await emailService.send({
+    to: signerEmail,
+    subject: "Action Required: Sign Your Appointment Letter",
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+        <div style="background:#2563EB;padding:20px;border-radius:8px 8px 0 0">
+          <h2 style="color:white;margin:0">MAS Callnet — Appointment Letter</h2>
+        </div>
+        <div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;padding:24px">
+          <p>Dear <strong>${signerName}</strong>,</p>
+          <p>Your appointment letter is ready for signing. Please sign it digitally using your <strong>Aadhaar-linked OTP</strong>.</p>
+          <p style="margin:24px 0">
+            <a href="${fullUrl}"
+               style="background:#2563EB;color:white;padding:12px 28px;text-decoration:none;border-radius:6px;font-weight:600;display:inline-block">
+              Sign Appointment Letter →
+            </a>
+          </p>
+          <p style="font-size:13px;color:#64748b">
+            Powered by <strong>${providerLabel}</strong>. This link expires in <strong>7 days</strong>.
+            If you have questions, contact your HR team.
+          </p>
+          <hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0"/>
+          <p style="font-size:12px;color:#94a3b8">
+            MAS Callnet PeopleOS &nbsp;|&nbsp; This is an automated message. Do not reply.
+          </p>
+        </div>
+      </div>`,
+    text: `Dear ${signerName},\n\nPlease sign your appointment letter at:\n${fullUrl}\n\nThis link expires in 7 days.\n\n— MAS Callnet HR`,
+  });
 }
 
 // ── service ───────────────────────────────────────────────────────────────────
@@ -73,27 +249,149 @@ export const appointmentEsignService = {
   },
 
   /**
-   * Initiate candidate e-sign step (mock — no real provider).
-   * Returns a mock sign page URL.
+   * Initiate real Aadhaar-based eSign via the active BGV provider.
+   * Looks up candidate contact details from DB, calls provider API,
+   * stores transaction ID, and sends email to candidate.
+   *
+   * Falls back to manual sign page if provider is mock or Befisc
+   * (Befisc handles Aadhaar OTP auth but not document signing).
    */
-  async initiateCandidateEsign(requestId: string): Promise<{ requestId: string; esignUrl: string }> {
+  async initiateCandidateEsign(
+    requestId: string,
+    pdfUrl?: string
+  ): Promise<{ requestId: string; esignUrl: string; providerKey: string }> {
     const prev = await _getState(requestId);
     if (!prev) throw Object.assign(new Error("Request not found"), { statusCode: 404 });
-    const esignUrl = `/api/letters/appointment/${requestId}/candidate-sign-page`;
+
+    // Fetch candidate contact info
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT alr.candidate_id, alr.employee_id,
+              COALESCE(e.name, c.full_name, op.employee_name) AS signer_name,
+              COALESCE(e.official_email, e.personal_email, c.email, op.personal_email_id) AS signer_email,
+              COALESCE(e.mobile, c.mobile, op.mobile_number) AS signer_mobile
+         FROM appointment_letter_request alr
+         LEFT JOIN ats_candidate c ON c.id = alr.candidate_id
+         LEFT JOIN candidate_onboarding_profile op ON op.candidate_id = alr.candidate_id
+         LEFT JOIN employees e ON e.id = alr.employee_id
+        WHERE alr.id = ? LIMIT 1`,
+      [requestId]
+    );
+    const row = (rows as RowDataPacket[])[0];
+    if (!row) throw Object.assign(new Error("Request not found"), { statusCode: 404 });
+
+    const signerName: string = (row.signer_name as string) ?? "Candidate";
+    const signerEmail: string = row.signer_email as string;
+    const signerMobile: string = row.signer_mobile as string;
+
+    if (!signerEmail) throw new Error("Candidate email not found — cannot send eSign link.");
+    if (!signerMobile) throw new Error("Candidate mobile not found — Aadhaar OTP requires a registered mobile.");
+
+    const provider = await _activeProvider();
+    const effectivePdfUrl = pdfUrl ?? `/api/letters/appointment/${requestId}/pdf`;
+
+    let esignResult: EsignInitResult;
+
+    if (provider === "digio") {
+      esignResult = await _initiateDigioEsign(signerName, signerEmail, signerMobile, effectivePdfUrl, requestId);
+    } else if (provider === "infinity_ai") {
+      esignResult = await _initiateInfinityEsign(signerName, signerEmail, signerMobile, effectivePdfUrl, requestId);
+    } else {
+      // mock or befisc_luckpay — use local sign page
+      esignResult = _initiateMockEsign(requestId, signerName);
+    }
+
     await db.execute(
       `UPDATE appointment_letter_request
-          SET current_state        = 'candidate_esign_pending',
-              candidate_esign_url  = ?,
-              candidate_esign_status = 'pending'
+          SET current_state          = 'candidate_esign_pending',
+              candidate_esign_url    = ?,
+              candidate_esign_status = 'pending',
+              esign_transaction_id   = ?,
+              esign_request_id       = ?,
+              esign_signer_name      = ?,
+              esign_signer_email     = ?,
+              esign_signer_mobile    = ?,
+              esign_initiated_at     = NOW(),
+              esign_provider_used    = ?
         WHERE id = ?`,
-      [esignUrl, requestId]
+      [
+        esignResult.esignUrl,
+        esignResult.requestId,
+        esignResult.requestId,
+        signerName,
+        signerEmail,
+        signerMobile,
+        esignResult.providerKey,
+        requestId,
+      ]
     );
-    await _auditLog(requestId, "CANDIDATE_ESIGN_INITIATE", prev, "candidate_esign_pending", null);
-    return { requestId, esignUrl };
+
+    await _auditLog(
+      requestId,
+      "CANDIDATE_ESIGN_INITIATE",
+      prev,
+      "candidate_esign_pending",
+      null,
+      `Provider: ${esignResult.providerKey}, TxnId: ${esignResult.requestId}`
+    );
+
+    // Send email notification with sign link
+    await _sendEsignEmail(signerName, signerEmail, esignResult.esignUrl, esignResult.providerKey).catch((e) => {
+      console.warn("[eSign] Email notification failed:", e.message);
+    });
+
+    return { requestId: esignResult.requestId, esignUrl: esignResult.esignUrl, providerKey: esignResult.providerKey };
   },
 
   /**
-   * Record completion of candidate e-sign.
+   * Handle provider webhook callback confirming candidate signed.
+   * Called by /api/letters/appointment/esign-webhook (no auth, HMAC-validated).
+   */
+  async handleEsignWebhook(
+    providerRequestId: string,
+    status: "signed" | "failed" | "expired",
+    rawPayload: Record<string, unknown>
+  ): Promise<void> {
+    // Find the letter request by provider transaction ID
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, current_state FROM appointment_letter_request
+        WHERE esign_request_id = ? OR esign_transaction_id = ?
+        LIMIT 1`,
+      [providerRequestId, providerRequestId]
+    );
+    const req = (rows as RowDataPacket[])[0];
+    if (!req) {
+      console.warn(`[eSign webhook] No appointment_letter_request found for provider ID: ${providerRequestId}`);
+      return;
+    }
+
+    const letterRequestId = req.id as string;
+    const prev = req.current_state as string;
+
+    if (status === "signed") {
+      await db.execute(
+        `UPDATE appointment_letter_request
+            SET current_state          = 'candidate_signed',
+                candidate_esign_status = 'signed',
+                candidate_esign_at     = NOW()
+          WHERE id = ?`,
+        [letterRequestId]
+      );
+      await _auditLog(letterRequestId, "CANDIDATE_ESIGN_COMPLETE", prev, "candidate_signed", "webhook",
+        `Signed via provider webhook. Payload keys: ${Object.keys(rawPayload).join(", ")}`);
+    } else {
+      await db.execute(
+        `UPDATE appointment_letter_request
+            SET candidate_esign_status = ?
+          WHERE id = ?`,
+        [status, letterRequestId]
+      );
+      await _auditLog(letterRequestId, `CANDIDATE_ESIGN_${status.toUpperCase()}`, prev, prev, "webhook",
+        `Provider returned status: ${status}`);
+    }
+  },
+
+  /**
+   * Record completion of candidate e-sign (manual/HR override path).
    */
   async completeCandidateEsign(requestId: string, signedBy: string): Promise<void> {
     const prev = await _getState(requestId);
@@ -106,7 +404,7 @@ export const appointmentEsignService = {
         WHERE id = ?`,
       [requestId]
     );
-    await _auditLog(requestId, "CANDIDATE_ESIGN_COMPLETE", prev, "candidate_signed", signedBy);
+    await _auditLog(requestId, "CANDIDATE_ESIGN_COMPLETE", prev, "candidate_signed", signedBy, "Manual completion by HR");
   },
 
   /**
@@ -149,7 +447,6 @@ export const appointmentEsignService = {
     const prev = await _getState(requestId);
     if (!prev) throw Object.assign(new Error("Request not found"), { statusCode: 404 });
 
-    // Fetch candidate_id for vault row
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT candidate_id FROM appointment_letter_request WHERE id = ? LIMIT 1",
       [requestId]
@@ -169,7 +466,6 @@ export const appointmentEsignService = {
       [vaultPath, requestId]
     );
 
-    // Insert into employee_document_vault
     const vaultId = randomUUID();
     await db.execute(
       `INSERT INTO employee_document_vault

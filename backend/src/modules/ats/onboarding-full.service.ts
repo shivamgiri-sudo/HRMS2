@@ -158,7 +158,7 @@ export async function getFullOnboardingStatus(token: string) {
   const [bankRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, bank_name, branch_name, account_holder_name, account_no_masked, ifsc_code,
             account_type, verification_status, name_validation_status, cancelled_cheque_document_id,
-            name_on_cheque, updated_at
+            updated_at
        FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`,
     [candidateId]
   );
@@ -298,46 +298,34 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
     ]
   );
 
+  // Only update columns that actually exist on ats_candidate.
+  // Extended profile fields (title, relation, marital_status, blood_group, nominee_*, state/city/pincode, official_email, source_type)
+  // are stored exclusively in candidate_onboarding_profile (saved above).
   await db.execute(
     `UPDATE ats_candidate SET
-       title = ?, relation = ?, father_husband_name = ?, father_name = ?, gender = ?, marital_status = ?,
-       date_of_birth = ?, blood_group = ?, nominee_name = ?, nominee_relation = ?, nominee_date_of_birth = ?,
-       permanent_address = ?, permanent_state = ?, permanent_city = ?, permanent_pincode = ?,
-       current_address = ?, present_state = ?, present_city = ?, present_pincode = ?, alt_mobile_number = ?,
-       personal_email_id = ?, official_email_id = ?,
+       father_name = COALESCE(?, father_name),
+       gender = COALESCE(?, gender),
+       date_of_birth = COALESCE(?, date_of_birth),
+       current_address = ?,
+       permanent_address = ?,
+       alt_mobile_number = ?,
+       personal_email_id = COALESCE(?, personal_email_id),
        pan_number = COALESCE(?, pan_number), pan_number_hash = COALESCE(?, pan_number_hash),
        aadhar_number = COALESCE(?, aadhar_number), aadhar_number_hash = COALESCE(?, aadhar_number_hash),
-       source_type = ?, source = ?, profile_status = 'profile_in_progress', updated_at = NOW()
+       profile_status = 'profile_in_progress', updated_at = NOW()
      WHERE id = ?`,
     [
-      input.title ?? null,
-      input.relation ?? null,
-      input.fatherHusbandName ?? input.father_name ?? null,
       input.fatherHusbandName ?? input.father_name ?? null,
       input.gender ?? tokenData.gender ?? null,
-      input.maritalStatus ?? null,
       safeDate(input.dateOfBirth ?? tokenData.date_of_birth),
-      input.bloodGroup ?? null,
-      input.nominee ?? input.nomineeName ?? null,
-      input.nomineeRelation ?? null,
-      safeDate(input.nomineeDateOfBirth),
-      input.permanentAddress ?? null,
-      input.permanentState ?? null,
-      input.permanentCity ?? null,
-      input.permanentPincode ?? null,
       input.presentAddress ?? input.current_address ?? null,
-      input.presentState ?? null,
-      input.presentCity ?? null,
-      input.presentPincode ?? null,
+      input.permanentAddress ?? null,
       input.altMobileNumber ?? null,
       input.personalEmailId ?? tokenData.email ?? null,
-      input.officialEmailId ?? null,
       panMasked,
       panHash,
       aadhaarMasked,
       aadhaarHash,
-      input.sourceType ?? tokenData.source_type ?? null,
-      input.source ?? tokenData.source ?? null,
       candidateId,
     ]
   );
@@ -376,13 +364,12 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
   await db.execute(
     `INSERT INTO candidate_onboarding_bank_detail
        (id, candidate_id, bank_name, branch_name, account_holder_name, account_no_masked,
-        account_no_hash, ifsc_code, account_type, cancelled_cheque_document_id, name_on_cheque, verification_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'not_started')
+        account_no_hash, ifsc_code, account_type, cancelled_cheque_document_id, verification_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'not_started')
      ON DUPLICATE KEY UPDATE
        bank_name = VALUES(bank_name), branch_name = VALUES(branch_name), account_holder_name = VALUES(account_holder_name),
        account_no_masked = VALUES(account_no_masked), account_no_hash = VALUES(account_no_hash), ifsc_code = VALUES(ifsc_code),
        account_type = VALUES(account_type), cancelled_cheque_document_id = VALUES(cancelled_cheque_document_id),
-       name_on_cheque = VALUES(name_on_cheque),
        updated_at = NOW()`,
     [
       id,
@@ -395,7 +382,6 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
       String(input.ifscCode ?? input.bank_ifsc ?? "").trim().toUpperCase() || null,
       input.accountType ?? null,
       input.cancelledChequeDocumentId ?? null,
-      nameOnCheque,
     ]
   );
 

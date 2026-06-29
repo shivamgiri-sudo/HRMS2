@@ -1076,6 +1076,10 @@ export interface BgvDbConfig {
   digio_api_url?: string;
   digio_client_id?: string;
   digio_client_secret?: string;
+  befisc_api_key?: string;
+  luckpay_basic_token?: string;
+  luckpay_client_id?: string;
+  crimescan_api_key?: string;
 }
 
 export function buildAdapterFromDbConfig(cfg: BgvDbConfig): BgvProviderAdapter {
@@ -1110,6 +1114,25 @@ export function buildAdapterFromDbConfig(cfg: BgvDbConfig): BgvProviderAdapter {
     (env as any).DIGIO_CLIENT_ID = savedId;
     (env as any).DIGIO_CLIENT_SECRET = savedSecret;
     (env as any).DIGIO_API_URL = savedUrl;
+    return adapter;
+  }
+  if (provider === "befisc_luckpay") {
+    if (!cfg.befisc_api_key || !cfg.luckpay_basic_token || !cfg.luckpay_client_id || !cfg.crimescan_api_key) {
+      throw new Error("Befisc API Key, Luckpay Basic Token, Luckpay Client ID, and Crimescan API Key are all required for Befisc/Luckpay provider.");
+    }
+    const savedBefisc = env.BEFISC_API_KEY;
+    const savedLuckpayToken = env.LUCKPAY_BASIC_TOKEN;
+    const savedLuckpayClient = env.LUCKPAY_CLIENT_ID;
+    const savedCrimescan = env.CRIMESCAN_API_KEY;
+    (env as any).BEFISC_API_KEY = cfg.befisc_api_key;
+    (env as any).LUCKPAY_BASIC_TOKEN = cfg.luckpay_basic_token;
+    (env as any).LUCKPAY_CLIENT_ID = cfg.luckpay_client_id;
+    (env as any).CRIMESCAN_API_KEY = cfg.crimescan_api_key;
+    const adapter = new BefiscLuckpayCrimescanAdapter();
+    (env as any).BEFISC_API_KEY = savedBefisc;
+    (env as any).LUCKPAY_BASIC_TOKEN = savedLuckpayToken;
+    (env as any).LUCKPAY_CLIENT_ID = savedLuckpayClient;
+    (env as any).CRIMESCAN_API_KEY = savedCrimescan;
     return adapter;
   }
   return new MockBgvProviderAdapter();

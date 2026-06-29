@@ -432,6 +432,7 @@ const BGV_CONFIG_KEYS = [
   "bgv_provider",
   "infinity_ai_api_url", "infinity_ai_api_key", "infinity_ai_client_id", "infinity_ai_portal_url",
   "digio_api_url", "digio_client_id", "digio_client_secret",
+  "befisc_api_key", "luckpay_basic_token", "luckpay_client_id", "crimescan_api_key",
 ];
 
 router.get("/admin/provider-config", requireAuth, requireRole("admin"), h(async (_req: AuthenticatedRequest, res: Response) => {

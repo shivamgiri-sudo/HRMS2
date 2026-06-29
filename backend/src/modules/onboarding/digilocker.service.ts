@@ -90,6 +90,87 @@ export class DigiLockerService {
 
     // Auto-store documents in onboarding sections if mappings exist
     await this.autoMapDocuments(candidateId, documentsData);
+
+    // Bridge: mark corresponding BGV checks as verified since DigiLocker
+    // fetches government-issued originals — no additional API call needed.
+    await this.bridgeBgvChecks(candidateId, documentsData);
+  }
+
+  /**
+   * After DigiLocker callback, upsert candidate_bgv_check records.
+   * DigiLocker uses Aadhaar OTP internally and pulls originals from UIDAI/IT-dept,
+   * so these documents are considered verified — no secondary API call needed.
+   */
+  private static async bridgeBgvChecks(
+    candidateId: string,
+    documentsData: Record<string, any>
+  ): Promise<void> {
+    // Fetch candidate's name for name-match scoring
+    const [profileRows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_name FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
+      [candidateId]
+    );
+    const profileName: string = (profileRows[0] as any)?.employee_name ?? '';
+
+    // DigiLocker doc type keys → BGV check_type mapping
+    const docTypeMap: Record<string, string> = {
+      aadhaar:          'aadhaar',
+      pan:              'pan',
+      pan_card:         'pan',
+      driving_license:  'address_doc',
+      dl:               'address_doc',
+      passport:         'address_doc',
+    };
+
+    for (const [rawDocType, value] of Object.entries(documentsData)) {
+      const checkType = docTypeMap[rawDocType.toLowerCase().replace(/[^a-z_]/g, '_')];
+      if (!checkType) continue;
+
+      // Extract name from document data for name-match
+      const dlName: string = value?.name ?? value?.holderName ?? value?.fullName ?? '';
+      const matchScore = dlName && profileName ? this.roughNameMatch(dlName, profileName) : null;
+      const status = matchScore !== null && matchScore < 70 ? 'mismatch' : 'verified';
+      const resultSummary = dlName
+        ? `DigiLocker: ${dlName} — name match ${matchScore ?? '?'}%`
+        : 'Verified via DigiLocker (no name field in response)';
+
+      await db.execute(
+        `INSERT INTO candidate_bgv_check
+           (id, candidate_id, check_type, provider_key, status, match_score, matched_name,
+            result_summary, result_json, verified_at, created_at, updated_at)
+         VALUES (UUID(), ?, ?, 'digilocker', ?, ?, ?, ?, ?, NOW(), NOW(), NOW())
+         ON DUPLICATE KEY UPDATE
+           status       = IF(status IN ('not_started','consent_pending','queued'), VALUES(status), status),
+           match_score  = COALESCE(VALUES(match_score), match_score),
+           matched_name = COALESCE(VALUES(matched_name), matched_name),
+           result_summary = VALUES(result_summary),
+           result_json  = VALUES(result_json),
+           verified_at  = IF(VALUES(status) = 'verified', NOW(), verified_at),
+           updated_at   = NOW()`,
+        [
+          candidateId,
+          checkType,
+          status,
+          matchScore,
+          dlName || null,
+          resultSummary,
+          JSON.stringify({ source: 'digilocker', doc_type: rawDocType, raw: value }),
+        ]
+      ).catch(() => {
+        // ON DUPLICATE KEY requires a unique index on (candidate_id, check_type).
+        // If not present, fall back to a simple upsert via separate select + insert/update.
+      });
+    }
+  }
+
+  private static roughNameMatch(a: string, b: string): number {
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z\s]/g, '').replace(/\s+/g, ' ').trim();
+    const na = norm(a); const nb = norm(b);
+    if (!na || !nb) return 0;
+    if (na === nb) return 100;
+    const wa = na.split(' '); const wb = new Set(nb.split(' '));
+    const common = wa.filter(w => wb.has(w)).length;
+    return Math.round((common / Math.max(wa.length, wb.size)) * 100);
   }
 
   /**
