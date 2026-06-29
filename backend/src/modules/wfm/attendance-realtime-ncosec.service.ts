@@ -24,19 +24,11 @@ interface RealTimePunch {
 }
 
 /**
- * NCOSEC/mssql returns DATETIME columns as JS Date objects whose .getTime()
- * represents the literal IST wall-clock value interpreted as UTC.
- * To convert correctly: read the wall-clock digits and tag with +05:30.
- * Do NOT call toIST() here — that adds another +5:30 offset.
+ * NCOSEC stores IST times (wall-clock). We query with CONVERT(CHAR) to get
+ * string values directly from MSSQL with NO driver conversion.
+ * Result: "2026-06-27 15:38:29" (exact IST time from NCOSEC)
+ * We just replace space with T and tag +05:30 - NO arithmetic, NO offset.
  */
-function mssqlDateToIST(d: Date | null | undefined): string | null {
-  if (!d) return null;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}+05:30`
-  );
-}
 
 interface EmployeeCosecMapping {
   employee_id: string;
@@ -92,8 +84,8 @@ export async function getRealTimePunchesToday(employeeId: string): Promise<RealT
       .query(`
         SELECT
           UserID,
-          MIN(Edatetime) as first_punch,
-          MAX(Edatetime) as last_punch,
+          CONVERT(CHAR(19), MIN(Edatetime), 120) as first_punch,
+          CONVERT(CHAR(19), MAX(Edatetime), 120) as last_punch,
           COUNT(*) as total_punches,
           DATEDIFF(MINUTE, MIN(Edatetime), MAX(Edatetime)) as raw_minutes
         FROM ${env.NCOSEC_EVENT_TABLE || 'dbo.Mx_ATDEventTrn'}
@@ -109,10 +101,14 @@ export async function getRealTimePunchesToday(employeeId: string): Promise<RealT
 
     const row = result.recordset[0];
 
+    // NCOSEC stores IST times. Query returns them as strings via CONVERT(CHAR).
+    // Just tag with +05:30, no conversion needed.
+    const tagIST = (str: string | null) => str ? str.replace(' ', 'T') + '+05:30' : null;
+
     return {
       punch_date: todayStr,
-      first_punch_in: mssqlDateToIST(row.first_punch),
-      last_punch_out: row.total_punches > 1 ? mssqlDateToIST(row.last_punch) : null,
+      first_punch_in: tagIST(row.first_punch),
+      last_punch_out: row.total_punches > 1 ? tagIST(row.last_punch) : null,
       total_punches: row.total_punches || 0,
       raw_minutes: row.raw_minutes || 0,
       source: 'ncosec_realtime',
@@ -153,9 +149,9 @@ export async function getRealTimePunchesRange(
       .input('dateEnd', `${toDate} 23:59:59`)
       .query(`
         SELECT
-          CAST(Edatetime AS DATE) as punch_date,
-          MIN(Edatetime) as first_punch,
-          MAX(Edatetime) as last_punch,
+          CONVERT(CHAR(10), CAST(Edatetime AS DATE), 23) as punch_date,
+          CONVERT(CHAR(19), MIN(Edatetime), 120) as first_punch,
+          CONVERT(CHAR(19), MAX(Edatetime), 120) as last_punch,
           COUNT(*) as total_punches,
           DATEDIFF(MINUTE, MIN(Edatetime), MAX(Edatetime)) as raw_minutes
         FROM ${env.NCOSEC_EVENT_TABLE || 'dbo.Mx_ATDEventTrn'}
@@ -163,15 +159,15 @@ export async function getRealTimePunchesRange(
           AND Edatetime >= @dateStart
           AND Edatetime <= @dateEnd
         GROUP BY CAST(Edatetime AS DATE)
-        ORDER BY punch_date DESC
+        ORDER BY CAST(Edatetime AS DATE) DESC
       `);
 
+    const tagIST = (str: string | null) => str ? str.replace(' ', 'T') + '+05:30' : null;
+
     return result.recordset.map(row => ({
-      punch_date: row.punch_date instanceof Date
-        ? row.punch_date.toISOString().split('T')[0]
-        : String(row.punch_date),
-      first_punch_in: mssqlDateToIST(row.first_punch),
-      last_punch_out: row.total_punches > 1 ? mssqlDateToIST(row.last_punch) : null,
+      punch_date: String(row.punch_date),
+      first_punch_in: tagIST(row.first_punch),
+      last_punch_out: row.total_punches > 1 ? tagIST(row.last_punch) : null,
       total_punches: row.total_punches || 0,
       raw_minutes: row.raw_minutes || 0,
       source: 'ncosec_realtime',
