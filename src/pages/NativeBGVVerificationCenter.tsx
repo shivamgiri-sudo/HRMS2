@@ -280,24 +280,47 @@ export default function NativeBGVVerificationCenter() {
                         </thead>
                         <tbody>
                           {selected.checks.map((c) => (
-                            <tr key={c.id} className="border-t">
-                              <td className="p-3 font-medium">{CHECK_LABELS[c.check_type] ?? c.check_type}</td>
-                              <td className="p-3">
-                                <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${STATUS_COLOR[c.status] ?? "bg-slate-100 text-slate-600"}`}>{c.status}</span>
-                              </td>
-                              <td className="p-3 text-xs text-slate-500">{c.match_score != null ? `${c.match_score}%` : "-"}</td>
-                              <td className="p-3">
-                                <div className="flex flex-wrap gap-1">
-                                  <Button size="sm" variant="outline" onClick={() => manualReview("verified", c.id)}>
-                                    <CheckCircle2 className="mr-1 h-3 w-3 text-emerald-600" />Clear
-                                  </Button>
-                                  <Button size="sm" variant="outline" onClick={() => waive(c.id)}>Waive</Button>
-                                  <Button size="sm" variant="outline" onClick={() => openDispatchForm(c)} className="gap-1 border-orange-300 text-orange-700 hover:bg-orange-50">
-                                    <Send className="h-3 w-3" />Vendor
-                                  </Button>
-                                </div>
-                              </td>
-                            </tr>
+                            <>
+                              <tr key={c.id} className="border-t">
+                                <td className="p-3 font-medium">{CHECK_LABELS[c.check_type] ?? c.check_type}</td>
+                                <td className="p-3">
+                                  <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${STATUS_COLOR[c.status] ?? "bg-slate-100 text-slate-600"}`}>{c.status}</span>
+                                </td>
+                                <td className="p-3 text-xs text-slate-500">{c.match_score != null ? `${c.match_score}%` : "-"}</td>
+                                <td className="p-3">
+                                  <div className="flex flex-wrap gap-1">
+                                    <Button size="sm" variant="outline" onClick={() => manualReview("verified", c.id)}>
+                                      <CheckCircle2 className="mr-1 h-3 w-3 text-emerald-600" />Clear
+                                    </Button>
+                                    <Button size="sm" variant="outline" onClick={() => waive(c.id)}>Waive</Button>
+                                    <Button size="sm" variant="outline" onClick={() => openDispatchForm(c)} className="gap-1 border-orange-300 text-orange-700 hover:bg-orange-50">
+                                      <Send className="h-3 w-3" />Vendor
+                                    </Button>
+                                  </div>
+                                </td>
+                              </tr>
+                              {/* API failure banner: prompt manual BGV dispatch */}
+                              {(c.status === "failed" || c.status === "error") && (
+                                <tr key={`${c.id}-banner`} className="bg-amber-50">
+                                  <td colSpan={4} className="px-3 py-2">
+                                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                                      <div className="flex items-center gap-2 text-amber-800 text-xs">
+                                        <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                                        <span><strong>API verification failed</strong> — dispatch to an external vendor for manual BGV on this check.</span>
+                                      </div>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="border-amber-400 text-amber-800 hover:bg-amber-100 text-xs"
+                                        onClick={() => openDispatchForm(c)}
+                                      >
+                                        <Send className="h-3 w-3 mr-1" />Dispatch to Vendor
+                                      </Button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </>
                           ))}
                         </tbody>
                       </table>
@@ -363,7 +386,7 @@ export default function NativeBGVVerificationCenter() {
                 {/* Vendor dispatch history + result entry */}
                 {dispatches.length > 0 && (
                   <Card>
-                    <CardHeader><CardTitle className="flex items-center gap-2"><PackageCheck className="h-4 w-4" />Vendor Dispatches</CardTitle></CardHeader>
+                    <CardHeader><CardTitle className="flex items-center gap-2"><PackageCheck className="h-4 w-4" />Manual BGV Fallback — Vendor Dispatch History</CardTitle></CardHeader>
                     <CardContent className="space-y-4">
                       {dispatches.map((d) => (
                         <div key={d.id} className="rounded-2xl border p-4 space-y-2">

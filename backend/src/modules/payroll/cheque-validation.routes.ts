@@ -14,7 +14,7 @@ router.use(requireAuth);
 
 // ── GET /api/payroll/cheque-validation/queue ─────────────────────────────────
 // Payroll HO list of pending cheque name mismatch cases.
-router.get('/queue', requireRole('payroll', 'super_admin', 'finance'), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get('/queue', requireRole('payroll', 'payroll_head', 'super_admin', 'finance'), h(async (_req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT cnv.*,
             ac.full_name AS candidate_full_name, ac.candidate_code, ac.mobile,
@@ -33,7 +33,7 @@ router.get('/queue', requireRole('payroll', 'super_admin', 'finance'), h(async (
 
 // ── GET /api/payroll/cheque-validation/:id ───────────────────────────────────
 // Single case detail — includes cheque image URL and all candidate/bank details.
-router.get('/:id', requireRole('payroll', 'super_admin', 'finance'), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get('/:id', requireRole('payroll', 'payroll_head', 'super_admin', 'finance'), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT cnv.*,
             ac.full_name AS candidate_full_name, ac.candidate_code, ac.mobile, ac.email,
@@ -56,7 +56,7 @@ router.get('/:id', requireRole('payroll', 'super_admin', 'finance'), h(async (re
 
 // ── PATCH /api/payroll/cheque-validation/:id ─────────────────────────────────
 // Payroll HO validates (or rejects) a cheque name mismatch case.
-router.patch('/:id', requireRole('payroll', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
+router.patch('/:id', requireRole('payroll', 'payroll_head', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
   const actorUserId = req.authUser!.id;
   const { decision, note } = req.body as {
     decision: 'manual_validated' | 'rejected';

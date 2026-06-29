@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2';
 import { inboxService } from '../inbox/inbox.service.js';
 import { emailService } from '../communication/email.service.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
+import { createTatInstance } from '../governance/tat.service.js';
 
 const OFFICIAL_EMAIL_REGEX = /^[a-zA-Z0-9._%+\-]+@(teammas\.in|teammas\.co\.in)$/;
 export { OFFICIAL_EMAIL_REGEX };
@@ -151,6 +152,23 @@ async function createRequest(params: {
 
 // ── JOIN trigger ───────────────────────────────────────────────────────────────
 
+// TAT task type mapping for each provisioning task code
+const JOIN_TAT_MAP: Record<string, string> = {
+  WFM_PROCESS_ALIGNMENT: 'JCLR_ENTRY',
+  IT_EMAIL_DOMAIN_ASSET: 'DOMAIN_CREATION',
+  ADMIN_BIOMETRIC_ID_CARD: 'BIOMETRIC_ENROLL',
+  APPOINTMENT_LETTER_ESIGN: 'APPOINTMENT_LETTER',
+};
+
+const EXIT_TAT_MAP: Record<string, string> = {
+  domain_delete: 'DOMAIN_CREATION',
+  email_delete: 'EMAIL_CREATION',
+  biometric_delete: 'BIOMETRIC_ENROLL',
+};
+
+// IT tasks that require IT Head governance notification
+const IT_TASKS_NEEDING_HEAD_CC = new Set(['IT_EMAIL_DOMAIN_ASSET', 'domain_delete', 'email_delete']);
+
 const JOIN_TASKS: ProvisioningTask[] = [
   {
     taskCode: 'WFM_PROCESS_ALIGNMENT',
@@ -161,17 +179,17 @@ const JOIN_TASKS: ProvisioningTask[] = [
   },
   {
     taskCode: 'IT_EMAIL_DOMAIN_ASSET',
-    assignedRole: 'it',
+    assignedRole: 'branch_it',
     titleFn: (name, code) => `IT Action: Create domain account + official email for ${name} [${code}]`,
     descFn: (name, code) =>
       `New employee ${name} (${code}) has an employee code. Please create their domain account, official email ID (@teammas.in / @teammas.co.in), and asset assignment in the HRMS portal.`,
   },
   {
     taskCode: 'ADMIN_BIOMETRIC_ID_CARD',
-    assignedRole: 'admin',
-    titleFn: (name, code) => `Admin Action: Biometric and ID card for ${name} [${code}]`,
+    assignedRole: 'branch_admin',
+    titleFn: (name, code) => `Branch Admin Action: Biometric enrollment and ID card for ${name} [${code}]`,
     descFn: (name, code) =>
-      `New employee ${name} (${code}) has an employee code. Please enroll biometric attendance and issue the employee ID card.`,
+      `New employee ${name} (${code}) has an employee code. Please enroll them on the biometric attendance system and issue the employee ID card.`,
   },
   {
     taskCode: 'APPOINTMENT_LETTER_ESIGN',
@@ -208,6 +226,27 @@ export async function dispatchJoinProvisioningTasks(params: {
     });
 
     await dispatchNotifications(users, 'it_provisioning', title, desc, requestId, '/it-provisioning');
+
+    // IT Head governance: send a CC inbox notification (no task row) for IT tasks
+    if (IT_TASKS_NEEDING_HEAD_CC.has(task.taskCode)) {
+      const itHeadUsers = await getUsersForGlobalRole('it_head');
+      if (itHeadUsers.length > 0) {
+        await dispatchNotifications(
+          itHeadUsers, 'it_provisioning_governance',
+          `[Governance] ${title}`,
+          `For your awareness: ${desc}`,
+          requestId, '/it-provisioning',
+        ).catch((err: unknown) => console.error('[it-provisioning] IT Head governance ping failed:', err));
+      }
+    }
+
+    // Wire TAT SLA clock
+    const tatTaskType = JOIN_TAT_MAP[task.taskCode];
+    const assignedTo = users[0]?.userId ?? null;
+    if (tatTaskType && assignedTo) {
+      await createTatInstance(tatTaskType, 'it_provisioning_request', requestId, assignedTo, branchId ?? undefined)
+        .catch((err: unknown) => console.error('[it-provisioning] TAT instance create failed:', err));
+    }
   }
 }
 
@@ -216,22 +255,22 @@ export async function dispatchJoinProvisioningTasks(params: {
 const EXIT_TASKS: ProvisioningTask[] = [
   {
     taskCode: 'domain_delete',
-    assignedRole: 'it',
+    assignedRole: 'branch_it',
     titleFn: (name, code, lwd) => `IT Action: Delete domain account for ${name} [${code}]${lwd ? ` (LWD: ${lwd})` : ''}`,
     descFn: (name, code, lwd) =>
       `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ''}. Please delete their domain account immediately.`,
   },
   {
     taskCode: 'email_delete',
-    assignedRole: 'it',
+    assignedRole: 'branch_it',
     titleFn: (name, code, lwd) => `IT Action: Delete official email for ${name} [${code}]${lwd ? ` (LWD: ${lwd})` : ''}`,
     descFn: (name, code, lwd) =>
       `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ''}. Please delete their official email ID and revoke all email access.`,
   },
   {
     taskCode: 'biometric_delete',
-    assignedRole: 'admin',
-    titleFn: (name, code, lwd) => `Biometric: Remove ${name} [${code}] from biometric system${lwd ? ` (LWD: ${lwd})` : ''}`,
+    assignedRole: 'branch_admin',
+    titleFn: (name, code, lwd) => `Branch Admin: Remove ${name} [${code}] from biometric system${lwd ? ` (LWD: ${lwd})` : ''}`,
     descFn: (name, code, lwd) =>
       `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ''}. Please remove them from the biometric attendance system.`,
   },
@@ -271,6 +310,27 @@ export async function dispatchExitProvisioningTasks(params: {
     });
 
     await dispatchNotifications(users, 'it_provisioning', title, desc, requestId, '/it-provisioning');
+
+    // IT Head governance: CC notification for IT exit tasks
+    if (IT_TASKS_NEEDING_HEAD_CC.has(task.taskCode)) {
+      const itHeadUsers = await getUsersForGlobalRole('it_head');
+      if (itHeadUsers.length > 0) {
+        await dispatchNotifications(
+          itHeadUsers, 'it_provisioning_governance',
+          `[Governance] ${title}`,
+          `For your awareness: ${desc}`,
+          requestId, '/it-provisioning',
+        ).catch((err: unknown) => console.error('[it-provisioning] IT Head governance ping failed:', err));
+      }
+    }
+
+    // Wire TAT SLA clock
+    const tatTaskType = EXIT_TAT_MAP[task.taskCode];
+    const assignedTo = users[0]?.userId ?? null;
+    if (tatTaskType && assignedTo) {
+      await createTatInstance(tatTaskType, 'it_provisioning_request', requestId, assignedTo, branchId ?? undefined)
+        .catch((err: unknown) => console.error('[it-provisioning] TAT instance create failed:', err));
+    }
   }
 }
 

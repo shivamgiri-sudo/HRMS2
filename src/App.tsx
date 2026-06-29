@@ -55,6 +55,7 @@ const NativeBranchHeadApproval      = lazy(() => import("./pages/NativeBranchHea
 const NativeBGVVerificationCenter   = lazy(() => import("./pages/NativeBGVVerificationCenter"));
 const NativePayrollHRValidation     = lazy(() => import("./pages/NativePayrollHRValidation"));
 const NativePayrollHOQueues         = lazy(() => import("./pages/NativePayrollHOQueues"));
+const NativeChequeNameValidation    = lazy(() => import("./pages/NativeChequeNameValidation"));
 const NativeSalaryPackageAdmin      = lazy(() => import("./pages/NativeSalaryPackageAdmin"));
 const NativeGRNManagement           = lazy(() => import("./pages/NativeGRNManagement"));
 
@@ -421,6 +422,7 @@ const App = () => (
               <Route path="/payroll/statutory-config" element={<ProtectedRoute><Gate pageCode="STATUTORY_CONFIG"><NativeStatutoryConfig /></Gate></ProtectedRoute>} />
               <Route path="/payroll/masters" element={<ProtectedRoute><Gate pageCode="PAYROLL_MASTERS"><NativePayrollMasters /></Gate></ProtectedRoute>} />
               <Route path="/payroll/ho-queues" element={<ProtectedRoute><NativePayrollHOQueues /></ProtectedRoute>} />
+              <Route path="/payroll/cheque-validation" element={<ProtectedRoute roles={['payroll','payroll_head','super_admin','finance']}><NativeChequeNameValidation /></ProtectedRoute>} />
               <Route path="/payroll/package-admin" element={<ProtectedRoute roles={['admin','super_admin','payroll']}><NativeSalaryPackageAdmin /></ProtectedRoute>} />
               <Route path="/payroll/salary-packages" element={<ProtectedRoute><Gate pageCode="SALARY_PACKAGES"><NativeSalaryPackages /></Gate></ProtectedRoute>} />
               <Route path="/payroll/incentives" element={<ProtectedRoute><Gate pageCode="PAYROLL_INCENTIVES"><NativeIncentives /></Gate></ProtectedRoute>} />
