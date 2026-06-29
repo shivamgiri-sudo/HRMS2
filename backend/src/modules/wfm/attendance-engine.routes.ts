@@ -280,4 +280,91 @@ router.post('/clock-out', h(async (req: AuthenticatedRequest, res: Response) => 
   res.json({ success: true, data: out });
 }));
 
+// ── Web Punch-In / Punch-Out (Validation-Only) ────────────────────────────────
+// Web punch records the browser-time employee was online. It does NOT affect
+// attendance_status — that remains driven by NCOSEC biometric or APR dialler data.
+
+router.post('/web-punch-in', h(async (req, res) => {
+  const userId = (req as any).authUser?.id as string;
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, error: 'No employee record found' });
+
+  const { latitude, longitude, location_name } = req.body ?? {};
+  const today = nowIST().split(' ')[0]!; // "YYYY-MM-DD"
+  const now = nowIST(); // "YYYY-MM-DD HH:mm:ss" IST wall-clock
+
+  // Check if already web-punched in today
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT id, web_punch_in FROM attendance_daily_record
+     WHERE employee_id = ? AND record_date = ? LIMIT 1`,
+    [emp.id, today],
+  );
+  const record = (existing as any[])[0] ?? null;
+
+  if (record?.web_punch_in) {
+    return res.status(409).json({ success: false, error: 'Already web-punched in today', web_punch_in: mysqlDatetimeToIST(record.web_punch_in) });
+  }
+
+  if (record) {
+    // Update existing record — only set web_punch_in columns, never touch attendance_status
+    await db.execute(
+      `UPDATE attendance_daily_record
+       SET web_punch_in = ?, web_punch_in_lat = ?, web_punch_in_lng = ?, web_punch_location = ?
+       WHERE id = ?`,
+      [now, latitude ?? null, longitude ?? null, location_name ?? null, record.id],
+    );
+    return res.json({ success: true, record_id: record.id, web_punch_in: mysqlDatetimeToIST(now) });
+  }
+
+  // Create a new record with 'unreconciled' status — NCOSEC/APR sync will update status later
+  const newId = randomUUID();
+  await db.execute(
+    `INSERT INTO attendance_daily_record
+       (id, employee_id, record_date,
+        attendance_source, source_system, attendance_status, lwp_value,
+        web_punch_in, web_punch_in_lat, web_punch_in_lng, web_punch_location,
+        is_locked, processed_at, created_by)
+     VALUES (?, ?, ?,
+             'biometric', 'web_punch', 'unreconciled', 0.0,
+             ?, ?, ?, ?,
+             0, NOW(), 'web_punch')`,
+    [newId, emp.id, today, now, latitude ?? null, longitude ?? null, location_name ?? null],
+  );
+
+  return res.json({ success: true, record_id: newId, web_punch_in: mysqlDatetimeToIST(now) });
+}));
+
+router.post('/web-punch-out', h(async (req, res) => {
+  const userId = (req as any).authUser?.id as string;
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, error: 'No employee record found' });
+
+  const { latitude, longitude, location_name } = req.body ?? {};
+  const today = nowIST().split(' ')[0]!;
+  const now = nowIST();
+
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT id, web_punch_in, web_punch_out FROM attendance_daily_record
+     WHERE employee_id = ? AND record_date = ? LIMIT 1`,
+    [emp.id, today],
+  );
+  const record = (existing as any[])[0] ?? null;
+
+  if (!record?.web_punch_in) {
+    return res.status(409).json({ success: false, error: 'No web punch-in found for today. Punch in first.' });
+  }
+  if (record.web_punch_out) {
+    return res.status(409).json({ success: false, error: 'Already web-punched out today', web_punch_out: mysqlDatetimeToIST(record.web_punch_out) });
+  }
+
+  await db.execute(
+    `UPDATE attendance_daily_record
+     SET web_punch_out = ?, web_punch_out_lat = ?, web_punch_out_lng = ?
+     WHERE id = ?`,
+    [now, latitude ?? null, longitude ?? null, record.id],
+  );
+
+  return res.json({ success: true, record_id: record.id, web_punch_out: mysqlDatetimeToIST(now) });
+}));
+
 export { router as attendanceEngineRouter };

@@ -5,7 +5,7 @@ import { getNcosecPool } from "../../db/ncosecDb.js";
 import { attendanceEngineService } from "./attendance-engine.service.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 
-type PunchGroup = {
+export type PunchGroup = {
   cosecUserId: string;
   punchDate: string;
   firstPunch: string;
@@ -397,7 +397,7 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
  * On merge: PDate stays as Day N (shift start), OutPunch becomes next row's
  * OutPunch, WorkTime sums both rows plus the gap between OutPunch→Punch1.
  */
-function mergeNightShiftRollover(groups: PunchGroup[]): PunchGroup[] {
+export function mergeNightShiftRollover(groups: PunchGroup[]): PunchGroup[] {
   const byUser = new Map<string, PunchGroup[]>();
   for (const g of groups) {
     const arr = byUser.get(g.cosecUserId) ?? [];

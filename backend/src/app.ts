@@ -88,6 +88,8 @@ import { emailTemplatesRouter } from "./modules/email-templates/email-templates.
 import { securityCenterRouter } from "./modules/security/security-center.routes.js";
 import { attendanceEngineRouter } from "./modules/wfm/attendance-engine.routes.js";
 import { attendanceDailyScopedRouter } from "./modules/wfm/attendance-daily-scoped.routes.js";
+import { attendanceAprBulkRouter } from "./modules/wfm/attendance-apr-bulk.routes.js";
+import { attendanceManualMarkRouter } from "./modules/wfm/attendance-manual-mark.routes.js";
 import { biometricPunchRouter } from "./modules/wfm/biometric-punch.routes.js";
 import { cosecSyncRouter } from "./modules/wfm/cosec-sync.routes.js";
 import { biometricSummaryRouter } from "./modules/wfm/biometric-summary.routes.js";
@@ -297,6 +299,8 @@ app.use("/api/payroll-masters", payrollMastersRouter);
 app.use("/api/incentives", incentivesRouter);
 app.use('/api/wfm/attendance', attendanceDailyScopedRouter);
 app.use('/api/wfm/attendance', attendanceEngineRouter);
+app.use('/api/wfm/attendance', attendanceAprBulkRouter);
+app.use('/api/wfm/attendance/manual-mark', attendanceManualMarkRouter);
 app.use("/api/dialer", dialerRouter);
 app.use("/api/tasks", taskRouter);
 app.use('/api/wfm/biometric-punch', biometricPunchRouter);

@@ -1,9 +1,13 @@
 import { randomUUID } from "crypto";
+import sql from "mssql";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { getNcosecPool } from "../../db/ncosecDb.js";
 import { payrollService } from "./payroll.service.js";
 import type { SalaryPrepRun } from "./payroll.types.js";
 import { maternityService } from "../compliance/maternity.service.js";
+import { isOperationsExecutive, classifyCosecMinutes } from "../wfm/attendance-engine.service.js";
+import { type PunchGroup, mergeNightShiftRollover } from "../wfm/cosec-sync.service.js";
 
 interface TaxDeclarationRow {
   declared_hra: number;
@@ -152,6 +156,8 @@ interface EmployeeRow {
   hra_pct: number;
   state_code: string | null;
   salary_start_date: string | null;
+  dept_name: string;
+  designation_name: string;
 }
 
 interface AttendanceRow {
@@ -170,6 +176,199 @@ interface StatutoryRow {
   esic_wage_limit: number;
   pf_wage_limit: number;
   professional_tax: number;
+}
+
+// ─── NCOSEC Payroll Pre-sync ───────────────────────────────────────────────────
+
+/**
+ * Sync attendance directly from NCOSEC Mx_DATDTrn into attendance_daily_record
+ * before payroll runs. This ensures payroll always reads the freshest NCOSEC data
+ * rather than waiting for the 5-minute cosec-sync pipeline.
+ *
+ * - Skips APR/Operations Executive employees (they use dialler data)
+ * - Skips records already locked (is_locked=1 — already regularized/finalized)
+ * - Applies night-shift merge (same logic as cosec-sync)
+ * - Applies leave/holiday overrides before upserting
+ * - Wrapped in try/catch at call site — NCOSEC failure does not block payroll
+ */
+async function syncAttendanceFromNcosecForPayroll(
+  employees: EmployeeRow[],
+  monthStart: string,
+  monthEnd: string,
+): Promise<void> {
+  // Step 1: Filter to non-APR employees
+  const ncosecEmployees = employees.filter(
+    e => !isOperationsExecutive(e.dept_name, e.designation_name),
+  );
+  if (ncosecEmployees.length === 0) return;
+
+  const empIds = ncosecEmployees.map(e => e.employee_id);
+  const ph = empIds.map(() => '?').join(', ');
+
+  // Step 2: Fetch COSEC UserID for each employee
+  const [mappingRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id AS employee_id,
+            COALESCE(em.external_id, e.employee_code) AS cosec_user_id
+     FROM employees e
+     LEFT JOIN employee_external_mapping em
+       ON em.employee_id = e.id AND em.system_name = 'ncosec' AND em.is_active = 1
+     WHERE e.id IN (${ph})`,
+    empIds,
+  );
+  const cosecToEmpId = new Map<string, string>();
+  const empIdToCosec = new Map<string, string>();
+  for (const row of mappingRows as any[]) {
+    cosecToEmpId.set(row.cosec_user_id, row.employee_id);
+    empIdToCosec.set(row.employee_id, row.cosec_user_id);
+  }
+  const cosecUserIds = [...cosecToEmpId.keys()];
+  if (cosecUserIds.length === 0) return;
+
+  // Step 3: Fetch already-locked records to skip them
+  const [lockedRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id, DATE_FORMAT(record_date, '%Y-%m-%d') AS record_date
+     FROM attendance_daily_record
+     WHERE employee_id IN (${ph})
+       AND record_date BETWEEN ? AND ?
+       AND is_locked = 1`,
+    [...empIds, monthStart, monthEnd],
+  );
+  const locked = new Set<string>(
+    (lockedRows as any[]).map(r => `${r.employee_id}:${r.record_date}`),
+  );
+
+  // Step 4: Fetch approved leaves for leave_approved override
+  const [leaveRows] = await db.execute<RowDataPacket[]>(
+    `WITH RECURSIVE cal AS (
+       SELECT employee_id, from_date AS d, to_date
+       FROM leave_request
+       WHERE employee_id IN (${ph})
+         AND status = 'approved'
+         AND from_date <= ? AND to_date >= ?
+       UNION ALL
+       SELECT employee_id, DATE_ADD(d, INTERVAL 1 DAY), to_date
+       FROM cal WHERE d < to_date
+     )
+     SELECT employee_id, DATE_FORMAT(d, '%Y-%m-%d') AS d
+     FROM cal WHERE d BETWEEN ? AND ?`,
+    [...empIds, monthEnd, monthStart, monthStart, monthEnd],
+  );
+  const leaveApproved = new Set<string>(
+    (leaveRows as any[]).map(r => `${r.employee_id}:${r.d}`),
+  );
+
+  // Fetch holidays
+  const [holidayRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT e.id AS employee_id, DATE_FORMAT(lhm.holiday_date, '%Y-%m-%d') AS d
+     FROM leave_holiday_master lhm
+     JOIN employees e ON e.id IN (${ph})
+       AND (lhm.branch_id IS NULL OR lhm.branch_id = e.branch_id)
+     WHERE lhm.holiday_date BETWEEN ? AND ? AND lhm.active_status = 1`,
+    [...empIds, monthStart, monthEnd],
+  );
+  const holidays = new Set<string>(
+    (holidayRows as any[]).map(r => `${r.employee_id}:${r.d}`),
+  );
+
+  // Step 5: Query NCOSEC Mx_DATDTrn for the pay month
+  const pool = await getNcosecPool();
+  const request = pool.request();
+  request.input('fromDate', sql.Date, monthStart);
+  request.input('toDate', sql.Date, monthEnd);
+  for (let i = 0; i < cosecUserIds.length; i++) {
+    request.input(`u${i}`, sql.NVarChar(100), cosecUserIds[i]);
+  }
+  const userConditions = cosecUserIds.map((_, i) => `@u${i}`).join(', ');
+  const dailyTable = process.env.NCOSEC_DAILY_TABLE || 'dbo.Mx_DATDTrn';
+
+  const result = await request.query(`
+    SELECT
+      CAST([UserID] AS NVARCHAR(100))       AS user_id,
+      CONVERT(CHAR(10), [PDate], 23)        AS attendance_date,
+      CONVERT(CHAR(19), [Punch1], 120)      AS first_punch,
+      CONVERT(CHAR(19), [OutPunch], 120)    AS last_punch,
+      ISNULL([WorkTime], 0)                 AS working_minutes
+    FROM ${dailyTable}
+    WHERE [PDate] >= @fromDate
+      AND [PDate] < DATEADD(DAY, 1, @toDate)
+      AND [PDate] < CAST(GETDATE() AS DATE)
+      AND [UserID] IN (${userConditions})
+      AND [Punch1] IS NOT NULL
+      AND [OutPunch] IS NOT NULL
+      AND [WorkTime] IS NOT NULL
+    ORDER BY [UserID], [PDate]
+  `);
+
+  // Map to PunchGroup for night-shift merge
+  const rawGroups: PunchGroup[] = result.recordset
+    .map((row: any) => ({
+      cosecUserId: String(row.user_id ?? '').trim(),
+      punchDate: String(row.attendance_date ?? '').trim(),
+      firstPunch: String(row.first_punch ?? '').trim(),
+      lastPunch: String(row.last_punch ?? '').trim(),
+      totalPunches: 2,
+      workingMinutes: Math.max(0, Number(row.working_minutes ?? 0)),
+      sourceSystem: 'ncosec_direct',
+      sourceTable: dailyTable,
+    }))
+    .filter((g: PunchGroup) =>
+      g.cosecUserId &&
+      /^\d{4}-\d{2}-\d{2}$/.test(g.punchDate) &&
+      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(g.firstPunch) &&
+      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(g.lastPunch),
+    );
+
+  // Step 6: Apply night-shift merge
+  const merged = mergeNightShiftRollover(rawGroups);
+
+  // Step 7: Classify and upsert
+  for (const group of merged) {
+    const employeeId = cosecToEmpId.get(group.cosecUserId);
+    if (!employeeId) continue;
+
+    const lockKey = `${employeeId}:${group.punchDate}`;
+    if (locked.has(lockKey)) continue; // already regularized — never overwrite
+
+    // Apply leave/holiday override for payroll classification
+    let status: string;
+    let lwpValue: number;
+    if (leaveApproved.has(lockKey)) {
+      status = 'leave_approved'; lwpValue = 0;
+    } else if (holidays.has(lockKey)) {
+      status = 'holiday'; lwpValue = 0;
+    } else {
+      const cls = classifyCosecMinutes(group.workingMinutes);
+      status = cls.status; lwpValue = cls.lwpValue;
+    }
+
+    // firstPunch/lastPunch are "YYYY-MM-DD HH:mm:ss" strings — store directly in DATETIME
+    await db.execute(
+      `INSERT INTO attendance_daily_record
+         (id, employee_id, record_date, attendance_source, source_system,
+          biometric_minutes, raw_minutes, attendance_status, lwp_value,
+          late_mark, late_by_minutes, clock_in_time, clock_out_time,
+          processed_at, created_by)
+       VALUES (UUID(), ?, ?, 'biometric', 'ncosec_direct', ?, ?, ?, ?, 0, 0, ?, ?, NOW(), 'payroll_presync')
+       ON DUPLICATE KEY UPDATE
+         attendance_source = IF(is_locked=0, 'biometric',        attendance_source),
+         source_system     = IF(is_locked=0, 'ncosec_direct',    source_system),
+         biometric_minutes = IF(is_locked=0, VALUES(biometric_minutes), biometric_minutes),
+         raw_minutes       = IF(is_locked=0, VALUES(raw_minutes),       raw_minutes),
+         attendance_status = IF(is_locked=0, VALUES(attendance_status), attendance_status),
+         lwp_value         = IF(is_locked=0, VALUES(lwp_value),         lwp_value),
+         clock_in_time     = IF(is_locked=0, VALUES(clock_in_time),     clock_in_time),
+         clock_out_time    = IF(is_locked=0, VALUES(clock_out_time),    clock_out_time),
+         processed_at      = IF(is_locked=0, NOW(),                     processed_at)`,
+      [
+        employeeId, group.punchDate,
+        group.workingMinutes, group.workingMinutes,
+        status, lwpValue,
+        group.firstPunch, group.lastPunch,
+      ],
+    );
+  }
+
+  console.log(`[payroll-presync] Synced ${merged.length} NCOSEC records for ${monthStart}–${monthEnd}`);
 }
 
 export async function calculatePayrollRun(runId: string, userId: string): Promise<CalculateResult> {
@@ -220,12 +419,16 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     `SELECT e.id AS employee_id, e.employee_code,
             esa.ctc_annual, ss.basic_pct, ss.hra_pct,
             bm.state AS state_code,
-            COALESCE(e.salary_start_date, e.date_of_joining) AS salary_start_date
+            COALESCE(e.salary_start_date, e.date_of_joining) AS salary_start_date,
+            LOWER(COALESCE(dm.dept_name, '')) AS dept_name,
+            LOWER(COALESCE(desig.designation_name, '')) AS designation_name
        FROM employees e
        JOIN employee_salary_assignment esa ON esa.employee_id = e.id
        JOIN salary_structure_master ss      ON ss.id = esa.structure_id
        LEFT JOIN process_master pm          ON pm.id = e.process_id
        LEFT JOIN branch_master bm           ON bm.id = e.branch_id
+       LEFT JOIN department_master dm       ON dm.id = e.department_id
+       LEFT JOIN designation_master desig   ON desig.id = e.designation_id
       WHERE LOWER(e.employment_status) = 'active' AND ${empConds.join(" AND ")}`,
     empParams
   );
@@ -248,9 +451,21 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   // Per MBA 1961 s.5(1) these employees receive full pay — no LWP deduction.
   const maternityExemptIds = await maternityService.getActiveEmployeeIdsForMonth(run.run_month);
 
+  // Hoist month boundary (used by presync and by per-emp loop)
+  const monthStart = `${run.run_month}-01`;
+  const monthEnd   = `${run.run_month}-${String(daysInMonth).padStart(2, "0")}`;
+
+  // Pre-sync attendance from NCOSEC directly before payroll calculation.
+  // This ensures payroll reads the freshest NCOSEC data, not the 5-min sync cache.
+  // Wrapped in try/catch — if NCOSEC is unreachable, payroll falls through to cached data.
+  try {
+    await syncAttendanceFromNcosecForPayroll(employees, monthStart, monthEnd);
+  } catch (err) {
+    console.error('[payroll-presync] NCOSEC sync failed, proceeding with cached attendance data:',
+      err instanceof Error ? err.message : String(err));
+  }
+
   for (const emp of employees) {
-    const monthStart = `${run.run_month}-01`;
-    const monthEnd   = `${run.run_month}-${String(daysInMonth).padStart(2, "0")}`;
 
     // salary_start_date gate: skip employees whose salary hasn't started yet this month
     if (emp.salary_start_date) {

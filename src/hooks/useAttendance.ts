@@ -2,7 +2,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 
-const ATTENDANCE_PAGE_LIMIT = 200;
+const ATTENDANCE_PAGE_LIMIT = 500;
+const NCOSEC_ENDPOINT = "/api/wfm/attendance/ncosec-monthly";
 
 export interface AttendanceRecord {
   id: string;
@@ -57,7 +58,7 @@ async function fetchAttendancePages(params: URLSearchParams): Promise<Attendance
     const paged = new URLSearchParams(params);
     paged.set("limit", String(ATTENDANCE_PAGE_LIMIT));
     paged.set("page", String(page));
-    const res = await hrmsApi.get<{ success: boolean; data: AttendanceRecord[]; total?: number }>(`/api/wfm/attendance/daily?${paged}`);
+    const res = await hrmsApi.get<{ success: boolean; data: AttendanceRecord[]; total?: number }>(`${NCOSEC_ENDPOINT}?${paged}`);
     if (!res.success) throw new Error((res as any).message || "Failed to fetch attendance records");
     const rows = res.data ?? [];
     allRecords.push(...rows);
@@ -75,7 +76,7 @@ export function useAttendance(month?: Date, employeeId?: string) {
   const end = format(endOfMonth(targetMonth), "yyyy-MM-dd");
 
   return useQuery({
-    queryKey: ["attendance", start, end, employeeId ?? "all"],
+    queryKey: ["attendance-ncosec", start, end, employeeId ?? "all"],
     queryFn: async () => {
       const params = new URLSearchParams({ fromDate: start, toDate: end, limit: String(ATTENDANCE_PAGE_LIMIT) });
       if (employeeId) {
@@ -88,7 +89,7 @@ export function useAttendance(month?: Date, employeeId?: string) {
     retry: 2,
     retryDelay: 1000,
     staleTime: 30000,
-    refetchInterval: 5 * 60 * 1000,
+    refetchInterval: 2 * 60 * 1000,
     refetchIntervalInBackground: false,
   });
 }
@@ -177,6 +178,42 @@ export function useClockOut() {
   });
 }
 
+export function useWebPunchIn() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (location?: { latitude?: number; longitude?: number; location_name?: string }) => {
+      const res = await hrmsApi.post<{ success: boolean; record_id: string; web_punch_in: string; error?: string }>(
+        "/api/wfm/attendance/web-punch-in",
+        location ?? {},
+      );
+      if (!res.success) throw new Error((res as any).error ?? "Web punch-in failed");
+      return res;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["attendance-ncosec"] });
+      queryClient.invalidateQueries({ queryKey: ["attendance-today"] });
+    },
+  });
+}
+
+export function useWebPunchOut() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (location?: { latitude?: number; longitude?: number; location_name?: string }) => {
+      const res = await hrmsApi.post<{ success: boolean; record_id: string; web_punch_out: string; error?: string }>(
+        "/api/wfm/attendance/web-punch-out",
+        location ?? {},
+      );
+      if (!res.success) throw new Error((res as any).error ?? "Web punch-out failed");
+      return res;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["attendance-ncosec"] });
+      queryClient.invalidateQueries({ queryKey: ["attendance-today"] });
+    },
+  });
+}
+
 export interface LivePunchData {
   punch_date: string;
   first_punch_in: string | null;
@@ -207,7 +244,7 @@ export function useAttendanceReport(month: Date) {
   const end = format(endOfMonth(month), "yyyy-MM-dd");
 
   return useQuery({
-    queryKey: ["attendance-report", start, end],
+    queryKey: ["attendance-ncosec-report", start, end],
     queryFn: async () => {
       const params = new URLSearchParams({ fromDate: start, toDate: end });
       const records = await fetchAttendancePages(params);

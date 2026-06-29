@@ -15,7 +15,157 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertTriangle, Loader2, Plus } from "lucide-react";
+import { AlertTriangle, Loader2, Plus, ShieldCheck } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+
+// ── Admin Manual Attendance Mark ──────────────────────────────────────────────
+
+function AdminManualMark() {
+  const [form, setForm] = useState({
+    employee_id: "",
+    attendance_date: "",
+    attendance_status: "present" as string,
+    override_reason: "",
+    clock_in_time: "",
+    clock_out_time: "",
+  });
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ previous_status: string | null; new_status: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit() {
+    if (!form.employee_id || !form.attendance_date || !form.override_reason.trim()) {
+      setError("Employee ID, date, and reason are required");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const payload: Record<string, string> = {
+        employee_id: form.employee_id,
+        attendance_date: form.attendance_date,
+        attendance_status: form.attendance_status,
+        override_reason: form.override_reason,
+      };
+      if (form.clock_in_time) payload.clock_in_time = `${form.attendance_date} ${form.clock_in_time}:00`;
+      if (form.clock_out_time) payload.clock_out_time = `${form.attendance_date} ${form.clock_out_time}:00`;
+
+      const res = await hrmsApi.post<{ success: boolean; previous_status: string | null; new_status: string; message?: string }>(
+        "/api/wfm/attendance/manual-mark",
+        payload,
+      );
+      if (!res.success) throw new Error(res.message ?? "Failed");
+      setResult({ previous_status: res.previous_status, new_status: res.new_status });
+      setForm(f => ({ ...f, employee_id: "", attendance_date: "", override_reason: "", clock_in_time: "", clock_out_time: "" }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to mark attendance");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 text-red-600" />
+          Direct Attendance Mark
+          <Badge className="bg-red-100 text-red-700 text-xs">Payroll Head / Super Admin Only</Badge>
+        </CardTitle>
+        <p className="text-xs text-slate-500 mt-1">
+          For remote employees, field staff, and cases where neither COSEC nor APR data is available.
+          Records are locked (is_locked=1) — not overwritable by any sync.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-slate-600">Employee ID (UUID)</label>
+            <Input
+              placeholder="e.g. 3f2504e0-4f89-..."
+              value={form.employee_id}
+              onChange={e => setForm(f => ({ ...f, employee_id: e.target.value }))}
+              className="text-sm"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-slate-600">Attendance Date</label>
+            <Input
+              type="date"
+              value={form.attendance_date}
+              onChange={e => setForm(f => ({ ...f, attendance_date: e.target.value }))}
+              className="text-sm"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-slate-600">Attendance Status</label>
+            <Select value={form.attendance_status} onValueChange={v => setForm(f => ({ ...f, attendance_status: v }))}>
+              <SelectTrigger className="text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="present">Present</SelectItem>
+                <SelectItem value="half_day">Half Day</SelectItem>
+                <SelectItem value="absent">Absent</SelectItem>
+                <SelectItem value="leave_approved">Leave Approved</SelectItem>
+                <SelectItem value="holiday">Holiday</SelectItem>
+                <SelectItem value="week_off">Week Off</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-slate-600">Clock-In Time (optional, HH:MM)</label>
+            <Input
+              type="time"
+              value={form.clock_in_time}
+              onChange={e => setForm(f => ({ ...f, clock_in_time: e.target.value }))}
+              className="text-sm"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-slate-600">Clock-Out Time (optional, HH:MM)</label>
+            <Input
+              type="time"
+              value={form.clock_out_time}
+              onChange={e => setForm(f => ({ ...f, clock_out_time: e.target.value }))}
+              className="text-sm"
+            />
+          </div>
+          <div className="space-y-1 md:col-span-2">
+            <label className="text-xs font-medium text-slate-600">Override Reason (required)</label>
+            <Textarea
+              placeholder="e.g. Ground-level field work confirmed by Branch Head — no COSEC access at site"
+              value={form.override_reason}
+              onChange={e => setForm(f => ({ ...f, override_reason: e.target.value }))}
+              className="text-sm resize-none"
+              rows={2}
+            />
+          </div>
+        </div>
+
+        {error && (
+          <Alert variant="destructive" className="py-2">
+            <AlertDescription className="text-sm">{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {result && (
+          <Alert className="bg-green-50 border-green-200 py-2">
+            <AlertDescription className="text-sm text-green-700">
+              Marked successfully. Previous: <b>{result.previous_status ?? "none"}</b> → New: <b>{result.new_status}</b>. Record is now locked.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <Button onClick={handleSubmit} disabled={loading} size="sm" className="bg-red-600 hover:bg-red-700">
+          {loading ? <><Loader2 className="w-3 h-3 mr-2 animate-spin" />Marking...</> : "Mark Attendance (Locked)"}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
 
 interface ManualOverride {
   id: string;
@@ -146,6 +296,7 @@ export default function NativePayrollAttendanceOverrides() {
   return (
     <DashboardLayout pageTitle="Attendance Overrides (Payroll Head)">
       <div className="space-y-4">
+        <AdminManualMark />
         <div className="flex justify-between items-center">
           <h1 className="text-2xl font-bold">Manual Attendance Overrides</h1>
           <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
