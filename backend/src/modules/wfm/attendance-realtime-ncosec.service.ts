@@ -102,8 +102,8 @@ export async function getRealTimePunchesToday(employeeId: string): Promise<RealT
 
     const row = result.recordset[0];
 
-    // NCOSEC stores IST times. Query returns them as strings via CONVERT(CHAR).
-    // Just tag with +05:30, no conversion needed.
+    // NCOSEC stores IST wall-clock. CONVERT(CHAR) returns IST string directly.
+    // Just tag with +05:30, no arithmetic needed.
     const tagIST = (str: string | null) => str ? str.replace(' ', 'T') + '+05:30' : null;
 
     return {

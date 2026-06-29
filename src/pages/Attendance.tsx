@@ -22,7 +22,6 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { AttendanceCalendar } from "@/components/attendance/AttendanceCalendar";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
-import { AprBulkUpload } from "@/components/attendance/AprBulkUpload";
 import {
   AttendanceRecord,
   useAttendance,
@@ -1202,15 +1201,6 @@ const Attendance = () => {
               </Card>
             )}
           </section>
-
-          {/* APR Bulk Upload — visible to admin/HR/WFM roles */}
-          {isAdminOrHR && (
-            <section className="pt-4">
-              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                <AprBulkUpload />
-              </div>
-            </section>
-          )}
 
         </div>
       </TooltipProvider>

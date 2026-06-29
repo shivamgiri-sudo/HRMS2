@@ -3,6 +3,7 @@ import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
+import { AprBulkUpload } from "@/components/attendance/AprBulkUpload";
 
 type UploadTemplate = {
   id: string;
@@ -543,9 +544,13 @@ function csvHealthHasBlockingError(health: CsvHealth | null) {
   );
 }
 
+type HubTab = "master" | "apr";
+
 export default function BulkUploadHub() {
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [activeTab, setActiveTab] = useState<HubTab>("master");
 
   const [templates, setTemplates] = useState<UploadTemplate[]>([]);
   const [batches, setBatches] = useState<UploadBatch[]>([]);
@@ -919,20 +924,52 @@ export default function BulkUploadHub() {
                 </h1>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
                   Manage upload templates, upload CSV/Excel files, stage rows,
-                  validate required columns, and import validated Employee, Process, Department, Asset, Branch, LOB, and Designation master rows directly into HRMS.
+                  validate required columns, and import validated Employee, Process, Department, Asset, Branch, LOB, Designation, and APR/Dialler Attendance records directly into HRMS.
                 </p>
               </div>
 
+              {activeTab === "master" && (
+                <button
+                  onClick={loadData}
+                  className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                >
+                  Refresh
+                </button>
+              )}
+            </div>
+
+            {/* Tab switcher */}
+            <div className="mt-4 flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit">
               <button
-                onClick={loadData}
-                className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                onClick={() => setActiveTab("master")}
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                  activeTab === "master"
+                    ? "bg-white text-slate-950 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                }`}
               >
-                Refresh
+                Master Data Upload
+              </button>
+              <button
+                onClick={() => setActiveTab("apr")}
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                  activeTab === "apr"
+                    ? "bg-white text-slate-950 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                APR / Dialler Attendance
               </button>
             </div>
           </section>
 
-          {(message || errorMessage) && (
+          {activeTab === "apr" && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <AprBulkUpload />
+            </section>
+          )}
+
+          {activeTab === "master" && (message || errorMessage) && (
             <div
               className={`rounded-2xl border p-4 text-sm ${
                 errorMessage
@@ -944,6 +981,7 @@ export default function BulkUploadHub() {
             </div>
           )}
 
+          {activeTab === "master" && (
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
             <StatCard label="Templates" value={stats.templates} />
             <StatCard label="Upload Batches" value={stats.batches} />
@@ -951,8 +989,9 @@ export default function BulkUploadHub() {
             <StatCard label="Imported" value={stats.imported} />
             <StatCard label="Error Rows" value={stats.errors} />
           </section>
+          )}
 
-          <section className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
+          {activeTab === "master" && <section className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <h2 className="text-base font-semibold text-slate-950">
                 New Upload
@@ -1174,9 +1213,9 @@ export default function BulkUploadHub() {
                 ))}
               </div>
             </div>
-          </section>
+          </section>}
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          {activeTab === "master" && <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <h2 className="text-base font-semibold text-slate-950">
@@ -1271,10 +1310,10 @@ export default function BulkUploadHub() {
                 </div>
               )}
             </div>
-          </section>
+          </section>}
         </div>
 
-        {selectedBatch && (
+        {activeTab === "master" && selectedBatch && (
           <BatchRowsDialog
             batch={selectedBatch}
             rows={selectedBatchRows}

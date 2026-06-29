@@ -5,6 +5,7 @@ import { getNcosecPool } from "../../db/ncosecDb.js";
 import { attendanceEngineService } from "./attendance-engine.service.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 
+
 export type PunchGroup = {
   cosecUserId: string;
   punchDate: string;
