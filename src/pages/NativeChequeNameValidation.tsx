@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { CheckCircle, AlertTriangle, Eye, X, ChevronRight, FileText } from "lucide-react";
-import { hrmsApi } from "../lib/api";
+import { hrmsApi } from "../lib/hrmsApi";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
