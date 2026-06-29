@@ -347,6 +347,24 @@ export const wfmService = {
       );
     }
 
+    // If approved → enqueue payroll recalculation (backward-compatible, fire-and-forget)
+    if (input.status === 'approved' && reg.session_date) {
+      try {
+        const { enqueueRecalculation } = await import("../payroll/payroll-recalc-queue.service.js");
+        const payrollMonth = reg.session_date.slice(0, 7) + "-01";
+        await enqueueRecalculation({
+          employeeId: reg.employee_id,
+          payrollMonth,
+          sourceEventType: "attendance_regularization",
+          sourceEventId: id,
+          reason: `Regularization approved: ${reg.reason_code ?? reg.reason}`,
+          requestedBy: reviewerId,
+        });
+      } catch (_err) {
+        // Non-blocking — recalc queue failure must never break regularization approval
+      }
+    }
+
     return this.getRegularization(id);
   },
 

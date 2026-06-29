@@ -147,6 +147,7 @@ export const navGroups: NavGroup[] = [
           { label: "WFM Planning Rules",     href: "/wfm/planning-rules",        icon: ic(Settings2),     roles: ["admin","hr","wfm","manager","super_admin"], description: "Shift planning rules" },
           { label: "Slot Requirements",      href: "/wfm/slot-requirements",     icon: ic(Calendar),      roles: ["admin","hr","wfm","manager","super_admin"], description: "Slot capacity" },
           { label: "Workforce Planning",     href: "/workforce-planning",        icon: ic(Users),         pageCode: "WFM_AUTO_ROSTER", description: "Headcount planning" },
+          { label: "Week-off Fairness",      href: "/wfm/weekoff-fairness",      icon: ic(Target),        roles: ["admin","super_admin","wfm"], description: "Fairness scores & allocation" },
         ],
       },
       {
@@ -201,6 +202,12 @@ export const navGroups: NavGroup[] = [
           { label: "Statutory Config",      href: "/payroll/statutory-config",     icon: ic(Landmark),   roles: ["admin","hr","finance"],                             description: "Statutory" },
           { label: "Compliance",            href: "/compliance/statutory",         icon: ic(Landmark),   roles: ["admin","hr","finance"],                             description: "Compliance" },
           { label: "Labour Compliance",     href: "/compliance/labour",            icon: ic(Landmark),   pageCode: "LABOUR_COMPLIANCE", roles: ["admin","hr","finance"], description: "Labour" },
+          { label: "Holiday Master",         href: "/payroll/holiday-master",       icon: ic(CalendarDays), roles: ["admin","super_admin","payroll_head","payroll_branch"],  description: "Holidays & CC mapping" },
+          { label: "Holiday Work Requests",  href: "/payroll/holiday-work-requests",icon: ic(ClipboardList), roles: ["admin","super_admin","wfm","payroll_head","payroll_branch"], description: "Raise holiday work requests" },
+          { label: "Holiday Work Approvals", href: "/payroll/holiday-work-approvals",icon: ic(ShieldCheck), roles: ["admin","super_admin","payroll_head","payroll_branch","wfm"], description: "Approve holiday work" },
+          { label: "Running Payroll",        href: "/payroll/running-breakdown",    icon: ic(TrendingUp), roles: ["admin","super_admin","payroll_head","payroll_branch","wfm"], description: "Mid-month earned salary" },
+          { label: "Recalculation Queue",    href: "/payroll/recalculation-queue",  icon: ic(Settings2),  roles: ["admin","super_admin","payroll_head","payroll_branch"],  description: "Payroll recalc queue" },
+          { label: "Config Flags",           href: "/payroll/config-flags",         icon: ic(Settings),   roles: ["admin","super_admin","payroll_head","payroll_branch"],  description: "Payroll configuration flags" },
         ],
       },
       {

@@ -8,6 +8,7 @@ import type { SalaryPrepRun } from "./payroll.types.js";
 import { maternityService } from "../compliance/maternity.service.js";
 import { isOperationsExecutive, classifyCosecMinutes } from "../wfm/attendance-engine.service.js";
 import { type PunchGroup, mergeNightShiftRollover } from "../wfm/cosec-sync.service.js";
+import { resolveHolidaysForEmployee } from "./holiday-work.service.js";
 
 interface TaxDeclarationRow {
   declared_hra: number;
@@ -371,7 +372,89 @@ async function syncAttendanceFromNcosecForPayroll(
   console.log(`[payroll-presync] Synced ${merged.length} NCOSEC records for ${monthStart}–${monthEnd}`);
 }
 
-export async function calculatePayrollRun(runId: string, userId: string): Promise<CalculateResult> {
+// ─── Per-branch payroll config helpers ───────────────────────────────────────
+
+async function getPayrollConfigFlag(
+  key: string,
+  branchId?: string | null,
+  processId?: string | null,
+): Promise<string> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT config_value FROM payroll_config_flags
+     WHERE config_key = ?
+       AND (branch_id = ? OR branch_id IS NULL)
+       AND (process_id = ? OR process_id IS NULL)
+     ORDER BY (branch_id IS NOT NULL) DESC, (process_id IS NOT NULL) DESC
+     LIMIT 1`,
+    [key, branchId ?? null, processId ?? null],
+  );
+  return (rows[0] as any)?.config_value ?? "";
+}
+
+/**
+ * Compute the active calendar days for a given employee/month,
+ * accounting for mid-month joins and exits.
+ */
+async function computeActiveCalendarDays(
+  employeeId: string,
+  monthStart: string,
+  monthEnd: string,
+  daysInMonth: number,
+  salaryStartDate: string | null,
+): Promise<number> {
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT date_of_leaving FROM employees WHERE id = ? LIMIT 1`,
+    [employeeId],
+  );
+  const dateOfLeaving = (empRows[0] as any)?.date_of_leaving ?? null;
+
+  const effectiveStart = salaryStartDate && salaryStartDate > monthStart
+    ? salaryStartDate
+    : monthStart;
+  const effectiveEnd = dateOfLeaving && dateOfLeaving < monthEnd
+    ? dateOfLeaving
+    : monthEnd;
+
+  const start = new Date(effectiveStart);
+  const end = new Date(effectiveEnd);
+  const days = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+  return Math.max(1, Math.min(days, daysInMonth));
+}
+
+/**
+ * Count branch-level working days (total calendar days - holidays - sundays/roster-offs).
+ * Used as the denominator for LWP calculation.
+ * Falls back to 26 if holiday data is unavailable.
+ */
+async function computeBranchWorkingDays(
+  branchId: string | null,
+  monthStart: string,
+  monthEnd: string,
+  daysInMonth: number,
+): Promise<number> {
+  if (!branchId) return 26;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM leave_holiday_master
+     WHERE holiday_date BETWEEN ? AND ?
+       AND active_status = 1
+       AND (branch_id IS NULL OR branch_id = ?)`,
+    [monthStart, monthEnd, branchId],
+  );
+  const holidayCount = Number((rows[0] as any)?.cnt ?? 0);
+  // Standard 6-day week BPO: daysInMonth - sundays - holidays
+  // Count Sundays in the month
+  let sundays = 0;
+  const d = new Date(monthStart);
+  const mEnd = new Date(monthEnd);
+  while (d <= mEnd) {
+    if (d.getDay() === 0) sundays++;
+    d.setDate(d.getDate() + 1);
+  }
+  const workingDays = daysInMonth - sundays - holidayCount;
+  return Math.max(20, Math.min(workingDays, 27)); // sanity clamp 20–27
+}
+
+export async function calculatePayrollRun(runId: string, userId: string, singleEmployeeId?: string): Promise<CalculateResult> {
   // 1. Load run
   const [runRows] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]
@@ -403,22 +486,28 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     professional_tax: statConfig["professional_tax"] ?? 200,
   };
 
-  // 3. Fetch eligible employees (scoped to run's process/branch filters)
+  // 3. Fetch eligible employees (scoped to run's process/branch filters, or single employee)
   const empConds: string[] = ["esa.active_status = 1"];
   const empParams: unknown[] = [];
-  if (run.process_filter) {
-    empConds.push("(pm.process_name = ? OR e.process_id IN (SELECT id FROM process_master WHERE process_name = ?))");
-    empParams.push(run.process_filter, run.process_filter);
-  }
-  if (run.branch_filter) {
-    empConds.push("e.branch_id IN (SELECT id FROM branch_master WHERE branch_name = ?)");
-    empParams.push(run.branch_filter);
+  if (singleEmployeeId) {
+    // Recalculation queue: only re-process this one employee
+    empConds.push("e.id = ?");
+    empParams.push(singleEmployeeId);
+  } else {
+    if (run.process_filter) {
+      empConds.push("(pm.process_name = ? OR e.process_id IN (SELECT id FROM process_master WHERE process_name = ?))");
+      empParams.push(run.process_filter, run.process_filter);
+    }
+    if (run.branch_filter) {
+      empConds.push("e.branch_id IN (SELECT id FROM branch_master WHERE branch_name = ?)");
+      empParams.push(run.branch_filter);
+    }
   }
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id, e.employee_code,
             esa.ctc_annual, ss.basic_pct, ss.hra_pct,
-            bm.state AS state_code,
+            bm.state AS state_code, e.branch_id, e.process_id,
             COALESCE(e.salary_start_date, e.date_of_joining) AS salary_start_date,
             LOWER(COALESCE(dm.dept_name, '')) AS dept_name,
             LOWER(COALESCE(desig.designation_name, '')) AS designation_name
@@ -432,12 +521,11 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       WHERE LOWER(e.employment_status) = 'active' AND ${empConds.join(" AND ")}`,
     empParams
   );
-  const employees = empRows as EmployeeRow[];
+  const employees = empRows as (EmployeeRow & { branch_id: string; process_id: string })[];
 
-  // 4. Derive working days from run_month (Mon–Sat = 26 assumed; real impl queries holidays)
+  // 4. Derive calendar info from run_month
   const [year, month] = run.run_month.split("-").map(Number);
   const daysInMonth = new Date(year, month, 0).getDate();
-  const defaultWorkingDays = 26; // BPO standard; can be refined later
 
   // Derive financial year string e.g. "2025-26" for months April–March
   const fyStartYear = month >= 4 ? year : year - 1;
@@ -477,18 +565,25 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       }
     }
 
+    // Active calendar days (handles mid-month join/exit for correct pro-rata)
+    const activeCalDays = await computeActiveCalendarDays(
+      emp.employee_id, monthStart, monthEnd, daysInMonth, emp.salary_start_date,
+    );
+
+    // Branch-aware working days denominator (replaces hardcoded 26)
+    const branchWorkingDays = await computeBranchWorkingDays(
+      emp.branch_id ?? null, monthStart, monthEnd, daysInMonth,
+    );
+
+    // Per-employee payroll config flags
+    const weekoffEarningRequired =
+      (await getPayrollConfigFlag("weekoff_earning_required", emp.branch_id, emp.process_id)) !== "false";
+    const workingDaysPerWeekoff =
+      parseInt(await getPayrollConfigFlag("working_days_required_for_one_weekoff", emp.branch_id, emp.process_id) || "6", 10);
+
     // Pro-rata multiplier: if salary starts mid-month, pay only from that date
-    let proRataMultiplier = 1;
-    if (emp.salary_start_date) {
-      const ssd = new Date(emp.salary_start_date);
-      const mStart = new Date(monthStart);
-      if (ssd > mStart) {
-        // Days from salary_start_date to end of month (inclusive)
-        const calendarDaysInMonth = daysInMonth;
-        const paidDays = new Date(monthEnd).getDate() - ssd.getDate() + 1;
-        proRataMultiplier = Math.max(0, Math.min(1, paidDays / calendarDaysInMonth));
-      }
-    }
+    let proRataMultiplier = activeCalDays / daysInMonth;
+    if (proRataMultiplier > 1) proRataMultiplier = 1;
 
     // 5. Fetch attendance summary for this employee for run_month
 
@@ -522,8 +617,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       );
       att = (attRows as AttendanceRow[])[0] ?? {
         employee_id: emp.employee_id,
-        working_days: defaultWorkingDays,
-        present_days: defaultWorkingDays,
+        working_days: branchWorkingDays,
+        present_days: branchWorkingDays,
         leave_days: 0,
         lwp_days: 0,
         late_marks: 0,
@@ -542,12 +637,12 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
            NULL AS dialer_hours
          FROM wfm_attendance_session s
          WHERE s.employee_id = ? AND s.session_date BETWEEN ? AND ?`,
-        [emp.employee_id, defaultWorkingDays, defaultWorkingDays, emp.employee_id, monthStart, monthEnd]
+        [emp.employee_id, branchWorkingDays, branchWorkingDays, emp.employee_id, monthStart, monthEnd]
       );
       att = (attRows as AttendanceRow[])[0] ?? {
         employee_id: emp.employee_id,
-        working_days: defaultWorkingDays,
-        present_days: defaultWorkingDays,
+        working_days: branchWorkingDays,
+        present_days: branchWorkingDays,
         leave_days: 0,
         lwp_days: 0,
         late_marks: 0,
@@ -555,16 +650,61 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       };
     }
 
+    // ─── Week-off and holiday eligibility ─────────────────────────────────────
+
+    // Count rostered week-off days this month from attendance_daily_record
+    const [woRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM attendance_daily_record
+       WHERE employee_id = ? AND record_date BETWEEN ? AND ?
+         AND attendance_status = 'week_off'`,
+      [emp.employee_id, monthStart, monthEnd],
+    );
+    const rosteredWeekoffs = Number((woRows[0] as any)?.cnt ?? 0);
+
+    // Paid working days (present + approved leave) for week-off earning
+    const presentDays = Number(att.present_days) || 0;
+    const leaveDays   = Number(att.leave_days)   || 0;
+    const paidWorkingDays = presentDays + leaveDays;
+
+    // Eligible week-offs earned this month
+    let eligibleWeekoffs: number;
+    if (weekoffEarningRequired) {
+      const earned = Math.floor(paidWorkingDays / workingDaysPerWeekoff);
+      eligibleWeekoffs = Math.min(rosteredWeekoffs, earned);
+    } else {
+      eligibleWeekoffs = rosteredWeekoffs;
+    }
+
+    // Eligible holidays via cost-centre / designation resolution
+    let eligibleHolidays = 0;
+    const dateIter = new Date(monthStart);
+    const monthEndDate = new Date(monthEnd);
+    while (dateIter <= monthEndDate) {
+      const dateStr = dateIter.toISOString().slice(0, 10);
+      try {
+        const hols = await resolveHolidaysForEmployee(emp.employee_id, dateStr);
+        if (hols.length > 0) eligibleHolidays++;
+      } catch (_) { /* non-blocking */ }
+      dateIter.setDate(dateIter.getDate() + 1);
+    }
+
+    // Payable days = present + paid leave + eligible week-offs + eligible holidays - LWP
+    const lwpDays = Number(att.lwp_days) || 0;
+    const rawPayableDays = paidWorkingDays + eligibleWeekoffs + eligibleHolidays - lwpDays;
+    // Hard cap: payable days must never exceed active calendar days (MAS policy)
+    const finalPayableDays = Math.min(Math.max(0, rawPayableDays), activeCalDays);
+
     const grossMonthly = (emp.ctc_annual / 12) * proRataMultiplier;
 
     // 5c. LWP deduction — skip for employees on maternity leave (MBA 1961 s.5(1))
-    const workingDays = att.working_days || defaultWorkingDays;
-    const lwpDays = att.lwp_days || 0;
+    // Use finalPayableDays as effective paid days; deduction = gross * (lwp / activeCalDays)
+    const workingDays = att.working_days || branchWorkingDays;
     const isOnMaternityLeave = maternityExemptIds.has(emp.employee_id);
     const lwpDeduction = (!isOnMaternityLeave && lwpDays > 0)
-      ? Math.round((grossMonthly / workingDays) * lwpDays * 100) / 100
+      ? Math.round((grossMonthly / activeCalDays) * lwpDays * 100) / 100
       : 0;
-    const grossAfterLwp = Math.max(0, grossMonthly - lwpDeduction);
+    // Gross based on finalPayableDays (includes eligible week-offs and holidays)
+    const grossAfterLwp = Math.max(0, (emp.ctc_annual / 12) * (finalPayableDays / activeCalDays));
 
     // 5a. Fetch tax declaration for this employee / financial year
     const [declRows] = await db.execute<RowDataPacket[]>(
@@ -633,7 +773,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     const netPayFinal = Math.max(0, calc.net_salary - advanceRecovery);
     const totalDedFinal = calc.total_deductions + advanceRecovery;
 
-    // 6. Upsert prep line
+    // 6. Upsert prep line (includes extended columns from migration 331)
     await db.execute(
       `INSERT INTO salary_prep_line
          (id, run_id, employee_id, employee_code,
@@ -641,8 +781,14 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
           gross_salary, gross_before_lwp, total_deductions, net_salary,
           basic, hra, special_allowance,
           pf_employee, pf_employer, esic_employee, esic_employer,
-          professional_tax, tds, tds_amount, lwp_deduction, advance_recovery, status)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
+          professional_tax, tds, tds_amount, lwp_deduction, advance_recovery,
+          paid_working_days, eligible_weekoff_days, eligible_holiday_days, final_payable_days,
+          active_calendar_days, salary_start_date,
+          base_gross_pay, base_net_pay, needs_recalculation,
+          status)
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+               ?, ?, ?, ?, ?, ?, ?, ?, 0,
+               'calculated')
        ON DUPLICATE KEY UPDATE
          working_days = VALUES(working_days), present_days = VALUES(present_days),
          lwp_days = VALUES(lwp_days), gross_salary = VALUES(gross_salary),
@@ -654,6 +800,15 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
          professional_tax = VALUES(professional_tax),
          tds = VALUES(tds), tds_amount = VALUES(tds_amount),
          lwp_deduction = VALUES(lwp_deduction), advance_recovery = VALUES(advance_recovery),
+         paid_working_days = VALUES(paid_working_days),
+         eligible_weekoff_days = VALUES(eligible_weekoff_days),
+         eligible_holiday_days = VALUES(eligible_holiday_days),
+         final_payable_days = VALUES(final_payable_days),
+         active_calendar_days = VALUES(active_calendar_days),
+         salary_start_date = VALUES(salary_start_date),
+         base_gross_pay = VALUES(base_gross_pay),
+         base_net_pay = VALUES(base_net_pay),
+         needs_recalculation = 0,
          status = 'calculated'`,
       [
         runId, emp.employee_id, emp.employee_code,
@@ -662,6 +817,9 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         calc.basic, calc.hra, calc.special_allowance,
         calc.pf_employee, calc.pf_employer, calc.esic_employee, calc.esic_employer,
         calc.professional_tax, tdsMonthly, tdsMonthly, lwpDeduction, advanceRecovery,
+        paidWorkingDays, eligibleWeekoffs, eligibleHolidays, finalPayableDays,
+        activeCalDays, emp.salary_start_date ?? null,
+        grossMonthly, calc.net_salary,
       ]
     );
 

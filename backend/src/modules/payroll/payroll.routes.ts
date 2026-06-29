@@ -1270,4 +1270,128 @@ router.get("/compliance", requireRole("admin", "super_admin", "finance", "payrol
   return res.json({ success: true, data: compliance });
 }));
 
+// ── Holiday Work Requests ─────────────────────────────────────────────────────
+// GET /api/payroll/holiday-work/policies
+router.get("/holiday-work/policies", requireRole("admin", "super_admin", "payroll", "wfm", "hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const { listHolidayWorkPolicies } = await import("./holiday-work.service.js");
+  const data = await listHolidayWorkPolicies();
+  return res.json({ success: true, data });
+}));
+
+// GET /api/payroll/holiday-work/requests
+router.get("/holiday-work/requests", requireRole("admin", "super_admin", "payroll", "wfm", "branch_head", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { listHolidayWorkRequests } = await import("./holiday-work.service.js");
+  const { branchId, processId, status, requestMonth } = req.query as Record<string, string>;
+  const data = await listHolidayWorkRequests({ branchId, processId, status, requestMonth });
+  return res.json({ success: true, data });
+}));
+
+// POST /api/payroll/holiday-work/requests
+router.post("/holiday-work/requests", requireRole("admin", "super_admin", "wfm", "branch_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { createHolidayWorkRequest } = await import("./holiday-work.service.js");
+  const id = await createHolidayWorkRequest({ ...req.body, requested_by: req.authUser!.id }, req.authUser!.id);
+  return res.status(201).json({ success: true, id });
+}));
+
+// PATCH /api/payroll/holiday-work/requests/:id/approve
+router.patch("/holiday-work/requests/:id/approve", requireRole("admin", "super_admin", "payroll", "branch_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { approveHolidayWorkRequest } = await import("./holiday-work.service.js");
+  const { action, remarks } = req.body as { action: string; remarks?: string };
+  const actorRole = (req.authUser as any)?.roles?.[0] ?? "payroll";
+  await approveHolidayWorkRequest(req.params.id, action as any, req.authUser!.id, actorRole, remarks);
+  return res.json({ success: true });
+}));
+
+// ── Payroll Config Flags ──────────────────────────────────────────────────────
+// GET /api/payroll/config-flags
+router.get("/config-flags", requireRole("admin", "super_admin", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { branchId, processId } = req.query as Record<string, string>;
+  const conds: string[] = ["config_key IS NOT NULL"];
+  const params: unknown[] = [];
+  if (branchId)  { conds.push("(branch_id = ? OR branch_id IS NULL)");  params.push(branchId); }
+  if (processId) { conds.push("(process_id = ? OR process_id IS NULL)"); params.push(processId); }
+  const [rows] = await db.execute(
+    `SELECT * FROM payroll_config_flags WHERE ${conds.join(" AND ")} ORDER BY config_key`,
+    params,
+  );
+  return res.json({ success: true, data: rows });
+}));
+
+// PUT /api/payroll/config-flags
+router.put("/config-flags", requireRole("admin", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { config_key, config_value, branch_id, process_id, description } = req.body as Record<string, string>;
+  if (!config_key || config_value === undefined) {
+    return res.status(400).json({ success: false, error: "config_key and config_value required" });
+  }
+  await db.execute(
+    `INSERT INTO payroll_config_flags (id, branch_id, process_id, config_key, config_value, description, updated_by)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), description = COALESCE(VALUES(description), description), updated_by = VALUES(updated_by), updated_at = NOW()`,
+    [branch_id ?? null, process_id ?? null, config_key, config_value, description ?? null, req.authUser!.id],
+  );
+  return res.json({ success: true });
+}));
+
+// ── Recalculation Queue ───────────────────────────────────────────────────────
+// GET /api/payroll/recalculation-queue
+router.get("/recalculation-queue", requireRole("admin", "super_admin", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { listRecalcQueue } = await import("./payroll-recalc-queue.service.js");
+  const { status, payrollMonth, employeeId } = req.query as Record<string, string>;
+  const data = await listRecalcQueue({ status, payrollMonth, employeeId });
+  return res.json({ success: true, data });
+}));
+
+// ── Running Salary ────────────────────────────────────────────────────────────
+// GET /api/payroll/running-summary/:employeeId?month=YYYY-MM-01
+router.get("/running-summary/:employeeId", requireRole("admin", "super_admin", "payroll", "hr", "employee"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { computeRunningSalary } = await import("./running-salary.service.js");
+  const { month, asOf } = req.query as Record<string, string>;
+  const runMonth = month ?? new Date().toISOString().slice(0, 7) + "-01";
+  const data = await computeRunningSalary(req.params.employeeId, runMonth, asOf);
+  return res.json({ success: true, data });
+}));
+
+// ── Holiday Master + CC Mapping (read endpoints) ──────────────────────────────
+// GET /api/payroll/holiday-master
+router.get("/holiday-master", requireRole("admin", "super_admin", "payroll", "hr", "wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { branchId } = req.query as Record<string, string>;
+  const [rows] = await db.execute(
+    `SELECT lhm.*,
+            GROUP_CONCAT(DISTINCT hccm.process_id) AS process_ids,
+            GROUP_CONCAT(DISTINCT hccm.cost_centre_id) AS cc_ids
+       FROM leave_holiday_master lhm
+       LEFT JOIN holiday_cost_centre_mapping hccm ON hccm.holiday_id = lhm.id AND hccm.is_active=1
+      WHERE lhm.active_status = 1
+        ${branchId ? "AND (lhm.branch_id = ? OR lhm.branch_id IS NULL)" : ""}
+      GROUP BY lhm.id
+      ORDER BY lhm.holiday_date DESC
+      LIMIT 200`,
+    branchId ? [branchId] : [],
+  );
+  return res.json({ success: true, data: rows });
+}));
+
+// POST /api/payroll/holiday-master/cc-mapping
+router.post("/holiday-master/cc-mapping", requireRole("admin", "super_admin", "hr", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { holiday_id, branch_id, process_id, cost_centre_id, department_id, is_mandatory } = req.body;
+  await db.execute(
+    `INSERT INTO holiday_cost_centre_mapping
+       (id, holiday_id, branch_id, process_id, cost_centre_id, department_id, is_mandatory, created_by)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?)`,
+    [holiday_id, branch_id ?? null, process_id ?? null, cost_centre_id ?? null, department_id ?? null, is_mandatory ? 1 : 0, req.authUser!.id],
+  );
+  return res.status(201).json({ success: true });
+}));
+
+// POST /api/payroll/holiday-master/designation-mapping
+router.post("/holiday-master/designation-mapping", requireRole("admin", "super_admin", "hr", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { holiday_id, designation_id } = req.body;
+  await db.execute(
+    `INSERT IGNORE INTO holiday_designation_mapping (id, holiday_id, designation_id, created_by)
+     VALUES (UUID(), ?, ?, ?)`,
+    [holiday_id, designation_id, req.authUser!.id],
+  );
+  return res.status(201).json({ success: true });
+}));
+
 export { router as payrollRouter };

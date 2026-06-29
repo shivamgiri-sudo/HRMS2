@@ -1002,3 +1002,53 @@ wfmRouter.get(
     });
   })
 );
+
+// ─── Week-off fairness score routes ──────────────────────────────────────────
+
+// GET /api/wfm/weekoff/fairness-scores?processId=&weekStartDate=
+wfmRouter.get(
+  "/weekoff/fairness-scores",
+  requireAuth,
+  requireRole("admin", "super_admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const { getFairnessScoresForWeek } = await import("./weekoff-fairness.service.js");
+    const { processId, weekStartDate } = req.query as Record<string, string>;
+    if (!processId || !weekStartDate) {
+      return res.status(400).json({ success: false, error: "processId and weekStartDate required" });
+    }
+    const data = await getFairnessScoresForWeek(processId, weekStartDate);
+    return res.json({ success: true, data });
+  })
+);
+
+// POST /api/wfm/weekoff/fairness-scores/compute
+wfmRouter.post(
+  "/weekoff/fairness-scores/compute",
+  requireAuth,
+  requireRole("admin", "super_admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const { computeAndStoreFairnessScores } = await import("./weekoff-fairness.service.js");
+    const { processId, weekStartDate } = req.body as Record<string, string>;
+    if (!processId || !weekStartDate) {
+      return res.status(400).json({ success: false, error: "processId and weekStartDate required" });
+    }
+    await computeAndStoreFairnessScores(processId, weekStartDate);
+    return res.json({ success: true });
+  })
+);
+
+// POST /api/wfm/weekoff/allocations/record
+wfmRouter.post(
+  "/weekoff/allocations/record",
+  requireAuth,
+  requireRole("admin", "super_admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const { recordWeekOffAllocation } = await import("./weekoff-fairness.service.js");
+    const { employeeId, processId, weekStartDate, assignedDay, exceptionReason } = req.body as any;
+    if (!employeeId || !processId || !weekStartDate || assignedDay === undefined) {
+      return res.status(400).json({ success: false, error: "employeeId, processId, weekStartDate, assignedDay required" });
+    }
+    await recordWeekOffAllocation(employeeId, processId, weekStartDate, assignedDay, exceptionReason);
+    return res.json({ success: true });
+  })
+);

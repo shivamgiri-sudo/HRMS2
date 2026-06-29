@@ -133,6 +133,7 @@ const NativeEmployeeReactivation      = lazy(() => import("./pages/NativeEmploye
 // Offer Letters & Master Reports
 const NativeOfferLetterGeneration   = lazy(() => import("./pages/NativeOfferLetterGeneration"));
 const NativeMasterReports           = lazy(() => import("./pages/NativeMasterReports"));
+const NativeReportsCenter           = lazy(() => import("./pages/NativeReportsCenter"));
 
 // HR Ops
 const NativeAssetsManager           = lazy(() => import("./pages/NativeAssetsManager"));
@@ -174,6 +175,13 @@ const NativePayrollMasters          = lazy(() => import("./pages/NativePayrollMa
 const NativeSalaryPackages          = lazy(() => import("./pages/NativeSalaryPackages"));
 const NativeIncentives              = lazy(() => import("./pages/NativeIncentives"));
 const PayrollOvertimeManagement     = lazy(() => import("./pages/PayrollOvertimeManagement"));
+const PayrollConfigFlags            = lazy(() => import("./pages/payroll/PayrollConfigFlags"));
+const RecalculationQueue            = lazy(() => import("./pages/payroll/RecalculationQueue"));
+const RunningPayrollBreakdown       = lazy(() => import("./pages/payroll/RunningPayrollBreakdown"));
+const HolidayMaster                 = lazy(() => import("./pages/payroll/HolidayMaster"));
+const HolidayWorkRequest            = lazy(() => import("./pages/payroll/HolidayWorkRequest"));
+const HolidayWorkApprovals          = lazy(() => import("./pages/payroll/HolidayWorkApprovals"));
+const WeekoffFairness               = lazy(() => import("./pages/wfm/WeekoffFairness"));
 
 // Communication
 const NativeTemplateManager             = lazy(() => import("./pages/NativeTemplateManager"));
@@ -280,8 +288,8 @@ const App = () => (
               <Route path="/leave-approvals" element={<Navigate to="/leaves" replace />} />
               <Route path="/assets" element={<ProtectedRoute><Assets /></ProtectedRoute>} />
               <Route path="/payroll" element={<ProtectedRoute><Gate pageCode="PAYROLL"><Payroll /></Gate></ProtectedRoute>} />
-              <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
-              <Route path="/reports/enterprise" element={<ProtectedRoute><Gate pageCode="ADVANCED_REPORTS"><NativeEnterpriseReports /></Gate></ProtectedRoute>} />
+              <Route path="/reports" element={<ProtectedRoute><NativeReportsCenter /></ProtectedRoute>} />
+              <Route path="/reports/enterprise" element={<Navigate to="/reports" replace />} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
               <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
               <Route path="/employee-journey" element={<ProtectedRoute><EmployeeJourney /></ProtectedRoute>} />
@@ -381,7 +389,7 @@ const App = () => (
               <Route path="/portal" element={<PortalRoute><PortalOverview /></PortalRoute>} />
               <Route path="/portal/processes/:id" element={<PortalRoute><PortalProcessDashboard /></PortalRoute>} />
               <Route path="/offer-letter" element={<ProtectedRoute><Gate pageCode="ATS_OFFER"><NativeOfferLetterGeneration /></Gate></ProtectedRoute>} />
-              <Route path="/master-reports" element={<ProtectedRoute><Gate pageCode="ADVANCED_REPORTS"><NativeMasterReports /></Gate></ProtectedRoute>} />
+              <Route path="/master-reports" element={<Navigate to="/reports" replace />} />
               <Route path="/document-verification" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeDocumentVerification /></Gate></ProtectedRoute>} />
               <Route path="/assets-manager" element={<ProtectedRoute><Gate pageCode="ASSETS_MANAGER"><NativeAssetsManager /></Gate></ProtectedRoute>} />
               <Route path="/helpdesk" element={<ProtectedRoute><Gate pageCode="HELPDESK"><NativeHelpdesk /></Gate></ProtectedRoute>} />
@@ -406,7 +414,7 @@ const App = () => (
               <Route path="/work-inbox" element={<ProtectedRoute><Gate pageCode="WORK_INBOX"><NativeWorkInbox /></Gate></ProtectedRoute>} />
               <Route path="/mobility" element={<ProtectedRoute><Gate pageCode="MOBILITY"><NativeMobilityManagement /></Gate></ProtectedRoute>} />
               <Route path="/jobs" element={<Navigate to="/dashboard" replace />} />
-              <Route path="/advanced-reports" element={<ProtectedRoute><Gate pageCode="ADVANCED_REPORTS"><NativeAdvancedReports /></Gate></ProtectedRoute>} />
+              <Route path="/advanced-reports" element={<Navigate to="/reports" replace />} />
               <Route path="/compliance/statutory" element={<ProtectedRoute><Gate pageCode="STATUTORY_COMPLIANCE"><NativeStatutoryCompliance /></Gate></ProtectedRoute>} />
               <Route path="/compliance/labour" element={<ProtectedRoute><Gate pageCode="LABOUR_COMPLIANCE"><NativeLabourCompliance /></Gate></ProtectedRoute>} />
               <Route path="/compliance/dpdp" element={<ProtectedRoute><Gate pageCode="DPDP_COMPLIANCE"><NativeDPDPCompliance /></Gate></ProtectedRoute>} />
@@ -427,6 +435,13 @@ const App = () => (
               <Route path="/payroll/salary-packages" element={<ProtectedRoute><Gate pageCode="SALARY_PACKAGES"><NativeSalaryPackages /></Gate></ProtectedRoute>} />
               <Route path="/payroll/incentives" element={<ProtectedRoute><Gate pageCode="PAYROLL_INCENTIVES"><NativeIncentives /></Gate></ProtectedRoute>} />
               <Route path="/payroll/overtime" element={<ProtectedRoute roles={['admin', 'wfm']}><PayrollOvertimeManagement /></ProtectedRoute>} />
+              <Route path="/payroll/config-flags" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><PayrollConfigFlags /></ProtectedRoute>} />
+              <Route path="/payroll/recalculation-queue" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><RecalculationQueue /></ProtectedRoute>} />
+              <Route path="/payroll/running-breakdown" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','wfm','employee']}><RunningPayrollBreakdown /></ProtectedRoute>} />
+              <Route path="/payroll/holiday-master" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><HolidayMaster /></ProtectedRoute>} />
+              <Route path="/payroll/holiday-work-requests" element={<ProtectedRoute roles={['super_admin','admin','wfm','payroll_head','payroll_branch']}><HolidayWorkRequest /></ProtectedRoute>} />
+              <Route path="/payroll/holiday-work-approvals" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','wfm']}><HolidayWorkApprovals /></ProtectedRoute>} />
+              <Route path="/wfm/weekoff-fairness" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><WeekoffFairness /></ProtectedRoute>} />
 
               {/* Communication */}
               <Route path="/communication/templates" element={<ProtectedRoute roles={['admin', 'hr']}><NativeTemplateManager /></ProtectedRoute>} />
