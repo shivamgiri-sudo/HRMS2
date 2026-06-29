@@ -1,5 +1,10 @@
 import { useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import {
+  EnterprisePageHeader,
+  KpiCard,
+  KpiCardGrid,
+} from "@/components/enterprise";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -97,11 +102,26 @@ const Reports = () => {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div>
-          <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">Analytics</p>
-          <h2 className="mt-1 text-3xl font-black text-slate-950">Reports & Analytics</h2>
-          <p className="text-slate-600">Insights and data visualization</p>
-        </div>
+        <EnterprisePageHeader
+          eyebrow="Analytics"
+          title="Reports Library"
+          description="Browse statutory, payroll, attendance, employee, leave and asset reports from one consistent workspace."
+          status="info"
+          rightSlot={
+            <Select value={selectedYear} onValueChange={setSelectedYear}>
+              <SelectTrigger className="w-full bg-white !text-slate-900 sm:w-[140px] [&>span]:!text-slate-900">
+                <SelectValue placeholder="Year" />
+              </SelectTrigger>
+              <SelectContent className="bg-white !text-slate-900">
+                {YEARS.map((y) => (
+                  <SelectItem key={y} value={y}>
+                    {y}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
+        />
 
         <RoleInsightsPanel roles={roleKeys} title="Report control insights" />
 
@@ -118,26 +138,11 @@ const Reports = () => {
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
-            <div className="flex justify-end">
-              <Select value={selectedYear} onValueChange={setSelectedYear}>
-                <SelectTrigger className="w-[140px] bg-white !text-slate-900 [&>span]:!text-slate-900">
-                  <SelectValue placeholder="Year" />
-                </SelectTrigger>
-                <SelectContent className="bg-white !text-slate-900">
-                  {YEARS.map((y) => (
-                    <SelectItem key={y} value={y}>
-                      {y}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {reportCards.map((report) => (
             <Card
               key={report.title}
-              className="cursor-pointer hover:shadow-md transition-shadow"
+              className="cursor-pointer rounded-[var(--r-lg)] border-[var(--border-hairline)] bg-[var(--surface-0)] shadow-[var(--shadow-xs)] transition hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)]"
               onClick={() => document.getElementById(report.sectionId)?.scrollIntoView({ behavior: "smooth" })}
             >
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -154,67 +159,12 @@ const Reports = () => {
           ))}
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Start of Year</CardTitle>
-              <Users className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              {isLoadingHeadcount ? <Skeleton className="h-8 w-20" /> : (
-                <>
-                  <div className="text-2xl font-bold">{headcountData?.startOfYear ?? 0}</div>
-                  <p className="text-xs text-muted-foreground">Employees on Jan 1</p>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Current Headcount</CardTitle>
-              <UserPlus className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              {isLoadingHeadcount ? <Skeleton className="h-8 w-20" /> : (
-                <>
-                  <div className="text-2xl font-bold">{headcountData?.currentHeadcount ?? 0}</div>
-                  <p className="text-xs text-muted-foreground">Active employees</p>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">New Joiners</CardTitle>
-              <TrendingUp className="h-4 w-4 text-green-600" />
-            </CardHeader>
-            <CardContent>
-              {isLoadingHeadcount ? <Skeleton className="h-8 w-20" /> : (
-                <>
-                  <div className="text-2xl font-bold text-green-600">+{headcountData?.newJoiners ?? 0}</div>
-                  <p className="text-xs text-muted-foreground">This year</p>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Terminations</CardTitle>
-              <TrendingDown className="h-4 w-4 text-red-600" />
-            </CardHeader>
-            <CardContent>
-              {isLoadingHeadcount ? <Skeleton className="h-8 w-20" /> : (
-                <>
-                  <div className="text-2xl font-bold text-red-600">-{headcountData?.terminations ?? 0}</div>
-                  <p className="text-xs text-muted-foreground">This year</p>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+        <KpiCardGrid>
+          <KpiCard title="Start of Year" value={headcountData?.startOfYear ?? 0} description="Employees on Jan 1" icon={<Users className="h-5 w-5" />} tone="people" loading={isLoadingHeadcount} />
+          <KpiCard title="Current Headcount" value={headcountData?.currentHeadcount ?? 0} description="Active employees" icon={<UserPlus className="h-5 w-5" />} tone="success" loading={isLoadingHeadcount} />
+          <KpiCard title="New Joiners" value={`+${headcountData?.newJoiners ?? 0}`} description="This year" icon={<TrendingUp className="h-5 w-5" />} tone="brand" loading={isLoadingHeadcount} />
+          <KpiCard title="Terminations" value={`-${headcountData?.terminations ?? 0}`} description="This year" icon={<TrendingDown className="h-5 w-5" />} tone="danger" loading={isLoadingHeadcount} />
+        </KpiCardGrid>
 
         <Card>
           <CardHeader>

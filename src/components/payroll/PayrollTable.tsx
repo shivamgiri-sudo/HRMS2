@@ -8,10 +8,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { AmountCell, MobileRecordCard, StatusBadgeV2 } from "@/components/enterprise";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,6 +27,19 @@ import { Download, Eye, MoreVertical, CheckCircle, Clock, CreditCard, CalendarCh
 import { useState } from "react";
 import { downloadPayslip } from "@/lib/payslipPdfGenerator";
 import { useToast } from "@/hooks/use-toast";
+
+type SalaryStructureResponse = {
+  success: boolean;
+  data: Partial<Record<
+    | "hra"
+    | "transport_allowance"
+    | "medical_allowance"
+    | "other_allowances"
+    | "tax_deduction"
+    | "other_deductions",
+    number
+  >> | null;
+};
 
 export interface PayrollRecord {
   id: string;
@@ -164,7 +176,7 @@ export function PayrollTable({
       console.log("Starting payslip download for:", record.employee.name);
 
       // Fetch salary structure for detailed breakdown
-      const structureResponse = await hrmsApi.get<{success:boolean;data:any}>("/api/payroll/structures");
+      const structureResponse = await hrmsApi.get<SalaryStructureResponse>("/api/payroll/structures");
       const salaryStructure = structureResponse.data;
 
       console.log("Salary structure fetched:", salaryStructure);
@@ -266,7 +278,60 @@ export function PayrollTable({
         </div>
       )}
 
-      <div className="rounded-xl border border-border bg-card">
+      <div className="grid gap-3 md:hidden">
+        {records.map((record) => (
+          <MobileRecordCard
+            key={record.id}
+            title={record.employee.name}
+            subtitle={`${record.employeeCode} · ${record.month} ${record.year}`}
+            status={
+              <StatusBadgeV2
+                status={record.status === "paid" ? "success" : record.status === "processing" ? "info" : "pending"}
+                label={record.status.charAt(0).toUpperCase() + record.status.slice(1)}
+              />
+            }
+            actions={
+              <>
+                <Button variant="outline" size="sm" className="rounded-[var(--r-md)]" onClick={() => onView?.(record)}>
+                  <Eye className="mr-2 h-4 w-4" />
+                  View
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-[var(--r-md)]"
+                  onClick={() => downloadPayslipPDF(record)}
+                  disabled={downloadingId === record.id}
+                >
+                  {downloadingId === record.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                  Payslip
+                </Button>
+              </>
+            }
+          >
+            <div className="grid grid-cols-2 gap-3 rounded-[var(--r-md)] bg-[var(--surface-1)] p-3 text-xs">
+              <div>
+                <p className="text-[var(--text-muted)]">Basic</p>
+                <p className="mt-1 font-semibold text-[var(--text-primary)]"><AmountCell amount={record.basic} /></p>
+              </div>
+              <div>
+                <p className="text-[var(--text-muted)]">Allowances</p>
+                <p className="mt-1 font-semibold text-[var(--status-present)]"><AmountCell amount={record.allowances} prefix="+" /></p>
+              </div>
+              <div>
+                <p className="text-[var(--text-muted)]">Deductions</p>
+                <p className="mt-1 font-semibold text-[var(--status-absent)]"><AmountCell amount={record.deductions} prefix="-" /></p>
+              </div>
+              <div>
+                <p className="text-[var(--text-muted)]">Net Salary</p>
+                <p className="mt-1 font-semibold text-[var(--text-primary)]"><AmountCell amount={record.netSalary} /></p>
+              </div>
+            </div>
+          </MobileRecordCard>
+        ))}
+      </div>
+
+      <div className="hidden rounded-xl border border-border bg-card md:block">
         <Table className="smarthr-table">
           <TableHeader>
             <TableRow>
@@ -326,8 +391,8 @@ export function PayrollTable({
                 </TableCell>
                 <TableCell>
                   <div className="flex flex-col gap-1">
-                    <StatusBadge
-                      status={record.status === "paid" ? "success" : record.status === "processing" ? "in_progress" : "pending"}
+                    <StatusBadgeV2
+                      status={record.status === "paid" ? "success" : record.status === "processing" ? "info" : "pending"}
                       label={record.status.charAt(0).toUpperCase() + record.status.slice(1)}
                     />
                     {record.paidAt && (
