@@ -223,6 +223,15 @@ const MIGRATION_MANIFEST: string[] = [
   "309_super_admin_full_page_access.sql",
   "1000_fix_engagement_schema_columns.sql",
   "324_login_geo.sql",
+  "325_fix_attendance_utc_to_ist.sql",
+  "326_salary_package_master_sync.sql",
+  "327_aadhaar_esign_appointment_letter.sql",
+  "328_holiday_cost_centre_mapping.sql",
+  "329_holiday_work_request.sql",
+  "330_payroll_recalc_queue_and_config.sql",
+  "331_salary_prep_line_extended_columns.sql",
+  "332_weekoff_fairness_score.sql",
+  "333_cost_centre_master_ensure.sql",
 ];
 
 export type MigrationHealth = {
