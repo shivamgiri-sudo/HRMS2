@@ -147,6 +147,7 @@ import { onboardingDataRouter } from "./modules/onboarding/onboarding-data.route
 import { pennyDropRouter } from "./modules/onboarding/penny-drop.routes.js";
 import { nameValidationRouter } from "./modules/onboarding/name-validation.routes.js";
 import { digiLockerRouter } from "./modules/onboarding/digilocker.routes.js";
+import { employeeReactivationRouter } from "./modules/employees/employee-reactivation.routes.js";
 
 export const app = express();
 
@@ -224,6 +225,7 @@ app.use("/api/employees", listEndpointLimiter, employeeGovernanceRouter);
 app.use("/api/employees", employeePhotoCompatRouter);
 app.use("/api/employees", listEndpointLimiter, employee360Router);
 app.use("/api/employees", listEndpointLimiter, employeeRouter);
+app.use("/api/employees", employeeReactivationRouter);
 app.use("/api/rm-change", rmChangeRouter);
 app.use("/api/kpi/process-role", kpiProcessRoleRouter);
 app.use("/api/kpi-master", kpiMasterRouter);

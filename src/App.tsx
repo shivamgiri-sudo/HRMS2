@@ -127,6 +127,7 @@ const NativeEngagementCommandCenter   = lazy(() => import("./pages/NativeEngagem
 
 // Exit
 const NativeExitCommandCenter         = lazy(() => import("./pages/NativeExitCommandCenter"));
+const NativeEmployeeReactivation      = lazy(() => import("./pages/NativeEmployeeReactivation"));
 
 // Offer Letters & Master Reports
 const NativeOfferLetterGeneration   = lazy(() => import("./pages/NativeOfferLetterGeneration"));
@@ -317,6 +318,8 @@ const App = () => (
               <Route path="/ats/bgv" element={<ProtectedRoute><Gate pageCode="ATS_BGV"><NativeBGVVerificationCenter /></Gate></ProtectedRoute>} />
               <Route path="/ats/bgv-enhanced" element={<ProtectedRoute roles={['admin', 'hr']}><NativeBGVEnhanced /></ProtectedRoute>} />
               <Route path="/ats/bgv-report" element={<ProtectedRoute><Gate pageCode="ATS_BGV_REPORT"><NativeBGVReport /></Gate></ProtectedRoute>} />
+              {/* Employee Reactivation */}
+              <Route path="/employees/reactivation" element={<ProtectedRoute roles={['hr','admin','super_admin','branch_head','payroll_head']}><NativeEmployeeReactivation /></ProtectedRoute>} />
               {/* Employee self-view BGV status */}
               <Route path="/employees/bgv-status" element={<ProtectedRoute><NativeEmployeeBGVStatus /></ProtectedRoute>} />
               {/* HR/Payroll lookup by employee ID */}
