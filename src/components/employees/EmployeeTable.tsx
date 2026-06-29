@@ -7,7 +7,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -33,7 +32,7 @@ import {
 } from "lucide-react";
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { SortDirection } from "@/hooks/useSorting";
-import { employeeStatusStyles } from "@/lib/statusStyles";
+import { MobileRecordCard, StatusBadgeV2 } from "@/components/enterprise";
 
 export interface Employee {
   id: string;
@@ -69,8 +68,6 @@ interface EmployeeTableProps {
   onSelectionChange?: (ids: string[]) => void;
   onBulkAction?: (action: string, ids: string[]) => void;
 }
-
-const statusStyles = employeeStatusStyles;
 
 export function EmployeeTable({
   employees,
@@ -172,7 +169,73 @@ export function EmployeeTable({
         </div>
       )}
 
-      <div className="rounded-xl border border-border bg-card">
+      <div className="grid gap-3 md:hidden">
+        {employees.map((employee) => (
+          <MobileRecordCard
+            key={employee.id}
+            title={employee.name}
+            subtitle={`${employee.employeeCode} · ${employee.designation || "Employee"}`}
+            status={<StatusBadgeV2 status={employee.status} />}
+            actions={
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="rounded-[var(--r-md)]">
+                    <MoreHorizontal className="mr-2 h-4 w-4" />
+                    Actions
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => onView?.(employee)}>
+                    <Eye className="mr-2 h-4 w-4" />
+                    View Profile
+                  </DropdownMenuItem>
+                  {isAdminOrHR && (
+                    <>
+                      <DropdownMenuItem onClick={() => onEdit?.(employee)}>
+                        <Edit className="mr-2 h-4 w-4" />
+                        Edit
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => onManageDocuments?.(employee)}>
+                        <FileText className="mr-2 h-4 w-4" />
+                        Documents
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                  {canResetPassword && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => onResetPassword?.(employee)}
+                        className="text-amber-600 focus:text-amber-700"
+                      >
+                        <KeyRound className="mr-2 h-4 w-4" />
+                        Reset Password
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            }
+          >
+            <div className="grid gap-2 rounded-[var(--r-md)] bg-[var(--surface-1)] p-3 text-xs text-[var(--text-secondary)]">
+              <div className="flex justify-between gap-3">
+                <span className="text-[var(--text-muted)]">Branch</span>
+                <span className="text-right font-semibold">{employee.branch || "-"}</span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-[var(--text-muted)]">Process</span>
+                <span className="text-right font-semibold">{employee.process || "-"}</span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-[var(--text-muted)]">Manager</span>
+                <span className="text-right font-semibold">{employee.reportingManager || "-"}</span>
+              </div>
+            </div>
+          </MobileRecordCard>
+        ))}
+      </div>
+
+      <div className="hidden rounded-xl border border-border bg-card md:block">
         <Table>
           <TableHeader>
             <TableRow>
@@ -312,9 +375,7 @@ export function EmployeeTable({
                 <TableCell className="text-muted-foreground">{employee.designation}</TableCell>
                 <TableCell className="text-muted-foreground">{employee.joinDate}</TableCell>
                 <TableCell>
-                  <Badge variant="outline" className={statusStyles[employee.status]}>
-                    {employee.status}
-                  </Badge>
+                  <StatusBadgeV2 status={employee.status} />
                 </TableCell>
                 <TableCell className="text-right">
                   <DropdownMenu>
