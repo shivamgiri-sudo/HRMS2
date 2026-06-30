@@ -21,7 +21,7 @@ export const navGroups: NavGroup[] = [
       { label: "My Modules",    href: "/modules",       icon: ic(Package),       description: "All allowed pages" },
       { label: "Notifications", href: "/notifications", icon: ic(Bell),          description: "Personal updates" },
       { label: "Work Inbox",    href: "/work-inbox",    icon: ic(ClipboardList), pageCode: "WORK_INBOX", description: "Pending actions" },
-      { label: "Reports",       href: "/reports",       icon: ic(BarChart3),     roles: ["admin","hr","manager","ceo","branch_head"], description: "Reports" },
+      { label: "Reports",       href: "/reports",       icon: ic(BarChart3),     roles: ["admin","hr","manager","ceo","coo","branch_head"], description: "Reports" },
     ],
   },
 
@@ -83,7 +83,7 @@ export const navGroups: NavGroup[] = [
     title: "People & Hiring",
     items: [
       { label: "Employees",    href: "/employees",   icon: ic(Users),     roles: ["admin","hr","manager","branch_head","process_manager"], description: "Directory" },
-      { label: "Departments",  href: "/departments", icon: ic(Building2), roles: ["admin","hr","manager","ceo","branch_head"], description: "Departments" },
+      { label: "Departments",  href: "/departments", icon: ic(Building2), roles: ["admin","hr","manager","ceo","coo","branch_head"], description: "Departments" },
       {
         label: "ATS",          href: "/ats/command-center", icon: ic(Briefcase), pageCode: "ATS_DASHBOARD", description: "Recruitment",
         children: [
@@ -182,7 +182,7 @@ export const navGroups: NavGroup[] = [
         children: [
           { label: "Performance",          href: "/performance",                icon: ic(Target),       description: "Performance" },
           { label: "Performance Command",  href: "/performance/command-center", icon: ic(Target),       pageCode: "WORKFORCE_COMMAND_CENTER", description: "Perf command" },
-          { label: "Agent Performance",    href: "/agent-performance",          icon: ic(Activity),     roles: ["admin","hr","ceo","qa","analyst","manager","process_manager","branch_head"], description: "Cross-source KPI" },
+          { label: "Agent Performance",    href: "/agent-performance",          icon: ic(Activity),     roles: ["admin","hr","ceo","coo","qa","analyst","manager","process_manager","branch_head"], description: "Cross-source KPI" },
           // Goals, Reviews Management, PIP Management removed per business requirement
           { label: "KPI Config",           href: "/kpi-config",                 icon: ic(Target),       pageCode: "KPI_CONFIG", roles: ["admin","hr","manager","process_manager"], description: "KPI" },
           { label: "Operations KPI",       href: "/operations-kpi",             icon: ic(Target),       pageCode: "OPERATIONS_KPI",          description: "Ops KPI" },
@@ -223,9 +223,9 @@ export const navGroups: NavGroup[] = [
         label: "Management",   href: "/management/dashboard", icon: ic(BarChart3), pageCode: "MANAGEMENT_DASHBOARD", description: "Management dashboards",
         children: [
           { label: "Management Dashboard",     href: "/management/dashboard",          icon: ic(BarChart3),  pageCode: "MANAGEMENT_DASHBOARD",   description: "Management" },
-          { label: "CEO Command Center",       href: "/management/ceo-command-center", icon: ic(BarChart3),  roles: ["admin","hr","ceo","finance","process_manager","manager"], description: "CEO dashboard" },
-          { label: "Business Command Center",  href: "/business-command-center",       icon: ic(Briefcase),  roles: ["admin","ceo","hr","manager","process_manager"],           description: "Business ops center" },
-          { label: "Business Actions",         href: "/business-actions",              icon: ic(ClipboardList), roles: ["admin","ceo","hr","manager","process_manager","team_leader","tl"], description: "Action queue" },
+          { label: "CEO Command Center",       href: "/management/ceo-command-center", icon: ic(BarChart3),  roles: ["admin","hr","ceo","coo","finance","process_manager","manager"], description: "CEO dashboard" },
+          { label: "Business Command Center",  href: "/business-command-center",       icon: ic(Briefcase),  roles: ["admin","ceo","coo","hr","manager","process_manager"],           description: "Business ops center" },
+          { label: "Business Actions",         href: "/business-actions",              icon: ic(ClipboardList), roles: ["admin","ceo","coo","hr","manager","process_manager","team_leader","tl"], description: "Action queue" },
           { label: "Control Tower",            href: "/control-tower",                 icon: ic(Activity),   pageCode: "CONTROL_TOWER",          description: "Control tower" },
           { label: "Master Reports",           href: "/master-reports",                icon: ic(BarChart3),  pageCode: "ADVANCED_REPORTS",       description: "Master reports" },
           { label: "Advanced Reports",         href: "/advanced-reports",              icon: ic(BarChart3),  pageCode: "ADVANCED_REPORTS",       description: "Advanced reports" },

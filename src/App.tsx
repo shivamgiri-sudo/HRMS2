@@ -367,7 +367,7 @@ const App = () => (
               <Route path="/operations/dashboard" element={<ProtectedRoute><Gate pageCode="OPERATIONS_DASHBOARD"><NativeOperationsDashboard /></Gate></ProtectedRoute>} />
               <Route path="/performance/command-center" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><UnifiedPerformanceCommandCenter /></Gate></ProtectedRoute>} />
               <Route path="/settings/access-control" element={<ProtectedRoute><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />
-              <Route path="/security-center" element={<ProtectedRoute roles={['admin', 'ceo', 'hr']}><NativeSecurityCenter /></ProtectedRoute>} />
+              <Route path="/security-center" element={<ProtectedRoute roles={['admin', 'ceo', 'coo', 'hr']}><NativeSecurityCenter /></ProtectedRoute>} />
               <Route path="/super-admin/page-access" element={<ProtectedRoute roles={['admin']}><SuperAdminAccessControl /></ProtectedRoute>} />
               <Route path="/it-provisioning" element={<ProtectedRoute><Gate pageCode="IT_PROVISIONING_TRACKER"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
               <Route path="/settings/call-centre-config" element={<ProtectedRoute roles={['admin']}><NativeCallCentreConfig /></ProtectedRoute>} />
@@ -382,7 +382,7 @@ const App = () => (
               <Route path="/engagement/kudos" element={<ProtectedRoute><NativeKudos /></ProtectedRoute>} />
               <Route path="/engagement/surveys" element={<ProtectedRoute><NativeSurveys /></ProtectedRoute>} />
               <Route path="/engagement/leaderboard" element={<ProtectedRoute><NativeLeaderboard /></ProtectedRoute>} />
-              <Route path="/people-experience/command-center" element={<ProtectedRoute roles={['admin', 'hr', 'ceo', 'manager', 'process_manager', 'team_leader', 'tl', 'branch_head', 'employee']}><NativePeopleExperienceCommandCenter /></ProtectedRoute>} />
+              <Route path="/people-experience/command-center" element={<ProtectedRoute roles={['admin', 'hr', 'ceo', 'coo', 'manager', 'process_manager', 'team_leader', 'tl', 'branch_head', 'employee']}><NativePeopleExperienceCommandCenter /></ProtectedRoute>} />
               <Route path="/engagement/command-center" element={<Navigate to="/people-experience/command-center" replace />} />
               <Route path="/employee-stat-card" element={<ProtectedRoute><NativeEmployeeStatCard /></ProtectedRoute>} />
               <Route path="/employee-stat-card/:id" element={<ProtectedRoute><NativeEmployeeStatCard /></ProtectedRoute>} />
