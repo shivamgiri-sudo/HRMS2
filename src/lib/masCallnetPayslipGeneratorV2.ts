@@ -1,5 +1,6 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { buildPayslipQrData, buildQrCodeUrl } from "@/integrations/apis/qrCode.api";
 
 interface MasCallnetPayslipData {
   companyName: string;
@@ -82,6 +83,22 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
     } catch (e) {
       console.error('Error adding logo:', e);
     }
+  }
+
+  // === QR CODE (Top Right) ===
+  try {
+    const qrData = buildPayslipQrData(data.empCode, data.monthYear);
+    const qrUrl = buildQrCodeUrl(qrData, 80);
+    const qrSize = 15; // 15mm in PDF
+    const qrX = pageWidth - 14 - qrSize; // 14mm margin from right
+    doc.addImage(qrUrl, 'PNG', qrX, currentY - 2, qrSize, qrSize);
+    // Tiny label under QR
+    doc.setFontSize(6);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(100, 100, 100);
+    doc.text("Scan to verify", qrX + qrSize / 2, currentY - 2 + qrSize + 2, { align: "center" });
+  } catch (e) {
+    console.error('Error adding QR code:', e);
   }
 
   // === COMPANY NAME (Centered, Bold) ===

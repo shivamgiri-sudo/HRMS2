@@ -1,5 +1,6 @@
 import { Heart } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { formatISTDate } from "@/lib/utils";
 import type { Kudos } from "./types";
 
 export function KudosCard({ kudos }: { kudos: Kudos }) {

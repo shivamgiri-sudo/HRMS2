@@ -1,5 +1,11 @@
+import { useEffect, useState } from "react";
 import { CloudSun, Quote, Sparkles } from "lucide-react";
 import { useSmartGreeting } from "@/integrations/hooks/useSmartGreeting";
+import { useGeoCapture } from "@/hooks/useGeoCapture";
+import { defaultBranchLocation } from "@/integrations/apis/weather.api";
+import { reverseGeocode } from "@/integrations/apis/reverseGeocode.api";
+import { getLocationFromIP } from "@/integrations/apis/ipGeocode.api";
+import type { BranchLocation } from "@/integrations/types/integrations.types";
 
 interface LoginSmartGreetingProps {
   employeeName?: string;
@@ -20,7 +26,24 @@ const cleanDisplayName = (value?: string) => {
 
 export function LoginSmartGreeting({ employeeName }: LoginSmartGreetingProps) {
   const displayName = cleanDisplayName(employeeName);
-  const { greeting, weather, quote, advisory, isLoading } = useSmartGreeting(displayName);
+  const captureGeo = useGeoCapture();
+  const [location, setLocation] = useState<BranchLocation>(defaultBranchLocation);
+
+  useEffect(() => {
+    captureGeo().then(async ({ latitude, longitude }) => {
+      if (latitude !== null && longitude !== null) {
+        const cityName = await reverseGeocode(latitude, longitude);
+        setLocation({ label: cityName ?? "Your Location", latitude, longitude });
+      } else {
+        const ipLocation = await getLocationFromIP();
+        if (ipLocation !== null) {
+          setLocation(ipLocation);
+        }
+      }
+    });
+  }, []);
+
+  const { greeting, weather, quote, advisory, isLoading } = useSmartGreeting(displayName, location);
 
   return (
     <div className="mb-5 overflow-hidden rounded-2xl border border-sky-100 bg-gradient-to-br from-sky-50 via-white to-emerald-50 p-4 shadow-sm">
