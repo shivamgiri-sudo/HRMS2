@@ -8,6 +8,7 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { kpiController as c } from "./kpi.controller.js";
 import { kpiService } from "./kpi.service.js";
+import { getOrgKpiSummary } from "./kpi-org-summary.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -149,5 +150,22 @@ router.put("/rating-config/:processId", requireRole("admin", "hr"), h(async (req
   }
   res.json({ success: true });
 }));
+
+// GET /api/kpi/org-summary?period=2026-06
+// Returns aggregated KPI performance across ALL processes — intended for CEO / COO / Super Admin.
+router.get(
+  "/org-summary",
+  requireRole("super_admin", "admin", "ceo", "coo"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const period =
+      (req.query.period as string) ??
+      new Date().toISOString().substring(0, 7);
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+      return res.status(400).json({ success: false, error: "period must be YYYY-MM" });
+    }
+    const data = await getOrgKpiSummary(period);
+    return res.json({ success: true, data });
+  })
+);
 
 export { router as kpiRouter };
