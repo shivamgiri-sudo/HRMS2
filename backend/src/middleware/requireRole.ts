@@ -15,6 +15,8 @@ const ROLE_ALIASES: Record<string, string[]> = {
   "manager":         ["process_manager"],
   "team_leader":     ["tl"],
   "tl":              ["team_leader"],
+  "coo":             ["ceo"],   // COO has identical access level to CEO
+  "ceo":             ["coo"],
 };
 
 /** Expand a list of roles to include their known aliases */
