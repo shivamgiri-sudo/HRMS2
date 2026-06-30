@@ -33,6 +33,8 @@ export interface PayrollRecord {
   netSalary: number;
   status: "pending" | "processing" | "paid";
   paidAt?: string;
+  designation?: string;
+  department?: string;
 }
 
 const MONTH_NAMES = [
@@ -81,6 +83,8 @@ const mapPayrollRecord = (row: any): PayrollRecord => {
     netSalary: Number(row.net_salary ?? 0),
     status: normalizePayrollStatus(row.run_status, row.line_status),
     paidAt: row.disbursed_at ? String(row.disbursed_at).slice(0, 10) : undefined,
+    designation: row.designation_name ?? row.designation ?? undefined,
+    department:  row.dept_name ?? row.department ?? undefined,
   };
 };
 
