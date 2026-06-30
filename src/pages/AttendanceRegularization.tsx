@@ -164,8 +164,6 @@ export default function AttendanceRegularization() {
   const [isLoading, setIsLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState("all");
   const [selectedRequest, setSelectedRequest] = useState<EmployeeRequest | null>(null);
-  const [rejectTarget, setRejectTarget] = useState<EmployeeRequest | null>(null);
-  const [rejectRemarks, setRejectRemarks] = useState("");
 
   const [searchParams] = useSearchParams();
   const linkedEmployeeId = searchParams.get("employeeId");
@@ -257,32 +255,8 @@ export default function AttendanceRegularization() {
       }),
   });
 
-  const reviewMutation = useMutation({
-    mutationFn: ({ id, status, remarks }: { id: string; status: string; remarks?: string }) =>
-      hrmsApi.patch(`/api/wfm/regularizations/${id}/review`, {
-        status,
-        reviewerNote: remarks,
-      }),
-    onSuccess: (_data, vars) => {
-      toast({ title: vars.status === "approved" ? "Request approved" : "Request rejected" });
-      setRejectTarget(null);
-      setRejectRemarks("");
-      loadRequests();
-    },
-    onError: (err: any) =>
-      toast({
-        title: "Action failed",
-        description: err?.response?.data?.error ?? err?.message ?? "Could not update request.",
-        variant: "destructive",
-      }),
-  });
-
   function getDetail(request: EmployeeRequest) {
     return request.regularization_request_detail?.[0] || null;
-  }
-
-  function canAct(request: EmployeeRequest) {
-    return ["pending_manager", "pending_admin"].includes(request.current_status);
   }
 
   return (
@@ -643,30 +617,6 @@ export default function AttendanceRegularization() {
                                 View
                               </button>
 
-                              {canAct(request) && (
-                                <>
-                                  <button
-                                    disabled={reviewMutation.isPending}
-                                    onClick={() =>
-                                      reviewMutation.mutate({ id: request.id, status: "approved" })
-                                    }
-                                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
-                                  >
-                                    Approve
-                                  </button>
-
-                                  <button
-                                    disabled={reviewMutation.isPending}
-                                    onClick={() => {
-                                      setRejectTarget(request);
-                                      setRejectRemarks("");
-                                    }}
-                                    className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-60"
-                                  >
-                                    Reject
-                                  </button>
-                                </>
-                              )}
                             </div>
                           </Td>
                         </tr>
@@ -685,62 +635,6 @@ export default function AttendanceRegularization() {
         <DetailDialog request={selectedRequest} onClose={() => setSelectedRequest(null)} />
       )}
 
-      {/* Reject Modal */}
-      {rejectTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
-            <h3 className="text-lg font-semibold text-slate-950">Reject Request</h3>
-            <p className="mt-2 text-sm text-slate-500">
-              Rejection remarks are mandatory and will be saved in the audit log. (min 5 characters)
-            </p>
-
-            <div className="mt-4">
-              <textarea
-                value={rejectRemarks}
-                onChange={(e) => setRejectRemarks(e.target.value)}
-                placeholder="Enter rejection reason…"
-                className="min-h-[120px] w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-              />
-              <div className="mt-1 flex justify-end">
-                <span
-                  className={cn(
-                    "text-xs tabular-nums",
-                    rejectRemarks.length < 5 ? "text-rose-500" : "text-slate-400"
-                  )}
-                >
-                  {rejectRemarks.length} chars (min 5)
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                onClick={() => {
-                  setRejectTarget(null);
-                  setRejectRemarks("");
-                }}
-                className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-              <button
-                disabled={rejectRemarks.trim().length < 5 || reviewMutation.isPending}
-                onClick={() =>
-                  reviewMutation.mutate({
-                    id: rejectTarget.id,
-                    status: "rejected",
-                    remarks: rejectRemarks.trim(),
-                  })
-                }
-                className="flex h-10 items-center gap-2 rounded-xl bg-rose-600 px-4 text-sm font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {reviewMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                Confirm Reject
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </DashboardLayout>
   );
 }

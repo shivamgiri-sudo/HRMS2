@@ -348,9 +348,9 @@ export function useSubmitRegularization() {
           reason_code: input.reasonCode,
           reason: input.reason,
           requested_status: input.requestedStatus,
-          dispute_type: input.disputeType,
-          new_punch_in: input.newPunchIn,
-          new_punch_out: input.newPunchOut,
+          disputeType: input.disputeType,
+          newPunchIn: input.newPunchIn,
+          newPunchOut: input.newPunchOut,
         }
       );
       if (!res.success) throw new Error((res as any).message || 'Failed to submit regularization');

@@ -1,6 +1,7 @@
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
+import { runLeaveWeekoffReconciliation } from './leave-weekoff-reconciliation.service.js';
 
 let _timer: ReturnType<typeof setInterval> | null = null;
 
@@ -21,6 +22,19 @@ export async function runPayrollWindowClosure(): Promise<void> {
   );
 
   for (const row of rows as Array<{ id: string; run_month: string }>) {
+    // Run leave/week-off reconciliation before locking (idempotent safety net)
+    try {
+      const recon = await runLeaveWeekoffReconciliation(row.run_month);
+      if (recon.restored > 0) {
+        console.log(
+          `[payroll-window-cron] Leave/week-off reconciliation: restored ${recon.restored} days` +
+          ` across ${recon.employees} employees for ${row.run_month}`,
+        );
+      }
+    } catch (err) {
+      console.error(`[payroll-window-cron] Reconciliation failed for ${row.run_month}:`, err);
+    }
+
     await db.execute(
       `UPDATE salary_prep_run
           SET status = 'locked', auto_closed_at = NOW(), closed_by = 'system'

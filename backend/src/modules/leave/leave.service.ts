@@ -2,6 +2,10 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
+import {
+  getWeekOffDatesForEmployee,
+  reconcileOnLeaveApproval,
+} from "../payroll/leave-weekoff-reconciliation.service.js";
 import type {
   LeaveBalanceLedger,
   LeaveHoliday,
@@ -59,7 +63,7 @@ export const leaveService = {
     return (rows as LeaveType[])[0];
   },
 
-  async submitRequest(input: LeaveRequestInput): Promise<LeaveRequest> {
+  async submitRequest(input: LeaveRequestInput): Promise<LeaveRequest & { weekoff_warning?: string[] }> {
     const id = randomUUID();
     await db.execute(
       `INSERT INTO leave_request (id, employee_id, leave_type_id, from_date, to_date, total_days, reason, latitude, longitude)
@@ -68,7 +72,20 @@ export const leaveService = {
        input.totalDays, input.reason ?? null,
        (input as any).latitude ?? null, (input as any).longitude ?? null]
     );
-    return this.getRequest(id);
+    const request = await this.getRequest(id);
+
+    // Soft-warn if any requested day is a rostered week-off
+    let weekoff_warning: string[] | undefined;
+    try {
+      const overlaps = await getWeekOffDatesForEmployee(
+        input.employeeId, input.fromDate, input.toDate,
+      );
+      if (overlaps.length > 0) weekoff_warning = overlaps;
+    } catch {
+      // Non-fatal — never block submission over a warning check failure
+    }
+
+    return weekoff_warning ? { ...request, weekoff_warning } : request;
   },
 
   async getRequest(id: string): Promise<LeaveRequest> {
@@ -82,28 +99,25 @@ export const leaveService = {
 
   async reviewRequest(id: string, input: ReviewLeaveInput, reviewerId: string): Promise<LeaveRequest> {
     const request = await this.getRequest(id);
-    
-    // Handle approval - deduct leave balance
+
+    // Handle approval — deduct leave balance
     if (input.status === 'approved') {
-      // Validate leave_type_id exists
       if (!request.leave_type_id) {
         throw new Error("Leave type is required for approval");
       }
-      
+
       const duration = request.total_days;
       const employeeId = request.employee_id;
       const leaveTypeId = request.leave_type_id;
       const year = new Date(request.from_date).getFullYear();
-      
-      // Check current balance
+
       const [balanceRows] = await db.execute<RowDataPacket[]>(
-        `SELECT * FROM leave_balance_ledger 
+        `SELECT * FROM leave_balance_ledger
          WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
         [employeeId, leaveTypeId, year]
       );
-      
+
       if (balanceRows.length === 0) {
-        // No ledger row exists - create one with used_days = duration and allocated_days = 0
         await db.execute(
           `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
            VALUES (UUID(), ?, ?, ?, 0, ?, 0)`,
@@ -111,31 +125,69 @@ export const leaveService = {
         );
       } else {
         const balance = balanceRows[0];
-        const availableBalance = (balance.allocated_days || 0) + (balance.adjusted_days || 0) - (balance.used_days || 0);
-        
-        // Validate sufficient balance
+        const availableBalance =
+          (balance.allocated_days || 0) + (balance.adjusted_days || 0) - (balance.used_days || 0);
+
         if (duration > availableBalance) {
-          throw new Error(`Insufficient leave balance. Available: ${availableBalance}, Requested: ${duration}`);
+          throw new Error(
+            `Insufficient leave balance. Available: ${availableBalance}, Requested: ${duration}`
+          );
         }
-        
-        // Update used_days
+
         await db.execute(
-          `UPDATE leave_balance_ledger 
-           SET used_days = used_days + ? 
+          `UPDATE leave_balance_ledger
+           SET used_days = used_days + ?
            WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
           [duration, employeeId, leaveTypeId, year]
         );
       }
+
+      // Immediately restore credit for any days that are rostered week-offs
+      // (for processes where weekoff_earning_required = true)
+      try {
+        const [ltRow] = await db.execute<RowDataPacket[]>(
+          "SELECT leave_name FROM leave_type_master WHERE id = ? LIMIT 1",
+          [leaveTypeId],
+        );
+        const leaveTypeName = (ltRow[0] as any)?.leave_name ?? "leave";
+
+        const [userRow] = await db.execute<RowDataPacket[]>(
+          "SELECT user_id FROM employees WHERE id = ? LIMIT 1",
+          [employeeId],
+        );
+        const employeeUserId = (userRow[0] as any)?.user_id ?? null;
+
+        await reconcileOnLeaveApproval({
+          employeeId,
+          leaveRequestId: id,
+          leaveTypeId,
+          leaveTypeName,
+          fromDate: String(request.from_date).slice(0, 10),
+          toDate: String(request.to_date).slice(0, 10),
+          totalDays: Number(duration),
+          employeeUserId,
+        });
+      } catch (err) {
+        // Non-fatal — balance deduction already succeeded; reconciliation is a best-effort step
+        console.warn(`[leave] Week-off reconciliation failed for request ${id}:`, err);
+      }
     }
-    
-    // Handle rejection - restore leave balance if previously approved
+
+    // Handle rejection — restore balance if previously approved
     if (input.status === 'rejected' && request.status === 'approved') {
-      // TODO: Handle state transition from approved to rejected - deduct used_days
-      // This requires tracking the previous status which is a more complex change
-      // For now, log a warning about this edge case
-      console.warn(`Request ${id} was rejected after approval - balance was already deducted and should be restored manually`);
+      await db.execute(
+        `UPDATE leave_balance_ledger
+         SET used_days = GREATEST(0, used_days - ?)
+         WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+        [
+          request.total_days,
+          request.employee_id,
+          request.leave_type_id,
+          new Date(request.from_date).getFullYear(),
+        ]
+      );
     }
-    
+
     await db.execute(
       "UPDATE leave_request SET status = ? WHERE id = ?",
       [input.status, id]
