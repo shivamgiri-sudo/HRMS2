@@ -156,11 +156,18 @@ export async function verifyPanByToken(token: string, input: { panNumber?: strin
   return verifyPanForCandidate(tokenData.candidate_id as string, input, { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent });
 }
 
-export async function verifyPanForCandidate(candidateId: string, input: { panNumber?: string }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
+export async function verifyPanForCandidate(candidateId: string, input: { panNumber?: string; force?: boolean }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
   await ensureConsent(candidateId);
   const candidate = await getCandidateIdentity(candidateId);
   const pan = String(input.panNumber ?? "").trim().toUpperCase();
   if (!pan) throw Object.assign(new Error("PAN number is required"), { statusCode: 400 });
+  if (!input.force) {
+    const [existing] = await db.execute<RowDataPacket[]>(
+      `SELECT id, status FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = 'pan' AND status = 'verified' LIMIT 1`,
+      [candidateId]
+    );
+    if ((existing as RowDataPacket[]).length) return getBgvStatusForCandidate(candidateId);
+  }
   const adapter = getBgvProviderAdapter();
   const started = Date.now();
   const result = await adapter.verifyPan({ candidateName: candidate.employee_name ?? candidate.full_name, dateOfBirth: candidate.date_of_birth, panNumber: pan });
@@ -194,9 +201,16 @@ export async function verifyBankByToken(token: string, input: { accountNo?: stri
   return verifyBankForCandidate(tokenData.candidate_id as string, input, { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent });
 }
 
-export async function verifyBankForCandidate(candidateId: string, input: { accountNo?: string; ifscCode?: string; accountHolderName?: string }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
+export async function verifyBankForCandidate(candidateId: string, input: { accountNo?: string; ifscCode?: string; accountHolderName?: string; force?: boolean }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
   await ensureConsent(candidateId);
   const candidate = await getCandidateIdentity(candidateId);
+  if (!input.force) {
+    const [existing] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM candidate_bank_verification WHERE candidate_id = ? AND verification_status = 'verified' LIMIT 1`,
+      [candidateId]
+    );
+    if ((existing as RowDataPacket[]).length) return getBgvStatusForCandidate(candidateId);
+  }
   let accountNo = String(input.accountNo ?? "").trim();
   let ifscCode = String(input.ifscCode ?? "").trim().toUpperCase();
   let accountHolderName = input.accountHolderName;
@@ -261,14 +275,79 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
   return getBgvStatusForCandidate(candidateId);
 }
 
+export async function verifyUanByToken(token: string, input: { uanNumber?: string }, meta?: { ip?: string; userAgent?: string }) {
+  const tokenData = await validateOnboardingToken(token);
+  return verifyUanForCandidate(tokenData.candidate_id as string, input, { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent });
+}
+
+export async function verifyUanForCandidate(candidateId: string, input: { uanNumber?: string; force?: boolean }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
+  await ensureConsent(candidateId);
+  const uan = String(input.uanNumber ?? "").trim();
+  if (!input.force) {
+    const [existing] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = 'experience' AND status = 'verified' LIMIT 1`,
+      [candidateId]
+    );
+    if ((existing as RowDataPacket[]).length) return { ...await getBgvStatusForCandidate(candidateId), employment_history: [] };
+  }
+  if (!uan) throw Object.assign(new Error("UAN number is required"), { statusCode: 400 });
+  const adapter = getBgvProviderAdapter() as any;
+  if (typeof adapter.verifyUan !== "function") {
+    throw Object.assign(new Error("UAN verification is not supported by the current BGV provider"), { statusCode: 501 });
+  }
+  const started = Date.now();
+  const result = await adapter.verifyUan(uan) as any;
+  const checkId = await createOrUpdateCheck(candidateId, "experience", result.status, {
+    providerKey: result.providerKey,
+    providerRequestId: result.providerRequestId,
+    providerReferenceId: result.providerReferenceId,
+    matchScore: result.matchScore,
+    matchedName: result.matchedName,
+    resultSummary: result.resultSummary,
+    resultJson: result.raw,
+    riskFlags: result.riskFlags,
+  });
+  await db.execute(
+    `INSERT INTO candidate_bgv_api_request_log
+       (id, candidate_id, check_id, provider_key, endpoint_key, request_ref, request_payload_hash, response_status_code, response_payload, duration_ms, success_flag)
+     VALUES (?, ?, ?, ?, 'UAN_VERIFY', ?, ?, 200, ?, ?, ?)`,
+    [randomUUID(), candidateId, checkId, result.providerKey, result.providerRequestId, hashValue(uan), JSON.stringify(result.raw ?? result), Date.now() - started, result.status === "verified" ? 1 : 0]
+  );
+  // Write UAN back to profile if not already set
+  await db.execute(
+    `UPDATE candidate_onboarding_profile SET uan_number = ? WHERE candidate_id = ? AND (uan_number IS NULL OR uan_number = '')`,
+    [uan, candidateId]
+  );
+  // Persist employment history as experience entries if any returned
+  if (Array.isArray(result.employmentHistory) && result.employmentHistory.length > 0) {
+    for (const emp of result.employmentHistory) {
+      await db.execute(
+        `INSERT IGNORE INTO candidate_onboarding_experience
+           (id, candidate_id, company_name, from_date, to_date, uan_establishment_id, data_source, created_at)
+         VALUES (UUID(), ?, ?, ?, ?, ?, 'luckpay_uan', NOW())`,
+        [candidateId, emp.employer ?? null, emp.joining ?? null, emp.leaving ?? null, emp.establishment ?? null]
+      ).catch(() => { /* table may not have all columns — non-fatal */ });
+    }
+  }
+  await logEvent(candidateId, "UAN_VERIFICATION_COMPLETED", result, checkId, meta);
+  return { ...await getBgvStatusForCandidate(candidateId), employment_history: result.employmentHistory ?? [] };
+}
+
 export async function verifyAadhaarOfflineByToken(token: string, input: { documentId?: string; aadhaarLast4?: string }, meta?: { ip?: string; userAgent?: string }) {
   const tokenData = await validateOnboardingToken(token);
   return verifyAadhaarOfflineForCandidate(tokenData.candidate_id as string, input, { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent });
 }
 
-export async function verifyAadhaarOfflineForCandidate(candidateId: string, input: { documentId?: string; aadhaarLast4?: string }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
+export async function verifyAadhaarOfflineForCandidate(candidateId: string, input: { documentId?: string; aadhaarLast4?: string; force?: boolean }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
   await ensureConsent(candidateId);
   const candidate = await getCandidateIdentity(candidateId);
+  if (!input.force) {
+    const [existing] = await db.execute<RowDataPacket[]>(
+      `SELECT id, status FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = 'aadhaar' AND status = 'verified' LIMIT 1`,
+      [candidateId]
+    );
+    if ((existing as RowDataPacket[]).length) return getBgvStatusForCandidate(candidateId);
+  }
   const adapter = getBgvProviderAdapter();
   const result = await adapter.verifyAadhaarOffline({ candidateName: candidate.employee_name ?? candidate.full_name, aadhaarLast4: input.aadhaarLast4, documentId: input.documentId });
   const checkId = await createOrUpdateCheck(candidateId, "aadhaar", result.status, {

@@ -189,6 +189,10 @@ if (parsed.data.NODE_ENV === "production") {
     console.error("[FATAL] DIGIO_CLIENT_ID and DIGIO_CLIENT_SECRET must be set when BGV_PROVIDER=digio.");
     process.exit(1);
   }
+  if (parsed.data.BGV_PROVIDER === "befisc_luckpay" && (!parsed.data.LUCKPAY_BASIC_TOKEN || !parsed.data.LUCKPAY_CLIENT_ID || !parsed.data.CRIMESCAN_API_KEY)) {
+    console.error("[FATAL] LUCKPAY_BASIC_TOKEN, LUCKPAY_CLIENT_ID, and CRIMESCAN_API_KEY must be set when BGV_PROVIDER=befisc_luckpay.");
+    process.exit(1);
+  }
 }
 
 export const env = {

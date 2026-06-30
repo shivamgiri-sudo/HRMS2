@@ -173,6 +173,7 @@ export default function CandidateOnboardingFullPage() {
           onVerifyAadhaar={onb.verifyAadhaar}
           onVerifyPan={onb.verifyPan}
           onVerifyBank={onb.verifyBank}
+          onVerifyUan={onb.verifyUan}
           onDigilocker={onb.startDigilocker}
         />
       )}

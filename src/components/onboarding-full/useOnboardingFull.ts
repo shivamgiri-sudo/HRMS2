@@ -452,6 +452,20 @@ export function useOnboardingFull(token: string) {
     finally { setSaving(false); }
   };
 
+  const verifyUan = async () => {
+    const uan = employee.uanNumber?.trim();
+    if (!uan) { setError("Please enter your UAN number in the KYC section (Step 3) before verifying."); return; }
+    setSaving(true);
+    try {
+      const res = await hrmsApi.post<{ data: { employment_history?: unknown[] } }>(`${BGV}/verify/uan`, { token, uanNumber: uan });
+      await load();
+      const count = res.data?.data?.employment_history?.length ?? 0;
+      if (count > 0) setError(""); // clear any prior error; employment history fetched
+    }
+    catch (e: any) { setError(e?.message || "UAN verification failed"); }
+    finally { setSaving(false); }
+  };
+
   const startDigilocker = async () => {
     setSaving(true);
     try {
@@ -554,7 +568,7 @@ export function useOnboardingFull(token: string) {
     pfOptOutElected, pfOptOutSaving, pfOptOutConsented, pfOptOutConsentedAt, pfOptOutConsent,
     load, autosave, advanceStep,
     saveEmployee, saveBank, addQualification, saveExperience, saveStatutory,
-    sendOtp, verifyOtp, grantConsent, verifyPan, verifyBank, verifyAadhaar,
+    sendOtp, verifyOtp, grantConsent, verifyPan, verifyBank, verifyAadhaar, verifyUan,
     startDigilocker, lookupIfsc, uploadDoc, deleteDoc, submit,
     updateSectionStatus, getBlockers, saveFamily, saveNominees,
   };

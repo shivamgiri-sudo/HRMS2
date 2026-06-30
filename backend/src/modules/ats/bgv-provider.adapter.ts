@@ -1010,6 +1010,52 @@ export class BefiscLuckpayCrimescanAdapter implements BgvProviderAdapter {
     };
   }
 
+  async verifyUan(uan: string): Promise<VerificationResult & { employmentHistory?: Array<{ employer: string; joining: string | null; leaving: string | null; establishment: string | null }> | null }> {
+    const requestId = randomUUID();
+    const { token, clientId } = await this.getLuckpayToken();
+    const txnId = randomUUID().replace(/-/g, "").slice(0, 12);
+    const res = await axios.post(
+      "https://api-banking.luckpay.in/apibanking/api/v1/verifyUanByUan",
+      { clientTransactionId: txnId, identifier: uan.trim() },
+      {
+        headers: { Authorization: clientId, "X-Access-Token": `Bearer ${token}`, "Content-Type": "application/json" },
+        timeout: 30_000,
+      }
+    );
+    const d = res.data ?? {};
+    const data = d.data ?? d;
+    const success = (String(d.code ?? "") === "200" || String(d.status ?? "").toLowerCase() === "success") &&
+      (String(data.status ?? "").toUpperCase() === "SUCCESS" || Array.isArray(data.employmentDetails) || Array.isArray(data.employment_details));
+    const rawHistory: unknown[] = Array.isArray(data.employmentDetails)
+      ? data.employmentDetails
+      : Array.isArray(data.employment_details)
+        ? data.employment_details
+        : [];
+    const employmentHistory = rawHistory.map((e: unknown) => {
+      const entry = e as Record<string, unknown>;
+      return {
+        employer: String(entry.establishmentName ?? entry.employer_name ?? entry.company_name ?? ""),
+        joining: String(entry.dateOfJoining ?? entry.joining_date ?? entry.doj ?? ""),
+        leaving: entry.dateOfExit ?? entry.exit_date ?? entry.doe ? String(entry.dateOfExit ?? entry.exit_date ?? entry.doe) : null,
+        establishment: String(entry.establishmentId ?? entry.establishment_id ?? entry.epfo_id ?? ""),
+      };
+    });
+    return {
+      status: success ? "verified" : "failed",
+      providerKey: this.providerKey,
+      providerRequestId: requestId,
+      providerReferenceId: String(data.transactionId ?? txnId),
+      matchScore: null,
+      matchedName: String(data.memberName ?? data.name ?? ""),
+      resultSummary: success
+        ? `UAN verified via Luckpay. ${employmentHistory.length} employment record(s) found.`
+        : (d.message ?? "UAN verification failed"),
+      riskFlags: success ? [] : ["UAN_VERIFICATION_FAILED"],
+      employmentHistory: success ? employmentHistory : null,
+      raw: d,
+    };
+  }
+
   async startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession> {
     // befisc_luckpay does not support DigiLocker — fallback to mock URL
     const state = randomUUID();

@@ -26,6 +26,8 @@ import {
   verifyEducationByToken,
   verifyPanByToken,
   verifyPanForCandidate,
+  verifyUanByToken,
+  verifyUanForCandidate,
   waiveCheck,
   dispatchToVendor,
   updateVendorResult,
@@ -71,6 +73,13 @@ router.post("/verify/bank", h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await verifyBankByToken(token, req.body, meta(req)) });
+}));
+
+router.post("/verify/uan", h(async (req, res) => {
+  const token = String(req.body.token ?? "");
+  if (!token) return res.status(400).json({ success: false, message: "token required" });
+  if (!req.body.uanNumber) return res.status(400).json({ success: false, message: "uanNumber required" });
+  return res.json({ success: true, data: await verifyUanByToken(token, req.body, meta(req)) });
 }));
 
 router.post("/verify/aadhaar-offline", h(async (req, res) => {
@@ -182,6 +191,11 @@ router.post("/candidates/:candidateId/verify/pan", requireAuth, requireRole("adm
 router.post("/candidates/:candidateId/verify/bank", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
   await requireBgvCandidateScope(req, req.params.candidateId);
   return res.json({ success: true, data: await verifyBankForCandidate(req.params.candidateId, req.body, { actorType: "hr", actorId: req.authUser!.id }) });
+}));
+
+router.post("/candidates/:candidateId/verify/uan", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+  await requireBgvCandidateScope(req, req.params.candidateId);
+  return res.json({ success: true, data: await verifyUanForCandidate(req.params.candidateId, req.body, { actorType: "hr", actorId: req.authUser!.id }) });
 }));
 
 router.post("/candidates/:candidateId/manual-review", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {

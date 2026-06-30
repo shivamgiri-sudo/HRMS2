@@ -798,7 +798,7 @@ export function Step4Documents({
 
 export function Step5Bgv({
   bgv, bgvApiAvailable, consentAccepted, saving,
-  onConsent, onVerifyAadhaar, onVerifyPan, onVerifyBank, onDigilocker,
+  onConsent, onVerifyAadhaar, onVerifyPan, onVerifyBank, onVerifyUan, onDigilocker,
 }: {
   bgv: BgvStatus | null;
   bgvApiAvailable: boolean;
@@ -808,6 +808,7 @@ export function Step5Bgv({
   onVerifyAadhaar: () => void;
   onVerifyPan: () => void;
   onVerifyBank: () => void;
+  onVerifyUan: () => void;
   onDigilocker: () => void;
 }) {
   return (
@@ -884,11 +885,13 @@ export function Step5Bgv({
               { label: "Verify Aadhaar", onClick: onVerifyAadhaar, icon: "🪪" },
               { label: "Verify PAN", onClick: onVerifyPan, icon: "📋" },
               { label: "Verify Bank A/C", onClick: onVerifyBank, icon: "🏦" },
+              { label: "Verify UAN / Employment", onClick: onVerifyUan, icon: "🏢" },
               { label: "DigiLocker Link", onClick: onDigilocker, icon: "🔗" },
             ].map(({ label, onClick, icon }) => {
               const checkType = label.toLowerCase().includes("aadhaar") ? "aadhaar"
                 : label.toLowerCase().includes("pan") ? "pan"
-                : label.toLowerCase().includes("bank") ? "bank" : null;
+                : label.toLowerCase().includes("bank") ? "bank"
+                : label.toLowerCase().includes("uan") ? "experience" : null;
               const check = bgv?.checks.find((c) => checkType && c.check_type?.toLowerCase() === checkType);
               const verified = check?.status === "verified";
               return (
@@ -896,10 +899,10 @@ export function Step5Bgv({
                   key={label}
                   variant="outline"
                   onClick={onClick}
-                  disabled={!consentAccepted || saving}
+                  disabled={!consentAccepted || saving || verified}
                   size="lg"
                   className={`min-h-[52px] text-sm font-bold rounded-xl border-2 flex items-center gap-2 justify-start px-4 ${
-                    verified ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 hover:border-indigo-300"
+                    verified ? "border-emerald-200 bg-emerald-50 text-emerald-700 opacity-80 cursor-default" : "border-slate-200 hover:border-indigo-300"
                   }`}
                 >
                   <span>{icon}</span>
