@@ -80,48 +80,66 @@ router.get("/roles/catalog", requireRole("admin", "hr"), h(async (_req: Authenti
   res.json({ data: await listRoleCatalog() });
 }));
 
-// Fast searchable users endpoint for the redesigned access-control page.
+// Full user list for the Settings → Users admin tab.
+// Groups by auth_user.id so each login account is one row even if multiple employees share a user_id.
 router.get("/users", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const search = String(req.query.search ?? "").trim();
-  const limit = Math.max(1, Math.min(Number(req.query.limit ?? 20), 50));
+  const limit = Math.max(1, Math.min(Number(req.query.limit ?? 50), 200));
   const offset = Math.max(0, Number(req.query.offset ?? 0));
+  const includeBlocked = req.query.includeBlocked === "true";
   const like = `%${search}%`;
 
-  const where = search
-    ? `WHERE au.is_blocked = 0 AND (
-         au.email LIKE ?
-         OR e.full_name LIKE ?
-         OR e.employee_code LIKE ?
-       )`
-    : "WHERE au.is_blocked = 0";
+  const blockedClause = includeBlocked ? "" : "AND au.is_blocked = 0";
+  const searchClause = search
+    ? "AND (au.email LIKE ? OR e.full_name LIKE ? OR e.employee_code LIKE ?)"
+    : "";
   const params: unknown[] = search ? [like, like, like] : [];
+
+  const [countRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(DISTINCT au.id) AS total
+       FROM auth_user au
+       LEFT JOIN employees e ON e.user_id = au.id AND e.active_status = 1
+      WHERE 1=1 ${blockedClause} ${searchClause}`,
+    params
+  );
+  const total = Number((countRows[0] as any)?.total ?? 0);
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
-       au.id,
-       au.email,
-       COALESCE(e.full_name, au.email) AS full_name,
-       e.employee_code,
-       GROUP_CONCAT(DISTINCT ur.role_key ORDER BY ur.role_key) AS roles
-     FROM auth_user au
-     LEFT JOIN employees e ON e.user_id = au.id AND e.active_status = 1
-     LEFT JOIN user_roles ur ON ur.user_id = au.id AND ur.active_status = 1
-     ${where}
-     GROUP BY au.id, au.email, e.full_name, e.employee_code
-     ORDER BY COALESCE(e.full_name, au.email)
-     LIMIT ${limit} OFFSET ${offset}`,
+         au.id,
+         au.email,
+         au.is_blocked,
+         au.last_login_at,
+         MIN(COALESCE(e.full_name, '')) AS full_name,
+         MIN(e.employee_code)          AS employee_code,
+         MIN(e.id)                     AS employee_id,
+         MIN(e.employment_status)      AS employment_status,
+         GROUP_CONCAT(DISTINCT ur.role_key ORDER BY ur.role_key) AS roles
+       FROM auth_user au
+       LEFT JOIN employees e ON e.user_id = au.id AND e.active_status = 1
+       LEFT JOIN user_roles ur ON ur.user_id = au.id AND ur.active_status = 1
+      WHERE 1=1 ${blockedClause} ${searchClause}
+      GROUP BY au.id, au.email, au.is_blocked, au.last_login_at
+      ORDER BY MIN(COALESCE(NULLIF(e.full_name,''), au.email))
+      LIMIT ${limit} OFFSET ${offset}`,
     params
   );
 
   res.json({
     success: true,
+    total,
     data: rows.map((row: any) => ({
-      id: row.id,
-      email: row.email,
-      full_name: row.full_name,
-      employee_code: row.employee_code,
-      roles: row.roles ? String(row.roles).split(",") : [],
+      id:                row.id,
+      email:             row.email,
+      is_blocked:        Boolean(row.is_blocked),
+      last_login_at:     row.last_login_at ?? null,
+      full_name:         row.full_name || null,
+      employee_code:     row.employee_code ?? null,
+      employee_id:       row.employee_id ?? null,
+      employment_status: row.employment_status ?? null,
+      roles:             row.roles ? String(row.roles).split(",") : [],
     })),
+    meta: { limit, offset, total },
   });
 }));
 

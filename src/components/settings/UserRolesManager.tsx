@@ -1,50 +1,41 @@
-import { useState } from "react";
+import { useState, useCallback, useRef } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useAuth } from "@/contexts/AuthContext";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Pencil, Loader2, Ban, CheckCircle, Link, Unlink } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Pencil, Ban, CheckCircle, Loader2, Search, ChevronLeft, ChevronRight,
+  Shield, UserX, Clock, RefreshCcw, Plus, Trash2,
+} from "lucide-react";
 
-import { useAuth } from "@/contexts/AuthContext";
+// ── Types ──────────────────────────────────────────────────────────────────────
 
-type EmployeeStatus = "active" | "inactive" | "onboarding" | "offboarded";
+interface UserRow {
+  id: string;
+  email: string;
+  is_blocked: boolean;
+  last_login_at: string | null;
+  full_name: string | null;
+  employee_code: string | null;
+  employee_id: string | null;
+  employment_status: string | null;
+  roles: string[];
+}
 
 interface CatalogRole {
   role_key: string;
@@ -52,543 +43,521 @@ interface CatalogRole {
   description?: string;
 }
 
-interface UserWithRole {
-  id: string;
-  email: string;
-  full_name: string | null;
-  avatar_url: string | null;
-  role: string | null;
-  role_id: string | null;
-  employee_status: EmployeeStatus | null;
-  blocked: boolean;
-  employee_id: string | null;
+interface UsersResponse {
+  success: boolean;
+  data: UserRow[];
+  total: number;
+  meta: { limit: number; offset: number; total: number };
 }
 
-interface UnlinkedEmployee {
-  id: string;
-  employee_code: string;
-  first_name: string;
-  last_name: string;
-  email: string;
-  designation: string;
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+const ROLE_COLORS: Record<string, string> = {
+  super_admin:       "bg-red-100 text-red-800",
+  admin:             "bg-orange-100 text-orange-800",
+  hr:                "bg-blue-100 text-blue-800",
+  finance:           "bg-emerald-100 text-emerald-800",
+  payroll:           "bg-emerald-100 text-emerald-800",
+  payroll_head:      "bg-emerald-100 text-emerald-800",
+  payroll_admin:     "bg-emerald-100 text-emerald-800",
+  payroll_hr:        "bg-emerald-100 text-emerald-800",
+  branch_head:       "bg-violet-100 text-violet-800",
+  branch_admin:      "bg-violet-100 text-violet-800",
+  process_manager:   "bg-indigo-100 text-indigo-800",
+  manager:           "bg-indigo-100 text-indigo-800",
+  wfm:               "bg-cyan-100 text-cyan-800",
+  qa:                "bg-yellow-100 text-yellow-800",
+  recruiter:         "bg-pink-100 text-pink-800",
+  trainer:           "bg-pink-100 text-pink-800",
+  team_leader:       "bg-slate-100 text-slate-700",
+  tl:                "bg-slate-100 text-slate-700",
+  interviewer:       "bg-slate-100 text-slate-700",
+  employee:          "bg-gray-100 text-gray-600",
+};
+
+function roleBadge(roleKey: string, roleName: string) {
+  const cls = ROLE_COLORS[roleKey] ?? "bg-gray-100 text-gray-600";
+  return (
+    <span key={roleKey} className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${cls}`}>
+      {roleName}
+    </span>
+  );
 }
 
-// Stable color chips for known roles; unknown roles fall back to "outline"
-const roleBadgeVariant: Record<string, "default" | "secondary" | "outline"> = {
-  admin:           "default",
-  hr:              "default",
-  ceo:             "default",
-  branch_head:     "default",
-  process_manager: "secondary",
-  manager:         "secondary",
-  assistant_manager:"secondary",
-  wfm:             "secondary",
-  finance:         "secondary",
-  payroll:         "secondary",
-  qa:              "secondary",
-  recruiter:       "outline",
-  trainer:         "outline",
-  team_leader:     "outline",
-  tl:              "outline",
-  employee:        "outline",
-  client_user:     "outline",
-};
+function initials(name: string | null, email: string) {
+  const src = name?.trim() || email;
+  return src.split(/\s+/).map((w) => w[0]).join("").toUpperCase().slice(0, 2);
+}
 
-const statusLabels: Record<EmployeeStatus, string> = {
-  active: "Active",
-  inactive: "Inactive",
-  onboarding: "Onboarding",
-  offboarded: "Offboarded",
-};
+function formatLastLogin(dt: string | null) {
+  if (!dt) return "Never";
+  const d = new Date(dt);
+  const diff = Date.now() - d.getTime();
+  const days = Math.floor(diff / 86400000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 30) return `${days}d ago`;
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+}
 
-const statusBadgeVariant: Record<EmployeeStatus, "default" | "secondary" | "outline" | "destructive"> = {
-  active: "default",
-  inactive: "destructive",
-  onboarding: "secondary",
-  offboarded: "outline",
-};
+const PAGE_SIZE = 50;
+
+// ── Main component ─────────────────────────────────────────────────────────────
 
 export function UserRolesManager() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { user: currentUser } = useAuth();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [blockDialogOpen, setBlockDialogOpen] = useState(false);
-  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
-  const [unlinkDialogOpen, setUnlinkDialogOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<UserWithRole | null>(null);
-  const [selectedRole, setSelectedRole] = useState<string>("employee");
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>("");
 
-  // All roles from catalog — used to populate the role picker
+  const [search, setSearch] = useState("");
+  const [draftSearch, setDraftSearch] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [includeBlocked, setIncludeBlocked] = useState(false);
+
+  // Dialogs
+  const [roleDialogUser, setRoleDialogUser] = useState<UserRow | null>(null);
+  const [addRole, setAddRole] = useState<string>("");
+  const [removeRole, setRemoveRole] = useState<string>("");
+  const [blockDialogUser, setBlockDialogUser] = useState<UserRow | null>(null);
+
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Queries ────────────────────────────────────────────────────────────────
+
+  const usersKey = ["access-users", search, offset, includeBlocked];
+
+  const { data: usersResp, isLoading, isFetching } = useQuery<UsersResponse>({
+    queryKey: usersKey,
+    queryFn: () => hrmsApi.get<UsersResponse>(
+      `/api/access/users?search=${encodeURIComponent(search)}&limit=${PAGE_SIZE}&offset=${offset}&includeBlocked=${includeBlocked}`
+    ),
+    placeholderData: (prev) => prev,
+  });
+
   const { data: catalogRoles = [] } = useQuery<CatalogRole[]>({
-    queryKey: ['role-catalog'],
+    queryKey: ["role-catalog"],
     queryFn: async () => {
       const res = await hrmsApi.get<{ data: CatalogRole[] }>("/api/access/roles/catalog");
       return res.data ?? [];
     },
+    staleTime: 5 * 60 * 1000,
   });
 
-  const { data: users = [], isLoading } = useQuery({
-    queryKey: ['users-with-roles'],
-    queryFn: async () => {
-      const [empRes, rolesRes] = await Promise.all([
-        hrmsApi.get<{success:boolean;data:any}>("/api/employees"),
-        hrmsApi.get<{success:boolean;data:any}>("/api/access/roles/catalog"),
-      ]);
-      const profiles = empRes.data ?? [];
-      const roles = rolesRes.data ?? [];
-      const employees = profiles;
+  const users: UserRow[] = usersResp?.data ?? [];
+  const total: number = usersResp?.total ?? 0;
+  const roleMap = new Map(catalogRoles.map((r) => [r.role_key, r.role_name]));
 
-      const usersWithRoles: UserWithRole[] = (profiles || []).map((profile: any) => {
-        const userRole = roles?.find((r: any) => r.user_id === profile.id);
-        const employee = employees?.find((e: any) => e.user_id === profile.id);
-        return {
-          ...profile,
-          role: userRole?.role as string | null,
-          role_id: userRole?.id || null,
-          employee_status: employee?.status as EmployeeStatus | null,
-          blocked: profile.blocked ?? false,
-          employee_id: employee?.id || null,
-        };
-      });
+  // ── Search debounce ────────────────────────────────────────────────────────
 
-      return usersWithRoles;
-    },
-  });
+  const handleSearchChange = (v: string) => {
+    setDraftSearch(v);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setSearch(v);
+      setOffset(0);
+    }, 350);
+  };
 
-  // Fetch unlinked employees (those without a user_id)
-  const { data: unlinkedEmployees = [] } = useQuery({
-    queryKey: ['unlinked-employees'],
-    queryFn: async () => {
-      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
-      return (res.data ?? []) as UnlinkedEmployee[];
-    },
-  });
+  // ── Mutations ──────────────────────────────────────────────────────────────
 
-  const updateRoleMutation = useMutation({
-    mutationFn: async ({ userId, role, existingRoleId }: { userId: string; role: string; existingRoleId: string | null }) => {
-      if (existingRoleId) {
-        // Update existing role
-        await hrmsApi.post(`/api/admin/users/${userId}/roles`, { roleKey: role });
-      } else {
-        // Insert new role
-        await hrmsApi.post(`/api/admin/users/${userId}/roles`, { roleKey: role });
-      }
-    },
+  const assignRoleMutation = useMutation({
+    mutationFn: ({ userId, roleKey }: { userId: string; roleKey: string }) =>
+      hrmsApi.post("/api/access/roles/assign", { user_id: userId, role_key: roleKey }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users-with-roles'] });
-      queryClient.invalidateQueries({ queryKey: ['user-role'] });
-      setDialogOpen(false);
-      setSelectedUser(null);
-      toast({ title: "Role updated", description: "User role has been updated successfully." });
+      queryClient.invalidateQueries({ queryKey: ["access-users"] });
+      queryClient.invalidateQueries({ queryKey: ["user-role"] });
+      toast({ title: "Role assigned" });
     },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const toggleBlockMutation = useMutation({
-    mutationFn: async ({ userId, block }: { userId: string; block: boolean }) => {
-      if (block) {
-        await hrmsApi.post('/api/account-control/lock', { userId });
-      } else {
-        await hrmsApi.post('/api/account-control/unlock', { userId });
-      }
-    },
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['users-with-roles'] });
-      setBlockDialogOpen(false);
-      setSelectedUser(null);
-      toast({ 
-        title: variables.block ? "User blocked" : "User unblocked", 
-        description: variables.block 
-          ? "User has been blocked and can no longer login." 
-          : "User has been unblocked and can now login."
-      });
-    },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    },
-  });
-
-  const linkEmployeeMutation = useMutation({
-    mutationFn: async ({ employeeId, userId }: { employeeId: string; userId: string }) => {
-      await hrmsApi.patch(`/api/employees/${employeeId}`, { user_id: userId });
-    },
+  const revokeRoleMutation = useMutation({
+    mutationFn: ({ userId, roleKey }: { userId: string; roleKey: string }) =>
+      hrmsApi.post("/api/access/roles/revoke", { user_id: userId, role_key: roleKey }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users-with-roles'] });
-      queryClient.invalidateQueries({ queryKey: ['unlinked-employees'] });
-      queryClient.invalidateQueries({ queryKey: ['employees'] });
-      setLinkDialogOpen(false);
-      setSelectedUser(null);
-      setSelectedEmployeeId("");
-      toast({ title: "Employee linked", description: "User has been linked to the employee record." });
+      queryClient.invalidateQueries({ queryKey: ["access-users"] });
+      queryClient.invalidateQueries({ queryKey: ["user-role"] });
+      toast({ title: "Role removed" });
     },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const unlinkEmployeeMutation = useMutation({
-    mutationFn: async ({ employeeId }: { employeeId: string }) => {
-      await hrmsApi.patch(`/api/employees/${employeeId}`, { user_id: null });
+  const blockMutation = useMutation({
+    mutationFn: ({ userId, block }: { userId: string; block: boolean }) =>
+      block
+        ? hrmsApi.post("/api/account-control/lock", { userId })
+        : hrmsApi.post("/api/account-control/unlock", { userId }),
+    onSuccess: (_, { block }) => {
+      queryClient.invalidateQueries({ queryKey: ["access-users"] });
+      setBlockDialogUser(null);
+      toast({ title: block ? "Account locked" : "Account unlocked" });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users-with-roles'] });
-      queryClient.invalidateQueries({ queryKey: ['unlinked-employees'] });
-      queryClient.invalidateQueries({ queryKey: ['employees'] });
-      setUnlinkDialogOpen(false);
-      setSelectedUser(null);
-      toast({ title: "Employee unlinked", description: "User has been unlinked from the employee record." });
-    },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const handleEditRole = (user: UserWithRole) => {
-    setSelectedUser(user);
-    setSelectedRole(user.role ?? "employee");
-    setDialogOpen(true);
+  // ── Handlers ───────────────────────────────────────────────────────────────
+
+  const openRoleDialog = (u: UserRow) => {
+    setRoleDialogUser(u);
+    setAddRole("");
+    setRemoveRole(u.roles[0] ?? "");
   };
 
-  const handleBlockClick = (user: UserWithRole) => {
-    setSelectedUser(user);
-    setBlockDialogOpen(true);
+  const availableToAdd = catalogRoles.filter(
+    (r) => !roleDialogUser?.roles.includes(r.role_key)
+  );
+
+  const handleAddRole = () => {
+    if (!roleDialogUser || !addRole) return;
+    assignRoleMutation.mutate({ userId: roleDialogUser.id, roleKey: addRole });
+    // Optimistically update dialog state
+    setRoleDialogUser((prev) => prev ? { ...prev, roles: [...prev.roles, addRole] } : prev);
+    setAddRole("");
   };
 
-  const handleLinkClick = (user: UserWithRole) => {
-    setSelectedUser(user);
-    // Pre-select employee with matching email if available
-    const matchingEmployee = unlinkedEmployees.find(e => e.email.toLowerCase() === user.email.toLowerCase());
-    setSelectedEmployeeId(matchingEmployee?.id || "");
-    setLinkDialogOpen(true);
+  const handleRemoveRole = () => {
+    if (!roleDialogUser || !removeRole) return;
+    revokeRoleMutation.mutate({ userId: roleDialogUser.id, roleKey: removeRole });
+    setRoleDialogUser((prev) =>
+      prev ? { ...prev, roles: prev.roles.filter((r) => r !== removeRole) } : prev
+    );
+    setRemoveRole(roleDialogUser.roles.filter((r) => r !== removeRole)[0] ?? "");
   };
 
-  const handleUnlinkClick = (user: UserWithRole) => {
-    setSelectedUser(user);
-    setUnlinkDialogOpen(true);
-  };
-
-  const handleToggleBlock = () => {
-    if (!selectedUser) return;
-    toggleBlockMutation.mutate({
-      userId: selectedUser.id,
-      block: !selectedUser.blocked,
-    });
-  };
-
-  const handleSaveRole = () => {
-    if (!selectedUser || !selectedRole) return;
-    updateRoleMutation.mutate({
-      userId: selectedUser.id,
-      role: selectedRole,
-      existingRoleId: selectedUser.role_id,
-    });
-  };
-
-  const handleLinkEmployee = () => {
-    if (!selectedUser || !selectedEmployeeId) return;
-    linkEmployeeMutation.mutate({
-      employeeId: selectedEmployeeId,
-      userId: selectedUser.id,
-    });
-  };
-
-  const handleUnlinkEmployee = () => {
-    if (!selectedUser || !selectedUser.employee_id) return;
-    unlinkEmployeeMutation.mutate({
-      employeeId: selectedUser.employee_id,
-    });
-  };
-
-  const getUserInitials = (name: string | null, email: string) => {
-    const displayName = name || email;
-    return displayName.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
-  };
-
-  // Sort unlinked employees to show matching email first
-  const sortedUnlinkedEmployees = selectedUser
-    ? [...unlinkedEmployees].sort((a, b) => {
-        const aMatches = a.email.toLowerCase() === selectedUser.email.toLowerCase();
-        const bMatches = b.email.toLowerCase() === selectedUser.email.toLowerCase();
-        if (aMatches && !bMatches) return -1;
-        if (!aMatches && bMatches) return 1;
-        return 0;
-      })
-    : unlinkedEmployees;
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>User Roles</CardTitle>
-        <CardDescription>Manage user access levels and permissions</CardDescription>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Shield className="h-5 w-5 text-blue-600" />
+              User Accounts & Roles
+            </CardTitle>
+            <CardDescription>
+              {total > 0 ? `${total.toLocaleString()} login accounts` : "All login accounts"} —
+              assign / revoke roles, lock / unlock access
+            </CardDescription>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+              <input
+                value={draftSearch}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                placeholder="Search name, email, code…"
+                className="w-60 rounded-2xl border border-slate-200 bg-white pl-8 pr-3 py-2 text-sm outline-none focus:border-blue-400 transition-colors"
+              />
+            </div>
+            {/* Include blocked toggle */}
+            <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 rounded"
+                checked={includeBlocked}
+                onChange={(e) => { setIncludeBlocked(e.target.checked); setOffset(0); }}
+              />
+              Show locked
+            </label>
+            {/* Refresh */}
+            <button
+              onClick={() => queryClient.invalidateQueries({ queryKey: ["access-users"] })}
+              disabled={isFetching}
+              className="inline-flex items-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-40 cursor-pointer"
+            >
+              <RefreshCcw className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          </div>
+        </div>
       </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <div className="py-8 text-center text-muted-foreground">Loading users...</div>
-        ) : users.length === 0 ? (
-          <div className="py-8 text-center text-muted-foreground">No users found.</div>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>User</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead className="w-24">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {users.map((user) => (
-                <TableRow key={user.id}>
-                  <TableCell>
-                    <div className="flex items-center gap-3">
-                      <Avatar className="h-8 w-8">
-                        <AvatarImage src={user.avatar_url || undefined} />
-                        <AvatarFallback>{getUserInitials(user.full_name, user.email)}</AvatarFallback>
-                      </Avatar>
-                      <span className="font-medium">{user.full_name || "Unnamed User"}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{user.email}</TableCell>
-                  <TableCell>
-                    {user.blocked ? (
-                      <Badge variant="destructive">Blocked</Badge>
-                    ) : user.employee_status ? (
-                      <Badge variant={statusBadgeVariant[user.employee_status]}>
-                        {statusLabels[user.employee_status]}
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline">Not Linked</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {user.role ? (
-                      <Badge variant={roleBadgeVariant[user.role] ?? "outline"}>
-                        {catalogRoles.find(r => r.role_key === user.role)?.role_name ?? user.role}
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline">No Role</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => handleEditRole(user)} title="Edit role">
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      {/* Link/Unlink Employee Button */}
-                      {user.employee_id ? (
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          onClick={() => handleUnlinkClick(user)}
-                          title="Unlink employee"
-                        >
-                          <Unlink className="h-4 w-4" />
-                        </Button>
-                      ) : (
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          onClick={() => handleLinkClick(user)}
-                          title="Link to employee"
-                          disabled={unlinkedEmployees.length === 0}
-                        >
-                          <Link className="h-4 w-4" />
-                        </Button>
-                      )}
-                      {user.id !== currentUser?.id && (
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          onClick={() => handleBlockClick(user)}
-                          className={user.blocked ? "text-green-600 hover:text-green-700" : "text-destructive hover:text-destructive"}
-                          title={user.blocked ? "Unblock user" : "Block user"}
-                        >
-                          {user.blocked ? <CheckCircle className="h-4 w-4" /> : <Ban className="h-4 w-4" />}
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
 
-        <Dialog open={dialogOpen} onOpenChange={(open) => {
-          setDialogOpen(open);
-          if (!open) setSelectedUser(null);
-        }}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Edit User Role</DialogTitle>
-              <DialogDescription>
-                Change the role for {selectedUser?.full_name || selectedUser?.email}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label>Role</Label>
-                <Select value={selectedRole} onValueChange={setSelectedRole}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a role…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {catalogRoles.length === 0 ? (
-                      <SelectItem value="" disabled>Loading roles…</SelectItem>
-                    ) : (
-                      catalogRoles.map((r) => (
-                        <SelectItem key={r.role_key} value={r.role_key}>
-                          <div className="flex flex-col">
-                            <span>{r.role_name}</span>
-                            {r.description && (
-                              <span className="text-xs text-muted-foreground">{r.description}</span>
-                            )}
+      <CardContent className="p-0">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-7 w-7 animate-spin text-slate-400" />
+          </div>
+        ) : users.length === 0 ? (
+          <div className="py-16 text-center text-slate-400">
+            <UserX className="mx-auto mb-3 h-10 w-10 opacity-30" />
+            <p className="font-semibold">No accounts found.</p>
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 border-b">
+                  <tr>
+                    <th className="px-4 py-3 font-semibold">Account</th>
+                    <th className="px-4 py-3 font-semibold">Employee</th>
+                    <th className="px-4 py-3 font-semibold">Roles</th>
+                    <th className="px-4 py-3 font-semibold">Last Login</th>
+                    <th className="px-4 py-3 font-semibold">Status</th>
+                    <th className="px-4 py-3 font-semibold w-24">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((u) => (
+                    <tr key={u.id} className={`border-t transition-colors hover:bg-slate-50/80 ${u.is_blocked ? "opacity-60 bg-red-50/40" : ""}`}>
+                      {/* Account */}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <Avatar className="h-8 w-8 shrink-0">
+                            <AvatarFallback className="text-xs bg-slate-200 text-slate-700">
+                              {initials(u.full_name, u.email)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-900 truncate max-w-[180px]">
+                              {u.full_name ?? <span className="text-slate-400 font-normal italic">No name</span>}
+                            </p>
+                            <p className="text-xs text-slate-500 truncate max-w-[180px]">{u.email}</p>
                           </div>
-                        </SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
+                        </div>
+                      </td>
+                      {/* Employee */}
+                      <td className="px-4 py-3">
+                        {u.employee_code ? (
+                          <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
+                            {u.employee_code}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-300 italic">not linked</span>
+                        )}
+                      </td>
+                      {/* Roles */}
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1">
+                          {u.roles.length === 0 ? (
+                            <span className="text-xs text-slate-300 italic">no role</span>
+                          ) : (
+                            u.roles.map((rk) => roleBadge(rk, roleMap.get(rk) ?? rk))
+                          )}
+                        </div>
+                      </td>
+                      {/* Last login */}
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center gap-1 text-xs ${u.last_login_at ? "text-slate-600" : "text-slate-300"}`}>
+                          <Clock className="h-3 w-3" />
+                          {formatLastLogin(u.last_login_at)}
+                        </span>
+                      </td>
+                      {/* Status */}
+                      <td className="px-4 py-3">
+                        {u.is_blocked ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700">
+                            Locked
+                          </span>
+                        ) : u.employment_status ? (
+                          <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                            u.employment_status.toLowerCase() === "active"
+                              ? "bg-emerald-50 text-emerald-700"
+                              : "bg-slate-100 text-slate-500"
+                          }`}>
+                            {u.employment_status}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-300 italic">—</span>
+                        )}
+                      </td>
+                      {/* Actions */}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => openRoleDialog(u)}
+                            className="cursor-pointer rounded-xl border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+                            title="Edit roles"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          {u.id !== currentUser?.id && (
+                            <button
+                              onClick={() => setBlockDialogUser(u)}
+                              className={`cursor-pointer rounded-xl border p-1.5 transition-colors ${
+                                u.is_blocked
+                                  ? "border-emerald-200 text-emerald-600 hover:bg-emerald-50"
+                                  : "border-red-200 text-red-500 hover:bg-red-50"
+                              }`}
+                              title={u.is_blocked ? "Unlock account" : "Lock account"}
+                            >
+                              {u.is_blocked
+                                ? <CheckCircle className="h-3.5 w-3.5" />
+                                : <Ban className="h-3.5 w-3.5" />}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            <div className="flex items-center justify-between border-t px-4 py-3 text-xs text-slate-500">
+              <span>
+                {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total.toLocaleString()} accounts
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={offset === 0}
+                  onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 px-2.5 py-1.5 font-semibold hover:bg-slate-50 disabled:opacity-40 cursor-pointer disabled:cursor-default transition-colors"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" /> Prev
+                </button>
+                <button
+                  disabled={offset + PAGE_SIZE >= total}
+                  onClick={() => setOffset(offset + PAGE_SIZE)}
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 px-2.5 py-1.5 font-semibold hover:bg-slate-50 disabled:opacity-40 cursor-pointer disabled:cursor-default transition-colors"
+                >
+                  Next <ChevronRight className="h-3.5 w-3.5" />
+                </button>
               </div>
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-              <Button onClick={handleSaveRole} disabled={updateRoleMutation.isPending}>
-                {updateRoleMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Save
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+          </>
+        )}
+      </CardContent>
 
-        <AlertDialog open={blockDialogOpen} onOpenChange={(open) => {
-          setBlockDialogOpen(open);
-          if (!open) setSelectedUser(null);
-        }}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>
-                {selectedUser?.blocked ? "Unblock User" : "Block User"}
-              </AlertDialogTitle>
-              <AlertDialogDescription>
-                {selectedUser?.blocked 
-                  ? `Are you sure you want to unblock ${selectedUser?.full_name || selectedUser?.email}? They will be able to login again.`
-                  : `Are you sure you want to block ${selectedUser?.full_name || selectedUser?.email}? They will not be able to login until unblocked.`
-                }
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction 
-                onClick={handleToggleBlock}
-                className={selectedUser?.blocked ? "" : "bg-destructive text-destructive-foreground hover:bg-destructive/90"}
-              >
-                {toggleBlockMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {selectedUser?.blocked ? "Unblock" : "Block"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+      {/* ── Role edit dialog ─────────────────────────────────────────────────── */}
+      <Dialog open={!!roleDialogUser} onOpenChange={(o) => !o && setRoleDialogUser(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Manage Roles</DialogTitle>
+            <DialogDescription>
+              {roleDialogUser?.full_name ?? roleDialogUser?.email}
+              {roleDialogUser?.employee_code && (
+                <span className="ml-2 font-mono text-xs text-slate-500">({roleDialogUser.employee_code})</span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
 
-        {/* Link Employee Dialog */}
-        <Dialog open={linkDialogOpen} onOpenChange={(open) => {
-          setLinkDialogOpen(open);
-          if (!open) {
-            setSelectedUser(null);
-            setSelectedEmployeeId("");
-          }
-        }}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Link Employee to User</DialogTitle>
-              <DialogDescription>
-                Link {selectedUser?.full_name || selectedUser?.email} to an existing employee record
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label>Select Employee</Label>
-                {sortedUnlinkedEmployees.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No unlinked employees available</p>
+          {roleDialogUser && (
+            <div className="space-y-5 py-2">
+              {/* Current roles */}
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Current Roles</p>
+                {roleDialogUser.roles.length === 0 ? (
+                  <p className="text-sm text-slate-400 italic">No roles assigned</p>
                 ) : (
-                  <Select value={selectedEmployeeId} onValueChange={setSelectedEmployeeId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select an employee..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {sortedUnlinkedEmployees.map((emp) => {
-                        const isMatch = selectedUser && emp.email.toLowerCase() === selectedUser.email.toLowerCase();
-                        return (
-                          <SelectItem key={emp.id} value={emp.id}>
-                            <div className="flex items-center gap-2">
-                              <span>{emp.first_name} {emp.last_name}</span>
-                              <span className="text-xs text-muted-foreground">({emp.employee_code})</span>
-                              {isMatch && (
-                                <Badge variant="secondary" className="text-xs">Recommended</Badge>
-                              )}
-                            </div>
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
+                  <div className="flex flex-wrap gap-1.5">
+                    {roleDialogUser.roles.map((rk) => (
+                      <span key={rk} className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${ROLE_COLORS[rk] ?? "bg-gray-100 text-gray-600"}`}>
+                        {roleMap.get(rk) ?? rk}
+                      </span>
+                    ))}
+                  </div>
                 )}
               </div>
-              {selectedEmployeeId && (
-                <div className="rounded-md border p-3 text-sm">
-                  {(() => {
-                    const emp = unlinkedEmployees.find(e => e.id === selectedEmployeeId);
-                    if (!emp) return null;
-                    return (
-                      <div className="space-y-1">
-                        <p><span className="text-muted-foreground">Name:</span> {emp.first_name} {emp.last_name}</p>
-                        <p><span className="text-muted-foreground">Code:</span> {emp.employee_code}</p>
-                        <p><span className="text-muted-foreground">Email:</span> {emp.email}</p>
-                        <p><span className="text-muted-foreground">Designation:</span> {emp.designation}</p>
-                      </div>
-                    );
-                  })()}
+
+              {/* Add a role */}
+              <div className="rounded-2xl border p-4 space-y-3 bg-slate-50">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 flex items-center gap-1">
+                  <Plus className="h-3.5 w-3.5" /> Add Role
+                </p>
+                <div className="flex gap-2">
+                  <Select value={addRole} onValueChange={setAddRole}>
+                    <SelectTrigger className="flex-1 text-sm rounded-xl">
+                      <SelectValue placeholder="Select role to add…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableToAdd.length === 0 ? (
+                        <SelectItem value="__none__" disabled>All roles assigned</SelectItem>
+                      ) : (
+                        availableToAdd.map((r) => (
+                          <SelectItem key={r.role_key} value={r.role_key}>
+                            <div>
+                              <span>{r.role_name}</span>
+                              {r.description && <span className="ml-2 text-xs text-slate-400">{r.description}</span>}
+                            </div>
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="sm"
+                    onClick={handleAddRole}
+                    disabled={!addRole || assignRoleMutation.isPending}
+                    className="rounded-xl shrink-0"
+                  >
+                    {assignRoleMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Remove a role */}
+              {roleDialogUser.roles.length > 0 && (
+                <div className="rounded-2xl border border-red-100 p-4 space-y-3 bg-red-50/30">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-red-500 flex items-center gap-1">
+                    <Trash2 className="h-3.5 w-3.5" /> Remove Role
+                  </p>
+                  <div className="flex gap-2">
+                    <Select value={removeRole} onValueChange={setRemoveRole}>
+                      <SelectTrigger className="flex-1 text-sm rounded-xl">
+                        <SelectValue placeholder="Select role to remove…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {roleDialogUser.roles.map((rk) => (
+                          <SelectItem key={rk} value={rk}>
+                            {roleMap.get(rk) ?? rk}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={handleRemoveRole}
+                      disabled={!removeRole || revokeRoleMutation.isPending}
+                      className="rounded-xl shrink-0"
+                    >
+                      {revokeRoleMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Remove"}
+                    </Button>
+                  </div>
                 </div>
               )}
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setLinkDialogOpen(false)}>Cancel</Button>
-              <Button onClick={handleLinkEmployee} disabled={!selectedEmployeeId || linkEmployeeMutation.isPending}>
-                {linkEmployeeMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Link Employee
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+          )}
 
-        {/* Unlink Employee Dialog */}
-        <AlertDialog open={unlinkDialogOpen} onOpenChange={(open) => {
-          setUnlinkDialogOpen(open);
-          if (!open) setSelectedUser(null);
-        }}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Unlink Employee</AlertDialogTitle>
-              <AlertDialogDescription>
-                Are you sure you want to unlink {selectedUser?.full_name || selectedUser?.email} from their employee record? 
-                The employee record will remain but won't be associated with this user account.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={handleUnlinkEmployee}>
-                {unlinkEmployeeMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Unlink
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </CardContent>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRoleDialogUser(null)} className="rounded-xl">
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Lock / unlock dialog ─────────────────────────────────────────────── */}
+      <AlertDialog open={!!blockDialogUser} onOpenChange={(o) => !o && setBlockDialogUser(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {blockDialogUser?.is_blocked ? "Unlock Account" : "Lock Account"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {blockDialogUser?.is_blocked
+                ? `Unlock ${blockDialogUser.full_name ?? blockDialogUser.email}? They will be able to log in again.`
+                : `Lock ${blockDialogUser?.full_name ?? blockDialogUser?.email}? They will be unable to log in until unlocked.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() =>
+                blockDialogUser &&
+                blockMutation.mutate({ userId: blockDialogUser.id, block: !blockDialogUser.is_blocked })
+              }
+              className={blockDialogUser?.is_blocked ? "" : "bg-destructive text-destructive-foreground hover:bg-destructive/90"}
+            >
+              {blockMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {blockDialogUser?.is_blocked ? "Unlock" : "Lock"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }
