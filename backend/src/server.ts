@@ -15,6 +15,10 @@ import { startOfficialEmailComplianceScheduler } from "./workers/official-email-
 import { startIntegrationScheduler } from "./workers/integration-scheduler.worker.js";
 import { startLeaveMonthlyWorker } from "./workers/leave-monthly-credit.worker.js";
 import { startAnnualLeaveWorker } from "./workers/leave-annual-el-credit.worker.js";
+import { startKpiDailySyncWorker } from "./workers/kpi-daily-sync.worker.js";
+import { startAprVicidialSyncWorker } from "./workers/apr-vicidial-sync.worker.js";
+import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
+import { startPayrollNightlyRecalcWorker } from "./workers/payroll-nightly-recalc.worker.js";
 import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-db.service.js";
 
 function startServer() {
@@ -32,6 +36,10 @@ function startServer() {
       startLeaveMonthlyWorker();
       startAnnualLeaveWorker();
       startPayrollWindowClosureScheduler();
+      startKpiDailySyncWorker();
+      startAprVicidialSyncWorker();
+      startLmsSyncWorker();
+      startPayrollNightlyRecalcWorker();
 
       startBreachSlaCron();
 
@@ -50,7 +58,7 @@ function startServer() {
         }
       }, 24 * 60 * 60 * 1000);
 
-      console.log(`[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, dpdp-sla started`);
+      console.log(`[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, kpi-daily, apr-vicidial, lms-sync, payroll-nightly-recalc, dpdp-sla started`);
     } else {
       console.log(`[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)`);
     }

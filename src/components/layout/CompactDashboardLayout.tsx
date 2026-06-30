@@ -79,7 +79,10 @@ export function DashboardLayout({ children }: Props) {
   const filteredGroups = useMemo(() => {
     const visibleSet = new Set(visiblePageCodes);
 
+    const isSuperAdmin = hasAnyRole("super_admin");
+
     const canShow = (item: { pageCode?: string; roles?: string[]; adminOnly?: boolean }) => {
+      if (isSuperAdmin) return true;
       if (item.pageCode) return visibleSet.has(item.pageCode) || canViewPage(item.pageCode);
       if (item.roles?.length) return hasAnyRole(...item.roles);
       if ((item as any).adminOnly && !isAdminOrHR) return false;

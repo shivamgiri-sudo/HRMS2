@@ -731,13 +731,54 @@ export const attendanceEngineService = {
       [employeeId, monthStart, monthEnd]
     );
     const r = rows[0] as any;
+    let leaveDays = Number(r.leave_days);
+    let holidayDays = Number(r.holiday_days);
+    let weekOffDays = Number(r.week_off_days);
+
+    // Supplement from source tables when attendance_daily_record doesn't have override rows
+    // (NCOSEC-primary employees may not have rows in attendance_daily_record for leave/holiday)
+    if (leaveDays === 0) {
+      const [leaveRows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(DISTINCT d.d) AS cnt
+         FROM leave_request lr
+         JOIN (
+           SELECT DATE_ADD(?, INTERVAL seq DAY) AS d
+           FROM (SELECT @row := @row + 1 AS seq FROM information_schema.columns, (SELECT @row := -1) r LIMIT 31) nums
+         ) d ON d.d BETWEEN lr.from_date AND lr.to_date AND d.d BETWEEN ? AND ?
+         WHERE lr.employee_id = ? AND lr.status = 'approved'`,
+        [monthStart, monthStart, monthEnd, employeeId]
+      );
+      leaveDays = Number((leaveRows[0] as any)?.cnt ?? 0);
+    }
+    if (holidayDays === 0) {
+      const [emp] = await db.execute<RowDataPacket[]>(
+        'SELECT branch_id FROM employees WHERE id = ? LIMIT 1', [employeeId]
+      );
+      const branchId = (emp[0] as any)?.branch_id ?? null;
+      const [holRows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM leave_holiday_master
+         WHERE holiday_date BETWEEN ? AND ? AND active_status = 1
+           AND (branch_id IS NULL OR branch_id = ?)`,
+        [monthStart, monthEnd, branchId]
+      );
+      holidayDays = Number((holRows[0] as any)?.cnt ?? 0);
+    }
+    if (weekOffDays === 0) {
+      const [woRows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM wfm_roster_assignment
+         WHERE employee_id = ? AND roster_date BETWEEN ? AND ? AND roster_status = 'Week Off'`,
+        [employeeId, monthStart, monthEnd]
+      );
+      weekOffDays = Number((woRows[0] as any)?.cnt ?? 0);
+    }
+
     return {
       presentDays:     Number(r.present_days),
       halfDays:        Number(r.half_days),
       absentDays:      Number(r.absent_days),
-      leaveDays:       Number(r.leave_days),
-      holidayDays:     Number(r.holiday_days),
-      weekOffDays:     Number(r.week_off_days),
+      leaveDays,
+      holidayDays,
+      weekOffDays,
       totalLwp:        Number(r.total_lwp),
       lateMarks:       Number(r.late_marks),
       totalWorkingDays:Number(r.total_working_days),

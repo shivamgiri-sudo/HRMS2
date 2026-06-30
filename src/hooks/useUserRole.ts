@@ -168,8 +168,10 @@ export const useWorkforceAccess = () => {
     );
     const roleKeys = expandRoleKeys(roleQuery.data?.roleKeys ?? []);
 
+    const isSuperAdmin = roleKeys.includes("super_admin");
+
     return {
-      canViewPage: (pageCode: string) => pageSet.has(pageCode),
+      canViewPage: (pageCode: string) => isSuperAdmin || pageSet.has(pageCode),
       visiblePageCodes: Array.from(pageSet),
       roleKeys,
       scopes: roleQuery.data?.scopes ?? [],

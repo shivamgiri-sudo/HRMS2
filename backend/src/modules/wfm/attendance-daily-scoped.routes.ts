@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
-import { toIST, mysqlDatetimeToIST } from "../../shared/timezone.js";
+import { toIST, mysqlDatetimeToIST, nowIST } from "../../shared/timezone.js";
 import { getRealTimePunchesToday, getRealTimePunchesRange, getMonthlyAttendanceFromNcosec, getBulkCosecMappings } from "./attendance-realtime-ncosec.service.js";
 import { isOperationsExecutive } from "./attendance-engine.service.js";
 
@@ -133,9 +133,7 @@ attendanceDailyScopedRouter.get("/today-live", h(async (req, res) => {
   const callerEmp = await getEmployeeForUser(userId);
   if (!callerEmp?.id) return res.status(403).json({ success: false, error: "No employee record" });
 
-  const today = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+  const todayStr = nowIST().slice(0, 10);
 
   // Try real-time NCOSEC first
   try {

@@ -163,7 +163,7 @@ export default function NativeMasterReports() {
 
   const { data: processData } = useQuery({
     queryKey: ['processes-for-filter'],
-    queryFn: () => hrmsApi.get<{ data: { id: string; process_name: string }[] }>('/api/process'),
+    queryFn: () => hrmsApi.get<{ data: { id: string; process_name: string }[] }>('/api/processes'),
     staleTime: 5 * 60_000,
   });
 

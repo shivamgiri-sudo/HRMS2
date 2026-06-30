@@ -12,6 +12,7 @@ import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { getNcosecPool } from '../../db/ncosecDb.js';
 import { env } from '../../config/env.js';
+import { nowIST } from '../../shared/timezone.js';
 import { classifyCosecMinutes } from './attendance-engine.service.js';
 import { type PunchGroup, mergeNightShiftRollover } from './cosec-sync.service.js';
 
@@ -72,9 +73,7 @@ export async function getRealTimePunchesToday(employeeId: string): Promise<RealT
     return null;
   }
 
-  const today = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+  const todayStr = nowIST().slice(0, 10);
 
   try {
     const pool = await getNcosecPool();

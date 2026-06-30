@@ -10,7 +10,7 @@ const _pool: Pool = mysql.createPool({
   connectionLimit:    env.DB_POOL_MAX,
   waitForConnections: true,
   queueLimit:         0,
-  timezone:           "local",   // Use server local time (avoids double-offset on IST-stored values)
+  timezone:           "local",   // Deployed server is IST (Asia/Kolkata) — verified 2026-06-30
   dateStrings:        true,      // Return DATETIME/TIMESTAMP as strings, not JS Date objects
   decimalNumbers:     true,
 });
