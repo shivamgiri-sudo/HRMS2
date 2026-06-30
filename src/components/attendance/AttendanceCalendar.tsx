@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ChevronLeft,
@@ -14,6 +14,10 @@ import {
   MinusCircle,
   Moon,
   Loader2,
+  FileText,
+  CalendarOff,
+  AlertOctagon,
+  Lock,
 } from "lucide-react";
 import { format } from "date-fns";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -29,6 +33,17 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { useSubmitRegularization, useSubmitLeaveRequest } from "@/hooks/useAttendance";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -237,6 +252,100 @@ function DayDetailSheet({
   const isNight = detectNightShift(agg?.first_punch_in, agg?.last_punch_out);
   const status  = normalizeStatus(adr?.attendance_status);
 
+  // ── Action panel state ──────────────────────────────────────────────────────
+  const [activeAction, setActiveAction] = useState<'regularize' | 'leave' | 'dispute' | null>(null);
+  const [regReasonCode, setRegReasonCode] = useState('');
+  const [regReason, setRegReason] = useState('');
+  const [regStatus, setRegStatus] = useState<'present' | 'half_day'>('present');
+  const [disputeType, setDisputeType] = useState('');
+  const [disputeNewIn, setDisputeNewIn] = useState('');
+  const [disputeNewOut, setDisputeNewOut] = useState('');
+  const [disputeReason, setDisputeReason] = useState('');
+  const [leaveTypeId, setLeaveTypeId] = useState('');
+  const [leaveIsHalf, setLeaveIsHalf] = useState(false);
+  const [leaveReason, setLeaveReason] = useState('');
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+
+  const regMutation = useSubmitRegularization();
+  const leaveMutation = useSubmitLeaveRequest();
+
+  // Reset all form state when sheet closes or date changes
+  useEffect(() => {
+    setActiveAction(null);
+    setActionSuccess(null);
+    setRegReason(''); setRegReasonCode(''); setRegStatus('present');
+    setDisputeType(''); setDisputeReason(''); setDisputeNewIn(''); setDisputeNewOut('');
+    setLeaveTypeId(''); setLeaveReason(''); setLeaveIsHalf(false);
+  }, [open, date]);
+
+  // Reason codes for regularization
+  const { data: reasonCodes = [] } = useQuery<{ code: string; label: string }[]>({
+    queryKey: ['reg-reasons'],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: { code: string; label: string }[] }>(
+        '/api/wfm/regularizations/reasons'
+      );
+      return res.data ?? [];
+    },
+    staleTime: 5 * 60_000,
+  });
+
+  // Leave types
+  const { data: leaveTypes = [] } = useQuery<{ id: string; leave_name: string }[]>({
+    queryKey: ['leave-types'],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: { id: string; leave_name: string }[] }>(
+        '/api/leave/types'
+      );
+      return res.data ?? [];
+    },
+    staleTime: 10 * 60_000,
+  });
+
+  const isPastDate = date ? new Date(date + 'T00:00:00') < new Date(new Date().toDateString()) : false;
+  const isLocked = adr?.is_locked === 1;
+
+  const handleRegularizeSubmit = async () => {
+    if (!date || !regReason.trim()) return;
+    await regMutation.mutateAsync({
+      sessionDate: date,
+      reasonCode: regReasonCode || undefined,
+      reason: regReason,
+      requestedStatus: regStatus,
+    });
+    setActionSuccess('Regularization submitted successfully.');
+    setActiveAction(null);
+    setRegReason(''); setRegReasonCode(''); setRegStatus('present');
+  };
+
+  const handleDisputeSubmit = async () => {
+    if (!date || !disputeType || !disputeReason.trim()) return;
+    await regMutation.mutateAsync({
+      sessionDate: date,
+      reason: disputeReason,
+      disputeType,
+      newPunchIn: disputeNewIn || undefined,
+      newPunchOut: disputeNewOut || undefined,
+    });
+    setActionSuccess('Dispute filed successfully.');
+    setActiveAction(null);
+    setDisputeType(''); setDisputeReason(''); setDisputeNewIn(''); setDisputeNewOut('');
+  };
+
+  const handleLeaveSubmit = async () => {
+    if (!date || !leaveTypeId) return;
+    await leaveMutation.mutateAsync({
+      leaveTypeId,
+      fromDate: date,
+      toDate: date,
+      totalDays: leaveIsHalf ? 0.5 : 1,
+      reason: leaveReason || undefined,
+    });
+    setActionSuccess('Leave request submitted successfully.');
+    setActiveAction(null);
+    setLeaveTypeId(''); setLeaveReason(''); setLeaveIsHalf(false);
+  };
+
   return (
     <Sheet open={open} onOpenChange={onClose}>
       <SheetContent className="w-full sm:max-w-md overflow-y-auto">
@@ -281,7 +390,7 @@ function DayDetailSheet({
             </div>
 
             {/* COSEC authoritative summary */}
-            {agg && (
+            {agg && adr?.attendance_source !== 'dialler' && (
               <div className="rounded-xl border border-[#c4dcf5] bg-[#e8f2fc]/40 p-3 space-y-3">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-[#1B6AB5]">
                   COSEC Biometric Record
@@ -325,6 +434,18 @@ function DayDetailSheet({
                   {agg.work_minutes != null && (
                     <span className="text-xs text-slate-400">({agg.work_minutes} min)</span>
                   )}
+                </div>
+              </div>
+            )}
+
+            {adr?.attendance_source === 'dialler' && !agg && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-3 space-y-2">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">
+                  APR / Dialler Record
+                </p>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Net Login</span>
+                  <span className="font-semibold">{fmtMinutes((adr as any).dialler_minutes)}</span>
                 </div>
               </div>
             )}
@@ -388,16 +509,16 @@ function DayDetailSheet({
                       <div
                         key={i}
                         className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm border ${
-                          p.io_type === 0
+                          p.io_type === 1
                             ? 'bg-emerald-50 border-emerald-100'
                             : 'bg-sky-50 border-sky-100'
                         }`}
                       >
-                        {p.io_type === 0
+                        {p.io_type === 1
                           ? <LogIn  className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
                           : <LogOut className="h-3.5 w-3.5 text-sky-600 shrink-0" />
                         }
-                        <span className={`font-semibold text-xs ${p.io_type === 0 ? 'text-emerald-700' : 'text-sky-700'}`}>
+                        <span className={`font-semibold text-xs ${p.io_type === 1 ? 'text-emerald-700' : 'text-sky-700'}`}>
                           {p.io_label}
                         </span>
                         <span className="font-mono text-slate-700">{fmtTime(p.punch_time)}</span>
@@ -433,6 +554,202 @@ function DayDetailSheet({
                     <span className="font-medium text-slate-700">
                       {format(new Date(adr.processed_at), "dd MMM yyyy HH:mm")}
                     </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <Separator />
+
+            {/* Action Panel */}
+            {isLocked ? (
+              <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-500">
+                <Lock className="h-3.5 w-3.5" />
+                Record is locked — cannot request changes
+              </div>
+            ) : !isPastDate ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-500">
+                Actions available for past dates only
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {actionSuccess && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs text-emerald-700 font-semibold">
+                    {actionSuccess}
+                  </div>
+                )}
+
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    variant={activeAction === 'regularize' ? 'default' : 'outline'}
+                    size="sm"
+                    className="text-xs h-8"
+                    onClick={() => { setActiveAction(a => a === 'regularize' ? null : 'regularize'); setActionSuccess(null); }}
+                  >
+                    <FileText className="h-3.5 w-3.5 mr-1.5" />
+                    Regularize
+                  </Button>
+                  <Button
+                    variant={activeAction === 'leave' ? 'default' : 'outline'}
+                    size="sm"
+                    className="text-xs h-8"
+                    onClick={() => { setActiveAction(a => a === 'leave' ? null : 'leave'); setActionSuccess(null); }}
+                  >
+                    <CalendarOff className="h-3.5 w-3.5 mr-1.5" />
+                    Apply Leave
+                  </Button>
+                  <Button
+                    variant={activeAction === 'dispute' ? 'default' : 'outline'}
+                    size="sm"
+                    className="text-xs h-8"
+                    onClick={() => { setActiveAction(a => a === 'dispute' ? null : 'dispute'); setActionSuccess(null); }}
+                  >
+                    <AlertOctagon className="h-3.5 w-3.5 mr-1.5" />
+                    Dispute
+                  </Button>
+                </div>
+
+                {/* Regularization form */}
+                {activeAction === 'regularize' && (
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-3 mt-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Reason Code</Label>
+                      <Select value={regReasonCode} onValueChange={setRegReasonCode}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select reason code (optional)" /></SelectTrigger>
+                        <SelectContent>
+                          {reasonCodes.map(r => <SelectItem key={r.code} value={r.code} className="text-xs">{r.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Requested Status</Label>
+                      <Select value={regStatus} onValueChange={(v) => setRegStatus(v as 'present' | 'half_day')}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="present" className="text-xs">Present</SelectItem>
+                          <SelectItem value="half_day" className="text-xs">Half Day</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Reason <span className="text-red-500">*</span></Label>
+                      <Textarea
+                        className="text-xs min-h-[60px]"
+                        placeholder="Describe why this correction is needed..."
+                        value={regReason}
+                        onChange={e => setRegReason(e.target.value)}
+                      />
+                    </div>
+                    <Button
+                      size="sm" className="w-full text-xs h-8"
+                      disabled={!regReason.trim() || regMutation.isPending}
+                      onClick={handleRegularizeSubmit}
+                    >
+                      {regMutation.isPending ? 'Submitting...' : 'Submit Regularization'}
+                    </Button>
+                    {regMutation.isError && (
+                      <p className="text-xs text-red-600">{(regMutation.error as Error)?.message}</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Leave form */}
+                {activeAction === 'leave' && (
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-3 mt-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Leave Type <span className="text-red-500">*</span></Label>
+                      <Select value={leaveTypeId} onValueChange={setLeaveTypeId}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select leave type" /></SelectTrigger>
+                        <SelectContent>
+                          {leaveTypes.map(lt => <SelectItem key={lt.id} value={lt.id} className="text-xs">{lt.leave_name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="half-day-toggle"
+                        checked={leaveIsHalf}
+                        onChange={e => setLeaveIsHalf(e.target.checked)}
+                        className="h-3.5 w-3.5"
+                      />
+                      <Label htmlFor="half-day-toggle" className="text-xs cursor-pointer">Half day</Label>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Reason (optional)</Label>
+                      <Textarea
+                        className="text-xs min-h-[60px]"
+                        placeholder="Reason for leave..."
+                        value={leaveReason}
+                        onChange={e => setLeaveReason(e.target.value)}
+                      />
+                    </div>
+                    <Button
+                      size="sm" className="w-full text-xs h-8"
+                      disabled={!leaveTypeId || leaveMutation.isPending}
+                      onClick={handleLeaveSubmit}
+                    >
+                      {leaveMutation.isPending ? 'Submitting...' : 'Submit Leave Request'}
+                    </Button>
+                    {leaveMutation.isError && (
+                      <p className="text-xs text-red-600">{(leaveMutation.error as Error)?.message}</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Dispute form */}
+                {activeAction === 'dispute' && (
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-3 mt-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Dispute Type <span className="text-red-500">*</span></Label>
+                      <Select value={disputeType} onValueChange={setDisputeType}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select dispute type" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="missing_punch" className="text-xs">Missing Punch</SelectItem>
+                          <SelectItem value="wrong_punch" className="text-xs">Wrong Punch</SelectItem>
+                          <SelectItem value="late_mark_dispute" className="text-xs">Late Mark Dispute</SelectItem>
+                          <SelectItem value="early_logout_dispute" className="text-xs">Early Logout Dispute</SelectItem>
+                          <SelectItem value="half_day_dispute" className="text-xs">Half Day Dispute</SelectItem>
+                          <SelectItem value="absent_wrongly_marked" className="text-xs">Absent Wrongly Marked</SelectItem>
+                          <SelectItem value="week_off_worked" className="text-xs">Week Off Worked</SelectItem>
+                          <SelectItem value="holiday_worked" className="text-xs">Holiday Worked</SelectItem>
+                          <SelectItem value="shift_mismatch" className="text-xs">Shift Mismatch</SelectItem>
+                          <SelectItem value="cosec_sync_issue" className="text-xs">COSEC Sync Issue</SelectItem>
+                          <SelectItem value="manual_punch_correction" className="text-xs">Manual Punch Correction</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {(disputeType === 'missing_punch' || disputeType === 'wrong_punch') && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs">New Punch In</Label>
+                          <Input type="time" className="h-8 text-xs" value={disputeNewIn} onChange={e => setDisputeNewIn(e.target.value)} />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">New Punch Out</Label>
+                          <Input type="time" className="h-8 text-xs" value={disputeNewOut} onChange={e => setDisputeNewOut(e.target.value)} />
+                        </div>
+                      </div>
+                    )}
+                    <div className="space-y-1">
+                      <Label className="text-xs">Reason <span className="text-red-500">*</span></Label>
+                      <Textarea
+                        className="text-xs min-h-[60px]"
+                        placeholder="Describe the issue..."
+                        value={disputeReason}
+                        onChange={e => setDisputeReason(e.target.value)}
+                      />
+                    </div>
+                    <Button
+                      size="sm" className="w-full text-xs h-8"
+                      disabled={!disputeType || !disputeReason.trim() || regMutation.isPending}
+                      onClick={handleDisputeSubmit}
+                    >
+                      {regMutation.isPending ? 'Submitting...' : 'File Dispute'}
+                    </Button>
+                    {regMutation.isError && (
+                      <p className="text-xs text-red-600">{(regMutation.error as Error)?.message}</p>
+                    )}
                   </div>
                 )}
               </div>
