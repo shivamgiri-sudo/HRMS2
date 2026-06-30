@@ -70,9 +70,10 @@ export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
   // Allow access to dashboard for everyone (non-employees see onboarding request form there)
   const isDashboard = location.pathname === "/dashboard";
   const isChangePassword = location.pathname === "/change-password";
+  const isTwoFactor = location.pathname === "/two-factor";
 
-  // Non-employees who are not admin/HR can only access dashboard or change-password
-  if (!isEmployee && !isAdminOrHR && !isDashboard && !isChangePassword) {
+  // Non-employees who are not admin/HR can only access dashboard, change-password, or two-factor
+  if (!isEmployee && !isAdminOrHR && !isDashboard && !isChangePassword && !isTwoFactor) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <Card className="max-w-md w-full">

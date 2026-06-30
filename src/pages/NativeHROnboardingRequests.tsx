@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { Button } from '@/components/ui/button';
@@ -18,7 +18,7 @@ interface BgvData { score: number; checks: BgvCheckItem[]; }
 interface OnboardingRequest {
   id: string; status: string; candidate_id: string; candidate_code: string;
   full_name: string; mobile: string; email: string; profile_status: string;
-  branch_name: string; process_name?: string; offer_id?: string; offer_status?: string; offered_ctc?: number;
+  branch_name: string; applied_for_process?: string; process_name?: string; offer_id?: string; offer_status?: string; offered_ctc?: number;
 }
 interface SalaryPreview {
   gross: number; basic: number; hra: number; net_in_hand: number;
@@ -29,9 +29,6 @@ interface SalaryPreview {
 interface MasterItem { id: string; name: string; code?: string; }
 interface SalaryBand { id: string; band_code: string; band_name: string; min_ctc: number; max_ctc: number; }
 
-// Grades H+ are above executive level — eligible as reporting managers
-// Based on designation_master: G=EXECUTIVE/CCE/TRAINER, H+=QA/TL/AM/Manager/above
-const MANAGER_ELIGIBLE_GRADES = ['H', 'I', 'J', 'K', 'L', 'M', 'N'];
 
 function rowsFrom(payload: unknown): OnboardingRequest[] {
   if (Array.isArray(payload)) return payload;
@@ -89,10 +86,18 @@ export default function NativeHROnboardingRequests() {
   const [bgv, setBgv]             = useState<BgvData | null>(null);
   const [offerTab, setOfferTab]   = useState<'standard' | 'proposed'>('standard');
 
+  // Candidate profile review panel
+  const [profilePanel, setProfilePanel] = useState<{ candidateId: string; data: any } | null>(null);
+  const [profilePanelLoading, setProfilePanelLoading] = useState(false);
+  const [pushbackRemarks, setPushbackRemarks] = useState('');
+  const [reviewSaving, setReviewSaving] = useState(false);
+
   const [departments, setDepartments]   = useState<MasterItem[]>([]);
   const [designations, setDesignations] = useState<MasterItem[]>([]);
-  const [managers, setManagers]         = useState<Array<{ id: string; name: string; code?: string; branch_name?: string; cost_center_code?: string; grade?: string }>>([]);
-  const [allManagers, setAllManagers]   = useState<typeof managers>([]);
+  type ManagerItem = { id: string; employee_code: string; full_name: string; branch_name?: string; cost_centre_code?: string; grade?: string };
+  const [managers, setManagers]         = useState<ManagerItem[]>([]);
+  const [managerSearch, setManagerSearch] = useState('');
+  const [managerOpen, setManagerOpen]   = useState(false);
   const [salaryBands, setSalaryBands]   = useState<SalaryBand[]>([]);
   const [costCentres, setCostCentres]   = useState<Array<{
     id: string; cost_centre_code: string; display_name: string;
@@ -183,55 +188,29 @@ export default function NativeHROnboardingRequests() {
       ]);
     });
 
-    hrmsApi.get<unknown>('/api/employees?active_status=1&limit=2000').then((r: any) => {
-      const emps = Array.isArray(r) ? r : r?.data ?? [];
-      const mgrs = (Array.isArray(emps) ? emps : [])
-        .filter((e: any) => e.first_name || e.last_name || e.full_name)
-        .map((e: any) => ({
-          id: e.id,
-          name: e.full_name || [e.first_name, e.last_name].filter(Boolean).join(' '),
-          code: e.employee_code || '',
-          branch_name:      e.branch_name      || '',
-          cost_center_code: e.cost_center_code || '',
-          grade:            e.grade            || '',
-        }));
-      setAllManagers(mgrs);
-      setManagers(mgrs.filter(m => !m.grade || MANAGER_ELIGIBLE_GRADES.includes(m.grade)));
-    }).catch(() => {});
   }, []);
 
-  // Cascading: cost centres + manager filter by branch
+  // Cascading: cost centres by branch
   useEffect(() => {
     if (!selected?.branch_name) {
       setCostCentres([]);
-      setManagers(allManagers.filter(m => !m.grade || MANAGER_ELIGIBLE_GRADES.includes(m.grade)));
+      setManagers([]);
       return;
     }
     hrmsApi.get<unknown>(`/api/payroll-masters/cost-centres?branch=${encodeURIComponent(selected.branch_name)}`)
       .then((r: any) => setCostCentres((r?.data ?? []).map((c: any) => ({ ...c, branch_name: selected.branch_name }))))
       .catch(() => setCostCentres([]));
-    applyManagerFilter(allManagers, selected.branch_name, offer.cost_centre);
-  }, [selected?.branch_name, allManagers]);
+  }, [selected?.branch_name]);
 
-  // Re-filter managers when cost centre changes
+  // Fetch managers from dedicated endpoint whenever branch or cost centre changes
   useEffect(() => {
-    if (!allManagers.length) return;
-    applyManagerFilter(allManagers, selected?.branch_name ?? '', offer.cost_centre);
-  }, [offer.cost_centre, allManagers]);
-
-  function applyManagerFilter(all: typeof allManagers, branchName: string, costCentre: string) {
-    let filtered = all.filter(m => !m.grade || MANAGER_ELIGIBLE_GRADES.includes(m.grade));
-    if (branchName) {
-      filtered = filtered.filter(m =>
-        !m.branch_name || m.branch_name.toLowerCase() === branchName.toLowerCase()
-      );
-    }
-    if (costCentre) {
-      const sameCc = filtered.filter(m => m.cost_center_code && m.cost_center_code === costCentre);
-      if (sameCc.length > 0) filtered = sameCc;
-    }
-    setManagers(filtered);
-  }
+    if (!selected?.branch_name) { setManagers([]); return; }
+    const params = new URLSearchParams({ branch: selected.branch_name });
+    if (offer.cost_centre) params.set('costCentre', offer.cost_centre);
+    hrmsApi.get<unknown>(`/api/employees/managers?${params}`)
+      .then((r: any) => setManagers(r?.data ?? []))
+      .catch(() => setManagers([]));
+  }, [selected?.branch_name, offer.cost_centre]);
 
   // Cascading: packages by branch + cost centre + band
   useEffect(() => {
@@ -242,6 +221,14 @@ export default function NativeHROnboardingRequests() {
       .then((r: any) => { setPackages(r?.data ?? []); setSelectedPackage(null); setSalaryPreview(null); })
       .catch(() => setPackages([]));
   }, [selected?.branch_name, offer.cost_centre, offer.salary_band]);
+
+  // Close manager dropdown on outside click
+  useEffect(() => {
+    if (!managerOpen) return;
+    const handler = () => setManagerOpen(false);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [managerOpen]);
 
   const selectedBand = salaryBands.find(b => b.band_code === offer.salary_band);
 
@@ -280,6 +267,8 @@ export default function NativeHROnboardingRequests() {
     setProposedReason('');
     setSalaryPreview(null);
     setSelectedPackage(null);
+    setManagerOpen(false);
+    setManagerSearch('');
     setOffer({
       emp_type: 'OnRoll', date_of_joining: '', date_of_salary: '',
       cost_centre: '', role_type: 'Analyst', salary_band: '',
@@ -317,6 +306,35 @@ export default function NativeHROnboardingRequests() {
       setSalaryPreview(null);
     } catch (e: any) { alert(e?.message ?? 'Failed to save offer'); }
     finally { setSaving(false); }
+  };
+
+  const openProfilePanel = async (candidateId: string) => {
+    setProfilePanelLoading(true);
+    setPushbackRemarks('');
+    setProfilePanel({ candidateId, data: null });
+    try {
+      const r = await hrmsApi.get<any>(`/api/ats/onboarding-full/candidate/${candidateId}`);
+      setProfilePanel({ candidateId, data: r?.data ?? r });
+    } catch { setProfilePanel(null); }
+    finally { setProfilePanelLoading(false); }
+  };
+
+  const submitReview = async (status: 'approved' | 'hr_review') => {
+    if (!profilePanel) return;
+    if (status === 'hr_review' && !pushbackRemarks.trim()) {
+      alert('Please enter remarks explaining what needs to be corrected.');
+      return;
+    }
+    setReviewSaving(true);
+    try {
+      await hrmsApi.patch(`/api/ats/onboarding-full/candidate/${profilePanel.candidateId}/review`, {
+        status,
+        remarks: pushbackRemarks.trim() || undefined,
+      });
+      setProfilePanel(null);
+      await load();
+    } catch (e: any) { alert(e?.message ?? 'Failed to save review'); }
+    finally { setReviewSaving(false); }
   };
 
   // ── Stats ──────────────────────────────────────────────────────────────────
@@ -410,7 +428,7 @@ export default function NativeHROnboardingRequests() {
                           <td className="px-4 py-3 text-slate-600 whitespace-nowrap text-xs">{r.mobile}</td>
                           <td className="px-4 py-3">
                             <p className="text-slate-700 font-medium text-xs">{r.branch_name || '—'}</p>
-                            <p className="text-slate-400 text-[11px]">{r.process_name || '—'}</p>
+                            <p className="text-slate-400 text-[11px]">{r.applied_for_process || r.process_name || '—'}</p>
                           </td>
                           <td className="px-4 py-3">
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${si.color}`}>
@@ -423,23 +441,29 @@ export default function NativeHROnboardingRequests() {
                               : <span className="text-slate-300 text-xs">—</span>}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap">
-                            {r.profile_status === 'profile_submitted' && !r.offer_status && (
-                              <Button size="sm" onClick={() => openCandidate(r)}
-                                className="h-8 gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm px-3">
-                                <UserPlus className="h-3.5 w-3.5" /> Create Offer
+                            <div className="flex items-center gap-2">
+                              <Button size="sm" variant="outline" onClick={() => openProfilePanel(r.candidate_id)}
+                                className="h-8 gap-1 border-slate-200 text-slate-600 text-xs px-2.5">
+                                <FileCheck className="h-3.5 w-3.5" /> View
                               </Button>
-                            )}
-                            {r.offer_status === 'draft' && (
-                              <Button size="sm" variant="outline" onClick={() => openCandidate(r)}
-                                className="h-8 gap-1.5 border-slate-200 text-slate-600 text-xs px-3">
-                                Edit Draft
-                              </Button>
-                            )}
-                            {r.offer_status === 'submitted' && (
-                              <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
-                                <Clock className="h-3 w-3" /> Pending
-                              </span>
-                            )}
+                              {r.profile_status === 'profile_submitted' && !r.offer_status && (
+                                <Button size="sm" onClick={() => openCandidate(r)}
+                                  className="h-8 gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm px-3">
+                                  <UserPlus className="h-3.5 w-3.5" /> Create Offer
+                                </Button>
+                              )}
+                              {r.offer_status === 'draft' && (
+                                <Button size="sm" variant="outline" onClick={() => openCandidate(r)}
+                                  className="h-8 gap-1.5 border-slate-200 text-slate-600 text-xs px-3">
+                                  Edit Draft
+                                </Button>
+                              )}
+                              {r.offer_status === 'submitted' && (
+                                <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
+                                  <Clock className="h-3 w-3" /> Pending
+                                </span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -462,6 +486,156 @@ export default function NativeHROnboardingRequests() {
           )}
         </div>
       </div>
+
+      {/* Candidate Profile Review Panel */}
+      {profilePanel !== null && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/40" onClick={() => setProfilePanel(null)} />
+          <div className="w-full max-w-lg bg-white h-full overflow-y-auto shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 sticky top-0 bg-white z-10">
+              <h2 className="font-bold text-slate-900 text-base">Candidate Profile Review</h2>
+              <button onClick={() => setProfilePanel(null)} className="text-slate-400 hover:text-slate-700 text-xl leading-none">×</button>
+            </div>
+            {profilePanelLoading ? (
+              <div className="flex-1 flex items-center justify-center">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+              </div>
+            ) : profilePanel.data ? (() => {
+              const p = profilePanel.data.profile ?? {};
+              const bank = profilePanel.data.bank ?? {};
+              const docs: any[] = profilePanel.data.documents ?? [];
+              const quals: any[] = profilePanel.data.qualifications ?? [];
+              const exp = profilePanel.data.experience ?? {};
+              const fmtBool = (v: any) => v ? 'Yes' : v === 0 ? 'No' : '—';
+              const Row = ({ label, value }: { label: string; value: any }) => (
+                <div className="flex py-1.5 border-b border-slate-50 last:border-0">
+                  <span className="text-xs text-slate-400 w-40 shrink-0">{label}</span>
+                  <span className="text-xs text-slate-800 font-medium break-all">{value ?? '—'}</span>
+                </div>
+              );
+              const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
+                <div className="px-5 py-4 border-b border-slate-100">
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">{title}</p>
+                  {children}
+                </div>
+              );
+              return (
+                <>
+                  <Section title="Personal Details">
+                    <Row label="Full Name" value={p.full_name_aadhaar || p.full_name} />
+                    <Row label="Date of Birth" value={p.date_of_birth} />
+                    <Row label="Gender" value={p.gender} />
+                    <Row label="Marital Status" value={p.marital_status} />
+                    <Row label="Blood Group" value={p.blood_group} />
+                    <Row label="Father's Name" value={p.father_name} />
+                    <Row label="Mother's Name" value={p.mother_name} />
+                    <Row label="Mobile" value={p.mobile} />
+                    <Row label="Alternate Mobile" value={p.alt_mobile_number || p.alternate_mobile} />
+                    <Row label="Personal Email" value={p.personal_email_id} />
+                  </Section>
+                  <Section title="Address">
+                    <Row label="Current Address" value={p.present_address || p.current_address} />
+                    <Row label="Permanent Address" value={p.permanent_address} />
+                    <Row label="City / State" value={[p.city, p.state].filter(Boolean).join(', ')} />
+                    <Row label="PIN Code" value={p.pin_code} />
+                  </Section>
+                  <Section title="Identity Documents">
+                    <Row label="Aadhaar" value={p.aadhar_number || p.aadhaar_number} />
+                    <Row label="PAN" value={p.pan_number} />
+                    <Row label="Voter ID" value={p.voter_id} />
+                    <Row label="Driving Licence" value={p.driving_license} />
+                    <Row label="Passport" value={p.passport_number} />
+                    <Row label="UAN" value={p.uan_number} />
+                    <Row label="ESIC" value={p.esic_number} />
+                  </Section>
+                  <Section title="Bank Details">
+                    <Row label="Bank Name" value={bank.bank_name} />
+                    <Row label="Account Number" value={bank.account_number} />
+                    <Row label="IFSC" value={bank.ifsc_code} />
+                    <Row label="Account Type" value={bank.account_type} />
+                  </Section>
+                  {quals.length > 0 && (
+                    <Section title="Qualifications">
+                      {quals.map((q: any, i: number) => (
+                        <div key={i} className="mb-2 pb-2 border-b border-slate-50 last:border-0">
+                          <Row label="Degree" value={q.degree_name || q.qualification} />
+                          <Row label="Institute" value={q.institute_name || q.institution} />
+                          <Row label="Year" value={q.passing_year} />
+                          <Row label="Score" value={q.percentage_cgpa} />
+                        </div>
+                      ))}
+                    </Section>
+                  )}
+                  {(exp.company_name || exp.previous_employer) && (
+                    <Section title="Work Experience">
+                      <Row label="Previous Employer" value={exp.company_name || exp.previous_employer} />
+                      <Row label="Designation" value={exp.designation || exp.previous_designation} />
+                      <Row label="Duration" value={exp.duration_months ? `${exp.duration_months} months` : exp.duration} />
+                      <Row label="Last CTC" value={exp.last_ctc} />
+                    </Section>
+                  )}
+                  <Section title="Emergency Contact">
+                    <Row label="Name" value={p.emergency_contact_name} />
+                    <Row label="Relation" value={p.emergency_contact_relation} />
+                    <Row label="Mobile" value={p.emergency_contact_number || p.emergency_contact_mobile} />
+                  </Section>
+                  <Section title="Statutory">
+                    <Row label="PF Member" value={fmtBool(p.previous_pf_member)} />
+                    <Row label="EPS Member" value={fmtBool(p.eps_member)} />
+                  </Section>
+                  {docs.length > 0 && (
+                    <Section title={`Uploaded Documents (${docs.length})`}>
+                      {docs.map((d: any, i: number) => (
+                        <div key={i} className="flex items-center justify-between py-1">
+                          <span className="text-xs text-slate-700">{d.document_type || d.doc_type || `Document ${i + 1}`}</span>
+                          {d.file_url && (
+                            <a href={d.file_url} target="_blank" rel="noreferrer"
+                              className="text-xs text-blue-600 hover:underline">View</a>
+                          )}
+                        </div>
+                      ))}
+                    </Section>
+                  )}
+
+                  {/* Pushback / Approve actions */}
+                  <div className="px-5 py-4 sticky bottom-0 bg-white border-t border-slate-200 space-y-3">
+                    <div>
+                      <label className="text-xs font-semibold text-slate-600 block mb-1.5">
+                        Push-back Remarks <span className="text-slate-400 font-normal">(required if pushing back)</span>
+                      </label>
+                      <textarea
+                        rows={2}
+                        className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                        placeholder="e.g. Address proof missing, DOB mismatch with Aadhaar…"
+                        value={pushbackRemarks}
+                        onChange={e => setPushbackRemarks(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex gap-3">
+                      <Button variant="outline" size="sm" disabled={reviewSaving}
+                        onClick={() => submitReview('hr_review')}
+                        className="flex-1 border-amber-300 text-amber-700 hover:bg-amber-50 gap-1.5">
+                        {reviewSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+                        Push Back for Edit
+                      </Button>
+                      <Button size="sm" disabled={reviewSaving}
+                        onClick={() => submitReview('approved')}
+                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5">
+                        {reviewSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                        Approve Profile
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              );
+            })() : (
+              <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">
+                Could not load profile data.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 
@@ -504,7 +678,7 @@ export default function NativeHROnboardingRequests() {
                 <InfoCell label="Mobile"      value={selected.mobile} />
                 <InfoCell label="Email"       value={selected.email} small />
                 <InfoCell label="Branch"      value={selected.branch_name || '—'} />
-                <InfoCell label="Process/LOB" value={selected.process_name || '—'} />
+                <InfoCell label="Process/LOB" value={selected.applied_for_process || selected.process_name || '—'} />
               </div>
             </div>
 
@@ -624,16 +798,73 @@ export default function NativeHROnboardingRequests() {
 
                 <FL label="Process / LOB">
                   <div className={SEL + ' flex items-center bg-slate-50 text-slate-500 cursor-default border-dashed'}>
-                    <span className="truncate text-xs">{selected?.process_name || '—'}</span>
+                    <span className="truncate text-xs">{selected?.applied_for_process || selected?.process_name || '—'}</span>
                   </div>
                 </FL>
 
                 <FL label={`Reporting Manager${managers.length > 0 ? ` (${managers.length})` : ''}`}>
-                  <select className={SEL} style={{ backgroundColor: 'white', color: '#1e293b' }}
-                    value={offer.reporting_manager_id} onChange={e => setF('reporting_manager_id', e.target.value)}>
-                    <option value="">— Select —</option>
-                    {managers.map(m => <option key={m.id} value={m.id}>{m.name}{m.code ? ` · ${m.code}` : ''}</option>)}
-                  </select>
+                  {(() => {
+                    const selectedMgr = managers.find(m => m.id === offer.reporting_manager_id);
+                    const filteredMgrs = managerSearch.trim()
+                      ? managers.filter(m =>
+                          m.full_name.toLowerCase().includes(managerSearch.toLowerCase()) ||
+                          m.employee_code.toLowerCase().includes(managerSearch.toLowerCase())
+                        )
+                      : managers;
+                    return (
+                      <div className="relative">
+                        <div
+                          className={SEL + ' flex items-center justify-between cursor-pointer'}
+                          style={{ backgroundColor: 'white', color: '#1e293b' }}
+                          onClick={() => setManagerOpen(o => !o)}
+                        >
+                          <span className={selectedMgr ? 'text-slate-900' : 'text-slate-400'}>
+                            {selectedMgr
+                              ? `${selectedMgr.full_name} · ${selectedMgr.employee_code}`
+                              : '— Select —'}
+                          </span>
+                          <Search className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                        </div>
+                        {managerOpen && (
+                          <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg">
+                            <div className="p-2 border-b border-slate-100">
+                              <input
+                                autoFocus
+                                type="text"
+                                placeholder="Search by name or code…"
+                                value={managerSearch}
+                                onChange={e => setManagerSearch(e.target.value)}
+                                className="w-full h-8 px-3 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                onClick={e => e.stopPropagation()}
+                              />
+                            </div>
+                            <div className="max-h-52 overflow-y-auto">
+                              <div
+                                className="px-3 py-2 text-sm text-slate-400 hover:bg-slate-50 cursor-pointer"
+                                onClick={() => { setF('reporting_manager_id', ''); setManagerOpen(false); setManagerSearch(''); }}
+                              >
+                                — None —
+                              </div>
+                              {filteredMgrs.length === 0 && (
+                                <div className="px-3 py-2 text-xs text-slate-400">No results</div>
+                              )}
+                              {filteredMgrs.map(m => (
+                                <div
+                                  key={m.id}
+                                  className={`px-3 py-2 text-sm cursor-pointer hover:bg-blue-50 ${offer.reporting_manager_id === m.id ? 'bg-blue-50 font-semibold text-blue-700' : 'text-slate-800'}`}
+                                  onClick={() => { setF('reporting_manager_id', m.id); setManagerOpen(false); setManagerSearch(''); }}
+                                >
+                                  <span className="font-medium">{m.full_name}</span>
+                                  <span className="ml-2 text-xs text-slate-400">{m.employee_code}</span>
+                                  {m.grade && <span className="ml-2 text-xs text-blue-500">Grade {m.grade}</span>}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {managers.length === 0 && selected?.branch_name && (
                     <p className="text-[10px] text-amber-600 mt-1">No managers found for this branch/cost centre</p>
                   )}

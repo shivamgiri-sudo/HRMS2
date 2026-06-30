@@ -458,6 +458,51 @@ router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req
   res.json({ data: rows[0] });
 }));
 
+// GET /managers?branch=X&costCentre=Y — all active employees above executive level (grade H+)
+// Used by onboarding offer form to populate the Reporting Manager dropdown.
+router.get("/managers", requireAuth, requireRole("super_admin", "admin", "hr", "recruiter"), h(async (req, res) => {
+  const branch = String(req.query.branch ?? "").trim();
+  const costCentre = String(req.query.costCentre ?? "").trim();
+
+  const conds: string[] = [
+    "e.active_status = 1",
+    "desig.grade IS NOT NULL",
+    "desig.grade >= 'H'",   // H, I, J, K, L, M, N — QA/TL/AM/Manager and above
+  ];
+  const params: string[] = [];
+
+  if (branch) {
+    conds.push("bm.branch_name = ?");
+    params.push(branch);
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code, e.full_name,
+            bm.branch_name,
+            COALESCE(scc.cost_centre_code, '') AS cost_centre_code,
+            desig.grade
+     FROM employees e
+     LEFT JOIN designation_master  desig ON desig.id = e.designation_id
+     LEFT JOIN branch_master        bm   ON bm.id    = e.branch_id
+     LEFT JOIN salary_cost_centre  scc   ON scc.branch_name = bm.branch_name
+                                        AND scc.active_status = 1
+     WHERE ${conds.join(" AND ")}
+     GROUP BY e.id
+     ORDER BY desig.grade ASC, e.full_name ASC`,
+    params
+  );
+
+  // If costCentre filter provided, prefer same-CC employees but don't exclude others
+  // (manager may supervise across CCs in same branch)
+  let result = rows as any[];
+  if (costCentre && result.length > 0) {
+    const sameCc = result.filter((m: any) => m.cost_centre_code === costCentre);
+    if (sameCc.length > 0) result = sameCc;
+  }
+
+  return res.json({ success: true, data: result });
+}));
+
 router.get("/", requireRole("super_admin", "admin", "hr", "manager", "ceo"), h(async (req, res) => {
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,

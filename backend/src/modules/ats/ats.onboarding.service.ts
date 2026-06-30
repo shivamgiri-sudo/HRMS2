@@ -554,7 +554,9 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
         employeeId, employeeCode, firstName, lastName,
         offer.email, offer.email, offer.mobile,
         candRow?.personal_email ?? null, candRow?.personal_phone ?? null, candRow?.alternate_mobile ?? null,
-        candRow?.gender ?? null, candRow?.date_of_birth ?? null, candRow?.current_address ?? null, null, null,
+        // Normalise gender to Title-case to match employees ENUM('Male','Female','Other')
+        candRow?.gender ? (candRow.gender.charAt(0).toUpperCase() + candRow.gender.slice(1).toLowerCase()) : null,
+        candRow?.date_of_birth ?? null, candRow?.current_address ?? null, null, null,
         offer.resolved_branch_id ?? null, offer.resolved_process_id ?? null,
         offer.department_id ?? null, offer.designation_id ?? null,
         offer.date_of_joining, salaryStartDate, offer.emp_type,
@@ -572,12 +574,12 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
        VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         employeeId, offer.date_of_joining,
-        offer.offered_ctc, offer.basic, offer.hra, offer.conveyance,
-        offer.da, offer.special_allowance, offer.other_allowance, offer.bonus, offer.gross,
+        offer.offered_ctc ?? 0, offer.basic ?? 0, offer.hra ?? 0, offer.conveyance ?? 0,
+        offer.da ?? 0, offer.special_allowance ?? 0, offer.other_allowance ?? 0, offer.bonus ?? 0, offer.gross ?? 0,
         // ats_employment_offer stores as pf_employee; employee_salary_snapshot uses epf_employee
-        offer.pf_employee ?? offer.epf_employee, offer.pf_employer ?? offer.epf_employer,
-        offer.esic_employee, offer.esic_employer,
-        offer.professional_tax, offer.gratuity, offer.admin_charges, offer.net_in_hand,
+        offer.pf_employee ?? offer.epf_employee ?? 0, offer.pf_employer ?? offer.epf_employer ?? 0,
+        offer.esic_employee ?? 0, offer.esic_employer ?? 0,
+        offer.professional_tax ?? 0, offer.gratuity ?? 0, offer.admin_charges ?? 0, offer.net_in_hand ?? 0,
       ],
     );
 

@@ -389,20 +389,73 @@ export const policyService = {
 // ── Process ───────────────────────────────────────────────────────────────────
 
 export const processService = {
-  list: (employeeId?: string) => listActive("process_master", "process_name", "process", employeeId),
+  async list(employeeId?: string) {
+    const rows = await listActive("process_master", "process_name", "process", employeeId);
+    // Attach branch_name by joining in-memory (branch list is small)
+    const [branches] = await db.execute<RowDataPacket[]>(
+      "SELECT id, branch_name FROM branch_master WHERE active_status = 1"
+    );
+    const branchMap = new Map<string, string>(
+      (branches as RowDataPacket[]).map((b) => [String(b.id), String(b.branch_name)])
+    );
+    return (rows as RowDataPacket[]).map((r) => ({
+      ...r,
+      branch_name: r.branch_id ? (branchMap.get(String(r.branch_id)) ?? null) : null,
+    }));
+  },
   getById: (id: string) => getById("process_master", id),
-  async create(data: { process_code: string; process_name: string; branch_id?: string; department_id?: string; business_lob?: string }) {
+  async create(data: {
+    process_code: string;
+    process_name: string;
+    branch_id?: string;
+    business_lob?: string;
+    workload_type?: string;
+    client_name?: string;
+  }) {
     const id = randomUUID();
     await db.execute(
-      "INSERT INTO process_master (id, process_code, process_name, branch_id, department_id, business_lob) VALUES (?, ?, ?, ?, ?, ?)",
-      [id, data.process_code, data.process_name, data.branch_id ?? null, data.department_id ?? null, data.business_lob ?? null]
+      `INSERT INTO process_master
+         (id, process_code, process_name, branch_id, business_lob, workload_type, client_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        data.process_code,
+        data.process_name,
+        data.branch_id ?? null,
+        data.business_lob ?? null,
+        data.workload_type ?? null,
+        data.client_name ?? null,
+      ]
     );
     return getById("process_master", id);
   },
-  async update(id: string, data: { process_name?: string; branch_id?: string; department_id?: string; business_lob?: string }) {
+  async update(id: string, data: {
+    process_name?: string;
+    branch_id?: string;
+    business_lob?: string;
+    workload_type?: string;
+    client_name?: string;
+  }) {
+    // branch_id and workload_type can be explicitly cleared (pass "" to set NULL)
+    const branchVal = data.branch_id !== undefined ? (data.branch_id.trim() || null) : null;
+    const workloadVal = data.workload_type !== undefined ? (data.workload_type.trim() || null) : null;
     await db.execute(
-      "UPDATE process_master SET process_name = COALESCE(?, process_name), branch_id = COALESCE(?, branch_id), department_id = COALESCE(?, department_id), business_lob = COALESCE(?, business_lob), updated_at = NOW() WHERE id = ?",
-      [data.process_name ?? null, data.branch_id ?? null, data.department_id ?? null, data.business_lob ?? null, id]
+      `UPDATE process_master
+         SET process_name  = COALESCE(?, process_name),
+             branch_id     = COALESCE(?, branch_id),
+             business_lob  = COALESCE(?, business_lob),
+             workload_type = COALESCE(?, workload_type),
+             client_name   = COALESCE(?, client_name),
+             updated_at    = NOW()
+       WHERE id = ?`,
+      [
+        data.process_name ?? null,
+        branchVal,
+        data.business_lob ?? null,
+        workloadVal,
+        data.client_name ?? null,
+        id,
+      ]
     );
     return getById("process_master", id);
   },
