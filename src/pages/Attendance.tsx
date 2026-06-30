@@ -263,7 +263,7 @@ const Attendance = () => {
     currentEmployee?.id
   );
 
-  const { data: summaryData, isLoading: reportLoading } =
+  const { data: summaryData, isLoading: reportLoading, error: summaryError } =
     useMyAttendanceSummary(currentEmployee?.id, targetDate);
 
   const { data: activeBreak } = useActiveBreak(todayRecord?.id);
@@ -371,23 +371,7 @@ const Attendance = () => {
     return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
   };
 
-  const countLateArrivals = (): number => {
-    if (!attendanceRecords) return 0;
-
-    return attendanceRecords.filter(
-      (record) => calculateLateArrival(record.clock_in, record.employee) > 0
-    ).length;
-  };
-
   const selectedMonthLabel = MONTHS[parseInt(selectedMonth)].label;
-
-  const wfoDaysCount = useMemo(() =>
-    (attendanceRecords ?? []).filter(r => r.work_mode === 'wfo' || r.work_mode === 'office').length,
-  [attendanceRecords]);
-
-  const totalHoursCount = useMemo(() =>
-    (attendanceRecords ?? []).reduce((sum, r) => sum + (r.raw_minutes ?? 0) / 60, 0),
-  [attendanceRecords]);
 
   const renderPaginationControls = () => {
     if (historyPagination.totalPages <= 1) return null;
@@ -826,6 +810,20 @@ const Attendance = () => {
                   <Skeleton key={item} className="h-32 rounded-2xl" />
                 ))}
               </div>
+            ) : summaryError ? (
+              <Card className="border-dashed border-red-200 bg-red-50/70 shadow-none">
+                <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+                  <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-red-500 shadow-sm ring-1 ring-red-200">
+                    <AlertTriangle className="h-7 w-7" />
+                  </div>
+                  <h3 className="text-base font-semibold text-red-950">
+                    Could Not Load Summary
+                  </h3>
+                  <p className="mt-2 max-w-md text-sm leading-6 text-red-600">
+                    Attendance summary could not be loaded. Please try refreshing.
+                  </p>
+                </CardContent>
+              </Card>
             ) : !summaryData ? (
               <Card className="border-dashed border-slate-200 bg-slate-50/70 shadow-none">
                 <CardContent className="flex flex-col items-center justify-center py-12 text-center">
@@ -843,7 +841,7 @@ const Attendance = () => {
                 </CardContent>
               </Card>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+              <div className={`grid gap-4 sm:grid-cols-2 ${isAdminOrHR ? 'xl:grid-cols-3' : 'xl:grid-cols-5'}`}>
                 <AttendanceMetricCard
                   label="Present Days"
                   value={summaryData.presentDays}
@@ -854,7 +852,7 @@ const Attendance = () => {
 
                 <AttendanceMetricCard
                   label="From Office"
-                  value={wfoDaysCount}
+                  value={summaryData.wfoDays}
                   description="Work from office days."
                   icon={<Briefcase className="h-5 w-5" />}
                   tone="sky"
@@ -862,7 +860,7 @@ const Attendance = () => {
 
                 <AttendanceMetricCard
                   label="Total Hours"
-                  value={`${totalHoursCount.toFixed(1)}h`}
+                  value={`${summaryData.totalHours.toFixed(1)}h`}
                   description="Total productive hours."
                   icon={<Timer className="h-5 w-5" />}
                   tone="indigo"
@@ -872,7 +870,7 @@ const Attendance = () => {
                   label="Avg Hours / Day"
                   value={`${
                     summaryData.totalWorkingDays > 0
-                      ? (totalHoursCount / summaryData.totalWorkingDays).toFixed(1)
+                      ? (summaryData.totalHours / summaryData.totalWorkingDays).toFixed(1)
                       : "0"
                   }h`}
                   description="Average daily hours."
@@ -882,7 +880,7 @@ const Attendance = () => {
 
                 <AttendanceMetricCard
                   label="LWP Days"
-                  value={summaryData.totalLwp.toFixed(1)}
+                  value={summaryData.totalLwp % 1 === 0 ? String(summaryData.totalLwp) : summaryData.totalLwp.toFixed(1)}
                   description="Leave without pay days."
                   icon={<AlertTriangle className="h-5 w-5" />}
                   tone="amber"
@@ -915,9 +913,9 @@ const Attendance = () => {
 
               {attendanceRecords && attendanceRecords.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2">
-                  {isAdminOrHR && countLateArrivals() > 0 && (
+                  {isAdminOrHR && (summaryData?.lateMarks ?? 0) > 0 && (
                     <Badge className="bg-amber-50 text-amber-700 hover:bg-amber-50">
-                      Late Arrivals: {countLateArrivals()}
+                      Late Arrivals: {summaryData?.lateMarks}
                     </Badge>
                   )}
 

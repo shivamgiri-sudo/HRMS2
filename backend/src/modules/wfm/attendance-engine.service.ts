@@ -89,6 +89,8 @@ export interface MonthlySummary {
   totalLwp: number;
   lateMarks: number;
   totalWorkingDays: number;
+  totalHours: number;
+  wfoDays: number;
 }
 
 export interface BatchResult {
@@ -721,7 +723,9 @@ export const attendanceEngineService = {
          COUNT(CASE WHEN attendance_status = 'week_off'       THEN 1 END) AS week_off_days,
          COALESCE(SUM(lwp_value), 0)                                       AS total_lwp,
          COALESCE(SUM(late_mark), 0)                                       AS late_marks,
-         COUNT(CASE WHEN attendance_status NOT IN ('week_off','holiday') THEN 1 END) AS total_working_days
+         COUNT(CASE WHEN attendance_status NOT IN ('week_off','holiday') THEN 1 END) AS total_working_days,
+         COALESCE(SUM(raw_minutes), 0) / 60.0                                       AS total_hours,
+         COUNT(CASE WHEN work_mode IN ('wfo','office')                 THEN 1 END) AS wfo_days
        FROM attendance_daily_record
        WHERE employee_id = ? AND record_date BETWEEN ? AND ?`,
       [employeeId, monthStart, monthEnd]
@@ -737,6 +741,8 @@ export const attendanceEngineService = {
       totalLwp:        Number(r.total_lwp),
       lateMarks:       Number(r.late_marks),
       totalWorkingDays:Number(r.total_working_days),
+      totalHours:      Number(r.total_hours),
+      wfoDays:         Number(r.wfo_days),
     };
   },
 

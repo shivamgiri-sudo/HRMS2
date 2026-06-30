@@ -57,6 +57,8 @@ export interface MonthlySummary {
   totalLwp: number;
   lateMarks: number;
   totalWorkingDays: number;
+  totalHours: number;
+  wfoDays: number;
 }
 
 export type WorkMode = 'wfh' | 'wfo';
