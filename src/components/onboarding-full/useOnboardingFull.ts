@@ -17,6 +17,7 @@ export type TokenData = {
   process_name?: string;
   source_type?: string;
   source?: string;
+  is_minor?: boolean;
 };
 
 export type DocRecord = {
@@ -162,6 +163,7 @@ export function useOnboardingFull(token: string) {
   const [otpCode, setOtpCode] = useState("");
   const [consentAccepted, setConsentAccepted] = useState(false);
   const [bgvApiAvailable, setBgvApiAvailable] = useState(true);
+  const [privacyConsentAccepted, setPrivacyConsentAccepted] = useState(false);
   const [pfOptOutElected, setPfOptOutElected] = useState<boolean | null>(null);
   const [pfOptOutSaving, setPfOptOutSaving] = useState(false);
   const [pfOptOutConsented, setPfOptOutConsented] = useState(false);
@@ -486,6 +488,16 @@ export function useOnboardingFull(token: string) {
     } catch { /* non-fatal */ }
   };
 
+  const recordPrivacyConsent = async () => {
+    try {
+      await hrmsApi.post("/api/privacy/consent/recruitment", { token });
+      setPrivacyConsentAccepted(true);
+    } catch {
+      // Non-fatal — record failure silently; consent still marked locally
+      setPrivacyConsentAccepted(true);
+    }
+  };
+
   const submit = async () => {
     setSaving(true);
     const geo = await geoCapture();
@@ -564,12 +576,12 @@ export function useOnboardingFull(token: string) {
     status, bgv, bgvApiAvailable, employee, setEmployee, bank, setBank, qual, setQual,
     experience, setExperience, family, setFamily, languages, setLanguages,
     statutory, setStatutory, otpSent, otpVerified, otpCode, setOtpCode,
-    consentAccepted, completion,
+    consentAccepted, privacyConsentAccepted, completion,
     pfOptOutElected, pfOptOutSaving, pfOptOutConsented, pfOptOutConsentedAt, pfOptOutConsent,
     load, autosave, advanceStep,
     saveEmployee, saveBank, addQualification, saveExperience, saveStatutory,
     sendOtp, verifyOtp, grantConsent, verifyPan, verifyBank, verifyAadhaar, verifyUan,
     startDigilocker, lookupIfsc, uploadDoc, deleteDoc, submit,
-    updateSectionStatus, getBlockers, saveFamily, saveNominees,
+    updateSectionStatus, getBlockers, saveFamily, saveNominees, recordPrivacyConsent,
   };
 }

@@ -1,7 +1,23 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Github } from "lucide-react";
 import logo from "@/assets/brand/mcn-logo.png";
+import { hrmsApi } from "@/lib/hrmsApi";
+
+type GrievanceOfficer = { name: string; email: string; designation: string; sla_days: number };
+
+function useGrievanceOfficer() {
+  const [go, setGo] = useState<GrievanceOfficer | null>(null);
+  useEffect(() => {
+    hrmsApi.get<{ data: GrievanceOfficer }>("/api/privacy/grievance-officer")
+      .then((r) => { if (r.data?.name) setGo(r.data); })
+      .catch(() => {});
+  }, []);
+  return go;
+}
+
 const Footer = () => {
+  const go = useGrievanceOfficer();
   return <footer className="bg-background border-t py-16">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
@@ -36,6 +52,15 @@ const Footer = () => {
               <li><Link to="/terms-of-service" className="hover:text-foreground transition-colors">Terms of Service</Link></li>
               <li><Link to="/security" className="hover:text-foreground transition-colors">Security</Link></li>
             </ul>
+            {go?.email && (
+              <div className="mt-5 pt-4 border-t border-border/50">
+                <p className="text-[11px] font-black uppercase tracking-wide text-muted-foreground mb-1.5">DPDP Grievance Officer</p>
+                <p className="text-xs font-semibold text-foreground">{go.name}</p>
+                {go.designation && <p className="text-xs text-muted-foreground">{go.designation}</p>}
+                <a href={`mailto:${go.email}`} className="text-xs text-primary hover:underline break-all">{go.email}</a>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Response within {go.sla_days} days</p>
+              </div>
+            )}
           </div>
         </div>
         <div className="border-t pt-8 flex flex-col md:flex-row justify-between items-center gap-4">

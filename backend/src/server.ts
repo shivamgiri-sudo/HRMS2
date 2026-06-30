@@ -10,6 +10,7 @@ import { startAccessExpiryScheduler } from "./workers/access-expiry.worker.js";
 import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
 import { startPayrollWindowClosureScheduler } from "./modules/payroll/payroll-window.cron.js";
 import { getOverdueErasureRequests } from "./modules/privacy/dpdpErasure.service.js";
+import { startBreachSlaCron } from "./modules/privacy/dpdp-breach-sla.cron.js";
 import { startOfficialEmailComplianceScheduler } from "./workers/official-email-compliance.worker.js";
 import { startIntegrationScheduler } from "./workers/integration-scheduler.worker.js";
 import { startLeaveMonthlyWorker } from "./workers/leave-monthly-credit.worker.js";
@@ -31,6 +32,8 @@ function startServer() {
       startLeaveMonthlyWorker();
       startAnnualLeaveWorker();
       startPayrollWindowClosureScheduler();
+
+      startBreachSlaCron();
 
       // DPDP §12 — 30-day SLA alert: runs daily, logs overdue erasure requests
       setInterval(async () => {

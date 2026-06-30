@@ -129,7 +129,13 @@ export default function CandidateOnboardingFullPage() {
       }
     >
       {/* Step 1: Welcome */}
-      {onb.step === 1 && <Step1Welcome status={onb.status} />}
+      {onb.step === 1 && (
+        <Step1Welcome
+          status={onb.status}
+          privacyConsentAccepted={onb.privacyConsentAccepted}
+          onPrivacyConsent={onb.recordPrivacyConsent}
+        />
+      )}
 
       {/* Step 2: Personal Details */}
       {onb.step === 2 && (

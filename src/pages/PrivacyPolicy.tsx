@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -5,6 +6,10 @@ import { Shield, Eye, Lock, UserCheck, Database, Mail } from "lucide-react";
 import hrHubLogo from "@/assets/brand/mcn-logo.png";
 import Footer from "@/components/layout/Footer";
 import { isProductionDomain } from "@/lib/domain";
+import { hrmsApi } from "@/lib/hrmsApi";
+import { formatISTDate } from "@/lib/utils";
+
+type GrievanceOfficer = { name: string; email: string; designation: string; sla_days: number };
 
 const PrivacyPolicy = () => {
   const sections = [
@@ -78,6 +83,13 @@ const PrivacyPolicy = () => {
   ];
 
   const isProduction = isProductionDomain();
+
+  const [go, setGo] = useState<GrievanceOfficer | null>(null);
+  useEffect(() => {
+    hrmsApi.get<{ data: GrievanceOfficer }>("/api/privacy/grievance-officer")
+      .then((r) => { if (r.data?.name) setGo(r.data); })
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="min-h-screen bg-background">
@@ -187,6 +199,52 @@ const PrivacyPolicy = () => {
                 You are advised to review this Privacy Policy periodically for any changes. Changes to this 
                 Privacy Policy are effective when they are posted on this page.
               </p>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+
+      {/* DPDP Act 2023 — Grievance Officer (§13 public disclosure) */}
+      <section className="py-12">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          <Card className="max-w-4xl mx-auto border-2 border-blue-100 bg-blue-50/40">
+            <CardContent className="p-8">
+              <div className="flex items-start gap-4">
+                <div className="p-3 rounded-xl bg-blue-100 text-blue-700 shrink-0">
+                  <Shield className="h-6 w-6" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-semibold mb-2">Grievance Officer — DPDP Act 2023</h2>
+                  <p className="text-muted-foreground text-sm leading-relaxed mb-4">
+                    In accordance with the Digital Personal Data Protection Act 2023 and the DPDP Rules 2025,
+                    MAS Callnet has designated a Grievance Officer to address privacy-related queries, concerns,
+                    and complaints from data principals.
+                  </p>
+                  {go?.email ? (
+                    <div className="rounded-xl border-2 border-blue-200 bg-white p-5 space-y-1.5">
+                      <p className="text-sm font-bold text-slate-800">{go.name}</p>
+                      {go.designation && <p className="text-sm text-muted-foreground">{go.designation}</p>}
+                      <a href={`mailto:${go.email}`} className="text-sm text-primary font-semibold hover:underline flex items-center gap-1.5">
+                        <Mail className="h-4 w-4" /> {go.email}
+                      </a>
+                      <p className="text-xs text-muted-foreground">
+                        We will acknowledge your grievance within 48 hours and aim to resolve it within {go.sla_days} days.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border-2 border-blue-200 bg-white p-4">
+                      <p className="text-sm text-muted-foreground">
+                        Grievance Officer details are maintained by HR. Please contact HR via the employee self-service portal
+                        or email hr@mascallnet.in.
+                      </p>
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground mt-3">
+                    You may also exercise your rights (access, correction, nomination, withdrawal) through the
+                    "Privacy &amp; DPDP" section of the employee self-service portal after login.
+                  </p>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </div>

@@ -183,7 +183,15 @@ const DOC_TYPES = [
 
 // ── Step 1: Welcome ────────────────────────────────────────────────────────────
 
-export function Step1Welcome({ status }: { status: StatusData | null }) {
+export function Step1Welcome({
+  status,
+  privacyConsentAccepted,
+  onPrivacyConsent,
+}: {
+  status: StatusData | null;
+  privacyConsentAccepted: boolean;
+  onPrivacyConsent: () => void;
+}) {
   const t = status?.token;
   return (
     <div className="space-y-4">
@@ -239,6 +247,58 @@ export function Step1Welcome({ status }: { status: StatusData | null }) {
               </div>
             ))}
           </div>
+        </CardContent>
+      </Card>
+
+      {/* DPDP §9 — Minor candidate warning */}
+      {t?.is_minor && (
+        <Card className="shadow-sm border-2 border-red-200 bg-red-50">
+          <CardContent className="pt-4">
+            <p className="font-bold text-red-800 text-sm flex items-center gap-2 mb-2">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+              Minor Candidate — Guardian Consent Required
+            </p>
+            <p className="text-xs text-red-700 leading-relaxed">
+              Our records indicate you are under 18 years of age. Under the Digital Personal Data Protection (DPDP) Act 2023 §9,
+              processing personal data of minors requires explicit parental or guardian consent.
+              Please inform HR immediately. Your onboarding will be paused until guardian consent is obtained and recorded by the HR team.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* DPDP Privacy Notice — DPDP Act 2023 §6: consent before data collection */}
+      <Card className={`shadow-sm border-2 ${privacyConsentAccepted ? "border-emerald-200 bg-emerald-50" : "border-indigo-200 bg-indigo-50"}`}>
+        <CardContent className="pt-4 space-y-3">
+          <p className={`font-bold text-sm flex items-center gap-2 ${privacyConsentAccepted ? "text-emerald-800" : "text-indigo-800"}`}>
+            <ShieldCheck className="h-4 w-4 flex-shrink-0" />
+            Data Collection Notice (DPDP Act 2023)
+          </p>
+          <div className="text-xs text-slate-700 space-y-1.5">
+            <p><strong>What we collect:</strong> Identity (Aadhaar, PAN), contact details, address, bank account, employment history, family information, statutory details (PF/ESIC), biometric attendance.</p>
+            <p><strong>Why:</strong> Employment onboarding, payroll processing, statutory compliance (PF/ESIC/TDS), background verification, and HR record-keeping as required by law.</p>
+            <p><strong>Who receives your data:</strong> MAS Callnet HR team; and for background verification — <strong>Luckpay</strong> (PAN, bank, UAN), <strong>Befisc</strong> (Aadhaar OTP), <strong>Crimescan</strong> (court records).</p>
+            <p><strong>Retention:</strong> Employment data is retained for the duration of employment. Statutory/payroll records are retained for 8 years per legal obligation.</p>
+            <p><strong>Your rights:</strong> Access, correction, nomination of representative, and withdrawal of consent (non-statutory data only) — contact HR or raise a request in employee self-service.</p>
+            <p><strong>Grievance:</strong> Contact our HR Compliance Officer via the "Privacy &amp; DPDP" section after login.</p>
+          </div>
+          {!privacyConsentAccepted ? (
+            <button
+              type="button"
+              onClick={onPrivacyConsent}
+              className="w-full flex items-center gap-3 rounded-xl border-2 border-indigo-300 bg-white px-4 py-3 text-sm font-semibold text-indigo-800 hover:bg-indigo-100 hover:border-indigo-400 transition-colors active:scale-[0.99]"
+            >
+              <span className="w-5 h-5 rounded border-2 border-indigo-400 flex-shrink-0 flex items-center justify-center">
+                <span className="w-2.5 h-2.5 rounded-sm bg-indigo-200" />
+              </span>
+              I have read and understood the data collection notice and consent to processing my personal data for employment purposes
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 text-sm font-bold text-emerald-700">
+              <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+              Privacy consent recorded — you may proceed
+            </div>
+          )}
         </CardContent>
       </Card>
 

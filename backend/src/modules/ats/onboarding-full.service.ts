@@ -122,6 +122,21 @@ export async function validateOnboardingToken(token: string) {
     (isUuid(row.applied_for_process) ? null : row.applied_for_process as string | null) ??
     null;
 
+  // DPDP §9 — check if candidate is a minor (< 18 years old)
+  let is_minor = false;
+  if (row.date_of_birth) {
+    const dob = new Date(row.date_of_birth as string);
+    const today = new Date();
+    const ageMs = today.getTime() - dob.getTime();
+    const ageYears = ageMs / (1000 * 60 * 60 * 24 * 365.25);
+    is_minor = ageYears < 18;
+    // Persist the flag if it changed
+    await db.execute(
+      `UPDATE ats_candidate SET is_minor = ? WHERE id = ? AND is_minor != ?`,
+      [is_minor ? 1 : 0, row.candidate_id, is_minor ? 1 : 0]
+    ).catch(() => { /* column may not exist until migration 336 runs */ });
+  }
+
   return {
     candidate_id: row.candidate_id,
     candidate_code: row.candidate_code,
@@ -140,6 +155,7 @@ export async function validateOnboardingToken(token: string) {
     selfie_url: row.selfie_url,
     profile_status: row.profile_status,
     saved_profile: profileRows[0] ?? null,
+    is_minor,
   };
 }
 
