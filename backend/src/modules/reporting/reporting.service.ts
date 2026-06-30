@@ -13,6 +13,24 @@ function scopeClause(scope: BranchScope, branchCol: string): { sql: string; para
 
 type Builder = (f: Record<string, string>, scope: BranchScope) => { sql: string; params: unknown[] };
 
+// ── Shared mandatory columns for all employee-touching reports ────────────────
+const EMP_CORE_COLS = `
+  e.employee_code,
+  CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
+  e.employment_status,
+  desig.designation_name,
+  dept.dept_name AS department,
+  b.branch_name,
+  p.process_name,
+  cc.cost_centre_name`;
+
+const EMP_CORE_JOINS = `
+  LEFT JOIN branch_master b ON b.id = e.branch_id
+  LEFT JOIN process_master p ON p.id = e.process_id
+  LEFT JOIN department_master dept ON dept.id = e.department_id
+  LEFT JOIN designation_master desig ON desig.id = e.designation_id
+  LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id`;
+
 const QUERIES: Record<string, Builder> = {
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -92,14 +110,12 @@ const QUERIES: Record<string, Builder> = {
   employee_dir: (f, scope) => {
     const sc = scopeClause(scope, 'e.branch_id');
     return {
-      sql: `SELECT e.employee_code, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS full_name,
-                   e.email, d.designation_name, b.branch_name, p.process_name,
-                   e.employment_status, e.date_of_joining,
+      sql: `SELECT ${EMP_CORE_COLS},
+                   e.email,
+                   e.date_of_joining,
                    COALESCE(e.call_centre_code, b.call_centre_code) AS cc_code
               FROM employees e
-              LEFT JOIN designation_master d ON d.id = e.designation_id
-              LEFT JOIN branch_master b ON b.id = e.branch_id
-              LEFT JOIN process_master p ON p.id = e.process_id
+              ${EMP_CORE_JOINS}
              WHERE e.active_status = 1 AND ${sc.sql}
                ${f.branch ? 'AND e.branch_id = ?' : ''}
                ${f.status ? 'AND e.employment_status = ?' : ''}
@@ -117,11 +133,7 @@ const QUERIES: Record<string, Builder> = {
     return {
       sql: `SELECT
                spr.run_month,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
-               p.process_name,
-               d.designation_name,
+               ${EMP_CORE_COLS},
                spl.working_days,
                spl.present_days,
                spl.leave_days,
@@ -145,9 +157,7 @@ const QUERIES: Record<string, Builder> = {
              FROM salary_prep_line spl
              JOIN salary_prep_run spr ON spr.id = spl.run_id
              JOIN employees e ON e.id = spl.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
-             LEFT JOIN process_master p ON p.id = e.process_id
-             LEFT JOIN designation_master d ON d.id = e.designation_id
+             ${EMP_CORE_JOINS}
             WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND ${sc.sql}
               ${f.month ? 'AND spr.run_month = ?' : ''}
@@ -168,10 +178,7 @@ const QUERIES: Record<string, Builder> = {
     return {
       sql: `SELECT
                spr.run_month,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
-               p.process_name,
+               ${EMP_CORE_COLS},
                splc.component_code,
                splc.component_name,
                splc.component_type,
@@ -181,8 +188,7 @@ const QUERIES: Record<string, Builder> = {
              FROM salary_prep_line_component splc
              JOIN salary_prep_run spr ON spr.id = splc.run_id
              JOIN employees e ON e.id = splc.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
-             LEFT JOIN process_master p ON p.id = e.process_id
+             ${EMP_CORE_JOINS}
             WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND ${sc.sql}
               ${f.month ? 'AND spr.run_month = ?' : ''}
@@ -203,9 +209,7 @@ const QUERIES: Record<string, Builder> = {
     return {
       sql: `SELECT
                spr.run_month,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
+               ${EMP_CORE_COLS},
                e.uan_number,
                e.esic_number,
                e.pan_number,
@@ -221,7 +225,7 @@ const QUERIES: Record<string, Builder> = {
              FROM salary_prep_line spl
              JOIN salary_prep_run spr ON spr.id = spl.run_id
              JOIN employees e ON e.id = spl.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
+             ${EMP_CORE_JOINS}
             WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND ${sc.sql}
               ${f.month ? 'AND spr.run_month = ?' : ''}
@@ -240,9 +244,7 @@ const QUERIES: Record<string, Builder> = {
     return {
       sql: `SELECT
                spr.run_month,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
+               ${EMP_CORE_COLS},
                e.bank_name,
                e.bank_branch,
                e.account_holder_name,
@@ -255,7 +257,7 @@ const QUERIES: Record<string, Builder> = {
              FROM salary_prep_line spl
              JOIN salary_prep_run spr ON spr.id = spl.run_id
              JOIN employees e ON e.id = spl.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
+             ${EMP_CORE_JOINS}
             WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND ${sc.sql}
               ${f.month ? 'AND spr.run_month = ?' : ''}
@@ -273,10 +275,7 @@ const QUERIES: Record<string, Builder> = {
     const sc = scopeClause(scope, 'e.branch_id');
     return {
       sql: `SELECT
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
-               d.designation_name,
+               ${EMP_CORE_COLS},
                e.date_of_joining,
                e.date_of_exit,
                er.resignation_date,
@@ -295,8 +294,7 @@ const QUERIES: Record<string, Builder> = {
              FROM full_final_calculation ffc
              JOIN exit_request er ON er.id = ffc.exit_request_id
              JOIN employees e ON e.id = ffc.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
-             LEFT JOIN designation_master d ON d.id = e.designation_id
+             ${EMP_CORE_JOINS}
             WHERE ${sc.sql}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
               ${f.dateFrom ? 'AND ffc.calculation_date >= ?' : ''}
@@ -315,10 +313,7 @@ const QUERIES: Record<string, Builder> = {
     const sc = scopeClause(scope, 'e.branch_id');
     return {
       sql: `SELECT
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
-               p.process_name,
+               ${EMP_CORE_COLS},
                spr.financial_year,
                COUNT(spl.id) AS months_paid,
                SUM(spl.gross_salary) AS ytd_gross,
@@ -335,13 +330,12 @@ const QUERIES: Record<string, Builder> = {
              FROM salary_prep_line spl
              JOIN salary_prep_run spr ON spr.id = spl.run_id
              JOIN employees e ON e.id = spl.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
-             LEFT JOIN process_master p ON p.id = e.process_id
+             ${EMP_CORE_JOINS}
             WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND ${sc.sql}
               ${f.financialYear ? 'AND spr.financial_year = ?' : ''}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
-            GROUP BY e.id, spr.financial_year
+            GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.employment_status, desig.designation_name, dept.dept_name, b.branch_name, p.process_name, cc.cost_centre_name, spr.financial_year
             ORDER BY b.branch_name, e.employee_code`,
       params: [
         ...sc.params,
@@ -449,9 +443,7 @@ const QUERIES: Record<string, Builder> = {
     const sc = scopeClause(scope, 'e.branch_id');
     return {
       sql: `SELECT
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS full_name,
-               b.branch_name,
+               ${EMP_CORE_COLS},
                e.pan_number,
                e.pan_verified_on,
                e.aadhaar_last4,
@@ -462,10 +454,9 @@ const QUERIES: Record<string, Builder> = {
                esi.pf_applicable,
                esi.esic_applicable,
                esi.pt_applicable,
-               esi.tds_applicable,
-               e.employment_status
+               esi.tds_applicable
              FROM employees e
-             LEFT JOIN branch_master b ON b.id = e.branch_id
+             ${EMP_CORE_JOINS}
              LEFT JOIN employee_statutory_info esi ON esi.employee_id = e.id
             WHERE e.active_status = 1
               AND ${sc.sql}
@@ -479,18 +470,15 @@ const QUERIES: Record<string, Builder> = {
     const sc = scopeClause(scope, 'e.branch_id');
     return {
       sql: `SELECT
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS full_name,
-               b.branch_name,
+               ${EMP_CORE_COLS},
                e.account_holder_name,
                e.bank_name,
                e.bank_branch,
                e.bank_account_number,
                e.ifsc_code,
-               e.account_type,
-               e.employment_status
+               e.account_type
              FROM employees e
-             LEFT JOIN branch_master b ON b.id = e.branch_id
+             ${EMP_CORE_JOINS}
             WHERE e.active_status = 1
               AND ${sc.sql}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -506,21 +494,14 @@ const QUERIES: Record<string, Builder> = {
       f.type === 'leavers' ? 'AND e.date_of_exit IS NOT NULL' : '';
     return {
       sql: `SELECT
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS full_name,
-               b.branch_name,
-               p.process_name,
-               d.designation_name,
+               ${EMP_CORE_COLS},
                e.date_of_joining,
                e.date_of_exit,
-               e.employment_status,
                e.employment_type,
                e.employee_category,
                COALESCE(e.call_centre_code, b.call_centre_code) AS cc_code
              FROM employees e
-             LEFT JOIN branch_master b ON b.id = e.branch_id
-             LEFT JOIN process_master p ON p.id = e.process_id
-             LEFT JOIN designation_master d ON d.id = e.designation_id
+             ${EMP_CORE_JOINS}
             WHERE ${sc.sql} ${typeFilter}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
               ${f.dateFrom ? 'AND COALESCE(e.date_of_exit, e.date_of_joining) >= ?' : ''}
@@ -539,9 +520,7 @@ const QUERIES: Record<string, Builder> = {
     const sc = scopeClause(scope, 'e.branch_id');
     return {
       sql: `SELECT
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS full_name,
-               b.branch_name,
+               ${EMP_CORE_COLS},
                ed.doc_type,
                ed.doc_category,
                ed.doc_name,
@@ -552,7 +531,7 @@ const QUERIES: Record<string, Builder> = {
                ed.verification_remarks
              FROM employee_documents ed
              JOIN employees e ON e.id = ed.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
+             ${EMP_CORE_JOINS}
             WHERE e.active_status = 1
               AND ${sc.sql}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -575,10 +554,7 @@ const QUERIES: Record<string, Builder> = {
     return {
       sql: `SELECT
                adr.record_date,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
-               p.process_name,
+               ${EMP_CORE_COLS},
                adr.attendance_status,
                adr.clock_in_time,
                adr.clock_out_time,
@@ -591,8 +567,7 @@ const QUERIES: Record<string, Builder> = {
                adr.attendance_source
              FROM attendance_daily_record adr
              JOIN employees e ON e.id = adr.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
-             LEFT JOIN process_master p ON p.id = e.process_id
+             ${EMP_CORE_JOINS}
             WHERE ${sc.sql}
               ${f.month ? "AND DATE_FORMAT(adr.record_date,'%Y-%m') = ?" : ''}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -616,22 +591,18 @@ const QUERIES: Record<string, Builder> = {
     return {
       sql: `SELECT
                DATE_FORMAT(adr.record_date,'%Y-%m') AS month,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
-               p.process_name,
+               ${EMP_CORE_COLS},
                COUNT(*) AS total_late_marks,
                SUM(adr.late_by_minutes) AS total_late_minutes,
                ROUND(AVG(adr.late_by_minutes),1) AS avg_late_minutes
              FROM attendance_daily_record adr
              JOIN employees e ON e.id = adr.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
-             LEFT JOIN process_master p ON p.id = e.process_id
+             ${EMP_CORE_JOINS}
             WHERE adr.late_mark = 1
               AND ${sc.sql}
               ${f.month ? "AND DATE_FORMAT(adr.record_date,'%Y-%m') = ?" : ''}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
-            GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), e.id
+            GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), e.id, e.employee_code, e.first_name, e.last_name, e.employment_status, desig.designation_name, dept.dept_name, b.branch_name, p.process_name, cc.cost_centre_name
             ORDER BY month, b.branch_name, total_late_marks DESC`,
       params: [
         ...sc.params,
@@ -646,12 +617,9 @@ const QUERIES: Record<string, Builder> = {
     return {
       sql: `SELECT
                was.session_date,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
+               ${EMP_CORE_COLS},
                e.biometric_code,
-               b.branch_name,
                was.branch_name AS punch_branch,
-               p.process_name,
                was.login_time AS punch_in,
                was.logout_time AS punch_out,
                was.total_login_minutes,
@@ -660,8 +628,7 @@ const QUERIES: Record<string, Builder> = {
                was.punch_source
              FROM wfm_attendance_session was
              JOIN employees e ON e.id = was.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
-             LEFT JOIN process_master p ON p.id = e.process_id
+             ${EMP_CORE_JOINS}
             WHERE ${sc.sql}
               ${f.month ? "AND DATE_FORMAT(was.session_date,'%Y-%m') = ?" : ''}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -683,9 +650,7 @@ const QUERIES: Record<string, Builder> = {
     return {
       sql: `SELECT
                ar.session_date,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
+               ${EMP_CORE_COLS},
                ar.reason,
                ar.status,
                ar.reviewed_at,
@@ -693,7 +658,7 @@ const QUERIES: Record<string, Builder> = {
                ar.created_at AS applied_at
              FROM attendance_regularization ar
              JOIN employees e ON e.id = ar.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
+             ${EMP_CORE_JOINS}
             WHERE ${sc.sql}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
               ${f.status ? 'AND ar.status = ?' : ''}
@@ -715,9 +680,7 @@ const QUERIES: Record<string, Builder> = {
     return {
       sql: `SELECT
                adr.record_date,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
+               ${EMP_CORE_COLS},
                adr.attendance_status,
                adr.attendance_source,
                adr.clock_in_time,
@@ -726,7 +689,7 @@ const QUERIES: Record<string, Builder> = {
                adr.is_locked
              FROM attendance_daily_record adr
              JOIN employees e ON e.id = adr.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
+             ${EMP_CORE_JOINS}
             WHERE adr.attendance_status = 'unreconciled'
               AND ${sc.sql}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -756,6 +719,9 @@ const QUERIES: Record<string, Builder> = {
                e.employee_code,
                b.branch_name,
                p.process_name,
+               dm.dept_name AS department,
+               dg.designation_name,
+               cc.cost_centre_name,
                a.campaign_id,
                a.Calls,
                a.TALK_TIME,
@@ -774,7 +740,12 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN employees e ON e.biometric_code = a.UserID AND e.active_status = 1
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = e.process_id
+             LEFT JOIN department_master dm ON dm.id = e.department_id
+             LEFT JOIN designation_master dg ON dg.id = e.designation_id
+             LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
             WHERE ${sc.sql}
+              AND LOWER(TRIM(COALESCE(dm.dept_name,''))) IN ('operations','operation')
+              AND LOWER(TRIM(COALESCE(dg.designation_name,''))) REGEXP '^executive([ \t]*-[ \t]*.+)?$'
               ${f.dateFrom ? 'AND a.ReportDate >= ?' : ''}
               ${f.dateTo ? 'AND a.ReportDate <= ?' : ''}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -800,6 +771,7 @@ const QUERIES: Record<string, Builder> = {
                e.employee_code,
                b.branch_name,
                p.process_name,
+               cc.cost_centre_name,
                a.campaign_id,
                COUNT(*) AS days_logged,
                SUM(a.Calls) AS total_calls,
@@ -810,7 +782,12 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN employees e ON e.biometric_code = a.UserID AND e.active_status = 1
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = e.process_id
+             LEFT JOIN department_master dm ON dm.id = e.department_id
+             LEFT JOIN designation_master dg ON dg.id = e.designation_id
+             LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
             WHERE ${sc.sql}
+              AND LOWER(TRIM(COALESCE(dm.dept_name,''))) IN ('operations','operation')
+              AND LOWER(TRIM(COALESCE(dg.designation_name,''))) REGEXP '^executive([ \t]*-[ \t]*.+)?$'
               ${f.month ? "AND DATE_FORMAT(a.ReportDate,'%Y-%m') = ?" : ''}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
             GROUP BY DATE_FORMAT(a.ReportDate,'%Y-%m'), a.UserID, a.campaign_id
@@ -830,6 +807,7 @@ const QUERIES: Record<string, Builder> = {
                a.campaign_id,
                DATE_FORMAT(a.ReportDate,'%Y-%m') AS month,
                b.branch_name,
+               cc.cost_centre_name,
                COUNT(DISTINCT a.UserID) AS agents,
                COUNT(*) AS agent_days,
                SUM(a.Calls) AS total_calls,
@@ -839,11 +817,16 @@ const QUERIES: Record<string, Builder> = {
              FROM apr a
              LEFT JOIN employees e ON e.biometric_code = a.UserID AND e.active_status = 1
              LEFT JOIN branch_master b ON b.id = e.branch_id
+             LEFT JOIN department_master dm ON dm.id = e.department_id
+             LEFT JOIN designation_master dg ON dg.id = e.designation_id
+             LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
             WHERE ${sc.sql}
+              AND LOWER(TRIM(COALESCE(dm.dept_name,''))) IN ('operations','operation')
+              AND LOWER(TRIM(COALESCE(dg.designation_name,''))) REGEXP '^executive([ \t]*-[ \t]*.+)?$'
               ${f.month ? "AND DATE_FORMAT(a.ReportDate,'%Y-%m') = ?" : ''}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
               ${f.campaign ? 'AND a.campaign_id = ?' : ''}
-            GROUP BY a.campaign_id, DATE_FORMAT(a.ReportDate,'%Y-%m'), b.branch_name
+            GROUP BY a.campaign_id, DATE_FORMAT(a.ReportDate,'%Y-%m'), b.branch_name, cc.cost_centre_name
             ORDER BY month, b.branch_name, a.campaign_id`,
       params: [
         ...sc.params,
@@ -863,10 +846,7 @@ const QUERIES: Record<string, Builder> = {
     const year = parseInt(f.year || String(new Date().getFullYear()));
     return {
       sql: `SELECT
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
-               p.process_name,
+               ${EMP_CORE_COLS},
                ltm.leave_code,
                ltm.leave_name,
                ltm.paid_leave,
@@ -878,9 +858,9 @@ const QUERIES: Record<string, Builder> = {
              FROM leave_balance_ledger lbl
              JOIN employees e ON e.id = lbl.employee_id
              JOIN leave_type_master ltm ON ltm.id = lbl.leave_type_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
-             LEFT JOIN process_master p ON p.id = e.process_id
+             ${EMP_CORE_JOINS}
             WHERE lbl.balance_year = ?
+              AND e.active_status = 1
               AND ${sc.sql}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
             ORDER BY b.branch_name, e.employee_code, ltm.leave_code`,
@@ -893,10 +873,7 @@ const QUERIES: Record<string, Builder> = {
     return {
       sql: `SELECT
                lr.applied_at,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
-               p.process_name,
+               ${EMP_CORE_COLS},
                ltm.leave_code,
                ltm.leave_name,
                lr.from_date,
@@ -910,8 +887,7 @@ const QUERIES: Record<string, Builder> = {
              FROM leave_request lr
              JOIN employees e ON e.id = lr.employee_id
              JOIN leave_type_master ltm ON ltm.id = lr.leave_type_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
-             LEFT JOIN process_master p ON p.id = e.process_id
+             ${EMP_CORE_JOINS}
             WHERE ${sc.sql}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
               ${f.status ? 'AND lr.status = ?' : ''}
@@ -933,21 +909,17 @@ const QUERIES: Record<string, Builder> = {
     return {
       sql: `SELECT
                DATE_FORMAT(adr.record_date,'%Y-%m') AS month,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
-               p.process_name,
+               ${EMP_CORE_COLS},
                SUM(adr.lwp_value) AS total_lwp_days,
                COUNT(*) AS lwp_records
              FROM attendance_daily_record adr
              JOIN employees e ON e.id = adr.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
-             LEFT JOIN process_master p ON p.id = e.process_id
+             ${EMP_CORE_JOINS}
             WHERE adr.lwp_value > 0
               AND ${sc.sql}
               ${f.month ? "AND DATE_FORMAT(adr.record_date,'%Y-%m') = ?" : ''}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
-            GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), e.id
+            GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), e.id, e.employee_code, e.first_name, e.last_name, e.employment_status, desig.designation_name, dept.dept_name, b.branch_name, p.process_name, cc.cost_centre_name
             ORDER BY month, b.branch_name, total_lwp_days DESC`,
       params: [
         ...sc.params,
@@ -966,10 +938,7 @@ const QUERIES: Record<string, Builder> = {
     return {
       sql: `SELECT
                ks.period,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
-               p.process_name,
+               ${EMP_CORE_COLS},
                kmm.metric_code,
                kmm.metric_name,
                kmm.metric_unit,
@@ -978,8 +947,7 @@ const QUERIES: Record<string, Builder> = {
              FROM kpi_score ks
              JOIN kpi_metric_master kmm ON kmm.id = ks.metric_id
              JOIN employees e ON e.id = ks.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
-             LEFT JOIN process_master p ON p.id = e.process_id
+             ${EMP_CORE_JOINS}
             WHERE ${sc.sql}
               ${f.period ? 'AND ks.period = ?' : ''}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -998,10 +966,7 @@ const QUERIES: Record<string, Builder> = {
       sql: `SELECT
                kss.period_id,
                kss.role_code,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
-               p.process_name,
+               ${EMP_CORE_COLS},
                kss.final_score,
                kss.rating,
                kss.rank_in_team,
@@ -1010,8 +975,7 @@ const QUERIES: Record<string, Builder> = {
                kss.status
              FROM kpi_score_summary kss
              JOIN employees e ON e.id = kss.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
-             LEFT JOIN process_master p ON p.id = kss.process_id
+             ${EMP_CORE_JOINS}
             WHERE ${sc.sql}
               ${f.period ? 'AND kss.period_id = ?' : ''}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -1060,9 +1024,7 @@ const QUERIES: Record<string, Builder> = {
     return {
       sql: `SELECT
                ele.effective_date,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               b.branch_name,
+               ${EMP_CORE_COLS},
                ele.event_type,
                ele.old_value_json,
                ele.new_value_json,
@@ -1070,7 +1032,7 @@ const QUERIES: Record<string, Builder> = {
                ele.created_at
              FROM employee_lifecycle_event ele
              JOIN employees e ON e.id = ele.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
+             ${EMP_CORE_JOINS}
             WHERE ${sc.sql}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
               ${f.eventType ? 'AND ele.event_type = ?' : ''}
@@ -1096,9 +1058,7 @@ const QUERIES: Record<string, Builder> = {
     return {
       sql: `SELECT
                spr.run_month,
-               b.branch_name,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
+               ${EMP_CORE_COLS},
                e.uan_number,
                e.epf_number,
                spl.gross_salary AS pf_wages,
@@ -1109,7 +1069,7 @@ const QUERIES: Record<string, Builder> = {
              FROM salary_prep_line spl
              JOIN salary_prep_run spr ON spr.id = spl.run_id
              JOIN employees e ON e.id = spl.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
+             ${EMP_CORE_JOINS}
             WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND spl.pf_employee > 0
               AND ${sc.sql}
@@ -1129,9 +1089,7 @@ const QUERIES: Record<string, Builder> = {
     return {
       sql: `SELECT
                spr.run_month,
-               b.branch_name,
-               e.employee_code,
-               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
+               ${EMP_CORE_COLS},
                e.esic_number,
                spl.gross_salary AS esic_wages,
                spl.esic_employee AS employee_esic,
@@ -1140,7 +1098,7 @@ const QUERIES: Record<string, Builder> = {
              FROM salary_prep_line spl
              JOIN salary_prep_run spr ON spr.id = spl.run_id
              JOIN employees e ON e.id = spl.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
+             ${EMP_CORE_JOINS}
             WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND spl.esic_employee > 0
               AND ${sc.sql}
@@ -1163,10 +1121,7 @@ const QUERIES: Record<string, Builder> = {
     const sc = scopeClause(scope, 'e.branch_id');
     return {
       sql: `SELECT
-               e.employee_code,
-               e.full_name,
-               b.branch_name,
-               e.employment_status,
+               ${EMP_CORE_COLS},
                ec.contact_seq,
                ec.is_primary,
                ec.name AS contact_name,
@@ -1175,7 +1130,7 @@ const QUERIES: Record<string, Builder> = {
                ec.address AS contact_address
              FROM employee_emergency_contact ec
              JOIN employees e ON e.id = ec.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
+             ${EMP_CORE_JOINS}
             WHERE e.active_status = 1
               AND ${sc.sql}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -1193,9 +1148,7 @@ const QUERIES: Record<string, Builder> = {
     const sc = scopeClause(scope, 'e.branch_id');
     return {
       sql: `SELECT
-               e.employee_code,
-               e.full_name,
-               b.branch_name,
+               ${EMP_CORE_COLS},
                n.nominee_name,
                n.relationship,
                n.date_of_birth AS nominee_dob,
@@ -1208,7 +1161,7 @@ const QUERIES: Record<string, Builder> = {
                n.address AS nominee_address
              FROM employee_nominee n
              JOIN employees e ON e.id = n.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
+             ${EMP_CORE_JOINS}
             WHERE e.active_status = 1
               AND ${sc.sql}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -1224,11 +1177,7 @@ const QUERIES: Record<string, Builder> = {
     const sc = scopeClause(scope, 'e.branch_id');
     return {
       sql: `SELECT
-               e.employee_code,
-               e.full_name,
-               b.branch_name,
-               proc.process_name,
-               desig.designation_name,
+               ${EMP_CORE_COLS},
                e.date_of_joining,
                ep.probation_start_date,
                ep.probation_end_date,
@@ -1240,9 +1189,7 @@ const QUERIES: Record<string, Builder> = {
                CONCAT(conf.first_name,' ',COALESCE(conf.last_name,'')) AS confirmed_by
              FROM employee_probation ep
              JOIN employees e ON e.id = ep.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
-             LEFT JOIN process_master proc ON proc.id = e.process_id
-             LEFT JOIN designation_master desig ON desig.id = e.designation_id
+             ${EMP_CORE_JOINS}
              LEFT JOIN employees conf ON conf.id = ep.confirmed_by
             WHERE ${sc.sql}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -1260,9 +1207,7 @@ const QUERIES: Record<string, Builder> = {
     const sc = scopeClause(scope, 'e.branch_id');
     return {
       sql: `SELECT
-               e.employee_code,
-               e.full_name,
-               b.branch_name,
+               ${EMP_CORE_COLS},
                jh.effective_date,
                jh.change_type,
                fd.designation_name AS from_designation,
@@ -1278,7 +1223,7 @@ const QUERIES: Record<string, Builder> = {
                jh.reason
              FROM employee_job_history jh
              JOIN employees e ON e.id = jh.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
+             ${EMP_CORE_JOINS}
              LEFT JOIN designation_master fd ON fd.id = jh.from_designation_id
              LEFT JOIN designation_master td ON td.id = jh.to_designation_id
              LEFT JOIN department_master fdept ON fdept.id = jh.from_department_id
@@ -1307,9 +1252,7 @@ const QUERIES: Record<string, Builder> = {
     const sc = scopeClause(scope, 'e.branch_id');
     return {
       sql: `SELECT
-               e.employee_code,
-               e.full_name,
-               b.branch_name,
+               ${EMP_CORE_COLS},
                sa.effective_from,
                sa.effective_to,
                sa.ctc_annual,
@@ -1318,7 +1261,7 @@ const QUERIES: Record<string, Builder> = {
                sa.active_status AS is_current
              FROM employee_salary_assignment sa
              JOIN employees e ON e.id = sa.employee_id
-             LEFT JOIN branch_master b ON b.id = e.branch_id
+             ${EMP_CORE_JOINS}
              LEFT JOIN salary_structure_master ss ON ss.id = sa.structure_id
             WHERE ${sc.sql}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
@@ -1474,7 +1417,7 @@ export const reportingService = {
     const employeeGrowth = monthNames.map((month, index) => {
       const end = new Date(year, index + 1, 0, 23, 59, 59, 999);
       const count = employees.filter((employee) => {
-        const joinedBeforeEnd = !employee.joined || employee.joined <= end;
+        const joinedBeforeEnd = !!employee.joined && employee.joined <= end;
         const notExitedYet = !employee.exited || employee.exited > end;
         return joinedBeforeEnd && notExitedYet && employee.active;
       }).length;
