@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import {
   Activity,
   AlertCircle,
@@ -17,6 +18,8 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useExecutiveQualitySummary } from "@/hooks/useExecutiveQuality";
+import { useOrgKpiSummary } from "@/hooks/useOrgKpiSummary";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -157,6 +160,8 @@ function ModuleHealthCard({ module }: ModuleCardProps) {
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export default function SuperAdminDashboardV2() {
+  const [activeTab, setActiveTab] = useState<"system" | "business">("system");
+
   const { data: systemData, isLoading: metricsLoading } = useQuery<SystemDashboardData>({
     queryKey: ["super-admin-system-dashboard"],
     queryFn: async () => {
@@ -167,6 +172,9 @@ export default function SuperAdminDashboardV2() {
     },
     refetchInterval: 60_000,
   });
+
+  const { data: execQuality } = useExecutiveQualitySummary(30);
+  const { data: orgKpi } = useOrgKpiSummary();
 
   const metrics = systemData?.metrics;
   const modules = systemData?.modules ?? [];
@@ -184,6 +192,34 @@ export default function SuperAdminDashboardV2() {
             Real-time system monitoring, access control, and operational metrics
           </p>
         </div>
+
+        {/* Tab Navigation */}
+        <div className="flex border-b border-slate-200">
+          <button
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "system"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
+            onClick={() => setActiveTab("system")}
+          >
+            System Overview
+          </button>
+          <button
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "business"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
+            onClick={() => setActiveTab("business")}
+          >
+            Business Overview
+          </button>
+        </div>
+
+        {/* ── System Overview Tab ── */}
+        {activeTab === "system" && (
+        <div className="space-y-6">
 
         {/* System Metrics Grid */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -353,6 +389,87 @@ export default function SuperAdminDashboardV2() {
             </div>
           </CardContent>
         </Card>
+
+        </div>
+        )}
+
+        {/* ── Business Overview Tab ── */}
+        {activeTab === "business" && (
+          <div className="space-y-6">
+            {/* Quality Overview */}
+            {execQuality && execQuality.process_performance && execQuality.process_performance.length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-700 mb-3">Process Quality Scorecard (Last 30 Days)</h3>
+                <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Process</th>
+                          <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">Avg Score</th>
+                          <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">Agents</th>
+                          <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">Calls</th>
+                          <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {execQuality.process_performance.map((p, i) => (
+                          <tr key={p.process || i} className="hover:bg-gray-50">
+                            <td className="px-4 py-2 font-medium text-gray-800">{p.process || "—"}</td>
+                            <td className="px-4 py-2 text-right font-semibold">{p.avg_quality}%</td>
+                            <td className="px-4 py-2 text-right text-gray-600">{p.agent_count}</td>
+                            <td className="px-4 py-2 text-right text-gray-600">{p.calls_handled?.toLocaleString()}</td>
+                            <td className="px-4 py-2 text-center">
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
+                                p.status === "On Track" ? "bg-green-100 text-green-700" :
+                                p.status === "At Risk"  ? "bg-amber-100 text-amber-700" :
+                                                          "bg-red-100 text-red-700"
+                              }`}>
+                                {p.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* KPI Summary */}
+            {orgKpi && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-700 mb-3">
+                  KPI Performance — {orgKpi.periodLabel}
+                </h3>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-white rounded-xl p-4 shadow-sm border">
+                    <p className="text-xs text-gray-500">Org Avg KPI Score</p>
+                    <p className="text-2xl font-bold text-blue-600">{orgKpi.orgAvgScore}%</p>
+                  </div>
+                  <div className="bg-white rounded-xl p-4 shadow-sm border">
+                    <p className="text-xs text-gray-500">Best Process</p>
+                    <p className="text-lg font-bold text-green-600">{orgKpi.topProcess?.processName ?? "—"}</p>
+                    <p className="text-sm text-gray-500">{orgKpi.topProcess?.avgScore ?? ""}%</p>
+                  </div>
+                  <div className="bg-white rounded-xl p-4 shadow-sm border">
+                    <p className="text-xs text-gray-500">Needs Attention</p>
+                    <p className="text-lg font-bold text-red-500">{orgKpi.bottomProcess?.processName ?? "—"}</p>
+                    <p className="text-sm text-gray-500">{orgKpi.bottomProcess?.avgScore ?? ""}%</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!execQuality && !orgKpi && (
+              <div className="text-center py-12 text-gray-400 text-sm">
+                No business data available
+              </div>
+            )}
+          </div>
+        )}
+
       </div>
     </DashboardLayout>
   );
