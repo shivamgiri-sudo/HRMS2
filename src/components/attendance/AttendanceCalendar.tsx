@@ -83,6 +83,7 @@ interface DayDetail {
     is_locked: number;
     source_system: string;
     attendance_source: string;
+    dialler_minutes: number | null;
     processed_at: string | null;
   } | null;
   cosec_daily_agg: {
@@ -278,7 +279,7 @@ function DayDetailSheet({
     setLeaveTypeId(''); setLeaveReason(''); setLeaveIsHalf(false);
   }, [open, date]);
 
-  // Reason codes for regularization
+  // Reason codes for regularization — only fetch when sheet is open
   const { data: reasonCodes = [] } = useQuery<{ code: string; label: string }[]>({
     queryKey: ['reg-reasons'],
     queryFn: async () => {
@@ -287,10 +288,11 @@ function DayDetailSheet({
       );
       return res.data ?? [];
     },
+    enabled: open,
     staleTime: 5 * 60_000,
   });
 
-  // Leave types
+  // Leave types — only fetch when sheet is open
   const { data: leaveTypes = [] } = useQuery<{ id: string; leave_name: string }[]>({
     queryKey: ['leave-types'],
     queryFn: async () => {
@@ -299,51 +301,59 @@ function DayDetailSheet({
       );
       return res.data ?? [];
     },
+    enabled: open,
     staleTime: 10 * 60_000,
   });
 
-  const isPastDate = date ? new Date(date + 'T00:00:00') < new Date(new Date().toDateString()) : false;
+  // Compare date strings directly — avoids locale-dependent toDateString()
+  const isPastDate = !!date && date < format(new Date(), 'yyyy-MM-dd');
   const isLocked = adr?.is_locked === 1;
 
   const handleRegularizeSubmit = async () => {
     if (!date || !regReason.trim()) return;
-    await regMutation.mutateAsync({
-      sessionDate: date,
-      reasonCode: regReasonCode || undefined,
-      reason: regReason,
-      requestedStatus: regStatus,
-    });
-    setActionSuccess('Regularization submitted successfully.');
-    setActiveAction(null);
-    setRegReason(''); setRegReasonCode(''); setRegStatus('present');
+    try {
+      await regMutation.mutateAsync({
+        sessionDate: date,
+        reasonCode: regReasonCode || undefined,
+        reason: regReason,
+        requestedStatus: regStatus,
+      });
+      setActionSuccess('Regularization submitted successfully.');
+      setActiveAction(null);
+      setRegReason(''); setRegReasonCode(''); setRegStatus('present');
+    } catch { /* error surfaced via regMutation.isError */ }
   };
 
   const handleDisputeSubmit = async () => {
     if (!date || !disputeType || !disputeReason.trim()) return;
-    await regMutation.mutateAsync({
-      sessionDate: date,
-      reason: disputeReason,
-      disputeType,
-      newPunchIn: disputeNewIn || undefined,
-      newPunchOut: disputeNewOut || undefined,
-    });
-    setActionSuccess('Dispute filed successfully.');
-    setActiveAction(null);
-    setDisputeType(''); setDisputeReason(''); setDisputeNewIn(''); setDisputeNewOut('');
+    try {
+      await regMutation.mutateAsync({
+        sessionDate: date,
+        reason: disputeReason,
+        disputeType,
+        newPunchIn: disputeNewIn || undefined,
+        newPunchOut: disputeNewOut || undefined,
+      });
+      setActionSuccess('Dispute filed successfully.');
+      setActiveAction(null);
+      setDisputeType(''); setDisputeReason(''); setDisputeNewIn(''); setDisputeNewOut('');
+    } catch { /* error surfaced via regMutation.isError */ }
   };
 
   const handleLeaveSubmit = async () => {
     if (!date || !leaveTypeId) return;
-    await leaveMutation.mutateAsync({
-      leaveTypeId,
-      fromDate: date,
-      toDate: date,
-      totalDays: leaveIsHalf ? 0.5 : 1,
-      reason: leaveReason || undefined,
-    });
-    setActionSuccess('Leave request submitted successfully.');
-    setActiveAction(null);
-    setLeaveTypeId(''); setLeaveReason(''); setLeaveIsHalf(false);
+    try {
+      await leaveMutation.mutateAsync({
+        leaveTypeId,
+        fromDate: date,
+        toDate: date,
+        totalDays: leaveIsHalf ? 0.5 : 1,
+        reason: leaveReason || undefined,
+      });
+      setActionSuccess('Leave request submitted successfully.');
+      setActiveAction(null);
+      setLeaveTypeId(''); setLeaveReason(''); setLeaveIsHalf(false);
+    } catch { /* error surfaced via leaveMutation.isError */ }
   };
 
   return (
@@ -445,7 +455,7 @@ function DayDetailSheet({
                 </p>
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-500">Net Login</span>
-                  <span className="font-semibold">{fmtMinutes((adr as any).dialler_minutes)}</span>
+                  <span className="font-semibold">{fmtMinutes(adr.dialler_minutes)}</span>
                 </div>
               </div>
             )}
@@ -584,7 +594,7 @@ function DayDetailSheet({
                     variant={activeAction === 'regularize' ? 'default' : 'outline'}
                     size="sm"
                     className="text-xs h-8"
-                    onClick={() => { setActiveAction(a => a === 'regularize' ? null : 'regularize'); setActionSuccess(null); }}
+                    onClick={() => { setActiveAction(a => a === 'regularize' ? null : 'regularize'); setActionSuccess(null); regMutation.reset(); leaveMutation.reset(); }}
                   >
                     <FileText className="h-3.5 w-3.5 mr-1.5" />
                     Regularize
@@ -593,7 +603,7 @@ function DayDetailSheet({
                     variant={activeAction === 'leave' ? 'default' : 'outline'}
                     size="sm"
                     className="text-xs h-8"
-                    onClick={() => { setActiveAction(a => a === 'leave' ? null : 'leave'); setActionSuccess(null); }}
+                    onClick={() => { setActiveAction(a => a === 'leave' ? null : 'leave'); setActionSuccess(null); regMutation.reset(); leaveMutation.reset(); }}
                   >
                     <CalendarOff className="h-3.5 w-3.5 mr-1.5" />
                     Apply Leave
@@ -602,7 +612,7 @@ function DayDetailSheet({
                     variant={activeAction === 'dispute' ? 'default' : 'outline'}
                     size="sm"
                     className="text-xs h-8"
-                    onClick={() => { setActiveAction(a => a === 'dispute' ? null : 'dispute'); setActionSuccess(null); }}
+                    onClick={() => { setActiveAction(a => a === 'dispute' ? null : 'dispute'); setActionSuccess(null); regMutation.reset(); leaveMutation.reset(); }}
                   >
                     <AlertOctagon className="h-3.5 w-3.5 mr-1.5" />
                     Dispute
