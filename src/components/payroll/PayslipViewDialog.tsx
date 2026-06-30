@@ -7,7 +7,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Plus, Minus } from "lucide-react";
 
@@ -29,6 +28,8 @@ interface PayrollRecord {
   netSalary: number;
   status: "paid" | "pending" | "processing";
   paidAt?: string;
+  designation?: string;
+  department?: string;
 }
 
 interface PayslipViewDialogProps {
@@ -119,6 +120,18 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                 <span className="text-muted-foreground">Pay Period:</span>
                 <span className="ml-2 font-medium">{record.month}</span>
               </div>
+              {record.designation && (
+                <div>
+                  <span className="text-muted-foreground">Designation:</span>
+                  <span className="ml-2 font-medium">{record.designation}</span>
+                </div>
+              )}
+              {record.department && (
+                <div>
+                  <span className="text-muted-foreground">Department:</span>
+                  <span className="ml-2 font-medium">{record.department}</span>
+                </div>
+              )}
               <div className="col-span-2">
                 <span className="text-muted-foreground">Status:</span>
                 <span className="ml-2">{getStatusBadge(record.status)}</span>
@@ -142,29 +155,32 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                   <Plus className="h-4 w-4" />
                   <span className="font-semibold">Earnings</span>
                 </div>
-                <div className="space-y-2 rounded-lg border bg-background p-4">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Basic Salary</span>
-                    <span className="font-medium">{formatCurrency(record.basic)}</span>
-                  </div>
-                  {allowanceBreakdown.length > 0 ? (
-                    allowanceBreakdown.map((item) => (
-                      <div key={item.label} className="flex justify-between">
-                        <span className="text-muted-foreground">{item.label}</span>
-                        <span className="font-medium text-emerald-600">+{formatCurrency(item.amount)}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Total Allowances</span>
-                      <span className="font-medium text-emerald-600">+{formatCurrency(record.allowances)}</span>
-                    </div>
-                  )}
-                  <Separator />
-                  <div className="flex justify-between font-semibold">
-                    <span>Gross Salary</span>
-                    <span>{formatCurrency(grossSalary)}</span>
-                  </div>
+                <div className="rounded-lg border bg-background p-4">
+                  <table className="w-full text-sm">
+                    <tbody>
+                      <tr className="border-b">
+                        <td className="py-1.5 text-muted-foreground">Basic Salary</td>
+                        <td className="py-1.5 text-right font-mono font-semibold">{formatCurrency(record.basic)}</td>
+                      </tr>
+                      {allowanceBreakdown.length > 0 ? (
+                        allowanceBreakdown.map((item) => (
+                          <tr key={item.label} className="border-b">
+                            <td className="py-1.5 text-muted-foreground">{item.label}</td>
+                            <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">+{formatCurrency(item.amount)}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr className="border-b">
+                          <td className="py-1.5 text-muted-foreground">Total Allowances</td>
+                          <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">+{formatCurrency(record.allowances)}</td>
+                        </tr>
+                      )}
+                      <tr className="font-semibold">
+                        <td className="py-1.5">Gross Salary</td>
+                        <td className="py-1.5 text-right font-mono">{formatCurrency(grossSalary)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
@@ -174,22 +190,21 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                   <Minus className="h-4 w-4" />
                   <span className="font-semibold">Deductions</span>
                 </div>
-                <div className="space-y-2 rounded-lg border bg-background p-4">
-                  {deductionBreakdown.length > 0 ? (
-                    <>
-                      {deductionBreakdown.map((item) => (
-                        <div key={item.label} className="flex justify-between">
-                          <span className="text-muted-foreground">{item.label}</span>
-                          <span className="font-medium text-destructive">-{formatCurrency(item.amount)}</span>
-                        </div>
+                <div className="rounded-lg border bg-background p-4">
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {deductionBreakdown.length > 0 && deductionBreakdown.map((item) => (
+                        <tr key={item.label} className="border-b">
+                          <td className="py-1.5 text-muted-foreground">{item.label}</td>
+                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{formatCurrency(item.amount)}</td>
+                        </tr>
                       ))}
-                      <Separator />
-                    </>
-                  ) : null}
-                  <div className="flex justify-between font-semibold">
-                    <span>Total Deductions</span>
-                    <span className="text-destructive">-{formatCurrency(record.deductions)}</span>
-                  </div>
+                      <tr className="font-semibold">
+                        <td className="py-1.5">Total Deductions</td>
+                        <td className="py-1.5 text-right font-mono text-destructive">-{formatCurrency(record.deductions)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
