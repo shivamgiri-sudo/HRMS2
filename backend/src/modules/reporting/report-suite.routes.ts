@@ -3,9 +3,14 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
+import { resolveBranchScope } from "./reporting.scope.js";
 
 export const reportSuiteRouter = Router();
 reportSuiteRouter.use(requireAuth);
+
+const EMP_CORE_COLS = `e.employee_code, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name, e.employment_status, desig.designation_name, dept.dept_name AS department, b.branch_name, p.process_name, cc.cost_centre_name`;
+
+const EMP_CORE_JOINS = `LEFT JOIN branch_master b ON b.id = e.branch_id LEFT JOIN process_master p ON p.id = e.process_id LEFT JOIN department_master dept ON dept.id = e.department_id LEFT JOIN designation_master desig ON desig.id = e.designation_id LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id`;
 
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
@@ -68,15 +73,11 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
   switch (code) {
     case "employee-master":
       addEmployeeFilters(req.query, clauses, params);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    e.official_email, e.mobile, e.employment_status, e.date_of_joining, e.date_of_exit,
-                    b.branch_name, d.dept_name AS department_name, p.process_name, cc.cost_centre_name,
+      sql = `SELECT ${EMP_CORE_COLS},
+                    e.official_email, e.mobile, e.date_of_joining, e.date_of_exit,
                     COALESCE(NULLIF(m.full_name,''), CONCAT(m.first_name,' ',COALESCE(m.last_name,''))) AS reporting_manager
                FROM employees e
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+               ${EMP_CORE_JOINS}
                LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
               WHERE ${clauses.length ? clauses.join(" AND ") : "1=1"}
               ORDER BY e.employee_code`;
@@ -84,14 +85,12 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
     case "headcount":
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("e.active_status = 1", "LOWER(COALESCE(e.employment_status,'active')) = 'active'");
-      sql = `SELECT b.branch_name, d.dept_name AS department_name, p.process_name, COUNT(*) AS active_headcount
+      sql = `SELECT b.branch_name, dept.dept_name AS department_name, p.process_name, cc.cost_centre_name, COUNT(*) AS active_headcount
                FROM employees e
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN process_master p ON p.id = e.process_id
+               ${EMP_CORE_JOINS}
               WHERE ${clauses.join(" AND ")}
-              GROUP BY b.branch_name, d.dept_name, p.process_name
-              ORDER BY b.branch_name, d.dept_name, p.process_name`;
+              GROUP BY b.branch_name, dept.dept_name, p.process_name, cc.cost_centre_name
+              ORDER BY b.branch_name, dept.dept_name, p.process_name`;
       break;
     case "employee-movement": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
@@ -99,14 +98,11 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("(e.date_of_joining BETWEEN ? AND ? OR COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) BETWEEN ? AND ?)");
       params.push(from, to, from, to);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+      sql = `SELECT ${EMP_CORE_COLS},
                     e.date_of_joining, COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) AS exit_date,
-                    CASE WHEN e.date_of_joining BETWEEN ? AND ? THEN 'joining' ELSE 'exit' END AS movement_type,
-                    b.branch_name, d.dept_name AS department_name, p.process_name
+                    CASE WHEN e.date_of_joining BETWEEN ? AND ? THEN 'joining' ELSE 'exit' END AS movement_type
                FROM employees e
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN process_master p ON p.id = e.process_id
+               ${EMP_CORE_JOINS}
               WHERE ${clauses.join(" AND ")}
               ORDER BY COALESCE(e.date_of_joining,e.date_of_exit,e.date_of_leaving,e.resignation_date) DESC`;
       params.push(from, to);
@@ -119,18 +115,13 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       clauses.push("COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) BETWEEN ? AND ?");
       params.push(from, to);
       if (req.query.exitType) { clauses.push("e.exit_type = ?"); params.push(String(req.query.exitType)); }
-      sql = `SELECT e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+      sql = `SELECT ${EMP_CORE_COLS},
                     e.date_of_joining,
                     COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) AS exit_date,
                     DATEDIFF(COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date), e.date_of_joining) AS tenure_days,
-                    e.exit_type, e.exit_sub_type, e.exit_reason_category,
-                    b.branch_name, p.process_name,
-                    COALESCE(d.designation_name, e.designation) AS designation
+                    e.exit_type, e.exit_sub_type, e.exit_reason_category
                FROM employees e
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN designation_master d ON d.id = e.designation_id
+               ${EMP_CORE_JOINS}
               WHERE ${clauses.join(" AND ")}
               ORDER BY COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) DESC`;
       break;
@@ -138,13 +129,14 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
     case "manager-mapping":
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("e.active_status = 1");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+      sql = `SELECT ${EMP_CORE_COLS},
                     e.reporting_manager_id, e.manager_id,
                     COALESCE(NULLIF(m.full_name,''), CONCAT(m.first_name,' ',COALESCE(m.last_name,''))) AS manager_name,
                     CASE WHEN e.reporting_manager_id IS NULL AND e.manager_id IS NULL THEN 'MISSING_MANAGER'
                          WHEN e.reporting_manager_id IS NOT NULL AND e.manager_id IS NOT NULL AND e.reporting_manager_id <> e.manager_id THEN 'MANAGER_FIELD_MISMATCH'
                          ELSE 'OK' END AS mapping_status
                FROM employees e
+               ${EMP_CORE_JOINS}
                LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
               WHERE ${clauses.join(" AND ")}
               ORDER BY mapping_status DESC, employee_name`;
@@ -152,32 +144,69 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
     case "attendance-daily": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
+      const attDailyScope = await resolveBranchScope(String(req.authUser.id));
+      if (!attDailyScope.isSuperAdmin && attDailyScope.branchIds.length > 0) {
+        clauses.push(`e.branch_id IN (${attDailyScope.branchIds.map(() => '?').join(',')})`);
+        params.push(...attDailyScope.branchIds);
+      }
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT adr.record_date, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+      sql = `SELECT ${EMP_CORE_COLS}, adr.record_date,
                     adr.attendance_source, adr.attendance_status, adr.raw_minutes, adr.dialler_minutes, adr.biometric_minutes,
                     adr.lwp_value, adr.late_mark, adr.late_by_minutes, adr.is_locked
                FROM attendance_daily_record adr JOIN employees e ON e.id = adr.employee_id
+               ${EMP_CORE_JOINS}
               WHERE ${clauses.join(" AND ")}
               ORDER BY adr.record_date DESC, employee_name`;
       break;
     }
     case "attendance-summary": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
-      clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    SUM(adr.attendance_status='present') AS present_days,
-                    SUM(adr.attendance_status='half_day') AS half_days,
-                    SUM(adr.attendance_status='absent') AS absent_days,
-                    SUM(adr.attendance_status='leave_approved') AS leave_days,
-                    SUM(adr.lwp_value) AS lwp_days,
-                    SUM(adr.late_mark=1) AS late_days,
-                    ROUND(SUM(COALESCE(adr.raw_minutes,adr.biometric_minutes,adr.dialler_minutes,0))/60,2) AS total_hours
-               FROM attendance_daily_record adr JOIN employees e ON e.id = adr.employee_id
-              WHERE ${clauses.join(" AND ")}
-              GROUP BY e.id, e.employee_code, e.first_name, e.last_name
-              ORDER BY employee_name`;
+      const attSummaryScope = await resolveBranchScope(String(req.authUser.id));
+      const scopeClauses: string[] = [];
+      const scopeParams: unknown[] = [];
+      if (!attSummaryScope.isSuperAdmin && attSummaryScope.branchIds.length > 0) {
+        scopeClauses.push(`e.branch_id IN (${attSummaryScope.branchIds.map(() => '?').join(',')})`);
+        scopeParams.push(...attSummaryScope.branchIds);
+      }
+      const filterClauses: string[] = [];
+      const filterParams: unknown[] = [];
+      addEmployeeFilters(req.query, filterClauses, filterParams);
+
+      const coreGroupBy = `e.id, e.employee_code, e.first_name, e.last_name, e.employment_status, desig.designation_name, dept.dept_name, b.branch_name, p.process_name, cc.cost_centre_name`;
+      const whereActive = [...scopeClauses, ...filterClauses, 'e.active_status = 1'].filter(Boolean).join(' AND ') || '1=1';
+      const whereInactive = [...scopeClauses, ...filterClauses, 'e.active_status = 0'].filter(Boolean).join(' AND ') || '1=1';
+
+      sql = `(SELECT ${EMP_CORE_COLS},
+                     COALESCE(SUM(adr.attendance_status='present'),0) AS present_days,
+                     COALESCE(SUM(adr.attendance_status='half_day'),0) AS half_days,
+                     COALESCE(SUM(adr.attendance_status='absent'),0) AS absent_days,
+                     COALESCE(SUM(adr.attendance_status='leave_approved'),0) AS leave_days,
+                     COALESCE(SUM(adr.lwp_value),0) AS lwp_days,
+                     COALESCE(SUM(adr.late_mark=1),0) AS late_days,
+                     ROUND(COALESCE(SUM(COALESCE(adr.raw_minutes,adr.biometric_minutes,adr.dialler_minutes,0)),0)/60,2) AS total_hours
+                FROM employees e
+                ${EMP_CORE_JOINS}
+                LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id AND DATE_FORMAT(adr.record_date,'%Y-%m') = ?
+               WHERE ${whereActive}
+               GROUP BY ${coreGroupBy})
+             UNION ALL
+             (SELECT ${EMP_CORE_COLS},
+                     SUM(adr.attendance_status='present') AS present_days,
+                     SUM(adr.attendance_status='half_day') AS half_days,
+                     SUM(adr.attendance_status='absent') AS absent_days,
+                     SUM(adr.attendance_status='leave_approved') AS leave_days,
+                     SUM(adr.lwp_value) AS lwp_days,
+                     SUM(adr.late_mark=1) AS late_days,
+                     ROUND(SUM(COALESCE(adr.raw_minutes,adr.biometric_minutes,adr.dialler_minutes,0))/60,2) AS total_hours
+                FROM attendance_daily_record adr
+                JOIN employees e ON e.id = adr.employee_id
+                ${EMP_CORE_JOINS}
+               WHERE DATE_FORMAT(adr.record_date,'%Y-%m') = ? AND ${whereInactive}
+               GROUP BY ${coreGroupBy}
+               HAVING SUM(adr.attendance_status IN ('present','half_day')) > 0)
+             ORDER BY branch_name, employee_name`;
+      params.push(...scopeParams, ...filterParams, month, month, ...scopeParams, ...filterParams);
       break;
     }
     case "biometric-reconciliation": {
@@ -185,12 +214,13 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       const to = dateParam(req.query.to, from);
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT adr.record_date, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+      sql = `SELECT ${EMP_CORE_COLS}, adr.record_date,
                     adr.attendance_status, adr.biometric_minutes, ibd.first_punch, ibd.last_punch, ibd.biometric_minutes AS imported_minutes,
                     CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day') THEN 'NO_BIOMETRIC_FOR_PRESENT'
                          WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'PUNCHED_BUT_ABSENT'
                          ELSE 'OK' END AS reconciliation_status
                FROM attendance_daily_record adr JOIN employees e ON e.id = adr.employee_id
+               ${EMP_CORE_JOINS}
                LEFT JOIN integration_biometric_daily ibd ON ibd.employee_code = e.employee_code AND ibd.activity_date = adr.record_date
               WHERE ${clauses.join(" AND ")}
               ORDER BY adr.record_date DESC, reconciliation_status DESC`;
@@ -199,10 +229,11 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
     case "leave-balance":
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("lbl.balance_year = ?"); params.push(Number(req.query.year ?? new Date().getFullYear()));
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+      sql = `SELECT ${EMP_CORE_COLS},
                     lt.leave_code, lt.leave_name, lbl.allocated_days, lbl.used_days, lbl.adjusted_days,
                     (lbl.allocated_days + lbl.adjusted_days - lbl.used_days) AS remaining_days
                FROM leave_balance_ledger lbl JOIN employees e ON e.id = lbl.employee_id
+               ${EMP_CORE_JOINS}
                JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
               WHERE ${clauses.join(" AND ")}
               ORDER BY employee_name, lt.leave_code`;
@@ -212,9 +243,11 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("lr.from_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT lr.from_date, lr.to_date, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+      sql = `SELECT ${EMP_CORE_COLS},
+                    lr.from_date, lr.to_date,
                     lt.leave_code, lt.leave_name, lr.total_days, lr.status
                FROM leave_request lr JOIN employees e ON e.id = lr.employee_id
+               ${EMP_CORE_JOINS}
                JOIN leave_type_master lt ON lt.id = lr.leave_type_id
               WHERE ${clauses.join(" AND ")}
               ORDER BY lr.from_date DESC`;
@@ -224,9 +257,10 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       const month = monthParam(req.query.month);
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
-      sql = `SELECT spr.run_month, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+      sql = `SELECT ${EMP_CORE_COLS}, spr.run_month,
                     spl.gross_salary, spl.total_deductions, spl.net_salary, spl.working_days, spl.present_days, spl.leave_days, spl.lwp_days, spl.status
                FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id JOIN employees e ON e.id = spl.employee_id
+               ${EMP_CORE_JOINS}
               WHERE ${clauses.join(" AND ")}
               ORDER BY employee_name`;
       break;
@@ -235,12 +269,13 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       const month = monthParam(req.query.month);
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+      sql = `SELECT ${EMP_CORE_COLS},
                     spr.run_month, spl.net_salary AS current_net,
                     prev.net_salary AS previous_net,
                     ROUND(((spl.net_salary - COALESCE(prev.net_salary,0)) / NULLIF(prev.net_salary,0))*100,2) AS net_variance_pct,
                     spl.lwp_days
                FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id JOIN employees e ON e.id = spl.employee_id
+               ${EMP_CORE_JOINS}
                LEFT JOIN salary_prep_run pspr ON pspr.run_month = DATE_FORMAT(DATE_SUB(STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d'), INTERVAL 1 MONTH),'%Y-%m')
                LEFT JOIN salary_prep_line prev ON prev.run_id = pspr.id AND prev.employee_id = spl.employee_id
               WHERE ${clauses.join(" AND ")}
@@ -251,10 +286,11 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       const month = monthParam(req.query.month);
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
-      sql = `SELECT spr.run_month, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+      sql = `SELECT ${EMP_CORE_COLS}, spr.run_month,
                     sp.payslip_ref, sp.file_url, sp.acknowledged_at,
                     CASE WHEN sp.id IS NULL THEN 'NOT_GENERATED' WHEN sp.acknowledged_at IS NULL THEN 'RELEASED_NOT_ACKNOWLEDGED' ELSE 'ACKNOWLEDGED' END AS payslip_status
                FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id JOIN employees e ON e.id = spl.employee_id
+               ${EMP_CORE_JOINS}
                LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
               WHERE ${clauses.join(" AND ")}
               ORDER BY payslip_status DESC, employee_name`;
@@ -262,19 +298,23 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
     }
     case "statutory-missing":
       addEmployeeFilters(req.query, clauses, params); clauses.push("e.active_status = 1");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+      sql = `SELECT ${EMP_CORE_COLS},
                     e.pan_number, eu.uan, e.epf_number, e.esic_number,
                     CONCAT_WS(',', IF(COALESCE(e.pan_number,'')='', 'PAN_MISSING', NULL), IF(eu.uan IS NULL, 'UAN_MISSING', NULL), IF(COALESCE(e.esic_number,'')='', 'ESIC_MISSING', NULL)) AS missing_items
-               FROM employees e LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
+               FROM employees e
+               ${EMP_CORE_JOINS}
+               LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
               WHERE ${clauses.join(" AND ")}
                 AND (COALESCE(e.pan_number,'')='' OR eu.uan IS NULL OR COALESCE(e.esic_number,'')='')
               ORDER BY employee_name`;
       break;
     case "bank-missing":
       addEmployeeFilters(req.query, clauses, params); clauses.push("e.active_status = 1");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+      sql = `SELECT ${EMP_CORE_COLS},
                     CASE WHEN ebd.id IS NULL THEN 'MISSING_BANK' WHEN COALESCE(ebd.verified,0)=0 THEN 'UNVERIFIED_BANK' ELSE 'OK' END AS bank_status
-               FROM employees e LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
+               FROM employees e
+               ${EMP_CORE_JOINS}
+               LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
               WHERE ${clauses.join(" AND ")}
                 AND (ebd.id IS NULL OR COALESCE(ebd.verified,0)=0)
               ORDER BY bank_status DESC, employee_name`;
@@ -305,21 +345,19 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("spr.run_month BETWEEN DATE_FORMAT(?,'%Y-%m') AND DATE_FORMAT(?,'%Y-%m')");
       params.push(fyStart, fyEnd);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, p.process_name,
+      sql = `SELECT ${EMP_CORE_COLS},
                     SUM(spl.gross_salary) AS ytd_gross,
                     SUM(spl.net_salary) AS ytd_net,
-                    SUM(COALESCE(spl.tds,0)) AS ytd_tds,
+                    SUM(COALESCE(spl.tds_amount,0)) AS ytd_tds,
                     SUM(COALESCE(spl.pf_employee,0)) AS ytd_pf_employee,
                     SUM(COALESCE(spl.esic_employee,0)) AS ytd_esic_employee,
                     COUNT(DISTINCT spr.run_month) AS months_included
                FROM salary_prep_line spl
                JOIN salary_prep_run spr ON spr.id = spl.run_id
                JOIN employees e ON e.id = spl.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
+               ${EMP_CORE_JOINS}
               WHERE ${clauses.join(" AND ")}
-              GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, b.branch_name, p.process_name
+              GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.employment_status, desig.designation_name, dept.dept_name, b.branch_name, p.process_name, cc.cost_centre_name
               ORDER BY employee_name`;
       break;
     }
@@ -391,14 +429,14 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("sa.advance_date BETWEEN ? AND ?"); params.push(from, to);
       if (req.query.status) { clauses.push("sa.status = ?"); params.push(String(req.query.status)); }
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+      sql = `SELECT ${EMP_CORE_COLS},
                     sa.advance_date, sa.amount, sa.recovery_months,
                     COALESCE(sa.recovered_amount,0) AS recovered_amount,
                     (sa.amount - COALESCE(sa.recovered_amount,0)) AS outstanding,
-                    sa.status, b.branch_name
+                    sa.status
                FROM salary_advance sa
                JOIN employees e ON e.id = sa.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
+               ${EMP_CORE_JOINS}
               WHERE ${clauses.join(" AND ")}
               ORDER BY sa.advance_date DESC`;
       break;
@@ -408,16 +446,14 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       const month = monthParam(req.query.month);
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+      sql = `SELECT ${EMP_CORE_COLS},
                     spl.lwp_days,
                     ROUND(spl.gross_salary / NULLIF(spl.working_days,0), 2) AS daily_rate,
-                    COALESCE(spl.lwp_deduction, ROUND(spl.gross_salary / NULLIF(spl.working_days,0) * spl.lwp_days, 2)) AS lwp_deduction_amount,
-                    b.branch_name, p.process_name
+                    COALESCE(spl.lwp_deduction, ROUND(spl.gross_salary / NULLIF(spl.working_days,0) * spl.lwp_days, 2)) AS lwp_deduction_amount
                FROM salary_prep_line spl
                JOIN salary_prep_run spr ON spr.id = spl.run_id
                JOIN employees e ON e.id = spl.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
+               ${EMP_CORE_JOINS}
               WHERE ${clauses.join(" AND ")} AND spl.lwp_days > 0
               ORDER BY spl.lwp_days DESC`;
       break;
@@ -494,8 +530,8 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       const month = monthParam(req.query.month);
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
-      sql = `SELECT eu.uan, eu.member_id,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS emp_name,
+      sql = `SELECT ${EMP_CORE_COLS},
+                    eu.uan, eu.member_id,
                     COALESCE(spl.epf_wages, spl.basic_salary) AS epf_wages,
                     COALESCE(spl.eps_wages, LEAST(COALESCE(spl.basic_salary,0), 15000)) AS eps_wages,
                     COALESCE(spl.gross_salary, 0) AS edli_wages,
@@ -507,6 +543,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
                FROM salary_prep_line spl
                JOIN salary_prep_run spr ON spr.id = spl.run_id
                JOIN employees e ON e.id = spl.employee_id
+               ${EMP_CORE_JOINS}
                LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
               WHERE ${clauses.join(" AND ")}
               ORDER BY eu.uan`;
