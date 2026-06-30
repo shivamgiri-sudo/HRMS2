@@ -93,6 +93,7 @@ import { attendanceManualMarkRouter } from "./modules/wfm/attendance-manual-mark
 import { biometricPunchRouter } from "./modules/wfm/biometric-punch.routes.js";
 import { cosecSyncRouter } from "./modules/wfm/cosec-sync.routes.js";
 import { biometricSummaryRouter } from "./modules/wfm/biometric-summary.routes.js";
+import { attendanceDisputeRouter } from "./modules/attendance/attendance.dispute.routes.js";
 import customizationRouter from "./modules/customization/customization.routes.js";
 import { rosterMasterRouter } from "./modules/roster/roster-master.routes.js";
 import rosterCapacityRouter from "./modules/roster/roster-capacity.routes.js";
@@ -309,6 +310,7 @@ app.use('/api/wfm/biometric-punch', biometricPunchRouter);
 app.use('/api/wfm/cosec-sync', cosecSyncRouter);
 app.use('/api/wfm/biometric-summary', biometricSummaryRouter);
 app.use("/api/attendance/exception-engine", attendanceExceptionRouter);
+app.use("/api/attendance", attendanceDisputeRouter);
 app.use("/api/integrations/cosec", cosecMonitoringRouter);
 app.use("/api/workforce-planning", workforcePlanningRouter);
 app.use("/api/customization", customizationRouter);

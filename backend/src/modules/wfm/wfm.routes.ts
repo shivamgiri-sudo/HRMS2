@@ -916,29 +916,30 @@ wfmRouter.get(
 
     const { db: dbConn } = await import("../../db/mysql.js");
 
-    // Run queries: cosec_daily_agg may not exist in all environments — catch its error gracefully
-    const [[attRows], [punchRows]] = await Promise.all([
-      // 1. Attendance record + biometric log
-      dbConn.execute(
-        `SELECT adr.*,
-                DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
-                e.employee_code,
-                COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                e.working_hours_start,
-                e.working_hours_end,
-                DATE_FORMAT(bal.first_punch_in, '%Y-%m-%d %H:%i:%s') AS first_punch,
-                DATE_FORMAT(bal.last_punch_out, '%Y-%m-%d %H:%i:%s') AS last_punch,
-                bal.raw_minutes AS bio_minutes_log
-           FROM attendance_daily_record adr
-           JOIN employees e ON e.id = adr.employee_id
-           LEFT JOIN biometric_attendance_log bal
-             ON bal.employee_id = adr.employee_id AND bal.punch_date = adr.record_date
-          WHERE adr.employee_id = ? AND adr.record_date = ?
-          LIMIT 1`,
-        [employeeId, date]
-      ),
-      // 2. Individual punch events — handle night shift (prev-day punches before 06:00)
-      dbConn.execute(
+    // Run attendance record query (always required)
+    const [attRows] = await dbConn.execute(
+      `SELECT adr.*,
+              DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
+              e.employee_code,
+              COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+              e.working_hours_start,
+              e.working_hours_end,
+              DATE_FORMAT(bal.first_punch_in, '%Y-%m-%d %H:%i:%s') AS first_punch,
+              DATE_FORMAT(bal.last_punch_out, '%Y-%m-%d %H:%i:%s') AS last_punch,
+              bal.raw_minutes AS bio_minutes_log
+         FROM attendance_daily_record adr
+         JOIN employees e ON e.id = adr.employee_id
+         LEFT JOIN biometric_attendance_log bal
+           ON bal.employee_id = adr.employee_id AND bal.punch_date = adr.record_date
+        WHERE adr.employee_id = ? AND adr.record_date = ?
+        LIMIT 1`,
+      [employeeId, date]
+    ) as any[];
+
+    // Individual punch events — cosec_punch_sync may not exist in all environments
+    let punchRows: any[] = [];
+    try {
+      const [pr] = await dbConn.execute(
         `SELECT DATE_FORMAT(cps.punch_time, '%Y-%m-%d %H:%i:%s') AS punch_time,
                 cps.io_type,
                 CASE cps.io_type WHEN 1 THEN 'In' WHEN 2 THEN 'Out' ELSE CAST(cps.io_type AS CHAR) END AS io_label,
@@ -952,8 +953,9 @@ wfmRouter.get(
             )
           ORDER BY cps.punch_time ASC`,
         [employeeId, date, date]
-      ),
-    ]);
+      ) as any[];
+      punchRows = pr as any[];
+    } catch { /* cosec_punch_sync table may not exist in this environment */ }
 
     // cosec_daily_agg may not exist — query it separately with fallback to null
     let cosecAgg: any = null;
@@ -998,6 +1000,7 @@ wfmRouter.get(
         attendance_record: adr,
         cosec_daily_agg: agg,
         raw_punches: punches,
+        punch_count: punches.length,
       },
     });
   })
