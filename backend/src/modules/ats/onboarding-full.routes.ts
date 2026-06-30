@@ -25,6 +25,7 @@ import {
   saveFinalSection,
   saveLanguages,
   saveNominees,
+  savePfOptOutConsent,
   saveProgress,
   saveStatutory,
   submitFullOnboarding,
@@ -283,6 +284,13 @@ router.get("/blockers", h(async (req, res) => {
   const tokenData = await validateOnboardingToken(token);
   const blockers = await getOnboardingBlockers(String(tokenData.candidate_id));
   return res.json({ success: true, data: blockers });
+}));
+
+// PATCH /pf-opt-out-consent — candidate records Form 11 PF opt-out election
+router.patch("/pf-opt-out-consent", h(async (req, res) => {
+  const { token, elected } = req.body;
+  if (!token || elected === undefined) return res.status(400).json({ success: false, message: "token and elected required" });
+  return res.json({ success: true, data: await savePfOptOutConsent(token, Boolean(elected)) });
 }));
 
 // PUT /section-status — upsert section completion for a candidate

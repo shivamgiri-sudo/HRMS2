@@ -1,4 +1,13 @@
 // backend/src/modules/ats/salary.calculator.ts
+export interface CalcOptions {
+  pfOptOut?: boolean;
+}
+
+/** Returns true if basic salary (monthly) exceeds ₹15,000 — EPF Act §17(1) threshold. */
+export function isPfOptOutEligible(monthlyBasic: number): boolean {
+  return monthlyBasic > 15000;
+}
+
 export interface SalaryComponents {
   offered_ctc: number;
   gross: number;
@@ -23,13 +32,45 @@ export interface SalaryComponents {
  * All inputs are annual. All returned values are monthly (annual ÷ 12).
  * basic_pct: % of gross (e.g. 40 for 40%)
  * hra_pct:   % of basic (e.g. 40 for 40%)
+ * opts.pfOptOut: when true, all statutory deductions = 0, gross = CTC, net = gross (EPF Act §17(1)).
  */
 export function calculateSalary(
   annualCtc: number,
   basicPct: number,
   hraPct: number,
   _isMetro: boolean,
+  opts?: CalcOptions,
 ): SalaryComponents {
+  if (opts?.pfOptOut) {
+    const m = (v: number) => Math.round((v / 12) * 100) / 100;
+    const gross = annualCtc;
+    const basic = gross * (basicPct / 100);
+    const hra = basic * (hraPct / 100);
+    const conveyance = 19200;
+    const da = 0;
+    const special = gross - basic - hra - conveyance - da;
+    const bonus = basic * 0.0833;
+    const monthlyGross = m(gross);
+    return {
+      offered_ctc:       m(annualCtc),
+      gross:             monthlyGross,
+      basic:             m(basic),
+      hra:               m(hra),
+      conveyance:        m(conveyance),
+      da:                m(da),
+      special_allowance: Math.max(0, m(special)),
+      other_allowance:   0,
+      bonus:             m(bonus),
+      pf_employee:       0,
+      pf_employer:       0,
+      esic_employee:     0,
+      esic_employer:     0,
+      professional_tax:  0,
+      gratuity:          0,
+      admin_charges:     0,
+      net_in_hand:       monthlyGross,
+    };
+  }
   // Single-pass: derive gross from CTC by subtracting employer-side costs.
   // We don't know gross yet, so approximate employer PF/ESIC/gratuity iteratively.
   // Use CTC * 0.88 as starting estimate for gross to determine ESIC eligibility only.

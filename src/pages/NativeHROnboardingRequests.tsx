@@ -91,6 +91,8 @@ export default function NativeHROnboardingRequests() {
   const [profilePanelLoading, setProfilePanelLoading] = useState(false);
   const [pushbackRemarks, setPushbackRemarks] = useState('');
   const [reviewSaving, setReviewSaving] = useState(false);
+  // PF opt-out consent status for the currently open candidate
+  const [candidateOnboardingProfile, setCandidateOnboardingProfile] = useState<any>(null);
 
   const [departments, setDepartments]   = useState<MasterItem[]>([]);
   const [designations, setDesignations] = useState<MasterItem[]>([]);
@@ -262,6 +264,7 @@ export default function NativeHROnboardingRequests() {
   const openCandidate = (row: OnboardingRequest) => {
     setSelected(row);
     setBgv(null);
+    setCandidateOnboardingProfile(null);
     setOfferTab('standard');
     setProposedCtc('');
     setProposedReason('');
@@ -277,6 +280,10 @@ export default function NativeHROnboardingRequests() {
     });
     hrmsApi.get<unknown>(`/api/ats/bgv/status?candidateId=${row.candidate_id}`)
       .then((r: any) => { const d = r?.data ?? r; if (d && typeof d === 'object') setBgv(d as BgvData); })
+      .catch(() => {});
+    // Fetch onboarding profile to display PF opt-out consent status (non-blocking)
+    hrmsApi.get<unknown>(`/api/ats/onboarding-full/candidate/${row.candidate_id}`)
+      .then((r: any) => { const prof = r?.data?.profile ?? r?.profile ?? null; if (prof) setCandidateOnboardingProfile(prof); })
       .catch(() => {});
   };
 
@@ -580,8 +587,25 @@ export default function NativeHROnboardingRequests() {
                     <Row label="Mobile" value={p.emergency_contact_number || p.emergency_contact_mobile} />
                   </Section>
                   <Section title="Statutory">
-                    <Row label="PF Member" value={fmtBool(p.previous_pf_member)} />
+                    <Row label="PF Member (prev)" value={fmtBool(p.previous_pf_member)} />
                     <Row label="EPS Member" value={fmtBool(p.eps_member)} />
+                    <Row label="Int'l Worker" value={fmtBool(p.international_worker)} />
+                    <div className="mt-2">
+                      {Number(p.pf_opt_out_elected) === 1 ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700 border border-emerald-200">
+                          ✓ PF Opt-Out Elected (Form 11)
+                          {p.pf_opt_out_consented_at && <span className="font-normal opacity-70">· {new Date(p.pf_opt_out_consented_at).toLocaleDateString('en-IN')}</span>}
+                        </span>
+                      ) : p.pf_opt_out_elected === 0 ? (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                          PF Deductions Apply (candidate chose standard)
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 border border-amber-200">
+                          ⏳ Awaiting Form 11 declaration from candidate
+                        </span>
+                      )}
+                    </div>
                   </Section>
                   {docs.length > 0 && (
                     <Section title={`Uploaded Documents (${docs.length})`}>
@@ -952,19 +976,31 @@ export default function NativeHROnboardingRequests() {
                   </FL>
                 )}
 
-                <FL label="Statutory Eligibility">
-                  <div className="flex gap-4 h-10 items-center">
-                    <label className="flex items-center gap-1.5 text-sm text-slate-700 cursor-pointer">
-                      <input type="checkbox" checked={offer.pf_eligible} onChange={e => setF('pf_eligible', e.target.checked)}
-                        className="h-4 w-4 accent-blue-600 rounded cursor-pointer" />
-                      PF
-                    </label>
-                    <label className="flex items-center gap-1.5 text-sm text-slate-700 cursor-pointer">
-                      <input type="checkbox" checked={offer.esi_eligible} onChange={e => setF('esi_eligible', e.target.checked)}
-                        className="h-4 w-4 accent-blue-600 rounded cursor-pointer" />
-                      ESI
-                    </label>
-                  </div>
+                <FL label="PF Status">
+                  {(() => {
+                    const prof = candidateOnboardingProfile ?? {};
+                    const elected = Number(prof.pf_opt_out_elected) === 1;
+                    const consentAt = prof.pf_opt_out_consented_at;
+                    const notStarted = prof.pf_opt_out_elected == null;
+                    return (
+                      <div className="h-10 flex items-center">
+                        {elected ? (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700 border border-emerald-200">
+                            ✓ PF Opt-Out Elected (Form 11)
+                            {consentAt && <span className="font-normal opacity-70">· {new Date(consentAt).toLocaleDateString('en-IN')}</span>}
+                          </span>
+                        ) : notStarted ? (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 border border-amber-200">
+                            ⏳ Awaiting candidate Form 11 declaration
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                            PF Deductions Apply
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </FL>
 
               </div>

@@ -3,7 +3,7 @@ import { RowDataPacket, PoolConnection } from 'mysql2/promise';
 import { db } from '../../db/mysql.js';
 import { env } from '../../config/env.js';
 import { hasScopedAccess } from '../../shared/scopeAccess.js';
-import { calculateSalary, SalaryComponents } from './salary.calculator.js';
+import { calculateSalary, isPfOptOutEligible, SalaryComponents } from './salary.calculator.js';
 import { appendJourneyEvent } from '../employees/journeyLog.service.js';
 import {
   sendOnboardingTokenEmail,
@@ -275,12 +275,33 @@ export async function saveOffer(
   const bandCode = String(offerData.salary_band ?? 'D').toUpperCase();
   const basicPct = ['M', 'N'].includes(bandCode) ? 50 : 40;
   const hraPct = 40;
+
+  // Server-side PF opt-out eligibility check (EPF Act §17(1) — Excluded Employee)
+  const [profileRows] = await db.execute<RowDataPacket[]>(
+    `SELECT pf_opt_out_elected, pf_opt_out_consented_at,
+            previous_pf_member, eps_member, international_worker
+     FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
+    [req.candidate_id],
+  );
+  const profile = (profileRows as RowDataPacket[])[0] as any ?? {};
+  const candidateElected = Number(profile.pf_opt_out_elected) === 1;
+  const legallyEligible = Number(profile.previous_pf_member) !== 1
+    && Number(profile.eps_member) !== 1
+    && Number(profile.international_worker) !== 1;
+
+  // First pass to determine basic for threshold check
+  const preComponents = calculateSalary(Number(offerData.offered_ctc), basicPct, hraPct, false);
+  const basicEligible = isPfOptOutEligible(preComponents.basic);
+  const pfOptOut = candidateElected && legallyEligible && basicEligible;
+
   const components: SalaryComponents = calculateSalary(
     Number(offerData.offered_ctc),
     basicPct,
     hraPct,
     false,
+    { pfOptOut },
   );
+  const pfOptOutConsentAt = pfOptOut ? (profile.pf_opt_out_consented_at ?? null) : null;
 
   const status = submit ? 'submitted' : 'draft';
   const submittedAt = submit ? new Date() : null;
@@ -299,6 +320,7 @@ export async function saveOffer(
          da = ?, special_allowance = ?, other_allowance = ?, bonus = ?, gross = ?,
          pf_employee = ?, pf_employer = ?, esic_employee = ?, esic_employer = ?,
          professional_tax = ?, gratuity = ?, admin_charges = ?, net_in_hand = ?,
+         pf_opt_out = ?, pf_opt_out_consent_at = ?,
          status = ?, submitted_at = ?, updated_at = NOW()
        WHERE id = ?`,
       [
@@ -310,6 +332,7 @@ export async function saveOffer(
         components.da, components.special_allowance, components.other_allowance, components.bonus, components.gross,
         components.pf_employee, components.pf_employer, components.esic_employee, components.esic_employer,
         components.professional_tax, components.gratuity, components.admin_charges, components.net_in_hand,
+        pfOptOut ? 1 : 0, pfOptOutConsentAt,
         status, submittedAt,
         offerId,
       ],
@@ -323,8 +346,9 @@ export async function saveOffer(
           salary_band, offered_ctc, basic, hra, conveyance, da, special_allowance,
           other_allowance, bonus, gross, pf_employee, pf_employer, esic_employee, esic_employer,
           professional_tax, gratuity, admin_charges, net_in_hand,
+          pf_opt_out, pf_opt_out_consent_at,
           status, created_by, submitted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         offerId, requestId, req.candidate_id,
         offerData.emp_type ?? 'OnRoll', offerData.date_of_joining, offerData.date_of_salary ?? null,
@@ -335,6 +359,7 @@ export async function saveOffer(
         components.da, components.special_allowance, components.other_allowance, components.bonus, components.gross,
         components.pf_employee, components.pf_employer, components.esic_employee, components.esic_employer,
         components.professional_tax, components.gratuity, components.admin_charges, components.net_in_hand,
+        pfOptOut ? 1 : 0, pfOptOutConsentAt,
         status, createdBy, submittedAt,
       ],
     );
@@ -620,6 +645,38 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
            (id, employee_id, nominee_name, relationship, date_of_birth, share_percentage, nominee_for, mobile, address)
          VALUES (UUID(), ?, ?, ?, ?, ?, 'gratuity', NULL, NULL)`,
         [employeeId, nomRow.nominee2_name, nomRow.nominee2_relation, nomRow.nominee2_dob, nomRow.nominee2_share_pct ?? 0]
+      );
+    }
+
+    // PF opt-out: if candidate elected Form 11 opt-out, record statutory override + update statutory info
+    if (Number(offer.pf_opt_out) === 1) {
+      const [candProfileRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT pf_opt_out_consent_text, pf_opt_out_consented_at FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
+        [candidateId],
+      );
+      const cpRow = (candProfileRows as RowDataPacket[])[0] as any ?? {};
+      const effectiveFromMonth = offer.date_of_joining
+        ? String(offer.date_of_joining).slice(0, 7)
+        : new Date().toISOString().slice(0, 7);
+      await conn.execute(
+        `INSERT INTO employee_statutory_override
+           (id, employee_id, override_type, status, requested_by, requested_at,
+            declaration_text, approved_by, approved_at, effective_from_month)
+         VALUES (UUID(), ?, 'pf_opt_out', 'approved', ?, ?, ?, ?, NOW(), ?)`,
+        [
+          employeeId,
+          employeeId,
+          cpRow.pf_opt_out_consented_at ?? offer.pf_opt_out_consent_at ?? null,
+          cpRow.pf_opt_out_consent_text ?? 'Form 11 — EPF Act §17(1) Excluded Employee declaration',
+          approverId,
+          effectiveFromMonth,
+        ],
+      );
+      await conn.execute(
+        `INSERT INTO employee_statutory_info (id, employee_id, pf_eligible, esi_eligible)
+         VALUES (UUID(), ?, 0, 1)
+         ON DUPLICATE KEY UPDATE pf_eligible = 0`,
+        [employeeId],
       );
     }
 

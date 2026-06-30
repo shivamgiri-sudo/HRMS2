@@ -124,6 +124,15 @@ interface GradeBand {
   name?: string;
 }
 
+interface SalaryBand {
+  id: string;
+  band_code: string;
+  band_name: string;
+  slab_from: number;
+  slab_to: number;
+  active_status: number;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtCurrency(val: number | string | undefined): string {
@@ -1290,6 +1299,214 @@ function OrgMastersTab() {
   );
 }
 
+// ─── Tab 5: Salary Bands ──────────────────────────────────────────────────────
+
+const EMPTY_BAND = {
+  band_code: "",
+  band_name: "",
+  slab_from: "",
+  slab_to: "",
+};
+
+function SalaryBandsTab() {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<SalaryBand | null>(null);
+  const [form, setForm] = useState(EMPTY_BAND);
+  const [mutErr, setMutErr] = useState("");
+
+  const { data: res, isLoading, isError } = useQuery<ApiList<SalaryBand>>({
+    queryKey: ["payroll-masters", "bands"],
+    queryFn: () => hrmsApi.get("/api/payroll-masters/bands"),
+  });
+
+  const bands: SalaryBand[] = res?.data ?? [];
+
+  function openAdd() {
+    setEditing(null);
+    setForm(EMPTY_BAND);
+    setMutErr("");
+    setOpen(true);
+  }
+
+  function openEdit(row: SalaryBand) {
+    setEditing(row);
+    setForm({
+      band_code: row.band_code,
+      band_name: row.band_name,
+      slab_from: String(row.slab_from),
+      slab_to: String(row.slab_to),
+    });
+    setMutErr("");
+    setOpen(true);
+  }
+
+  const saveMut = useMutation({
+    mutationFn: (body: Record<string, unknown>) =>
+      editing
+        ? hrmsApi.put(`/api/payroll-masters/bands/${editing.id}`, body)
+        : hrmsApi.post("/api/payroll-masters/bands", body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["payroll-masters", "bands"] });
+      setOpen(false);
+    },
+    onError: (e: Error) => setMutErr(e.message),
+  });
+
+  const deactivateMut = useMutation({
+    mutationFn: (id: string) =>
+      hrmsApi.put(`/api/payroll-masters/bands/${id}`, { active_status: 0 }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["payroll-masters", "bands"] }),
+  });
+
+  function handleSave() {
+    setMutErr("");
+    saveMut.mutate({
+      band_code: form.band_code,
+      band_name: form.band_name,
+      slab_from: Number(form.slab_from),
+      slab_to: Number(form.slab_to),
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-3">
+        <CardTitle className="text-base">Salary Bands</CardTitle>
+        <Button size="sm" onClick={openAdd}>
+          <Plus className="h-4 w-4 mr-1" /> Add Band
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {isLoading && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          </div>
+        )}
+        {isError && (
+          <div className="flex items-center gap-2 text-sm text-destructive py-4">
+            <AlertCircle className="h-4 w-4" /> Failed to load salary bands.
+          </div>
+        )}
+        {!isLoading && !isError && (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Band Code</TableHead>
+                <TableHead>Band Name</TableHead>
+                <TableHead>Monthly CTC From</TableHead>
+                <TableHead>Monthly CTC To</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {bands.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-6">
+                    No salary bands found.
+                  </TableCell>
+                </TableRow>
+              )}
+              {bands.map((b) => (
+                <TableRow key={b.id}>
+                  <TableCell className="font-mono text-xs">{b.band_code}</TableCell>
+                  <TableCell className="font-medium">{b.band_name}</TableCell>
+                  <TableCell>{fmtCurrency(b.slab_from)}</TableCell>
+                  <TableCell>{fmtCurrency(b.slab_to)}</TableCell>
+                  <TableCell>
+                    <Badge variant={b.active_status === 1 ? "default" : "secondary"}>
+                      {b.active_status === 1 ? "Active" : "Inactive"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right space-x-1">
+                    <Button variant="ghost" size="icon" onClick={() => openEdit(b)}>
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    {b.active_status === 1 && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => deactivateMut.mutate(b.id)}
+                        disabled={deactivateMut.isPending}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editing ? "Edit Salary Band" : "Add Salary Band"}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>Band Code</Label>
+                <Input
+                  value={form.band_code}
+                  onChange={(e) => setForm({ ...form, band_code: e.target.value.toUpperCase() })}
+                  placeholder="e.g. A, B, C"
+                  maxLength={5}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Band Name</Label>
+                <Input
+                  value={form.band_name}
+                  onChange={(e) => setForm({ ...form, band_name: e.target.value })}
+                  placeholder="e.g. Entry Level"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>Monthly CTC From (₹)</Label>
+                <Input
+                  type="number"
+                  value={form.slab_from}
+                  onChange={(e) => setForm({ ...form, slab_from: e.target.value })}
+                  placeholder="e.g. 10000"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Monthly CTC To (₹)</Label>
+                <Input
+                  type="number"
+                  value={form.slab_to}
+                  onChange={(e) => setForm({ ...form, slab_to: e.target.value })}
+                  placeholder="e.g. 20000"
+                />
+              </div>
+            </div>
+            {mutErr && (
+              <p className="text-xs text-destructive flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" /> {mutErr}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSave} disabled={saveMut.isPending}>
+              {saveMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+              {editing ? "Update" : "Create"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function NativePayrollMasters() {
@@ -1304,8 +1521,9 @@ export default function NativePayrollMasters() {
         </div>
 
         <Tabs defaultValue="slabs">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="slabs">Salary Slabs</TabsTrigger>
+            <TabsTrigger value="bands">Salary Bands</TabsTrigger>
             <TabsTrigger value="matrix">Desig-Band Matrix</TabsTrigger>
             <TabsTrigger value="min-wages">Minimum Wages</TabsTrigger>
             <TabsTrigger value="org">Org Masters</TabsTrigger>
@@ -1313,6 +1531,10 @@ export default function NativePayrollMasters() {
 
           <TabsContent value="slabs" className="mt-4">
             <SalarySlabsTab />
+          </TabsContent>
+
+          <TabsContent value="bands" className="mt-4">
+            <SalaryBandsTab />
           </TabsContent>
 
           <TabsContent value="matrix" className="mt-4">

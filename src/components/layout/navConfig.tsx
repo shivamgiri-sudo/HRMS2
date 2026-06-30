@@ -209,6 +209,7 @@ export const navGroups: NavGroup[] = [
           { label: "Running Payroll",        href: "/payroll/running-breakdown",    icon: ic(TrendingUp), roles: ["admin","super_admin","payroll_head","payroll_branch","wfm"], description: "Mid-month earned salary" },
           { label: "Recalculation Queue",    href: "/payroll/recalculation-queue",  icon: ic(Settings2),  roles: ["admin","super_admin","payroll_head","payroll_branch"],  description: "Payroll recalc queue" },
           { label: "Config Flags",           href: "/payroll/config-flags",         icon: ic(Settings),   roles: ["admin","super_admin","payroll_head","payroll_branch"],  description: "Payroll configuration flags" },
+          { label: "Payroll Masters",        href: "/payroll/masters",              icon: ic(Settings2),  roles: ["admin","super_admin","payroll","finance"],              description: "Salary slabs, bands, min wages" },
         ],
       },
       {

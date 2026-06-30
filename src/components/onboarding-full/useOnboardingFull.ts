@@ -162,6 +162,10 @@ export function useOnboardingFull(token: string) {
   const [otpCode, setOtpCode] = useState("");
   const [consentAccepted, setConsentAccepted] = useState(false);
   const [bgvApiAvailable, setBgvApiAvailable] = useState(true);
+  const [pfOptOutElected, setPfOptOutElected] = useState<boolean | null>(null);
+  const [pfOptOutSaving, setPfOptOutSaving] = useState(false);
+  const [pfOptOutConsented, setPfOptOutConsented] = useState(false);
+  const [pfOptOutConsentedAt, setPfOptOutConsentedAt] = useState<string | null>(null);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const geoCapture = useGeoCapture();
 
@@ -280,6 +284,12 @@ export function useOnboardingFull(token: string) {
         internationalWorker: Boolean(sp.international_worker),
         declarationAccepted: Boolean(sp.statutory_declaration_accepted),
       });
+      // Restore PF opt-out consent state if candidate already completed Form 11
+      if (sp.pf_opt_out_elected != null) {
+        setPfOptOutElected(Boolean(sp.pf_opt_out_elected));
+        setPfOptOutConsented(Boolean(sp.pf_opt_out_elected) && Boolean(sp.pf_opt_out_consented_at));
+        setPfOptOutConsentedAt(sp.pf_opt_out_consented_at ?? null);
+      }
     } catch (e: any) {
       setError(e?.message || "Unable to load onboarding.");
     } finally {
@@ -313,6 +323,22 @@ export function useOnboardingFull(token: string) {
   const saveNominees = useCallback(async (nominees: Array<Record<string, unknown>>) => {
     return hrmsApi.post(`${API}/nominees`, { token, nominees });
   }, [token]);
+
+  const pfOptOutConsent = async (elected: boolean) => {
+    setPfOptOutSaving(true);
+    try {
+      await hrmsApi.patch(`${API}/pf-opt-out-consent`, { token, elected });
+      setPfOptOutElected(elected);
+      if (elected) {
+        setPfOptOutConsented(true);
+        setPfOptOutConsentedAt(new Date().toISOString());
+      }
+    } catch (e: any) {
+      setError(e?.message || "Failed to save PF opt-out consent");
+    } finally {
+      setPfOptOutSaving(false);
+    }
+  };
 
   const saveEmployee = async () => {
     setSaving(true);
@@ -525,6 +551,7 @@ export function useOnboardingFull(token: string) {
     experience, setExperience, family, setFamily, languages, setLanguages,
     statutory, setStatutory, otpSent, otpVerified, otpCode, setOtpCode,
     consentAccepted, completion,
+    pfOptOutElected, pfOptOutSaving, pfOptOutConsented, pfOptOutConsentedAt, pfOptOutConsent,
     load, autosave, advanceStep,
     saveEmployee, saveBank, addQualification, saveExperience, saveStatutory,
     sendOtp, verifyOtp, grantConsent, verifyPan, verifyBank, verifyAadhaar,

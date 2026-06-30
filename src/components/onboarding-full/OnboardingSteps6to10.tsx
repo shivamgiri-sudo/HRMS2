@@ -526,6 +526,8 @@ export function Step9FamilyLang({
 export function Step10Statutory({
   statutory, setStatutory, otpSent, otpVerified, otpCode, setOtpCode,
   saving, employee, bank, status, bgv, completion,
+  pfOptOutElected, pfOptOutSaving, pfOptOutConsented, pfOptOutConsentedAt,
+  onPfOptOutConsent,
   onSendOtp, onVerifyOtp, onSave, onSubmit,
 }: {
   statutory: StatutoryForm;
@@ -540,12 +542,27 @@ export function Step10Statutory({
   status: StatusData | null;
   bgv: BgvStatus | null;
   completion: number;
+  pfOptOutElected: boolean | null;
+  pfOptOutSaving: boolean;
+  pfOptOutConsented: boolean;
+  pfOptOutConsentedAt: string | null;
+  onPfOptOutConsent: (elected: boolean) => void;
   onSendOtp: () => void;
   onVerifyOtp: () => void;
   onSave: () => void;
   onSubmit: () => void;
 }) {
   const updS = (k: keyof StatutoryForm, v: any) => setStatutory((p) => ({ ...p, [k]: v }));
+  const [pfForm11Check1, setPfForm11Check1] = useState(false);
+  const [pfForm11Check2, setPfForm11Check2] = useState(false);
+  const [pfForm11Check3, setPfForm11Check3] = useState(false);
+
+  // Show Form 11 only when candidate answers indicate first-time employment
+  const isPfOptOutEligibleCandidate =
+    statutory.previousPfMember === false &&
+    statutory.epsMember === false &&
+    statutory.internationalWorker === false;
+  const form11ConsentReady = pfForm11Check1 && pfForm11Check2 && pfForm11Check3;
 
   const canSubmit = statutory.declarationAccepted && otpVerified;
 
@@ -581,6 +598,100 @@ export function Step10Statutory({
             helpText="Are you a foreign national or hold foreign passport?"
           />
         </div>
+
+        {/* Form 11 — PF Opt-Out (EPF Act §17(1) — Excluded Employee) */}
+        {isPfOptOutEligibleCandidate && (
+          <div>
+            <SectionHead sub="Employees' Provident Fund Act §17(1) — Excluded Employee Option">
+              PF Opt-Out Declaration (Form 11)
+            </SectionHead>
+            {pfOptOutConsented ? (
+              <InfoBox variant="success">
+                <p className="font-bold">PF Opt-Out Consent Recorded</p>
+                <p className="text-xs mt-0.5">
+                  You elected to opt out of PF contributions under EPF Act §17(1) on{" "}
+                  {pfOptOutConsentedAt ? new Date(pfOptOutConsentedAt).toLocaleString("en-IN") : "—"}.
+                  This election is final and cannot be changed.
+                </p>
+                <p className="text-xs mt-1 text-emerald-700 font-semibold">
+                  Your CTC = Gross = Net-in-Hand (no statutory deductions will apply).
+                </p>
+              </InfoBox>
+            ) : pfOptOutElected === false ? (
+              <InfoBox variant="info">
+                <p className="font-bold">PF Deductions Will Apply</p>
+                <p className="text-xs mt-0.5">
+                  You chose to keep PF contributions. Standard PF/ESI deductions will apply per EPF Act rules.
+                </p>
+              </InfoBox>
+            ) : (
+              <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-5 space-y-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-bold text-blue-900">
+                    You may be eligible to opt out of PF under EPF Act §17(1)
+                  </p>
+                  <p className="text-xs text-blue-800 leading-relaxed">
+                    Since this is your first employment and you have never been a PF member, you can choose to opt out.
+                    If your basic salary exceeds ₹15,000/month, you qualify as an "Excluded Employee."
+                    <strong> This is an irrevocable, one-time election.</strong>
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-blue-300 bg-white p-4 space-y-3">
+                  <p className="text-xs font-black uppercase tracking-wide text-blue-700">Form 11 — Online Declaration</p>
+                  <p className="text-xs text-slate-700 leading-relaxed italic border-l-4 border-blue-300 pl-3">
+                    "I hereby declare that I am joining employment for the first time and have never been a member
+                    of the Employees' Provident Fund or the Employees' Pension Scheme. I have never held a UAN or
+                    PF account. I wish to exercise my option under Section 17(1) of the EPF &amp; MP Act, 1952 to be
+                    treated as an Excluded Employee. I understand this is a one-time irrevocable election."
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  {[
+                    { state: pfForm11Check1, set: setPfForm11Check1, label: "I confirm this is my first employment — I have never worked anywhere before." },
+                    { state: pfForm11Check2, set: setPfForm11Check2, label: "I confirm I have never held a UAN (Universal Account Number) or any PF account." },
+                    { state: pfForm11Check3, set: setPfForm11Check3, label: "I understand this PF opt-out election is irrevocable and cannot be changed after joining." },
+                  ].map(({ state, set, label }, i) => (
+                    <label key={i} className={`flex items-start gap-3 cursor-pointer p-3 rounded-xl border-2 transition-all ${state ? "bg-emerald-50 border-emerald-300" : "bg-white border-slate-200 hover:border-slate-400"}`}>
+                      <input
+                        type="checkbox"
+                        checked={state}
+                        onChange={(e) => set(e.target.checked)}
+                        className="mt-0.5 h-5 w-5 flex-shrink-0 accent-emerald-600"
+                      />
+                      <span className="text-sm text-slate-800">{label}</span>
+                    </label>
+                  ))}
+                </div>
+
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    onClick={() => onPfOptOutConsent(true)}
+                    disabled={!form11ConsentReady || pfOptOutSaving}
+                    size="lg"
+                    className="min-h-[52px] px-6 text-sm font-black rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white gap-2"
+                  >
+                    {pfOptOutSaving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Shield className="h-5 w-5" />}
+                    I Consent — Opt Out of PF
+                  </Button>
+                  <Button
+                    onClick={() => onPfOptOutConsent(false)}
+                    disabled={pfOptOutSaving}
+                    variant="outline"
+                    size="lg"
+                    className="min-h-[52px] px-6 text-sm font-semibold rounded-xl border-2"
+                  >
+                    No, Keep PF Deductions
+                  </Button>
+                </div>
+                <p className="text-xs text-slate-500">
+                  You must make a selection before submitting. This step is only available to first-time employees.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* OTP Verification */}
         <SectionHead sub="Verify your registered mobile number">Mobile OTP Verification</SectionHead>

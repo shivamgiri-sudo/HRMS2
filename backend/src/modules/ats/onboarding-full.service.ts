@@ -878,3 +878,44 @@ export async function getOnboardingBlockers(
 
   return blockers;
 }
+
+// Full Form 11 declaration text stored verbatim as audit record
+const FORM_11_DECLARATION_TEXT =
+  "I hereby declare that I am joining employment for the first time and have never been a member of the Employees' Provident Fund or the Employees' Pension Scheme under the Employees' Provident Funds & Miscellaneous Provisions Act, 1952. I have never held a UAN (Universal Account Number) or PF account number. I wish to exercise my option under Section 17(1) of the EPF & MP Act, 1952 to be treated as an Excluded Employee. I understand that this is an irrevocable one-time election and cannot be changed after joining. I confirm that my basic salary at the time of joining exceeds ₹15,000 per month. I make this declaration in good faith and understand that providing false information is an offence under applicable law.";
+
+export async function savePfOptOutConsent(token: string, elected: boolean) {
+  const tokenData = await validateOnboardingToken(token);
+  const candidateId = tokenData.candidate_id as string;
+
+  // Only allow consent if candidate's own prior answers confirm first-time employment
+  const [profileRows] = await db.execute<RowDataPacket[]>(
+    `SELECT previous_pf_member, eps_member, international_worker FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const profile = (profileRows as RowDataPacket[])[0] as any ?? {};
+
+  if (elected) {
+    // Enforce: only eligible candidates can elect opt-out
+    if (Number(profile.previous_pf_member) === 1 || Number(profile.eps_member) === 1 || Number(profile.international_worker) === 1) {
+      throw Object.assign(new Error('Not eligible for PF opt-out under EPF Act §17(1)'), { statusCode: 400 });
+    }
+  }
+
+  await db.execute(
+    `UPDATE candidate_onboarding_profile
+     SET pf_opt_out_elected = ?,
+         pf_opt_out_consent_text = ?,
+         pf_opt_out_consented_at = IF(? = 1, NOW(), NULL)
+     WHERE candidate_id = ?`,
+    [elected ? 1 : 0, elected ? FORM_11_DECLARATION_TEXT : null, elected ? 1 : 0, candidateId],
+  );
+
+  await logCandidateAction(
+    candidateId,
+    elected ? 'pf_opt_out_elected' : 'pf_opt_out_declined',
+    { elected },
+    { actorType: 'candidate' },
+  );
+
+  return { elected };
+}

@@ -236,6 +236,11 @@ export default function CandidateOnboardingFullPage() {
           status={onb.status}
           bgv={onb.bgv}
           completion={onb.completion}
+          pfOptOutElected={onb.pfOptOutElected}
+          pfOptOutSaving={onb.pfOptOutSaving}
+          pfOptOutConsented={onb.pfOptOutConsented}
+          pfOptOutConsentedAt={onb.pfOptOutConsentedAt}
+          onPfOptOutConsent={onb.pfOptOutConsent}
           onSendOtp={onb.sendOtp}
           onVerifyOtp={onb.verifyOtp}
           onSave={onb.saveStatutory}
