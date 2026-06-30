@@ -47,6 +47,18 @@ export interface LocationData {
   locationName?: string;
 }
 
+export interface MonthlySummary {
+  presentDays: number;
+  halfDays: number;
+  absentDays: number;
+  leaveDays: number;
+  holidayDays: number;
+  weekOffDays: number;
+  totalLwp: number;
+  lateMarks: number;
+  totalWorkingDays: number;
+}
+
 export type WorkMode = 'wfh' | 'wfo';
 
 async function fetchAttendancePages(params: URLSearchParams): Promise<AttendanceRecord[]> {
@@ -292,6 +304,93 @@ export function useAttendanceReport(month: Date) {
       });
 
       return Array.from(employeeMap.values());
+    },
+  });
+}
+
+export function useMyAttendanceSummary(employeeId?: string, month?: Date) {
+  const monthStr = format(month ?? new Date(), 'yyyy-MM');
+  return useQuery({
+    queryKey: ['attendance-my-summary', employeeId, monthStr],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: MonthlySummary }>(
+        `/api/wfm/attendance/summary/${employeeId}/${monthStr}`
+      );
+      if (!res.success) throw new Error('Failed to fetch summary');
+      return res.data;
+    },
+    enabled: !!employeeId,
+    staleTime: 60_000,
+  });
+}
+
+export interface RegularizationInput {
+  sessionDate: string;           // 'YYYY-MM-DD'
+  reasonCode?: string;
+  reason: string;
+  requestedStatus?: 'present' | 'half_day' | 'absent';
+  disputeType?: string;
+  newPunchIn?: string;           // 'HH:mm'
+  newPunchOut?: string;          // 'HH:mm'
+}
+
+export function useSubmitRegularization() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: RegularizationInput) => {
+      const res = await hrmsApi.post<{ success: boolean; data: any; message?: string }>(
+        '/api/wfm/regularizations',
+        {
+          sessionDate: input.sessionDate,
+          reason_code: input.reasonCode,
+          reason: input.reason,
+          requested_status: input.requestedStatus,
+          dispute_type: input.disputeType,
+          new_punch_in: input.newPunchIn,
+          new_punch_out: input.newPunchOut,
+        }
+      );
+      if (!res.success) throw new Error((res as any).message || 'Failed to submit regularization');
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attendance-calendar'] });
+      queryClient.invalidateQueries({ queryKey: ['attendance-ncosec'] });
+      queryClient.invalidateQueries({ queryKey: ['attendance-my-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['day-detail'] });
+    },
+  });
+}
+
+export interface LeaveRequestInput {
+  leaveTypeId: string;
+  fromDate: string;      // 'YYYY-MM-DD'
+  toDate: string;        // 'YYYY-MM-DD'
+  totalDays: number;     // 0.5 for half-day, 1 for full day
+  reason?: string;
+}
+
+export function useSubmitLeaveRequest() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: LeaveRequestInput) => {
+      const res = await hrmsApi.post<{ success: boolean; data: any; message?: string }>(
+        '/api/leave/requests',
+        {
+          leaveTypeId: input.leaveTypeId,
+          fromDate: input.fromDate,
+          toDate: input.toDate,
+          totalDays: input.totalDays,
+          reason: input.reason,
+        }
+      );
+      if (!res.success) throw new Error((res as any).message || 'Failed to submit leave request');
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attendance-calendar'] });
+      queryClient.invalidateQueries({ queryKey: ['attendance-ncosec'] });
+      queryClient.invalidateQueries({ queryKey: ['attendance-my-summary'] });
     },
   });
 }
