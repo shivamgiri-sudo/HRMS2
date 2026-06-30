@@ -13,6 +13,8 @@ import type { KpiMetric } from "@/components/dashboard";
 import type { InsightItem } from "@/components/dashboard";
 import { useUserRole } from "@/hooks/useUserRole";
 import { Button } from "@/components/ui/button";
+import { useExecutiveQualitySummary } from "../../hooks/useExecutiveQuality";
+import { useOrgKpiSummary } from "../../hooks/useOrgKpiSummary";
 
 const DASHBOARD_CODE = "CEO_DASHBOARD";
 
@@ -49,6 +51,9 @@ function formatInr(amount: number | undefined): string {
 
 export default function CeoDashboard() {
   const { data: roleData, isLoading: roleLoading } = useUserRole();
+
+  const { data: execQuality } = useExecutiveQualitySummary(30);
+  const { data: orgKpi } = useOrgKpiSummary();
 
   const [summary, setSummary] = useState<CeoSummary | null>(null);
   const [insights, setInsights] = useState<InsightApiResponse | null>(null);
@@ -123,8 +128,9 @@ export default function CeoDashboard() {
 
   // Role check
   if (!roleLoading) {
-    const roleKeys = roleData?.roleKeys ?? [];
-    const allowed = roleKeys.includes("super_admin") || roleKeys.includes("ceo");
+    const allowed = roleData?.roleKeys?.some((r: string) =>
+      ["super_admin", "ceo", "coo"].includes(r)
+    ) ?? false;
     if (!allowed) {
       return (
         <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
@@ -132,7 +138,7 @@ export default function CeoDashboard() {
             <ShieldX className="mx-auto h-12 w-12 text-red-400 mb-4" />
             <h2 className="text-lg font-semibold text-slate-900 mb-1">Access Restricted</h2>
             <p className="text-sm text-slate-500 mb-4">
-              This dashboard is only accessible to CEO and Super Admin roles.
+              This dashboard is only accessible to CEO, COO and Super Admin roles.
             </p>
             <Button asChild variant="outline">
               <Link to="/dashboard">Go to Dashboard</Link>
@@ -297,6 +303,113 @@ export default function CeoDashboard() {
             <WorkInboxPanel maxItems={8} />
           </div>
         </div>
+
+        {/* Quality Overview Panel */}
+        {execQuality && execQuality.process_performance && execQuality.process_performance.length > 0 && (
+          <div>
+            <h2 className="text-base font-semibold text-gray-700 mb-3">Quality Overview (Last 30 Days)</h2>
+
+            {/* Summary cards */}
+            {execQuality.metrics && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <div className="bg-white rounded-xl p-4 shadow-sm border">
+                  <p className="text-xs text-gray-500">Org Quality Score</p>
+                  <p className="text-2xl font-bold text-blue-600">
+                    {execQuality.metrics.overall_quality_score ?? "—"}%
+                  </p>
+                </div>
+                <div className="bg-white rounded-xl p-4 shadow-sm border">
+                  <p className="text-xs text-gray-500">Quality vs Target</p>
+                  <p className={`text-2xl font-bold ${execQuality.metrics.gap_pct >= 0 ? "text-green-600" : "text-red-500"}`}>
+                    {execQuality.metrics.gap_pct >= 0 ? "+" : ""}{execQuality.metrics.gap_pct ?? "—"}%
+                  </p>
+                </div>
+                <div className="bg-white rounded-xl p-4 shadow-sm border">
+                  <p className="text-xs text-gray-500">Risk Agents</p>
+                  <p className="text-2xl font-bold text-amber-500">
+                    {execQuality.risk_summary
+                      ? (execQuality.risk_summary.critical_agents_count ?? 0) + (execQuality.risk_summary.at_risk_agents_count ?? 0)
+                      : "—"}
+                  </p>
+                </div>
+                <div className="bg-white rounded-xl p-4 shadow-sm border">
+                  <p className="text-xs text-gray-500">Overall Status</p>
+                  <p className={`text-lg font-bold ${
+                    execQuality.metrics.status === "On Track" ? "text-green-600" :
+                    execQuality.metrics.status === "At Risk"  ? "text-amber-500" :
+                                                                "text-red-600"
+                  }`}>
+                    {execQuality.metrics.status ?? "—"}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Process Scorecard Table */}
+            <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+              <div className="px-4 py-3 border-b">
+                <p className="text-sm font-semibold text-gray-700">Process Quality Scorecard</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Process</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">Avg Score</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">Agents</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">Calls</th>
+                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {execQuality.process_performance.map((p, i) => (
+                      <tr key={p.process || i} className="hover:bg-gray-50">
+                        <td className="px-4 py-2 font-medium text-gray-800">{p.process || "—"}</td>
+                        <td className="px-4 py-2 text-right font-semibold text-gray-800">{p.avg_quality}%</td>
+                        <td className="px-4 py-2 text-right text-gray-600">{p.agent_count}</td>
+                        <td className="px-4 py-2 text-right text-gray-600">{p.calls_handled?.toLocaleString()}</td>
+                        <td className="px-4 py-2 text-center">
+                          <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
+                            p.status === "On Track" ? "bg-green-100 text-green-700" :
+                            p.status === "At Risk"  ? "bg-amber-100 text-amber-700" :
+                                                      "bg-red-100 text-red-700"
+                          }`}>
+                            {p.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* KPI Overview Panel */}
+        {orgKpi && (
+          <div>
+            <h2 className="text-base font-semibold text-gray-700 mb-3">
+              KPI Performance — {orgKpi.periodLabel}
+            </h2>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div className="bg-white rounded-xl p-4 shadow-sm border">
+                <p className="text-xs text-gray-500">Org Avg KPI Score</p>
+                <p className="text-2xl font-bold text-blue-600">{orgKpi.orgAvgScore}%</p>
+              </div>
+              <div className="bg-white rounded-xl p-4 shadow-sm border">
+                <p className="text-xs text-gray-500">Best Process</p>
+                <p className="text-lg font-bold text-green-600">{orgKpi.topProcess?.processName ?? "—"}</p>
+                <p className="text-sm text-gray-500">{orgKpi.topProcess?.avgScore ?? ""}%</p>
+              </div>
+              <div className="bg-white rounded-xl p-4 shadow-sm border">
+                <p className="text-xs text-gray-500">Needs Attention</p>
+                <p className="text-lg font-bold text-red-500">{orgKpi.bottomProcess?.processName ?? "—"}</p>
+                <p className="text-sm text-gray-500">{orgKpi.bottomProcess?.avgScore ?? ""}%</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <DashboardDrilldownDrawer
