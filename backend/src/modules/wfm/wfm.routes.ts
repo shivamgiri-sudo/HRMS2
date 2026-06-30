@@ -954,8 +954,11 @@ wfmRouter.get(
           ORDER BY cps.punch_time ASC`,
         [employeeId, date, date]
       ) as any[];
-      punchRows = pr as any[];
-    } catch { /* cosec_punch_sync table may not exist in this environment */ }
+      punchRows = pr;
+    } catch (err: any) {
+      // ER_NO_SUCH_TABLE (1146) — table not deployed in this environment, skip gracefully
+      if (err?.errno !== 1146) throw err;
+    }
 
     // cosec_daily_agg may not exist — query it separately with fallback to null
     let cosecAgg: any = null;
@@ -971,8 +974,9 @@ wfmRouter.get(
         [employeeId, date]
       ) as any[];
       cosecAgg = (cosecRows as any[])[0] ?? null;
-    } catch {
-      // Table doesn't exist in this environment — return null safely
+    } catch (err: any) {
+      // ER_NO_SUCH_TABLE (1146) — table not deployed in this environment, return null safely
+      if (err?.errno !== 1146) throw err;
     }
 
     const adrRaw = (attRows as any[])[0] ?? null;
