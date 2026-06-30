@@ -313,6 +313,7 @@ export function useMyAttendanceSummary(employeeId?: string, month?: Date) {
   return useQuery({
     queryKey: ['attendance-my-summary', employeeId, monthStr],
     queryFn: async () => {
+      if (!employeeId) throw new Error('employeeId is required');
       const res = await hrmsApi.get<{ success: boolean; data: MonthlySummary }>(
         `/api/wfm/attendance/summary/${employeeId}/${monthStr}`
       );
@@ -391,6 +392,7 @@ export function useSubmitLeaveRequest() {
       queryClient.invalidateQueries({ queryKey: ['attendance-calendar'] });
       queryClient.invalidateQueries({ queryKey: ['attendance-ncosec'] });
       queryClient.invalidateQueries({ queryKey: ['attendance-my-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['leave'] });
     },
   });
 }
