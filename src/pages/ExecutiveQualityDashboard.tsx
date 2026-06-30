@@ -7,6 +7,7 @@
  */
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useUserRole } from "@/hooks/useUserRole";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useQuery } from "@tanstack/react-query";
@@ -46,15 +47,23 @@ function statusBadge(status: string): string {
   return "bg-red-100 text-red-700 border-red-200";
 }
 
+const ALLOWED_ROLES = ["super_admin", "admin", "ceo", "coo"] as const;
+
 export default function ExecutiveQualityDashboard() {
   const { user } = useAuth();
   const [daysBack, setDaysBack] = useState<7 | 30>(30);
+
+  const { data: roleData, isLoading: roleLoading } = useUserRole();
+  const isAllowed =
+    roleData?.roleKeys?.some((r: string) =>
+      (ALLOWED_ROLES as readonly string[]).includes(r)
+    ) ?? false;
 
   const { data, isLoading, isError, error } = useQuery<ExecutiveQualityData>({
     queryKey: ["executive-quality-summary", daysBack],
     queryFn: () =>
       hrmsApi.get(`/api/executive/quality-summary?daysBack=${daysBack}`).then((r) => r.data),
-    enabled: !!user,
+    enabled: !!user && isAllowed,
   });
 
   // Auth gate
@@ -63,6 +72,28 @@ export default function ExecutiveQualityDashboard() {
       <DashboardLayout>
         <div className="flex items-center justify-center min-h-screen">
           <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  // Role loading
+  if (roleLoading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center min-h-screen">
+          <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  // Role guard — restricted to super_admin, admin, ceo, coo
+  if (!isAllowed) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-64">
+          <p className="text-gray-500 text-sm">You don&apos;t have access to this view.</p>
         </div>
       </DashboardLayout>
     );
@@ -312,9 +343,9 @@ export default function ExecutiveQualityDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {process_scorecard.map((row) => (
-                  <tr key={row.process} className="border-b border-slate-50 hover:bg-slate-50">
-                    <td className="py-2 pr-6 text-slate-700">{row.process}</td>
+                {process_scorecard.map((row, idx) => (
+                  <tr key={row.process ?? idx} className="border-b border-slate-50 hover:bg-slate-50">
+                    <td className="py-2 pr-6 text-slate-700">{row.process || "—"}</td>
                     <td className={`py-2 pr-6 text-right ${qualityColor(row.avg_quality)}`}>
                       {row.avg_quality.toFixed(1)}%
                     </td>
