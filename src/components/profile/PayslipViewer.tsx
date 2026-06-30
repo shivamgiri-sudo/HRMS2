@@ -21,7 +21,6 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
 import {
   Collapsible,
   CollapsibleContent,
@@ -519,6 +518,12 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
             <CardHeader className="pb-3">
               <CardTitle className="text-lg font-black text-slate-950">Current salary breakdown</CardTitle>
               <CardDescription>Earnings and deductions from your latest processed statement</CardDescription>
+              {latestRecord?.designation_name && (
+                <p className="mt-1 text-xs text-slate-500">
+                  <span className="font-semibold">Designation:</span> {latestRecord.designation_name}
+                  {latestRecord.dept_name ? ` · ${latestRecord.dept_name}` : ""}
+                </p>
+              )}
             </CardHeader>
             <CardContent>
               <div className="grid gap-6 md:grid-cols-2">
@@ -528,36 +533,41 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                     <Plus className="h-4 w-4" />
                     <span className="font-semibold">Earnings</span>
                   </div>
-                  <div className="space-y-2 rounded-2xl border border-emerald-100 bg-emerald-50/50 p-4">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Basic Salary</span>
-                      <span className="font-medium">{renderSensitive(formatCurrency(salaryStructure.basic_salary))}</span>
-                    </div>
-                    {allowanceBreakdown.map((item) => (
-                      <div key={item.label} className="flex justify-between">
-                        <span className="text-muted-foreground">{item.label}</span>
-                        <span className="font-medium text-green-600">
-                          {renderSensitive(`+${formatCurrency(item.amount)}`)}
-                        </span>
-                      </div>
-                    ))}
-                    <Separator />
-                    <div className="flex justify-between font-semibold">
-                      <span>Gross Salary</span>
-                      <span>
-                        {renderSensitive(
-                          payrollRecords && payrollRecords.length > 0
-                            ? formatCurrency(Number(payrollRecords[0].gross_salary ?? 0))
-                            : formatCurrency(
-                                salaryStructure.basic_salary +
-                                  (salaryStructure.hra || 0) +
-                                  (salaryStructure.transport_allowance || 0) +
-                                  (salaryStructure.medical_allowance || 0) +
-                                  (salaryStructure.other_allowances || 0)
-                              )
-                        )}
-                      </span>
-                    </div>
+                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50/50 p-4">
+                    <table className="w-full text-sm">
+                      <tbody>
+                        <tr className="border-b border-emerald-100">
+                          <td className="py-1.5 text-muted-foreground">Basic Salary</td>
+                          <td className="py-1.5 text-right font-mono font-semibold">
+                            {renderSensitive(formatCurrency(salaryStructure.basic_salary))}
+                          </td>
+                        </tr>
+                        {allowanceBreakdown.map((item) => (
+                          <tr key={item.label} className="border-b border-emerald-100">
+                            <td className="py-1.5 text-muted-foreground">{item.label}</td>
+                            <td className="py-1.5 text-right font-mono font-semibold text-green-600">
+                              {renderSensitive(`+${formatCurrency(item.amount)}`)}
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className="font-semibold">
+                          <td className="py-1.5">Gross Salary</td>
+                          <td className="py-1.5 text-right font-mono">
+                            {renderSensitive(
+                              payrollRecords && payrollRecords.length > 0
+                                ? formatCurrency(Number(payrollRecords[0].gross_salary ?? 0))
+                                : formatCurrency(
+                                    salaryStructure.basic_salary +
+                                      (salaryStructure.hra || 0) +
+                                      (salaryStructure.transport_allowance || 0) +
+                                      (salaryStructure.medical_allowance || 0) +
+                                      (salaryStructure.other_allowances || 0)
+                                  )
+                            )}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
 
@@ -567,27 +577,26 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                     <Minus className="h-4 w-4" />
                     <span className="font-semibold">Deductions</span>
                   </div>
-                  <div className="space-y-2 rounded-2xl border border-rose-100 bg-rose-50/50 p-4">
+                  <div className="rounded-2xl border border-rose-100 bg-rose-50/50 p-4">
                     {deductionBreakdown.length > 0 ? (
-                      <>
-                        {deductionBreakdown.map((item) => (
-                          <div key={item.label} className="flex justify-between">
-                            <span className="text-muted-foreground">{item.label}</span>
-                            <span className="font-medium text-red-600">
-                              {renderSensitive(`-${formatCurrency(item.amount)}`)}
-                            </span>
-                          </div>
-                        ))}
-                        <Separator />
-                        <div className="flex justify-between font-semibold">
-                          <span>Total Deductions</span>
-                          <span className="text-red-600">
-                            {renderSensitive(
-                              `-${formatCurrency(Number(payrollRecords?.[0]?.total_deductions ?? 0))}`
-                            )}
-                          </span>
-                        </div>
-                      </>
+                      <table className="w-full text-sm">
+                        <tbody>
+                          {deductionBreakdown.map((item) => (
+                            <tr key={item.label} className="border-b border-rose-100">
+                              <td className="py-1.5 text-muted-foreground">{item.label}</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-red-600">
+                                {renderSensitive(`-${formatCurrency(item.amount)}`)}
+                              </td>
+                            </tr>
+                          ))}
+                          <tr className="font-semibold">
+                            <td className="py-1.5">Total Deductions</td>
+                            <td className="py-1.5 text-right font-mono text-red-600">
+                              {renderSensitive(`-${formatCurrency(Number(payrollRecords?.[0]?.total_deductions ?? 0))}`)}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
                     ) : (
                       <p className="text-muted-foreground text-sm">No deductions configured</p>
                     )}
@@ -700,98 +709,76 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                                   <p className="font-medium text-green-600 flex items-center gap-1">
                                     <Plus className="h-3 w-3" /> Earnings Breakdown
                                   </p>
-                                  <div className="space-y-1 text-sm">
-                                    {record.earnings && record.earnings.length > 0 ? (
-                                      record.earnings.map((earning) => (
-                                        <div key={earning.component_code} className="flex justify-between">
-                                          <span className="text-muted-foreground">{earning.component_name}</span>
-                                          <span className="text-green-600">
-                                            {renderSensitive(`+${formatCurrency(Number(earning.amount))}`)}
-                                          </span>
-                                        </div>
-                                      ))
-                                    ) : (
-                                      <>
-                                        <div className="flex justify-between">
-                                          <span className="text-muted-foreground">Basic Salary</span>
-                                          <span>
-                                            {renderSensitive(formatCurrency(Number(record.basic ?? record.basic_salary ?? 0)))}
-                                          </span>
-                                        </div>
-                                        {Number(record.hra ?? 0) > 0 && (
-                                          <div className="flex justify-between">
-                                            <span className="text-muted-foreground">HRA</span>
-                                            <span className="text-green-600">
-                                              {renderSensitive(`+${formatCurrency(Number(record.hra))}`)}
-                                            </span>
-                                          </div>
-                                        )}
-                                        {Number(record.special_allowance ?? 0) > 0 && (
-                                          <div className="flex justify-between">
-                                            <span className="text-muted-foreground">Special Allowance</span>
-                                            <span className="text-green-600">
-                                              {renderSensitive(`+${formatCurrency(Number(record.special_allowance))}`)}
-                                            </span>
-                                          </div>
-                                        )}
-                                      </>
-                                    )}
-                                  </div>
+                                  <table className="w-full text-sm">
+                                    <tbody>
+                                      {record.earnings && record.earnings.length > 0 ? (
+                                        record.earnings.map((earning) => (
+                                          <tr key={earning.component_code} className="border-b last:border-0">
+                                            <td className="py-1 text-muted-foreground">{earning.component_name}</td>
+                                            <td className="py-1 text-right font-mono font-semibold text-green-600">
+                                              {renderSensitive(`+${formatCurrency(Number(earning.amount))}`)}
+                                            </td>
+                                          </tr>
+                                        ))
+                                      ) : (
+                                        <>
+                                          <tr className="border-b">
+                                            <td className="py-1 text-muted-foreground">Basic Salary</td>
+                                            <td className="py-1 text-right font-mono">{renderSensitive(formatCurrency(Number(record.basic ?? record.basic_salary ?? 0)))}</td>
+                                          </tr>
+                                          {Number(record.hra ?? 0) > 0 && (
+                                            <tr className="border-b">
+                                              <td className="py-1 text-muted-foreground">HRA</td>
+                                              <td className="py-1 text-right font-mono text-green-600">{renderSensitive(`+${formatCurrency(Number(record.hra))}`)}</td>
+                                            </tr>
+                                          )}
+                                          {Number(record.special_allowance ?? 0) > 0 && (
+                                            <tr>
+                                              <td className="py-1 text-muted-foreground">Special Allowance</td>
+                                              <td className="py-1 text-right font-mono text-green-600">{renderSensitive(`+${formatCurrency(Number(record.special_allowance))}`)}</td>
+                                            </tr>
+                                          )}
+                                        </>
+                                      )}
+                                    </tbody>
+                                  </table>
                                 </div>
                                 <div className="space-y-2">
                                   <p className="font-medium text-red-600 flex items-center gap-1">
                                     <Minus className="h-3 w-3" /> Deductions Breakdown
                                   </p>
-                                  <div className="space-y-1 text-sm">
-                                    {record.deductions && record.deductions.length > 0 ? (
-                                      record.deductions.map((deduction) => (
-                                        <div key={deduction.component_code} className="flex justify-between">
-                                          <span className="text-muted-foreground">{deduction.component_name}</span>
-                                          <span className="text-red-600">
-                                            {renderSensitive(`-${formatCurrency(Number(deduction.amount))}`)}
-                                          </span>
-                                        </div>
-                                      ))
-                                    ) : (
-                                      <>
-                                        {Number(record.pf_employee ?? 0) > 0 && (
-                                          <div className="flex justify-between">
-                                            <span className="text-muted-foreground">PF (Employee)</span>
-                                            <span className="text-red-600">
-                                              {renderSensitive(`-${formatCurrency(Number(record.pf_employee))}`)}
-                                            </span>
-                                          </div>
-                                        )}
-                                        {Number(record.esic_employee ?? 0) > 0 && (
-                                          <div className="flex justify-between">
-                                            <span className="text-muted-foreground">ESIC</span>
-                                            <span className="text-red-600">
-                                              {renderSensitive(`-${formatCurrency(Number(record.esic_employee))}`)}
-                                            </span>
-                                          </div>
-                                        )}
-                                        {Number(record.professional_tax ?? 0) > 0 && (
-                                          <div className="flex justify-between">
-                                            <span className="text-muted-foreground">Professional Tax</span>
-                                            <span className="text-red-600">
-                                              {renderSensitive(`-${formatCurrency(Number(record.professional_tax))}`)}
-                                            </span>
-                                          </div>
-                                        )}
-                                        {Number(record.tds ?? 0) > 0 && (
-                                          <div className="flex justify-between">
-                                            <span className="text-muted-foreground">TDS</span>
-                                            <span className="text-red-600">
-                                              {renderSensitive(`-${formatCurrency(Number(record.tds))}`)}
-                                            </span>
-                                          </div>
-                                        )}
-                                        {Number(record.total_deductions) === 0 && (
-                                          <p className="text-muted-foreground text-sm">No deductions</p>
-                                        )}
-                                      </>
-                                    )}
-                                  </div>
+                                  <table className="w-full text-sm">
+                                    <tbody>
+                                      {record.deductions && record.deductions.length > 0 ? (
+                                        record.deductions.map((deduction) => (
+                                          <tr key={deduction.component_code} className="border-b last:border-0">
+                                            <td className="py-1 text-muted-foreground">{deduction.component_name}</td>
+                                            <td className="py-1 text-right font-mono font-semibold text-red-600">
+                                              {renderSensitive(`-${formatCurrency(Number(deduction.amount))}`)}
+                                            </td>
+                                          </tr>
+                                        ))
+                                      ) : (
+                                        <>
+                                          {Number(record.pf_employee ?? 0) > 0 && (
+                                            <tr className="border-b"><td className="py-1 text-muted-foreground">PF (Employee)</td><td className="py-1 text-right font-mono text-red-600">{renderSensitive(`-${formatCurrency(Number(record.pf_employee))}`)}</td></tr>
+                                          )}
+                                          {Number(record.esic_employee ?? 0) > 0 && (
+                                            <tr className="border-b"><td className="py-1 text-muted-foreground">ESIC</td><td className="py-1 text-right font-mono text-red-600">{renderSensitive(`-${formatCurrency(Number(record.esic_employee))}`)}</td></tr>
+                                          )}
+                                          {Number(record.professional_tax ?? 0) > 0 && (
+                                            <tr className="border-b"><td className="py-1 text-muted-foreground">Professional Tax</td><td className="py-1 text-right font-mono text-red-600">{renderSensitive(`-${formatCurrency(Number(record.professional_tax))}`)}</td></tr>
+                                          )}
+                                          {Number(record.tds ?? 0) > 0 && (
+                                            <tr><td className="py-1 text-muted-foreground">TDS</td><td className="py-1 text-right font-mono text-red-600">{renderSensitive(`-${formatCurrency(Number(record.tds))}`)}</td></tr>
+                                          )}
+                                          {Number(record.total_deductions) === 0 && (
+                                            <tr><td colSpan={2} className="py-1 text-muted-foreground">No deductions</td></tr>
+                                          )}
+                                        </>
+                                      )}
+                                    </tbody>
+                                  </table>
                                 </div>
                               </div>
                             </TableCell>
