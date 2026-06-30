@@ -6,47 +6,53 @@ import { QualityExecutiveService } from './quality-executive.service.js';
 import { logger } from '../../logger.js';
 
 const router = Router();
+router.use(requireAuth);
 
 // Initialize service
 const service = new QualityExecutiveService(db);
 
+const EXEC_ROLES = ['super_admin', 'admin', 'ceo', 'coo'] as const;
+
 /**
  * GET /api/executive/quality-summary
  * Returns organization-wide quality summary with KPIs, top/bottom performers, and risks
- * Auth: requireRole(['CEO', 'ADMIN', 'super_admin'])
- * Query params: daysBack (default 30)
+ * Auth: requireRole(['super_admin', 'admin', 'ceo', 'coo'])
+ * Query params: daysBack (default 30, max 365)
  */
 router.get(
   '/quality-summary',
-  requireAuth,
-  requireRole('ceo', 'super_admin', 'admin'),
+  requireRole(...EXEC_ROLES),
   async (req: AuthenticatedRequest, res: Response) => {
+    const daysBack = parseInt((req.query.daysBack as string) ?? '30', 10);
+    const safeDays = isNaN(daysBack) || daysBack < 1 ? 30 : Math.min(daysBack, 365);
     try {
-      const userId = req.authUser?.id;
-      if (!userId) {
-        return res.status(403).json({ success: false, error: 'Unauthorized' });
-      }
+      const data = await service.getExecutiveSummary(safeDays);
+      return res.json({ success: true, data });
+    } catch (err: any) {
+      logger.error('Error fetching executive quality summary:', err);
+      return res.status(500).json({ success: false, error: 'Failed to load executive quality summary' });
+    }
+  }
+);
 
-      const daysBack = parseInt(req.query.daysBack as string) || 30;
-
-      // Validate inputs
-      if (daysBack < 1 || daysBack > 365) {
-        return res.status(400).json({ success: false, error: 'daysBack must be between 1 and 365' });
-      }
-
-      const result = await service.getExecutiveSummary(daysBack);
-
-      res.json({
-        success: true,
-        data: {
-          ...result,
-          last_updated: new Date(),
-          filter: { daysBack }
-        }
-      });
-    } catch (error) {
-      logger.error('Error fetching executive quality summary:', error);
-      res.status(500).json({ success: false, error: 'Internal server error' });
+/**
+ * GET /api/executive/quality-summary/process-breakdown
+ * Returns process-level quality scorecard
+ * Auth: requireRole(['super_admin', 'admin', 'ceo', 'coo'])
+ * Query params: daysBack (default 30, max 365)
+ */
+router.get(
+  '/quality-summary/process-breakdown',
+  requireRole(...EXEC_ROLES),
+  async (req: AuthenticatedRequest, res: Response) => {
+    const daysBack = parseInt((req.query.daysBack as string) ?? '30', 10);
+    const safeDays = isNaN(daysBack) || daysBack < 1 ? 30 : Math.min(daysBack, 365);
+    try {
+      const full = await service.getExecutiveSummary(safeDays);
+      return res.json({ success: true, data: full.process_performance ?? [] });
+    } catch (err: any) {
+      logger.error('Error fetching quality process breakdown:', err);
+      return res.status(500).json({ success: false, error: 'Failed to load process breakdown' });
     }
   }
 );
