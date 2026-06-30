@@ -1,9 +1,9 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Search, Star, Clock, Download, Play, Loader2, ChevronRight, ChevronDown,
+  Search, Star, Clock, Download, Play, Loader2, ChevronDown,
   BarChart3, Users, CalendarDays, CreditCard, FileCheck, UserPlus, TrendingDown,
-  Award, Layers, Package, Link2, HelpCircle, Globe, X,
+  Award, Layers, Package, Link2, HelpCircle, Globe, X, Filter, CheckCircle2,
 } from "lucide-react";
 import { hrmsApi } from "../lib/hrmsApi";
 
@@ -214,59 +214,78 @@ const CATALOG: ReportDef[] = [
   { code: "productivity-shrinkage-impact", name: "Shrinkage Impact on Productivity", category: "Productivity", subcategory: "Organisation", filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, PROCESS_FILTER, { key: "costCentreId", label: "Cost Centre", type: "text" }] },
 ];
 
-// ─── Category metadata ──────────────────────────────────────────────────────
+// ─── Category Gradients ────────────────────────────────────────────────────────
 
-const CATEGORY_META: Record<string, { icon: React.ReactNode; color: string; bg: string }> = {
-  "HR & Workforce":        { icon: <Users size={14} />,        color: "text-blue-700",   bg: "bg-blue-50" },
-  "Attendance":            { icon: <CalendarDays size={14} />, color: "text-violet-700", bg: "bg-violet-50" },
-  "Leave":                 { icon: <Clock size={14} />,        color: "text-green-700",  bg: "bg-green-50" },
-  "Payroll":               { icon: <CreditCard size={14} />,   color: "text-amber-700",  bg: "bg-amber-50" },
-  "Statutory & Compliance":{ icon: <FileCheck size={14} />,    color: "text-red-700",    bg: "bg-red-50" },
-  "Recruitment & ATS":     { icon: <UserPlus size={14} />,     color: "text-cyan-700",   bg: "bg-cyan-50" },
-  "Exit & Attrition":      { icon: <TrendingDown size={14} />, color: "text-orange-700", bg: "bg-orange-50" },
-  "Performance & KPI":     { icon: <Award size={14} />,        color: "text-pink-700",   bg: "bg-pink-50" },
-  "WFM & Roster":          { icon: <Layers size={14} />,       color: "text-teal-700",   bg: "bg-teal-50" },
-  "Assets & Documents":    { icon: <Package size={14} />,      color: "text-lime-700",   bg: "bg-lime-50" },
-  "Integration & Audit":   { icon: <Link2 size={14} />,        color: "text-slate-700",  bg: "bg-slate-50" },
-  "Helpdesk & Grievance":  { icon: <HelpCircle size={14} />,   color: "text-rose-700",   bg: "bg-rose-50" },
-  "Client Portal":         { icon: <Globe size={14} />,        color: "text-indigo-700", bg: "bg-indigo-50" },
-  "Productivity":          { icon: <BarChart3 size={14} />,     color: "text-emerald-700",bg: "bg-emerald-50" },
+const CATEGORY_GRADIENTS: Record<string, { from: string; to: string; icon: typeof Users }> = {
+  "HR & Workforce": { from: "from-blue-500", to: "to-indigo-600", icon: Users },
+  "Attendance": { from: "from-violet-500", to: "to-purple-600", icon: CalendarDays },
+  "Leave": { from: "from-emerald-500", to: "to-teal-600", icon: Clock },
+  "Payroll": { from: "from-amber-500", to: "to-orange-600", icon: CreditCard },
+  "Statutory & Compliance": { from: "from-red-500", to: "to-rose-600", icon: FileCheck },
+  "Recruitment & ATS": { from: "from-cyan-500", to: "to-sky-600", icon: UserPlus },
+  "Exit & Attrition": { from: "from-slate-500", to: "to-gray-600", icon: TrendingDown },
+  "Performance & KPI": { from: "from-pink-500", to: "to-rose-600", icon: Award },
+  "WFM & Roster": { from: "from-teal-500", to: "to-cyan-600", icon: Layers },
+  "Assets & Documents": { from: "from-lime-500", to: "to-green-600", icon: Package },
+  "Integration & Audit": { from: "from-indigo-500", to: "to-blue-600", icon: Link2 },
+  "Helpdesk & Grievance": { from: "from-fuchsia-500", to: "to-pink-600", icon: HelpCircle },
+  "Client Portal": { from: "from-sky-500", to: "to-indigo-600", icon: Globe },
+  "Productivity": { from: "from-orange-500", to: "to-red-600", icon: BarChart3 },
 };
 
-const CATEGORY_ORDER = Object.keys(CATEGORY_META);
+const CATEGORY_ORDER = Object.keys(CATEGORY_GRADIENTS);
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────────
 
 const LS_RECENT = "rpt_recent_v1";
-const LS_FAVS   = "rpt_favs_v1";
+const LS_FAVS = "rpt_favs_v1";
 
 function loadList(key: string): string[] {
   try { return JSON.parse(localStorage.getItem(key) ?? "[]"); } catch { return []; }
 }
 function saveList(key: string, val: string[]) {
-  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* noop */ }
 }
 
-function downloadCsv(rows: Record<string, unknown>[], filename: string) {
+// ─── Count-Up Hook ──────────────────────────────────────────────────────────────
+
+function useCountUp(target: number, duration = 1200) {
+  const [value, setValue] = useState(0);
+  const prevTarget = useRef(0);
+  useEffect(() => {
+    if (target === prevTarget.current) return;
+    prevTarget.current = target;
+    let start = 0;
+    const step = (ts: number) => {
+      if (!start) start = ts;
+      const progress = Math.min((ts - start) / duration, 1);
+      setValue(Math.floor(progress * target));
+      if (progress < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }, [target, duration]);
+  return value;
+}
+
+// ─── XLSX Export ─────────────────────────────────────────────────────────────────
+
+async function downloadXlsx(rows: Record<string, unknown>[], filename: string) {
   if (!rows.length) return;
-  const cols = Object.keys(rows[0]);
-  const header = cols.join(",");
-  const body = rows.map(r => cols.map(c => JSON.stringify(r[c] ?? "")).join(",")).join("\n");
-  const blob = new Blob([header + "\n" + body], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
+  const XLSX = await import("xlsx");
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Report");
+  XLSX.writeFile(wb, filename.endsWith(".xlsx") ? filename : `${filename}.xlsx`);
 }
 
-// ─── Filter Input ───────────────────────────────────────────────────────────
+// ─── Filter Input ───────────────────────────────────────────────────────────────
 
 function FilterInput({ def, value, onChange }: {
   def: FilterDef;
   value: string;
   onChange: (v: string) => void;
 }) {
-  const base = "h-8 text-sm border border-gray-200 rounded-lg px-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white w-full";
+  const base = "h-9 text-sm border border-gray-200 rounded-lg px-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white w-full";
 
   if (def.type === "select" && def.options) {
     return (
@@ -283,73 +302,7 @@ function FilterInput({ def, value, onChange }: {
   return <input className={base} type="text" placeholder={def.placeholder ?? def.label} value={value} onChange={e => onChange(e.target.value)} />;
 }
 
-// ─── Sidebar section ────────────────────────────────────────────────────────
-
-function SidebarCategory({
-  category, reports, selectedCode, onSelect, isOpen, onToggle, searchQ, favCodes,
-}: {
-  category: string;
-  reports: ReportDef[];
-  selectedCode: string;
-  onSelect: (r: ReportDef) => void;
-  isOpen: boolean;
-  onToggle: () => void;
-  searchQ: string;
-  favCodes: Set<string>;
-}) {
-  const meta = CATEGORY_META[category] ?? { icon: <BarChart3 size={14} />, color: "text-gray-700", bg: "bg-gray-50" };
-  const visible = searchQ
-    ? reports.filter(r => r.name.toLowerCase().includes(searchQ.toLowerCase()))
-    : reports;
-  if (searchQ && visible.length === 0) return null;
-
-  const subcats = Array.from(new Set(visible.map(r => r.subcategory)));
-
-  return (
-    <div className="border-b border-gray-100 last:border-0">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-center justify-between px-3 py-2.5 text-left hover:bg-gray-50 transition-colors"
-      >
-        <span className="flex items-center gap-2">
-          <span className={`flex items-center justify-center w-5 h-5 rounded ${meta.bg} ${meta.color}`}>{meta.icon}</span>
-          <span className="text-xs font-semibold text-gray-700 leading-tight">{category}</span>
-          <span className="text-xs text-gray-400">({visible.length})</span>
-        </span>
-        {isOpen ? <ChevronDown size={12} className="text-gray-400 flex-shrink-0" /> : <ChevronRight size={12} className="text-gray-400 flex-shrink-0" />}
-      </button>
-
-      {isOpen && (
-        <div className="pb-1">
-          {subcats.map(sub => {
-            const subReports = visible.filter(r => r.subcategory === sub);
-            return (
-              <div key={sub}>
-                <p className="px-3 py-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{sub}</p>
-                {subReports.map(r => (
-                  <button
-                    key={r.code}
-                    type="button"
-                    onClick={() => onSelect(r)}
-                    className={`w-full px-4 py-1.5 text-left text-xs transition-colors flex items-center gap-1.5 ${
-                      selectedCode === r.code ? "bg-blue-600 text-white font-semibold" : "text-gray-700 hover:bg-gray-100"
-                    }`}
-                  >
-                    {favCodes.has(r.code) && <Star size={10} className={selectedCode === r.code ? "text-yellow-200" : "text-yellow-400"} fill="currentColor" />}
-                    <span className="leading-snug">{r.name}</span>
-                  </button>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Main page ───────────────────────────────────────────────────────────────
+// ─── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function NativeReportsCenter() {
   const [selectedReport, setSelectedReport] = useState<ReportDef | null>(null);
@@ -358,11 +311,14 @@ export default function NativeReportsCenter() {
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState("");
   const [searchQ, setSearchQ] = useState("");
-  const [openCats, setOpenCats] = useState<Set<string>>(new Set([CATEGORY_ORDER[0]]));
+  const [expandedCat, setExpandedCat] = useState<string | null>(null);
   const [recentCodes, setRecentCodes] = useState<string[]>(() => loadList(LS_RECENT));
   const [favCodes, setFavCodes] = useState<Set<string>>(() => new Set(loadList(LS_FAVS)));
+  const [filtersOpen, setFiltersOpen] = useState(true);
 
-  // load branches + processes for filter dropdowns
+  const runnerRef = useRef<HTMLDivElement>(null);
+
+  // Data fetching for filter dropdowns
   const { data: branchData } = useQuery({
     queryKey: ["branches-all"],
     queryFn: () => hrmsApi.get<{ data: { id: string; branch_name: string }[] }>("/api/org/branches"),
@@ -370,12 +326,24 @@ export default function NativeReportsCenter() {
   });
   const { data: processData } = useQuery({
     queryKey: ["processes-all"],
-    queryFn: () => hrmsApi.get<{ data: { id: string; process_name: string }[] }>("/api/process"),
+    queryFn: () => hrmsApi.get<{ data: { id: string; process_name: string }[] }>("/api/processes"),
+    staleTime: 10 * 60_000,
+  });
+  const { data: deptData } = useQuery({
+    queryKey: ["departments-all"],
+    queryFn: () => hrmsApi.get<{ data: { id: string; dept_name: string }[] }>("/api/org/departments"),
+    staleTime: 10 * 60_000,
+  });
+  const { data: ccData } = useQuery({
+    queryKey: ["cost-centres-all"],
+    queryFn: () => hrmsApi.get<{ data: { id: string; cost_centre_name: string }[] }>("/api/org/cost-centres"),
     staleTime: 10 * 60_000,
   });
 
   const branches = branchData?.data ?? [];
   const processes = processData?.data ?? [];
+  const departments = deptData?.data ?? [];
+  const costCentres = ccData?.data ?? [];
 
   // Group catalog by category
   const grouped = useMemo(() => {
@@ -387,30 +355,36 @@ export default function NativeReportsCenter() {
     return map;
   }, []);
 
+  // Stats
+  const totalReports = CATALOG.length;
+  const categoryCount = CATEGORY_ORDER.length;
+  const favCount = favCodes.size;
+  const animatedTotal = useCountUp(totalReports);
+  const animatedCats = useCountUp(categoryCount);
+  const animatedFavs = useCountUp(favCount);
+
   const recentReports = useMemo(
     () => recentCodes.map(c => CATALOG.find(r => r.code === c)).filter(Boolean) as ReportDef[],
     [recentCodes]
   );
 
-  const toggleCat = useCallback((cat: string) => {
-    setOpenCats(prev => {
-      const next = new Set(prev);
-      next.has(cat) ? next.delete(cat) : next.add(cat);
-      return next;
-    });
-  }, []);
+  // Filtered reports by search
+  const searchResults = useMemo(() => {
+    if (!searchQ.trim()) return null;
+    return CATALOG.filter(r => r.name.toLowerCase().includes(searchQ.toLowerCase()));
+  }, [searchQ]);
 
   function selectReport(r: ReportDef) {
     setSelectedReport(r);
     setRows([]);
     setRunError("");
     setFilterValues({});
-    // Open the category
-    setOpenCats(prev => new Set([...prev, r.category]));
     // Track recent
     const next = [r.code, ...recentCodes.filter(c => c !== r.code)].slice(0, 8);
     setRecentCodes(next);
     saveList(LS_RECENT, next);
+    // Scroll to runner
+    setTimeout(() => runnerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
   }
 
   function toggleFav(code: string) {
@@ -422,6 +396,10 @@ export default function NativeReportsCenter() {
     });
   }
 
+  const toggleCategory = useCallback((cat: string) => {
+    setExpandedCat(prev => prev === cat ? null : cat);
+  }, []);
+
   async function runReport() {
     if (!selectedReport) return;
     setRunning(true);
@@ -430,7 +408,6 @@ export default function NativeReportsCenter() {
     try {
       const active: Record<string, string> = {};
       Object.entries(filterValues).forEach(([k, v]) => { if (v) active[k] = v; });
-      // Build query string for suite endpoint
       const params = new URLSearchParams();
       Object.entries(active).forEach(([k, v]) => params.set(k, v));
       const url = `/api/reports/suite/${selectedReport.code}?${params.toString()}&limit=2000`;
@@ -447,207 +424,304 @@ export default function NativeReportsCenter() {
   }
 
   const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
+  const activeFilterCount = Object.values(filterValues).filter(Boolean).length;
 
   function setFilter(key: string, val: string) {
     setFilterValues(prev => ({ ...prev, [key]: val }));
   }
 
-  // Expand category when searching
-  useEffect(() => {
-    if (!searchQ) return;
-    const matchedCats = new Set(CATALOG.filter(r => r.name.toLowerCase().includes(searchQ.toLowerCase())).map(r => r.category));
-    setOpenCats(prev => new Set([...prev, ...matchedCats]));
-  }, [searchQ]);
-
-  // Override branch/process filter if known IDs
-  function getBranchOptions() {
-    return branches.map(b => ({ value: b.id, label: b.branch_name }));
-  }
-  function getProcessOptions() {
-    return processes.map(p => ({ value: p.id, label: (p as { process_name: string }).process_name }));
-  }
-
   function resolveFilterDef(def: FilterDef): FilterDef {
-    if (def.key === "branchId" && branches.length > 0) return { ...def, type: "select", options: getBranchOptions() };
-    if (def.key === "processId" && processes.length > 0) return { ...def, type: "select", options: getProcessOptions() };
+    if (def.key === "branchId" && branches.length > 0) return { ...def, type: "select", options: branches.map(b => ({ value: b.id, label: b.branch_name })) };
+    if (def.key === "processId" && processes.length > 0) return { ...def, type: "select", options: processes.map(p => ({ value: p.id, label: (p as { process_name: string }).process_name })) };
+    if (def.key === "departmentId" && departments.length > 0) return { ...def, type: "select", options: departments.map(d => ({ value: d.id, label: d.dept_name })) };
+    if (def.key === "costCentreId" && costCentres.length > 0) return { ...def, type: "select", options: costCentres.map(c => ({ value: c.id, label: c.cost_centre_name })) };
     return def;
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      {/* Top bar */}
-      <div className="bg-white border-b border-gray-200 sticky top-0 z-20">
-        <div className="max-w-[1600px] mx-auto px-4 py-3 flex items-center gap-4">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
-              <BarChart3 size={16} className="text-white" />
-            </div>
-            <div>
-              <h1 className="text-sm font-bold text-gray-900 leading-tight">Reports Center</h1>
-              <p className="text-xs text-gray-400">{CATALOG.length} reports across 13 categories</p>
-            </div>
-          </div>
+    <div className="min-h-screen bg-gray-50">
+      <style>{`
+        @keyframes slideUp {
+          from { transform: translateY(20px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+        @keyframes fadeInRow {
+          from { opacity: 0; transform: translateY(4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-slide-up { animation: slideUp 0.3s ease-out forwards; }
+        .animate-fade-row { animation: fadeInRow 0.3s ease-out forwards; }
+      `}</style>
 
-          {/* Search */}
-          <div className="relative flex-1 max-w-xs ml-4">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              className="w-full h-8 pl-8 pr-8 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-              placeholder="Search reports…"
-              value={searchQ}
-              onChange={e => setSearchQ(e.target.value)}
-            />
-            {searchQ && (
-              <button type="button" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600" onClick={() => setSearchQ("")}>
-                <X size={12} />
-              </button>
+      {/* ── Hero Bar ─────────────────────────────────────────────────────── */}
+      <div className="sticky top-0 z-30 bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 relative overflow-hidden">
+        {/* Dot grid pattern */}
+        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.3) 1px, transparent 1px)", backgroundSize: "20px 20px" }} />
+        <div className="relative max-w-[1600px] mx-auto px-4 sm:px-6 py-5">
+          <div className="flex flex-col md:flex-row md:items-center gap-4">
+            {/* Left: Title + Stats */}
+            <div className="flex items-center gap-4 flex-shrink-0">
+              <div className="w-11 h-11 rounded-xl bg-white/10 backdrop-blur-sm flex items-center justify-center border border-white/20">
+                <BarChart3 size={22} className="text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight text-white">Reports Center</h1>
+                <div className="flex items-center gap-4 mt-1">
+                  <span className="text-xs text-blue-200/80 font-medium">{animatedTotal} reports</span>
+                  <span className="text-xs text-blue-200/80 font-medium">{animatedCats} categories</span>
+                  {favCount > 0 && (
+                    <span className="text-xs text-yellow-200/80 font-medium flex items-center gap-1">
+                      <Star size={10} fill="currentColor" /> {animatedFavs} favourites
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Search */}
+            <div className="relative flex-1 max-w-md">
+              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                className="w-full h-10 pl-10 pr-10 text-sm rounded-full bg-white shadow-lg border-0 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                placeholder="Search reports..."
+                value={searchQ}
+                onChange={e => setSearchQ(e.target.value)}
+              />
+              {searchQ && (
+                <button type="button" className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600" onClick={() => setSearchQ("")}>
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+
+            {/* Recent chips */}
+            {recentReports.length > 0 && (
+              <div className="hidden lg:flex items-center gap-2 overflow-x-auto flex-1">
+                <Clock size={13} className="text-blue-200/60 flex-shrink-0" />
+                {recentReports.slice(0, 4).map(r => (
+                  <button
+                    key={r.code}
+                    type="button"
+                    onClick={() => selectReport(r)}
+                    className="flex-shrink-0 text-xs px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-sm text-white/90 border border-white/20 hover:bg-white/20 transition-colors"
+                  >
+                    {r.name.length > 24 ? r.name.slice(0, 24) + "..." : r.name}
+                  </button>
+                ))}
+              </div>
             )}
           </div>
-
-          {/* Recent chips */}
-          {recentReports.length > 0 && (
-            <div className="hidden lg:flex items-center gap-1 overflow-x-auto flex-1">
-              <span className="text-xs text-gray-400 mr-1 flex-shrink-0 flex items-center gap-1"><Clock size={11} /> Recent:</span>
-              {recentReports.slice(0, 5).map(r => (
-                <button
-                  key={r.code}
-                  type="button"
-                  onClick={() => selectReport(r)}
-                  className={`flex-shrink-0 text-xs px-2 py-1 rounded-full border transition-colors ${
-                    selectedReport?.code === r.code ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
-                  }`}
-                >
-                  {r.name.length > 22 ? r.name.slice(0, 22) + "…" : r.name}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
       </div>
 
-      <div className="flex flex-1 max-w-[1600px] mx-auto w-full px-4 py-4 gap-4">
-        {/* ── Sidebar ───────────────────────────────────────────────────────── */}
-        <aside className="w-64 flex-shrink-0 bg-white rounded-xl border border-gray-200 overflow-y-auto sticky top-16 self-start max-h-[calc(100vh-80px)]">
-          <div className="px-3 py-2.5 border-b border-gray-100">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">All Reports ({CATALOG.length})</p>
-          </div>
-          {CATEGORY_ORDER.filter(cat => grouped[cat]).map(cat => (
-            <SidebarCategory
-              key={cat}
-              category={cat}
-              reports={grouped[cat]}
-              selectedCode={selectedReport?.code ?? ""}
-              onSelect={selectReport}
-              isOpen={openCats.has(cat)}
-              onToggle={() => toggleCat(cat)}
-              searchQ={searchQ}
-              favCodes={favCodes}
-            />
-          ))}
-        </aside>
+      {/* ── Main Content ─────────────────────────────────────────────────── */}
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 space-y-6">
 
-        {/* ── Main panel ────────────────────────────────────────────────────── */}
-        <main className="flex-1 min-w-0 space-y-4">
-          {/* Empty state */}
-          {!selectedReport && (
-            <div className="bg-white rounded-xl border border-gray-200">
-              <div className="flex flex-col items-center justify-center py-20 text-center px-6">
-                <div className="w-14 h-14 rounded-2xl bg-blue-50 flex items-center justify-center mb-4">
-                  <BarChart3 size={28} className="text-blue-400" />
-                </div>
-                <h3 className="text-base font-semibold text-gray-800 mb-1">Select a Report</h3>
-                <p className="text-sm text-gray-400 max-w-xs">Choose from 112 reports across 13 categories using the sidebar. Data is branch-scoped based on your access.</p>
-              </div>
-
-              {/* Favourites */}
-              {favCodes.size > 0 && (
-                <div className="border-t border-gray-100 px-6 pb-6">
-                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mt-4 mb-3 flex items-center gap-1">
-                    <Star size={11} className="text-yellow-400" fill="currentColor" /> Favourites
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {Array.from(favCodes).map(code => {
-                      const r = CATALOG.find(x => x.code === code);
-                      return r ? (
-                        <button key={code} type="button" onClick={() => selectReport(r)}
-                          className="text-xs px-3 py-1.5 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg hover:bg-yellow-100 transition-colors">
-                          {r.name}
-                        </button>
-                      ) : null;
-                    })}
-                  </div>
-                </div>
-              )}
+        {/* Search Results Overlay */}
+        {searchResults && (
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 animate-slide-up">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-gray-800">Search Results ({searchResults.length})</h3>
+              <button type="button" onClick={() => setSearchQ("")} className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1">
+                <X size={12} /> Clear
+              </button>
             </div>
-          )}
+            {searchResults.length === 0 ? (
+              <p className="text-sm text-gray-400">No reports matching "{searchQ}"</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                {searchResults.slice(0, 20).map(r => {
+                  const grad = CATEGORY_GRADIENTS[r.category];
+                  return (
+                    <button
+                      key={r.code}
+                      type="button"
+                      onClick={() => { selectReport(r); setSearchQ(""); }}
+                      className={`text-left px-3 py-2.5 rounded-lg border transition-all hover:shadow-md ${
+                        selectedReport?.code === r.code ? "border-blue-500 bg-blue-50 ring-2 ring-blue-200" : "border-gray-100 hover:border-gray-200 bg-white"
+                      }`}
+                    >
+                      <p className="text-xs font-semibold text-gray-800 leading-snug">{r.name}</p>
+                      <p className={`text-[10px] mt-1 font-medium bg-gradient-to-r ${grad?.from ?? "from-gray-500"} ${grad?.to ?? "to-gray-600"} bg-clip-text text-transparent`}>
+                        {r.category}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
-          {selectedReport && (
-            <>
-              {/* Report header card */}
-              <div className="bg-white rounded-xl border border-gray-200">
-                <div className="px-5 py-4 border-b border-gray-100">
-                  <div className="flex items-start justify-between gap-4 flex-wrap">
-                    <div className="flex items-start gap-3">
-                      {(() => {
-                        const meta = CATEGORY_META[selectedReport.category];
-                        return (
-                          <span className={`flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0 mt-0.5 ${meta?.bg ?? "bg-gray-50"} ${meta?.color ?? "text-gray-600"}`}>
-                            {meta?.icon ?? <BarChart3 size={16} />}
-                          </span>
-                        );
-                      })()}
-                      <div>
-                        <h2 className="text-base font-semibold text-gray-900">{selectedReport.name}</h2>
-                        <p className="text-xs text-gray-400 mt-0.5">{selectedReport.category} · {selectedReport.subcategory}</p>
+        {/* ── Category Grid ──────────────────────────────────────────────── */}
+        {!searchResults && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {CATEGORY_ORDER.filter(cat => grouped[cat]).map(cat => {
+              const grad = CATEGORY_GRADIENTS[cat];
+              const Icon = grad?.icon ?? BarChart3;
+              const count = grouped[cat].length;
+              const isExpanded = expandedCat === cat;
+
+              return (
+                <div key={cat} className={`${isExpanded ? "sm:col-span-2 lg:col-span-3 xl:col-span-4" : ""}`}>
+                  <div
+                    onClick={() => toggleCategory(cat)}
+                    className={`rounded-2xl overflow-hidden cursor-pointer transition-all duration-300 hover:-translate-y-1 hover:shadow-xl ${
+                      isExpanded ? "ring-2 ring-blue-400 shadow-xl" : ""
+                    }`}
+                  >
+                    {/* Gradient strip */}
+                    <div className={`h-2 bg-gradient-to-r ${grad?.from ?? "from-gray-500"} ${grad?.to ?? "to-gray-600"}`} />
+                    {/* Body */}
+                    <div className="bg-white/80 backdrop-blur-sm border border-white/60 shadow-lg p-4">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${grad?.from ?? "from-gray-500"} ${grad?.to ?? "to-gray-600"} flex items-center justify-center shadow-sm`}>
+                          <Icon size={18} className="text-white" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="text-sm font-bold text-gray-800 truncate">{cat}</h3>
+                          <p className="text-xs text-gray-400">{count} reports</p>
+                        </div>
+                        <ChevronDown size={16} className={`text-gray-400 transition-transform duration-300 ${isExpanded ? "rotate-180" : ""}`} />
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => toggleFav(selectedReport.code)}
-                        className={`p-1.5 rounded-lg border transition-colors ${
-                          favCodes.has(selectedReport.code) ? "bg-yellow-50 border-yellow-200 text-yellow-500" : "bg-white border-gray-200 text-gray-400 hover:text-yellow-400"
-                        }`}
-                        title={favCodes.has(selectedReport.code) ? "Remove from favourites" : "Add to favourites"}
-                      >
-                        <Star size={14} fill={favCodes.has(selectedReport.code) ? "currentColor" : "none"} />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={running}
-                        onClick={runReport}
-                        className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg disabled:opacity-60 transition-colors"
-                      >
-                        {running ? <><Loader2 size={14} className="animate-spin" /> Running…</> : <><Play size={14} /> Run Report</>}
-                      </button>
-                      {rows.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => downloadCsv(rows, `${selectedReport.code}_${new Date().toISOString().slice(0, 10)}.csv`)}
-                          className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
-                        >
-                          <Download size={14} /> Export CSV
-                        </button>
-                      )}
-                    </div>
                   </div>
 
-                  {/* Note for "requires run selector" reports */}
-                  {selectedReport.requiresRunSelector && (
-                    <div className="mt-3 flex items-center gap-2 text-xs text-amber-700 bg-amber-50 px-3 py-2 rounded-lg">
-                      <span className="font-semibold">Tip:</span> This report uses payroll run data — set the Month filter to the run month you want.
+                  {/* ── Inline Accordion: Report List ───────────────────────── */}
+                  {isExpanded && (
+                    <div className="mt-2 bg-white rounded-xl border border-gray-200 p-4 animate-slide-up">
+                      {(() => {
+                        const subcats = Array.from(new Set(grouped[cat].map(r => r.subcategory)));
+                        return (
+                          <div className="space-y-4">
+                            {subcats.map(sub => {
+                              const subReports = grouped[cat].filter(r => r.subcategory === sub);
+                              return (
+                                <div key={sub}>
+                                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">{sub}</p>
+                                  <div className="flex flex-wrap gap-2">
+                                    {subReports.map(r => (
+                                      <button
+                                        key={r.code}
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); selectReport(r); }}
+                                        className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all ${
+                                          selectedReport?.code === r.code
+                                            ? "bg-blue-600 text-white shadow-md ring-2 ring-blue-300"
+                                            : "bg-gray-50 text-gray-700 hover:bg-blue-50 hover:text-blue-700 border border-gray-100"
+                                        }`}
+                                      >
+                                        {favCodes.has(r.code) && <Star size={9} className="inline mr-1 text-yellow-400" fill="currentColor" />}
+                                        {r.name}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>
+              );
+            })}
+          </div>
+        )}
 
-                {/* Filters */}
-                <div className="px-5 py-4">
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+        {/* ── Favourites Section (when no report selected) ────────────────── */}
+        {!selectedReport && favCodes.size > 0 && !searchResults && (
+          <div className="bg-white rounded-2xl border border-gray-200 p-5">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+              <Star size={12} className="text-yellow-400" fill="currentColor" /> Favourites
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {Array.from(favCodes).map(code => {
+                const r = CATALOG.find(x => x.code === code);
+                return r ? (
+                  <button key={code} type="button" onClick={() => selectReport(r)}
+                    className="text-xs px-3 py-1.5 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg hover:bg-yellow-100 font-medium transition-colors">
+                    {r.name}
+                  </button>
+                ) : null;
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── Runner Panel ────────────────────────────────────────────────── */}
+        {selectedReport && (
+          <div ref={runnerRef} className="animate-slide-up space-y-4">
+            {/* Report Header */}
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100">
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div className="flex items-center gap-3">
+                    {(() => {
+                      const grad = CATEGORY_GRADIENTS[selectedReport.category];
+                      const Icon = grad?.icon ?? BarChart3;
+                      return (
+                        <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${grad?.from ?? "from-gray-500"} ${grad?.to ?? "to-gray-600"} flex items-center justify-center shadow-sm`}>
+                          <Icon size={16} className="text-white" />
+                        </div>
+                      );
+                    })()}
+                    <div>
+                      <h2 className="text-base font-bold text-gray-900">{selectedReport.name}</h2>
+                      <p className="text-xs text-gray-400 mt-0.5">{selectedReport.category} / {selectedReport.subcategory}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => toggleFav(selectedReport.code)}
+                      className={`p-2 rounded-lg border transition-colors ${
+                        favCodes.has(selectedReport.code) ? "bg-yellow-50 border-yellow-200 text-yellow-500" : "bg-white border-gray-200 text-gray-400 hover:text-yellow-400"
+                      }`}
+                      title={favCodes.has(selectedReport.code) ? "Remove from favourites" : "Add to favourites"}
+                    >
+                      <Star size={14} fill={favCodes.has(selectedReport.code) ? "currentColor" : "none"} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedReport(null); setRows([]); setRunError(""); }}
+                      className="p-2 rounded-lg border border-gray-200 text-gray-400 hover:text-gray-600 transition-colors"
+                      title="Close report"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                {selectedReport.requiresRunSelector && (
+                  <div className="mt-3 flex items-center gap-2 text-xs text-amber-700 bg-amber-50 px-3 py-2 rounded-lg">
+                    <CheckCircle2 size={13} />
+                    <span><span className="font-semibold">Tip:</span> This report uses payroll run data. Set the Month filter to the run month you want.</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Filter Row */}
+              <div className="px-5 py-4">
+                {/* Mobile filter toggle */}
+                <button
+                  type="button"
+                  onClick={() => setFiltersOpen(!filtersOpen)}
+                  className="md:hidden flex items-center gap-2 text-sm font-medium text-gray-700 mb-3"
+                >
+                  <Filter size={14} />
+                  Filters {activeFilterCount > 0 && `(${activeFilterCount} active)`}
+                  <ChevronDown size={14} className={`transition-transform ${filtersOpen ? "rotate-180" : ""}`} />
+                </button>
+
+                <div className={`${filtersOpen ? "" : "hidden md:block"}`}>
+                  <div className="flex flex-wrap items-end gap-3">
                     {selectedReport.filters.map(def => {
                       const resolved = resolveFilterDef(def);
                       return (
-                        <div key={def.key} className="space-y-1">
+                        <div key={def.key} className="space-y-1 w-full sm:w-auto sm:min-w-[140px] sm:max-w-[200px]">
                           <label className="block text-xs font-medium text-gray-500">{def.label}</label>
                           <FilterInput
                             def={resolved}
@@ -657,69 +731,95 @@ export default function NativeReportsCenter() {
                         </div>
                       );
                     })}
+                    <button
+                      type="button"
+                      disabled={running}
+                      onClick={runReport}
+                      className="flex items-center gap-2 px-5 h-9 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg disabled:opacity-60 transition-colors shadow-sm"
+                    >
+                      {running ? <><Loader2 size={14} className="animate-spin" /> Running...</> : <><Play size={14} /> Run</>}
+                    </button>
                   </div>
                 </div>
               </div>
+            </div>
 
-              {/* Error */}
-              {runError && (
-                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 flex items-center gap-2">
-                  <X size={15} className="flex-shrink-0" />
-                  <span>{runError} — This report may not be implemented yet on the backend. It will be available in a future phase.</span>
-                </div>
-              )}
+            {/* Error */}
+            {runError && (
+              <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 flex items-center gap-2 animate-slide-up">
+                <X size={15} className="flex-shrink-0" />
+                <span>{runError} -- This report may not be implemented yet on the backend. It will be available in a future phase.</span>
+              </div>
+            )}
 
-              {/* Results */}
-              {rows.length > 0 && (
-                <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                  <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
-                    <p className="text-sm font-semibold text-gray-700">
-                      {rows.length.toLocaleString()} rows{rows.length === 2000 && <span className="text-amber-600 ml-1">(showing first 2,000 — export CSV for full data)</span>}
-                    </p>
-                    <p className="text-xs text-gray-400">{columns.length} columns</p>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-gray-100 bg-gray-50">
-                          {columns.map(col => (
-                            <th key={col} className="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                              {col.replace(/_/g, " ")}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {rows.slice(0, 500).map((row, i) => (
-                          <tr key={i} className="hover:bg-gray-50 transition-colors">
-                            {columns.map(col => (
-                              <td key={col} className="px-3 py-2 text-gray-700 whitespace-nowrap max-w-[200px] truncate" title={String(row[col] ?? "")}>
-                                {row[col] == null ? <span className="text-gray-300">—</span> : String(row[col])}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {rows.length > 500 && (
-                      <p className="px-5 py-3 text-xs text-gray-400 border-t border-gray-100">
-                        Showing 500 of {rows.length.toLocaleString()} rows in the table. Export CSV to see all rows.
-                      </p>
+            {/* Results Table */}
+            {rows.length > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm animate-slide-up">
+                <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-3">
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 bg-blue-50 text-blue-700 rounded-full">
+                      {rows.length.toLocaleString()} rows
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 bg-gray-50 text-gray-600 rounded-full">
+                      {columns.length} columns
+                    </span>
+                    {rows.length === 2000 && (
+                      <span className="text-xs text-amber-600 font-medium">(limit reached -- export for full data)</span>
                     )}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => downloadXlsx(rows, `${selectedReport.code}_${new Date().toISOString().slice(0, 10)}.xlsx`)}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg transition-colors shadow-sm"
+                  >
+                    <Download size={14} /> Export XLSX
+                  </button>
                 </div>
-              )}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-gray-100 bg-gray-50 sticky top-0">
+                        {columns.map(col => (
+                          <th key={col} className="px-3 py-2.5 text-left font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                            {col.replace(/_/g, " ")}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {rows.slice(0, 500).map((row, i) => (
+                        <tr
+                          key={i}
+                          className={`hover:bg-blue-50/50 transition-colors animate-fade-row ${i % 2 === 0 ? "" : "bg-gray-50/50"}`}
+                          style={{ animationDelay: `${Math.min(i * 20, 400)}ms`, opacity: 0 }}
+                        >
+                          {columns.map(col => (
+                            <td key={col} className="px-3 py-2 text-gray-700 whitespace-nowrap max-w-[220px] truncate" title={String(row[col] ?? "")}>
+                              {row[col] == null ? <span className="text-gray-300">--</span> : String(row[col])}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {rows.length > 500 && (
+                    <p className="px-5 py-3 text-xs text-gray-400 border-t border-gray-100">
+                      Showing 500 of {rows.length.toLocaleString()} rows in the table. Export XLSX to see all rows.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
 
-              {/* No results */}
-              {!running && !runError && rows.length === 0 && (
-                <div className="bg-white rounded-xl border border-gray-200 py-12 text-center">
-                  <BarChart3 size={32} className="mx-auto text-gray-200 mb-3" />
-                  <p className="text-sm text-gray-400">Set filters above and click Run Report</p>
-                </div>
-              )}
-            </>
-          )}
-        </main>
+            {/* No results yet */}
+            {!running && !runError && rows.length === 0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 py-14 text-center">
+                <BarChart3 size={36} className="mx-auto text-gray-200 mb-3" />
+                <p className="text-sm text-gray-400 font-medium">Set filters above and click Run to generate the report</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
