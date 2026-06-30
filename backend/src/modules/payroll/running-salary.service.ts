@@ -1,6 +1,7 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2/promise";
 import { resolveHolidaysForEmployee } from "./holiday-work.service.js";
+import { payrollService } from "./payroll.service.js";
 
 // ─── Running salary helpers ───────────────────────────────────────────────────
 
@@ -41,8 +42,13 @@ export async function computeRunningSalary(
   eligible_weekoff_till_date: number;
   eligible_holiday_till_date: number;
   earned_salary_till_date: number;
+  earned_net_till_date: number;
   projected_payable_days: number;
   projected_salary: number;
+  projected_net: number;
+  pf_employee: number;
+  esic_employee: number;
+  professional_tax: number;
 }> {
   const today = asOfDate ?? new Date().toISOString().slice(0, 10);
   const monthStart = runMonth;
@@ -53,16 +59,44 @@ export async function computeRunningSalary(
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.branch_id, e.process_id,
             esa.ctc_annual,
-            ss.basic_pct, ss.hra_pct
+            ss.basic_pct, ss.hra_pct,
+            bm.state AS state_code
        FROM employees e
        JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
        JOIN salary_structure_master ss     ON ss.id = esa.structure_id
+       LEFT JOIN branch_master bm          ON bm.id = e.branch_id
       WHERE e.id = ?
       LIMIT 1`,
     [employeeId],
   );
   const emp = (empRows[0] as any);
   if (!emp) return _zeroResult();
+
+  // Statutory config for deductions
+  const [statKvRows] = await db.execute<RowDataPacket[]>(
+    `SELECT config_key, config_value FROM statutory_config`,
+  );
+  const statConfig: Record<string, number> = {};
+  for (const r of statKvRows as any[]) {
+    statConfig[String(r.config_key).toLowerCase()] = Number(r.config_value);
+  }
+  const pfEmployeePct  = statConfig["pf_employee_pct"]   ?? 12;
+  const esicEmpPct     = statConfig["esic_employee_pct"] ?? 0.75;
+  const esicWageLimit  = statConfig["esic_wage_limit"]   ?? 21000;
+  const pfWageLimit    = statConfig["pf_wage_limit"]     ?? 15000;
+  const defaultPt      = statConfig["professional_tax"]  ?? 200;
+
+  // Check PF / ESI opt-outs
+  const [overrideRows] = await db.execute<RowDataPacket[]>(
+    `SELECT override_type FROM employee_statutory_override
+     WHERE employee_id = ? AND status = 'approved'`,
+    [employeeId],
+  );
+  const pfOptOut   = (overrideRows as any[]).some((r: any) => r.override_type === "pf_opt_out");
+  const esicOptOut = (overrideRows as any[]).some((r: any) => r.override_type === "esic_opt_out");
+
+  // Professional tax from slab if state is known
+  const { getPtFromSlab } = await import("./payrollCalculate.service.js");
 
   const monthlyGross = emp.ctc_annual / 12;
 
@@ -123,6 +157,22 @@ export async function computeRunningSalary(
 
   const earnedSalaryTillDate = (monthlyGross / activeCalDays) * cappedEarned;
 
+  // Prorated deductions on earned gross
+  const ptEarned = emp.state_code
+    ? await getPtFromSlab(emp.state_code, earnedSalaryTillDate)
+    : defaultPt;
+  const earnedCalc = payrollService.calculateNetSalary({
+    grossMonthlyCTC: earnedSalaryTillDate,
+    workingDays: Math.max(1, cappedEarned),
+    lwpDays: 0, // LWP already baked into cappedEarned
+    pfEmployeePct, esicEmployeePct: esicEmpPct, esicWageLimit, pfWageLimit,
+    professionalTax: ptEarned,
+    tds: 0,
+    basicPct: emp.basic_pct ?? 40,
+    hraPct: emp.hra_pct ?? 20,
+    pfOptOut, esicOptOut,
+  });
+
   // ── Projection ────────────────────────────────────────────────────────────
   // Future days from roster
   const [futureRoster] = await db.execute<RowDataPacket[]>(
@@ -166,13 +216,34 @@ export async function computeRunningSalary(
   const projectedPayableDays = Math.min(Math.max(0, projectedPayableDaysRaw), activeCalDays);
   const projectedSalary = (monthlyGross / activeCalDays) * projectedPayableDays;
 
+  // Prorated deductions on projected gross
+  const ptProjected = emp.state_code
+    ? await getPtFromSlab(emp.state_code, projectedSalary)
+    : defaultPt;
+  const projectedCalc = payrollService.calculateNetSalary({
+    grossMonthlyCTC: projectedSalary,
+    workingDays: Math.max(1, projectedPayableDays),
+    lwpDays: 0,
+    pfEmployeePct, esicEmployeePct: esicEmpPct, esicWageLimit, pfWageLimit,
+    professionalTax: ptProjected,
+    tds: 0,
+    basicPct: emp.basic_pct ?? 40,
+    hraPct: emp.hra_pct ?? 20,
+    pfOptOut, esicOptOut,
+  });
+
   return {
     earned_payable_days: cappedEarned,
     eligible_weekoff_till_date: eligibleWeekoffTillDate,
     eligible_holiday_till_date: eligibleHolidaysTillDate,
     earned_salary_till_date: Math.round(earnedSalaryTillDate * 100) / 100,
+    earned_net_till_date: Math.round(earnedCalc.net_salary * 100) / 100,
     projected_payable_days: projectedPayableDays,
     projected_salary: Math.round(projectedSalary * 100) / 100,
+    projected_net: Math.round(projectedCalc.net_salary * 100) / 100,
+    pf_employee: Math.round(earnedCalc.pf_employee * 100) / 100,
+    esic_employee: Math.round(earnedCalc.esic_employee * 100) / 100,
+    professional_tax: Math.round(earnedCalc.professional_tax * 100) / 100,
   };
 }
 
@@ -207,7 +278,12 @@ function _zeroResult() {
     eligible_weekoff_till_date: 0,
     eligible_holiday_till_date: 0,
     earned_salary_till_date: 0,
+    earned_net_till_date: 0,
     projected_payable_days: 0,
     projected_salary: 0,
+    projected_net: 0,
+    pf_employee: 0,
+    esic_employee: 0,
+    professional_tax: 0,
   };
 }

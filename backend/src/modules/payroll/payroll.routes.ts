@@ -1345,8 +1345,8 @@ router.get("/recalculation-queue", requireRole("admin", "super_admin", "payroll"
 // GET /api/payroll/running-summary/:employeeId?month=YYYY-MM-01
 router.get("/running-summary/:employeeId", requireRole("admin", "super_admin", "payroll", "hr", "employee"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { computeRunningSalary } = await import("./running-salary.service.js");
-  const { month, asOf } = req.query as Record<string, string>;
-  const runMonth = month ?? new Date().toISOString().slice(0, 7) + "-01";
+  const { month, runMonth: runMonthParam, asOf } = req.query as Record<string, string>;
+  const runMonth = month ?? runMonthParam ?? new Date().toISOString().slice(0, 7) + "-01";
   const data = await computeRunningSalary(req.params.employeeId, runMonth, asOf);
   return res.json({ success: true, data });
 }));

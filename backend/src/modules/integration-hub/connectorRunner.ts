@@ -1,3 +1,5 @@
+import { createSign } from "node:crypto";
+import * as XLSX from "xlsx";
 import { getCredentialsForKey } from "../external-db/external-db.service.js";
 import { db } from "../../db/mysql.js";
 import { fetchFromDatabase, quoteIdentifier, type DbDialect } from "./adapters/databaseAdapter.js";
@@ -17,6 +19,13 @@ interface ConnectorConfig {
   date_column?: string;
   pagination?: string;
   request_body?: Record<string, unknown>;
+  spreadsheet_id?: string;
+  sheet_name?: string;
+  range?: string;
+  sheet_range?: string;
+  header_row?: number | string;
+  auth_mode?: "service_account" | "oauth" | "public";
+  sync_direction?: "pull" | "push";
 }
 
 function parseConfig(value: IntegrationConfig["config_json"]): ConnectorConfig {
@@ -34,6 +43,100 @@ function normalizeRows(payload: unknown): Record<string, unknown>[] {
     }
   }
   return [object];
+}
+
+function normalizeHeader(value: unknown, index: number): string {
+  const header = String(value ?? "").trim();
+  return header || `column_${index + 1}`;
+}
+
+function rowsFromWorkbook(workbook: XLSX.WorkBook, headerRow: number): Record<string, unknown>[] {
+  const sheetName = workbook.SheetNames[0];
+  const worksheet = sheetName ? workbook.Sheets[sheetName] : undefined;
+  if (!worksheet) return [];
+
+  const cells = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
+    header: 1,
+    defval: null,
+    blankrows: false,
+    raw: false,
+  });
+  const headerIndex = Math.max(0, headerRow - 1);
+  const headerCells = cells[headerIndex] ?? [];
+  const seen = new Map<string, number>();
+  const headers = headerCells.map((cell, index) => {
+    const base = normalizeHeader(cell, index);
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    return count === 0 ? base : `${base}_${count + 1}`;
+  });
+
+  return cells.slice(headerIndex + 1)
+    .filter((row) => row.some((cell) => cell !== null && cell !== undefined && String(cell).trim() !== ""))
+    .map((row) => Object.fromEntries(headers.map((header, index) => [header, row[index] ?? null])));
+}
+
+function parseServiceAccountSecret(secret: string): { client_email: string; private_key: string; token_uri?: string } {
+  const trimmed = secret.trim();
+  const decoded = trimmed.startsWith("{")
+    ? trimmed
+    : Buffer.from(trimmed, "base64").toString("utf8");
+  const parsed = JSON.parse(decoded) as Record<string, unknown>;
+  const clientEmail = String(parsed.client_email ?? "");
+  const privateKey = String(parsed.private_key ?? "").replace(/\\n/g, "\n");
+  if (!clientEmail || !privateKey) {
+    throw new Error("Google Sheets service account secret must include client_email and private_key");
+  }
+  return {
+    client_email: clientEmail,
+    private_key: privateKey,
+    token_uri: typeof parsed.token_uri === "string" ? parsed.token_uri : undefined,
+  };
+}
+
+function base64Url(value: string | Buffer): string {
+  return Buffer.from(value).toString("base64url");
+}
+
+async function getGoogleSheetsBearerToken(connector: IntegrationConfig): Promise<string> {
+  if (!connector.secret_name) {
+    throw new Error("Google Sheets private access requires a credential secret reference");
+  }
+  const envKey = connector.secret_name.trim().toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  const secret = process.env[envKey];
+  if (!secret) throw new Error(`Missing Google Sheets credential in environment variable ${envKey}`);
+
+  if (connector.auth_type === "oauth") return secret;
+
+  const serviceAccount = parseServiceAccountSecret(secret);
+  const now = Math.floor(Date.now() / 1000);
+  const tokenUrl = serviceAccount.token_uri ?? "https://oauth2.googleapis.com/token";
+  const header = base64Url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const claim = base64Url(JSON.stringify({
+    iss: serviceAccount.client_email,
+    scope: "https://www.googleapis.com/auth/spreadsheets.readonly",
+    aud: tokenUrl,
+    iat: now,
+    exp: now + 3600,
+  }));
+  const signer = createSign("RSA-SHA256");
+  signer.update(`${header}.${claim}`);
+  signer.end();
+  const assertion = `${header}.${claim}.${signer.sign(serviceAccount.private_key).toString("base64url")}`;
+
+  const sourceUrl = await assertSafeOutboundUrl(tokenUrl, "Google OAuth token");
+  const response = await fetch(sourceUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion,
+    }),
+  });
+  if (!response.ok) throw new Error(`Google OAuth token request returned HTTP ${response.status}`);
+  const payload = await response.json() as { access_token?: string };
+  if (!payload.access_token) throw new Error("Google OAuth token response did not include an access token");
+  return payload.access_token;
 }
 
 function safeDate(value: string | undefined, field: string): string | undefined {
@@ -85,6 +188,72 @@ async function readDatabaseRows(
     rows.push(...result.rows.map((row) => ({ __source_table: tableName, ...row })));
   }
   return rows;
+}
+
+async function readGoogleSheetRows(
+  connector: IntegrationConfig,
+  config: ConnectorConfig
+): Promise<Record<string, unknown>[]> {
+  if (config.sync_direction === "push") {
+    throw Object.assign(
+      new Error("Google Sheets push is not configured. Set sync direction to pull for live imports."),
+      { statusCode: 400 },
+    );
+  }
+
+  const spreadsheetId = String(config.spreadsheet_id ?? "").trim();
+  if (!spreadsheetId) throw new Error("Google Sheets connector requires spreadsheet_id");
+  if (!/^[A-Za-z0-9_-]+$/.test(spreadsheetId)) throw new Error("Google Sheets spreadsheet_id is invalid");
+
+  const sheetName = String(config.sheet_name ?? "Sheet1").trim() || "Sheet1";
+  const range = String(config.range ?? config.sheet_range ?? "A:Z").trim() || "A:Z";
+  const headerRow = Math.max(1, Number(config.header_row ?? 1) || 1);
+  const authMode = config.auth_mode ?? (connector.auth_type === "public" ? "public" : "service_account");
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  try {
+    if (authMode === "public") {
+      const url = new URL(`https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq`);
+      url.searchParams.set("tqx", "out:csv");
+      url.searchParams.set("sheet", sheetName);
+      if (range) url.searchParams.set("range", range);
+      const sourceUrl = await assertSafeOutboundUrl(url.toString(), "Google Sheets public export");
+      const response = await fetch(sourceUrl, {
+        headers: { Accept: "text/csv" },
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`Google Sheets public export returned HTTP ${response.status}`);
+      const csv = await response.text();
+      const workbook = XLSX.read(csv, { type: "string", raw: false });
+      return rowsFromWorkbook(workbook, headerRow);
+    }
+
+    const bearerToken = await getGoogleSheetsBearerToken(connector);
+    const a1Range = sheetName.includes("!")
+      ? sheetName
+      : `'${sheetName.replace(/'/g, "''")}'!${range}`;
+    const url = new URL(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(a1Range)}`,
+    );
+    const sourceUrl = await assertSafeOutboundUrl(url.toString(), "Google Sheets API");
+    const response = await fetch(sourceUrl, {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${bearerToken}`,
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`Google Sheets API returned HTTP ${response.status}`);
+    const payload = await response.json() as { values?: unknown[][] };
+    const values = payload.values ?? [];
+    const worksheet = XLSX.utils.aoa_to_sheet(values);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Sheet1");
+    return rowsFromWorkbook(workbook, headerRow);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function readRestRows(
@@ -249,6 +418,8 @@ export async function executeConnector(
   try {
     if (connector.integration_type === "database") {
       rows = await readDatabaseRows(connector, config, input.fromDate, input.toDate);
+    } else if (connector.integration_type === "rest_pull" && config.connector_kind === "google_sheets") {
+      rows = await readGoogleSheetRows(connector, config);
     } else if (connector.integration_type === "rest_pull") {
       rows = await readRestRows(connector, config);
     } else {

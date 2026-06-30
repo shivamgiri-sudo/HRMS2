@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Award,
   BookOpen,
@@ -58,6 +58,8 @@ interface EmployeeMapping {
   is_active: number;
   full_name: string | null;
   employee_code: string | null;
+  mapping_source?: string | null;
+  mapping_confidence?: string | null;
 }
 
 interface SyncLogEntry {
@@ -73,6 +75,22 @@ interface SyncLogEntry {
 interface ApiList<T> {
   success: boolean;
   data: T[];
+}
+
+interface LmsConnectionStatus {
+  ok: boolean;
+  source?: string;
+  latency_ms?: number;
+  error?: string;
+  can_write_sessions?: boolean;
+  can_update_lms?: boolean;
+}
+
+interface LmsSyncResult {
+  mapped: number;
+  progress: number;
+  certifications: number;
+  errors: string[];
 }
 
 // ── Badge helpers ──────────────────────────────────────────────────────────────
@@ -152,20 +170,31 @@ export default function NativeLMSIntegration() {
   const [loadingSyncLog, setLoadingSyncLog] = useState(false);
 
   // ── Connection & Sync Control ─────────────────────────────────────────────
-  const [connStatus, setConnStatus] = useState<{ ok: boolean; source?: string; latency_ms?: number; error?: string } | null>(null);
+  const [connStatus, setConnStatus] = useState<LmsConnectionStatus | null>(null);
   const [checkingConn, setCheckingConn] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<{ mapped: number; progress: number; certifications: number; errors: string[] } | null>(null);
+  const [syncResult, setSyncResult] = useState<LmsSyncResult | null>(null);
 
   // ── Credentials Form ───────────────────────────────────────────────────────
   const [showCredForm, setShowCredForm] = useState(false);
-  const [credForm, setCredForm] = useState({ host: "", port: "3306", database: "lms_mcn", username: "", password: "" });
+  const [credForm, setCredForm] = useState({
+    host: "",
+    port: "3306",
+    database: "mcn_lms",
+    username: "",
+    password: "",
+    write_host: "",
+    write_port: "3306",
+    write_database: "mcn_lms",
+    write_username: "",
+    write_password: "",
+  });
   const [savingCreds, setSavingCreds] = useState(false);
 
   const checkConnection = async () => {
     setCheckingConn(true);
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: any }>("/api/lms/connection");
+      const res = await hrmsApi.get<{ success: boolean; data: LmsConnectionStatus }>("/api/lms/connection");
       setConnStatus(res.data);
     } catch (err) {
       setConnStatus({ ok: false, error: (err as Error).message });
@@ -178,7 +207,7 @@ export default function NativeLMSIntegration() {
     setSyncing(true);
     setSyncResult(null);
     try {
-      const res = await hrmsApi.post<{ success: boolean; data: any }>("/api/lms/sync", {});
+      const res = await hrmsApi.post<{ success: boolean; data: LmsSyncResult }>("/api/lms/sync", {});
       setSyncResult(res.data);
       await loadSyncLog();
     } catch (err) {
@@ -201,6 +230,11 @@ export default function NativeLMSIntegration() {
         database: credForm.database.trim(),
         username: credForm.username.trim(),
         password: credForm.password,
+        write_host: credForm.write_host.trim() || undefined,
+        write_port: Number(credForm.write_port) || undefined,
+        write_database: credForm.write_database.trim() || undefined,
+        write_username: credForm.write_username.trim() || undefined,
+        write_password: credForm.write_password || undefined,
         db_type: "mysql",
       });
       setShowCredForm(false);
@@ -219,7 +253,7 @@ export default function NativeLMSIntegration() {
 
   // ── Loaders ────────────────────────────────────────────────────────────────
 
-  const loadLearning = async () => {
+  const loadLearning = useCallback(async () => {
     if (!employeeId) return;
     setLoadingLearning(true);
     setMessage("");
@@ -235,9 +269,9 @@ export default function NativeLMSIntegration() {
     } finally {
       setLoadingLearning(false);
     }
-  };
+  }, [employeeId]);
 
-  const loadMappings = async () => {
+  const loadMappings = useCallback(async () => {
     setLoadingMappings(true);
     setMessage("");
     try {
@@ -248,9 +282,9 @@ export default function NativeLMSIntegration() {
     } finally {
       setLoadingMappings(false);
     }
-  };
+  }, []);
 
-  const loadSyncLog = async () => {
+  const loadSyncLog = useCallback(async () => {
     setLoadingSyncLog(true);
     setMessage("");
     try {
@@ -261,13 +295,13 @@ export default function NativeLMSIntegration() {
     } finally {
       setLoadingSyncLog(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (activeTab === "learning")   void loadLearning();
     if (activeTab === "mapping")    void loadMappings();
     if (activeTab === "sync-log")   void loadSyncLog();
-  }, [activeTab, employeeId]);
+  }, [activeTab, loadLearning, loadMappings, loadSyncLog]);
 
   // ── Add Mapping ────────────────────────────────────────────────────────────
 
@@ -370,6 +404,13 @@ export default function NativeLMSIntegration() {
                     {connStatus.ok ? `Connected (${connStatus.latency_ms}ms)` : "Disconnected"}
                   </div>
                   {connStatus.source && <p className="text-xs text-slate-500">Source: <span className="font-semibold">{connStatus.source === "integration_hub" ? "Integration Hub credentials" : ".env fallback"}</span></p>}
+                  {connStatus.ok && (
+                    <div className={`rounded-xl px-3 py-2 text-xs font-bold ${connStatus.can_update_lms ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                      {connStatus.can_update_lms
+                        ? "LMS write-back enabled"
+                        : "LMS DB is read-only. HRMS can pull LMS data; HRMS-to-LMS writes need INSERT/UPDATE grants or bridge API support."}
+                    </div>
+                  )}
                   {connStatus.error && <p className="text-xs text-red-600">{connStatus.error}</p>}
                 </div>
               )}
@@ -379,16 +420,16 @@ export default function NativeLMSIntegration() {
               {showCredForm && (
                 <div className="mt-4 space-y-3 rounded-2xl border bg-slate-50 p-4">
                   <p className="text-xs font-black uppercase text-slate-500 tracking-wide">LMS MySQL Connection</p>
-                  {[
+                  {([
                     { key: "host", label: "Host / IP", placeholder: "192.168.11.225" },
                     { key: "port", label: "Port", placeholder: "3306" },
-                    { key: "database", label: "Database", placeholder: "lms_mcn" },
-                    { key: "username", label: "Username", placeholder: "db_user" },
-                  ].map(({ key, label, placeholder }) => (
+                    { key: "database", label: "Database", placeholder: "mcn_lms" },
+                    { key: "username", label: "Read Username", placeholder: "db_user" },
+                  ] satisfies Array<{ key: keyof typeof credForm; label: string; placeholder: string }>).map(({ key, label, placeholder }) => (
                     <div key={key}>
                       <label className="block text-xs font-semibold text-slate-600 mb-1">{label}</label>
                       <input
-                        value={(credForm as any)[key]}
+                        value={credForm[key]}
                         onChange={e => setCredForm(f => ({ ...f, [key]: e.target.value }))}
                         placeholder={placeholder}
                         className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
@@ -405,6 +446,36 @@ export default function NativeLMSIntegration() {
                       className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
+                  <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-xs font-black uppercase tracking-wide text-amber-700">Optional Write Back Credentials</p>
+                    <p className="text-xs text-amber-700">Use these when the LMS write user is different from the read user.</p>
+                    {([
+                      { key: "write_host", label: "Write Host / IP", placeholder: credForm.host || "192.168.11.225" },
+                      { key: "write_port", label: "Write Port", placeholder: credForm.port || "3306" },
+                      { key: "write_database", label: "Write Database", placeholder: credForm.database || "mcn_lms" },
+                      { key: "write_username", label: "Write Username", placeholder: "lms_write_user" },
+                    ] satisfies Array<{ key: keyof typeof credForm; label: string; placeholder: string }>).map(({ key, label, placeholder }) => (
+                      <div key={key}>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">{label}</label>
+                        <input
+                          value={credForm[key]}
+                          onChange={e => setCredForm(f => ({ ...f, [key]: e.target.value }))}
+                          placeholder={placeholder}
+                          className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500"
+                        />
+                      </div>
+                    ))}
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Write Password</label>
+                      <input
+                        type="password"
+                        value={credForm.write_password}
+                        onChange={e => setCredForm(f => ({ ...f, write_password: e.target.value }))}
+                        placeholder="••••••••"
+                        className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+                  </div>
                   <button onClick={saveCreds} disabled={savingCreds} className="w-full rounded-xl bg-blue-600 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50 cursor-pointer">
                     {savingCreds ? "Saving…" : "Save & Test Connection"}
                   </button>
@@ -415,7 +486,7 @@ export default function NativeLMSIntegration() {
             {/* Sync Control */}
             <div className="rounded-3xl border bg-white p-5 shadow-sm">
               <h2 className="flex items-center gap-2 font-black text-slate-950 mb-3"><ShieldCheck className="h-4 w-4 text-emerald-600" />Sync Control</h2>
-              <p className="text-xs text-slate-500 mb-4">Pulls trainee progress, certifications and mappings from LMS into HRMS snapshot tables.</p>
+              <p className="text-xs text-slate-500 mb-4">Pulls trainee progress, certifications and mappings from LMS into HRMS snapshot tables using the live LMS database.</p>
               <button onClick={runSync} disabled={syncing || !connStatus?.ok} className="w-full rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2">
                 {syncing ? <><Loader className="h-4 w-4 animate-spin" />Syncing…</> : <><RefreshCcw className="h-4 w-4" />Run Full Sync</>}
               </button>
@@ -613,10 +684,10 @@ export default function NativeLMSIntegration() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[700px] text-sm">
+                <table className="w-full min-w-[820px] text-sm">
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
-                      {["Employee", "Code", "LMS Learner ID", "Email", "Mapped At"].map((h) => (
+                      {["Employee", "Code", "LMS Learner ID", "Email", "Match", "Mapped At"].map((h) => (
                         <th key={h} className="p-4 font-semibold">{h}</th>
                       ))}
                     </tr>
@@ -628,6 +699,14 @@ export default function NativeLMSIntegration() {
                         <td className="p-4 font-mono text-xs text-slate-500">{m.employee_code ?? "—"}</td>
                         <td className="p-4 font-mono text-xs text-slate-700">{m.lms_learner_id}</td>
                         <td className="p-4 text-slate-500">{m.email ?? "—"}</td>
+                        <td className="p-4">
+                          {m.mapping_source ? (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs font-bold capitalize text-slate-700">{m.mapping_source.replace(/_/g, " ")}</span>
+                              {m.mapping_confidence && <span className="text-[11px] font-semibold uppercase text-slate-400">{m.mapping_confidence}</span>}
+                            </div>
+                          ) : "â€”"}
+                        </td>
                         <td className="p-4 font-mono text-xs text-slate-400">
                           {m.mapped_at?.slice(0, 16).replace("T", " ")}
                         </td>
