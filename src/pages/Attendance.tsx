@@ -24,8 +24,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import {
   AttendanceRecord,
+  MonthlySummary,
   useAttendance,
-  useAttendanceReport,
+  useMyAttendanceSummary,
   useTodayAttendance,
   useTodayLivePunch,
 } from "@/hooks/useAttendance";
@@ -262,8 +263,8 @@ const Attendance = () => {
     currentEmployee?.id
   );
 
-  const { data: reportData, isLoading: reportLoading } =
-    useAttendanceReport(targetDate);
+  const { data: summaryData, isLoading: reportLoading } =
+    useMyAttendanceSummary(currentEmployee?.id, targetDate);
 
   const { data: activeBreak } = useActiveBreak(todayRecord?.id);
   const { data: todayBreaks } = useBreaksForRecord(todayRecord?.id);
@@ -380,9 +381,13 @@ const Attendance = () => {
 
   const selectedMonthLabel = MONTHS[parseInt(selectedMonth)].label;
 
-  const myReportData = reportData?.find(
-    (employee) => employee.employeeId === currentEmployee?.id
-  );
+  const wfoDaysCount = useMemo(() =>
+    (attendanceRecords ?? []).filter(r => r.work_mode === 'wfo' || r.work_mode === 'office').length,
+  [attendanceRecords]);
+
+  const totalHoursCount = useMemo(() =>
+    (attendanceRecords ?? []).reduce((sum, r) => sum + (r.raw_minutes ?? 0) / 60, 0),
+  [attendanceRecords]);
 
   const renderPaginationControls = () => {
     if (historyPagination.totalPages <= 1) return null;
@@ -516,10 +521,10 @@ const Attendance = () => {
                     <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Month</p>
                     <p className="text-sm font-bold text-white">{selectedMonthLabel} {selectedYear}</p>
                   </div>
-                  {myReportData && (
+                  {summaryData && (
                     <div className="rounded-xl border border-white/10 bg-white/[0.08] px-4 py-2">
                       <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Present Days</p>
-                      <p className="text-sm font-bold text-[#3BAD49]">{myReportData.presentDays ?? 0}</p>
+                      <p className="text-sm font-bold text-[#3BAD49]">{summaryData.presentDays ?? 0}</p>
                     </div>
                   )}
                 </div>
@@ -821,7 +826,7 @@ const Attendance = () => {
                   <Skeleton key={item} className="h-32 rounded-2xl" />
                 ))}
               </div>
-            ) : !myReportData ? (
+            ) : !summaryData ? (
               <Card className="border-dashed border-slate-200 bg-slate-50/70 shadow-none">
                 <CardContent className="flex flex-col items-center justify-center py-12 text-center">
                   <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-slate-500 shadow-sm ring-1 ring-slate-200">
@@ -841,7 +846,7 @@ const Attendance = () => {
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
                 <AttendanceMetricCard
                   label="Present Days"
-                  value={myReportData.presentDays}
+                  value={summaryData.presentDays}
                   description="Days marked present."
                   icon={<CheckCircle2 className="h-5 w-5" />}
                   tone="emerald"
@@ -849,7 +854,7 @@ const Attendance = () => {
 
                 <AttendanceMetricCard
                   label="From Office"
-                  value={myReportData.wfoDays}
+                  value={wfoDaysCount}
                   description="Work from office days."
                   icon={<Briefcase className="h-5 w-5" />}
                   tone="sky"
@@ -857,7 +862,7 @@ const Attendance = () => {
 
                 <AttendanceMetricCard
                   label="Total Hours"
-                  value={`${myReportData.totalHours.toFixed(1)}h`}
+                  value={`${totalHoursCount.toFixed(1)}h`}
                   description="Total productive hours."
                   icon={<Timer className="h-5 w-5" />}
                   tone="indigo"
@@ -866,8 +871,8 @@ const Attendance = () => {
                 <AttendanceMetricCard
                   label="Avg Hours / Day"
                   value={`${
-                    myReportData.totalDays > 0
-                      ? (myReportData.totalHours / myReportData.totalDays).toFixed(1)
+                    summaryData.totalWorkingDays > 0
+                      ? (totalHoursCount / summaryData.totalWorkingDays).toFixed(1)
                       : "0"
                   }h`}
                   description="Average daily hours."
@@ -875,10 +880,18 @@ const Attendance = () => {
                   tone="slate"
                 />
 
+                <AttendanceMetricCard
+                  label="LWP Days"
+                  value={summaryData.totalLwp.toFixed(1)}
+                  description="Leave without pay days."
+                  icon={<AlertTriangle className="h-5 w-5" />}
+                  tone="amber"
+                />
+
                 {isAdminOrHR && (
                   <AttendanceMetricCard
                     label="Late Arrivals"
-                    value={myReportData.lateDays}
+                    value={summaryData.lateMarks}
                     description="Late arrival count."
                     icon={<AlertTriangle className="h-5 w-5" />}
                     tone="amber"
