@@ -13,31 +13,27 @@
 
 -- Step 1: Deactivate ALL branches first
 UPDATE branch_master
-SET active_status = 0,
-    updated_at = NOW()
+SET active_status = 0
 WHERE active_status = 1;
 
 -- Step 2: Reactivate ONLY the 3 required branches
 UPDATE branch_master
-SET active_status = 1,
-    updated_at = NOW()
-WHERE branch_name IN ('Noida 2', 'Noida', 'AHM');
+SET active_status = 1
+WHERE branch_name IN ('NOIDA-2', 'NOIDA', 'AHMEDABAD-JALDARSHAN');
 
 -- Step 3: Clear existing branch aliases
 DELETE FROM ats_branch_alias_master;
 
 -- Step 4: Insert the 3 branch aliases
-INSERT INTO ats_branch_alias_master (canonical_key, display_name, alias_text, active_status, sort_order)
+INSERT INTO ats_branch_alias_master (id, canonical_key, display_name, alias_text, active_status)
 VALUES
-  ('Noida 2',  'Okaya',       'Okaya',       1, 1),
-  ('Noida',    'Trapezoid',   'Trapezoid',   1, 2),
-  ('AHM',      'Jaldarshan',  'Jaldarshan',  1, 3)
+  (UUID(), 'NOIDA-2',                 'Okaya',       'Okaya',       1),
+  (UUID(), 'NOIDA',                   'Trapezoid',   'Trapezoid',   1),
+  (UUID(), 'AHMEDABAD-JALDARSHAN',    'Jaldarshan',  'Jaldarshan',  1)
 ON DUPLICATE KEY UPDATE
   display_name   = VALUES(display_name),
   alias_text     = VALUES(alias_text),
-  active_status  = VALUES(active_status),
-  sort_order     = VALUES(sort_order),
-  updated_at     = NOW();
+  active_status  = VALUES(active_status);
 
 -- Step 5: Verify setup
 SELECT
@@ -47,7 +43,6 @@ SELECT
   active_status
 FROM branch_master
 WHERE active_status = 1
-ORDER BY branch_name
 
 UNION ALL
 
@@ -57,8 +52,7 @@ SELECT
   alias_text AS branch_code,
   active_status
 FROM ats_branch_alias_master
-WHERE active_status = 1
-ORDER BY sort_order;
+WHERE active_status = 1;
 
 -- ============================================================================
 -- Post-Migration Notes:
