@@ -482,16 +482,15 @@ router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req
   res.json({ data: rows[0] });
 }));
 
-// GET /managers?branch=X&costCentre=Y — all active employees above executive level (grade H+)
+// GET /managers?branch=X&costCentre=Y — all active employees for the branch
 // Used by onboarding offer form to populate the Reporting Manager dropdown.
+// Returns ALL active employees (any grade) so HR can assign any employee as reporting manager.
 router.get("/managers", requireAuth, requireRole("super_admin", "admin", "hr", "recruiter"), h(async (req, res) => {
   const branch = String(req.query.branch ?? "").trim();
   const costCentre = String(req.query.costCentre ?? "").trim();
 
   const conds: string[] = [
     "e.active_status = 1",
-    "desig.grade IS NOT NULL",
-    "desig.grade >= 'H'",   // H, I, J, K, L, M, N — QA/TL/AM/Manager and above
   ];
   const params: string[] = [];
 

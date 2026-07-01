@@ -377,6 +377,14 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       );
     }
 
+    // 5b. Record first stage log entry so audit timeline is never empty for new candidates
+    await db.execute(
+      `INSERT IGNORE INTO ats_candidate_stage_log
+         (id, candidate_id, from_stage, to_stage, stage_date, remarks, updated_by)
+       VALUES (UUID(), ?, NULL, 'registered', NOW(), 'Walk-in registration', 'SYSTEM')`,
+      [candidateId]
+    );
+
     // 6. Get recruiter details — prefer official employee contact over stale roster row
     let recruiterDetails = null;
     if (assignmentResult.assignedRecruiterId) {

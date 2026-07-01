@@ -143,6 +143,11 @@ import { salaryComponentAssignmentRouter } from "./modules/ats/salary-component-
 import { employeeCodeGateRouter } from "./modules/ats/employee-code-gate.routes.js";
 import { payrollHRRouter } from "./modules/ats/payroll-hr.routes.js";
 import { branchHeadApprovalRouter } from "./modules/ats/branch-head-approval.routes.js";
+import { commandCentreRouter } from "./modules/ats/command-centre.routes.js";
+import { interviewRouter } from "./modules/ats/interview.routes.js";
+import { bgvEnhancedRouter } from "./modules/ats/bgv.enhanced.routes.js";
+import { candidatePortalRouter } from "./modules/ats/candidate-portal.routes.js";
+import { superAdminRouter } from "./modules/ats/super-admin.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
 import { onboardingDataRouter } from "./modules/onboarding/onboarding-data.routes.js";
@@ -337,6 +342,11 @@ app.use("/api/ats/salary-components", salaryComponentAssignmentRouter);
 app.use("/api/ats/employee-code", employeeCodeGateRouter);
 app.use("/api/ats/payroll-hr", payrollHRRouter);
 app.use("/api/ats/branch-head-approval", branchHeadApprovalRouter);
+app.use("/api/ats/command-centre", commandCentreRouter);
+app.use("/api/ats/interview", interviewRouter);
+app.use("/api/ats/bgv-enhanced", bgvEnhancedRouter);
+app.use("/api/ats/candidate-portal", candidatePortalRouter);
+app.use("/api/ats/super-admin", superAdminRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

@@ -298,11 +298,10 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
       ]
     );
 
-    // Update candidate status
+    // Update candidate stage
     await connection.execute(
       `UPDATE ats_candidate
-       SET candidate_status = 'pending_approval',
-           current_stage = 'payroll_validated',
+       SET current_stage = 'payroll_validated',
            updated_at = NOW()
        WHERE id = ?`,
       [input.candidate_id]

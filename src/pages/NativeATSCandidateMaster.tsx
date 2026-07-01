@@ -108,6 +108,24 @@ export default function NativeATSCandidateMaster() {
     void loadData();
   }, []);
 
+  useEffect(() => {
+    if (!selected) return;
+    hrmsApi.get<{ success: boolean; data: any[] }>(`/api/ats/candidates/${selected.id}/stage-logs`)
+      .then((r) => {
+        const logs: LogRow[] = (r.data ?? []).map((l: any) => ({
+          id: l.id,
+          candidate_id: l.candidate_id,
+          old_status: l.from_stage ?? undefined,
+          new_status: l.to_stage ?? undefined,
+          event_type: l.to_stage ? `Stage → ${l.to_stage}` : 'Journey Event',
+          event_note: l.remarks ?? undefined,
+          created_at: l.stage_date ?? l.created_at,
+        }));
+        setSelected((prev) => (prev?.id === selected.id ? { ...prev, logs } : prev));
+      })
+      .catch(() => {});
+  }, [selected?.id]);
+
   const loadData = async () => {
     setLoading(true);
     setError("");
@@ -130,7 +148,7 @@ export default function NativeATSCandidateMaster() {
         email: c.email ?? undefined,
         branch_name: c.applied_for_branch ?? undefined,
         role_applied: c.applied_for_process ?? undefined,
-        recruiter_name: c.sourcing_channel ?? undefined,
+        recruiter_name: c.recruiter_name ?? c.recruiter_assigned_name ?? c.sourcing_channel ?? undefined,
         status: c.current_stage ?? "Applied",
         walkin_end_stage: c.current_stage ?? undefined,
         created_at: c.created_at,
@@ -174,9 +192,14 @@ export default function NativeATSCandidateMaster() {
     });
   }, [rows, query, status, branch, fromDate, toDate]);
 
-  const selectedCount = filtered.filter((r) => (r.submission?.final_decision || r.status) === "Selected").length;
-  const waitingCount = filtered.filter((r) => (r.status || "Waiting") === "Waiting" && !r.submission?.final_decision).length;
-  const closedCount = filtered.filter((r) => ["Rejected", "No Show", "Hold", "Client Round - Pending"].includes(r.submission?.final_decision || "")).length;
+  const SELECTED_STAGES = ['selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted', 'joined'];
+  const CLOSED_STAGES = ['rejected', 'rejected_by_branch_head', 'no_show'];
+  const selectedCount = filtered.filter((r) => SELECTED_STAGES.includes((r.status ?? '').toLowerCase())).length;
+  const closedCount = filtered.filter((r) => CLOSED_STAGES.includes((r.status ?? '').toLowerCase())).length;
+  const waitingCount = filtered.filter((r) => {
+    const s = (r.status ?? '').toLowerCase();
+    return !SELECTED_STAGES.includes(s) && !CLOSED_STAGES.includes(s);
+  }).length;
 
   return (
     <DashboardLayout>

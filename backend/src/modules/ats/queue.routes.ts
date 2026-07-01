@@ -18,16 +18,18 @@ import {
 // ── Public display router (no auth) ───────────────────────────────────────────
 export const queuePublicRouter = Router();
 
-// GET /api/ats/queue/branches — distinct branches with active queue today
-queuePublicRouter.get('/branches', async (_req, res) => {
+// GET /api/ats/queue/branches?date=YYYY-MM-DD — distinct branches with active queue for date (defaults to today)
+queuePublicRouter.get('/branches', async (req, res) => {
   try {
+    const targetDate = (req.query.date as string) || new Date().toISOString().split('T')[0];
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT branch_name
          FROM ats_queue_token
-        WHERE DATE(created_at) = CURDATE()
+        WHERE DATE(created_at) = ?
           AND branch_name IS NOT NULL
           AND branch_name != ''
-        ORDER BY branch_name`
+        ORDER BY branch_name`,
+      [targetDate]
     );
     const branches = (rows as any[]).map((r) => r.branch_name as string);
     return res.json({ success: true, data: branches });

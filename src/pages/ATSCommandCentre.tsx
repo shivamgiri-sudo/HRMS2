@@ -38,7 +38,7 @@ interface BranchMetrics {
   branch_display_name: string;
   total_candidates: number;
   selected_count: number;
-  pending_interviews: number;
+  pending_bgv: number;
   active_recruiters: number;
 }
 
@@ -374,7 +374,7 @@ export default function ATSCommandCentre() {
                         {branch.selected_count}
                       </td>
                       <td className="px-4 py-4 text-sm text-orange-600">
-                        {branch.pending_interviews}
+                        {branch.pending_bgv}
                       </td>
                       <td className="px-4 py-4 text-sm text-gray-900">
                         {branch.active_recruiters}

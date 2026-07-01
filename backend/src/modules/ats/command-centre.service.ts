@@ -29,7 +29,7 @@ export interface BranchMetrics {
   branch_display_name: string;
   total_candidates: number;
   selected_count: number;
-  pending_interviews: number;
+  pending_bgv: number;
   active_recruiters: number;
 }
 
@@ -103,12 +103,12 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
      )`
   );
 
-  // Employees joined this month
+  // Employees joined this month — use updated_at as proxy (set when stage transitions to 'joined')
   const [joinedRes] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) as joined FROM ats_candidate
      WHERE current_stage = 'joined'
-     AND MONTH(created_at) = MONTH(CURRENT_DATE())
-     AND YEAR(created_at) = YEAR(CURRENT_DATE())`
+     AND MONTH(updated_at) = MONTH(CURRENT_DATE())
+     AND YEAR(updated_at) = YEAR(CURRENT_DATE())`
   );
 
   // Calculate conversion rate
@@ -159,10 +159,10 @@ export async function getBranchMetrics(): Promise<BranchMetrics[]> {
       c.branch_display_name,
       COUNT(DISTINCT c.id) as total_candidates,
       SUM(CASE WHEN c.current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted', 'joined') THEN 1 ELSE 0 END) as selected_count,
-      SUM(CASE WHEN c.current_stage IN ('selected', 'bgv_pending') THEN 1 ELSE 0 END) as pending_interviews,
+      SUM(CASE WHEN c.current_stage IN ('selected', 'bgv_pending') THEN 1 ELSE 0 END) as pending_bgv,
       COUNT(DISTINCT qt.recruiter_id) as active_recruiters
     FROM ats_candidate c
-    LEFT JOIN ats_queue_token qt ON qt.candidate_id = c.id AND DATE(qt.created_at) = CURDATE()
+    LEFT JOIN ats_queue_token qt ON qt.candidate_id = c.id
     WHERE c.active_status = 1
     GROUP BY c.applied_for_branch, c.branch_display_name
     ORDER BY total_candidates DESC`
@@ -282,11 +282,11 @@ export async function getStageDistribution(): Promise<StageDistribution[]> {
 export async function getRoleMetrics(): Promise<{ role: string; count: number }[]> {
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
-      applied_for_role as role,
+      COALESCE(applied_for_process, 'Unknown') as role,
       COUNT(*) as count
     FROM ats_candidate
     WHERE active_status = 1
-    GROUP BY applied_for_role
+    GROUP BY applied_for_process
     ORDER BY count DESC
     LIMIT 10`
   );
@@ -300,16 +300,16 @@ export async function getRoleMetrics(): Promise<{ role: string; count: number }[
 export async function getExperienceDistribution(): Promise<{ experience: string; count: number }[]> {
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
-      years_of_experience as experience,
+      COALESCE(experience, 'Not Specified') as experience,
       COUNT(*) as count
     FROM ats_candidate
-    WHERE active_status = 1 AND years_of_experience IS NOT NULL
-    GROUP BY years_of_experience
+    WHERE active_status = 1 AND experience IS NOT NULL
+    GROUP BY experience
     ORDER BY
       CASE
-        WHEN years_of_experience = 'Fresher' THEN 0
-        WHEN years_of_experience LIKE '%-%' THEN CAST(SUBSTRING_INDEX(years_of_experience, '-', 1) AS UNSIGNED)
-        WHEN years_of_experience LIKE '%+%' THEN CAST(SUBSTRING_INDEX(years_of_experience, '+', 1) AS UNSIGNED)
+        WHEN experience = 'Fresher' THEN 0
+        WHEN experience LIKE '%-%' THEN CAST(SUBSTRING_INDEX(experience, '-', 1) AS UNSIGNED)
+        WHEN experience LIKE '%+%' THEN CAST(SUBSTRING_INDEX(experience, '+', 1) AS UNSIGNED)
         ELSE 999
       END`
   );

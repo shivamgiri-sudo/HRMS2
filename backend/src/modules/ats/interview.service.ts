@@ -73,7 +73,7 @@ export async function getAssignedCandidates(recruiterId: string): Promise<Assign
     FROM ats_candidate c
     LEFT JOIN ats_queue_token qt ON qt.candidate_id = c.id
     WHERE c.recruiter_id = ?
-      AND c.candidate_status = 'registered'
+      AND c.current_stage NOT IN ('rejected', 'joined', 'rejected_by_branch_head')
       AND qt.queue_status IN ('waiting', 'called', 'in_interview')
     ORDER BY qt.created_at ASC`,
     [recruiterId]
@@ -149,11 +149,11 @@ export async function submitInterviewResult(input: InterviewResultInput) {
       ]
     );
 
-    // Update candidate status
+    // Update candidate stage
     const newStatus = input.interview_status === 'selected' ? 'selected' : 'rejected';
     await connection.execute(
       `UPDATE ats_candidate
-       SET candidate_status = ?
+       SET current_stage = ?
        WHERE id = ?`,
       [newStatus, input.candidate_id]
     );
