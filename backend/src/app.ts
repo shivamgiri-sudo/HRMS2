@@ -142,6 +142,7 @@ import { jclrRouter } from "./modules/ats/jclr.routes.js";
 import { salaryComponentAssignmentRouter } from "./modules/ats/salary-component-assignment.routes.js";
 import { employeeCodeGateRouter } from "./modules/ats/employee-code-gate.routes.js";
 import { payrollHRRouter } from "./modules/ats/payroll-hr.routes.js";
+import { branchHeadApprovalRouter } from "./modules/ats/branch-head-approval.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
 import { onboardingDataRouter } from "./modules/onboarding/onboarding-data.routes.js";
@@ -335,6 +336,7 @@ app.use("/api/ats/jclr", jclrRouter);
 app.use("/api/ats/salary-components", salaryComponentAssignmentRouter);
 app.use("/api/ats/employee-code", employeeCodeGateRouter);
 app.use("/api/ats/payroll-hr", payrollHRRouter);
+app.use("/api/ats/branch-head-approval", branchHeadApprovalRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

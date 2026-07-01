@@ -79,23 +79,14 @@ export function LeaveBalanceCard({ employeeId }: LeaveBalanceCardProps) {
                     <div className="flex justify-between text-sm text-muted-foreground">
                       <span>{balance.used_days.toFixed(1)} used</span>
                       <span className="font-medium text-foreground">
-                        {balance.available_days.toFixed(1)} available
+                        {balance.available_days.toFixed(1)} / {annualEntitlement} days
                       </span>
                     </div>
 
                     <p className="text-xs text-muted-foreground">
-                      Allocated: {balance.allocated_days.toFixed(1)} days
-                      {isCLML && annualEntitlement !== balance.allocated_days && (
-                        <span className="text-slate-400">
-                          {" "}(annual: {annualEntitlement} days)
-                        </span>
-                      )}
-                      {!isCLML && balance.annual_entitlement != null &&
-                        balance.annual_entitlement !== balance.allocated_days && (
-                          <span className="text-slate-400">
-                            {" "}(annual: {balance.annual_entitlement} days)
-                          </span>
-                        )}
+                      {isCLML
+                        ? `Credited so far: ${balance.allocated_days.toFixed(1)} of ${annualEntitlement} days`
+                        : `Allocated: ${balance.allocated_days.toFixed(1)} days`}
                       {balance.adjusted_days !== 0 && (
                         <span className={balance.adjusted_days > 0 ? " text-green-600" : " text-red-500"}>
                           {" "}({balance.adjusted_days > 0 ? "+" : ""}{balance.adjusted_days.toFixed(1)} adj)
@@ -110,15 +101,14 @@ export function LeaveBalanceCard({ employeeId }: LeaveBalanceCardProps) {
                           <div className="flex items-center gap-1.5 rounded-md bg-amber-50 px-2 py-1.5 cursor-help border border-amber-100">
                             <TrendingUp className="h-3.5 w-3.5 text-amber-600 flex-shrink-0" />
                             <span className="text-xs text-amber-700">
-                              {accruedToDate.toFixed(0)}/{annualEntitlement} accrued this year
+                              {accruedToDate.toFixed(1)}/{annualEntitlement} credited so far
                             </span>
                           </div>
                         </TooltipTrigger>
                         <TooltipContent side="bottom" className="max-w-xs text-xs">
                           <p>
-                            {balance.leave_type?.name} annual entitlement is {annualEntitlement} days,
-                            credited in specific months. Through {MONTH_NAMES[currentMonth]}, {accruedToDate.toFixed(0)} day(s)
-                            have been credited so far this year.
+                            {balance.leave_type?.name} annual entitlement is {annualEntitlement} days, credited monthly.
+                            {" "}{accruedToDate.toFixed(1)} day(s) have been credited through {MONTH_NAMES[currentMonth]}.
                           </p>
                         </TooltipContent>
                       </Tooltip>

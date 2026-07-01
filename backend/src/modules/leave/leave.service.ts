@@ -225,7 +225,7 @@ export const leaveService = {
 
   async getBalance(employeeId: string, year: number): Promise<any[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT lbl.*, lt.leave_name, lt.leave_code, lt.paid_leave, lt.carry_forward
+      `SELECT lbl.*, lt.leave_name, lt.leave_code, lt.paid_leave, lt.carry_forward, lt.max_days_per_year AS annual_entitlement
        FROM leave_balance_ledger lbl
        JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
        WHERE lbl.employee_id = ? AND lbl.balance_year = ?
