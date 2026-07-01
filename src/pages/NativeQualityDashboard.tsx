@@ -36,6 +36,7 @@ interface Summary {
 interface TrendPoint { date: string; total_calls: number; avg_score: number; above_80: number; below_50: number; }
 interface AgentRow { agent_name: string; agent_code?: string; total_calls: number; avg_score: number; calls_above_80: number; calls_below_50: number; band: string; }
 interface ClientRow { client_id: string; client_name?: string; total_calls: number; avg_score: number; agent_count: number; }
+interface ClientKpi { client_id: string; client_name?: string; audit_count: number; cq_score: number; without_fatal_cq: number; excellent_pct: number; good_pct: number; below_avg_pct: number; }
 interface AprRow { process: string; process_code?: string; agents: number; avg_calls: number; avg_aht: number; avg_shrinkage_pct: number; avg_bio_mins: number; avg_lunch_mins: number; avg_qa_mins: number; avg_training_mins: number; }
 interface SalesSummary { total_calls: number; sales_done: number; competitor_mentions: number; objection_calls: number; }
 interface Competitor { CompetitorName: string; mentions: number; }
@@ -354,6 +355,7 @@ export default function NativeQualityDashboard() {
   // Core queries — always fetched
   const summaryQ  = useQuery({ queryKey: ["qd-summary",  ...key], queryFn: () => hrmsApi.get<{ summary: Summary }>(`/api/quality-dashboard/summary?${qs}`).then(r => r.summary) });
   const clientsQ  = useQuery({ queryKey: ["qd-clients",  ...key], queryFn: () => hrmsApi.get<{ clients: ClientRow[] }>(`/api/quality-dashboard/clients?from=${from}&to=${to}`).then(r => r.clients) });
+  const clientKpisQ = useQuery({ queryKey: ["qd-clientkpis", ...key], queryFn: () => hrmsApi.get<{ success: boolean; data: ClientKpi[] }>(`/api/quality-dashboard/client-drill/kpis?from=${from}&to=${to}`).then(r => Array.isArray(r) ? r : (r as any)?.data ?? []), enabled: activeTab === "overview" });
 
   // Tab-lazy queries
   const trendQ    = useQuery({ queryKey: ["qd-trend",    ...key], queryFn: () => hrmsApi.get<{ trend: TrendPoint[] }>(`/api/quality-dashboard/trend?from=${from}&to=${to}&granularity=${granularity}`).then(r => r.trend), enabled: activeTab === "overview" || activeTab === "quality" });
@@ -481,16 +483,47 @@ export default function NativeQualityDashboard() {
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="mb-4 font-black text-slate-900">Client Performance</h2>
-          {clientsQ.isLoading ? <Spinner size="sm" /> : clientsQ.isError ? <ErrBanner msg="Failed" /> : (
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={(clientsQ.data ?? []).slice(0, 8).map(c => ({ ...c, display_name: c.client_name ?? c.client_id }))} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false} />
-                <YAxis dataKey="display_name" type="category" tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} width={80} />
-                <Tooltip formatter={(v: number) => [`${v}%`, "Avg Score"]} contentStyle={{ borderRadius: "12px", border: "1px solid #e2e8f0", fontSize: 12 }} />
-                <Bar dataKey="avg_score" fill="#6366f1" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+          <p className="mb-4 text-xs text-slate-500">Click any client for detailed drill-down</p>
+          {clientKpisQ.isLoading ? <Spinner size="sm" /> : clientKpisQ.isError ? <ErrBanner msg="Failed to load client KPIs" /> : (
+            <div className="grid gap-3 sm:grid-cols-1 lg:grid-cols-2 xl:grid-cols-1">
+              {(clientKpisQ.data ?? []).slice(0, 6).map(c => (
+                <div key={c.client_id} className="group cursor-pointer rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm transition-all hover:shadow-md hover:border-blue-300">
+                  <div className="mb-3 flex items-start justify-between">
+                    <div>
+                      <h3 className="font-bold text-slate-900">{c.client_name ?? c.client_id}</h3>
+                      <p className="text-xs text-slate-400">{c.audit_count} audited calls</p>
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-slate-300 transition-transform group-hover:translate-x-1 group-hover:text-blue-600" />
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="rounded-lg border border-blue-100 bg-blue-50 px-2 py-1.5 text-center">
+                      <p className="text-xs font-semibold text-blue-600">CQ Score</p>
+                      <p className="text-sm font-black text-blue-900">{c.cq_score}%</p>
+                    </div>
+                    <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-2 py-1.5 text-center">
+                      <p className="text-xs font-semibold text-emerald-600">W/O Fatal</p>
+                      <p className="text-sm font-black text-emerald-900">{c.without_fatal_cq}%</p>
+                    </div>
+                    <div className="rounded-lg border border-purple-100 bg-purple-50 px-2 py-1.5 text-center">
+                      <p className="text-xs font-semibold text-purple-600">Excellent</p>
+                      <p className="text-sm font-black text-purple-900">{c.excellent_pct}%</p>
+                    </div>
+                    <div className="rounded-lg border border-amber-100 bg-amber-50 px-2 py-1.5 text-center">
+                      <p className="text-xs font-semibold text-amber-600">Good</p>
+                      <p className="text-sm font-black text-amber-900">{c.good_pct}%</p>
+                    </div>
+                    <div className="rounded-lg border border-rose-100 bg-rose-50 px-2 py-1.5 text-center">
+                      <p className="text-xs font-semibold text-rose-600">Below Avg</p>
+                      <p className="text-sm font-black text-rose-900">{c.below_avg_pct}%</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-100 bg-slate-50 px-2 py-1.5 text-center">
+                      <p className="text-xs font-semibold text-slate-600">Audits</p>
+                      <p className="text-sm font-black text-slate-900">{c.audit_count}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>
