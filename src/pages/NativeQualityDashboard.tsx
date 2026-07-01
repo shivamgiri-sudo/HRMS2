@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { ClientQualityDrillModal } from "@/components/quality/ClientQualityDrillModal";
 
 // ─── Date Helpers ─────────────────────────────────────────────────────────────
 
@@ -348,6 +349,7 @@ export default function NativeQualityDashboard() {
   const [refresh, setRefresh] = useState(0);
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [selectedAgent, setSelectedAgent] = useState<AgentRisk | null>(null);
+  const [drillClient, setDrillClient] = useState<{ id: string; name?: string } | null>(null);
 
   const qs = `from=${from}&to=${to}&client_id=${clientId}`;
   const key = [from, to, clientId, granularity, refresh];
@@ -487,7 +489,7 @@ export default function NativeQualityDashboard() {
           {clientKpisQ.isLoading ? <Spinner size="sm" /> : clientKpisQ.isError ? <ErrBanner msg="Failed to load client KPIs" /> : (
             <div className="grid gap-3 sm:grid-cols-1 lg:grid-cols-2 xl:grid-cols-1">
               {(clientKpisQ.data ?? []).slice(0, 6).map(c => (
-                <div key={c.client_id} className="group cursor-pointer rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm transition-all hover:shadow-md hover:border-blue-300">
+                <div key={c.client_id} onClick={() => setDrillClient({ id: c.client_id, name: c.client_name })} className="group cursor-pointer rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm transition-all hover:shadow-md hover:border-blue-300">
                   <div className="mb-3 flex items-start justify-between">
                     <div>
                       <h3 className="font-bold text-slate-900">{c.client_name ?? c.client_id}</h3>
@@ -1008,6 +1010,9 @@ export default function NativeQualityDashboard() {
 
       {/* Agent Detail Modal */}
       {selectedAgent && <AgentDetailModal agent={selectedAgent} onClose={() => setSelectedAgent(null)} />}
+
+      {/* Client Quality Drill Modal */}
+      {drillClient && <ClientQualityDrillModal clientId={drillClient.id} clientName={drillClient.name} from={from} to={to} onClose={() => setDrillClient(null)} />}
     </DashboardLayout>
   );
 }
