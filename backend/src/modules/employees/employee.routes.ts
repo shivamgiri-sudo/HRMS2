@@ -36,8 +36,7 @@ router.get("/me", h(async (req: any, res: any) => {
   const userId = req.authUser?.id;
   if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
 
-  const [rows] = await db.execute(
-    `SELECT e.*,
+  const empSelect = `SELECT e.*,
             d.designation_name  AS designation,
             dept.dept_name      AS department_name,
             b.branch_name,
@@ -47,11 +46,36 @@ router.get("/me", h(async (req: any, res: any) => {
      LEFT JOIN designation_master d    ON d.id    = e.designation_id
      LEFT JOIN department_master  dept ON dept.id = e.department_id
      LEFT JOIN branch_master      b    ON b.id    = e.branch_id
-     LEFT JOIN employees          mgr  ON mgr.id  = e.reporting_manager_id
-     WHERE e.user_id = ? AND e.active_status = 1
-     LIMIT 1`,
+     LEFT JOIN employees          mgr  ON mgr.id  = e.reporting_manager_id`;
+
+  let [rows] = await db.execute(
+    `${empSelect} WHERE e.user_id = ? AND e.active_status = 1 LIMIT 1`,
     [userId]
   ) as any[];
+
+  // Self-heal: user_id not linked — try matching by auth email against employee email columns
+  if (!rows.length) {
+    const [authRows] = await db.execute(
+      'SELECT email FROM auth_user WHERE id = ? LIMIT 1',
+      [userId]
+    ) as any[];
+    if (authRows.length) {
+      const email = String(authRows[0].email).toLowerCase().trim();
+      const [byEmail] = await db.execute(
+        `${empSelect}
+         WHERE e.active_status = 1
+           AND (LOWER(TRIM(e.official_email)) = ? OR LOWER(TRIM(e.personal_email)) = ?)
+         LIMIT 1`,
+        [email, email]
+      ) as any[];
+      if (byEmail.length) {
+        // Auto-link so future lookups use user_id directly
+        await db.execute('UPDATE employees SET user_id = ? WHERE id = ?', [userId, byEmail[0].id]);
+        rows = byEmail;
+      }
+    }
+  }
+
   if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
 
   const emp = rows[0];
