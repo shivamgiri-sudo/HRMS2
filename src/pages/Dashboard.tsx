@@ -1,20 +1,24 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowUpRight,
+  Award,
   BadgeCheck,
   BarChart3,
   Calendar,
   CalendarCheck,
-  CheckCircle2,
   Clock,
   CreditCard,
   FileText,
+  Flame,
+  Heart,
   ShieldCheck,
   Sparkles,
+  Star,
   TrendingUp,
+  Trophy,
   UserCheck,
   UserPlus,
   Users,
@@ -28,6 +32,7 @@ import { Progress } from "@/components/ui/progress";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
+import type { EngagementSummary, LeaderboardEntry, ApiResponse } from "@/components/engagement/types";
 
 type MetricCardProps = {
   label: string;
@@ -115,6 +120,154 @@ function MiniBar({ label, value, tone }: { label: string; value: number; tone: s
       </div>
       <Progress value={value} className={`h-2 ${tone}`} />
     </div>
+  );
+}
+
+// ── Login streak (localStorage) ──────────────────────────────────────────────
+function useLoginStreak() {
+  const [streak, setStreak] = useState(0);
+  useEffect(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    const raw = localStorage.getItem("hrms_streak");
+    let data = raw ? JSON.parse(raw) : { lastDate: "", count: 0 };
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    if (data.lastDate === today) {
+      setStreak(data.count);
+    } else if (data.lastDate === yesterday) {
+      data = { lastDate: today, count: data.count + 1 };
+      localStorage.setItem("hrms_streak", JSON.stringify(data));
+      setStreak(data.count);
+    } else {
+      data = { lastDate: today, count: 1 };
+      localStorage.setItem("hrms_streak", JSON.stringify(data));
+      setStreak(1);
+    }
+  }, []);
+  return streak;
+}
+
+// ── Engagement strip ──────────────────────────────────────────────────────────
+function EngagementStrip() {
+  const streak = useLoginStreak();
+
+  const { data: engData } = useQuery({
+    queryKey: ["dashboard-engagement-summary"],
+    queryFn: () => hrmsApi.get<ApiResponse<EngagementSummary>>("/api/engagement/me"),
+    staleTime: 60_000 * 5,
+  });
+
+  const { data: lbData } = useQuery({
+    queryKey: ["dashboard-leaderboard"],
+    queryFn: () => hrmsApi.get<ApiResponse<LeaderboardEntry[]>>("/api/engagement/leaderboard?period=month&limit=3"),
+    staleTime: 60_000 * 5,
+  });
+
+  const summary = engData?.data;
+  const leaders = lbData?.data ?? [];
+
+  const streakLabel = streak >= 30 ? "Monthly Legend" : streak >= 7 ? "Week Warrior" : streak >= 3 ? "On a Roll" : "Just Started";
+  const streakColor = streak >= 30 ? "from-amber-500 to-orange-600" : streak >= 7 ? "from-orange-400 to-red-500" : streak >= 3 ? "from-yellow-400 to-orange-400" : "from-slate-400 to-slate-500";
+
+  return (
+    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
+      {/* Streak card */}
+      <Card className={`overflow-hidden rounded-[22px] bg-gradient-to-br ${streakColor} text-white shadow-lg border-0`}>
+        <CardContent className="p-5">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-white/70">Login Streak</p>
+              <p className="mt-1 text-4xl font-black">{streak}</p>
+              <p className="mt-1 text-sm font-semibold text-white/80">days</p>
+            </div>
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/20">
+              <Flame className="h-6 w-6" />
+            </div>
+          </div>
+          <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 text-xs font-bold">
+            {streakLabel}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Points & tier */}
+      <Card className="overflow-hidden rounded-[22px] border-0 bg-gradient-to-br from-violet-600 to-indigo-700 text-white shadow-lg">
+        <CardContent className="p-5">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-white/70">My Points</p>
+              <p className="mt-1 text-4xl font-black">{(summary?.total_points ?? 0).toLocaleString()}</p>
+              <p className="mt-1 text-sm font-semibold text-white/80">
+                {summary?.current_tier?.tier_name ?? "Starter"}
+              </p>
+            </div>
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/20">
+              <Star className="h-6 w-6" />
+            </div>
+          </div>
+          {summary != null && (
+            <div className="mt-3">
+              <Progress value={summary.progress_percentage} className="h-1.5 bg-white/20 [&>div]:bg-white" />
+              <p className="mt-1 text-[11px] text-white/60">
+                {summary.points_to_next_tier != null ? `${summary.points_to_next_tier} pts to next tier` : "Top tier!"}
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Quick actions */}
+      <Card className="overflow-hidden rounded-[22px] border border-slate-100 bg-white shadow-sm">
+        <CardContent className="p-5">
+          <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Quick Engage</p>
+          <div className="mt-3 flex flex-col gap-2">
+            <Link to="/engagement/kudos"
+              className="flex items-center gap-3 rounded-xl border border-pink-100 bg-pink-50 px-3 py-2.5 text-sm font-semibold text-pink-700 transition hover:bg-pink-100">
+              <Heart className="h-4 w-4" /> Give Kudos
+            </Link>
+            <Link to="/engagement/badges"
+              className="flex items-center gap-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5 text-sm font-semibold text-amber-700 transition hover:bg-amber-100">
+              <Award className="h-4 w-4" /> My Badges ({summary?.badges_earned.length ?? 0})
+            </Link>
+            <Link to="/career-planning"
+              className="flex items-center gap-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2.5 text-sm font-semibold text-blue-700 transition hover:bg-blue-100">
+              <TrendingUp className="h-4 w-4" /> Career Path
+            </Link>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Mini leaderboard */}
+      <Card className="overflow-hidden rounded-[22px] border border-slate-100 bg-white shadow-sm">
+        <CardContent className="p-5">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Top This Month</p>
+            <Link to="/engagement/leaderboard" className="text-[11px] font-bold text-[#1B6AB5] hover:underline">
+              Full board →
+            </Link>
+          </div>
+          <div className="mt-3 space-y-2">
+            {leaders.length === 0 && (
+              <p className="text-xs text-slate-400">Leaderboard loading…</p>
+            )}
+            {leaders.map((entry, i) => (
+              <div key={entry.employee_id} className="flex items-center gap-3">
+                <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-black ${
+                  i === 0 ? "bg-amber-100 text-amber-700" : i === 1 ? "bg-slate-100 text-slate-600" : "bg-orange-50 text-orange-500"
+                }`}>
+                  {i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉"}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800">{entry.employee_name}</span>
+                <span className="text-xs font-black text-violet-600">{entry.total_points.toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+          <Link to="/engagement" className="mt-4 flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-3 py-2 text-xs font-bold text-white transition hover:opacity-90">
+            <Trophy className="h-3.5 w-3.5" /> Open Engagement Hub
+          </Link>
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
@@ -278,6 +431,9 @@ export default function Dashboard() {
             </div>
           </div>
         </section>
+
+        {/* ── Engagement strip ──────────────────────────────────────── */}
+        <EngagementStrip />
 
         {isLoading ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
