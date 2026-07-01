@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { useUserRole } from "@/hooks/useUserRole";
 import { useAuth } from "@/contexts/AuthContext";
+import { AIInsightPanel } from "@/components/ai";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -380,6 +381,22 @@ export default function EmployeeSelfDashboard() {
           data={attendance}
           loading={attendanceLoading}
           error={attendanceError}
+        />
+
+        {/* AI Self Dashboard Brief */}
+        <AIInsightPanel
+          contextType="employee_self"
+          role="employee"
+          title="Your Attendance & Leave AI Brief"
+          enabled={!attendanceLoading && attendance !== null}
+          data={{
+            present_days: attendance?.presentDays,
+            absent_days: attendance?.absentDays,
+            late_days: attendance?.lateDays,
+            total_working_days: attendance?.totalWorkingDays,
+            attendance_pct: attendance?.attendancePct,
+            leave_balances: leaveBalances.map((b) => ({ type: b.leaveType, balance: b.balance })),
+          }}
         />
 
         {/* Onboarding (only shown if candidate) */}

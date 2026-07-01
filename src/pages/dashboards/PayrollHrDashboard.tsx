@@ -11,6 +11,7 @@ import type { HealthBreakdownItem } from "@/components/dashboard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUserRole } from "@/hooks/useUserRole";
 import { Button } from "@/components/ui/button";
+import { AIInsightPanel } from "@/components/ai";
 
 const DASHBOARD_CODE = "PAYROLL_HR_DASHBOARD";
 
@@ -358,6 +359,25 @@ export default function PayrollHrDashboard() {
             />
           </div>
         </div>
+
+        {/* AI Payroll Readiness Check */}
+        <AIInsightPanel
+          contextType="payroll_readiness"
+          role="payroll_hr"
+          title="Payroll AI Readiness Check"
+          enabled={!summaryLoading && summary !== null}
+          data={{
+            readiness_score: summary?.readinessScore,
+            missing_bank: summary?.blockers?.missingBank,
+            missing_pan: summary?.blockers?.missingPan,
+            missing_uan: summary?.blockers?.missingUan,
+            statutory_incomplete: summary?.blockers?.statutoryIncomplete,
+            jclr_pending: summary?.jclrPending,
+            name_mismatch_blocking: summary?.nameMismatchBlocking ? 1 : 0,
+            onboarding_validation_pending: summary?.onboardingValidationPending,
+            appointment_esign_pending: summary?.appointmentEsignPending,
+          }}
+        />
 
         {/* Blockers table + Work Inbox */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock, Filter, RefreshCcw, Search, TrendingUp, UserCheck, Users } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { getCachedCandidateList } from "@/lib/atsDashboardReplicaAdapter";
+import { AIInsightPanel } from "@/components/ai";
 
 
 type Candidate = {
@@ -305,6 +306,25 @@ export default function NativeATSDashboardV2() {
           <StatCard title="Client Pending" value={metrics.clientPending} sub="needs follow-up/resubmission" icon={<Clock className="h-5 w-5" />} tone="bg-amber-50 text-amber-700" />
           <StatCard title="SLA Breach" value={metrics.slaBreach} sub="not updated beyond 60 min" icon={<AlertTriangle className="h-5 w-5" />} tone="bg-rose-50 text-rose-700" />
         </div>
+
+        {/* AI ATS Pipeline Brief */}
+        <AIInsightPanel
+          contextType="ats_pipeline"
+          role="recruiter"
+          title="Recruitment AI Funnel Brief"
+          enabled={!loading && filtered.length > 0}
+          data={{
+            total_candidates: metrics.total,
+            selected_count: metrics.selectedCount,
+            rejected_count: metrics.rejected,
+            client_pending: metrics.clientPending,
+            onboarding_count: metrics.onboarding,
+            submitted_count: metrics.submitted,
+            sla_breach_count: metrics.slaBreach,
+            selection_rate_pct: metrics.selectionRate,
+            closure_rate_pct: metrics.closureRate,
+          }}
+        />
 
         <div className="grid gap-5 xl:grid-cols-4">
           <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h3 className="mb-4 flex items-center gap-2 font-black text-slate-950"><BarChart3 className="h-5 w-5" /> Branch Funnel</h3><BarList rows={grouped.branch} labelKey="name" valueKey="total" empty="No branch data" /></div>

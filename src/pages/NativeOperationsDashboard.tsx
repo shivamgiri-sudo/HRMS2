@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { AIInsightPanel } from "@/components/ai";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -721,6 +722,22 @@ export default function NativeOperationsDashboard() {
             }
           />
         </div>
+
+        {/* AI Operations Brief */}
+        <AIInsightPanel
+          contextType="wfm_roster"
+          role="wfm"
+          title="Operations AI Brief"
+          enabled={mgmt !== null}
+          data={{
+            headcount: mgmt?.headcount,
+            attendance_rate: mgmt?.attendance_rate,
+            avg_kpi_score: mgmt?.avg_kpi_score,
+            open_tickets: mgmt?.open_tickets,
+            pending_leaves: mgmt?.pending_leaves,
+            attrition_rate: mgmt?.attrition_rate,
+          }}
+        />
 
         {/* Section 1 */}
         <LiveWorkforceSection />

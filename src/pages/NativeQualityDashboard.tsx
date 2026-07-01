@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { AIInsightPanel } from "@/components/ai";
 import { useQuery } from "@tanstack/react-query";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis,
@@ -430,6 +431,23 @@ export default function NativeQualityDashboard() {
   const OverviewTab = (
     <div className="space-y-5">
       {KpiRow}
+
+      {/* AI Quality Operations Brief */}
+      <AIInsightPanel
+        contextType="quality_operations"
+        role="qa"
+        title="Quality AI Brief"
+        enabled={!summaryQ.isLoading && s !== undefined}
+        data={{
+          total_calls: s?.total_calls,
+          audited_calls: s?.audited_calls,
+          avg_quality_score: s?.avg_quality_score,
+          calls_above_80: s?.calls_above_80,
+          calls_below_50: s?.calls_below_50,
+          unique_agents: s?.unique_agents,
+          fraud_flags: s?.fraud_flags,
+        }}
+      />
 
       {/* Trend + Clients */}
       <div className="grid gap-5 xl:grid-cols-3">

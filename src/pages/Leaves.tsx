@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { AIInsightPanel } from "@/components/ai";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpDown,
@@ -819,6 +820,20 @@ const Leaves = () => {
             />
           ))}
         </section>
+
+        {/* AI Leave Brief */}
+        <AIInsightPanel
+          contextType="employee_self"
+          role="employee"
+          title="Leave AI Brief"
+          enabled={!isLoading && requests.length > 0}
+          data={{
+            total_requests: requests.length,
+            pending_requests: pendingRequests.length,
+            approved_count: requests.filter((r) => r.status === "approved").length,
+            rejected_count: requests.filter((r) => r.status === "rejected").length,
+          }}
+        />
 
         {/* Leave Requests */}
         <section className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm">

@@ -13,6 +13,7 @@ import type { KpiMetric } from "@/components/dashboard";
 import type { AgingBucket } from "@/components/dashboard";
 import { useUserRole } from "@/hooks/useUserRole";
 import { Button } from "@/components/ui/button";
+import { AIInsightPanel } from "@/components/ai";
 
 const DASHBOARD_CODE = "WFM_DASHBOARD";
 
@@ -215,6 +216,22 @@ export default function WfmDashboard() {
       <div className="space-y-6">
         {/* KPI Metrics */}
         <KpiMetricGrid metrics={metrics} columns={4} loading={summaryLoading} />
+
+        {/* AI Workforce Analysis */}
+        <AIInsightPanel
+          contextType="wfm_roster"
+          role="wfm"
+          title="Workforce AI Analysis"
+          enabled={!summaryLoading && summary !== null}
+          data={{
+            required_hc: summary?.requiredHc,
+            available_hc: summary?.availableHc,
+            hc_gap: hcGap,
+            roster_adherence_pct: summary?.rosterAdherence,
+            missing_punch: summary?.missingPunch,
+            attendance_variance_buckets: summary?.attendanceVarianceBuckets,
+          }}
+        />
 
         {/* Attendance Variance + Work Inbox */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

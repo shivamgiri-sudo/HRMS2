@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
+import { AIInsightPanel } from "@/components/ai";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
 
@@ -264,6 +265,28 @@ export default function NativeManagementDashboard() {
         </div>
 
         <RoleInsightsPanel roles={roleKeys} title="Management command insights" />
+
+        {/* AI Management Intelligence */}
+        <AIInsightPanel
+          contextType="ceo_dashboard"
+          role={roleKeys?.[0] ?? "manager"}
+          title="Management AI Intelligence"
+          enabled={!loading && dashStats !== null}
+          data={{
+            headcount: dashStats?.headcount,
+            attrition_rate: dashStats?.attrition_rate,
+            avg_kpi_score: dashStats?.avg_kpi_score,
+            attendance_rate: dashStats?.attendance_rate,
+            pending_leaves: dashStats?.pending_leaves,
+            open_tickets: dashStats?.open_tickets,
+            payroll_liability_gross: ceoMetrics?.payroll_liability?.total_gross,
+            hc_gap: ceoMetrics?.hc_gap?.total_gap,
+            processes_understaffed: ceoMetrics?.hc_gap?.processes_understaffed,
+            open_candidates: ceoMetrics?.hiring_pipeline?.open_candidates,
+            offers_pending_joining: ceoMetrics?.hiring_pipeline?.offers_pending_joining,
+            ff_pending_count: ceoMetrics?.ff_liability?.pending_count,
+          }}
+        />
 
         {message && (
           <div className="flex items-center gap-3 rounded-2xl border-2 border-[#E8231A] bg-red-50 p-4 text-sm font-bold text-red-900">

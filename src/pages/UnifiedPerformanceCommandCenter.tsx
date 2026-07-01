@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Activity, AlertTriangle, BarChart3, BookOpen, Briefcase, CheckCircle2, Clock, Database, RefreshCcw, Search, ShieldCheck, Target, TrendingUp, Users } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { AIInsightPanel } from "@/components/ai";
 // Extended tables not yet in the generated types — use a typed escape hatch only for those
 const extendedDb = { from: (t: string) => ({ select: (...a: any[]) => ({ eq: () => ({ order: () => ({ data: [], error: null }), maybeSingle: async () => ({ data: null, error: null }), data: [], error: null }), data: [], error: null }), insert: (...a: any[]) => ({ select: () => ({ single: async () => ({ data: { id: "stub" }, error: null }) }) }), update: (...a: any[]) => ({ eq: () => ({ data: null, error: null }) }), delete: () => ({ eq: () => ({ data: null, error: null }) }) }) };
 type Row = Record<string, any>;
@@ -221,6 +222,25 @@ export default function UnifiedPerformanceCommandCenter() {
           <Stat title="Shrinkage" value={`${metrics.shrinkagePct}%`} sub="ops log" icon={<AlertTriangle className="h-5 w-5" />} tone="bg-rose-50 text-rose-700" />
           <Stat title="Data Rows" value={scopedAtsCandidates.length + scopedAtsSubmissions.length + lmsProgress.length + scopedWfmRoster.length + scopedQuality.length + scopedOps.length} sub="selected filters" icon={<Database className="h-5 w-5" />} tone="bg-slate-100 text-slate-700" />
         </div>
+
+        {/* AI Performance Brief */}
+        <AIInsightPanel
+          contextType="performance_kpi"
+          role="manager"
+          title="Performance Command AI Brief"
+          enabled={!loading && employees.length > 0}
+          data={{
+            total_employees: metrics.activeEmployees,
+            ats_selected: metrics.selected,
+            client_pending: metrics.clientPending,
+            lms_completed: metrics.completedLearning,
+            on_shift: metrics.onShift,
+            avg_quality_score: metrics.avgQuality,
+            ops_achievement_pct: metrics.opsAchievement,
+            shrinkage_pct: metrics.shrinkagePct,
+            critical_quality_errors: metrics.critical,
+          }}
+        />
 
         <div className="grid gap-5 xl:grid-cols-3">
           <div className="rounded-3xl border bg-white p-5 shadow-sm"><h2 className="mb-4 flex items-center gap-2 font-black"><BarChart3 className="h-5 w-5" /> Branch Command View</h2><MiniBars rows={branchRows} label="name" value="activity" /></div>

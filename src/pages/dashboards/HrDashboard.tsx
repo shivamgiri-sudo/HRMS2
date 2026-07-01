@@ -10,6 +10,7 @@ import {
 import type { KpiMetric } from "@/components/dashboard";
 import { useUserRole } from "@/hooks/useUserRole";
 import { Button } from "@/components/ui/button";
+import { AIInsightPanel } from "@/components/ai";
 
 const DASHBOARD_CODE = "HR_DASHBOARD";
 
@@ -221,6 +222,23 @@ export default function HrDashboard() {
       <div className="space-y-6">
         {/* KPI Metrics */}
         <KpiMetricGrid metrics={metrics} columns={3} loading={summaryLoading} />
+
+        {/* AI HR Operations Briefing */}
+        <AIInsightPanel
+          contextType="hr_dashboard"
+          role="hr"
+          title="HR Operations AI Briefing"
+          enabled={!summaryLoading && summary !== null}
+          data={{
+            selected_candidates: summary?.selectedCandidates,
+            onboarding_submitted: summary?.onboarding?.submitted,
+            onboarding_pending: summary?.onboarding?.pending,
+            onboarding_stuck: summary?.onboarding?.stuck,
+            bgv_pending: summary?.bgvPending,
+            dpdp_withdrawals: summary?.dpdpWithdrawals,
+            resignation_pending: summary?.resignationDiscussionPending,
+          }}
+        />
 
         {/* Work Inbox */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { TrendingUp, TrendingDown, Minus, Loader, RefreshCcw, Activity, CalendarDays } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { AIInsightPanel } from "@/components/ai";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -340,6 +341,22 @@ export default function MyKpiDashboard() {
         {/* Dashboard */}
         {!loading && data && (
           <>
+            {/* AI KPI Brief */}
+            <AIInsightPanel
+              contextType="performance_kpi"
+              role="employee"
+              title="Your KPI AI Brief"
+              enabled={data !== null}
+              data={{
+                overall_score: data.overall_score,
+                overall_rating: data.overall_rating,
+                total_kpis: data.metrics.length,
+                kpis_with_data: data.metrics.filter((m) => m.actual_value !== null).length,
+                on_target_count: data.metrics.filter((m) => m.score_pct >= 90).length,
+                below_60_count: data.metrics.filter((m) => m.score_pct < 60).length,
+              }}
+            />
+
             {/* Summary Bar */}
             <div className="bg-gradient-to-r from-indigo-600 to-indigo-700 rounded-2xl p-5 text-white">
               <div className="flex items-center justify-between flex-wrap gap-4">

@@ -73,6 +73,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { AIInsightPanel } from "@/components/ai";
 
 const MONTHS = [
   { value: "0", label: "January" },
@@ -841,61 +842,79 @@ const Attendance = () => {
                 </CardContent>
               </Card>
             ) : (
-              <div className={`grid gap-4 sm:grid-cols-2 ${isAdminOrHR ? 'xl:grid-cols-3' : 'xl:grid-cols-5'}`}>
-                <AttendanceMetricCard
-                  label="Present Days"
-                  value={summaryData.presentDays}
-                  description="Days marked present."
-                  icon={<CheckCircle2 className="h-5 w-5" />}
-                  tone="emerald"
-                />
-
-                <AttendanceMetricCard
-                  label="From Office"
-                  value={summaryData.wfoDays}
-                  description="Work from office days."
-                  icon={<Briefcase className="h-5 w-5" />}
-                  tone="sky"
-                />
-
-                <AttendanceMetricCard
-                  label="Total Hours"
-                  value={`${summaryData.totalHours.toFixed(1)}h`}
-                  description="Total productive hours."
-                  icon={<Timer className="h-5 w-5" />}
-                  tone="indigo"
-                />
-
-                <AttendanceMetricCard
-                  label="Avg Hours / Day"
-                  value={`${
-                    summaryData.totalWorkingDays > 0
-                      ? (summaryData.totalHours / summaryData.totalWorkingDays).toFixed(1)
-                      : "0"
-                  }h`}
-                  description="Average daily hours."
-                  icon={<Clock className="h-5 w-5" />}
-                  tone="slate"
-                />
-
-                <AttendanceMetricCard
-                  label="LWP Days"
-                  value={summaryData.totalLwp % 1 === 0 ? String(summaryData.totalLwp) : summaryData.totalLwp.toFixed(1)}
-                  description="Leave without pay days."
-                  icon={<AlertTriangle className="h-5 w-5" />}
-                  tone="amber"
-                />
-
-                {isAdminOrHR && (
+              <>
+                <div className={`grid gap-4 sm:grid-cols-2 ${isAdminOrHR ? 'xl:grid-cols-3' : 'xl:grid-cols-5'}`}>
                   <AttendanceMetricCard
-                    label="Late Arrivals"
-                    value={summaryData.lateMarks}
-                    description="Late arrival count."
+                    label="Present Days"
+                    value={summaryData.presentDays}
+                    description="Days marked present."
+                    icon={<CheckCircle2 className="h-5 w-5" />}
+                    tone="emerald"
+                  />
+
+                  <AttendanceMetricCard
+                    label="From Office"
+                    value={summaryData.wfoDays}
+                    description="Work from office days."
+                    icon={<Briefcase className="h-5 w-5" />}
+                    tone="sky"
+                  />
+
+                  <AttendanceMetricCard
+                    label="Total Hours"
+                    value={`${summaryData.totalHours.toFixed(1)}h`}
+                    description="Total productive hours."
+                    icon={<Timer className="h-5 w-5" />}
+                    tone="indigo"
+                  />
+
+                  <AttendanceMetricCard
+                    label="Avg Hours / Day"
+                    value={`${
+                      summaryData.totalWorkingDays > 0
+                        ? (summaryData.totalHours / summaryData.totalWorkingDays).toFixed(1)
+                        : "0"
+                    }h`}
+                    description="Average daily hours."
+                    icon={<Clock className="h-5 w-5" />}
+                    tone="slate"
+                  />
+
+                  <AttendanceMetricCard
+                    label="LWP Days"
+                    value={summaryData.totalLwp % 1 === 0 ? String(summaryData.totalLwp) : summaryData.totalLwp.toFixed(1)}
+                    description="Leave without pay days."
                     icon={<AlertTriangle className="h-5 w-5" />}
                     tone="amber"
                   />
-                )}
-              </div>
+
+                  {isAdminOrHR && (
+                    <AttendanceMetricCard
+                      label="Late Arrivals"
+                      value={summaryData.lateMarks}
+                      description="Late arrival count."
+                      icon={<AlertTriangle className="h-5 w-5" />}
+                      tone="amber"
+                    />
+                  )}
+                </div>
+
+                {/* AI Attendance Brief */}
+                <AIInsightPanel
+                  contextType="attendance_pattern"
+                  role="employee"
+                  title="Attendance AI Brief"
+                  enabled={!reportLoading}
+                  data={{
+                    present_days: summaryData.presentDays,
+                    wfo_days: summaryData.wfoDays,
+                    total_hours: summaryData.totalHours,
+                    total_working_days: summaryData.totalWorkingDays,
+                    lwp_days: summaryData.totalLwp,
+                    late_marks: summaryData.lateMarks,
+                  }}
+                />
+              </>
             )}
           </section>
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock, FileText, RefreshCcw, ShieldCheck, UserMinus } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { AIInsightPanel } from "@/components/ai";
 
 type ExitRow = {
   id: string;
@@ -127,6 +128,23 @@ export default function NativeExitCommandCenter() {
           <StatCard title="Completed" value={Number(data?.summary?.completed ?? 0)} icon={<CheckCircle2 className="h-5 w-5" />} note="Exit confirmed" />
           <StatCard title="Regrettable" value={Number(data?.summary?.regrettable ?? 0)} icon={<AlertTriangle className="h-5 w-5" />} note="Retention attention" />
         </div>
+
+        {/* AI Exit Risk Briefing */}
+        <AIInsightPanel
+          contextType="exit_risk"
+          role="hr"
+          title="Exit Risk AI Brief"
+          enabled={data !== null && !loading}
+          data={{
+            total_exits: Number(data?.summary?.total ?? 0),
+            pending_offboarding: Number(data?.summary?.pending_review ?? 0),
+            regrettable_exits: Number(data?.summary?.regrettable ?? 0),
+            active_notice: Number(data?.summary?.active_notice ?? 0),
+            completed: Number(data?.summary?.completed ?? 0),
+            kt_incomplete: data?.requests?.filter((r) => r.status !== "exited" && r.status !== "exit_confirmed").length ?? 0,
+            clearance_pending: data?.clearance?.filter((c) => c.status === "pending").reduce((s, c) => s + c.count, 0) ?? 0,
+          }}
+        />
 
         <div className="rounded-3xl border bg-white p-4 shadow-sm">
           <div className="flex flex-wrap gap-2">

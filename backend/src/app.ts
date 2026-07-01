@@ -348,5 +348,9 @@ app.use("/api/ats/bgv-enhanced", bgvEnhancedRouter);
 app.use("/api/ats/candidate-portal", candidatePortalRouter);
 app.use("/api/ats/super-admin", superAdminRouter);
 
+// ── AI Insights (Gemini-powered, role-aware, sanitized) ────────────────────
+import { aiInsightsRouter } from "./modules/ai/ai-insights.routes.js";
+app.use("/api/ai", aiInsightsRouter);
+
 app.use(notFoundHandler);
 app.use(errorHandler);

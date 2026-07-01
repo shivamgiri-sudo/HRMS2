@@ -89,12 +89,16 @@ export const atsFormConfigService = {
     );
     const branchOptions = (branchRows as RowDataPacket[]).map((r: any) => r.branch_name as string);
 
-    // Return all active branch aliases — not filtered by recruiter presence
+    // Return only aliases whose corresponding branch_master entry is also active
     const [aliasRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, canonical_key, display_name, alias_text
-       FROM ats_branch_alias_master
-       WHERE active_status = 1
-       ORDER BY display_name ASC`
+      `SELECT a.id, a.canonical_key, a.display_name, a.alias_text
+       FROM ats_branch_alias_master a
+       JOIN branch_master b
+         ON b.branch_name = a.canonical_key
+         OR b.branch_code = a.canonical_key
+       WHERE a.active_status = 1
+         AND b.active_status = 1
+       ORDER BY a.display_name ASC`
     );
     const branchAliases = (aliasRows as RowDataPacket[]).map((r: any) => ({
       id: r.id,
@@ -238,28 +242,6 @@ export const atsFormConfigService = {
     );
     const branchName: string = (branchRows as RowDataPacket[])[0]?.branch_name ?? canonicalKey;
 
-    // Primary: employees in Human Resource department with Executive/Recruiter designation
-    // Returns roster id as employee_id so frontend can send it as preferredRecruiterId (FK-safe)
-    // email priority: official_email > office_email > personal email
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DISTINCT
-         e.id AS employee_id,
-         TRIM(CONCAT(e.first_name, IF(e.last_name IS NULL OR TRIM(e.last_name)='', '', CONCAT(' ', TRIM(e.last_name))))) AS name,
-         COALESCE(e.official_email, e.office_email, e.email)  AS email,
-         COALESCE(e.mobile, e.alternate_mobile)               AS mobile,
-         b.branch_name
-       FROM employees e
-       JOIN department_master d ON d.id = e.department_id
-       JOIN designation_master des ON des.id = e.designation_id
-       JOIN branch_master b ON b.id = e.branch_id
-       WHERE e.active_status = 1
-         AND (b.branch_name = ? OR b.branch_code = ?)
-         AND LOWER(d.dept_name) = 'human resource and development'
-         AND LOWER(des.designation_name) = 'executive'
-       ORDER BY name ASC`,
-      [branchName, canonicalKey]
-    );
-
     // Helper: upsert into roster (refreshing contact details), return roster-id-keyed list
     async function toRosterList(rows: any[], fallbackBranch: string) {
       const result = [];
@@ -281,11 +263,57 @@ export const atsFormConfigService = {
       return result;
     }
 
+    // Primary: employees in HR dept at this branch (broad dept/designation match)
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT
+         e.id AS employee_id,
+         TRIM(CONCAT(e.first_name, IF(e.last_name IS NULL OR TRIM(e.last_name)='', '', CONCAT(' ', TRIM(e.last_name))))) AS name,
+         COALESCE(e.official_email, e.office_email, e.email)  AS email,
+         COALESCE(e.mobile, e.alternate_mobile)               AS mobile,
+         b.branch_name
+       FROM employees e
+       JOIN department_master d ON d.id = e.department_id
+       JOIN designation_master des ON des.id = e.designation_id
+       JOIN branch_master b ON b.id = e.branch_id
+       WHERE e.active_status = 1
+         AND (b.branch_name = ? OR b.branch_code = ?)
+         AND (
+           LOWER(d.dept_name) LIKE '%human resource%'
+           OR LOWER(d.dept_name) LIKE '%hr%'
+         )
+       ORDER BY name ASC`,
+      [branchName, canonicalKey]
+    );
+
     if ((empRows as RowDataPacket[]).length > 0) {
       return toRosterList(empRows as any[], branchName);
     }
 
-    // No HR+Executive found at this branch — return empty list (never cross-pollinate branches)
+    // Fallback: employees with HR/recruiter roles at this branch via user_roles
+    const [roleRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT
+         e.id AS employee_id,
+         TRIM(CONCAT(e.first_name, IF(e.last_name IS NULL OR TRIM(e.last_name)='', '', CONCAT(' ', TRIM(e.last_name))))) AS name,
+         COALESCE(e.official_email, e.office_email, e.email)  AS email,
+         COALESCE(e.mobile, e.alternate_mobile)               AS mobile,
+         b.branch_name
+       FROM user_roles ur
+       JOIN auth_user au ON au.id = ur.user_id
+       JOIN employees e  ON e.user_id = au.id
+       JOIN branch_master b ON b.id = e.branch_id
+       WHERE ur.active_status = 1
+         AND ur.role_key IN ('hr', 'recruitment_hr', 'recruiter', 'branch_head')
+         AND e.active_status = 1
+         AND (b.branch_name = ? OR b.branch_code = ?)
+       ORDER BY name ASC`,
+      [branchName, canonicalKey]
+    );
+
+    if ((roleRows as RowDataPacket[]).length > 0) {
+      return toRosterList(roleRows as any[], branchName);
+    }
+
+    // No recruiters found at this branch — return empty list (never cross-pollinate branches)
     return [];
   },
 
