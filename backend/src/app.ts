@@ -39,7 +39,7 @@ import { atsRouter } from "./modules/ats/ats.routes.js";
 import { atsFormConfigRouter } from "./modules/ats/ats-form-config.routes.js";
 import { registrationEnhancedRouter } from "./modules/ats/registration.enhanced.routes.js";
 import mockDigilockerRouter from "./modules/ats/mock-digilocker.routes.js";
-import { queueRouter } from "./modules/ats/queue.routes.js";
+import { queueRouter, queuePublicRouter } from "./modules/ats/queue.routes.js";
 import { exitRouter } from "./modules/exit/exit.routes.js";
 import { exitSecureRouter } from "./modules/exit/exit.secure.routes.js";
 import { exitCompatRouter } from "./modules/exit/exit.compat.routes.js";
@@ -235,6 +235,7 @@ app.use("/api/portal", portalRouter);
 app.use("/api/ats", atsFormConfigRouter);
 app.use("/api/ats/registration", registrationEnhancedRouter);
 app.use("/api/ats", atsRouter);
+app.use("/api/ats/queue", queuePublicRouter); // public display endpoints (no auth)
 app.use("/api/ats/queue", queueRouter);
 app.use("/api/business-command", businessCommandRouter);
 app.use("/api/business-actions", businessActionsRouter);

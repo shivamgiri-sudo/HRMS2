@@ -1,6 +1,8 @@
 import { Router } from 'express';
+import type { RowDataPacket } from 'mysql2';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
+import { db } from '../../db/mysql.js';
 import {
   getLiveQueue,
   getQueueMetrics,
@@ -13,6 +15,97 @@ import {
   type QueueFilters,
 } from './queue.enhanced.service.js';
 
+// ── Public display router (no auth) ───────────────────────────────────────────
+export const queuePublicRouter = Router();
+
+// GET /api/ats/queue/branches — distinct branches with active queue today
+queuePublicRouter.get('/branches', async (_req, res) => {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT branch_name
+         FROM ats_queue_token
+        WHERE DATE(created_at) = CURDATE()
+          AND branch_name IS NOT NULL
+          AND branch_name != ''
+        ORDER BY branch_name`
+    );
+    const branches = (rows as any[]).map((r) => r.branch_name as string);
+    return res.json({ success: true, data: branches });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/ats/queue/public-display?branch=Chennai
+queuePublicRouter.get('/public-display', async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const filters: QueueFilters = {
+      branch: req.query.branch as string | undefined,
+      date: today,
+    };
+    const [queue, metrics] = await Promise.all([
+      getLiveQueue(filters),
+      getQueueMetrics(filters.branch, today),
+    ]);
+    // Strip PII — only send token_number, status, timing, position
+    const safeQueue = queue.map(({ token_number, queue_status, estimated_wait_time, position_in_queue, applied_role, branch_name, called_at, interview_started_at }) => ({
+      token_number,
+      queue_status,
+      estimated_wait_time,
+      position_in_queue,
+      applied_role,
+      branch_name,
+      called_at,
+      interview_started_at,
+    }));
+    return res.json({ success: true, data: { queue: safeQueue, metrics } });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/ats/queue/display-stream?branch=Chennai  (SSE)
+queuePublicRouter.get('/display-stream', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.flushHeaders();
+
+  const today = new Date().toISOString().split('T')[0];
+  const filters: QueueFilters = {
+    branch: req.query.branch as string | undefined,
+    date: today,
+  };
+
+  const sendSnapshot = async () => {
+    try {
+      const [queue, metrics] = await Promise.all([
+        getLiveQueue(filters),
+        getQueueMetrics(filters.branch, today),
+      ]);
+      const safeQueue = queue.map(({ token_number, queue_status, estimated_wait_time, position_in_queue, applied_role, branch_name, called_at, interview_started_at }) => ({
+        token_number, queue_status, estimated_wait_time, position_in_queue, applied_role, branch_name, called_at, interview_started_at,
+      }));
+      res.write(`data: ${JSON.stringify({ queue: safeQueue, metrics, ts: Date.now() })}\n\n`);
+    } catch {
+      // Non-fatal — client will retry on next interval
+    }
+  };
+
+  void sendSnapshot();
+  const dataInterval = setInterval(() => void sendSnapshot(), 15_000);
+  const heartbeatInterval = setInterval(() => res.write(': heartbeat\n\n'), 30_000);
+
+  req.on('close', () => {
+    clearInterval(dataInterval);
+    clearInterval(heartbeatInterval);
+    res.end();
+  });
+});
+
+// ── Authenticated queue router ────────────────────────────────────────────────
 export const queueRouter = Router();
 
 // All routes require authentication

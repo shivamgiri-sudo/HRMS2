@@ -238,6 +238,7 @@ const ExpenseReports = lazy(() => import("./pages/expenses/ExpenseReports"));
 const PortalLogin = lazy(() => import("./pages/portal/PortalLogin"));
 const PortalOverview = lazy(() => import("./pages/portal/PortalOverview"));
 const PortalProcessDashboard = lazy(() => import("./pages/portal/PortalProcessDashboard"));
+const WaitingRoomDisplay = lazy(() => import("./pages/WaitingRoomDisplay"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -505,6 +506,9 @@ const App = () => (
               {/* Exit / Resignation */}
               <Route path="/exit/resignation" element={<ProtectedRoute><Gate pageCode="RESIGNATION_MY_REQUEST"><NativeMyResignation /></Gate></ProtectedRoute>} />
               <Route path="/exit/resignation-command-center" element={<ProtectedRoute><Gate pageCode="RESIGNATION_COMMAND_CENTER"><NativePlaceholderPage /></Gate></ProtectedRoute>} />
+
+              {/* Public kiosk display — no auth required */}
+              <Route path="/display/waiting-room" element={<WaitingRoomDisplay />} />
 
               <Route path="*" element={<NotFound />} />
             </Routes>
