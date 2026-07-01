@@ -95,7 +95,9 @@ export async function getSurvey(id: string): Promise<SurveyWithQuestionsResponse
   );
   if (!surveyRows[0]) return null;
   const [questionRows] = await db.execute<RowDataPacket[]>(
-    "SELECT * FROM survey_question WHERE survey_id = ? ORDER BY display_order",
+    `SELECT id AS question_id, survey_id, question_text, question_type,
+            display_order, is_required, options_json, scale_min, scale_max
+       FROM survey_question WHERE survey_id = ? ORDER BY display_order`,
     [id]
   );
   return { ...(surveyRows[0] as SurveyMaster), questions: questionRows as SurveyQuestion[] };

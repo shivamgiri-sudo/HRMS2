@@ -45,8 +45,11 @@ export function LeaveBalanceCard({ employeeId }: LeaveBalanceCardProps) {
                 const isEL = balance.leave_code === "EL";
                 const isCLML = ["CL", "ML"].includes(balance.leave_code || "");
                 const currentMonth = new Date().getMonth() + 1; // 1-12
-                const accruedMonths = Math.min(currentMonth, 12);
-                const accruedToDate = isCLML ? accruedMonths : balance.allocated_days;
+                // Accrued-to-date = min(current calendar month, full annual allocation)
+                // so the badge never exceeds what was actually allocated in the DB
+                const accruedToDate = isCLML
+                  ? Math.min(currentMonth, balance.allocated_days)
+                  : balance.allocated_days;
                 const usedPct = balance.allocated_days > 0
                   ? Math.min((balance.used_days / balance.allocated_days) * 100, 100)
                   : 0;
@@ -100,7 +103,7 @@ export function LeaveBalanceCard({ employeeId }: LeaveBalanceCardProps) {
                         <TooltipContent side="bottom" className="max-w-xs text-xs">
                           <p>
                             {balance.leave_type?.name} accrues 1 day per month.
-                            Through {MONTH_NAMES[accruedMonths]}, you've accrued {accruedToDate.toFixed(0)} of {balance.allocated_days.toFixed(0)} annual days.
+                            Through {MONTH_NAMES[currentMonth]}, you've accrued {accruedToDate.toFixed(0)} of {balance.allocated_days.toFixed(0)} allocated days.
                           </p>
                         </TooltipContent>
                       </Tooltip>
