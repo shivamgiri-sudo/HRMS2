@@ -155,6 +155,7 @@ import { pennyDropRouter } from "./modules/onboarding/penny-drop.routes.js";
 import { nameValidationRouter } from "./modules/onboarding/name-validation.routes.js";
 import { digiLockerRouter } from "./modules/onboarding/digilocker.routes.js";
 import { employeeReactivationRouter } from "./modules/employees/employee-reactivation.routes.js";
+import { employeeVerifyRouter } from "./modules/employees/employee.verify.routes.js";
 
 export const app = express();
 
@@ -242,6 +243,7 @@ app.use("/api/ats", atsFormConfigRouter);
 app.use("/api/ats/registration", registrationEnhancedRouter);
 app.use("/api/ats", atsRouter);
 app.use("/api/ats/queue", queuePublicRouter); // public display endpoints (no auth)
+app.use("/api/public/verify", employeeVerifyRouter); // public QR code verification (no auth)
 app.use("/api/ats/queue", queueRouter);
 app.use("/api/business-command", businessCommandRouter);
 app.use("/api/business-actions", businessActionsRouter);

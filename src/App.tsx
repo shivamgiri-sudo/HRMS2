@@ -137,6 +137,8 @@ const NativeReportsCenter           = lazy(() => import("./pages/NativeReportsCe
 
 // HR Ops
 const NativeAssetsManager           = lazy(() => import("./pages/NativeAssetsManager"));
+const PublicEmployeeVerify          = lazy(() => import("./pages/PublicEmployeeVerify").then(m => ({ default: m.PublicEmployeeVerify })));
+const PublicPayslipVerify           = lazy(() => import("./pages/PublicEmployeeVerify").then(m => ({ default: m.PublicPayslipVerify })));
 const NativeHelpdesk                = lazy(() => import("./pages/NativeHelpdesk"));
 const NativeSupportCommandCenter    = lazy(() => import("./pages/NativeSupportCommandCenter"));
 const NativeGrievanceCommandCenter  = lazy(() => import("./pages/NativeGrievanceCommandCenter"));
@@ -275,6 +277,8 @@ const App = () => (
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/change-password" element={<ProtectedRoute><ChangePassword /></ProtectedRoute>} />
               <Route path="/two-factor" element={<ProtectedRoute><TwoFactor /></ProtectedRoute>} />
+              <Route path="/verify/emp/:employeeCode" element={<PublicEmployeeVerify />} />
+              <Route path="/verify/payslip/:employeeCode/:monthYear" element={<PublicPayslipVerify />} />
               <Route path="/onboard" element={<CandidateOnboardingPage />} />
               <Route path="/interview-registration" element={<NativeATSCandidateRegistration />} />
               <Route path="/candidate-registration" element={<Navigate to="/interview-registration" replace />} />

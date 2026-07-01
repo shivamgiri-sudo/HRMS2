@@ -5,14 +5,17 @@ import {
   ArrowRightLeft,
   Award,
   CalendarDays,
+  CreditCard,
   FileText,
   LogOut,
   Package,
+  Printer,
   Search,
   Star,
   TrendingUp,
   UserCircle,
   UserPlus,
+  X,
   Zap,
   Briefcase,
   MapPin,
@@ -29,6 +32,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { formatISTDate } from "@/lib/utils";
+import { EmployeeIDCard } from "@/components/employees/EmployeeIDCard";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -194,6 +198,7 @@ export default function NativeEmployeeStatCard() {
   const [searchInput, setSearchInput] = useState("");
   const [searchResults, setSearchResults] = useState<Array<{ id: string; name: string; code: string }>>([]);
   const [showResults, setShowResults] = useState(false);
+  const [showIdCard, setShowIdCard] = useState(false);
   const [targetId, setTargetId] = useState<string | null>(urlId ?? null);
   const searchRef = useRef<HTMLDivElement>(null);
 
@@ -439,6 +444,16 @@ export default function NativeEmployeeStatCard() {
                 </div>
               </div>
 
+              {/* ── ID Card Button ───────────────────────────────────────── */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowIdCard(true)}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors"
+                >
+                  <CreditCard className="h-4 w-4" /> View ID Card
+                </button>
+              </div>
+
               {/* ── 6-Stat Grid ────────────────────────────────────────────── */}
               <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
 
@@ -659,6 +674,35 @@ export default function NativeEmployeeStatCard() {
           )}
         </div>
       </div>
+      {/* ── ID Card Modal ───────────────────────────────────────────── */}
+      {showIdCard && card && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4" onClick={() => setShowIdCard(false)}>
+          <div className="relative" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setShowIdCard(false)}
+              className="absolute -top-3 -right-3 z-10 h-8 w-8 flex items-center justify-center rounded-full bg-white shadow-lg border text-slate-500 hover:text-slate-900"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <EmployeeIDCard
+              employeeId={card.employee.id}
+              employeeCode={card.employee.employee_code}
+              fullName={card.employee.full_name}
+              designation={card.employee.designation_name ?? "—"}
+              emergencyContact="Contact HR"
+              bloodGroup="—"
+            />
+            <div className="mt-3 flex justify-center">
+              <button
+                onClick={() => window.print()}
+                className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white shadow-lg hover:bg-slate-800"
+              >
+                <Printer className="h-4 w-4" /> Print ID Card
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }
