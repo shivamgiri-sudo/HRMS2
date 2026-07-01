@@ -1,0 +1,18 @@
+export type AppRole =
+  | "super_admin"
+  | "admin"
+  | "hr"
+  | "ceo"
+  | "branch_head"
+  | "process_manager"
+  | "manager"
+  | "assistant_manager"
+  | "team_leader"
+  | "tl"
+  | "wfm"
+  | "finance"
+  | "payroll"
+  | "qa"
+  | "trainer"
+  | "recruiter"
+  | "employee";

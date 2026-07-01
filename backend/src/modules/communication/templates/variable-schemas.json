@@ -1,0 +1,31 @@
+{
+  "onboarding": {
+    "employee": ["name", "id", "email", "designation", "date_of_joining"],
+    "manager": ["name", "email"],
+    "documents": ["pending_count", "deadline"],
+    "company": ["name", "address", "logo_url"]
+  },
+  "payroll": {
+    "employee": ["name", "id", "employee_code"],
+    "payslip": ["month", "year", "net_pay", "gross_pay", "deductions", "payslip_url"],
+    "company": ["name"]
+  },
+  "attendance": {
+    "employee": ["name", "id"],
+    "attendance": ["date", "status", "clock_in", "clock_out"],
+    "manager": ["name"],
+    "company": ["name"]
+  },
+  "leave": {
+    "employee": ["name", "id"],
+    "leave": ["type", "from_date", "to_date", "days", "reason"],
+    "manager": ["name"],
+    "company": ["name"]
+  },
+  "performance": {
+    "employee": ["name", "id"],
+    "feedback": ["cycle_name", "overall_score", "report_url"],
+    "manager": ["name"],
+    "company": ["name"]
+  }
+}

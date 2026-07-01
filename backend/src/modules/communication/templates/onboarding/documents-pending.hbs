@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+  <p>Hi {{employee.name}},</p>
+  <p>You have <strong>{{documents.pending_count}} pending document(s)</strong> to complete for your onboarding.</p>
+  <p>Please submit them by <strong>{{documents.deadline}}</strong>.</p>
+  <p><a href="/onboarding" style="background: #4F46E5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Complete Documents</a></p>
+  <p>Regards,<br>{{company.name}} HR Team</p>
+</body>
+</html>

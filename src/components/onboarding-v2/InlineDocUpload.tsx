@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Upload, FileCheck, Loader2 } from 'lucide-react';
 
-import { hrmsApi } from '@/lib/hrmsApi';
+const BASE = `${import.meta.env.VITE_HRMS_API_URL ?? 'http://localhost:5055'}/api/ats/onboarding-full`;
 
 interface InlineDocUploadProps {
   token: string;
@@ -26,13 +26,11 @@ export function InlineDocUpload({ token, docType, label, accept = '.pdf,.jpg,.jp
     formData.append('token', token);
     formData.append('doc_type', docType);
     try {
-      const data = await hrmsApi.postForm<{ success: boolean; data?: Record<string, unknown>; message?: string }>(
-        '/api/ats/onboarding-full/documents',
-        formData
-      );
+      const res = await fetch(`${BASE}/documents`, { method: 'POST', body: formData });
+      const data = await res.json();
       if (data.success) {
         setUploaded(file.name);
-        onUploaded?.(data.data ?? {});
+        onUploaded?.(data.data);
       } else {
         setError(data.message ?? 'Upload failed. Please try again.');
       }
