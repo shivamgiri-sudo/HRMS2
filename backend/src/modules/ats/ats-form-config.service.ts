@@ -82,46 +82,19 @@ export const atsFormConfigService = {
       configMap[row.config_key as string] = row.config_value;
     }
 
-    // Only return branches that have at least one active HR+Executive employee (a recruiter)
+    // Return all active branches — branch visibility is independent of recruiter availability.
+    // Recruiter filtering per branch is handled separately by getRecruitersByBranch().
     const [branchRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DISTINCT b.branch_name
-       FROM branch_master b
-       WHERE b.active_status = 1
-         AND EXISTS (
-           SELECT 1
-           FROM employees e
-           JOIN department_master d    ON d.id  = e.department_id
-           JOIN designation_master des ON des.id = e.designation_id
-           WHERE e.active_status = 1
-             AND e.branch_id = b.id
-             AND LOWER(d.dept_name) = 'human resource and development'
-             AND LOWER(des.designation_name) = 'executive'
-         )
-       ORDER BY b.branch_name ASC`
+      `SELECT DISTINCT branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name ASC`
     );
     const branchOptions = (branchRows as RowDataPacket[]).map((r: any) => r.branch_name as string);
 
-    // Only return aliases for branches that actually have recruiters
+    // Return all active branch aliases — not filtered by recruiter presence
     const [aliasRows] = await db.execute<RowDataPacket[]>(
-      `SELECT aba.id, aba.canonical_key, aba.display_name, aba.alias_text
-       FROM ats_branch_alias_master aba
-       WHERE aba.active_status = 1
-         AND aba.canonical_key IN (
-           SELECT DISTINCT b.branch_name
-           FROM branch_master b
-           WHERE b.active_status = 1
-             AND EXISTS (
-               SELECT 1
-               FROM employees e
-               JOIN department_master d    ON d.id  = e.department_id
-               JOIN designation_master des ON des.id = e.designation_id
-               WHERE e.active_status = 1
-                 AND e.branch_id = b.id
-                 AND LOWER(d.dept_name) = 'human resource and development'
-                 AND LOWER(des.designation_name) = 'executive'
-             )
-         )
-       ORDER BY aba.display_name ASC`
+      `SELECT id, canonical_key, display_name, alias_text
+       FROM ats_branch_alias_master
+       WHERE active_status = 1
+       ORDER BY display_name ASC`
     );
     const branchAliases = (aliasRows as RowDataPacket[]).map((r: any) => ({
       id: r.id,
@@ -217,7 +190,14 @@ export const atsFormConfigService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       'SELECT id, config_key, config_label, config_type, config_value, sort_order, updated_at FROM ats_form_config ORDER BY sort_order ASC'
     );
-    return rows as RowDataPacket[];
+    // config_value is stored as a JSON string — parse it so the frontend receives the actual array/object
+    return (rows as RowDataPacket[]).map((row) => ({
+      ...row,
+      config_value: (() => {
+        if (typeof row.config_value !== 'string') return row.config_value;
+        try { return JSON.parse(row.config_value as string); } catch { return row.config_value; }
+      })(),
+    }));
   },
 
   async updateOptionList(configKey: string, values: string[], updatedBy: string) {

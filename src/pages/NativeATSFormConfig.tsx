@@ -35,17 +35,17 @@ export default function NativeATSFormConfig() {
 
   const { data: configData, isLoading: configLoading } = useQuery({
     queryKey: ['ats-form-config'],
-    queryFn: () => hrmsApi.get('/api/ats/form-config').then(r => r.data.data as ConfigRow[]),
+    queryFn: () => hrmsApi.get<{ success: boolean; data: ConfigRow[] }>('/api/ats/form-config').then(r => r.data),
   });
 
   const { data: recruiters, isLoading: recruiterLoading } = useQuery({
     queryKey: ['ats-recruiters'],
-    queryFn: () => hrmsApi.get('/api/ats/recruiters').then(r => r.data.data as Recruiter[]),
+    queryFn: () => hrmsApi.get<{ success: boolean; data: Recruiter[] }>('/api/ats/recruiters').then(r => r.data),
   });
 
   const { data: branchAliases, isLoading: aliasesLoading } = useQuery({
     queryKey: ['ats-branch-aliases'],
-    queryFn: () => hrmsApi.get('/api/ats/branch-aliases').then(r => r.data.data as BranchAlias[]),
+    queryFn: () => hrmsApi.get<{ success: boolean; data: BranchAlias[] }>('/api/ats/branch-aliases').then(r => r.data),
   });
 
   const optionMap: Record<string, string[]> = {};
