@@ -18,6 +18,7 @@ export async function getBranchAliases() {
 }
 
 export async function resolveBranchFromAlias(displayName: string) {
+  // Primary: match by alias display_name or alias_text
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT canonical_key, display_name
      FROM ats_branch_alias_master
@@ -25,7 +26,17 @@ export async function resolveBranchFromAlias(displayName: string) {
      LIMIT 1`,
     [displayName, displayName]
   );
-  return rows[0] ?? null;
+  if ((rows as RowDataPacket[]).length > 0) return (rows as RowDataPacket[])[0];
+
+  // Fallback: the value IS the canonical branch name (no alias row exists for this branch)
+  const [branchRows] = await db.execute<RowDataPacket[]>(
+    `SELECT branch_name AS canonical_key, branch_name AS display_name
+     FROM branch_master
+     WHERE (branch_name = ? OR branch_code = ?) AND active_status = 1
+     LIMIT 1`,
+    [displayName, displayName]
+  );
+  return (branchRows as RowDataPacket[])[0] ?? null;
 }
 
 // ── Recruiter Roster Upsert ────────────────────────────────────────────────────
