@@ -122,6 +122,7 @@ const envSchema = z.object({
   LUCKPAY_CLIENT_ID: z.string().optional(),
   CRIMESCAN_API_KEY: z.string().optional(),
   PRESCREENING_API_KEY: z.string().optional(),
+  GEMINI_API_KEY: z.string().optional(),
 
   // Billing DB (db_bill) — optional, only needed when billing features are used
   BILL_DB_HOST:     z.string().default(""),

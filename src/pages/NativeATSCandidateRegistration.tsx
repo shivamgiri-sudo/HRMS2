@@ -356,6 +356,7 @@ export default function NativeATSCandidateRegistration() {
 
   const [scanMode, setScanMode]   = useState<'idle'|'options'|'preview'|'scanning'|'done'>('idle');
   const [scanImage, setScanImage] = useState<string | null>(null);
+  const [scanFile,  setScanFile]  = useState<File | null>(null);
   const [scanStatus, setScanStatus] = useState('');
   const scanFileInputRef  = useRef<HTMLInputElement | null>(null);
   const scanCameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -1070,9 +1071,16 @@ export default function NativeATSCandidateRegistration() {
   const handleScanFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.type === 'application/pdf') {
+      setScanFile(file);
+      setScanImage(null);
+      setScanMode('preview');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (ev) => {
       setScanImage(ev.target?.result as string);
+      setScanFile(null);
       setScanMode('preview');
     };
     reader.readAsDataURL(file);
@@ -1197,6 +1205,84 @@ export default function NativeATSCandidateRegistration() {
     }
   };
 
+  const dataURLtoBlob = (dataUrl: string): Blob => {
+    const [header, b64] = dataUrl.split(',');
+    const mime = header.match(/:(.*?);/)?.[1] ?? 'image/jpeg';
+    const bytes = atob(b64);
+    const arr = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  };
+
+  const extractFromResume = async () => {
+    setScanMode('scanning');
+    setScanStatus('Analysing resume with AI…');
+    try {
+      const apiBase = import.meta.env.VITE_HRMS_API_URL || (import.meta.env.DEV ? 'http://localhost:5055' : '');
+      const fd = new FormData();
+      if (scanFile) {
+        fd.append('file', scanFile);
+      } else if (scanImage) {
+        fd.append('file', dataURLtoBlob(scanImage), 'resume.jpg');
+      } else {
+        setScanStatus('⚠️ No resume selected');
+        setScanMode('done');
+        return;
+      }
+      fd.append('options', JSON.stringify({
+        roleOptions: bootstrap.roleOptions ?? [],
+        educationOptions: bootstrap.educationOptions ?? [],
+        experienceOptions: bootstrap.experienceOptions ?? [],
+        preferredShiftOptions: bootstrap.preferredShiftOptions ?? [],
+        nightShiftComfortOptions: bootstrap.nightShiftComfortOptions ?? [],
+      }));
+
+      const resp = await fetch(`${apiBase}/api/ats/registration/parse-resume`, {
+        method: 'POST',
+        body: fd,
+      });
+      const data = await resp.json();
+
+      if (data.needsClientOcr && scanImage) {
+        // No Gemini key on backend for images — fall back to Tesseract
+        await extractFromOCR(scanImage);
+        return;
+      }
+
+      const fields = data.fields ?? {};
+      const filled: string[] = [];
+      const fieldMap: Record<string, keyof CandidateFormData> = {
+        name: 'name', mobile: 'mobile', email: 'email', address: 'address',
+        education: 'education', experience: 'experience', gender: 'gender',
+        roleApplied: 'roleApplied', rotationalShift: 'rotationalShift',
+        preferredShift: 'preferredShift', nightShiftComfort: 'nightShiftComfort',
+        leavesRequired: 'leavesRequired', ownTwoWheeler: 'ownTwoWheeler',
+      };
+      setForm(prev => {
+        const next = { ...prev };
+        for (const [k, fk] of Object.entries(fieldMap)) {
+          if (fields[k] && String(fields[k]).trim()) {
+            (next as any)[fk] = fields[k];
+            filled.push(k);
+          }
+        }
+        return next;
+      });
+      setScanStatus(filled.length > 0
+        ? `✅ Filled ${filled.length} field(s) from resume — please review!`
+        : '⚠️ Could not extract details — please fill manually');
+      setScanMode('done');
+    } catch (err: any) {
+      // If backend fails entirely, try Tesseract as last resort for images
+      if (scanImage) {
+        await extractFromOCR(scanImage);
+      } else {
+        setScanStatus(`❌ Parse failed: ${err?.message ?? 'Unknown error'}`);
+        setScanMode('done');
+      }
+    }
+  };
+
   const renderLoading = () => (
     <div className="native-ats-loading-wrap">
       <div className="native-ats-spinner" />
@@ -1298,25 +1384,31 @@ export default function NativeATSCandidateRegistration() {
                 </button>
               )}
               {scanMode !== 'idle' && (
-                <button type="button" onClick={() => { setScanMode('idle'); setScanImage(null); setScanStatus(''); }}
+                <button type="button" onClick={() => { setScanMode('idle'); setScanImage(null); setScanFile(null); setScanStatus(''); }}
                   style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>✕</button>
               )}
             </div>
             {scanMode === 'options' && (
               <div style={{ display: 'flex', gap: 10 }}>
                 <input type="file" accept="image/*" capture="environment" ref={scanCameraInputRef} style={{ display: 'none' }} onChange={handleScanFileChange} />
-                <input type="file" accept="image/*" ref={scanFileInputRef} style={{ display: 'none' }} onChange={handleScanFileChange} />
+                <input type="file" accept="image/*,application/pdf" ref={scanFileInputRef} style={{ display: 'none' }} onChange={handleScanFileChange} />
                 <button type="button" onClick={() => scanCameraInputRef.current?.click()}
                   style={{ flex: 1, padding: 12, background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: '0.88rem', fontWeight: 600, boxShadow: '0 3px 10px rgba(99,102,241,.25)' }}>📷 Take Photo</button>
                 <button type="button" onClick={() => scanFileInputRef.current?.click()}
-                  style={{ flex: 1, padding: 12, background: 'linear-gradient(135deg,#10b981,#059669)', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: '0.88rem', fontWeight: 600, boxShadow: '0 3px 10px rgba(16,185,129,.25)' }}>📁 Upload</button>
+                  style={{ flex: 1, padding: 12, background: 'linear-gradient(135deg,#10b981,#059669)', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: '0.88rem', fontWeight: 600, boxShadow: '0 3px 10px rgba(16,185,129,.25)' }}>📁 Upload (Image / PDF)</button>
               </div>
             )}
-            {scanMode === 'preview' && scanImage && (
+            {scanMode === 'preview' && (scanImage || scanFile) && (
               <div style={{ textAlign: 'center' }}>
-                <img src={scanImage} alt="Resume preview" style={{ maxWidth: '100%', maxHeight: 220, borderRadius: 12, marginBottom: 12, objectFit: 'contain', border: '2px solid #c7d2fe', boxShadow: '0 4px 12px rgba(0,0,0,.1)' }} />
-                <button type="button" onClick={() => extractFromOCR(scanImage)}
-                  style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 28px', cursor: 'pointer', fontWeight: 700, fontSize: '0.9rem', boxShadow: '0 4px 12px rgba(99,102,241,.3)' }}>✨ Extract Details</button>
+                {scanImage ? (
+                  <img src={scanImage} alt="Resume preview" style={{ maxWidth: '100%', maxHeight: 220, borderRadius: 12, marginBottom: 12, objectFit: 'contain', border: '2px solid #c7d2fe', boxShadow: '0 4px 12px rgba(0,0,0,.1)' }} />
+                ) : (
+                  <div style={{ padding: '20px 16px', marginBottom: 12, background: '#f0f4ff', borderRadius: 12, border: '2px solid #c7d2fe', fontSize: '0.9rem', fontWeight: 600, color: '#4338ca' }}>
+                    📄 {scanFile?.name}
+                  </div>
+                )}
+                <button type="button" onClick={extractFromResume}
+                  style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 28px', cursor: 'pointer', fontWeight: 700, fontSize: '0.9rem', boxShadow: '0 4px 12px rgba(99,102,241,.3)' }}>✨ Extract Details with AI</button>
               </div>
             )}
             {scanMode === 'scanning' && (

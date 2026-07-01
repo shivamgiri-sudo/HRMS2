@@ -2,6 +2,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { db } from "../../db/mysql.js";
 import { RowDataPacket } from "mysql2/promise";
+import multer from "multer";
+import axios from "axios";
 import {
   getBranchAliases,
   resolveBranchFromAlias,
@@ -14,6 +16,176 @@ import {
   sendCandidateSuccessEmail,
   sendRecruiterNotificationEmail,
 } from "./ats.email.service.js";
+
+// Memory-storage multer for resume parsing (PDF + images, 10 MB max)
+const resumeUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["application/pdf", "image/jpeg", "image/png", "image/webp", "image/jpg"];
+    cb(null, allowed.includes(file.mimetype));
+  },
+});
+
+// ── Resume parsing helpers ─────────────────────────────────────────────────────
+
+function buildParsePrompt(
+  contentDescription: string,
+  options: Record<string, string[]>
+): string {
+  return `You are a resume parser. ${contentDescription}
+
+Extract candidate details and return ONLY a valid JSON object (no markdown, no explanation).
+
+Available options for each field — ONLY use these exact values for select fields:
+- education: ${JSON.stringify(options.educationOptions ?? [])}
+- experience: ${JSON.stringify(options.experienceOptions ?? [])}
+- roleApplied: ${JSON.stringify(options.roleOptions ?? [])}
+- preferredShift: ${JSON.stringify(options.preferredShiftOptions ?? [])}
+- nightShiftComfort: ${JSON.stringify(options.nightShiftComfortOptions ?? [])}
+- gender: ["Male", "Female", "Other"]
+- rotationalShift: ["Yes", "No"]
+- leavesRequired: ["Yes", "No"]
+- ownTwoWheeler: ["Yes", "No"]
+
+Return JSON with these keys (use empty string "" if not found):
+{
+  "name": "",
+  "mobile": "",
+  "email": "",
+  "address": "",
+  "education": "",
+  "experience": "",
+  "gender": "",
+  "roleApplied": "",
+  "rotationalShift": "",
+  "preferredShift": "",
+  "nightShiftComfort": "",
+  "leavesRequired": "",
+  "ownTwoWheeler": ""
+}`;
+}
+
+async function geminiParseText(
+  text: string,
+  options: Record<string, string[]>
+): Promise<Record<string, string>> {
+  const prompt = buildParsePrompt(
+    `Parse this resume text:\n\n${text.slice(0, 8000)}`,
+    options
+  );
+  const resp = await axios.post(
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
+    { contents: [{ parts: [{ text: prompt }] }] },
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "X-goog-api-key": process.env.GEMINI_API_KEY,
+      },
+      timeout: 30000,
+    }
+  );
+  const raw: string = resp.data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+  const jsonStr = raw.replace(/```json\n?|\n?```/g, "").trim();
+  return JSON.parse(jsonStr);
+}
+
+async function geminiParseImage(
+  base64: string,
+  mimeType: string,
+  options: Record<string, string[]>
+): Promise<Record<string, string>> {
+  const prompt = buildParsePrompt("Parse this resume image.", options);
+  const resp = await axios.post(
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
+    {
+      contents: [{
+        parts: [
+          { inlineData: { mimeType, data: base64 } },
+          { text: prompt },
+        ],
+      }],
+    },
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "X-goog-api-key": process.env.GEMINI_API_KEY,
+      },
+      timeout: 30000,
+    }
+  );
+  const raw: string = resp.data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+  const jsonStr = raw.replace(/```json\n?|\n?```/g, "").trim();
+  return JSON.parse(jsonStr);
+}
+
+function regexParse(
+  text: string,
+  options: Record<string, string[]>
+): Record<string, string> {
+  const fields: Record<string, string> = {};
+  const t = text;
+
+  // Mobile — Indian mobile number
+  const mobileMatch = t.match(/\b[6-9]\d{9}\b/);
+  if (mobileMatch) fields.mobile = mobileMatch[0];
+
+  // Email
+  const emailMatch = t.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  if (emailMatch) fields.email = emailMatch[0].toLowerCase();
+
+  // Name — line starting with "Name:" or first line with 2+ words
+  const nameLabel = t.match(/(?:^|\n)\s*(?:name|full name)\s*[:\-]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/im);
+  if (nameLabel) {
+    fields.name = nameLabel[1].trim();
+  } else {
+    const firstCapLine = t.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/m);
+    if (firstCapLine) fields.name = firstCapLine[1].trim();
+  }
+
+  // Address — line starting with "Address:"
+  const addrMatch = t.match(/(?:^|\n)\s*(?:address|location)\s*[:\-]?\s*(.+?)(?:\n|$)/im);
+  if (addrMatch) fields.address = addrMatch[1].trim();
+
+  // Education — match against options
+  const eduOpts = options.educationOptions ?? [];
+  for (const opt of eduOpts) {
+    if (t.toLowerCase().includes(opt.toLowerCase())) { fields.education = opt; break; }
+  }
+
+  // Experience — parse year counts
+  const expOpts = options.experienceOptions ?? [];
+  const yearMatch = t.match(/(\d+(?:\.\d+)?)\s*(?:\+)?\s*years?\s*(?:of)?\s*(?:experience)?/i);
+  if (yearMatch) {
+    const yrs = parseFloat(yearMatch[1]);
+    if (yrs === 0 || t.toLowerCase().includes("fresher")) fields.experience = "Fresher";
+    else if (yrs <= 1) fields.experience = expOpts.find(o => o.includes("0-1")) ?? "";
+    else if (yrs <= 2) fields.experience = expOpts.find(o => o.includes("1-2")) ?? "";
+    else if (yrs <= 3) fields.experience = expOpts.find(o => o.includes("2-3")) ?? "";
+    else fields.experience = expOpts.find(o => o.includes("3+")) ?? "";
+  } else if (/fresher|no experience/i.test(t)) {
+    fields.experience = "Fresher";
+  }
+
+  // Gender
+  if (/\bfemale\b/i.test(t)) fields.gender = "Female";
+  else if (/\bmale\b/i.test(t)) fields.gender = "Male";
+
+  // Role — keyword match
+  const roleOpts = options.roleOptions ?? [];
+  const tl = t.toLowerCase();
+  for (const opt of roleOpts) {
+    if (tl.includes(opt.toLowerCase())) { fields.roleApplied = opt; break; }
+  }
+  if (!fields.roleApplied) {
+    if (tl.includes("inbound")) fields.roleApplied = roleOpts.find(o => /inbound/i.test(o)) ?? "";
+    else if (tl.includes("outbound")) fields.roleApplied = roleOpts.find(o => /outbound/i.test(o)) ?? "";
+    else if (tl.includes("back office") || tl.includes("backoffice")) fields.roleApplied = roleOpts.find(o => /back/i.test(o)) ?? "";
+    else if (tl.includes("quality")) fields.roleApplied = roleOpts.find(o => /quality/i.test(o)) ?? "";
+  }
+
+  return fields;
+}
 
 export const registrationEnhancedRouter = Router();
 
@@ -291,73 +463,81 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
   }
 });
 
-// ── 4. Parse resume (placeholder - integrate with actual parser) ──────────────
-registrationEnhancedRouter.post("/parse-resume", async (req, res) => {
-  try {
-    const { fileUrl } = req.body;
-
-    if (!fileUrl) {
-      return res.status(400).json({ success: false, message: "fileUrl required" });
-    }
-
-    // Extract metadata from the URL itself — no parsing library required
-    const urlParts = fileUrl.split('/');
-    const filename = decodeURIComponent(urlParts[urlParts.length - 1] ?? '');
-    const lower = filename.toLowerCase();
-    const isPdf = lower.endsWith('.pdf');
-    const isDoc = lower.endsWith('.docx') || lower.endsWith('.doc');
-
-    // For plain-text files, attempt a fetch and read
-    let extractedText = '';
-    if (lower.endsWith('.txt')) {
-      try {
-        const response = await fetch(fileUrl);
-        if (response.ok) {
-          extractedText = await response.text();
-        }
-      } catch {
-        // Silently ignore fetch failures — fallback data is returned below
+// ── 4. Parse resume — Gemini AI + pdf-parse ───────────────────────────────────
+registrationEnhancedRouter.post(
+  "/parse-resume",
+  resumeUpload.single("file"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, message: "No file uploaded" });
       }
+
+      const { mimetype, buffer } = req.file;
+      let optionsArg: Record<string, string[]> = {};
+      try { optionsArg = JSON.parse(req.body.options ?? "{}"); } catch { /* ignore */ }
+
+      const hasGemini = !!process.env.GEMINI_API_KEY;
+      const isPdf = mimetype === "application/pdf";
+
+      if (isPdf) {
+        // Extract text from PDF with pdf-parse
+        let pdfText = "";
+        try {
+          const { PDFParse } = await import("pdf-parse");
+          const parser = new PDFParse({ data: buffer });
+          const result = await parser.getText();
+          pdfText = result.text ?? "";
+        } catch {
+          pdfText = "";
+        }
+
+        if (!pdfText.trim()) {
+          return res.json({ success: true, fields: {}, message: "Could not extract text from PDF" });
+        }
+
+        let fields: Record<string, string> = {};
+        if (hasGemini) {
+          try {
+            fields = await geminiParseText(pdfText, optionsArg);
+          } catch {
+            fields = regexParse(pdfText, optionsArg);
+          }
+        } else {
+          fields = regexParse(pdfText, optionsArg);
+        }
+        return res.json({ success: true, fields });
+      }
+
+      // Image path
+      if (!hasGemini) {
+        // No Gemini key — tell frontend to fall back to Tesseract
+        return res.json({ success: true, needsClientOcr: true, fields: {} });
+      }
+
+      const base64 = buffer.toString("base64");
+      let fields: Record<string, string> = {};
+      try {
+        fields = await geminiParseImage(base64, mimetype, optionsArg);
+      } catch {
+        fields = {};
+      }
+      return res.json({ success: true, fields });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message });
     }
-
-    const parsed = {
-      name: '',
-      mobile: '',
-      email: '',
-      education: '',
-      experience: '',
-      skills: [] as string[],
-      company: '',
-      designation: '',
-      address: extractedText ? extractedText.slice(0, 500) : '',
-      source_url: fileUrl,
-      filename,
-      parse_status: isPdf || isDoc
-        ? 'manual_review_required'
-        : lower.endsWith('.txt') && extractedText
-          ? 'text_extracted'
-          : 'unsupported_format',
-      parse_message: isPdf || isDoc
-        ? 'Resume uploaded successfully. Please fill in the details manually or use the preview to copy information.'
-        : lower.endsWith('.txt') && extractedText
-          ? 'Plain-text content extracted. Please review and fill in the structured fields.'
-          : 'Unsupported file format. Please upload a PDF or Word document.',
-    };
-
-    return res.json({ success: true, data: parsed });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
   }
-});
+);
 
 // ── 5. Parse-resume capability status ────────────────────────────────────────
-registrationEnhancedRouter.get('/parse-resume/status', (_req, res) => {
+registrationEnhancedRouter.get("/parse-resume/status", (_req, res) => {
   res.json({
     success: true,
     data: {
-      parsing_available: false,
-      supported_formats: ['pdf', 'docx', 'doc'],
-      message: 'Automatic parsing not available. Manual entry required.',
+      parsing_available: true,
+      pdf_supported: true,
+      ai_enhanced: !!process.env.GEMINI_API_KEY,
+      supported_formats: ["pdf", "jpg", "jpeg", "png", "webp"],
     },
   });
 });
