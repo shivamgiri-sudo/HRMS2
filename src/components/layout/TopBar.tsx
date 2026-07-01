@@ -6,16 +6,13 @@
  */
 import { type FormEvent, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { useTheme } from "next-themes";
 import {
   Bell,
   ChevronRight,
   LogOut,
   Menu,
-  Moon,
   Search,
   Settings,
-  Sun,
   User,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -90,7 +87,6 @@ export function TopBar({
   const { data: myProfile } = useEmployeeProfile();
   const breadcrumbs = useBreadcrumbs();
   const userInitials = (user?.email ?? "MC").slice(0, 2).toUpperCase();
-  const { resolvedTheme, setTheme } = useTheme();
 
   const handleSignOut = async () => {
     await signOut();
@@ -185,21 +181,6 @@ export function TopBar({
 
         {/* Right actions */}
         <div className="flex shrink-0 items-center gap-1.5">
-          {/* Dark / light toggle */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-            onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
-            aria-label="Toggle dark mode"
-          >
-            {resolvedTheme === "dark" ? (
-              <Sun className="h-4 w-4 text-amber-400" />
-            ) : (
-              <Moon className="h-4 w-4" />
-            )}
-          </Button>
-
           <NotificationBell />
 
           <DropdownMenu>
