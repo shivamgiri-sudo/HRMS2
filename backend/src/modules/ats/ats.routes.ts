@@ -33,6 +33,7 @@ atsRouter.use("/bgv", bgvVerificationRouter);
 
 // ── PUBLIC — candidate file upload (1 hour window after registration) ────────
 // Configure multer for candidate uploads
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadDir = path.resolve(__dirname, "../../../uploads/candidates");
 const fs = await import("fs");
 if (!fs.existsSync(uploadDir)) {

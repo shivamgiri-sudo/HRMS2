@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import { fileURLToPath } from "url";
 import { randomUUID, createHash } from "crypto";
 import { fileURLToPath } from "url";
 
@@ -42,6 +43,7 @@ const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
 const meta = (req: Request) => ({ ip: req.ip, userAgent: req.get("user-agent") ?? undefined });
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadDir = path.resolve(__dirname, "../../../uploads/onboarding");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 const upload = multer({
