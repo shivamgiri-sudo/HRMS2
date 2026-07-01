@@ -735,6 +735,28 @@ export async function calculatePayrollRun(runId: string, userId: string, singleE
     );
     const advanceRecovery = Number((advRows as Array<{ monthly_recovery: number }>)[0]?.monthly_recovery ?? 0);
 
+    // 5e. Other per-employee deductions (loan EMI, canteen, uniform, etc.)
+    // is_prorated=1 → scale by attendance ratio; is_prorated=0 → fixed full amount
+    const proRataFactor = activeCalDays > 0 ? finalPayableDays / activeCalDays : 1;
+    let otherDeductionsTotal = 0;
+    try {
+      const [otherDedRows] = await db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(SUM(
+           CASE WHEN is_prorated = 1
+                THEN ROUND(amount * ?, 2)
+                ELSE amount END
+         ), 0) AS other_ded
+         FROM employee_deduction_entries
+         WHERE employee_id = ?
+           AND (run_month = ? OR run_month IS NULL)
+           AND status = 'active'`,
+        [proRataFactor, emp.employee_id, run.run_month]
+      );
+      otherDeductionsTotal = Number((otherDedRows as Array<{ other_ded: number }>)[0]?.other_ded ?? 0);
+    } catch {
+      // Table may not exist yet; treat as zero so existing payroll runs are unaffected
+    }
+
     // Resolve PT from slab when employee has a state_code, else fall back to config value
     const professionalTax = emp.state_code
       ? await getPtFromSlab(emp.state_code, grossAfterLwp)
@@ -764,6 +786,7 @@ export async function calculatePayrollRun(runId: string, userId: string, singleE
       hraPct: emp.hra_pct ?? 20,
       pfOptOut,
       esicOptOut,
+      otherDeductions: otherDeductionsTotal,
     });
 
     // Net pay = payrollService net + advance recovery deducted on top

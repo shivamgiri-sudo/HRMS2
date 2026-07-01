@@ -438,7 +438,7 @@ export const payrollService = {
     // Gratuity: 4.81% of Basic — employer cost, not employee deduction
     const gratuity = r2(basic * 0.0481);
 
-    const totalDed = r2(pfEmp + esicEmp + p.professionalTax + p.tds);
+    const totalDed = r2(pfEmp + esicEmp + p.professionalTax + p.tds + (p.otherDeductions ?? 0));
     const net = r2(gross - totalDed);
     const ctcMonthly = r2(gross + pfEmr + esicEmr + gratuity);
 
@@ -512,11 +512,25 @@ export const payrollService = {
   },
 
   async getPayrollOverview(runMonth: string): Promise<any> {
+    let effectiveMonth = runMonth;
+
     const [runRow] = await db.execute<RowDataPacket[]>(
       "SELECT id, run_month, status, total_employees, total_gross, total_net FROM salary_prep_run WHERE run_month = ? LIMIT 1",
       [runMonth]
     );
-    const run = Array.isArray(runRow) && runRow.length ? runRow[0] : null;
+    let run = Array.isArray(runRow) && runRow.length ? runRow[0] : null;
+
+    // Fallback: if no run found for requested month, use the most recent available run
+    if (!run) {
+      const [latestRow] = await db.execute<RowDataPacket[]>(
+        "SELECT id, run_month, status, total_employees, total_gross, total_net FROM salary_prep_run ORDER BY run_month DESC LIMIT 1"
+      );
+      if (Array.isArray(latestRow) && latestRow.length) {
+        run = latestRow[0];
+        effectiveMonth = run.run_month;
+      }
+    }
+
     const [stats] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as employee_count,
               SUM(spl.gross_salary) as total_gross,
@@ -527,9 +541,15 @@ export const payrollService = {
        FROM salary_prep_line spl
        JOIN salary_prep_run spr ON spr.id = spl.run_id
        WHERE spr.run_month = ?`,
-      [runMonth]
+      [effectiveMonth]
     );
-    return { run, stats: Array.isArray(stats) && stats.length ? stats[0] : null, runMonth };
+    return {
+      run,
+      stats: Array.isArray(stats) && stats.length ? stats[0] : null,
+      runMonth: effectiveMonth,
+      requestedMonth: runMonth,
+      isFallback: effectiveMonth !== runMonth,
+    };
   },
 
   async updateOvertime(

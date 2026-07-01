@@ -567,11 +567,21 @@ const Payroll = () => {
     (record) => record.status === "pending"
   ).length;
 
+  // Build a human-readable label for the run month shown in stats
+  const statsRunLabel = (() => {
+    const rm = stats?.effectiveRunMonth;
+    if (!rm) return "Current month";
+    const [yr, mo] = rm.split("-");
+    const label = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" })
+      .format(new Date(Number(yr), Number(mo) - 1, 1));
+    return stats?.isFallback ? `Last run: ${label}` : label;
+  })();
+
   const payrollStats = [
     {
       label: "Total Payroll",
       value: formatCurrency(stats?.totalPayroll || currentPayrollNet || 0),
-      description: "Current month net salary total.",
+      description: statsRunLabel,
       icon: <IndianRupee className="h-5 w-5" />,
       tone: "payroll" as const,
     },
@@ -585,7 +595,7 @@ const Payroll = () => {
     {
       label: "Average Salary",
       value: formatCurrency(stats?.avgSalary || 0),
-      description: "Average salary for current payroll.",
+      description: statsRunLabel,
       icon: <TrendingUp className="h-5 w-5" />,
       tone: "brand" as const,
     },

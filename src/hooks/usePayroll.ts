@@ -139,6 +139,8 @@ export interface PayrollStats {
   totalBasic?: number | null;
   totalAllowances?: number | null;
   totalDeductions?: number | null;
+  effectiveRunMonth?: string | null;
+  isFallback?: boolean;
 }
 
 export function usePayrollStats() {
@@ -175,6 +177,8 @@ export function usePayrollStats() {
           totalBasic: Number(stats.total_basic ?? 0),
           totalAllowances: Number(stats.total_allowances ?? 0),
           totalDeductions: Number(stats.total_deductions ?? stats.total_pf ?? 0),
+          effectiveRunMonth: overview.runMonth ?? null,
+          isFallback: overview.isFallback ?? false,
         };
       } catch (error) {
         console.error("Failed to fetch payroll stats:", error);
