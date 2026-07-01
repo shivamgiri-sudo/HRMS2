@@ -8,6 +8,9 @@ import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
+import { hasRole, getEmployeeForUser } from "../../shared/accessGuard.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const UPLOADS_ROOT = path.resolve(__dirname, "../../../uploads");
@@ -111,16 +114,50 @@ router.post(
 );
 
 // GET /api/files/:category/:filename — serve file (authenticated users only)
+// For sensitive categories (tax-documents, payslips, employee-documents), ownership is enforced:
+// the requester must own the document OR have a privileged role.
+const SENSITIVE_CATEGORIES = new Set([
+  "tax-documents", "tax_documents",
+  "payslips", "salary-slips",
+  "employee-documents", "employee_documents",
+]);
+
 router.get(
   "/:category/:filename",
   requireAuth,
   h(async (req: AuthenticatedRequest, res: Response) => {
     const safe = (req.params.category.replace(/[^a-zA-Z0-9_-]/g, "")) || "misc";
-    const safeFile = path.basename(req.params.filename); // strip any path traversal
+    const safeFile = path.basename(req.params.filename);
     const filePath = path.join(UPLOADS_ROOT, safe, safeFile);
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: "File not found" });
     }
+
+    // Ownership check for sensitive document categories
+    if (SENSITIVE_CATEGORIES.has(safe)) {
+      const isPrivileged = await hasRole(
+        req.authUser!.id,
+        "admin", "hr", "finance", "payroll", "super_admin"
+      );
+      if (!isPrivileged) {
+        // Look up the document record to verify ownership
+        const [docRows] = await db.execute<RowDataPacket[]>(
+          "SELECT employee_id FROM employee_documents WHERE file_url LIKE ? LIMIT 1",
+          [`%${safeFile}%`]
+        );
+        if (docRows.length > 0) {
+          const callerEmp = await getEmployeeForUser(req.authUser!.id);
+          if (!callerEmp || callerEmp.id !== docRows[0].employee_id) {
+            return res.status(403).json({ error: "Forbidden: you may only access your own documents" });
+          }
+        }
+        // If no DB record found for this file in a sensitive category, deny by default
+        else {
+          return res.status(403).json({ error: "Forbidden: document not found in records" });
+        }
+      }
+    }
+
     res.sendFile(filePath);
   })
 );

@@ -278,6 +278,134 @@ router.get("/advances/:employeeId", checkDpdpRestriction, h(async (req: Authenti
 
 router.get("/statutory-config", requireRole("admin", "super_admin", "finance", "payroll"), h(c.getStatutoryConfig));
 
+// GET /api/payroll/statutory-config/history/:key — last 10 changes for a config key
+router.get("/statutory-config/history/:key", requireRole("super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { key } = req.params;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT scal.*, u.email AS changed_by_email
+       FROM statutory_config_audit_log scal
+       LEFT JOIN users u ON u.id = scal.changed_by
+      WHERE scal.config_key = ?
+      ORDER BY scal.changed_at DESC
+      LIMIT 10`,
+    [key]
+  );
+  return res.json({ success: true, data: rows });
+}));
+
+// Allowlist of config keys that super_admin can modify via UI
+const EDITABLE_STATUTORY_KEYS = new Set([
+  "PF_EMPLOYEE_PCT", "PF_EMPLOYER_PCT", "ESIC_EMPLOYEE_PCT", "ESIC_EMPLOYER_PCT",
+  "ESIC_WAGE_LIMIT", "PF_WAGE_LIMIT", "pf_wage_ceiling",
+  "tds_standard_deduction", "tds_rebate_87a_limit",
+  "tds_slab_0_300000", "tds_slab_300001_700000", "tds_slab_700001_1000000",
+  "tds_slab_1000001_1200000", "tds_slab_1200001_1500000", "tds_slab_1500001_above",
+  "tds_old_slab_0_250000", "tds_old_slab_250001_500000", "tds_old_slab_500001_1000000",
+  "tds_old_slab_1000001_above",
+  "gratuity_multiplier", "gratuity_divisor", "gratuity_min_service_months", "gratuity_statutory_cap",
+  "lwp_deduction_basis",
+]);
+
+// PATCH /api/payroll/statutory-config/:key — super_admin updates a statutory config value
+router.patch("/statutory-config/:key", requireRole("super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { key } = req.params;
+  if (!EDITABLE_STATUTORY_KEYS.has(key)) {
+    return res.status(400).json({ success: false, message: `Config key '${key}' is not editable via this API` });
+  }
+
+  const { config_value, effective_from, description, reason } = req.body as {
+    config_value: number;
+    effective_from?: string;
+    description?: string;
+    reason?: string;
+  };
+  if (config_value === undefined || isNaN(Number(config_value))) {
+    return res.status(400).json({ success: false, message: "config_value must be a number" });
+  }
+
+  // Read current value for audit
+  const [currentRows] = await db.execute<RowDataPacket[]>(
+    "SELECT config_value FROM statutory_config WHERE config_key = ? LIMIT 1",
+    [key]
+  );
+  const oldValue = (currentRows as RowDataPacket[])[0]?.config_value ?? null;
+
+  // Write audit log first
+  await db.execute(
+    `INSERT INTO statutory_config_audit_log (id, config_key, old_value, new_value, effective_from, changed_by, reason)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?)`,
+    [key, oldValue, config_value, effective_from ?? null, req.authUser!.id, reason ?? null]
+  );
+
+  // Upsert the config value
+  await db.execute(
+    `INSERT INTO statutory_config (id, config_key, config_value, description, effective_from, updated_at)
+     VALUES (UUID(), ?, ?, ?, ?, NOW())
+     ON DUPLICATE KEY UPDATE
+       config_value = VALUES(config_value),
+       description  = COALESCE(VALUES(description), description),
+       effective_from = COALESCE(VALUES(effective_from), effective_from),
+       updated_at = NOW()`,
+    [key, config_value, description ?? null, effective_from ?? null]
+  );
+
+  const [updated] = await db.execute<RowDataPacket[]>(
+    "SELECT * FROM statutory_config WHERE config_key = ? LIMIT 1",
+    [key]
+  );
+
+  void logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "STATUTORY_CONFIG_UPDATED",
+    module_key: "payroll",
+    entity_type: "statutory_config",
+    entity_id: key,
+    change_summary: { key, old_value: oldValue, new_value: config_value, reason },
+  });
+
+  return res.json({ success: true, data: (updated as RowDataPacket[])[0] });
+}));
+
+// POST /api/payroll/statutory-config — super_admin inserts a new statutory config key (e.g. new FY slab)
+router.post("/statutory-config", requireRole("super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { config_key, config_value, description, effective_from } = req.body as {
+    config_key: string;
+    config_value: number;
+    description?: string;
+    effective_from?: string;
+  };
+  if (!config_key || config_value === undefined) {
+    return res.status(400).json({ success: false, message: "config_key and config_value are required" });
+  }
+  const safeKey = config_key.replace(/[^a-zA-Z0-9_]/g, "");
+  if (safeKey !== config_key) {
+    return res.status(400).json({ success: false, message: "config_key may only contain letters, digits and underscores" });
+  }
+
+  await db.execute(
+    `INSERT INTO statutory_config (id, config_key, config_value, description, effective_from, updated_at)
+     VALUES (UUID(), ?, ?, ?, ?, NOW())
+     ON DUPLICATE KEY UPDATE
+       config_value = VALUES(config_value),
+       description = COALESCE(VALUES(description), description),
+       effective_from = COALESCE(VALUES(effective_from), effective_from),
+       updated_at = NOW()`,
+    [safeKey, config_value, description ?? null, effective_from ?? null]
+  );
+
+  void logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "STATUTORY_CONFIG_CREATED",
+    module_key: "payroll",
+    entity_type: "statutory_config",
+    entity_id: safeKey,
+    change_summary: { config_key: safeKey, config_value },
+  });
+
+  const [row] = await db.execute<RowDataPacket[]>("SELECT * FROM statutory_config WHERE config_key = ? LIMIT 1", [safeKey]);
+  return res.status(201).json({ success: true, data: (row as RowDataPacket[])[0] });
+}));
+
 // ─── Payslip ──────────────────────────────────────────────────────────────────
 
 // GET /api/payroll/payslip/my — list own payslip history (employee self-service)
@@ -472,6 +600,46 @@ router.post("/tax-declaration/:employeeId/:year", h(async (req: AuthenticatedReq
   return res.json({ success: true, data, message: "Tax declaration saved" });
 }));
 
+// PATCH /api/payroll/tax-declaration/:employeeId/:year/verify — HR verifies or rejects a declaration
+router.patch("/tax-declaration/:employeeId/:year/verify", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId, year } = req.params;
+  const { status, review_note } = req.body as { status: "verified" | "rejected"; review_note?: string };
+
+  if (!status || !["verified", "rejected"].includes(status)) {
+    return res.status(400).json({ success: false, message: "status must be 'verified' or 'rejected'" });
+  }
+
+  const declaration = await taxDeclarationService.find(employeeId, year);
+  if (!declaration) {
+    return res.status(404).json({ success: false, message: "Tax declaration not found" });
+  }
+
+  await taxDeclarationService.verify(declaration.id!, req.authUser!.id, status, review_note);
+
+  void logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: `TAX_DECLARATION_${status.toUpperCase()}`,
+    module_key: "payroll",
+    entity_type: "tax_declaration",
+    entity_id: declaration.id!,
+    change_summary: { employeeId, year, review_note },
+  });
+
+  const updated = await taxDeclarationService.find(employeeId, year);
+  return res.json({ success: true, data: updated, message: `Declaration ${status}` });
+}));
+
+// GET /api/payroll/tax-declaration/pending-verification — HR queue of submitted-but-unverified declarations
+router.get("/tax-declaration/pending-verification", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { financial_year, page = "0", limit = "20" } = req.query as Record<string, string>;
+  const result = await taxDeclarationService.listPendingVerification(
+    financial_year || undefined,
+    parseInt(page, 10),
+    Math.min(parseInt(limit, 10), 100)
+  );
+  return res.json({ success: true, ...result });
+}));
+
 // POST /api/payroll/tax-declaration/:employeeId/:year/document — upload tax proof document
 const taxDocUpload = multer({
   storage: multer.diskStorage({
@@ -532,6 +700,15 @@ router.post("/tax-declaration/:employeeId/:year/document", (req: any, res: any, 
     [id]
   );
 
+  void logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "TAX_DOCUMENT_UPLOADED",
+    module_key: "payroll",
+    entity_type: "employee_documents",
+    entity_id: id,
+    change_summary: { employeeId, fileName: req.file.filename, financialYear: year, documentType },
+  });
+
   res.status(201).json({ success: true, data: (rows as RowDataPacket[])[0] });
 }));
 
@@ -558,6 +735,196 @@ router.get("/tax-declaration/:employeeId/:year/documents", h(async (req: Authent
   );
 
   res.json({ success: true, data: rows });
+}));
+
+// DELETE /api/payroll/tax-declaration/:employeeId/:year/document/:docId — delete tax proof document
+router.delete("/tax-declaration/:employeeId/:year/document/:docId", h(async (req: AuthenticatedRequest, res: Response) => {
+  let { employeeId } = req.params;
+  const { docId } = req.params;
+  const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
+
+  if (!isPayrollRole) {
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (!callerEmp || callerEmp.id !== employeeId) {
+      return res.status(403).json({ success: false, message: "Forbidden: you may only delete your own tax documents" });
+    }
+    employeeId = callerEmp.id;
+  }
+
+  // Fetch the document record — verify it belongs to this employee
+  const [docRows] = await db.execute<RowDataPacket[]>(
+    "SELECT id, employee_id, file_url, doc_name FROM employee_documents WHERE id = ? AND employee_id = ? LIMIT 1",
+    [docId, employeeId]
+  );
+  if ((docRows as RowDataPacket[]).length === 0) {
+    return res.status(404).json({ success: false, message: "Document not found" });
+  }
+  const doc = (docRows as RowDataPacket[])[0];
+
+  // Delete DB record first (if this fails the file is preserved — no orphan)
+  await db.execute("DELETE FROM employee_documents WHERE id = ?", [docId]);
+
+  // Delete physical file from disk (non-fatal if already gone)
+  try {
+    const fileName = path.basename(doc.file_url as string);
+    const filePath = path.join(UPLOADS_ROOT, "tax-documents", fileName);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch {
+    // File deletion failure is logged but doesn't fail the request
+  }
+
+  void logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "TAX_DOCUMENT_DELETED",
+    module_key: "payroll",
+    entity_type: "employee_documents",
+    entity_id: docId,
+    change_summary: { employeeId, fileName: doc.doc_name },
+  });
+
+  res.json({ success: true });
+}));
+
+// GET /api/payroll/tax-declaration/run-summary/:runId — declaration completion stats for a payroll run
+router.get("/tax-declaration/run-summary/:runId", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { runId } = req.params;
+
+  // Get the financial year for this run
+  const [runRows] = await db.execute<RowDataPacket[]>(
+    "SELECT run_month FROM salary_prep_run WHERE id = ? LIMIT 1",
+    [runId]
+  );
+  if (!(runRows as RowDataPacket[]).length) {
+    return res.status(404).json({ success: false, message: "Payroll run not found" });
+  }
+  const runMonth = (runRows as RowDataPacket[])[0].run_month as string; // "YYYY-MM"
+  const year = parseInt(runMonth.split("-")[0], 10);
+  const month = parseInt(runMonth.split("-")[1], 10);
+  const financialYear = month >= 4 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
+
+  // Count employees in this run
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    "SELECT COUNT(DISTINCT employee_id) AS total FROM salary_prep_line WHERE run_id = ?",
+    [runId]
+  );
+  const totalEmployees = Number((empRows as RowDataPacket[])[0]?.total ?? 0);
+
+  // Declaration status breakdown
+  const [statusRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(fd.submission_status, 'not_submitted') AS status, COUNT(*) AS cnt
+       FROM salary_prep_line spl
+       LEFT JOIN tax_declaration td ON td.employee_id = spl.employee_id
+         AND td.financial_year IN (?, ?)
+       LEFT JOIN tax_declaration_form12bb_detail fd ON fd.declaration_id = td.id
+      WHERE spl.run_id = ?
+      GROUP BY COALESCE(fd.submission_status, 'not_submitted')`,
+    [financialYear, `${year}-${year+1}`, runId]
+  );
+  const statusMap: Record<string, number> = {};
+  (statusRows as RowDataPacket[]).forEach((r) => { statusMap[r.status as string] = Number(r.cnt); });
+
+  const compliance = totalEmployees > 0
+    ? Math.round(((statusMap["submitted"] ?? 0) + (statusMap["verified"] ?? 0)) / totalEmployees * 100)
+    : 0;
+
+  return res.json({
+    success: true,
+    run_id: runId,
+    run_month: runMonth,
+    financial_year: financialYear,
+    total_employees: totalEmployees,
+    declarations: {
+      not_submitted: statusMap["not_submitted"] ?? 0,
+      draft:         statusMap["draft"] ?? 0,
+      submitted:     statusMap["submitted"] ?? 0,
+      verified:      statusMap["verified"] ?? 0,
+      rejected:      statusMap["rejected"] ?? 0,
+    },
+    compliance_rate: compliance,
+  });
+}));
+
+// GET /api/payroll/tax-declaration/declarations-export — bulk CSV export for HR
+router.get("/tax-declaration/declarations-export", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { financial_year } = req.query as Record<string, string>;
+  if (!financial_year) {
+    return res.status(400).json({ success: false, message: "financial_year query param required" });
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name,'')) AS employee_name,
+            td.financial_year, td.regime, td.declared_hra, td.declared_80c, td.declared_80d,
+            COALESCE(fd.declared_home_loan_interest, 0) AS declared_home_loan_interest,
+            COALESCE(fd.declared_nps_80ccd1b, 0) AS declared_nps_80ccd1b,
+            COALESCE(fd.declared_ltc, 0) AS declared_ltc,
+            COALESCE(fd.declared_80e, 0) AS declared_80e,
+            COALESCE(fd.declared_80g, 0) AS declared_80g,
+            COALESCE(fd.declared_other_chapter_via, 0) AS declared_other_chapter_via,
+            td.total_investment, td.tds_projected,
+            COALESCE(fd.submission_status, 'submitted') AS submission_status,
+            fd.submitted_at, fd.verified_at,
+            (SELECT COUNT(*) FROM employee_documents ed
+             WHERE ed.employee_id = td.employee_id AND ed.doc_type LIKE 'tax_%'
+               AND (ed.metadata_json IS NULL OR ed.metadata_json LIKE CONCAT('%', td.financial_year, '%'))
+            ) AS document_count
+       FROM tax_declaration td
+       JOIN employees e ON e.id = td.employee_id
+       LEFT JOIN tax_declaration_form12bb_detail fd ON fd.declaration_id = td.id
+      WHERE td.financial_year LIKE ?
+      ORDER BY e.employee_code`,
+    [`%${financial_year}%`]
+  );
+
+  const headers = [
+    "employee_code", "employee_name", "financial_year", "regime",
+    "declared_hra", "declared_80c", "declared_80d", "home_loan_interest",
+    "nps_80ccd1b", "ltc", "80e", "80g", "other_chapter_via",
+    "total_investment", "tds_projected", "submission_status",
+    "submitted_at", "verified_at", "document_count",
+  ];
+
+  const csvRows = (rows as RowDataPacket[]).map((r) =>
+    [
+      r.employee_code, r.employee_name, r.financial_year, r.regime,
+      r.declared_hra, r.declared_80c, r.declared_80d, r.declared_home_loan_interest,
+      r.declared_nps_80ccd1b, r.declared_ltc, r.declared_80e, r.declared_80g, r.declared_other_chapter_via,
+      r.total_investment, r.tds_projected, r.submission_status,
+      r.submitted_at ?? "", r.verified_at ?? "", r.document_count,
+    ].map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")
+  );
+
+  const csv = [headers.join(","), ...csvRows].join("\n");
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename="tax-declarations-${financial_year}.csv"`);
+  return res.send(csv);
+}));
+
+// GET /api/payroll/gratuity-projection/:employeeId — project gratuity for an employee
+router.get("/gratuity-projection/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId } = req.params;
+  const isPrivileged = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
+  if (!isPrivileged) {
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (!callerEmp || callerEmp.id !== employeeId) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+  }
+
+  // Derive last basic monthly from salary assignment (basic assumed to be 40% of CTC monthly)
+  const lastBasicMonthly = req.query.basic_monthly
+    ? Number(req.query.basic_monthly)
+    : await (async () => {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          "SELECT ctc_annual FROM employee_salary_assignment WHERE employee_id = ? AND active_status = 1 ORDER BY effective_from DESC LIMIT 1",
+          [employeeId]
+        );
+        const ctcAnnual = Number((rows as RowDataPacket[])[0]?.ctc_annual ?? 0);
+        return Math.round((ctcAnnual / 12) * 0.4 * 100) / 100;
+      })();
+
+  const { calculateGratuity } = await import("./payrollCalculate.service.js");
+  const result = await calculateGratuity(employeeId, lastBasicMonthly);
+  return res.json({ success: true, data: result });
 }));
 
 // ─── UAN ─────────────────────────────────────────────────────────────────────
@@ -1007,6 +1374,44 @@ router.get("/minimum-wages", requireRole("admin", "hr", "super_admin", "finance"
     params
   );
   return res.json({ success: true, data: rows });
+}));
+
+// POST /api/payroll/minimum-wages — create a minimum wage entry (super_admin / admin / finance)
+router.post("/minimum-wages", requireRole("super_admin", "admin", "finance"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { state_code, state_name, category, daily_rate, monthly_rate, effective_from } = req.body as {
+    state_code: string; state_name?: string; category: string;
+    daily_rate?: number; monthly_rate?: number; effective_from?: string;
+  };
+  if (!state_code || !category) {
+    return res.status(400).json({ success: false, message: "state_code and category are required" });
+  }
+  const id = randomUUID();
+  await db.execute(
+    `INSERT INTO minimum_wage_master (id, state_code, state_name, category, daily_rate, monthly_rate, effective_from, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+    [id, state_code, state_name ?? state_code, category, daily_rate ?? null, monthly_rate ?? null, effective_from ?? null]
+  );
+  const [row] = await db.execute<RowDataPacket[]>("SELECT * FROM minimum_wage_master WHERE id = ? LIMIT 1", [id]);
+  return res.status(201).json({ success: true, data: (row as RowDataPacket[])[0] });
+}));
+
+// PATCH /api/payroll/minimum-wages/:id — update a minimum wage entry
+router.patch("/minimum-wages/:id", requireRole("super_admin", "admin", "finance"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const { daily_rate, monthly_rate, effective_from, is_active } = req.body as {
+    daily_rate?: number; monthly_rate?: number; effective_from?: string; is_active?: boolean;
+  };
+  await db.execute(
+    `UPDATE minimum_wage_master
+        SET daily_rate     = COALESCE(?, daily_rate),
+            monthly_rate   = COALESCE(?, monthly_rate),
+            effective_from = COALESCE(?, effective_from),
+            is_active      = COALESCE(?, is_active)
+      WHERE id = ?`,
+    [daily_rate ?? null, monthly_rate ?? null, effective_from ?? null, is_active !== undefined ? (is_active ? 1 : 0) : null, id]
+  );
+  const [row] = await db.execute<RowDataPacket[]>("SELECT * FROM minimum_wage_master WHERE id = ? LIMIT 1", [id]);
+  return res.json({ success: true, data: (row as RowDataPacket[])[0] });
 }));
 
 // ─── NEFT Export ─────────────────────────────────────────────────────────────

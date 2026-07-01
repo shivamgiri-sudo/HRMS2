@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatISTDate } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,9 +25,20 @@ type TaxDeclaration = {
   declared_hra: number;
   declared_80c: number;
   declared_80d: number;
+  declared_ltc: number;
+  declared_home_loan_interest: number;
+  declared_nps_80ccd1b: number;
+  declared_80e: number;
+  declared_80g: number;
+  declared_other_chapter_via: number;
+  other_income: number;
+  employee_consent: boolean;
+  submission_status: "draft" | "submitted" | "verified" | "rejected";
   tds_projected: number;
   submitted_at?: string;
-  status?: string;
+  verified_by?: string | null;
+  verified_at?: string | null;
+  review_note?: string | null;
 };
 
 type DeclarationHistory = TaxDeclaration & {
@@ -49,6 +61,14 @@ type FormState = {
   declared_80c: string;
   declared_80d: string;
   total_investment: string;
+  declared_ltc: string;
+  declared_home_loan_interest: string;
+  declared_nps_80ccd1b: string;
+  declared_80e: string;
+  declared_80g: string;
+  declared_other_chapter_via: string;
+  other_income: string;
+  employee_consent: boolean;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -64,11 +84,137 @@ const EMPTY_FORM: FormState = {
   declared_80c: "",
   declared_80d: "",
   total_investment: "",
+  declared_ltc: "",
+  declared_home_loan_interest: "",
+  declared_nps_80ccd1b: "",
+  declared_80e: "",
+  declared_80g: "",
+  declared_other_chapter_via: "",
+  other_income: "",
+  employee_consent: false,
 };
 
 function toNum(v: string): number {
   const n = parseFloat(v.replace(/,/g, ""));
   return isNaN(n) ? 0 : n;
+}
+
+// ─── HR Verification Panel ────────────────────────────────────────────────────
+
+function HrVerificationPanel({
+  declaration,
+  employeeId,
+  financialYear,
+  onVerified,
+}: {
+  declaration: TaxDeclaration;
+  employeeId: string;
+  financialYear: string;
+  onVerified: () => void;
+}) {
+  const [reviewNote, setReviewNote] = useState("");
+  const [submitting, setSubmitting] = useState<"verified" | "rejected" | null>(null);
+  const [msg, setMsg] = useState("");
+
+  const submit = async (status: "verified" | "rejected") => {
+    setSubmitting(status);
+    setMsg("");
+    try {
+      await hrmsApi.patch(`/api/payroll/tax-declaration/${employeeId}/${financialYear}/verify`, {
+        status,
+        review_note: reviewNote || undefined,
+      });
+      setMsg(`Declaration ${status} successfully.`);
+      setReviewNote("");
+      onVerified();
+    } catch (err: unknown) {
+      setMsg((err as Error).message || "Action failed.");
+    } finally {
+      setSubmitting(null);
+    }
+  };
+
+  const statusColor = declaration.submission_status === "verified"
+    ? "bg-emerald-100 text-emerald-700"
+    : declaration.submission_status === "rejected"
+    ? "bg-red-100 text-red-700"
+    : "bg-blue-100 text-blue-700";
+
+  return (
+    <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
+      <div className="border-b p-5 flex items-center gap-3">
+        <ShieldCheck className="h-5 w-5 text-slate-600" />
+        <div>
+          <h2 className="font-black text-slate-950">HR Verification</h2>
+          <p className="text-sm text-slate-500">Review and verify this tax declaration</p>
+        </div>
+      </div>
+      <div className="p-6 space-y-4">
+        {/* Current status */}
+        <div className="flex flex-wrap gap-4 text-sm">
+          <div>
+            <span className="text-slate-500 mr-2">Status:</span>
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold capitalize ${statusColor}`}>
+              {declaration.submission_status ?? "submitted"}
+            </span>
+          </div>
+          {declaration.verified_by && (
+            <div>
+              <span className="text-slate-500 mr-2">Verified by:</span>
+              <span className="font-semibold text-slate-700">{declaration.verified_by}</span>
+            </div>
+          )}
+          {declaration.verified_at && (
+            <div>
+              <span className="text-slate-500 mr-2">On:</span>
+              <span className="font-semibold text-slate-700">{formatISTDate(declaration.verified_at)}</span>
+            </div>
+          )}
+        </div>
+
+        {declaration.review_note && (
+          <div className="rounded-2xl bg-slate-50 border px-4 py-3 text-sm text-slate-700">
+            <span className="font-semibold">Review note: </span>{declaration.review_note}
+          </div>
+        )}
+
+        {msg && (
+          <p className={`text-sm font-semibold ${msg.includes("success") ? "text-emerald-700" : "text-red-600"}`}>{msg}</p>
+        )}
+
+        {/* Action area */}
+        {declaration.submission_status !== "verified" && (
+          <div className="space-y-3">
+            <textarea
+              value={reviewNote}
+              onChange={(e) => setReviewNote(e.target.value)}
+              placeholder="Add a review note (optional)..."
+              rows={2}
+              className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors resize-none"
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={() => submit("verified")}
+                disabled={!!submitting}
+                className="cursor-pointer inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 transition-colors disabled:opacity-50"
+              >
+                {submitting === "verified" ? <Loader className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                Approve Declaration
+              </button>
+              <button
+                onClick={() => submit("rejected")}
+                disabled={!!submitting}
+                className="cursor-pointer inline-flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-5 py-2.5 text-sm font-bold text-red-700 hover:bg-red-100 transition-colors disabled:opacity-50"
+              >
+                {submitting === "rejected" ? <Loader className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}
+                Reject
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ─── Main Page ─────────────────────────────────────────────────────────────────
@@ -142,6 +288,14 @@ export default function NativeTaxDeclaration() {
           declared_80c: d.declared_80c > 0 ? String(d.declared_80c) : "",
           declared_80d: d.declared_80d > 0 ? String(d.declared_80d) : "",
           total_investment: d.total_investment > 0 ? String(d.total_investment) : "",
+          declared_ltc: d.declared_ltc > 0 ? String(d.declared_ltc) : "",
+          declared_home_loan_interest: d.declared_home_loan_interest > 0 ? String(d.declared_home_loan_interest) : "",
+          declared_nps_80ccd1b: d.declared_nps_80ccd1b > 0 ? String(d.declared_nps_80ccd1b) : "",
+          declared_80e: d.declared_80e > 0 ? String(d.declared_80e) : "",
+          declared_80g: d.declared_80g > 0 ? String(d.declared_80g) : "",
+          declared_other_chapter_via: d.declared_other_chapter_via > 0 ? String(d.declared_other_chapter_via) : "",
+          other_income: d.other_income > 0 ? String(d.other_income) : "",
+          employee_consent: d.employee_consent ?? false,
         });
       } else {
         setForm(EMPTY_FORM);
@@ -201,6 +355,14 @@ export default function NativeTaxDeclaration() {
         declared_hra: toNum(form.declared_hra),
         declared_80c: toNum(form.declared_80c),
         declared_80d: toNum(form.declared_80d),
+        declared_ltc: toNum(form.declared_ltc),
+        declared_home_loan_interest: toNum(form.declared_home_loan_interest),
+        declared_nps_80ccd1b: toNum(form.declared_nps_80ccd1b),
+        declared_80e: toNum(form.declared_80e),
+        declared_80g: toNum(form.declared_80g),
+        declared_other_chapter_via: toNum(form.declared_other_chapter_via),
+        other_income: toNum(form.other_income),
+        employee_consent: form.employee_consent,
         tds_projected: declaration?.tds_projected ?? 0,
       });
       showMessage("Declaration submitted successfully.", "success");
@@ -263,16 +425,22 @@ export default function NativeTaxDeclaration() {
   };
 
   // ── Delete document ──────────────────────────────────────────────────────────
-  const handleDeleteDocument = async (docId: string) => {
-    if (!confirm("Are you sure you want to delete this document?")) return;
+  const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
 
+  const handleDeleteDocument = async (docId: string) => {
+    if (!confirm("Are you sure you want to delete this document? This cannot be undone.")) return;
+
+    const empId = mode === "self" ? "me" : selectedEmployeeId;
+    setDeletingDocId(docId);
     try {
-      // We'll just delete it from employee_documents table via a generic endpoint if available
-      // For now, show a message that deletion is not yet implemented
-      showMessage("Document deletion is not yet implemented.", "info");
+      await hrmsApi.delete(`/api/payroll/tax-declaration/${empId}/${selectedFY}/document/${docId}`);
+      showMessage("Document deleted.", "success");
+      void loadDocuments();
     } catch (err: unknown) {
       const e = err as Error;
       showMessage(e.message || "Delete failed.", "error");
+    } finally {
+      setDeletingDocId(null);
     }
   };
 
@@ -550,6 +718,143 @@ export default function NativeTaxDeclaration() {
                 </div>
               </div>
 
+              {/* Chapter VI-A & Other Deductions (Form 12BB extended fields) */}
+              <div>
+                <div className="mb-3 flex items-center gap-2">
+                  <div className="h-px flex-1 bg-slate-200" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Chapter VI-A &amp; Other Deductions</span>
+                  <div className="h-px flex-1 bg-slate-200" />
+                </div>
+                <div className="grid gap-5 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                      Home Loan Interest — 24B (₹)
+                    </label>
+                    <input
+                      type="number" min="0"
+                      value={form.declared_home_loan_interest}
+                      onChange={(e) => setForm({ ...form, declared_home_loan_interest: e.target.value })}
+                      placeholder="0"
+                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                    />
+                    <p className="mt-1 text-xs text-slate-400">Section 24(b) — max ₹2,00,000</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                      NPS 80CCD(1B) (₹)
+                    </label>
+                    <input
+                      type="number" min="0"
+                      value={form.declared_nps_80ccd1b}
+                      onChange={(e) => setForm({ ...form, declared_nps_80ccd1b: e.target.value })}
+                      placeholder="0"
+                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                    />
+                    <p className="mt-1 text-xs text-slate-400">NPS additional deduction — max ₹50,000</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                      LTC Exemption (₹)
+                    </label>
+                    <input
+                      type="number" min="0"
+                      value={form.declared_ltc}
+                      onChange={(e) => setForm({ ...form, declared_ltc: e.target.value })}
+                      placeholder="0"
+                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                    />
+                    <p className="mt-1 text-xs text-slate-400">Leave Travel Concession exemption</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                      80E — Education Loan Interest (₹)
+                    </label>
+                    <input
+                      type="number" min="0"
+                      value={form.declared_80e}
+                      onChange={(e) => setForm({ ...form, declared_80e: e.target.value })}
+                      placeholder="0"
+                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                    />
+                    <p className="mt-1 text-xs text-slate-400">Interest on education loan — no cap</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                      80G — Donations (₹)
+                    </label>
+                    <input
+                      type="number" min="0"
+                      value={form.declared_80g}
+                      onChange={(e) => setForm({ ...form, declared_80g: e.target.value })}
+                      placeholder="0"
+                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                    />
+                    <p className="mt-1 text-xs text-slate-400">Eligible charitable donations</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                      Other Chapter VI-A Deductions (₹)
+                    </label>
+                    <input
+                      type="number" min="0"
+                      value={form.declared_other_chapter_via}
+                      onChange={(e) => setForm({ ...form, declared_other_chapter_via: e.target.value })}
+                      placeholder="0"
+                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                    />
+                    <p className="mt-1 text-xs text-slate-400">80TTA, 80TTB, and other eligible deductions</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                      Other Income (₹)
+                    </label>
+                    <input
+                      type="number" min="0"
+                      value={form.other_income}
+                      onChange={(e) => setForm({ ...form, other_income: e.target.value })}
+                      placeholder="0"
+                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                    />
+                    <p className="mt-1 text-xs text-slate-400">FD interest, rental income, other heads</p>
+                  </div>
+                </div>
+
+                {/* Employee consent checkbox */}
+                <label className="mt-5 flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.employee_consent}
+                    onChange={(e) => setForm({ ...form, employee_consent: e.target.checked })}
+                    className="mt-0.5 h-4 w-4 rounded accent-slate-950"
+                  />
+                  <span className="text-sm text-slate-700">
+                    I declare that the above investment and income details are true and correct to the best of my knowledge,
+                    and I undertake to submit documentary proof as required.
+                  </span>
+                </label>
+              </div>
+
+              {/* submission_status badge */}
+              {declaration?.submission_status && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-500">Declaration status:</span>
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold capitalize ${
+                    declaration.submission_status === "verified"  ? "bg-emerald-100 text-emerald-700" :
+                    declaration.submission_status === "submitted" ? "bg-blue-100 text-blue-700" :
+                    declaration.submission_status === "rejected"  ? "bg-red-100 text-red-700" :
+                    "bg-slate-100 text-slate-500"
+                  }`}>
+                    {declaration.submission_status}
+                  </span>
+                </div>
+              )}
+
               {/* TDS Projected (read-only) */}
               {declaration?.tds_projected !== undefined && declaration.tds_projected > 0 && (
                 <div className="rounded-2xl bg-amber-50 border border-amber-200 p-4 flex items-center justify-between">
@@ -628,7 +933,7 @@ export default function NativeTaxDeclaration() {
               <table className="w-full min-w-[600px] text-sm">
                 <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                   <tr>
-                    {["Document Name", "Type", "Uploaded", "Actions"].map((h) => (
+                    {["Document Name", "Type", "Verified", "Uploaded", "Actions"].map((h) => (
                       <th key={h} className="p-4 font-semibold">{h}</th>
                     ))}
                   </tr>
@@ -647,6 +952,17 @@ export default function NativeTaxDeclaration() {
                           {doc.document_type.replace(/_/g, " ")}
                         </span>
                       </td>
+                      <td className="p-4">
+                        {doc.verified ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-700 px-2.5 py-1 text-xs font-semibold">
+                            <CheckCircle2 className="h-3 w-3" /> Verified
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 text-amber-700 px-2.5 py-1 text-xs font-semibold">
+                            <Clock className="h-3 w-3" /> Pending
+                          </span>
+                        )}
+                      </td>
                       <td className="p-4 text-xs text-slate-500 font-mono">
                         {formatISTDate(doc.uploaded_at)}
                       </td>
@@ -662,10 +978,13 @@ export default function NativeTaxDeclaration() {
                           </button>
                           <button
                             onClick={() => handleDeleteDocument(doc.id)}
-                            className="cursor-pointer inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 transition-colors"
+                            disabled={deletingDocId === doc.id}
+                            className="cursor-pointer inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 transition-colors disabled:opacity-50"
                             title="Delete"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            {deletingDocId === doc.id
+                              ? <Loader className="h-3.5 w-3.5 animate-spin" />
+                              : <Trash2 className="h-3.5 w-3.5" />}
                           </button>
                         </div>
                       </td>
@@ -676,6 +995,16 @@ export default function NativeTaxDeclaration() {
             </div>
           )}
         </div>
+
+        {/* HR Verification Panel — admin mode only */}
+        {mode === "admin" && declaration && (
+          <HrVerificationPanel
+            declaration={declaration}
+            employeeId={selectedEmployeeId}
+            financialYear={selectedFY}
+            onVerified={() => { void loadDeclaration(); }}
+          />
+        )}
 
         {/* Declaration History */}
         {history.length > 0 && (

@@ -15,6 +15,12 @@ interface TaxDeclarationRow {
   declared_80c: number;
   declared_80d: number;
   regime: string;
+  declared_ltc: number;
+  declared_home_loan_interest: number;
+  declared_nps_80ccd1b: number;
+  declared_80e: number;
+  declared_80g: number;
+  declared_other_chapter_via: number;
 }
 
 const LOCKED_STATUSES = new Set(["locked", "disbursed"]);
@@ -111,6 +117,79 @@ export function calculateTds(
   const tds_monthly = Math.round((tds_annual / 12) * 100) / 100;
   const effective_rate = annualTaxableIncome > 0
     ? Math.round((tds_annual / annualTaxableIncome) * 10000) / 100
+    : 0;
+
+  return { tds_annual, tds_monthly, effective_rate };
+}
+
+/**
+ * Calculate TDS under Old Regime (pre-115BAC) with all Chapter VI-A deductions.
+ * Old-regime slabs (FY 2025-26): 0–2.5L→0%, 2.5–5L→5%, 5–10L→20%, >10L→30%
+ * Rebate 87A: taxable income ≤ ₹5L → rebate up to ₹12,500
+ */
+export function calculateOldRegimeTds(
+  annualGross: number,
+  declarations: {
+    hra: number;
+    ltc: number;
+    homeLoanInterest: number;
+    section80c: number;
+    section80d: number;
+    nps80ccd1b: number;
+    section80e: number;
+    section80g: number;
+    otherChapterVia: number;
+  }
+): TdsResult {
+  const STANDARD_DEDUCTION = 50000;
+  const CAP_HOME_LOAN = 200000;
+  const CAP_80C = 150000;
+  const CAP_80D = 50000;      // 25k self + 25k parents (simplified)
+  const CAP_NPS_80CCD1B = 50000;
+  const REBATE_87A_LIMIT = 500000;
+  const REBATE_87A_MAX   = 12500;
+
+  let taxableIncome = Math.max(0, annualGross
+    - STANDARD_DEDUCTION
+    - (declarations.hra ?? 0)
+    - (declarations.ltc ?? 0)
+    - Math.min(declarations.homeLoanInterest ?? 0, CAP_HOME_LOAN)
+    - Math.min(declarations.section80c ?? 0, CAP_80C)
+    - Math.min(declarations.section80d ?? 0, CAP_80D)
+    - Math.min(declarations.nps80ccd1b ?? 0, CAP_NPS_80CCD1B)
+    - (declarations.section80e ?? 0)
+    - (declarations.section80g ?? 0)
+    - (declarations.otherChapterVia ?? 0)
+  );
+  taxableIncome = Math.max(0, taxableIncome);
+
+  // Old regime slabs
+  const slabs = [
+    { limit: 250000,  rate: 0 },
+    { limit: 500000,  rate: 0.05 },
+    { limit: 1000000, rate: 0.20 },
+    { limit: Infinity, rate: 0.30 },
+  ];
+
+  let tax = 0;
+  let prev = 0;
+  for (const slab of slabs) {
+    const band = Math.min(taxableIncome, slab.limit) - prev;
+    if (band <= 0) break;
+    tax += band * slab.rate;
+    prev = slab.limit;
+  }
+
+  // Section 87A rebate
+  if (taxableIncome <= REBATE_87A_LIMIT) {
+    tax = Math.max(0, tax - Math.min(tax, REBATE_87A_MAX));
+  }
+
+  // Education cess 4%
+  const tds_annual  = Math.round(tax * 1.04 * 100) / 100;
+  const tds_monthly = Math.round((tds_annual / 12) * 100) / 100;
+  const effective_rate = annualGross > 0
+    ? Math.round((tds_annual / annualGross) * 10000) / 100
     : 0;
 
   return { tds_annual, tds_monthly, effective_rate };
@@ -706,9 +785,19 @@ export async function calculatePayrollRun(runId: string, userId: string, singleE
     // Gross based on finalPayableDays (includes eligible week-offs and holidays)
     const grossAfterLwp = Math.max(0, (emp.ctc_annual / 12) * (finalPayableDays / activeCalDays));
 
-    // 5a. Fetch tax declaration for this employee / financial year
+    // 5a. Fetch tax declaration + extended Form 12BB deductions for this employee / financial year
     const [declRows] = await db.execute<RowDataPacket[]>(
-      "SELECT declared_hra, declared_80c, declared_80d, regime FROM tax_declaration WHERE employee_id = ? AND financial_year = ? LIMIT 1",
+      `SELECT td.declared_hra, td.declared_80c, td.declared_80d, td.regime,
+              COALESCE(fd.declared_ltc, 0) AS declared_ltc,
+              COALESCE(fd.declared_home_loan_interest, 0) AS declared_home_loan_interest,
+              COALESCE(fd.declared_nps_80ccd1b, 0) AS declared_nps_80ccd1b,
+              COALESCE(fd.declared_80e, 0) AS declared_80e,
+              COALESCE(fd.declared_80g, 0) AS declared_80g,
+              COALESCE(fd.declared_other_chapter_via, 0) AS declared_other_chapter_via
+         FROM tax_declaration td
+         LEFT JOIN tax_declaration_form12bb_detail fd ON fd.declaration_id = td.id
+        WHERE td.employee_id = ? AND td.financial_year = ?
+        LIMIT 1`,
       [emp.employee_id, financialYear]
     );
     const decl = (declRows as TaxDeclarationRow[])[0] ?? null;
@@ -719,11 +808,26 @@ export async function calculatePayrollRun(runId: string, userId: string, singleE
     let tdsMonthly = 0;
     if (tdsMode === 'auto') {
       const annualGross = grossAfterLwp * 12;
-      const declHra  = decl ? Number(decl.declared_hra)  : 0;
-      const decl80c  = decl ? Number(decl.declared_80c)  : 0;
-      const decl80d  = decl ? Number(decl.declared_80d)  : 0;
-      const taxableIncome = Math.max(0, annualGross - declHra - decl80c - decl80d);
-      tdsMonthly = calculateTds(taxableIncome, statConfig).tds_monthly;
+      if (decl?.regime === 'old') {
+        tdsMonthly = calculateOldRegimeTds(annualGross, {
+          hra:             Number(decl.declared_hra ?? 0),
+          ltc:             Number(decl.declared_ltc ?? 0),
+          homeLoanInterest: Number(decl.declared_home_loan_interest ?? 0),
+          section80c:      Number(decl.declared_80c ?? 0),
+          section80d:      Number(decl.declared_80d ?? 0),
+          nps80ccd1b:      Number(decl.declared_nps_80ccd1b ?? 0),
+          section80e:      Number(decl.declared_80e ?? 0),
+          section80g:      Number(decl.declared_80g ?? 0),
+          otherChapterVia: Number(decl.declared_other_chapter_via ?? 0),
+        }).tds_monthly;
+      } else {
+        // New regime or no declaration: apply standard deduction from statutory_config
+        const declHra  = decl ? Number(decl.declared_hra)  : 0;
+        const decl80c  = decl ? Number(decl.declared_80c)  : 0;
+        const decl80d  = decl ? Number(decl.declared_80d)  : 0;
+        const taxableIncome = Math.max(0, annualGross - declHra - decl80c - decl80d);
+        tdsMonthly = calculateTds(taxableIncome, statConfig).tds_monthly;
+      }
     }
 
     // 5d. Salary advance monthly recovery

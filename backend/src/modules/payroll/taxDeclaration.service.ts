@@ -228,7 +228,10 @@ const selectDeclaration = `
          COALESCE(fd.other_income, 0) AS other_income,
          COALESCE(fd.employee_consent, 0) AS employee_consent,
          COALESCE(fd.submission_status, 'submitted') AS submission_status,
-         fd.submitted_at
+         fd.submitted_at,
+         fd.verified_by,
+         fd.verified_at,
+         fd.review_note
     FROM tax_declaration td
     LEFT JOIN tax_declaration_form12bb_detail fd ON fd.declaration_id = td.id`;
 
@@ -366,5 +369,66 @@ export const taxDeclarationService = {
       [employeeId]
     );
     return rows as TaxDeclaration[];
+  },
+
+  async verify(
+    declarationId: string,
+    verifiedBy: string,
+    newStatus: "verified" | "rejected",
+    reviewNote?: string
+  ): Promise<void> {
+    // Ensure a form12bb_detail row exists (upsert) before updating verification columns
+    await db.execute(
+      `INSERT INTO tax_declaration_form12bb_detail (declaration_id, submission_status, verified_by, verified_at, review_note)
+       VALUES (?, ?, ?, NOW(), ?)
+       ON DUPLICATE KEY UPDATE
+         submission_status = VALUES(submission_status),
+         verified_by = VALUES(verified_by),
+         verified_at = NOW(),
+         review_note = VALUES(review_note),
+         updated_at = CURRENT_TIMESTAMP`,
+      [declarationId, newStatus, verifiedBy, reviewNote ?? null]
+    );
+  },
+
+  async listPendingVerification(
+    financialYear?: string,
+    page = 0,
+    limit = 20
+  ): Promise<{ data: unknown[]; total: number }> {
+    const offset = page * limit;
+    const fyFilter = financialYear ? `AND td.financial_year LIKE ?` : "";
+    const fyParam = financialYear ? [`%${financialYear}%`] : [];
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT td.id AS declaration_id, td.employee_id, td.financial_year, td.regime,
+              td.tds_projected, fd.submission_status, fd.submitted_at,
+              e.employee_code, e.first_name, e.last_name,
+              (SELECT COUNT(*) FROM employee_documents ed
+               WHERE ed.employee_id = td.employee_id
+                 AND ed.doc_type LIKE 'tax_%'
+                 AND (ed.metadata_json IS NULL OR ed.metadata_json LIKE CONCAT('%', td.financial_year, '%'))
+              ) AS document_count
+         FROM tax_declaration td
+         LEFT JOIN tax_declaration_form12bb_detail fd ON fd.declaration_id = td.id
+         JOIN employees e ON e.id = td.employee_id
+        WHERE COALESCE(fd.submission_status, 'submitted') = 'submitted'
+              ${fyFilter}
+        ORDER BY fd.submitted_at DESC
+        LIMIT ? OFFSET ?`,
+      [...fyParam, limit, offset]
+    );
+
+    const [countRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total
+         FROM tax_declaration td
+         LEFT JOIN tax_declaration_form12bb_detail fd ON fd.declaration_id = td.id
+        WHERE COALESCE(fd.submission_status, 'submitted') = 'submitted'
+              ${fyFilter}`,
+      fyParam
+    );
+    const total = Number((countRows[0] as any)?.total ?? 0);
+
+    return { data: rows, total };
   },
 };
