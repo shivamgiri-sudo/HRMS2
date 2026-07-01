@@ -45,13 +45,22 @@ export function LeaveBalanceCard({ employeeId }: LeaveBalanceCardProps) {
                 const isEL = balance.leave_code === "EL";
                 const isCLML = ["CL", "ML"].includes(balance.leave_code || "");
                 const currentMonth = new Date().getMonth() + 1; // 1-12
-                // Accrued-to-date = min(current calendar month, full annual allocation)
-                // so the badge never exceeds what was actually allocated in the DB
-                const accruedToDate = isCLML
-                  ? Math.min(currentMonth, balance.allocated_days)
-                  : balance.allocated_days;
-                const usedPct = balance.allocated_days > 0
-                  ? Math.min((balance.used_days / balance.allocated_days) * 100, 100)
+
+                // Annual entitlement: CL = 7 days (accrues Jan/Mar/May/Jul/Aug/Oct/Dec)
+                //                     ML = 5 days (accrues Feb/Apr/Jun/Sep/Nov)
+                // allocated_days = cumulative credits received so far this year (not full annual)
+                // Use backend annual_entitlement if provided, otherwise known statutory values
+                const annualEntitlement =
+                  balance.annual_entitlement != null ? balance.annual_entitlement :
+                  balance.leave_code === "CL" ? 7 :
+                  balance.leave_code === "ML" ? 5 :
+                  balance.allocated_days;
+
+                // accruedToDate = days actually credited so far = allocated_days
+                const accruedToDate = balance.allocated_days;
+
+                const usedPct = annualEntitlement > 0
+                  ? Math.min((balance.used_days / annualEntitlement) * 100, 100)
                   : 0;
 
                 return (
@@ -76,7 +85,12 @@ export function LeaveBalanceCard({ employeeId }: LeaveBalanceCardProps) {
 
                     <p className="text-xs text-muted-foreground">
                       Allocated: {balance.allocated_days.toFixed(1)} days
-                      {balance.annual_entitlement != null &&
+                      {isCLML && annualEntitlement !== balance.allocated_days && (
+                        <span className="text-slate-400">
+                          {" "}(annual: {annualEntitlement} days)
+                        </span>
+                      )}
+                      {!isCLML && balance.annual_entitlement != null &&
                         balance.annual_entitlement !== balance.allocated_days && (
                           <span className="text-slate-400">
                             {" "}(annual: {balance.annual_entitlement} days)
@@ -89,21 +103,22 @@ export function LeaveBalanceCard({ employeeId }: LeaveBalanceCardProps) {
                       )}
                     </p>
 
-                    {/* CL/ML accrual info — shows accrued-to-date vs full year */}
+                    {/* CL/ML accrual info — shows accrued-to-date vs full year entitlement */}
                     {isCLML && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <div className="flex items-center gap-1.5 rounded-md bg-amber-50 px-2 py-1.5 cursor-help border border-amber-100">
                             <TrendingUp className="h-3.5 w-3.5 text-amber-600 flex-shrink-0" />
                             <span className="text-xs text-amber-700">
-                              {accruedToDate.toFixed(0)}/{balance.allocated_days.toFixed(0)} accrued
+                              {accruedToDate.toFixed(0)}/{annualEntitlement} accrued this year
                             </span>
                           </div>
                         </TooltipTrigger>
                         <TooltipContent side="bottom" className="max-w-xs text-xs">
                           <p>
-                            {balance.leave_type?.name} accrues 1 day per month.
-                            Through {MONTH_NAMES[currentMonth]}, you've accrued {accruedToDate.toFixed(0)} of {balance.allocated_days.toFixed(0)} allocated days.
+                            {balance.leave_type?.name} annual entitlement is {annualEntitlement} days,
+                            credited in specific months. Through {MONTH_NAMES[currentMonth]}, {accruedToDate.toFixed(0)} day(s)
+                            have been credited so far this year.
                           </p>
                         </TooltipContent>
                       </Tooltip>
