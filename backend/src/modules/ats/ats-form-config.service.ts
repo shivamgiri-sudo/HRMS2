@@ -317,12 +317,14 @@ export const atsFormConfigService = {
   },
 
   async createRecruiter(name: string) {
+    const newId = randomUUID();
     await db.execute<ResultSetHeader>(
-      'INSERT INTO ats_recruiter (id, name) VALUES (UUID(), ?)',
-      [name.trim()]
+      'INSERT INTO ats_recruiter (id, name) VALUES (?, ?)',
+      [newId, name.trim()]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT id, name, active_status, sort_order FROM ats_recruiter ORDER BY created_at DESC LIMIT 1'
+      'SELECT id, name, active_status, sort_order FROM ats_recruiter WHERE id = ?',
+      [newId]
     );
     return (rows as RowDataPacket[])[0];
   },
@@ -352,12 +354,24 @@ export const atsFormConfigService = {
   },
 
   async createBranchAlias(canonical: string, display: string, alias: string | null) {
+    const newId = randomUUID();
+    // Use upsert so that if canonical_key or display_name already exists (unique constraint on live DB),
+    // we update rather than error out.
     await db.execute<ResultSetHeader>(
-      'INSERT INTO ats_branch_alias_master (id, canonical_key, display_name, alias_text) VALUES (UUID(), ?, ?, ?)',
-      [canonical.trim(), display.trim(), alias?.trim() || null]
+      `INSERT INTO ats_branch_alias_master (id, canonical_key, display_name, alias_text)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         display_name = VALUES(display_name),
+         alias_text   = VALUES(alias_text),
+         updated_at   = NOW()`,
+      [newId, canonical.trim(), display.trim(), alias?.trim() || null]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT id, canonical_key, display_name, alias_text, active_status FROM ats_branch_alias_master ORDER BY created_at DESC LIMIT 1'
+      `SELECT id, canonical_key, display_name, alias_text, active_status
+       FROM ats_branch_alias_master
+       WHERE canonical_key = ? OR id = ?
+       LIMIT 1`,
+      [canonical.trim(), newId]
     );
     return (rows as RowDataPacket[])[0];
   },

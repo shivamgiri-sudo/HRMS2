@@ -569,34 +569,35 @@ export default function NativeATSCandidateRegistration() {
       errors.push("✉️ Please enter a valid email address");
     }
 
-    // Address validation
+    // Address validation — only if form-config marks it required
     const address = String(form.address || "").trim();
-    if (!address) {
+    if (isFieldRequired('address') && !address) {
       nextErrors.address = "📍 Please enter your address";
       errors.push("📍 Please enter your address");
-    } else if (address.length < 10) {
+    } else if (isFieldRequired('address') && address.length < 10) {
       nextErrors.address = "📍 Please enter a complete address (minimum 10 characters)";
       errors.push("📍 Please enter a complete address");
     }
 
-    // Required field checks with friendly labels
-    const requiredFields = [
-      { key: 'education', label: '🎓 Education' },
-      { key: 'experience', label: '💼 Experience' },
-      { key: 'gender', label: '🧑 Gender' },
-      { key: 'roleApplied', label: '🗂️ Role Applied' },
-      { key: 'recruiterName', label: '🤝 Recruiter Name' },
-      { key: 'branch', label: '🏢 Branch' },
-      { key: 'rotationalShift', label: '🔄 Rotational Shift' },
-      { key: 'preferredShift', label: '🕐 Preferred Shift' },
-      { key: 'nightShiftComfort', label: '🌙 Night Shift Comfort' },
-      { key: 'leavesRequired', label: '📅 Leaves in 3 Months' },
-      { key: 'ownTwoWheeler', label: '🛵 Own 2 Wheeler' },
-      { key: 'idProofAvailable', label: '🪪 ID Proof' },
+    // Config-driven required field checks — respects form-config visibility + required flags
+    const configDrivenFields = [
+      { key: 'education',               label: '🎓 Education' },
+      { key: 'experience',              label: '💼 Experience' },
+      { key: 'gender',                  label: '🧑 Gender' },
+      { key: 'roleApplied',             label: '🗂️ Role Applied' },
+      { key: 'recruiterName',           label: '🤝 Recruiter Name' },
+      { key: 'branch',                  label: '🏢 Branch' },
+      { key: 'rotationalShift',         label: '🔄 Rotational Shift' },
+      { key: 'preferredShift',          label: '🕐 Preferred Shift' },
+      { key: 'nightShiftComfort',       label: '🌙 Night Shift Comfort' },
+      { key: 'leavesRequired',          label: '📅 Leaves in 3 Months' },
+      { key: 'ownTwoWheeler',           label: '🛵 Own 2 Wheeler' },
+      { key: 'idProofAvailable',        label: '🪪 ID Proof' },
       { key: 'educationProofAvailable', label: '📄 Education Proof' },
     ];
 
-    requiredFields.forEach(field => {
+    configDrivenFields.forEach(field => {
+      if (!isFieldRequired(field.key)) return;
       const value = String(form[field.key as keyof typeof form] || "").trim();
       if (!value) {
         nextErrors[field.key] = `${field.label} is required`;

@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { hrmsApi } from '@/lib/hrmsApi';
-import { Trash2, Plus, ChevronUp, ChevronDown, Save } from 'lucide-react';
+import { Trash2, Plus, ChevronUp, ChevronDown, Save, Pencil } from 'lucide-react';
 
 interface FieldDef {
   k: string; lb: string; t: string; ic: string;
@@ -314,6 +314,8 @@ function RecruitersTab({ recruiters, loading, onRefresh }: {
   const [newName, setNewName] = useState('');
   const [adding, setAdding] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
 
   const add = async () => {
     if (!newName.trim()) return;
@@ -324,6 +326,16 @@ function RecruitersTab({ recruiters, loading, onRefresh }: {
       toast({ title: 'Recruiter added' });
     } catch { toast({ title: 'Error', description: 'Could not add recruiter', variant: 'destructive' }); }
     finally { setAdding(false); }
+  };
+
+  const saveEdit = async (id: string) => {
+    if (!editName.trim()) return;
+    try {
+      await hrmsApi.patch(`/api/ats/recruiters/${id}`, { name: editName.trim() });
+      setEditingId(null);
+      onRefresh();
+      toast({ title: 'Recruiter name updated' });
+    } catch { toast({ title: 'Error', description: 'Could not update name', variant: 'destructive' }); }
   };
 
   const toggle = async (id: string, current: number) => {
@@ -358,17 +370,28 @@ function RecruitersTab({ recruiters, loading, onRefresh }: {
         )}
         <div className="divide-y">
           {recruiters.map((r, i) => (
-            <div key={r.id} className="flex items-center gap-3 py-2.5">
-              <div className="flex gap-1">
-                <button onClick={async () => { await hrmsApi.patch(`/api/ats/recruiters/${r.id}`, { sort_order: r.sort_order - 1 }); onRefresh(); }} disabled={i === 0} className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"><ChevronUp className="h-3.5 w-3.5" /></button>
-                <button onClick={async () => { await hrmsApi.patch(`/api/ats/recruiters/${r.id}`, { sort_order: r.sort_order + 1 }); onRefresh(); }} disabled={i === recruiters.length - 1} className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"><ChevronDown className="h-3.5 w-3.5" /></button>
-              </div>
-              <span className={`flex-1 text-sm ${r.active_status !== 1 ? 'line-through text-slate-400' : ''}`}>{r.name}</span>
-              <Switch checked={r.active_status === 1} onCheckedChange={() => toggle(r.id, r.active_status)} />
-              <Badge variant={r.active_status === 1 ? 'default' : 'secondary'} className="text-xs w-16 justify-center">
-                {r.active_status === 1 ? 'Active' : 'Inactive'}
-              </Badge>
-              <button onClick={() => remove(r.id)} className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>
+            <div key={r.id} className="py-2.5">
+              {editingId === r.id ? (
+                <div className="flex gap-2 items-center">
+                  <Input value={editName} onChange={e => setEditName(e.target.value)} className="flex-1 h-8 text-sm" onKeyDown={e => { if (e.key === 'Enter') saveEdit(r.id); if (e.key === 'Escape') setEditingId(null); }} autoFocus />
+                  <Button size="sm" className="h-8" onClick={() => saveEdit(r.id)}>Save</Button>
+                  <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditingId(null)}>Cancel</Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <div className="flex gap-1">
+                    <button onClick={async () => { await hrmsApi.patch(`/api/ats/recruiters/${r.id}`, { sort_order: r.sort_order - 1 }); onRefresh(); }} disabled={i === 0} className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"><ChevronUp className="h-3.5 w-3.5" /></button>
+                    <button onClick={async () => { await hrmsApi.patch(`/api/ats/recruiters/${r.id}`, { sort_order: r.sort_order + 1 }); onRefresh(); }} disabled={i === recruiters.length - 1} className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"><ChevronDown className="h-3.5 w-3.5" /></button>
+                  </div>
+                  <span className={`flex-1 text-sm ${r.active_status !== 1 ? 'line-through text-slate-400' : ''}`}>{r.name}</span>
+                  <button onClick={() => { setEditingId(r.id); setEditName(r.name); }} className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"><Pencil className="h-3.5 w-3.5" /></button>
+                  <Switch checked={r.active_status === 1} onCheckedChange={() => toggle(r.id, r.active_status)} />
+                  <Badge variant={r.active_status === 1 ? 'default' : 'secondary'} className="text-xs w-16 justify-center">
+                    {r.active_status === 1 ? 'Active' : 'Inactive'}
+                  </Badge>
+                  <button onClick={() => remove(r.id)} className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -387,7 +410,7 @@ function BranchAliasesTab({ aliases: initialAliases, loading, onRefresh }: {
   const [newAliasText, setNewAliasText] = useState('');
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
-  const [editValues, setEditValues] = useState<{ display: string; alias: string }>({ display: '', alias: '' });
+  const [editValues, setEditValues] = useState<{ canonical: string; display: string; alias: string }>({ canonical: '', display: '', alias: '' });
 
   const aliases = initialAliases.sort((a, b) => {
     if (a.active_status !== b.active_status) return b.active_status - a.active_status;
@@ -418,12 +441,13 @@ function BranchAliasesTab({ aliases: initialAliases, loading, onRefresh }: {
 
   const startEdit = (alias: BranchAlias) => {
     setEditing(alias.id);
-    setEditValues({ display: alias.display_name, alias: alias.alias_text || '' });
+    setEditValues({ canonical: alias.canonical_key, display: alias.display_name, alias: alias.alias_text || '' });
   };
 
   const saveEdit = async (id: string) => {
     try {
       await hrmsApi.patch(`/api/ats/branch-aliases/${id}`, {
+        canonical_key: editValues.canonical,
         display_name: editValues.display,
         alias_text: editValues.alias || null,
       });
@@ -520,7 +544,16 @@ function BranchAliasesTab({ aliases: initialAliases, loading, onRefresh }: {
             <div key={alias.id} className={`py-3 ${alias.active_status !== 1 ? 'opacity-50' : ''}`}>
               {editing === alias.id ? (
                 <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="text-xs text-slate-600 block mb-1">Official Branch Name (Database)</label>
+                      <Input
+                        value={editValues.canonical}
+                        onChange={e => setEditValues({ ...editValues, canonical: e.target.value })}
+                        className="text-sm font-mono"
+                        placeholder="e.g., AHMEDABAD-JALDARSHAN"
+                      />
+                    </div>
                     <div>
                       <label className="text-xs text-slate-600 block mb-1">Display Name</label>
                       <Input
