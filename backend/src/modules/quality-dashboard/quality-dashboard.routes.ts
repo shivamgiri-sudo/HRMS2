@@ -750,4 +750,302 @@ router.get("/objections/comprehensive-report", requireRole(...ALLOWED_ROLES), h(
   }
 }));
 
+// ============================================================================
+// INBOUND OPERATIONS ENDPOINTS (from dialer_db CDR data)
+// ============================================================================
+
+import {
+  getInboundSummary,
+  getInboundTrend,
+  getConsolidatedTrend,
+  getProjectHourly,
+  getProjectsMeta,
+} from "./inbound-ops.service.js";
+
+const INBOUND_ROLES = ["admin", "super_admin", "ceo", "coo", "branch_head", "process_manager", "manager", "operations_manager"] as const;
+
+// GET /api/quality-dashboard/inbound-ops/projects
+router.get("/inbound-ops/projects", requireRole(...INBOUND_ROLES), h(async (_req, res) => {
+  return res.json({ success: true, projects: getProjectsMeta() });
+}));
+
+// GET /api/quality-dashboard/inbound-ops/summary?from&to&projects=gnc,bellavita
+router.get("/inbound-ops/summary", requireRole(...INBOUND_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const projectKeys = req.query.projects ? String(req.query.projects).split(",").filter(Boolean) : undefined;
+    const data = await getInboundSummary(from, to, projectKeys);
+    return res.json({ success: true, data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Dialer DB unavailable";
+    console.error("[inbound-ops/summary]", msg);
+    return res.json({ success: true, data: [], _error: msg });
+  }
+}));
+
+// GET /api/quality-dashboard/inbound-ops/trend?from&to&project=gnc
+router.get("/inbound-ops/trend", requireRole(...INBOUND_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const projectKey = req.query.project ? String(req.query.project) : null;
+    if (projectKey) {
+      const rows = await getInboundTrend(from, to, projectKey);
+      return res.json({ success: true, data: rows });
+    }
+    const rows = await getConsolidatedTrend(from, to);
+    return res.json({ success: true, data: rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Dialer DB unavailable";
+    console.error("[inbound-ops/trend]", msg);
+    return res.json({ success: true, data: [], _error: msg });
+  }
+}));
+
+// GET /api/quality-dashboard/inbound-ops/hourly?project=gnc&date=2026-07-01
+router.get("/inbound-ops/hourly", requireRole(...INBOUND_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const projectKey = String(req.query.project ?? "");
+    const date = String(req.query.date ?? new Date().toISOString().slice(0, 10));
+    if (!projectKey) return res.status(400).json({ success: false, error: "project is required" });
+    const data = await getProjectHourly(projectKey, date);
+    return res.json({ success: true, data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Dialer DB unavailable";
+    console.error("[inbound-ops/hourly]", msg);
+    return res.json({ success: true, data: [], _error: msg });
+  }
+}));
+
+// ============================================================================
+// CLIENT QUALITY DRILL ENDPOINTS
+// ============================================================================
+
+// GET /api/quality-dashboard/client-drill/kpis?clientId&from&to
+router.get("/client-drill/kpis", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const clientId = String(req.query.clientId ?? "");
+    if (!clientId) return res.status(400).json({ success: false, error: "clientId required" });
+    const scope = await resolveScope(req);
+    const params: any[] = [from, to, clientId];
+    const scopeCond = auditScopeCond(scope, params);
+    const pool = getCiPool();
+
+    const [rows] = await pool.execute<RowDataPacket[]>(`
+      SELECT
+        COUNT(*) AS audit_count,
+        ROUND(AVG(quality_percentage), 2) AS cq_score,
+        ROUND(AVG(CASE WHEN COALESCE(data_theft_or_misuse,'')='' OR data_theft_or_misuse='null' THEN quality_percentage END), 2) AS cq_score_no_fatal,
+        COUNT(CASE WHEN quality_percentage >= 90 THEN 1 END) AS excellent,
+        COUNT(CASE WHEN quality_percentage >= 75 AND quality_percentage < 90 THEN 1 END) AS good,
+        COUNT(CASE WHEN quality_percentage >= 50 AND quality_percentage < 75 THEN 1 END) AS average_count,
+        COUNT(CASE WHEN quality_percentage < 50 THEN 1 END) AS below_average,
+        COUNT(CASE WHEN COALESCE(data_theft_or_misuse,'') != '' AND data_theft_or_misuse != 'null' THEN 1 END) AS fatal_count,
+        ROUND(AVG(call_answered_within_5_seconds)*100, 1) AS param_call_open,
+        ROUND(AVG(professionalism_maintained)*100, 1) AS param_professionalism,
+        ROUND(AVG(active_listening)*100, 1) AS param_active_listening,
+        ROUND(AVG(proper_hold_procedure)*100, 1) AS param_hold_procedure,
+        ROUND(AVG(correct_and_complete_information)*100, 1) AS param_resolution,
+        ROUND(AVG(proper_call_closure)*100, 1) AS param_closing
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ? AND ClientId = ?${scopeCond}
+    `, params);
+
+    return res.json({ success: true, data: rows[0] ?? {} });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[client-drill/kpis]", msg);
+    return res.json({ success: true, data: {}, _error: msg });
+  }
+}));
+
+// GET /api/quality-dashboard/client-drill/daily?clientId&from&to
+router.get("/client-drill/daily", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const clientId = String(req.query.clientId ?? "");
+    if (!clientId) return res.status(400).json({ success: false, error: "clientId required" });
+    const scope = await resolveScope(req);
+    const params: any[] = [from, to, clientId];
+    const scopeCond = auditScopeCond(scope, params);
+    const pool = getCiPool();
+
+    const [rows] = await pool.execute<RowDataPacket[]>(`
+      SELECT
+        DATE(CallDate) AS date,
+        COUNT(*) AS audit_count,
+        ROUND(AVG(quality_percentage), 2) AS cq_score,
+        COUNT(CASE WHEN COALESCE(data_theft_or_misuse,'') != '' AND data_theft_or_misuse != 'null' THEN 1 END) AS fatal_count,
+        ROUND(COUNT(CASE WHEN COALESCE(data_theft_or_misuse,'') != '' AND data_theft_or_misuse != 'null' THEN 1 END) * 100.0 / COUNT(*), 1) AS fatal_pct
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ? AND ClientId = ?${scopeCond}
+      GROUP BY DATE(CallDate) ORDER BY date ASC
+    `, params);
+
+    return res.json({ success: true, data: rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[client-drill/daily]", msg);
+    return res.json({ success: true, data: [], _error: msg });
+  }
+}));
+
+// GET /api/quality-dashboard/client-drill/agents?clientId&from&to
+router.get("/client-drill/agents", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const clientId = String(req.query.clientId ?? "");
+    if (!clientId) return res.status(400).json({ success: false, error: "clientId required" });
+    const scope = await resolveScope(req);
+    const params: any[] = [from, to, clientId];
+    const scopeCond = auditScopeCond(scope, params);
+    const pool = getCiPool();
+
+    const [rows] = await pool.execute<RowDataPacket[]>(`
+      SELECT
+        User AS agent_code,
+        COUNT(*) AS audit_count,
+        ROUND(AVG(quality_percentage), 2) AS cq_score,
+        COUNT(CASE WHEN COALESCE(data_theft_or_misuse,'') != '' AND data_theft_or_misuse != 'null' THEN 1 END) AS fatal_count,
+        ROUND(COUNT(CASE WHEN COALESCE(data_theft_or_misuse,'') != '' AND data_theft_or_misuse != 'null' THEN 1 END) * 100.0 / COUNT(*), 1) AS fatal_pct,
+        COUNT(CASE WHEN quality_percentage >= 90 THEN 1 END) AS excellent,
+        COUNT(CASE WHEN quality_percentage >= 75 AND quality_percentage < 90 THEN 1 END) AS good,
+        COUNT(CASE WHEN quality_percentage < 50 THEN 1 END) AS below_average
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ? AND ClientId = ?${scopeCond}
+      GROUP BY User ORDER BY cq_score DESC LIMIT 50
+    `, params);
+
+    return res.json({ success: true, data: rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[client-drill/agents]", msg);
+    return res.json({ success: true, data: [], _error: msg });
+  }
+}));
+
+// GET /api/quality-dashboard/client-drill/fatal?clientId&from&to
+router.get("/client-drill/fatal", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const clientId = String(req.query.clientId ?? "");
+    if (!clientId) return res.status(400).json({ success: false, error: "clientId required" });
+    const scope = await resolveScope(req);
+    const params: any[] = [from, to, clientId];
+    const scopeCond = auditScopeCond(scope, params);
+    const pool = getCiPool();
+
+    const [dailyRows] = await pool.execute<RowDataPacket[]>(`
+      SELECT
+        DATE(CallDate) AS date,
+        COUNT(*) AS total_audited,
+        COUNT(CASE WHEN COALESCE(data_theft_or_misuse,'') != '' AND data_theft_or_misuse != 'null' THEN 1 END) AS fatal_count,
+        ROUND(COUNT(CASE WHEN COALESCE(data_theft_or_misuse,'') != '' AND data_theft_or_misuse != 'null' THEN 1 END) * 100.0 / COUNT(*), 1) AS fatal_pct
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ? AND ClientId = ?${scopeCond}
+      GROUP BY DATE(CallDate) ORDER BY date ASC
+    `, params);
+
+    const params2: any[] = [from, to, clientId];
+    const scopeCond2 = auditScopeCond(scope, params2);
+    const [agentRows] = await pool.execute<RowDataPacket[]>(`
+      SELECT
+        User AS agent_code,
+        COUNT(*) AS audit_count,
+        COUNT(CASE WHEN COALESCE(data_theft_or_misuse,'') != '' AND data_theft_or_misuse != 'null' THEN 1 END) AS fatal_count,
+        ROUND(COUNT(CASE WHEN COALESCE(data_theft_or_misuse,'') != '' AND data_theft_or_misuse != 'null' THEN 1 END) * 100.0 / COUNT(*), 1) AS fatal_pct
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ? AND ClientId = ?${scopeCond2}
+        AND COALESCE(data_theft_or_misuse,'') != '' AND data_theft_or_misuse != 'null'
+      GROUP BY User ORDER BY fatal_count DESC LIMIT 20
+    `, params2);
+
+    return res.json({ success: true, daily: dailyRows, agents: agentRows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[client-drill/fatal]", msg);
+    return res.json({ success: true, daily: [], agents: [], _error: msg });
+  }
+}));
+
+// GET /api/quality-dashboard/client-drill/scenarios?clientId&from&to
+router.get("/client-drill/scenarios", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const clientId = String(req.query.clientId ?? "");
+    if (!clientId) return res.status(400).json({ success: false, error: "clientId required" });
+    const scope = await resolveScope(req);
+    const params: any[] = [from, to, clientId];
+    const scopeCond = auditScopeCond(scope, params);
+    const pool = getCiPool();
+
+    const [rows] = await pool.execute<RowDataPacket[]>(`
+      SELECT
+        COALESCE(scenario, 'Unknown') AS scenario,
+        COALESCE(scenario1, '') AS sub_scenario,
+        COUNT(*) AS call_count,
+        ROUND(AVG(quality_percentage), 2) AS avg_quality,
+        COUNT(CASE WHEN COALESCE(data_theft_or_misuse,'') != '' AND data_theft_or_misuse != 'null' THEN 1 END) AS fatal_count
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ? AND ClientId = ?${scopeCond}
+      GROUP BY scenario, scenario1 ORDER BY call_count DESC LIMIT 50
+    `, params);
+
+    return res.json({ success: true, data: rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[client-drill/scenarios]", msg);
+    return res.json({ success: true, data: [], _error: msg });
+  }
+}));
+
+// GET /api/quality-dashboard/client-drill/transcript?leadId
+router.get("/client-drill/transcript", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const leadId = String(req.query.leadId ?? "");
+    if (!leadId) return res.status(400).json({ success: false, error: "leadId required" });
+    const pool = getCiPool();
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT lead_id, User AS agent_code, CallDate, quality_percentage, Transcribe_Text AS transcript,
+              scenario, scenario1, areas_for_improvement
+       FROM db_audit.call_quality_assessment WHERE lead_id = ? LIMIT 1`, [leadId]
+    );
+    return res.json({ success: true, data: rows[0] ?? null });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[client-drill/transcript]", msg);
+    return res.json({ success: true, data: null, _error: msg });
+  }
+}));
+
+// GET /api/quality-dashboard/client-drill/repeat?clientId&from&to
+router.get("/client-drill/repeat", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const clientId = String(req.query.clientId ?? "");
+    if (!clientId) return res.status(400).json({ success: false, error: "clientId required" });
+    const scope = await resolveScope(req);
+    const params: any[] = [from, to, clientId];
+    const scopeCond = auditScopeCond(scope, params);
+    const pool = getCiPool();
+
+    const [rows] = await pool.execute<RowDataPacket[]>(`
+      SELECT MobileNo, COUNT(*) AS call_count, MIN(CallDate) AS first_call, MAX(CallDate) AS last_call
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ? AND ClientId = ?${scopeCond}
+      GROUP BY MobileNo HAVING COUNT(*) > 1
+      ORDER BY call_count DESC LIMIT 50
+    `, params);
+
+    const totalCalls = rows.reduce((s: number, r: any) => s + Number(r.call_count), 0);
+    const uniqueRepeaters = rows.length;
+
+    return res.json({ success: true, summary: { total_repeat_calls: totalCalls, unique_repeaters: uniqueRepeaters }, data: rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[client-drill/repeat]", msg);
+    return res.json({ success: true, summary: { total_repeat_calls: 0, unique_repeaters: 0 }, data: [], _error: msg });
+  }
+}));
+
 export const qualityDashboardRouter = router;

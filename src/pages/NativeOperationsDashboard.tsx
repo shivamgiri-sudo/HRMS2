@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -6,6 +6,8 @@ import {
   CalendarDays,
   ChevronDown,
   Loader,
+  Phone,
+  PhoneIncoming,
   RefreshCcw,
   Target,
   TrendingDown,
@@ -15,6 +17,7 @@ import {
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { AIInsightPanel } from "@/components/ai";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -622,8 +625,252 @@ function AttritionSection() {
 }
 
 // ---------------------------------------------------------------------------
+// Section 5 — Inbound Project Performance (CEO/BH/PM only)
+// ---------------------------------------------------------------------------
+
+interface InboundProject {
+  key: string;
+  name: string;
+  icon: string;
+  color: string;
+  offered: number;
+  answered: number;
+  abandoned: number;
+  al: number;
+  sl: number;
+  acht: number;
+  repeat_pct: number;
+  login_count: number;
+  fcr_pct: number | null;
+  deficit: number;
+  mandate: number;
+  required: number;
+}
+
+function metricBadge(value: number, target: number, higher_is_better = true): string {
+  const ok = higher_is_better ? value >= target : value <= target;
+  const near = higher_is_better ? value >= target * 0.9 : value <= target * 1.1;
+  if (ok) return "bg-emerald-100 text-emerald-800";
+  if (near) return "bg-amber-100 text-amber-800";
+  return "bg-rose-100 text-rose-800";
+}
+
+function InboundOpsSection() {
+  const [projects, setProjects] = useState<InboundProject[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [countdown, setCountdown] = useState(120);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const res = await hrmsApi.get<{ success: boolean; data: InboundProject[] }>(
+        `/api/quality-dashboard/inbound-ops/summary?from=${todayStr}&to=${todayStr}`
+      );
+      const data = Array.isArray(res) ? res : (res as any)?.data ?? [];
+      setProjects(data);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to load inbound ops data");
+    } finally {
+      setLoading(false);
+      setCountdown(120);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    intervalRef.current = setInterval(() => { void load(); }, 120_000);
+    countdownRef.current = setInterval(() => { setCountdown(c => Math.max(0, c - 1)); }, 1000);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  }, []);
+
+  const totals = useMemo(() => {
+    const t = { offered: 0, answered: 0, abandoned: 0 };
+    for (const p of projects) {
+      t.offered += p.offered;
+      t.answered += p.answered;
+      t.abandoned += p.abandoned;
+    }
+    return t;
+  }, [projects]);
+
+  const avgAL = totals.offered > 0 ? Math.round(totals.answered * 10000 / totals.offered) / 100 : 0;
+  const avgSL = projects.length > 0
+    ? Math.round(projects.reduce((s, p) => s + p.sl, 0) * 100 / projects.length) / 100
+    : 0;
+
+  return (
+    <div className="rounded-3xl border bg-white p-6 shadow-sm space-y-5">
+      <div className="flex items-center justify-between gap-4">
+        <SectionHeader label="Call Operations" title="Inbound Project Performance" />
+        <div className="flex items-center gap-3">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" /> Live
+          </span>
+          <span className="text-xs text-slate-400">Refresh in {countdown}s</span>
+          <button
+            onClick={() => void load()}
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
+        </div>
+      </div>
+
+      {error && <ErrorBanner message={error} />}
+
+      {loading && projects.length === 0 ? (
+        <LoadingRow />
+      ) : projects.length > 0 ? (
+        <>
+          {/* KPI Summary Cards */}
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              title="Total Offered"
+              value={totals.offered.toLocaleString()}
+              sub="All projects today"
+              icon={<Phone className="h-5 w-5" />}
+              tone="bg-blue-50 text-blue-700"
+            />
+            <StatCard
+              title="Total Answered"
+              value={totals.answered.toLocaleString()}
+              sub={`${totals.abandoned} abandoned`}
+              icon={<PhoneIncoming className="h-5 w-5" />}
+              tone="bg-emerald-50 text-emerald-700"
+            />
+            <StatCard
+              title="Avg AL%"
+              value={`${avgAL}%`}
+              sub="Target: 95%"
+              icon={<TrendingUp className="h-5 w-5" />}
+              tone={avgAL >= 95 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}
+            />
+            <StatCard
+              title="Avg SL%"
+              value={`${avgSL}%`}
+              sub="Target: 80%"
+              icon={<Target className="h-5 w-5" />}
+              tone={avgSL >= 80 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}
+            />
+          </div>
+
+          {/* Project Performance Table */}
+          <div className="overflow-x-auto rounded-2xl border">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="p-3 font-semibold">Project</th>
+                  <th className="p-3 font-semibold text-right">Offered</th>
+                  <th className="p-3 font-semibold text-right">Answered</th>
+                  <th className="p-3 font-semibold text-right">AL%</th>
+                  <th className="p-3 font-semibold text-right">SL%</th>
+                  <th className="p-3 font-semibold text-right">ACHT</th>
+                  <th className="p-3 font-semibold text-right">Repeat%</th>
+                  <th className="p-3 font-semibold text-right">Login</th>
+                  <th className="p-3 font-semibold text-right">Req'd</th>
+                  <th className="p-3 font-semibold text-right">Deficit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {projects.map((p) => (
+                  <tr key={p.key} className="border-t hover:bg-slate-50/80 transition-colors">
+                    <td className="p-3">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="inline-block w-1 h-8 rounded-full"
+                          style={{ backgroundColor: p.color }}
+                        />
+                        <span className="text-lg">{p.icon}</span>
+                        <span className="font-semibold text-slate-800">{p.name}</span>
+                      </div>
+                    </td>
+                    <td className="p-3 text-right font-bold text-slate-900">{p.offered}</td>
+                    <td className="p-3 text-right font-bold text-slate-900">{p.answered}</td>
+                    <td className="p-3 text-right">
+                      <span className={`inline-block rounded-lg px-2 py-0.5 text-xs font-bold ${metricBadge(p.al, 95)}`}>
+                        {p.al}%
+                      </span>
+                    </td>
+                    <td className="p-3 text-right">
+                      <span className={`inline-block rounded-lg px-2 py-0.5 text-xs font-bold ${metricBadge(p.sl, 80)}`}>
+                        {p.sl}%
+                      </span>
+                    </td>
+                    <td className="p-3 text-right">
+                      <span className={`inline-block rounded-lg px-2 py-0.5 text-xs font-bold ${metricBadge(p.acht, 300, false)}`}>
+                        {p.acht}s
+                      </span>
+                    </td>
+                    <td className="p-3 text-right">
+                      <span className={`inline-block rounded-lg px-2 py-0.5 text-xs font-bold ${metricBadge(p.repeat_pct, 20, false)}`}>
+                        {p.repeat_pct}%
+                      </span>
+                    </td>
+                    <td className="p-3 text-right font-semibold text-slate-700">{p.login_count}</td>
+                    <td className="p-3 text-right text-slate-600">{p.required}</td>
+                    <td className="p-3 text-right">
+                      <span className={`font-bold ${p.deficit > 0 ? "text-rose-600" : p.deficit < 0 ? "text-emerald-600" : "text-slate-500"}`}>
+                        {p.deficit > 0 ? `−${p.deficit}` : p.deficit < 0 ? `+${Math.abs(p.deficit)}` : "0"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Agent Login vs Mandate Mini Cards */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+            {projects.map((p) => {
+              const fillPct = p.required > 0 ? Math.min((p.login_count / p.required) * 100, 100) : 0;
+              const fillColor = fillPct >= 90 ? "bg-emerald-500" : fillPct >= 70 ? "bg-amber-400" : "bg-rose-500";
+              return (
+                <div key={p.key} className="rounded-xl border p-3 space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm">{p.icon}</span>
+                    <span className="text-xs font-bold text-slate-700 truncate">{p.name}</span>
+                  </div>
+                  <div className="text-center">
+                    <span className="text-lg font-black text-slate-900">{p.login_count}</span>
+                    <span className="text-xs text-slate-400"> / {p.required}</span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full bg-slate-100">
+                    <div className={`h-1.5 rounded-full transition-all ${fillColor}`} style={{ width: `${fillPct}%` }} />
+                  </div>
+                  <p className={`text-center text-xs font-bold ${p.deficit > 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                    {p.deficit > 0 ? `${p.deficit} deficit` : p.deficit < 0 ? `${Math.abs(p.deficit)} surplus` : "On target"}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <p className="py-8 text-center text-sm text-slate-500">No inbound operations data available. Check dialer connection.</p>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main Page
 // ---------------------------------------------------------------------------
+
+function InboundOpsGated() {
+  const { hasAnyRole } = useWorkforceAccess();
+  const canView = hasAnyRole("super_admin", "ceo", "coo", "branch_head", "process_manager", "manager", "operations_manager");
+  if (!canView) return null;
+  return <InboundOpsSection />;
+}
 
 export default function NativeOperationsDashboard() {
   const [mgmt, setMgmt] = useState<ManagementDashboard | null>(null);
@@ -744,6 +991,9 @@ export default function NativeOperationsDashboard() {
 
         {/* Section 2 */}
         <ProcessCoverageSection />
+
+        {/* Section 5 — Inbound Project Performance (CEO/BH/PM/Ops Manager) */}
+        <InboundOpsGated />
 
         {/* Section 3 & 4 side-by-side on wide screens */}
         <div className="grid gap-6 xl:grid-cols-2">
