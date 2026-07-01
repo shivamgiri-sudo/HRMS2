@@ -1251,6 +1251,21 @@ export default function NativeATSCandidateRegistration() {
 
       const fields = data.fields ?? {};
       const filled: string[] = [];
+
+      // Map each field key to the bootstrap options list for that field (select fields).
+      // Text fields have no options list (null) — written as-is.
+      const optionLists: Record<string, string[] | null> = {
+        name: null, mobile: null, email: null, address: null,
+        education: bootstrap.educationOptions ?? [],
+        experience: bootstrap.experienceOptions ?? [],
+        gender: ['Male', 'Female', 'Other'],
+        roleApplied: bootstrap.roleOptions ?? [],
+        rotationalShift: ['Yes', 'No'],
+        preferredShift: bootstrap.preferredShiftOptions ?? [],
+        nightShiftComfort: bootstrap.nightShiftComfortOptions ?? [],
+        leavesRequired: ['Yes', 'No'],
+        ownTwoWheeler: ['Yes', 'No'],
+      };
       const fieldMap: Record<string, keyof CandidateFormData> = {
         name: 'name', mobile: 'mobile', email: 'email', address: 'address',
         education: 'education', experience: 'experience', gender: 'gender',
@@ -1258,11 +1273,29 @@ export default function NativeATSCandidateRegistration() {
         preferredShift: 'preferredShift', nightShiftComfort: 'nightShiftComfort',
         leavesRequired: 'leavesRequired', ownTwoWheeler: 'ownTwoWheeler',
       };
+
+      // Case-insensitive exact match then partial match against the dropdown options.
+      // Returns the canonical option string if found, otherwise returns the raw value for text fields.
+      const normalise = (value: string, opts: string[] | null): string => {
+        if (!value || !value.trim()) return '';
+        if (!opts) return value.trim(); // free-text field
+        const v = value.trim().toLowerCase();
+        // Exact match (case-insensitive)
+        const exact = opts.find(o => o.toLowerCase() === v);
+        if (exact) return exact;
+        // Partial: option contains value OR value contains option
+        const partial = opts.find(o => o.toLowerCase().includes(v) || v.includes(o.toLowerCase()));
+        if (partial) return partial;
+        return ''; // no match → leave blank rather than write a wrong value
+      };
+
       setForm(prev => {
         const next = { ...prev };
         for (const [k, fk] of Object.entries(fieldMap)) {
-          if (fields[k] && String(fields[k]).trim()) {
-            (next as any)[fk] = fields[k];
+          const raw = String(fields[k] ?? '').trim();
+          const normalised = normalise(raw, optionLists[k] ?? null);
+          if (normalised) {
+            (next as any)[fk] = normalised;
             filled.push(k);
           }
         }
