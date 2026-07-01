@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
-  AlertTriangle, EyeOff, FileText, Loader, Lock, RefreshCcw,
-  Shield, ShieldAlert, TrendingUp, Users, X,
+  AlertTriangle, CheckCircle, Clock, EyeOff, FileText, Loader, Lock, RefreshCcw,
+  Shield, ShieldAlert, TrendingUp, UserCheck, Users, X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { DashboardLoading, FilterField, KpiTile, SelectFilter } from "@/components/command-center/CommandCenterUi";
@@ -39,6 +39,14 @@ type GrievanceDetail = GrievanceSummary & {
   closed_at?: string;
 };
 
+type TimelineEntry = {
+  id: string;
+  action: string;
+  actor?: string;
+  note?: string;
+  created_at: string;
+};
+
 type DashboardStats = {
   total_grievances: number;
   open_grievances: number;
@@ -64,7 +72,7 @@ type GrievanceCommandCenterData = {
   cases: GrievanceSummary[];
 };
 
-// ─── Severity config ──────────────────────────────────────────────────────────
+// ─── Severity / status config ─────────────────────────────────────────────────
 
 const SEVERITY_CONFIG: Record<string, { label: string; cls: string }> = {
   critical: { label: "Critical", cls: "bg-red-100 text-red-700 border-red-300" },
@@ -81,6 +89,19 @@ const STATUS_CONFIG: Record<string, string> = {
   closed:       "bg-gray-100 text-gray-500",
 };
 
+// ─── SLA helper ───────────────────────────────────────────────────────────────
+
+function getSlaStatus(due_date?: string, status?: string): "overdue" | "due-soon" | null {
+  if (!due_date || status === "closed" || status === "resolved") return null;
+  const due = new Date(due_date + "T00:00:00");
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffDays = Math.floor((due.getTime() - today.getTime()) / 86400000);
+  if (diffDays < 0) return "overdue";
+  if (diffDays <= 2) return "due-soon";
+  return null;
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function NativeGrievanceCommandCenter() {
@@ -93,10 +114,12 @@ export default function NativeGrievanceCommandCenter() {
   const [grievances, setGrievances] = useState<GrievanceSummary[]>([]);
   const [selected, setSelected]   = useState<GrievanceDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [timeline, setTimeline]   = useState<TimelineEntry[]>([]);
 
   // Action state
   const [noteText, setNoteText]   = useState("");
   const [resNote, setResNote]     = useState("");
+  const [assignee, setAssignee]   = useState("");
   const [actionMsg, setActionMsg] = useState("");
   const [actionWorking, setActionWorking] = useState(false);
 
@@ -141,15 +164,23 @@ export default function NativeGrievanceCommandCenter() {
     setActionMsg("");
     setNoteText("");
     setResNote("");
+    setAssignee("");
+    setTimeline([]);
     try {
-      const res = await hrmsApi.get<{ data: GrievanceDetail }>(`/api/helpdesk/grievances/${g.id}`);
-      setSelected(res.data?.data ?? null);
+      const [detailRes, timelineRes] = await Promise.allSettled([
+        hrmsApi.get<{ data: GrievanceDetail }>(`/api/helpdesk/grievances/${g.id}`),
+        hrmsApi.get<{ data: TimelineEntry[] }>(`/api/helpdesk/grievances/${g.id}/timeline`),
+      ]);
+      if (detailRes.status === "fulfilled") setSelected(detailRes.value.data?.data ?? null);
+      if (timelineRes.status === "fulfilled") setTimeline(timelineRes.value.data?.data ?? []);
     } catch (e: any) {
       setActionMsg("Failed to load grievance detail");
     } finally {
       setDetailLoading(false);
     }
   };
+
+  const closeDrawer = () => { setSelected(null); setTimeline([]); };
 
   const doAction = async (action: string, body: Record<string, unknown>) => {
     if (!selected) return;
@@ -159,8 +190,12 @@ export default function NativeGrievanceCommandCenter() {
       await hrmsApi.post(`/api/helpdesk/grievances/${selected.id}/${action}`, body);
       setActionMsg(`${action} successful`);
       await load();
-      const res = await hrmsApi.get<{ data: GrievanceDetail }>(`/api/helpdesk/grievances/${selected.id}`);
-      setSelected(res.data?.data ?? null);
+      const [detailRes, timelineRes] = await Promise.allSettled([
+        hrmsApi.get<{ data: GrievanceDetail }>(`/api/helpdesk/grievances/${selected.id}`),
+        hrmsApi.get<{ data: TimelineEntry[] }>(`/api/helpdesk/grievances/${selected.id}/timeline`),
+      ]);
+      if (detailRes.status === "fulfilled") setSelected(detailRes.value.data?.data ?? null);
+      if (timelineRes.status === "fulfilled") setTimeline(timelineRes.value.data?.data ?? []);
     } catch (e: any) {
       setActionMsg(e.message ?? `${action} failed`);
     } finally {
@@ -304,7 +339,7 @@ export default function NativeGrievanceCommandCenter() {
                       <th className="px-4 py-3 text-center">Status</th>
                       <th className="px-4 py-3 text-center">Flags</th>
                       <th className="px-4 py-3 text-left">Assigned</th>
-                      <th className="px-4 py-3 text-left">Due</th>
+                      <th className="px-4 py-3 text-left">Due / SLA</th>
                       <th className="px-4 py-3 text-left">Filed</th>
                     </tr>
                   </thead>
@@ -312,6 +347,7 @@ export default function NativeGrievanceCommandCenter() {
                     {grievances.map(g => {
                       const sevCfg = SEVERITY_CONFIG[g.severity] ?? SEVERITY_CONFIG.low;
                       const staCls = STATUS_CONFIG[g.status] ?? "bg-gray-100 text-gray-500";
+                      const sla = getSlaStatus(g.due_date, g.status);
                       return (
                         <tr key={g.id}
                           onClick={() => openDetail(g)}
@@ -324,22 +360,37 @@ export default function NativeGrievanceCommandCenter() {
                           <td className="px-4 py-3 text-center">
                             <span className={`text-xs font-medium px-2 py-0.5 rounded ${staCls}`}>{g.status.replace(/_/g, " ")}</span>
                           </td>
-                          <td className="px-4 py-3 text-center flex items-center justify-center gap-1.5">
-                            {g.is_anonymous && (
-                              <span title="Anonymous" className="text-purple-500"><EyeOff size={12} /></span>
-                            )}
-                            {g.anti_retaliation_flag && (
-                              <span title="Anti-retaliation flag" className="text-red-500"><AlertTriangle size={12} /></span>
-                            )}
-                            {g.escalation_level > 0 && (
-                              <span title={`Escalated L${g.escalation_level}`} className="text-orange-500 text-xs font-bold">L{g.escalation_level}</span>
-                            )}
+                          <td className="px-4 py-3 text-center">
+                            <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                              {g.is_anonymous && (
+                                <span title="Anonymous" className="text-purple-500"><EyeOff size={12} /></span>
+                              )}
+                              {g.anti_retaliation_flag && (
+                                <span title="Anti-retaliation flag" className="text-red-500"><AlertTriangle size={12} /></span>
+                              )}
+                              {g.escalation_level > 0 && (
+                                <span title={`Escalated L${g.escalation_level}`} className="text-orange-500 text-xs font-bold">L{g.escalation_level}</span>
+                              )}
+                              {g.evidence_count > 0 && (
+                                <span title={`${g.evidence_count} evidence file(s)`} className="text-blue-500 text-xs font-medium">
+                                  📎{g.evidence_count}
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-gray-500 text-xs">
                             {g.assigned_committee ?? g.assigned_to ?? "—"}
                           </td>
-                          <td className="px-4 py-3 text-gray-500 text-xs">
-                            {g.due_date ? formatISTDate(g.due_date + "T00:00:00") : "—"}
+                          <td className="px-4 py-3 text-xs">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-gray-500">{g.due_date ? formatISTDate(g.due_date + "T00:00:00") : "—"}</span>
+                              {sla === "overdue" && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-300 w-fit">Overdue</span>
+                              )}
+                              {sla === "due-soon" && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-300 w-fit">Due Soon</span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-gray-400 text-xs">
                             {formatISTDate(g.created_at)}
@@ -360,7 +411,7 @@ export default function NativeGrievanceCommandCenter() {
         {/* Detail drawer */}
         {(selected || detailLoading) && (
           <div className="fixed inset-0 z-50 flex">
-            <div className="flex-1 bg-black/40" onClick={() => setSelected(null)} />
+            <div className="flex-1 bg-black/40" onClick={closeDrawer} />
             <div className="w-full max-w-lg bg-white shadow-2xl overflow-y-auto p-6 space-y-5">
               {detailLoading ? (
                 <div className="flex items-center justify-center py-20">
@@ -370,7 +421,7 @@ export default function NativeGrievanceCommandCenter() {
                 <>
                   <div className="flex items-start justify-between">
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono text-sm text-indigo-600">{selected.grievance_code}</span>
                         {selected.is_anonymous && (
                           <span className="flex items-center gap-1 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">
@@ -382,13 +433,18 @@ export default function NativeGrievanceCommandCenter() {
                             <AlertTriangle size={11} /> Anti-Retaliation
                           </span>
                         )}
+                        {selected.evidence_count > 0 && (
+                          <span className="flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+                            📎 {selected.evidence_count} evidence
+                          </span>
+                        )}
                       </div>
                       <h2 className="text-lg font-bold text-gray-900 mt-1">{selected.subject || selected.category}</h2>
                       {selected.employee_name && (
                         <p className="text-sm text-gray-500">{selected.employee_name}</p>
                       )}
                     </div>
-                    <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600">
+                    <button onClick={closeDrawer} className="text-gray-400 hover:text-gray-600">
                       <X size={20} />
                     </button>
                   </div>
@@ -430,6 +486,58 @@ export default function NativeGrievanceCommandCenter() {
                   {/* Actions — only for open/under review */}
                   {!["closed","resolved"].includes(selected.status) && (
                     <div className="space-y-4 border-t border-gray-100 pt-4">
+
+                      {/* Status transition buttons */}
+                      <div className="flex gap-2 flex-wrap">
+                        {selected.status === "submitted" && (
+                          <button
+                            disabled={actionWorking}
+                            onClick={() => doAction("status", { status: "under_review" })}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-500 text-white text-sm rounded-lg hover:bg-yellow-600 disabled:opacity-50"
+                          >
+                            <Clock size={13} /> Mark Under Review
+                          </button>
+                        )}
+                        {(selected.status === "under_review" || selected.status === "submitted") && (
+                          <button
+                            disabled={actionWorking}
+                            onClick={() => doAction("status", { status: "resolved" })}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500 text-white text-sm rounded-lg hover:bg-green-600 disabled:opacity-50"
+                          >
+                            <CheckCircle size={13} /> Mark Resolved
+                          </button>
+                        )}
+                        <button
+                          disabled={actionWorking}
+                          onClick={() => doAction("escalate", { reason: "Manual escalation" })}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-700 text-sm rounded-lg hover:bg-red-200 disabled:opacity-50"
+                        >
+                          <TrendingUp size={13} /> Escalate
+                        </button>
+                      </div>
+
+                      {/* Assign to HR */}
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1.5">
+                          Assign to HR Individual
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            value={assignee}
+                            onChange={e => setAssignee(e.target.value)}
+                            placeholder="HR name or employee ID"
+                            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                          <button
+                            disabled={!assignee.trim() || actionWorking}
+                            onClick={() => doAction("assign", { assignee }).then(() => setAssignee(""))}
+                            className="flex items-center gap-1.5 px-4 py-2 bg-[#1B6AB5] text-white text-sm rounded-lg disabled:opacity-50 hover:bg-blue-700"
+                          >
+                            <UserCheck size={13} /> Assign
+                          </button>
+                        </div>
+                      </div>
+
                       {/* Investigation note */}
                       <div>
                         <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Add Investigation Note</label>
@@ -446,17 +554,6 @@ export default function NativeGrievanceCommandCenter() {
                           className="mt-2 px-4 py-1.5 bg-yellow-500 text-white text-sm rounded-lg disabled:opacity-50 hover:bg-yellow-600"
                         >
                           Save Note
-                        </button>
-                      </div>
-
-                      {/* Escalate */}
-                      <div className="flex gap-2">
-                        <button
-                          disabled={actionWorking}
-                          onClick={() => doAction("escalate", { reason: "Manual escalation" })}
-                          className="px-3 py-1.5 bg-red-100 text-red-700 text-sm rounded-lg hover:bg-red-200 disabled:opacity-50 flex items-center gap-1.5"
-                        >
-                          <TrendingUp size={13} /> Escalate
                         </button>
                       </div>
 
@@ -495,6 +592,33 @@ export default function NativeGrievanceCommandCenter() {
                   {actionMsg && (
                     <div className={`text-sm p-2 rounded ${actionMsg.includes("fail") || actionMsg.includes("Failed") ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"}`}>
                       {actionMsg}
+                    </div>
+                  )}
+
+                  {/* Activity Timeline */}
+                  {timeline.length > 0 && (
+                    <div className="border-t border-gray-100 pt-5">
+                      <h3 className="text-xs font-semibold text-gray-500 uppercase mb-3 flex items-center gap-1.5">
+                        <Users size={13} className="text-indigo-400" /> Activity Timeline
+                      </h3>
+                      <ol className="space-y-1">
+                        {timeline.map((entry, i) => (
+                          <li key={entry.id ?? i} className="flex gap-3 text-sm">
+                            <div className="flex flex-col items-center pt-1">
+                              <div className="w-2 h-2 rounded-full bg-indigo-400 shrink-0" />
+                              {i < timeline.length - 1 && <div className="w-px flex-1 bg-gray-200 mt-1 min-h-[16px]" />}
+                            </div>
+                            <div className="pb-3">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-medium text-gray-800 capitalize">{entry.action.replace(/_/g, " ")}</span>
+                                {entry.actor && <span className="text-gray-500 text-xs">by {entry.actor}</span>}
+                                <span className="text-gray-400 text-xs font-mono">{formatISTDate(entry.created_at)}</span>
+                              </div>
+                              {entry.note && <p className="text-gray-600 text-xs mt-0.5">{entry.note}</p>}
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
                     </div>
                   )}
                 </>

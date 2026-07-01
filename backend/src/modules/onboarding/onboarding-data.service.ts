@@ -95,25 +95,42 @@ export const EMPLOYMENT_TYPES = [
   { code: "5TPLUS", name: "5+ years" },
 ];
 
-// Mock IFSC lookup — in production, fetch from RBI IFSC API or centralized DB
-export function lookupIFSC(ifscCode: string): Promise<{
+// IFSC lookup via Razorpay public API
+export async function lookupIFSC(ifscCode: string): Promise<{
   bankName: string;
   branchName: string;
   city: string;
   state: string;
 } | null> {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      // Mock: return sample data for demo
-      if (ifscCode.toUpperCase().startsWith("SBIN")) {
-        return resolve({ bankName: "State Bank of India", branchName: "Sample Branch", city: "Mumbai", state: "Maharashtra" });
-      }
-      if (ifscCode.toUpperCase().startsWith("HDFC")) {
-        return resolve({ bankName: "HDFC Bank", branchName: "Sample Branch", city: "Bangalore", state: "Karnataka" });
-      }
-      resolve(null);
-    }, 200);
-  });
+  const cleanCode = ifscCode.trim().toUpperCase();
+  const IFSC_REGEX = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+
+  if (!IFSC_REGEX.test(cleanCode)) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(`https://ifsc.razorpay.com/${cleanCode}`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(4000),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+
+    return {
+      bankName: data.BANK || '',
+      branchName: data.BRANCH || '',
+      city: data.CITY || '',
+      state: data.STATE || '',
+    };
+  } catch {
+    return null;
+  }
 }
 
 // Mock cheque OCR — extract name from cheque image

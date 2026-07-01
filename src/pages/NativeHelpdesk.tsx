@@ -56,6 +56,7 @@ type GrievanceForm = {
   subject: string;
   description: string;
   grievance_type: string;
+  severity: string;
   is_anonymous: boolean;
 };
 
@@ -141,7 +142,7 @@ export default function NativeHelpdesk() {
 
   const [showRaiseGrievance, setShowRaiseGrievance] = useState(false);
   const [grievanceForm, setGrievanceForm] = useState<GrievanceForm>({
-    subject: "", description: "", grievance_type: "workplace", is_anonymous: false,
+    subject: "", description: "", grievance_type: "workplace", severity: "medium", is_anonymous: false,
   });
   const [grievanceBusy, setGrievanceBusy] = useState(false);
 
@@ -235,7 +236,7 @@ export default function NativeHelpdesk() {
     try {
       await hrmsApi.post("/api/helpdesk/grievances", grievanceForm);
       setShowRaiseGrievance(false);
-      setGrievanceForm({ subject: "", description: "", grievance_type: "workplace", is_anonymous: false });
+      setGrievanceForm({ subject: "", description: "", grievance_type: "workplace", severity: "medium", is_anonymous: false });
       setMessage("Grievance submitted.");
       await loadGrievances();
     } catch (err: unknown) {
@@ -581,26 +582,32 @@ export default function NativeHelpdesk() {
             </div>
             <div className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Grievance Type">
+                <Field label="Category">
                   <select value={grievanceForm.grievance_type} onChange={(e) => setGrievanceForm({ ...grievanceForm, grievance_type: e.target.value })} className={inputCls}>
-                    {["workplace", "harassment", "discrimination", "policy", "compensation", "other"].map((t) => (
+                    {["workplace", "harassment", "discrimination", "policy", "compensation", "safety", "other"].map((t) => (
                       <option key={t} value={t} className="capitalize">{t}</option>
                     ))}
                   </select>
                 </Field>
-                <Field label="Anonymous">
-                  <div className="flex items-center h-[50px]">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={grievanceForm.is_anonymous}
-                        onChange={(e) => setGrievanceForm({ ...grievanceForm, is_anonymous: e.target.checked })}
-                        className="h-4 w-4 rounded"
-                      />
-                      <span className="text-sm text-slate-700 font-semibold">Submit anonymously</span>
-                    </label>
-                  </div>
+                <Field label="Severity">
+                  <select value={grievanceForm.severity} onChange={(e) => setGrievanceForm({ ...grievanceForm, severity: e.target.value })} className={inputCls}>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                  </select>
                 </Field>
+              </div>
+              <div className="flex items-center gap-3 py-1">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={grievanceForm.is_anonymous}
+                    onChange={(e) => setGrievanceForm({ ...grievanceForm, is_anonymous: e.target.checked })}
+                    className="h-4 w-4 rounded"
+                  />
+                  <span className="text-sm text-slate-700 font-semibold">Submit anonymously (your identity will not be revealed to management)</span>
+                </label>
               </div>
               <Field label="Subject *">
                 <input value={grievanceForm.subject} onChange={(e) => setGrievanceForm({ ...grievanceForm, subject: e.target.value })} placeholder="Brief subject" className={inputCls} />
