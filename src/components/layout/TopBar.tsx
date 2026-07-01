@@ -33,6 +33,7 @@ import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEmployeeProfile } from "@/hooks/useEmployeeProfile";
 import { cn } from "@/lib/utils";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { navGroups } from "./navConfig";
 
 interface TopBarProps {
@@ -209,7 +210,7 @@ export function TopBar({
                 aria-label="Account menu"
               >
                 <Avatar className="h-11 w-11 ring-2 ring-[#1B6AB5]/25">
-                  <AvatarImage src={myProfile?.avatar_url ?? undefined} alt="My photo" />
+                  <AvatarImage src={normalizeMediaUrl(myProfile?.avatar_url)} alt="My photo" />
                   <AvatarFallback className="text-sm font-bold text-white" style={{ background: "#1B6AB5" }}>
                     {userInitials}
                   </AvatarFallback>

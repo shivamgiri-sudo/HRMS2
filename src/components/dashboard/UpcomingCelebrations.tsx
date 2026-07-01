@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Cake, Award, PartyPopper } from "lucide-react";
@@ -120,7 +121,7 @@ export function UpcomingCelebrations() {
                 className="flex items-center gap-3 rounded-lg bg-muted/50 p-2"
               >
                 <Avatar className="h-8 w-8">
-                  <AvatarImage src={celebration.avatarUrl} />
+                  <AvatarImage src={normalizeMediaUrl(celebration.avatarUrl)} />
                   <AvatarFallback className="text-xs">
                     {celebration.employeeName
                       .split(" ")

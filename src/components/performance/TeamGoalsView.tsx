@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -178,7 +179,7 @@ export function TeamGoalsView({ managerId }: TeamGoalsViewProps) {
               <div key={employee.id} className="space-y-3">
                 <div className="flex items-center gap-3 pb-2 border-b">
                   <Avatar className="h-8 w-8">
-                    <AvatarImage src={employee.avatar_url || undefined} />
+                    <AvatarImage src={normalizeMediaUrl(employee.avatar_url)} />
                     <AvatarFallback>{employee.first_name[0]}{employee.last_name[0]}</AvatarFallback>
                   </Avatar>
                   <div>

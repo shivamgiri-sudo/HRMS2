@@ -130,6 +130,12 @@ const envSchema = z.object({
   BILL_DB_USER:     z.string().default(""),
   BILL_DB_PASSWORD: z.string().default(""),
   BILL_DB_NAME:     z.string().default("db_bill"),
+
+  // Cloudinary — optional, enables cloud storage for employee profile photos
+  // When absent, photos are stored on local filesystem (default)
+  CLOUDINARY_CLOUD_NAME: z.string().optional(),
+  CLOUDINARY_API_KEY:    z.string().optional(),
+  CLOUDINARY_API_SECRET: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

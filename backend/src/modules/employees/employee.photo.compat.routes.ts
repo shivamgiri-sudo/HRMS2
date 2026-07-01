@@ -9,6 +9,8 @@ import { db } from "../../db/mysql.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
+import { env } from "../../config/env.js";
+import { isCloudinaryEnabled, uploadToCloudinary, deleteFromCloudinary } from "../files/cloudinary.service.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PHOTOS_DIR = path.resolve(__dirname, "../../../uploads/employee-photos");
@@ -62,21 +64,34 @@ function removeUploadedFile(file?: Express.Multer.File) {
 }
 
 async function savePhotoForEmployee(employeeId: string, uploadedFile: Express.Multer.File) {
-  const ext = path.extname(uploadedFile.filename).toLowerCase() || ".jpg";
-  const finalName = `${employeeId}${ext}`;
-  const finalPath = path.join(PHOTOS_DIR, finalName);
+  let fileUrl: string;
 
-  if (uploadedFile.path !== finalPath) {
-    for (const existingExt of [".jpg", ".jpeg", ".png", ".webp"]) {
-      const oldPath = path.join(PHOTOS_DIR, `${employeeId}${existingExt}`);
-      if (oldPath !== uploadedFile.path && fs.existsSync(oldPath)) {
-        fs.unlinkSync(oldPath);
+  if (isCloudinaryEnabled()) {
+    // Upload to Cloudinary — returns permanent https://res.cloudinary.com/... URL
+    const cloudUrl = await uploadToCloudinary(uploadedFile.path, `emp_${employeeId}`);
+    if (!cloudUrl) throw new Error("Cloudinary upload returned no URL");
+    if (fs.existsSync(uploadedFile.path)) fs.unlinkSync(uploadedFile.path);
+    fileUrl = cloudUrl;
+  } else {
+    // Local disk storage — rename to stable {employeeId}.{ext} and return absolute URL
+    const ext = path.extname(uploadedFile.filename).toLowerCase() || ".jpg";
+    const finalName = `${employeeId}${ext}`;
+    const finalPath = path.join(PHOTOS_DIR, finalName);
+
+    if (uploadedFile.path !== finalPath) {
+      for (const existingExt of [".jpg", ".jpeg", ".png", ".webp"]) {
+        const oldPath = path.join(PHOTOS_DIR, `${employeeId}${existingExt}`);
+        if (oldPath !== uploadedFile.path && fs.existsSync(oldPath)) {
+          fs.unlinkSync(oldPath);
+        }
       }
+      fs.renameSync(uploadedFile.path, finalPath);
     }
-    fs.renameSync(uploadedFile.path, finalPath);
+
+    const relativeUrl = `/api/files/employee-photos/${finalName}`;
+    fileUrl = `${env.BACKEND_URL.replace(/\/$/, "")}${relativeUrl}`;
   }
 
-  const fileUrl = `/api/files/employee-photos/${finalName}`;
   await db.execute(
     `UPDATE employees
         SET avatar_url = ?, photo_url = ?, updated_at = COALESCE(updated_at, NOW())
@@ -185,8 +200,12 @@ employeePhotoCompatRouter.delete("/:id/photo", requireRole("admin", "hr"), h(asy
 
   const photoUrl = String(rows[0]?.photo_url ?? "");
   if (photoUrl) {
-    const filePath = path.join(PHOTOS_DIR, path.basename(photoUrl));
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    if (photoUrl.includes("res.cloudinary.com")) {
+      await deleteFromCloudinary(`emp_${employeeId}`);
+    } else {
+      const filePath = path.join(PHOTOS_DIR, path.basename(photoUrl));
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
   }
 
   await db.execute(

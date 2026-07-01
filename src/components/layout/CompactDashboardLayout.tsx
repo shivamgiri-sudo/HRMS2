@@ -41,6 +41,7 @@ import { useIsAdminOrHR, useWorkforceAccess } from "@/hooks/useUserRole";
 import { useVersionCheck } from "@/hooks/useVersionCheck";
 import { useEmployeeProfile } from "@/hooks/useEmployeeProfile";
 import { cn } from "@/lib/utils";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { APP_VERSION, isAutoUpdatingEnvironment } from "@/lib/version";
 
 type Props = { children: ReactNode };
@@ -222,7 +223,7 @@ export function DashboardLayout({ children }: Props) {
           style={{ background: "var(--sidebar-surface-1)" }}
         >
           <Avatar className="h-14 w-14 flex-shrink-0 ring-2 ring-white/70">
-            <AvatarImage src={myProfile?.avatar_url ?? undefined} alt="My photo" />
+            <AvatarImage src={normalizeMediaUrl(myProfile?.avatar_url)} alt="My photo" />
             <AvatarFallback
               className="text-base font-bold"
               style={{ background: "#3BAD49", color: "#fff" }}

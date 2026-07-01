@@ -25,6 +25,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   EmployeeJourneyTimeline,
@@ -104,7 +105,7 @@ export function EmployeeViewDialog({ employee, open, onOpenChange }: EmployeeVie
           <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
             <Avatar className="size-32 border-4 border-white shadow-xl ring-2 ring-green-300">
               <AvatarImage
-                src={details?.avatar_url || details?.photo_url || employee.avatar}
+                src={normalizeMediaUrl(details?.avatar_url || details?.photo_url || employee.avatar)}
                 alt={`${displayName} profile photo`}
               />
               <AvatarFallback className="bg-[#1B6AB5] text-3xl font-black text-white">

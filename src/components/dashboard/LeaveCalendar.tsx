@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -100,7 +101,7 @@ export function LeaveCalendar() {
                 className="flex items-center gap-3 rounded-xl bg-muted/50 p-3"
               >
                 <Avatar className="h-9 w-9">
-                  {employee?.avatar_url && <AvatarImage src={employee.avatar_url} />}
+                  {employee?.avatar_url && <AvatarImage src={normalizeMediaUrl(employee.avatar_url)} />}
                   <AvatarFallback>{initials}</AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0">

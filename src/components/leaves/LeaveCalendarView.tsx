@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Calendar } from "@/components/ui/calendar";
 import { ChevronLeft, ChevronRight, CalendarDays, Users } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -257,7 +258,7 @@ export function LeaveCalendarView() {
                     <div className="relative">
                       <Avatar className="h-10 w-10">
                         {leave.employee?.avatar_url && (
-                          <AvatarImage src={leave.employee.avatar_url} />
+                          <AvatarImage src={normalizeMediaUrl(leave.employee.avatar_url)} />
                         )}
                         <AvatarFallback>{initials}</AvatarFallback>
                       </Avatar>

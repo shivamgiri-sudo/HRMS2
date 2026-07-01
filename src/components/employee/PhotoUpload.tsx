@@ -14,10 +14,14 @@ import { Camera, Loader2, Trash2, Upload } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 
 const MAX_BYTES = 3 * 1024 * 1024; // 3 MB
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const API_BASE = (import.meta.env.VITE_HRMS_API_URL || import.meta.env.VITE_API_URL || "http://localhost:5055").replace(/\/$/, "");
+
+// normalizeMediaUrl is imported from @/lib/mediaUrl — kept local alias for internal use
+const normalizeFileUrl = normalizeMediaUrl;
 
 interface PhotoUploadProps {
   /** Current avatar URL (from DB) */
@@ -70,12 +74,6 @@ function getToken(): string | null {
   );
 }
 
-function normalizeFileUrl(url?: string | null): string | undefined {
-  if (!url) return undefined;
-  if (/^https?:\/\//i.test(url) || url.startsWith("data:")) return url;
-  if (url.startsWith("/api/")) return `${API_BASE}${url}`;
-  return url;
-}
 
 async function readJsonSafely(res: Response): Promise<any> {
   const contentType = res.headers.get("content-type") ?? "";
@@ -150,7 +148,7 @@ export function PhotoUpload({
       }
       // Keep showing the uploaded URL directly (Facebook pattern - optimistic)
       const uploadedUrl = data.avatarUrl ?? data.photoUrl ?? data.url ?? "";
-      setPreview(uploadedUrl);
+      setPreview(normalizeFileUrl(uploadedUrl) ?? uploadedUrl);
       onSuccess?.(uploadedUrl);
     } catch (err: any) {
       setError(err.message ?? "Upload failed — please try again.");
