@@ -226,6 +226,19 @@ export async function getSubmissionHistory(recruiterCode?: string) {
   return rows as any[];
 }
 
+export async function getRecruiterDailyStats(recruiterName: string): Promise<Record<string, unknown>> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COUNT(*) AS total_submissions,
+       SUM(CASE WHEN final_decision = 'Selected' THEN 1 ELSE 0 END) AS selected_count,
+       SUM(CASE WHEN final_decision = 'Rejected' THEN 1 ELSE 0 END) AS rejected_count
+     FROM ats_interview_submission
+     WHERE recruiter_name = ? AND DATE(submitted_at) = CURDATE()`,
+    [recruiterName],
+  );
+  return (rows as any[])[0] ?? { total_submissions: 0, selected_count: 0, rejected_count: 0 };
+}
+
 // ── Validation ────────────────────────────────────────────────────────────────
 
 interface SubmissionInput {

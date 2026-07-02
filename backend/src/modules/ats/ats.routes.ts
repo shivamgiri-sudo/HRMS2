@@ -15,7 +15,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { atsQueueService } from "./ats.queue.service.js";
 import { verifyRecruiter, resolveRecruiterForActor, getMyPendingCandidates, getSubmissionHistory, getRecruiterDailyStats } from "../ats-full-parity/recruiterInterview.service.js";
 

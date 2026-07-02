@@ -507,6 +507,11 @@ export async function saveFinalSection(token: string, input: Record<string, unkn
   return getFullOnboardingStatus(token);
 }
 
+export async function savePfOptOutConsent(token: string, input: Record<string, unknown>, meta?: { ip?: string; userAgent?: string }) {
+  await logCandidateAction((await validateOnboardingToken(token)).candidate_id as string, "SAVE_PF_OPT_OUT_CONSENT", input, meta);
+  return saveStatutory(token, { ...input, pf_opt_out_consent: true });
+}
+
 export async function submitFullOnboarding(token: string, meta?: { ip?: string; userAgent?: string }) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;

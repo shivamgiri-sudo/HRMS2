@@ -14,6 +14,7 @@ import {
 } from './queue.enhanced.service.js';
 
 export const queueRouter = Router();
+export const queuePublicRouter = Router();
 
 // All routes require authentication
 queueRouter.use(requireAuth);

@@ -5,7 +5,7 @@ import { getNcosecPool } from "../../db/ncosecDb.js";
 import { attendanceEngineService } from "./attendance-engine.service.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 
-type PunchGroup = {
+export type PunchGroup = {
   cosecUserId: string;
   punchDate: string;
   firstPunch: string;
@@ -360,7 +360,7 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
  * and they have punches before 10:00 on day N+1, merge day N+1 into day N.
  * This attributes the full shift to the roster start date for payroll purposes.
  */
-function mergeNightShiftRollover(groups: PunchGroup[]): PunchGroup[] {
+export function mergeNightShiftRollover(groups: PunchGroup[]): PunchGroup[] {
   const byUser = new Map<string, PunchGroup[]>();
   for (const g of groups) {
     const arr = byUser.get(g.cosecUserId) ?? [];

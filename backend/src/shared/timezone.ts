@@ -25,6 +25,10 @@ export function toISTDate(value: Date | string | null | undefined): string | nul
   return s ? s.split('T')[0] : null;
 }
 
+export function nowIST(): string {
+  return toIST(new Date()) ?? new Date().toISOString();
+}
+
 export function toISTFields<T extends Record<string, unknown>>(
   row: T,
   fields: (keyof T)[],

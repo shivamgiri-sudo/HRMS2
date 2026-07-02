@@ -36,6 +36,7 @@ const envSchema = z.object({
   NCOSEC_DB_ENCRYPT:  z.string().default("false"),
   NCOSEC_DB_TRUST_CERT: z.string().default("true"),
   NCOSEC_EVENT_TABLE: z.string().default("dbo.Mx_ATDEventTrn"),
+  NCOSEC_DAILY_TABLE: z.string().default("dbo.Mx_DATDTrn"),
   NCOSEC_USER_ID_COLUMN: z.string().default("UserID"),
   NCOSEC_DATETIME_COLUMN: z.string().default("Edatetime"),
   NCOSEC_SOURCE_MODE: z.enum(["mysql", "mssql"]).default("mysql"),
