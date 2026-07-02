@@ -14,6 +14,7 @@ interface BranchAlias {
 
 interface Recruiter {
   id: string;
+  employee_id: string;
   employee_code: string;
   name: string;
   email: string;
@@ -108,7 +109,7 @@ export default function NativeATSRegistrationEnhanced() {
 
       // Auto-select if only one recruiter
       if (res.data && res.data.length === 1) {
-        setForm(prev => ({ ...prev, recruiter_id: res.data[0].id }));
+        setForm(prev => ({ ...prev, recruiter_id: res.data[0].employee_id }));
       }
     } catch (err: any) {
       console.error("Failed to load recruiters:", err);
@@ -430,7 +431,7 @@ export default function NativeATSRegistrationEnhanced() {
                           : "Select Recruiter"}
                     </option>
                     {recruiters.filter(recruiter => recruiter.present_today).map(recruiter => (
-                      <option key={recruiter.id} value={recruiter.id}>
+                      <option key={recruiter.employee_id} value={recruiter.employee_id}>
                         {recruiter.name} ({recruiter.employee_code})
                       </option>
                     ))}

@@ -116,7 +116,8 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
       ) as position_in_queue
     FROM ats_queue_token qt
     INNER JOIN ats_candidate c ON c.id = qt.candidate_id
-    LEFT JOIN employees e ON e.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
+    LEFT JOIN ats_recruiter_roster rr ON rr.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
+    LEFT JOIN employees e ON e.id = rr.employee_id
     WHERE ${conditions.join(' AND ')}
       AND (
         qt.queue_status IN ('waiting','called','in_interview','completed','no_show')
@@ -206,7 +207,8 @@ export async function getNextCandidate(recruiterId: string, branch: string): Pro
       1 as position_in_queue
     FROM ats_queue_token qt
     INNER JOIN ats_candidate c ON c.id = qt.candidate_id
-    LEFT JOIN employees e ON e.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
+    LEFT JOIN ats_recruiter_roster rr ON rr.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
+    LEFT JOIN employees e ON e.id = rr.employee_id
     WHERE (COALESCE(qt.recruiter_id, qt.assigned_recruiter_id) = ?
       OR qt.assigned_recruiter_id = ?)
       AND COALESCE(qt.branch_name, c.applied_for_branch) = ?
@@ -333,7 +335,8 @@ export async function getRecruiterQueue(recruiterId: string): Promise<QueueEntry
       ) as position_in_queue
     FROM ats_queue_token qt
     INNER JOIN ats_candidate c ON c.id = qt.candidate_id
-    LEFT JOIN employees e ON e.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
+    LEFT JOIN ats_recruiter_roster rr ON rr.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
+    LEFT JOIN employees e ON e.id = rr.employee_id
     WHERE COALESCE(qt.recruiter_id, qt.assigned_recruiter_id) = ?
       AND (
         qt.queue_status IN ('waiting', 'called', 'in_interview')

@@ -3,9 +3,8 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { formatISTDate } from '@/lib/utils';
 import {
-  User, Phone, Mail, Briefcase, Building2, Calendar, DollarSign,
-  CheckCircle, XCircle, Clock, Search, Filter, TrendingUp, Award,
-  FileText, AlertCircle, Eye, ThumbsUp, ThumbsDown, MessageSquare
+  User, CheckCircle, XCircle, Clock, Search, Filter, TrendingUp, Award,
+  FileText, Eye, ThumbsUp, ThumbsDown
 } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────────────────────

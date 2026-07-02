@@ -32,7 +32,7 @@ export async function resolveBranchFromAlias(displayName: string) {
 // Ensures an HR/Executive employee exists in ats_recruiter_roster (the FK target)
 // and returns their roster id. Uses INSERT … ON DUPLICATE KEY UPDATE so it's
 // idempotent — safe to call on every walk-in registration.
-async function ensureRecruiterInRoster(
+export async function ensureRecruiterInRoster(
   employee: { id: string; first_name: string; last_name: string; mobile: string | null; email: string | null; branch_name: string }
 ): Promise<string> {
   const fullName = `${employee.first_name} ${employee.last_name ?? ''}`.trim();
@@ -115,13 +115,21 @@ export async function getAvailableRecruiters(branchName: string) {
 }
 
 export async function isRecruiterAvailableToday(recruiterId: string): Promise<boolean> {
-  // Consider any active employee available — attendance absence at walk-in time is common.
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1`,
+  // recruiterId can be a roster UUID or an employee UUID — resolve to employee_id first
+  const [rosterRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id FROM ats_recruiter_roster WHERE id = ? AND active_status = 1 LIMIT 1`,
     [recruiterId]
   );
+  const employeeId = (rosterRows as RowDataPacket[]).length > 0
+    ? (rosterRows as RowDataPacket[])[0].employee_id as string
+    : recruiterId;
 
-  return rows.length > 0;
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1`,
+    [employeeId]
+  );
+
+  return empRows.length > 0;
 }
 
 export async function assignRecruiterToCandidate(candidateId: string, preferredRecruiterId: string | null) {
