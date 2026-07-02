@@ -25,6 +25,12 @@ function normalizeMonthYear(value: string) {
   return text;
 }
 
+function normalizePublicPhotoUrl(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const trimmed = value.trim();
+  return trimmed.replace(/^\/api\/files\/employee-photos\//, "/uploads/employee-photos/");
+}
+
 employeeVerifyRouter.get("/emp/:employeeCode", h(async (req, res) => {
   const employeeCode = String(req.params.employeeCode ?? "").trim();
   if (!employeeCode) return res.status(400).json({ success: false, message: "Employee code is required" });
@@ -59,7 +65,7 @@ employeeVerifyRouter.get("/emp/:employeeCode", h(async (req, res) => {
       employment_status: employee.employment_status,
       employment_type: employee.employment_type,
       date_of_joining: employee.date_of_joining,
-      avatar_url: employee.avatar_url,
+      avatar_url: normalizePublicPhotoUrl(employee.avatar_url),
       verified_at: new Date().toISOString(),
     },
   });
