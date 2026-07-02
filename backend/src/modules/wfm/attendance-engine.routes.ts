@@ -24,6 +24,20 @@ function parsePositiveInt(value: unknown, fallback: number, max: number): number
   return Math.min(Math.floor(parsed), max);
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 // ── Attendance Rules (Admin/HR CRUD + Simulator) ──────────────────────────────
 
 // GET /rules — list all rule configs
@@ -176,7 +190,7 @@ router.get('/today-live', h(async (req: AuthenticatedRequest, res: Response) => 
   if (!emp) return res.status(403).json({ success: false, error: 'No employee record' });
 
   try {
-    const live = await getRealTimePunchesToday(emp.id);
+    const live = await withTimeout(getRealTimePunchesToday(emp.id), 2500, 'today-live realtime lookup');
     if (live) return res.json({ success: true, data: { ...live, source: 'biometric_live' } });
   } catch (error) {
     console.warn('[attendance] today-live realtime lookup failed, falling back to local biometric log:', error instanceof Error ? error.message : String(error));
