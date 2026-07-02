@@ -23,6 +23,12 @@ auditLogRouter.use(requireAuth);
 const h = (fn: (req: any, res: any) => Promise<unknown>) =>
   (req: any, res: any, next: any) => fn(req, res).catch(next);
 
+function clampLimit(value: unknown, fallback: number, max: number): number {
+  const parsed = parseInt(String(value ?? fallback), 10);
+  if (Number.isNaN(parsed)) return fallback;
+  return Math.min(Math.max(parsed, 1), max);
+}
+
 // ─── Role helpers ──────────────────────────────────────────────────────────
 
 async function resolveActorRole(userId: string): Promise<string> {
@@ -138,9 +144,8 @@ export async function getAuditLogExtended(req: any, res: any): Promise<void> {
   }
 
   // Pagination — guard against NaN (MySQL rejects non-integer LIMIT/OFFSET params)
-  const limitRaw = parseInt(String(req.query.limit ?? "50"), 10);
   const pageRaw  = parseInt(String(req.query.page  ?? "1"),  10);
-  const limit  = Math.min(isNaN(limitRaw) ? 50 : Math.max(1, limitRaw), 500);
+  const limit  = clampLimit(req.query.limit, 50, 500);
   const page   = isNaN(pageRaw)  ? 1 : Math.max(1, pageRaw);
   const offset = (page - 1) * limit;
 
@@ -166,8 +171,8 @@ export async function getAuditLogExtended(req: any, res: any): Promise<void> {
        LEFT JOIN auth_user au ON au.id = sal.actor_user_id
        ${where}
       ORDER BY sal.acted_at DESC
-      LIMIT ? OFFSET ?`,
-    [...params, limit, offset],
+      LIMIT ${limit} OFFSET ${offset}`,
+    params,
   );
 
   return res.json({
@@ -344,14 +349,15 @@ export async function getAuditTimeline(
   entityId: string,
   limit: number = 50,
 ): Promise<RowDataPacket[]> {
+  const safeLimit = clampLimit(limit, 50, 500);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, actor_user_id, action_type, actor_role, reason,
             old_value_json, new_value_json, ip_address, acted_at
        FROM sensitive_action_log
       WHERE entity_type = ? AND entity_id = ?
       ORDER BY acted_at ASC
-      LIMIT ?`,
-    [entityType, entityId, limit],
+      LIMIT ${safeLimit}`,
+    [entityType, entityId],
   );
   return rows;
 }
@@ -370,7 +376,7 @@ export async function getEmployeeAuditTimeline(
     limit?: number;
   },
 ): Promise<RowDataPacket[]> {
-  const limit = filters?.limit ?? 100;
+  const limit = clampLimit(filters?.limit, 100, 500);
   const conds: string[] = ["sal.employee_id = ?"];
   const params: unknown[] = [employeeId];
 
@@ -386,8 +392,8 @@ export async function getEmployeeAuditTimeline(
        FROM sensitive_action_log sal
       WHERE ${conds.join(" AND ")}
       ORDER BY sal.acted_at DESC
-      LIMIT ?`,
-    [...params, limit],
+      LIMIT ${limit}`,
+    params,
   );
   return rows;
 }
