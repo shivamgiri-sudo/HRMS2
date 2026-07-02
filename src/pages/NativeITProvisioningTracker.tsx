@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatISTDate } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +19,8 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Server, Lock, CheckCircle, Clock, AlertTriangle, Search, XCircle } from "lucide-react";
+import { HrmsBentoTile, HrmsModernShell } from "@/components/ui/hrms-modern";
+import { Server, Lock, CheckCircle, Clock, AlertTriangle, Search, XCircle, ShieldCheck, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -145,7 +147,7 @@ export default function NativeITProvisioningTracker() {
     limit: LIMIT,
   };
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["it-provisioning", queryParams],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: ProvisioningRequest[]; total: number }>(
@@ -218,61 +220,48 @@ export default function NativeITProvisioningTracker() {
 
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6 p-4 md:p-6">
-      {/* Header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Server className="h-6 w-6 text-primary" />
-            {preset?.title ?? "IT Provisioning Tracker"}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Track domain, email, biometric, and dialler provisioning tasks for all employee joins and exits
-          </p>
-        </div>
-      </div>
+    <HrmsModernShell
+      eyebrow="Provisioning"
+      title={preset?.title ?? "IT Provisioning Tracker"}
+      description="Track domain, email, biometric, dialler, WFM, and appointment-letter tasks generated from employee joins and exits."
+      icon={<Server className="h-6 w-6" />}
+      actions={
+        <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching} className="w-full gap-2 sm:w-auto">
+            <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+      }
+    >
 
       {/* Stats bar */}
-      <div className="grid grid-cols-3 gap-4">
-        <Card className="border-amber-200">
-          <CardContent className="pt-4 pb-4">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-amber-500" />
-              <div>
-                <p className="text-xs text-muted-foreground">Pending</p>
-                <p className="text-2xl font-bold text-amber-600">{stats.pending}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-sky-200">
-          <CardContent className="pt-4 pb-4">
-            <div className="flex items-center gap-2">
-              <CheckCircle className="h-5 w-5 text-sky-500" />
-              <div>
-                <p className="text-xs text-muted-foreground">Actioned</p>
-                <p className="text-2xl font-bold text-sky-600">{stats.actioned}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-slate-200">
-          <CardContent className="pt-4 pb-4">
-            <div className="flex items-center gap-2">
-              <Lock className="h-5 w-5 text-slate-500" />
-              <div>
-                <p className="text-xs text-muted-foreground">Locked (Evidence)</p>
-                <p className="text-2xl font-bold text-slate-600">{stats.locked}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="grid gap-4 md:grid-cols-3">
+        <HrmsBentoTile
+          title="Pending"
+          value={stats.pending}
+          detail={`${total} open records in this queue`}
+          icon={<AlertTriangle className="h-5 w-5 text-amber-600" />}
+          accentClassName="from-amber-500 to-orange-500"
+        />
+        <HrmsBentoTile
+          title="Actioned"
+          value={stats.actioned}
+          detail="Completed, waiting for lock or confirmation"
+          icon={<CheckCircle className="h-5 w-5 text-sky-600" />}
+          accentClassName="from-sky-500 to-blue-500"
+        />
+        <HrmsBentoTile
+          title="Locked Evidence"
+          value={stats.locked}
+          detail="Immutable audit trail records"
+          icon={<ShieldCheck className="h-5 w-5 text-emerald-600" />}
+          accentClassName="from-emerald-500 to-teal-500"
+        />
       </div>
 
       {/* Filters */}
-      <Card>
+      <Card className="rounded-xl border-slate-200 bg-white shadow-sm">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Filters</CardTitle>
+          <CardTitle className="text-base text-slate-900">Filters</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-3">
@@ -328,9 +317,9 @@ export default function NativeITProvisioningTracker() {
       </Card>
 
       {/* Table */}
-      <Card>
+      <Card className="overflow-hidden rounded-xl border-slate-200 bg-white shadow-sm">
         <CardHeader>
-          <CardTitle className="text-base">
+          <CardTitle className="text-base text-slate-900">
             Provisioning Requests
             {total > 0 && <span className="ml-2 text-sm font-normal text-muted-foreground">({total} total)</span>}
           </CardTitle>
@@ -350,10 +339,10 @@ export default function NativeITProvisioningTracker() {
               <p className="text-sm text-muted-foreground mt-1">Requests appear automatically when employees join or exit</p>
             </div>
           ) : (
-            <div className="rounded-md border overflow-x-auto">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <Table>
                 <TableHeader>
-                  <TableRow>
+                  <TableRow className="bg-slate-50 hover:bg-slate-50">
                     <TableHead>Employee</TableHead>
                     <TableHead>Task</TableHead>
                     <TableHead>Type</TableHead>
@@ -365,7 +354,7 @@ export default function NativeITProvisioningTracker() {
                 </TableHeader>
                 <TableBody>
                   {filtered.map((req) => (
-                    <TableRow key={req.id} className={req.locked ? "opacity-60 bg-slate-50" : undefined}>
+                    <TableRow key={req.id} className={req.locked ? "bg-slate-50 opacity-70" : "hover:bg-blue-50/40"}>
                       <TableCell>
                         <div>
                           <p className="font-medium">{req.employee_name}</p>
@@ -488,6 +477,6 @@ export default function NativeITProvisioningTracker() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </HrmsModernShell>
   );
 }

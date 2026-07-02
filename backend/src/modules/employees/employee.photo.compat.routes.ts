@@ -31,7 +31,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB limit
   fileFilter: (_req, file, cb) => {
     if (ALLOWED_IMAGE_TYPES.has(file.mimetype)) return cb(null, true);
     return cb(new Error("Only JPG, PNG, or WebP images are allowed"));
@@ -46,7 +46,8 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 function photoMiddleware(req: any, res: any, next: any) {
   upload.single("photo")(req, res, (err: any) => {
     if (err instanceof multer.MulterError) {
-      return res.status(400).json({ success: false, error: err.message });
+      const message = err.code === "LIMIT_FILE_SIZE" ? "Image file is too large. Maximum allowed size is 15MB." : err.message;
+      return res.status(400).json({ success: false, error: message });
     }
     if (err) {
       return res.status(400).json({ success: false, error: err.message });

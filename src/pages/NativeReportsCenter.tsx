@@ -6,6 +6,7 @@ import {
   Award, Layers, Package, Link2, HelpCircle, Globe, X, Filter, CheckCircle2,
 } from "lucide-react";
 import { hrmsApi } from "../lib/hrmsApi";
+import { HrmsBentoTile, HrmsModernShell } from "@/components/ui/hrms-modern";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -439,7 +440,29 @@ export default function NativeReportsCenter() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <HrmsModernShell
+      eyebrow="Reports"
+      title="Reports Center"
+      description="Run workforce, attendance, payroll, compliance, ATS, and productivity reports from one consistent MAS Callnet workspace."
+      icon={<BarChart3 size={22} />}
+      actions={
+        <div className="relative w-full sm:w-[320px] xl:w-[420px]">
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            className="w-full h-10 pl-10 pr-10 text-sm rounded-lg bg-white border border-slate-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="Search reports..."
+            value={searchQ}
+            onChange={e => setSearchQ(e.target.value)}
+          />
+          {searchQ && (
+            <button type="button" className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600" onClick={() => setSearchQ("")}>
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      }
+    >
       <style>{`
         @keyframes slideUp {
           from { transform: translateY(20px); opacity: 0; }
@@ -453,74 +476,52 @@ export default function NativeReportsCenter() {
         .animate-fade-row { animation: fadeInRow 0.3s ease-out forwards; }
       `}</style>
 
-      {/* ── Hero Bar ─────────────────────────────────────────────────────── */}
-      <div className="sticky top-0 z-30 bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 relative overflow-hidden">
-        {/* Dot grid pattern */}
-        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.3) 1px, transparent 1px)", backgroundSize: "20px 20px" }} />
-        <div className="relative max-w-[1600px] mx-auto px-4 sm:px-6 py-5">
-          <div className="flex flex-col md:flex-row md:items-center gap-4">
-            {/* Left: Title + Stats */}
-            <div className="flex items-center gap-4 flex-shrink-0">
-              <div className="w-11 h-11 rounded-xl bg-white/10 backdrop-blur-sm flex items-center justify-center border border-white/20">
-                <BarChart3 size={22} className="text-white" />
-              </div>
-              <div>
-                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight text-white">Reports Center</h1>
-                <div className="flex items-center gap-4 mt-1">
-                  <span className="text-xs text-blue-200/80 font-medium">{animatedTotal} reports</span>
-                  <span className="text-xs text-blue-200/80 font-medium">{animatedCats} categories</span>
-                  {favCount > 0 && (
-                    <span className="text-xs text-yellow-200/80 font-medium flex items-center gap-1">
-                      <Star size={10} fill="currentColor" /> {animatedFavs} favourites
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Search */}
-            <div className="relative flex-1 max-w-md">
-              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                type="text"
-                className="w-full h-10 pl-10 pr-10 text-sm rounded-full bg-white shadow-lg border-0 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                placeholder="Search reports..."
-                value={searchQ}
-                onChange={e => setSearchQ(e.target.value)}
-              />
-              {searchQ && (
-                <button type="button" className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600" onClick={() => setSearchQ("")}>
-                  <X size={14} />
-                </button>
-              )}
-            </div>
-
-            {/* Recent chips */}
-            {recentReports.length > 0 && (
-              <div className="hidden lg:flex items-center gap-2 overflow-x-auto flex-1">
-                <Clock size={13} className="text-blue-200/60 flex-shrink-0" />
-                {recentReports.slice(0, 4).map(r => (
-                  <button
-                    key={r.code}
-                    type="button"
-                    onClick={() => selectReport(r)}
-                    className="flex-shrink-0 text-xs px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-sm text-white/90 border border-white/20 hover:bg-white/20 transition-colors"
-                  >
-                    {r.name.length > 24 ? r.name.slice(0, 24) + "..." : r.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+      <div className="grid gap-4 md:grid-cols-3">
+        <HrmsBentoTile
+          title="Reports"
+          value={animatedTotal}
+          detail="Across HR, payroll, ATS, WFM, and compliance"
+          icon={<BarChart3 className="h-5 w-5 text-blue-600" />}
+          accentClassName="from-blue-600 to-cyan-500"
+        />
+        <HrmsBentoTile
+          title="Categories"
+          value={animatedCats}
+          detail="Grouped as tiles for faster scanning"
+          icon={<Layers className="h-5 w-5 text-violet-600" />}
+          accentClassName="from-violet-500 to-purple-600"
+        />
+        <HrmsBentoTile
+          title="Favourites"
+          value={animatedFavs}
+          detail={favCount > 0 ? "Saved for quick launch" : "Star reports to pin them here"}
+          icon={<Star className="h-5 w-5 text-amber-500" fill={favCount > 0 ? "currentColor" : "none"} />}
+          accentClassName="from-amber-500 to-orange-500"
+        />
       </div>
 
+      {recentReports.length > 0 && (
+        <div className="flex items-center gap-2 overflow-x-auto rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+          <Clock size={13} className="text-slate-400 flex-shrink-0" />
+          {recentReports.slice(0, 8).map(r => (
+            <button
+              key={r.code}
+              type="button"
+              onClick={() => selectReport(r)}
+              className="flex-shrink-0 text-xs px-3 py-1.5 rounded-full bg-slate-50 text-slate-700 border border-slate-200 hover:bg-blue-50 hover:text-blue-700 transition-colors"
+            >
+              {r.name.length > 28 ? r.name.slice(0, 28) + "..." : r.name}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ── Main Content ─────────────────────────────────────────────────── */}
-      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <div className="space-y-6">
 
         {/* Search Results Overlay */}
         {searchResults && (
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 animate-slide-up">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 animate-slide-up">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold text-gray-800">Search Results ({searchResults.length})</h3>
               <button type="button" onClick={() => setSearchQ("")} className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1">
@@ -538,7 +539,7 @@ export default function NativeReportsCenter() {
                       key={r.code}
                       type="button"
                       onClick={() => { selectReport(r); setSearchQ(""); }}
-                      className={`text-left px-3 py-2.5 rounded-lg border transition-all hover:shadow-md ${
+                    className={`text-left px-3 py-2.5 rounded-lg border transition-all hover:shadow-md ${
                         selectedReport?.code === r.code ? "border-blue-500 bg-blue-50 ring-2 ring-blue-200" : "border-gray-100 hover:border-gray-200 bg-white"
                       }`}
                     >
@@ -567,14 +568,14 @@ export default function NativeReportsCenter() {
                 <div key={cat} className={`${isExpanded ? "sm:col-span-2 lg:col-span-3 xl:col-span-4" : ""}`}>
                   <div
                     onClick={() => toggleCategory(cat)}
-                    className={`rounded-2xl overflow-hidden cursor-pointer transition-all duration-300 hover:-translate-y-1 hover:shadow-xl ${
+                    className={`rounded-xl overflow-hidden cursor-pointer transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${
                       isExpanded ? "ring-2 ring-blue-400 shadow-xl" : ""
                     }`}
                   >
                     {/* Gradient strip */}
                     <div className={`h-2 bg-gradient-to-r ${grad?.from ?? "from-gray-500"} ${grad?.to ?? "to-gray-600"}`} />
                     {/* Body */}
-                    <div className="bg-white/80 backdrop-blur-sm border border-white/60 shadow-lg p-4">
+                    <div className="bg-white border border-slate-200 shadow-sm p-4">
                       <div className="flex items-center gap-3">
                         <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${grad?.from ?? "from-gray-500"} ${grad?.to ?? "to-gray-600"} flex items-center justify-center shadow-sm`}>
                           <Icon size={18} className="text-white" />
@@ -590,7 +591,7 @@ export default function NativeReportsCenter() {
 
                   {/* ── Inline Accordion: Report List ───────────────────────── */}
                   {isExpanded && (
-                    <div className="mt-2 bg-white rounded-xl border border-gray-200 p-4 animate-slide-up">
+                    <div className="mt-2 bg-white rounded-xl border border-slate-200 p-4 animate-slide-up shadow-sm">
                       {(() => {
                         const subcats = Array.from(new Set(grouped[cat].map(r => r.subcategory)));
                         return (
@@ -633,7 +634,7 @@ export default function NativeReportsCenter() {
 
         {/* ── Favourites Section (when no report selected) ────────────────── */}
         {!selectedReport && favCodes.size > 0 && !searchResults && (
-          <div className="bg-white rounded-2xl border border-gray-200 p-5">
+          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
             <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
               <Star size={12} className="text-yellow-400" fill="currentColor" /> Favourites
             </p>
@@ -655,7 +656,7 @@ export default function NativeReportsCenter() {
         {selectedReport && (
           <div ref={runnerRef} className="animate-slide-up space-y-4">
             {/* Report Header */}
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-100">
                 <div className="flex items-start justify-between gap-4 flex-wrap">
                   <div className="flex items-center gap-3">
@@ -754,7 +755,7 @@ export default function NativeReportsCenter() {
 
             {/* Results Table */}
             {rows.length > 0 && (
-              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm animate-slide-up">
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm animate-slide-up">
                 <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-3">
                     <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 bg-blue-50 text-blue-700 rounded-full">
@@ -813,7 +814,7 @@ export default function NativeReportsCenter() {
 
             {/* No results yet */}
             {!running && !runError && rows.length === 0 && (
-              <div className="bg-white rounded-2xl border border-gray-200 py-14 text-center">
+              <div className="bg-white rounded-xl border border-slate-200 py-14 text-center shadow-sm">
                 <BarChart3 size={36} className="mx-auto text-gray-200 mb-3" />
                 <p className="text-sm text-gray-400 font-medium">Set filters above and click Run to generate the report</p>
               </div>
@@ -821,6 +822,6 @@ export default function NativeReportsCenter() {
           </div>
         )}
       </div>
-    </div>
+    </HrmsModernShell>
   );
 }
