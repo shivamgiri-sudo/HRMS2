@@ -207,7 +207,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
 
 // ── Submission history ────────────────────────────────────────────────────────
 
-export async function getSubmissionHistory(recruiterCode?: string) {
+export async function getSubmissionHistory(recruiterCode?: string | null, _rosterId?: string | null, _userId?: string | null) {
   if (!recruiterCode) return [];
   const params = [recruiterCode];
   const [rows] = await db.execute<RowDataPacket[]>(

@@ -6,7 +6,6 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import { randomUUID, createHash } from "crypto";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -294,7 +293,7 @@ router.get("/blockers", h(async (req, res) => {
 router.patch("/pf-opt-out-consent", h(async (req, res) => {
   const { token, elected } = req.body;
   if (!token || elected === undefined) return res.status(400).json({ success: false, message: "token and elected required" });
-  return res.json({ success: true, data: await savePfOptOutConsent(token, Boolean(elected)) });
+  return res.json({ success: true, data: await savePfOptOutConsent(token, { elected: Boolean(elected) }) });
 }));
 
 // PUT /section-status — upsert section completion for a candidate
