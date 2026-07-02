@@ -106,6 +106,15 @@ function safeFormatDate(value: string | null | undefined, fmt: string, fallback 
   return formatISTDate(value) || fallback;
 }
 
+function safeNumber(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function formatHours(value: unknown, digits = 1): string {
+  return `${safeNumber(value).toFixed(digits)}h`;
+}
+
 interface EmployeeSchedule {
   id: string;
   first_name: string | null;
@@ -253,7 +262,7 @@ const Attendance = () => {
   const displayClockIn  = todayRecord?.clock_in  ?? todayRecord?.clock_in_time  ?? livePunch?.first_punch_in  ?? null;
   const displayClockOut = todayRecord?.clock_out ?? todayRecord?.clock_out_time ?? livePunch?.last_punch_out  ?? null;
   const displayHours    = todayRecord?.total_hours != null
-    ? todayRecord.total_hours
+    ? safeNumber(todayRecord.total_hours)
     : livePunch?.raw_minutes != null && livePunch.raw_minutes > 0
       ? Math.round(livePunch.raw_minutes / 60 * 100) / 100
       : null;
@@ -862,7 +871,7 @@ const Attendance = () => {
 
                   <AttendanceMetricCard
                     label="Total Hours"
-                    value={`${summaryData.totalHours.toFixed(1)}h`}
+                    value={formatHours(summaryData.totalHours)}
                     description="Total productive hours."
                     icon={<Timer className="h-5 w-5" />}
                     tone="indigo"
@@ -871,8 +880,8 @@ const Attendance = () => {
                   <AttendanceMetricCard
                     label="Avg Hours / Day"
                     value={`${
-                      summaryData.totalWorkingDays > 0
-                        ? (summaryData.totalHours / summaryData.totalWorkingDays).toFixed(1)
+                      safeNumber(summaryData.totalWorkingDays) > 0
+                        ? (safeNumber(summaryData.totalHours) / safeNumber(summaryData.totalWorkingDays)).toFixed(1)
                         : "0"
                     }h`}
                     description="Average daily hours."
@@ -882,7 +891,7 @@ const Attendance = () => {
 
                   <AttendanceMetricCard
                     label="LWP Days"
-                    value={summaryData.totalLwp % 1 === 0 ? String(summaryData.totalLwp) : summaryData.totalLwp.toFixed(1)}
+                    value={safeNumber(summaryData.totalLwp) % 1 === 0 ? String(safeNumber(summaryData.totalLwp)) : safeNumber(summaryData.totalLwp).toFixed(1)}
                     description="Leave without pay days."
                     icon={<AlertTriangle className="h-5 w-5" />}
                     tone="amber"
@@ -908,10 +917,10 @@ const Attendance = () => {
                   data={{
                     present_days: summaryData.presentDays,
                     wfo_days: summaryData.wfoDays,
-                    total_hours: summaryData.totalHours,
-                    total_working_days: summaryData.totalWorkingDays,
-                    lwp_days: summaryData.totalLwp,
-                    late_marks: summaryData.lateMarks,
+                    total_hours: safeNumber(summaryData.totalHours),
+                    total_working_days: safeNumber(summaryData.totalWorkingDays),
+                    lwp_days: safeNumber(summaryData.totalLwp),
+                    late_marks: safeNumber(summaryData.lateMarks),
                   }}
                 />
               </>
@@ -1126,7 +1135,7 @@ const Attendance = () => {
 
                             <TableCell>
                               {record.total_hours
-                                ? `${record.total_hours.toFixed(2)} hrs`
+                                ? `${safeNumber(record.total_hours).toFixed(2)} hrs`
                                 : "-"}
                             </TableCell>
 

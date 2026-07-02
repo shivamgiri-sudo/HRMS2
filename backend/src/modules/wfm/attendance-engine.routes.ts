@@ -10,12 +10,19 @@ import type { Response } from 'express';
 import { z } from 'zod';
 import { getEmployeeForUser, hasRole } from '../../shared/accessGuard.js';
 import { toIST } from '../../shared/timezone.js';
+import { getRealTimePunchesToday } from './attendance-realtime-ncosec.service.js';
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 const DB_ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,35}$/;
 
 router.use(requireAuth);
+
+function parsePositiveInt(value: unknown, fallback: number, max: number): number {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(Math.floor(parsed), max);
+}
 
 // ── Attendance Rules (Admin/HR CRUD + Simulator) ──────────────────────────────
 
@@ -126,6 +133,79 @@ router.get('/daily', h(async (req: AuthenticatedRequest, res: Response) => {
   }
   const data = await attendanceEngineService.listRecords(filters);
   return res.json({ success: true, ...data });
+}));
+
+// GET /ncosec-monthly — compatibility alias used by the upgraded Attendance UI.
+// It returns the same scoped attendance records as /daily without changing the
+// attendance calculation source or approval rules.
+router.get('/ncosec-monthly', h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const isPrivileged = await hasRole(userId, 'admin', 'hr', 'wfm', 'manager');
+  const page = parsePositiveInt(req.query.page, 1, 100000);
+  const limit = parsePositiveInt(req.query.limit, 500, 500);
+
+  const filters: any = {
+    processId:        req.query.processId as string | undefined,
+    branchId:         req.query.branchId as string | undefined,
+    fromDate:         req.query.fromDate as string | undefined,
+    toDate:           req.query.toDate as string | undefined,
+    attendanceStatus: req.query.attendanceStatus as string | undefined,
+    page,
+    limit,
+  };
+
+  if (isPrivileged) {
+    const qEmpId = req.query.employeeId as string | undefined;
+    if (qEmpId && !DB_ID_REGEX.test(qEmpId)) {
+      return res.status(400).json({ success: false, error: 'Invalid employeeId' });
+    }
+    filters.employeeId = qEmpId;
+  } else {
+    const emp = await getEmployeeForUser(userId);
+    if (!emp) return res.status(403).json({ success: false, error: 'No employee record' });
+    filters.employeeId = emp.id;
+  }
+
+  const data = await attendanceEngineService.listRecords(filters);
+  return res.json({ success: true, ...data });
+}));
+
+// GET /today-live — lightweight live punch lookup for the current user.
+router.get('/today-live', h(async (req: AuthenticatedRequest, res: Response) => {
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) return res.status(403).json({ success: false, error: 'No employee record' });
+
+  try {
+    const live = await getRealTimePunchesToday(emp.id);
+    if (live) return res.json({ success: true, data: { ...live, source: 'biometric_live' } });
+  } catch (error) {
+    console.warn('[attendance] today-live realtime lookup failed, falling back to local biometric log:', error instanceof Error ? error.message : String(error));
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(punch_date, '%Y-%m-%d') AS punch_date,
+            first_punch_in,
+            last_punch_out,
+            COALESCE(total_punches, CASE WHEN first_punch_in IS NULL THEN 0 WHEN last_punch_out IS NULL THEN 1 ELSE 2 END) AS total_punches,
+            COALESCE(raw_minutes, 0) AS raw_minutes
+       FROM biometric_attendance_log
+      WHERE employee_id = ? AND punch_date = CURDATE()
+      ORDER BY migrated_at DESC
+      LIMIT 1`,
+    [emp.id],
+  );
+  const row = rows[0] as any;
+  return res.json({
+    success: true,
+    data: row ? {
+      punch_date: row.punch_date,
+      first_punch_in: toIST(row.first_punch_in),
+      last_punch_out: toIST(row.last_punch_out),
+      raw_minutes: Number(row.raw_minutes ?? 0),
+      total_punches: Number(row.total_punches ?? 0),
+      source: 'biometric_live',
+    } : null,
+  });
 }));
 
 // GET /daily/:employeeId/:date — single record
