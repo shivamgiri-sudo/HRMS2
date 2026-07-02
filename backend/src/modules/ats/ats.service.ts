@@ -289,21 +289,49 @@ export const atsService = {
     };
   },
 
-  async listOnboardingBridges(scopeFilter?: { branchId?: string; processId?: string }): Promise<any[]> {
+  async listOnboardingBridges(scopeFilter?: { sql?: string; params?: unknown[]; branchId?: string; processId?: string }): Promise<any[]> {
     let where = "1=1";
     const params: any[] = [];
+    if (scopeFilter?.sql) {
+      where += ` AND (${scopeFilter.sql})`;
+      params.push(...(scopeFilter.params ?? []));
+    }
     if (scopeFilter?.branchId) { where += " AND c.applied_for_branch = ?"; params.push(scopeFilter.branchId); }
     if (scopeFilter?.processId) { where += " AND c.applied_for_process = ?"; params.push(scopeFilter.processId); }
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT ob.id, ob.candidate_id, ob.status AS bridge_status, ob.bridge_date, ob.joining_date,
-              c.full_name AS candidate_name, c.mobile, c.current_stage, c.applied_for_branch AS branch,
-              c.applied_for_process AS process,
+      `SELECT ob.id,
+              ob.candidate_id,
+              c.candidate_code,
+              c.full_name,
+              c.mobile,
+              c.email,
+              COALESCE(b.branch_name, c.branch_display_name, c.branch_text, c.applied_for_branch, '-') AS branch_name,
+              COALESCE(c.role_applied, p.process_name, c.process_text, c.applied_for_process, '-') AS role_applied,
+              COALESCE(c.recruiter_assigned_name, c.recruiter_name, '') AS recruiter_name,
+              COALESCE(c.status, c.current_stage, ob.status, 'Waiting') AS status,
+              c.current_stage AS latest_stage,
+              c.final_decision AS latest_decision,
+              COALESCE(p.process_name, c.process_text, c.applied_for_process) AS latest_process,
+              c.profile_status,
+              c.profile_status AS onboarding_profile_status,
+              c.offer_status AS request_status,
+              c.offer_status,
+              c.offer_doj,
+              c.offer_salary,
+              ob.employee_id,
+              c.employee_code,
+              ob.status AS bridge_status,
+              ob.bridge_date,
+              ob.joining_date,
+              c.current_stage,
               (SELECT verification_status FROM ats_bgv_verification WHERE candidate_id = c.id ORDER BY created_at DESC LIMIT 1) AS bgv_status,
               (SELECT overall_match_status FROM candidate_name_match_summary WHERE candidate_id = c.id LIMIT 1) AS name_status,
               (SELECT validation_status FROM ats_payroll_hr_validation WHERE candidate_id = c.id LIMIT 1) AS payroll_hr_status,
-              ob.created_at, ob.updated_at
+              ob.created_at
        FROM ats_onboarding_bridge ob
        JOIN ats_candidate c ON c.id = ob.candidate_id
+       LEFT JOIN branch_master b ON b.id = c.applied_for_branch
+       LEFT JOIN process_master p ON p.id = c.applied_for_process
        WHERE ${where}
        ORDER BY ob.created_at DESC`,
       params
