@@ -22,12 +22,13 @@ import {
   verifyEducationByToken,
   verifyPanByToken,
   verifyPanForCandidate,
+  verifyUanByToken,
   waiveCheck,
   dispatchToVendor,
   updateVendorResult,
 } from "./bgv-verification.service.js";
 import { overrideNameMatchReview, runNameMatchCheck } from "./bgv.enhanced.service.js";
-import { getBgvProviderAdapter, resetBgvProviderAdapterCache } from "./bgv-provider.adapter.js";
+import { getConfiguredBgvProviderAdapter, resetBgvProviderAdapterCache } from "./bgv-provider.adapter.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { atsService } from "./ats.service.js";
@@ -66,6 +67,12 @@ router.post("/verify/bank", h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await verifyBankByToken(token, req.body, meta(req)) });
+}));
+
+router.post("/verify/uan", h(async (req, res) => {
+  const token = String(req.body.token ?? "");
+  if (!token) return res.status(400).json({ success: false, message: "token required" });
+  return res.json({ success: true, data: await verifyUanByToken(token, req.body, meta(req)) });
 }));
 
 router.post("/verify/aadhaar-offline", h(async (req, res) => {
@@ -371,7 +378,7 @@ router.post("/report/initiate-portal", requireAuth, requireRole("admin", "hr"), 
   const cand = (candRows as RowDataPacket[])[0];
   if (!cand) return res.status(404).json({ success: false, message: "Candidate not found" });
 
-  const adapter = getBgvProviderAdapter();
+  const adapter = await getConfiguredBgvProviderAdapter();
   const result = await adapter.initiateCandidateBgv({
     candidateId: candidate_id,
     candidateName: String(cand.full_name ?? ""),
@@ -427,7 +434,32 @@ const BGV_CONFIG_KEYS = [
   "bgv_provider",
   "infinity_ai_api_url", "infinity_ai_api_key", "infinity_ai_client_id", "infinity_ai_portal_url",
   "digio_api_url", "digio_client_id", "digio_client_secret",
+  "digilocker_session_url", "digilocker_api_key", "digilocker_client_id",
+  "befisc_api_url", "befisc_api_key",
+  "luckpay_api_url", "luckpay_basic_token", "luckpay_client_id",
+  "crimescan_api_url", "crimescan_api_key",
 ];
+
+const BGV_CONFIG_DEFAULTS: Record<string, { value: string | null; label: string }> = {
+  bgv_provider: { value: "befisc_luckpay", label: "Active BGV provider" },
+  infinity_ai_api_url: { value: "https://api.infinityai.in", label: "Infinity AI API Base URL" },
+  infinity_ai_api_key: { value: null, label: "Infinity AI API Key" },
+  infinity_ai_client_id: { value: null, label: "Infinity AI Client ID" },
+  infinity_ai_portal_url: { value: "http://candidates.theinfiniti.ai", label: "Infinity AI Candidate Portal URL" },
+  digio_api_url: { value: "https://api.digio.in", label: "Digio API Base URL" },
+  digio_client_id: { value: null, label: "Digio Client ID" },
+  digio_client_secret: { value: null, label: "Digio Client Secret" },
+  digilocker_session_url: { value: null, label: "DigiLocker session/initiate URL" },
+  digilocker_api_key: { value: null, label: "DigiLocker API Key" },
+  digilocker_client_id: { value: null, label: "DigiLocker Client ID" },
+  befisc_api_url: { value: null, label: "Befisc Aadhaar API Base URL" },
+  befisc_api_key: { value: null, label: "Befisc Aadhaar API Key" },
+  luckpay_api_url: { value: null, label: "Luckpay API Base URL" },
+  luckpay_basic_token: { value: null, label: "Luckpay Basic Token" },
+  luckpay_client_id: { value: null, label: "Luckpay Client ID" },
+  crimescan_api_url: { value: null, label: "Crimescan API Base URL" },
+  crimescan_api_key: { value: null, label: "Crimescan API Key" },
+};
 
 router.get("/admin/provider-config", requireAuth, requireRole("admin"), h(async (_req: AuthenticatedRequest, res: Response) => {
   const placeholders = BGV_CONFIG_KEYS.map(() => "?").join(",");
@@ -435,13 +467,17 @@ router.get("/admin/provider-config", requireAuth, requireRole("admin"), h(async 
     `SELECT setting_key, setting_value, label FROM org_settings WHERE setting_key IN (${placeholders})`,
     BGV_CONFIG_KEYS,
   );
-  // Mask secrets in response
-  const masked = (rows as RowDataPacket[]).map((r) => ({
-    ...r,
-    setting_value: (r.setting_key as string).includes("key") || (r.setting_key as string).includes("secret")
-      ? (r.setting_value ? "••••••••" : null)
-      : r.setting_value,
-  }));
+  const byKey = new Map((rows as RowDataPacket[]).map((row) => [String(row.setting_key), row]));
+  const masked = BGV_CONFIG_KEYS.map((key) => {
+    const row = byKey.get(key);
+    const rawValue = row?.setting_value ?? BGV_CONFIG_DEFAULTS[key]?.value ?? null;
+    const isSecret = key.includes("key") || key.includes("secret") || key.includes("token");
+    return {
+      setting_key: key,
+      label: row?.label ?? BGV_CONFIG_DEFAULTS[key]?.label ?? key,
+      setting_value: isSecret ? (rawValue ? "••••••••" : null) : rawValue,
+    };
+  });
   res.json({ success: true, data: masked });
 }));
 

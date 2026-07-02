@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getBgvProviderAdapter, type AddressDocInput, type EducationVerificationInput } from "./bgv-provider.adapter.js";
+import { getConfiguredBgvProviderAdapter, type AddressDocInput, type EducationVerificationInput } from "./bgv-provider.adapter.js";
 import { validateOnboardingToken } from "./onboarding-full.service.js";
 
 const hashValue = (value: unknown) => {
@@ -124,7 +124,7 @@ export async function getBgvStatusForCandidate(candidateId: string) {
     (bankClear ? 20 : 0) +
     (clearChecks.has("address") ? 10 : 0) +
     (clearChecks.has("education") ? 10 : 0) +
-    (clearChecks.has("experience") ? 10 : 0) +
+    (clearChecks.has("employment") ? 10 : 0) +
     (clearChecks.has("photo_match") ? 5 : 0)
   ));
 
@@ -152,7 +152,7 @@ export async function verifyPanForCandidate(candidateId: string, input: { panNum
   const candidate = await getCandidateIdentity(candidateId);
   const pan = String(input.panNumber ?? "").trim().toUpperCase();
   if (!pan) throw Object.assign(new Error("PAN number is required"), { statusCode: 400 });
-  const adapter = getBgvProviderAdapter();
+  const adapter = await getConfiguredBgvProviderAdapter();
   const started = Date.now();
   const result = await adapter.verifyPan({ candidateName: candidate.employee_name ?? candidate.full_name, dateOfBirth: candidate.date_of_birth, panNumber: pan });
   const checkId = await createOrUpdateCheck(candidateId, "pan", result.status, {
@@ -200,7 +200,7 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
     // Raw account is intentionally not recoverable once hashed. Candidate must enter raw account for verification.
   }
   if (!accountNo) throw Object.assign(new Error("Raw account number is required for digital verification"), { statusCode: 400 });
-  const adapter = getBgvProviderAdapter();
+  const adapter = await getConfiguredBgvProviderAdapter();
   const started = Date.now();
   const result = await adapter.verifyBank({ candidateName: candidate.employee_name ?? candidate.full_name, accountHolderName, accountNo, ifscCode });
   const checkId = await createOrUpdateCheck(candidateId, "bank", result.status, {
@@ -252,6 +252,46 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
   return getBgvStatusForCandidate(candidateId);
 }
 
+export async function verifyUanByToken(token: string, input: { uanNumber?: string }, meta?: { ip?: string; userAgent?: string }) {
+  const tokenData = await validateOnboardingToken(token);
+  return verifyUanForCandidate(tokenData.candidate_id as string, input, { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent });
+}
+
+export async function verifyUanForCandidate(candidateId: string, input: { uanNumber?: string }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
+  await ensureConsent(candidateId);
+  const candidate = await getCandidateIdentity(candidateId);
+  const uanNumber = String(input.uanNumber ?? "").replace(/\s/g, "");
+  if (!uanNumber) throw Object.assign(new Error("UAN number is required"), { statusCode: 400 });
+  if (!/^\d{12}$/.test(uanNumber)) throw Object.assign(new Error("UAN number must be 12 digits"), { statusCode: 400 });
+
+  const adapter = await getConfiguredBgvProviderAdapter();
+  if (!adapter.verifyUan) throw Object.assign(new Error("UAN verification is not configured for the active BGV provider"), { statusCode: 503 });
+
+  const started = Date.now();
+  const result = await adapter.verifyUan({ candidateName: candidate.employee_name ?? candidate.full_name, uanNumber });
+  const checkId = await createOrUpdateCheck(candidateId, "employment", result.status, {
+    providerKey: result.providerKey,
+    providerRequestId: result.providerRequestId,
+    providerReferenceId: result.providerReferenceId,
+    matchScore: result.matchScore,
+    matchedName: result.matchedName,
+    resultSummary: result.resultSummary,
+    resultJson: {
+      ...(result.raw && typeof result.raw === "object" ? result.raw as Record<string, unknown> : { raw: result.raw }),
+      employmentHistory: result.employmentHistory ?? [],
+    },
+    riskFlags: result.riskFlags,
+  });
+  await db.execute(
+    `INSERT INTO candidate_bgv_api_request_log
+       (id, candidate_id, check_id, provider_key, endpoint_key, request_ref, request_payload_hash, response_status_code, response_payload, duration_ms, success_flag)
+     VALUES (?, ?, ?, ?, 'UAN_VERIFY', ?, ?, 200, ?, ?, ?)`,
+    [randomUUID(), candidateId, checkId, result.providerKey, result.providerRequestId, hashValue(uanNumber), JSON.stringify(result.raw ?? result), Date.now() - started, result.status === "verified" ? 1 : 0]
+  );
+  await logEvent(candidateId, "UAN_VERIFICATION_COMPLETED", result, checkId, meta);
+  return getBgvStatusForCandidate(candidateId);
+}
+
 export async function verifyAadhaarOfflineByToken(token: string, input: { documentId?: string; aadhaarLast4?: string }, meta?: { ip?: string; userAgent?: string }) {
   const tokenData = await validateOnboardingToken(token);
   return verifyAadhaarOfflineForCandidate(tokenData.candidate_id as string, input, { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent });
@@ -260,7 +300,7 @@ export async function verifyAadhaarOfflineByToken(token: string, input: { docume
 export async function verifyAadhaarOfflineForCandidate(candidateId: string, input: { documentId?: string; aadhaarLast4?: string }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
   await ensureConsent(candidateId);
   const candidate = await getCandidateIdentity(candidateId);
-  const adapter = getBgvProviderAdapter();
+  const adapter = await getConfiguredBgvProviderAdapter();
   const result = await adapter.verifyAadhaarOffline({ candidateName: candidate.employee_name ?? candidate.full_name, aadhaarLast4: input.aadhaarLast4, documentId: input.documentId });
   const checkId = await createOrUpdateCheck(candidateId, "aadhaar", result.status, {
     sourceDocumentId: input.documentId ?? null,
@@ -287,7 +327,7 @@ export async function startDigilockerByToken(token: string, requestedDocuments: 
   await ensureConsent((await validateOnboardingToken(token)).candidate_id as string);
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
-  const adapter = getBgvProviderAdapter();
+  const adapter = await getConfiguredBgvProviderAdapter();
   const session = await adapter.startDigilocker(candidateId, requestedDocuments.length ? requestedDocuments : ["AADHAAR", "PAN"]);
   await db.execute(
     `INSERT INTO candidate_digilocker_session
@@ -348,7 +388,7 @@ export async function verifyAddressDocByToken(
   const candidateId = tokenData.candidate_id as string;
   await ensureConsent(candidateId);
   const candidate = await getCandidateIdentity(candidateId);
-  const adapter = getBgvProviderAdapter();
+  const adapter = await getConfiguredBgvProviderAdapter();
   const started = Date.now();
   const result = await adapter.verifyAddressDoc({
     docType: input.docType,
@@ -390,7 +430,7 @@ export async function verifyEducationByToken(
   const candidateId = tokenData.candidate_id as string;
   await ensureConsent(candidateId);
   const candidate = await getCandidateIdentity(candidateId);
-  const adapter = getBgvProviderAdapter();
+  const adapter = await getConfiguredBgvProviderAdapter();
   const started = Date.now();
   const result = await adapter.verifyEducation({
     boardType: input.boardType,
@@ -442,7 +482,7 @@ export async function verifyCourtByToken(
   if (!candidateName) throw Object.assign(new Error("Candidate name required for court check"), { statusCode: 400 });
   const dob = String(candidate.date_of_birth ?? '');
   if (!dob) throw Object.assign(new Error("Date of birth required for court check"), { statusCode: 400 });
-  const adapter = getBgvProviderAdapter();
+  const adapter = await getConfiguredBgvProviderAdapter();
   const started = Date.now();
   const result = await adapter.verifyCourt({
     candidateName,

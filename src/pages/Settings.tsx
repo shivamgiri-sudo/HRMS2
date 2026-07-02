@@ -143,10 +143,9 @@ const SecuritySettings = () => {
 };
 
 const BGV_PROVIDERS = [
-  { value: "mock", label: "Mock (Dev/Test only)" },
+  { value: "befisc_luckpay", label: "DigiLocker + Befisc + Luckpay + Crimescan" },
   { value: "infinity_ai", label: "Infinity AI (Live)" },
   { value: "digio", label: "Digio (Live)" },
-  { value: "befisc_luckpay", label: "Befisc + Luckpay + Crimescan (Live)" },
 ];
 
 type BgvConfigRow = { setting_key: string; setting_value: string | null; label: string };
@@ -184,7 +183,60 @@ const BgvProviderSettings = () => {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const provider = form.bgv_provider ?? "mock";
+  const provider = form.bgv_provider ?? "befisc_luckpay";
+  const renderField = ({ key, label, type = "text", placeholder }: { key: string; label: string; type?: string; placeholder?: string }) => (
+    <div key={key}>
+      <Label>{label}</Label>
+      <Input
+        type={type}
+        value={form[key] ?? ""}
+        onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))}
+        placeholder={placeholder ?? (type === "password" ? "Enter to update" : undefined)}
+        className="mt-1"
+      />
+    </div>
+  );
+
+  const serviceCards = [
+    {
+      title: "DigiLocker",
+      desc: "Candidate document authorization for Aadhaar and PAN before fallback manual upload.",
+      fields: [
+        { key: "digilocker_session_url", label: "DigiLocker Session/Create URL" },
+        { key: "digilocker_api_key", label: "DigiLocker API Key", type: "password" },
+        { key: "digilocker_client_id", label: "DigiLocker Client ID" },
+      ],
+      callback: "/api/onboarding/digilocker/callback",
+    },
+    {
+      title: "Aadhaar API",
+      desc: "Befisc Aadhaar offline/OTP identity verification.",
+      fields: [
+        { key: "befisc_api_url", label: "Befisc Aadhaar API Base URL" },
+        { key: "befisc_api_key", label: "Befisc API Key", type: "password" },
+      ],
+      callback: "/api/ats/bgv/verify/aadhaar-offline",
+    },
+    {
+      title: "PAN, Bank & UAN",
+      desc: "Luckpay PAN verification, bank penny-drop/penny-less verification, and UAN/employment history.",
+      fields: [
+        { key: "luckpay_api_url", label: "Luckpay API Base URL" },
+        { key: "luckpay_basic_token", label: "Luckpay Basic Token", type: "password" },
+        { key: "luckpay_client_id", label: "Luckpay Client ID" },
+      ],
+      callback: "/api/onboarding/penny-drop/webhook",
+    },
+    {
+      title: "Criminal / Court Check",
+      desc: "Crimescan court and criminal background verification.",
+      fields: [
+        { key: "crimescan_api_url", label: "Crimescan API Base URL" },
+        { key: "crimescan_api_key", label: "Crimescan API Key", type: "password" },
+      ],
+      callback: "/api/ats/bgv/provider/callback",
+    },
+  ];
 
   if (isLoading) return <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>;
 
@@ -193,8 +245,7 @@ const BgvProviderSettings = () => {
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><ShieldQuestion className="h-5 w-5" /> BGV Provider Configuration</CardTitle>
         <CardDescription>
-          Select the verification provider used in candidate onboarding. API keys are stored encrypted in org settings.
-          {provider === "mock" && <span className="ml-2 font-bold text-amber-600">⚠ Mock mode — all checks return fake results.</span>}
+          Configure the live APIs used in candidate onboarding. Mock verification is not available from this production UI.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -255,26 +306,18 @@ const BgvProviderSettings = () => {
         )}
 
         {provider === "befisc_luckpay" && (
-          <div className="space-y-3 rounded-xl border p-4 bg-slate-50">
-            <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Befisc + Luckpay + Crimescan Settings</p>
-            <p className="text-xs text-slate-500">
-              Befisc handles Aadhaar OTP · Luckpay handles PAN &amp; Bank penny-drop · Crimescan handles court records.
-            </p>
-            {[
-              { key: "befisc_api_key", label: "Befisc API Key", type: "password" },
-              { key: "luckpay_basic_token", label: "Luckpay Basic Token (Base64)", type: "password" },
-              { key: "luckpay_client_id", label: "Luckpay Client ID", type: "text" },
-              { key: "crimescan_api_key", label: "Crimescan API Key", type: "password" },
-            ].map(({ key, label, type }) => (
-              <div key={key}>
-                <Label>{label}</Label>
-                <Input
-                  type={type}
-                  value={form[key] ?? ""}
-                  onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))}
-                  placeholder={type === "password" ? "Enter to update" : undefined}
-                  className="mt-1"
-                />
+          <div className="grid gap-4 lg:grid-cols-2">
+            {serviceCards.map((service) => (
+              <div key={service.title} className="space-y-3 rounded-xl border p-4 bg-slate-50">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-widest text-slate-500">{service.title}</p>
+                  <p className="text-xs text-slate-500 mt-1">{service.desc}</p>
+                </div>
+                {service.fields.map(renderField)}
+                <div className="rounded-lg bg-white border border-slate-200 px-3 py-2">
+                  <p className="text-[11px] font-bold uppercase text-slate-500">Endpoint / Callback</p>
+                  <code className="mt-1 block text-xs font-mono text-slate-700 truncate">{service.callback}</code>
+                </div>
               </div>
             ))}
           </div>

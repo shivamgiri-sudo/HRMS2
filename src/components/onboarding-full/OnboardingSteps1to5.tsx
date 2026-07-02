@@ -965,7 +965,7 @@ export function Step5Bgv({
               const checkType = label.toLowerCase().includes("aadhaar") ? "aadhaar"
                 : label.toLowerCase().includes("pan") ? "pan"
                 : label.toLowerCase().includes("bank") ? "bank"
-                : label.toLowerCase().includes("uan") ? "experience" : null;
+                : label.toLowerCase().includes("uan") ? "employment" : null;
               const check = bgv?.checks.find((c) => checkType && c.check_type?.toLowerCase() === checkType);
               const verified = check?.status === "verified";
               return (

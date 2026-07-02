@@ -1,4 +1,4 @@
-import { getBgvProviderAdapter } from "../ats/bgv-provider.adapter.js";
+import { getConfiguredBgvProviderAdapter } from "../ats/bgv-provider.adapter.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
@@ -24,7 +24,7 @@ export class DigiLockerService {
     requestedDocuments: string[]
   ): Promise<DigiLockerSession> {
     try {
-      const adapter = getBgvProviderAdapter();
+      const adapter = await getConfiguredBgvProviderAdapter();
       const dlSession = await adapter.startDigilocker(candidateId, requestedDocuments);
 
       const sessionId = `DL-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;

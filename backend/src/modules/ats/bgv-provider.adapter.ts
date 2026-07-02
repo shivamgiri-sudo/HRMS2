@@ -1,6 +1,8 @@
 import { randomUUID } from "crypto";
 import axios from "axios";
 import { env } from "../../config/env.js";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -105,6 +107,7 @@ export interface BgvProviderAdapter {
   verifyPan(input: PanVerificationInput): Promise<VerificationResult>;
   verifyBank(input: BankVerificationInput): Promise<VerificationResult>;
   verifyAadhaarOffline(input: AadhaarOfflineInput): Promise<VerificationResult>;
+  verifyUan?(input: { candidateName?: string | null; uanNumber: string }): Promise<VerificationResult & { employmentHistory?: unknown[] }>;
   verifyAddressDoc(input: AddressDocInput): Promise<VerificationResult>;
   verifyEducation(input: EducationVerificationInput): Promise<VerificationResult>;
   verifyCourt(input: CourtVerificationInput): Promise<CourtVerificationResult>;
@@ -177,6 +180,22 @@ export class MockBgvProviderAdapter implements BgvProviderAdapter {
         ...(score >= 60 ? [] : ["ACCOUNT_NAME_MISMATCH"]),
       ],
       raw: { mode: "mock", validIfsc, validAccount, returnedName },
+    };
+  }
+
+  async verifyUan(input: { candidateName?: string | null; uanNumber: string }): Promise<VerificationResult & { employmentHistory?: unknown[] }> {
+    const valid = /^\d{12}$/.test(input.uanNumber.trim());
+    return {
+      status: valid ? "verified" : "failed",
+      providerKey: "mock_bgv",
+      providerRequestId: randomUUID(),
+      providerReferenceId: `MOCK-UAN-${Date.now()}`,
+      matchScore: valid ? 80 : 0,
+      matchedName: input.candidateName ?? null,
+      resultSummary: valid ? "UAN format passed mock verification. Switch provider for live checks." : "Invalid UAN format.",
+      riskFlags: valid ? [] : ["UAN_FORMAT_INVALID"],
+      raw: { mode: "mock", valid },
+      employmentHistory: [],
     };
   }
 
@@ -763,6 +782,16 @@ export interface BgvDbConfig {
   digio_api_url?: string;
   digio_client_id?: string;
   digio_client_secret?: string;
+  digilocker_session_url?: string;
+  digilocker_api_key?: string;
+  digilocker_client_id?: string;
+  befisc_api_url?: string;
+  befisc_api_key?: string;
+  luckpay_api_url?: string;
+  luckpay_basic_token?: string;
+  luckpay_client_id?: string;
+  crimescan_api_url?: string;
+  crimescan_api_key?: string;
 }
 
 export function buildAdapterFromDbConfig(cfg: BgvDbConfig): BgvProviderAdapter {
@@ -799,5 +828,270 @@ export function buildAdapterFromDbConfig(cfg: BgvDbConfig): BgvProviderAdapter {
     (env as any).DIGIO_API_URL = savedUrl;
     return adapter;
   }
+  if (provider === "befisc_luckpay") {
+    return new CompositeBgvProviderAdapter(cfg);
+  }
   return new MockBgvProviderAdapter();
+}
+
+function cleanSettingValue(value: unknown): string | undefined {
+  const str = String(value ?? "").trim();
+  if (!str || str === "••••••••") return undefined;
+  return str;
+}
+
+async function loadBgvDbConfig(): Promise<BgvDbConfig | null> {
+  const keys = [
+    "bgv_provider",
+    "infinity_ai_api_url", "infinity_ai_api_key", "infinity_ai_client_id", "infinity_ai_portal_url",
+    "digio_api_url", "digio_client_id", "digio_client_secret",
+    "digilocker_session_url", "digilocker_api_key", "digilocker_client_id",
+    "befisc_api_url", "befisc_api_key",
+    "luckpay_api_url", "luckpay_basic_token", "luckpay_client_id",
+    "crimescan_api_url", "crimescan_api_key",
+  ];
+  const placeholders = keys.map(() => "?").join(",");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT setting_key, setting_value FROM org_settings WHERE setting_key IN (${placeholders})`,
+    keys,
+  );
+  if (!rows.length) return null;
+  const cfg: Record<string, string> = {};
+  for (const row of rows as RowDataPacket[]) {
+    const value = cleanSettingValue(row.setting_value);
+    if (value !== undefined) cfg[String(row.setting_key)] = value;
+  }
+  return cfg.bgv_provider ? cfg as unknown as BgvDbConfig : null;
+}
+
+export async function getConfiguredBgvProviderAdapter(): Promise<BgvProviderAdapter> {
+  const cfg = await loadBgvDbConfig();
+  if (cfg?.bgv_provider && cfg.bgv_provider !== "mock") {
+    return buildAdapterFromDbConfig(cfg);
+  }
+  if (env.NODE_ENV === "production" || process.env.DISABLE_MOCK_BGV === "true") {
+    throw Object.assign(
+      new Error("Live BGV provider is not configured. Configure DigiLocker/Aadhaar/PAN/Criminal APIs from Super Admin > Settings > BGV Config."),
+      { statusCode: 503 },
+    );
+  }
+  return getBgvProviderAdapter();
+}
+
+class CompositeBgvProviderAdapter implements BgvProviderAdapter {
+  readonly providerKey = "befisc_luckpay";
+  constructor(private readonly cfg: BgvDbConfig) {}
+
+  private async post(baseOrUrl: string | undefined, path: string, payload: Record<string, unknown>, auth: Record<string, string> = {}) {
+    if (!baseOrUrl) throw new Error(`${path} endpoint is not configured in BGV settings`);
+    const url = /^https?:\/\//i.test(baseOrUrl) && !baseOrUrl.endsWith("/") && baseOrUrl.includes(path)
+      ? baseOrUrl
+      : `${baseOrUrl.replace(/\/$/, "")}${path}`;
+    const res = await axios.post(url, payload, { headers: { "Content-Type": "application/json", ...auth }, timeout: 30_000 });
+    return res.data?.data ?? res.data ?? {};
+  }
+
+  private luckpayHeaders() {
+    return {
+      ...(this.cfg.luckpay_basic_token ? { Authorization: `Basic ${this.cfg.luckpay_basic_token}` } : {}),
+      ...(this.cfg.luckpay_client_id ? { "x-client-id": this.cfg.luckpay_client_id } : {}),
+    };
+  }
+
+  private apiKeyHeaders(key?: string): Record<string, string> {
+    return key ? { "x-api-key": key } : {};
+  }
+
+  async verifyPan(input: PanVerificationInput): Promise<VerificationResult> {
+    const requestId = randomUUID();
+    const d = await this.post(this.cfg.luckpay_api_url, "/pan/verify", {
+      request_id: requestId,
+      pan: input.panNumber.trim().toUpperCase(),
+      name: input.candidateName ?? undefined,
+      dob: input.dateOfBirth ?? undefined,
+    }, this.luckpayHeaders());
+    const apiStatus = String(d.status ?? d.result ?? "").toLowerCase();
+    const status: VerificationStatus = ["valid", "verified", "success", "active"].includes(apiStatus)
+      ? "verified"
+      : apiStatus.includes("mismatch") ? "mismatch" : "failed";
+    const matchedName = d.pan_name ?? d.name ?? d.full_name ?? null;
+    return {
+      status,
+      providerKey: this.providerKey,
+      providerRequestId: requestId,
+      providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
+      matchScore: roughNameMatchScore(input.candidateName, matchedName),
+      matchedName,
+      matchedDob: d.dob ?? null,
+      resultSummary: d.message ?? `PAN check: ${status}`,
+      riskFlags: status === "verified" ? [] : [String(d.failure_reason ?? "PAN_CHECK_FAILED").toUpperCase()],
+      raw: d,
+    };
+  }
+
+  async verifyBank(input: BankVerificationInput): Promise<VerificationResult> {
+    const requestId = randomUUID();
+    const d = await this.post(this.cfg.luckpay_api_url, "/bank/pennyless-verify", {
+      request_id: requestId,
+      account_number: input.accountNo.replace(/\s/g, ""),
+      ifsc: input.ifscCode.trim().toUpperCase(),
+      name: input.accountHolderName ?? input.candidateName ?? undefined,
+    }, this.luckpayHeaders());
+    const apiStatus = String(d.status ?? d.result ?? "").toLowerCase();
+    const matchedName = d.registered_name ?? d.account_holder_name ?? d.name ?? null;
+    const score = roughNameMatchScore(input.accountHolderName ?? input.candidateName, matchedName);
+    const status: VerificationStatus = ["valid", "verified", "success", "active"].includes(apiStatus)
+      ? "verified"
+      : apiStatus.includes("mismatch") || score < 60 ? "mismatch" : "failed";
+    return {
+      status,
+      providerKey: this.providerKey,
+      providerRequestId: requestId,
+      providerReferenceId: String(d.reference_id ?? d.utr ?? d.transaction_id ?? requestId),
+      matchScore: score,
+      matchedName,
+      resultSummary: d.message ?? `Bank check: ${status}`,
+      riskFlags: status === "verified" ? [] : [String(d.failure_reason ?? "BANK_CHECK_FAILED").toUpperCase()],
+      raw: d,
+    };
+  }
+
+  async verifyUan(input: { candidateName?: string | null; uanNumber: string }): Promise<VerificationResult & { employmentHistory?: unknown[] }> {
+    const requestId = randomUUID();
+    const d = await this.post(this.cfg.luckpay_api_url, "/uan/verify", {
+      request_id: requestId,
+      uan: input.uanNumber.trim(),
+      name: input.candidateName ?? undefined,
+    }, this.luckpayHeaders());
+    const apiStatus = String(d.status ?? d.result ?? "").toLowerCase();
+    const status: VerificationStatus = ["valid", "verified", "success", "active"].includes(apiStatus)
+      ? "verified"
+      : apiStatus.includes("mismatch") ? "mismatch" : "failed";
+    const matchedName = d.name ?? d.member_name ?? d.full_name ?? null;
+    const history = Array.isArray(d.employment_history) ? d.employment_history : Array.isArray(d.establishments) ? d.establishments : [];
+    return {
+      status,
+      providerKey: this.providerKey,
+      providerRequestId: requestId,
+      providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
+      matchScore: roughNameMatchScore(input.candidateName, matchedName),
+      matchedName,
+      resultSummary: d.message ?? `UAN/employment check: ${status}`,
+      riskFlags: status === "verified" ? [] : [String(d.failure_reason ?? "UAN_CHECK_FAILED").toUpperCase()],
+      raw: d,
+      employmentHistory: history,
+    };
+  }
+
+  async verifyAadhaarOffline(input: AadhaarOfflineInput): Promise<VerificationResult> {
+    const requestId = randomUUID();
+    const d = await this.post(this.cfg.befisc_api_url, "/aadhaar/offline-verify", {
+      request_id: requestId,
+      document_id: input.documentId ?? undefined,
+      aadhaar_last4: input.aadhaarLast4 ?? undefined,
+      name: input.candidateName ?? undefined,
+    }, this.apiKeyHeaders(this.cfg.befisc_api_key));
+    const apiStatus = String(d.status ?? d.result ?? "").toLowerCase();
+    const status: VerificationStatus = ["valid", "verified", "success"].includes(apiStatus)
+      ? "verified"
+      : ["pending", "manual_review", "review"].includes(apiStatus) ? "manual_review" : "failed";
+    const matchedName = d.name ?? d.matched_name ?? null;
+    return {
+      status,
+      providerKey: this.providerKey,
+      providerRequestId: requestId,
+      providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
+      matchScore: roughNameMatchScore(input.candidateName, matchedName),
+      matchedName,
+      resultSummary: d.message ?? `Aadhaar check: ${status}`,
+      riskFlags: status === "verified" ? [] : [String(d.failure_reason ?? "AADHAAR_CHECK_FAILED").toUpperCase()],
+      raw: d,
+    };
+  }
+
+  async verifyAddressDoc(input: AddressDocInput): Promise<VerificationResult> {
+    return {
+      status: "manual_review",
+      providerKey: this.providerKey,
+      providerRequestId: randomUUID(),
+      providerReferenceId: `ADDR-MANUAL-${Date.now()}`,
+      matchScore: null,
+      matchedName: input.candidateName ?? null,
+      resultSummary: `${input.docType} verification is not configured for Befisc/Luckpay/Crimescan provider. Use DigiLocker/manual review.`,
+      riskFlags: ["ADDRESS_DOC_MANUAL_REVIEW"],
+      raw: { provider: this.providerKey, docType: input.docType },
+    };
+  }
+
+  async verifyEducation(input: EducationVerificationInput): Promise<VerificationResult> {
+    return {
+      status: "manual_review",
+      providerKey: this.providerKey,
+      providerRequestId: randomUUID(),
+      providerReferenceId: `EDU-MANUAL-${Date.now()}`,
+      matchScore: null,
+      matchedName: input.candidateName ?? null,
+      resultSummary: `${input.boardType} education verification is not configured for Befisc/Luckpay/Crimescan provider. Use manual/vendor review.`,
+      riskFlags: ["EDUCATION_MANUAL_REVIEW"],
+      raw: { provider: this.providerKey, boardType: input.boardType },
+    };
+  }
+
+  async verifyCourt(input: CourtVerificationInput): Promise<CourtVerificationResult> {
+    const requestId = randomUUID();
+    const d = await this.post(this.cfg.crimescan_api_url, "/court/verify", {
+      request_id: requestId,
+      name: input.candidateName,
+      dob: input.dateOfBirth,
+      father_name: input.fatherName ?? undefined,
+      address: input.address ?? undefined,
+      state: input.state ?? undefined,
+      pincode: input.pincode ?? undefined,
+    }, this.apiKeyHeaders(this.cfg.crimescan_api_key));
+    const apiStatus = String(d.status ?? d.result ?? "").toLowerCase();
+    const status: VerificationStatus = ["clear", "no_records", "verified", "success"].includes(apiStatus)
+      ? "verified"
+      : ["positive", "records_found", "failed"].includes(apiStatus) ? "failed" : "manual_review";
+    const cases = Array.isArray(d.court_cases ?? d.cases) ? (d.court_cases ?? d.cases).map((c: Record<string, unknown>) => ({
+      caseType: String(c.case_type ?? c.type ?? ""),
+      caseNumber: String(c.case_number ?? c.number ?? ""),
+      court: String(c.court_name ?? c.court ?? ""),
+      year: Number(c.year ?? 0),
+      status: String(c.status ?? ""),
+    })) : null;
+    return {
+      status,
+      providerKey: this.providerKey,
+      providerRequestId: requestId,
+      providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
+      matchScore: null,
+      matchedName: input.candidateName,
+      resultSummary: d.message ?? `Criminal/court check: ${status}`,
+      riskFlags: cases?.length ? ["COURT_RECORDS_FOUND"] : [],
+      courtCases: cases,
+      raw: d,
+    };
+  }
+
+  async startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession> {
+    const state = randomUUID();
+    const d = await this.post(this.cfg.digilocker_session_url, "", {
+      state,
+      candidate_id: candidateId,
+      documents: requestedDocuments,
+      redirect_uri: `${env.FRONTEND_URL}/candidate-onboarding-full?step=digilocker`,
+    }, {
+      ...this.apiKeyHeaders(this.cfg.digilocker_api_key),
+      ...(this.cfg.digilocker_client_id ? { "x-client-id": this.cfg.digilocker_client_id } : {}),
+    });
+    return {
+      state: String(d.state ?? state),
+      authUrl: String(d.auth_url ?? d.redirect_url ?? d.access_link ?? ""),
+      expiresAt: d.expires_at ? new Date(d.expires_at) : new Date(Date.now() + 30 * 60 * 1000),
+    };
+  }
+
+  async initiateCandidateBgv(_input: BgvCandidatePortalInput): Promise<BgvPortalInitiationResult> {
+    throw Object.assign(new Error("Hosted BGV portal is not configured for Befisc/Luckpay/Crimescan. Use individual onboarding checks."), { statusCode: 501 });
+  }
 }

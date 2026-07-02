@@ -95,7 +95,7 @@ const envSchema = z.object({
   DIALER_DB_NAME: z.string().default(""),
 
   BGV_WEBHOOK_SECRET: z.string().optional(),
-  BGV_PROVIDER: z.enum(["mock", "infinity_ai", "digio"]).default("mock"),
+  BGV_PROVIDER: z.enum(["mock", "infinity_ai", "digio", "befisc_luckpay"]).default("mock"),
   INFINITY_AI_API_URL: z.string().url().default("https://api.infinityai.in"),
   INFINITY_AI_API_KEY: z.string().optional(),
   INFINITY_AI_CLIENT_ID: z.string().optional(),
