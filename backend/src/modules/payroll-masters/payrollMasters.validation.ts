@@ -11,6 +11,16 @@ export const CreateSlabSchema = z.object({
 
 export const UpdateSlabSchema = CreateSlabSchema.partial();
 
+export const CreateBandSchema = z.object({
+  band_code: z.string().min(1).max(20),
+  band_name: z.string().min(1).max(100),
+  slab_from: z.coerce.number().min(0),
+  slab_to: z.coerce.number().min(0),
+  active_status: z.coerce.number().int().min(0).max(1).default(1),
+});
+
+export const UpdateBandSchema = CreateBandSchema.partial();
+
 const amtType = z.enum(['fixed', 'pct']).default('fixed');
 
 export const CreatePackageSchema = z.object({

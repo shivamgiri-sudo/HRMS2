@@ -49,6 +49,53 @@ export async function deleteSlab(id: string) {
   await db.execute('DELETE FROM salary_slab_master WHERE id = ?', [id]);
 }
 
+// ── SALARY BANDS ──────────────────────────────────────────────────────────────
+
+export async function listBands(includeInactive = false) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, band_code, band_name, slab_from, slab_to, active_status, created_at, updated_at
+       FROM salary_band_master
+      ${includeInactive ? '' : 'WHERE active_status = 1'}
+      ORDER BY slab_from ASC, band_code ASC`
+  );
+  return rows;
+}
+
+export async function getBandById(id: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, band_code, band_name, slab_from, slab_to, active_status, created_at, updated_at
+       FROM salary_band_master
+      WHERE id = ?`,
+    [id]
+  );
+  return rows[0] ?? null;
+}
+
+export async function createBand(data: {
+  band_code: string; band_name: string; slab_from: number; slab_to: number; active_status: number;
+}) {
+  const id = randomUUID();
+  await db.execute(
+    `INSERT INTO salary_band_master (id, band_code, band_name, slab_from, slab_to, active_status)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [id, data.band_code, data.band_name, data.slab_from, data.slab_to, data.active_status]
+  );
+  return getBandById(id);
+}
+
+export async function updateBand(id: string, data: Partial<{
+  band_code: string; band_name: string; slab_from: number; slab_to: number; active_status: number;
+}>) {
+  const fields = Object.keys(data).map(k => `${k} = ?`).join(', ');
+  if (!fields) return getBandById(id);
+  await db.execute(`UPDATE salary_band_master SET ${fields}, updated_at = NOW() WHERE id = ?`, [...Object.values(data), id]);
+  return getBandById(id);
+}
+
+export async function deleteBand(id: string) {
+  await updateBand(id, { active_status: 0 });
+}
+
 // ── PACKAGES ──────────────────────────────────────────────────────────────────
 
 function calcGrossAndCtc(data: {

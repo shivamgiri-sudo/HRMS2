@@ -5,6 +5,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import * as svc from './payrollMasters.service.js';
 import {
   CreateSlabSchema, UpdateSlabSchema,
+  CreateBandSchema, UpdateBandSchema,
   CreatePackageSchema, UpdatePackageSchema,
   CreateMatrixEntrySchema, UpdateMatrixEntrySchema, BulkMatrixUpsertSchema,
   CreateMinWageSchema, UpdateMinWageSchema,
@@ -36,6 +37,30 @@ payrollMastersRouter.put('/slabs/:id', requireRole('admin', 'finance'), h(async 
 
 payrollMastersRouter.delete('/slabs/:id', requireRole('admin'), h(async (req, res) => {
   await svc.deleteSlab(req.params.id);
+  res.json({ success: true });
+}));
+
+// ── SALARY BANDS ──────────────────────────────────────────────────────────────
+payrollMastersRouter.get('/bands', h(async (req, res) => {
+  const includeInactive = String(req.query.include_inactive ?? '') === '1';
+  const data = await svc.listBands(includeInactive);
+  res.json({ success: true, data });
+}));
+
+payrollMastersRouter.post('/bands', requireRole('admin', 'finance', 'hr'), h(async (req, res) => {
+  const parsed = CreateBandSchema.parse(req.body);
+  const data = await svc.createBand(parsed);
+  res.status(201).json({ success: true, data });
+}));
+
+payrollMastersRouter.put('/bands/:id', requireRole('admin', 'finance', 'hr'), h(async (req, res) => {
+  const parsed = UpdateBandSchema.parse(req.body);
+  const data = await svc.updateBand(req.params.id, parsed);
+  res.json({ success: true, data });
+}));
+
+payrollMastersRouter.delete('/bands/:id', requireRole('admin'), h(async (req, res) => {
+  await svc.deleteBand(req.params.id);
   res.json({ success: true });
 }));
 
