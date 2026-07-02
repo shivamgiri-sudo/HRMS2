@@ -64,7 +64,7 @@ import { app } from "../src/app.js";
 const svc = integrationService as { [K in keyof typeof integrationService]: ReturnType<typeof vi.fn> };
 const mockExecuteConnector = executeConnector as ReturnType<typeof vi.fn>;
 
-const AUTH = { Authorization: "Bearer valid.token" };
+const AUTH = { Authorization: "Bearer mock-token-admin" };
 
 const fakeConfig = {
   id: "cfg-1",

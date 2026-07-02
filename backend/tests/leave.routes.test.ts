@@ -58,7 +58,7 @@ import { app } from "../src/app.js";
 
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 const svc = leaveService as { [K in keyof typeof leaveService]: ReturnType<typeof vi.fn> };
-const AUTH = { Authorization: "Bearer valid.token" };
+const AUTH = { Authorization: "Bearer mock-token-admin" };
 
 const fakeType    = { id: "lt-1", leave_code: "CL", leave_name: "Casual Leave" };
 const fakeRequest = { id: "lr-1", employee_id: "emp-1", status: "pending" };

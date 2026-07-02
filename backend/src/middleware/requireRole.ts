@@ -33,10 +33,24 @@ export function requireRole(...allowedRoles: string[]) {
         return res.status(401).json({ success: false, message: "Unauthenticated" });
       }
 
-      // Demo bypass: mock-token-super-admin-role gets all roles when INTERNAL_DEMO_BYPASS=true
+      // Demo bypass: resolve roles from req.authUser.role (set by DEMO_TOKEN_MAP)
+      // instead of querying the DB. This allows mock-token-{role} to correctly
+      // exercise role-based access control in tests / demo mode.
       if (req.authUser.isDemo && process.env.INTERNAL_DEMO_BYPASS === "true" && process.env.NODE_ENV !== "production") {
-        (req as AuthenticatedRequest & { userRoles: string[] }).userRoles = ["super_admin", ...allowedRoles];
-        return next();
+        const demoRole = req.authUser.role || 'employee';
+        const userRoles = [demoRole];
+        // Super_admin bypass still applies for the dedicated super-admin token
+        if (userRoles.includes('super_admin')) {
+          (req as AuthenticatedRequest & { userRoles: string[] }).userRoles = userRoles;
+          return next();
+        }
+        const expandedUserRoles = expandRoles(userRoles);
+        const expandedAllowed   = expandRoles(allowedRoles);
+        if (expandedAllowed.some((role) => expandedUserRoles.includes(role))) {
+          (req as AuthenticatedRequest & { userRoles: string[] }).userRoles = userRoles;
+          return next();
+        }
+        return res.status(403).json({ success: false, message: "Access denied. Required: " + allowedRoles.join(" or ") });
       }
 
       const [rows] = await db.execute<RowDataPacket[]>(

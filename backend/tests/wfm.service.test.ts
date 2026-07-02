@@ -5,10 +5,6 @@ vi.mock("../src/db/mysql.js", () => ({
   pingDb: vi.fn(),
 }));
 vi.mock("../src/modules/engagement/badge.service.js", () => ({ queueAutoAwards: vi.fn() }));
-vi.mock("../src/db/supabaseAdmin.js", () => ({
-  supabaseAdmin: {},
-  supabaseAuthClient: { auth: { getUser: vi.fn() } },
-}));
 
 import { db } from "../src/db/mysql.js";
 import { wfmService } from "../src/modules/wfm/wfm.service.js";

@@ -48,7 +48,7 @@ import { app } from "../src/app.js";
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 const svc = integrationService as { [K in keyof typeof integrationService]: ReturnType<typeof vi.fn> };
 
-const AUTH = { Authorization: "Bearer valid.token" };
+const AUTH = { Authorization: "Bearer mock-token-admin" };
 
 beforeEach(() => {
   vi.clearAllMocks();

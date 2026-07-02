@@ -2,20 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import express from "express";
 import request from "supertest";
 
-// Mock the supabaseAdmin module before importing the middleware
-vi.mock("../src/db/supabaseAdmin.js", () => ({
-  supabaseAdmin: {},
-  supabaseAuthClient: {
-    auth: {
-      getUser: vi.fn(),
-    },
-  },
-}));
-
-import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
 import { requireAuth } from "../src/middleware/authMiddleware.js";
-
-const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 
 function buildApp() {
   const app = express();
@@ -46,39 +33,27 @@ describe("requireAuth middleware", () => {
     expect(res.body.message).toMatch(/Missing authorization token/i);
   });
 
-  it("returns 401 when Supabase returns an error", async () => {
-    mockGetUser.mockResolvedValueOnce({
-      data: { user: null },
-      error: { message: "JWT expired" },
-    });
-
+  it("returns 401 when token is not in demo map", async () => {
     const res = await request(buildApp())
       .get("/protected")
-      .set("Authorization", "Bearer bad.token.here");
-    expect(res.status).toBe(401);
-    expect(res.body.message).toMatch(/Invalid or expired token/i);
-  });
-
-  it("returns 401 when Supabase returns no user", async () => {
-    mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: null });
-
-    const res = await request(buildApp())
-      .get("/protected")
-      .set("Authorization", "Bearer sometoken");
+      .set("Authorization", "Bearer mock-token-unknown");
     expect(res.status).toBe(401);
   });
 
-  it("attaches authUser and calls next when token is valid", async () => {
-    mockGetUser.mockResolvedValueOnce({
-      data: { user: { id: "user-123", email: "admin@mcn.com" } },
-      error: null,
-    });
-
+  it("attaches authUser and calls next for valid demo token", async () => {
     const res = await request(buildApp())
       .get("/protected")
-      .set("Authorization", "Bearer valid.token");
+      .set("Authorization", "Bearer mock-token-admin");
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.userId).toBe("user-1");
+    expect(res.body.userId).toBe("demo-admin-id");
+  });
+
+  it("attaches authUser for different demo roles", async () => {
+    const res = await request(buildApp())
+      .get("/protected")
+      .set("Authorization", "Bearer mock-token-hr");
+    expect(res.status).toBe(200);
+    expect(res.body.userId).toBe("demo-hr-id");
   });
 });

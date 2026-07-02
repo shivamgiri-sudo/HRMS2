@@ -58,7 +58,7 @@ const fakeProcess = {
 };
 
 function authHeader() {
-  return { Authorization: "Bearer valid.token" };
+  return { Authorization: "Bearer mock-token-admin" };
 }
 
 beforeEach(() => {

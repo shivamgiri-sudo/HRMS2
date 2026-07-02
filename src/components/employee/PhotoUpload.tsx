@@ -1,6 +1,6 @@
 /**
  * PhotoUpload — click-to-upload employee avatar with preview,
- * progress indication, and 3 MB / jpg+png+webp validation.
+ * progress indication, and 15 MB / jpg+png+webp validation.
  *
  * Usage:
  *   <PhotoUpload
@@ -16,9 +16,13 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
 
-const MAX_BYTES = 3 * 1024 * 1024; // 3 MB
+const MAX_BYTES = 15 * 1024 * 1024; // 15 MB
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const API_BASE = (import.meta.env.VITE_HRMS_API_URL || import.meta.env.VITE_API_URL || "http://localhost:5055").replace(/\/$/, "");
+const API_BASE = (
+  import.meta.env.VITE_HRMS_API_URL ||
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.DEV ? "http://localhost:5055" : "")
+).replace(/\/$/, "");
 
 // normalizeMediaUrl is imported from @/lib/mediaUrl — kept local alias for internal use
 const normalizeFileUrl = normalizeMediaUrl;
@@ -118,7 +122,7 @@ export function PhotoUpload({
       return;
     }
     if (file.size > MAX_BYTES) {
-      setError("Image must be under 3 MB.");
+      setError("Image must be under 15 MB.");
       return;
     }
 

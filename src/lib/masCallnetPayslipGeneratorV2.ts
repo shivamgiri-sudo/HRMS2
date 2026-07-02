@@ -88,7 +88,7 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
   // === QR CODE (Top Right) ===
   try {
     const qrData = buildPayslipQrData(data.empCode, data.monthYear);
-    const qrUrl = buildQrCodeUrl(qrData, 80);
+    const qrUrl = await buildQrCodeUrl(qrData, 80);
     const qrSize = 15; // 15mm in PDF
     const qrX = pageWidth - 14 - qrSize; // 14mm margin from right
     doc.addImage(qrUrl, 'PNG', qrX, currentY - 2, qrSize, qrSize);

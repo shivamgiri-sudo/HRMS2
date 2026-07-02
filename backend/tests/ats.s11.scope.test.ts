@@ -54,7 +54,11 @@ function makeAuthMiddleware(userId: string, role: string) {
 }
 
 vi.mock("../src/middleware/authMiddleware.js", () => ({
-  requireAuth: (_req: any, _res: any, next: any) => next(),
+  requireAuth: (req: any, _res: any, next: any) => {
+    req.authUser = { id: "demo-user-id", role: "employee" };
+    req.user = { id: "demo-user-id", email: "demo@mascallnet.com", role: "employee" };
+    next();
+  },
 }));
 
 vi.mock("../src/middleware/requireRole.js", () => ({

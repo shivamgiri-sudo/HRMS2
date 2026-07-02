@@ -81,6 +81,7 @@ vi.mock("../src/modules/ats/salary.calculator.js", () => ({
 vi.mock("../src/middleware/authMiddleware.js", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
     req.authUser = { id: "user-hr-1", role: "hr" };
+    req.user = { id: "user-hr-1", email: "hr@test.com", role: "hr" };
     next();
   },
 }));

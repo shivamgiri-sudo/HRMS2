@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { breakSpecialAllowance } from "../payroll/payroll.service.js";
 
 const r2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -112,11 +113,14 @@ export const payrollComplianceService = {
     const basic = r2(grossMonthly * (basicPct / 100));
     const hra = r2(grossMonthly * (hraPct / 100));
     const special = r2(grossMonthly - basic - hra);
+    const { conv, ma, pa } = breakSpecialAllowance(special);
 
     return [
       { component_code: "BASIC", component_name: "Basic Salary", component_type: "earning", amount: basic, source: "structure", taxable: true, pf_applicable: true, esic_applicable: true },
       { component_code: "HRA", component_name: "House Rent Allowance", component_type: "earning", amount: hra, source: "structure", taxable: true, pf_applicable: false, esic_applicable: true },
-      { component_code: "SPECIAL", component_name: "Special Allowance", component_type: "earning", amount: special, source: "structure", taxable: true, pf_applicable: false, esic_applicable: true },
+      { component_code: "CONV", component_name: "Conveyance Allowance", component_type: "earning", amount: conv, source: "structure", taxable: true, pf_applicable: false, esic_applicable: true },
+      { component_code: "MA", component_name: "Medical Allowance", component_type: "earning", amount: ma, source: "structure", taxable: true, pf_applicable: false, esic_applicable: true },
+      { component_code: "PA", component_name: "Personal Allowance", component_type: "earning", amount: pa, source: "structure", taxable: true, pf_applicable: false, esic_applicable: true },
     ];
   },
 

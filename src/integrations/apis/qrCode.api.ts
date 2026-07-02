@@ -1,12 +1,22 @@
-/**
- * QR Code generation using free QR Server API (no API key needed)
- * QR codes encode real verification URLs so scanning opens a browser page.
- */
+import QRCode from "qrcode";
 
 const APP_BASE_URL = import.meta.env.VITE_APP_URL ?? "https://mcnhrms.teammas.in";
 
-export function buildQrCodeUrl(data: string, size = 120): string {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(data)}`;
+const QR_SERVER_URL = "https://api.qrserver.com/v1/create-qr-code/";
+
+/**
+ * Build QR as data URL using local library, falling back to external API.
+ */
+export async function buildQrCodeUrl(data: string, size = 120): Promise<string> {
+  try {
+    return await QRCode.toDataURL(data, {
+      width: size,
+      margin: 1,
+      color: { dark: "#000000", light: "#ffffff" },
+    });
+  } catch {
+    return `${QR_SERVER_URL}?size=${size}x${size}&data=${encodeURIComponent(data)}`;
+  }
 }
 
 /** Payslip QR → opens public payslip verification page */

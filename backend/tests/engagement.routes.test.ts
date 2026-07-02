@@ -57,7 +57,7 @@ describe("engagement routes", () => {
 
     const response = await request(app)
       .get("/api/engagement/badges")
-      .set({ Authorization: "Bearer valid.token" });
+      .set({ Authorization: "Bearer mock-token-admin" });
 
     expect(response.status).toBe(200);
     expect(response.body.data[0].badge_name).toBe("Early Bird");

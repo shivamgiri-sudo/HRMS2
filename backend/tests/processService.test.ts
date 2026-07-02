@@ -6,12 +6,6 @@ vi.mock("../src/modules/process/process.repository.js", () => ({
   getProcessRepository: vi.fn(),
 }));
 
-// Mock supabaseAdmin so env validation doesn't fail
-vi.mock("../src/db/supabaseAdmin.js", () => ({
-  supabaseAdmin: {},
-  supabaseAuthClient: { auth: { getUser: vi.fn() } },
-}));
-
 import { getProcessRepository } from "../src/modules/process/process.repository.js";
 import { processService } from "../src/modules/process/process.service.js";
 

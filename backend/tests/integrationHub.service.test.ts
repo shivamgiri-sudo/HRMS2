@@ -5,11 +5,6 @@ vi.mock("../src/db/mysql.js", () => ({
   pingDb: vi.fn(),
 }));
 
-vi.mock("../src/db/supabaseAdmin.js", () => ({
-  supabaseAdmin: {},
-  supabaseAuthClient: { auth: { getUser: vi.fn() } },
-}));
-
 import { db } from "../src/db/mysql.js";
 import { integrationService } from "../src/modules/integration-hub/integration.service.js";
 

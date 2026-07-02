@@ -539,12 +539,17 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
     `SELECT e.*, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS full_name,
             d.designation_name, b.branch_name, b.call_centre_code,
             p.process_name, dept.dept_name,
-            DATEDIFF(NOW(), e.date_of_joining) AS days_employed
+            DATEDIFF(NOW(), e.date_of_joining) AS days_employed,
+            eec.name AS emergency_name,
+            eec.relationship AS emergency_relationship,
+            eec.mobile AS emergency_mobile
        FROM employees e
        LEFT JOIN designation_master d ON d.id = e.designation_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN process_master p ON p.id = e.process_id
        LEFT JOIN department_master dept ON dept.id = e.department_id
+       LEFT JOIN employee_emergency_contact eec
+         ON eec.employee_id = e.id AND eec.contact_seq = 1
       WHERE e.id = ? LIMIT 1`,
     [targetId]
   );
@@ -645,7 +650,14 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
 
   return res.json({
     data: {
-      employee: emp,
+      employee: {
+        ...emp,
+        emergency_contact: emp.emergency_name ? {
+          name: emp.emergency_name,
+          relationship: emp.emergency_relationship,
+          mobile: emp.emergency_mobile,
+        } : null,
+      },
       leave_balances: leaveBalances,
       attendance,
       performance,

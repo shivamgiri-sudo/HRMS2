@@ -56,7 +56,7 @@ const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 const svc = rosterService as { [K in keyof typeof rosterService]: ReturnType<typeof vi.fn> };
 const mockParseCsv = parseRosterCsv as ReturnType<typeof vi.fn>;
 
-const AUTH = { Authorization: "Bearer valid.token" };
+const AUTH = { Authorization: "Bearer mock-token-admin" };
 
 const fakePlan = {
   id: "plan-1", plan_name: "May Week 1", process_id: "proc-1", branch_id: null,

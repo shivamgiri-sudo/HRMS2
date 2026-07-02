@@ -1,5 +1,7 @@
+import { useState, useEffect } from "react";
 import { buildEmployeeIdQrData, buildQrCodeUrl } from "@/integrations/apis/qrCode.api";
 import { Card } from "@/components/ui/card";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 
 interface EmployeeIDCardProps {
   employeeId: string;
@@ -20,8 +22,12 @@ export function EmployeeIDCard({
   emergencyContact,
   bloodGroup,
 }: EmployeeIDCardProps) {
-  const qrData = buildEmployeeIdQrData(employeeCode, employeeId);
-  const qrUrl = buildQrCodeUrl(qrData, 100);
+  const [qrUrl, setQrUrl] = useState("");
+
+  useEffect(() => {
+    const qrData = buildEmployeeIdQrData(employeeCode, employeeId);
+    buildQrCodeUrl(qrData, 100).then(setQrUrl).catch(() => setQrUrl(""));
+  }, [employeeCode, employeeId]);
 
   return (
     <Card className="w-[340px] bg-white border-2 border-gray-200 rounded-xl overflow-hidden shadow-lg">
@@ -39,7 +45,7 @@ export function EmployeeIDCard({
       <div className="px-6 py-4 flex justify-center">
         <div className="w-28 h-28 rounded-lg overflow-hidden border-4 border-red-500 shadow-md">
           {photoUrl ? (
-            <img src={photoUrl} alt={fullName} className="w-full h-full object-cover" />
+            <img src={normalizeMediaUrl(photoUrl)} alt={fullName} className="w-full h-full object-cover" />
           ) : (
             <div className="w-full h-full bg-gray-200 flex items-center justify-center text-gray-400 text-xs">
               No Photo

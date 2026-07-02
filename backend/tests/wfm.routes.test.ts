@@ -61,7 +61,7 @@ import { app } from "../src/app.js";
 
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 const svc = wfmService as { [K in keyof typeof wfmService]: ReturnType<typeof vi.fn> };
-const AUTH = { Authorization: "Bearer valid.token" };
+const AUTH = { Authorization: "Bearer mock-token-admin" };
 
 const fakeShift = { id: "shift-1", shift_code: "GEN", shift_name: "General", start_time: "09:00", end_time: "18:00", required_minutes: 540, active_status: 1 };
 const fakeSession = { id: "sess-1", employee_id: "emp-1", session_date: "2026-05-21", current_status: "Logged In" };

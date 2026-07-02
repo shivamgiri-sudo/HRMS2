@@ -51,7 +51,7 @@ import { app } from "../src/app.js";
 
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 const svc = employeeService as { [K in keyof typeof employeeService]: ReturnType<typeof vi.fn> };
-const AUTH = { Authorization: "Bearer valid.token" };
+const AUTH = { Authorization: "Bearer mock-token-admin" };
 
 const fakeEmployee = {
   id: "emp-1",

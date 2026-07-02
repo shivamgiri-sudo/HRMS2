@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { payrollService } from "./payroll.service.js";
+import { payrollService, breakSpecialAllowance } from "./payroll.service.js";
 import type { SalaryPrepRun } from "./payroll.types.js";
 import { maternityService } from "../compliance/maternity.service.js";
 
@@ -419,6 +419,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     const totalDedFinal = calc.total_deductions + advanceRecovery;
 
     // 6. Upsert prep line
+    const prepLineId = randomUUID();
     await db.execute(
       `INSERT INTO salary_prep_line
          (id, run_id, employee_id, employee_code,
@@ -427,7 +428,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
           basic, hra, special_allowance,
           pf_employee, pf_employer, esic_employee, esic_employer,
           professional_tax, tds, tds_amount, lwp_deduction, advance_recovery, status)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
        ON DUPLICATE KEY UPDATE
          working_days = VALUES(working_days), present_days = VALUES(present_days),
          lwp_days = VALUES(lwp_days), gross_salary = VALUES(gross_salary),
@@ -441,7 +442,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
          lwp_deduction = VALUES(lwp_deduction), advance_recovery = VALUES(advance_recovery),
          status = 'calculated'`,
       [
-        runId, emp.employee_id, emp.employee_code,
+        prepLineId, runId, emp.employee_id, emp.employee_code,
         att.working_days, att.present_days, att.leave_days, att.lwp_days, att.late_marks, att.dialer_hours,
         calc.gross_salary, grossMonthly, totalDedFinal, netPayFinal,
         calc.basic, calc.hra, calc.special_allowance,
@@ -449,6 +450,26 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         calc.professional_tax, tdsMonthly, tdsMonthly, lwpDeduction, advanceRecovery,
       ]
     );
+
+    // 6b. Insert component-level breakdown for payslip display
+    const { conv, ma, pa } = breakSpecialAllowance(calc.special_allowance);
+    const components = [
+      { code: "BASIC", name: "Basic Salary", amount: calc.basic },
+      { code: "HRA", name: "House Rent Allowance", amount: calc.hra },
+      { code: "CONV", name: "Conveyance Allowance", amount: conv },
+      { code: "MA", name: "Medical Allowance", amount: ma },
+      { code: "PA", name: "Personal Allowance", amount: pa },
+    ];
+    for (const comp of components) {
+      await db.execute(
+        `INSERT INTO salary_prep_line_component
+           (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
+         VALUES (?, ?, ?, ?, ?, ?, 'earning', ?, 'structure', 1)
+         ON DUPLICATE KEY UPDATE
+           amount = VALUES(amount), source = VALUES(source), taxable = VALUES(taxable)`,
+        [randomUUID(), runId, prepLineId, emp.employee_id, comp.code, comp.name, comp.amount]
+      );
+    }
 
     totalGross += calc.gross_salary;
     totalDed   += totalDedFinal;

@@ -551,3 +551,24 @@ export const payrollService = {
     return Array.isArray(updated) && updated.length ? updated[0] : null;
   },
 };
+
+export function breakSpecialAllowance(specialAmount: number): { conv: number; ma: number; pa: number } {
+  const CONV_DEFAULT = 1600;
+  const MA_DEFAULT = 1250;
+  const totalDefault = CONV_DEFAULT + MA_DEFAULT;
+
+  if (specialAmount <= 0) return { conv: 0, ma: 0, pa: 0 };
+
+  if (specialAmount >= totalDefault) {
+    return {
+      conv: CONV_DEFAULT,
+      ma: MA_DEFAULT,
+      pa: Math.round((specialAmount - totalDefault) * 100) / 100,
+    };
+  }
+
+  const conv = Math.round((specialAmount * CONV_DEFAULT / totalDefault) * 100) / 100;
+  const ma = Math.round((specialAmount * MA_DEFAULT / totalDefault) * 100) / 100;
+  const pa = Math.round((specialAmount - conv - ma) * 100) / 100;
+  return { conv, ma, pa };
+}

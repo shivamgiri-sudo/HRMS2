@@ -52,7 +52,7 @@ const isRole = hasRole as ReturnType<typeof vi.fn>;
 const inScope = hasProcessScope as ReturnType<typeof vi.fn>;
 const employeeForUser = getEmployeeForUser as ReturnType<typeof vi.fn>;
 const svc = service as { [K in keyof typeof service]: ReturnType<typeof vi.fn> };
-const AUTH = { Authorization: "Bearer valid.token" };
+const AUTH = { Authorization: "Bearer mock-token-admin" };
 const cycle = { id: "cycle-1", process_id: "process-1", branch_id: "branch-1", week_start_date: "2026-06-01", week_end_date: "2026-06-07", status: "draft" };
 
 beforeEach(() => {

@@ -59,7 +59,7 @@ import { app } from "../src/app.js";
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 const svc = payrollService as { [K in keyof typeof payrollService]: ReturnType<typeof vi.fn> };
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
-const AUTH = { Authorization: "Bearer valid.token" };
+const AUTH = { Authorization: "Bearer mock-token-admin" };
 
 const fakeStructure = { id: "str-1", structure_code: "BPO_A", structure_name: "BPO Grade A" };
 const fakeComponent = { id: "cmp-1", component_code: "BASIC", component_type: "earning" };

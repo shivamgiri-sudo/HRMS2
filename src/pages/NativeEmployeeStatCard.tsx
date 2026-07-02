@@ -55,6 +55,15 @@ interface Employee {
   process_name: string | null;
   dept_name: string | null;
   days_employed: number;
+  blood_group: string | null;
+  avatar_url: string | null;
+  photo_url: string | null;
+}
+
+interface EmergencyContact {
+  name: string;
+  relationship: string;
+  mobile: string;
 }
 
 interface LeaveBalance {
@@ -689,8 +698,9 @@ export default function NativeEmployeeStatCard() {
               employeeCode={card.employee.employee_code}
               fullName={card.employee.full_name}
               designation={card.employee.designation_name ?? "—"}
-              emergencyContact="Contact HR"
-              bloodGroup="—"
+              photoUrl={card.employee.avatar_url ?? card.employee.photo_url ?? undefined}
+              emergencyContact={card.employee.emergency_contact?.mobile ?? "Contact HR"}
+              bloodGroup={card.employee.blood_group ?? "—"}
             />
             <div className="mt-3 flex justify-center">
               <button
