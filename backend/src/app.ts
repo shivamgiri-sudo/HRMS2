@@ -359,5 +359,7 @@ app.use("/api/ats/super-admin", superAdminRouter);
 import { aiInsightsRouter } from "./modules/ai/ai-insights.routes.js";
 app.use("/api/ai", aiInsightsRouter);
 
+app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
+
 app.use(notFoundHandler);
 app.use(errorHandler);

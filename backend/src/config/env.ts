@@ -24,17 +24,8 @@ const envSchema = z.object({
   LMS_DB_PORT:     z.coerce.number().default(3306),
   LMS_DB_USER:     z.string().default(""),
   LMS_DB_PASSWORD: z.string().default(""),
-  LMS_DB_NAME:     z.string().default("mcn_lms"),
+  LMS_DB_NAME:     z.string().default("lms_mcn"),
   LMS_DB_POOL_MAX: z.coerce.number().default(10),
-  LMS_WRITE_DB_HOST:     z.string().default(""),
-  LMS_WRITE_DB_PORT:     z.coerce.number().default(3306),
-  LMS_WRITE_DB_USER:     z.string().default(""),
-  LMS_WRITE_DB_PASSWORD: z.string().default(""),
-  LMS_WRITE_DB_NAME:     z.string().default(""),
-  LMS_WRITE_DB_POOL_MAX: z.coerce.number().default(5),
-  LMS_PORTAL_URL:  z.string().url().default("https://mcnlms.teammas.in"),
-  LMS_BRIDGE_SECRET: z.string().default(""),
-  LMS_ADMIN_SESSION_TOKEN: z.string().default(""),
 
   // NCOSEC Biometric DB (Matrix Cosec SQL Server)
   NCOSEC_DB_HOST:     z.string().default(""),
@@ -45,7 +36,6 @@ const envSchema = z.object({
   NCOSEC_DB_ENCRYPT:  z.string().default("false"),
   NCOSEC_DB_TRUST_CERT: z.string().default("true"),
   NCOSEC_EVENT_TABLE: z.string().default("dbo.Mx_ATDEventTrn"),
-  NCOSEC_DAILY_TABLE: z.string().default("dbo.Mx_DATDTrn"),
   NCOSEC_USER_ID_COLUMN: z.string().default("UserID"),
   NCOSEC_DATETIME_COLUMN: z.string().default("Edatetime"),
   NCOSEC_SOURCE_MODE: z.enum(["mysql", "mssql"]).default("mysql"),
@@ -104,7 +94,7 @@ const envSchema = z.object({
   DIALER_DB_NAME: z.string().default(""),
 
   BGV_WEBHOOK_SECRET: z.string().optional(),
-  BGV_PROVIDER: z.enum(["mock", "infinity_ai", "digio", "befisc_luckpay"]).default("mock"),
+  BGV_PROVIDER: z.enum(["mock", "infinity_ai", "digio"]).default("mock"),
   INFINITY_AI_API_URL: z.string().url().default("https://api.infinityai.in"),
   INFINITY_AI_API_KEY: z.string().optional(),
   INFINITY_AI_CLIENT_ID: z.string().optional(),
@@ -116,13 +106,6 @@ const envSchema = z.object({
   ATS_FORM_API_KEY: z.string().optional(),
   COURT_CHECK_API_URL: z.string().url().default("https://api.infinityai.in"),
   COURT_CHECK_API_KEY: z.string().optional(),
-  // Befisc + Luckpay + Crimescan (BGV_PROVIDER=befisc_luckpay)
-  BEFISC_API_KEY: z.string().optional(),
-  LUCKPAY_BASIC_TOKEN: z.string().optional(),
-  LUCKPAY_CLIENT_ID: z.string().optional(),
-  CRIMESCAN_API_KEY: z.string().optional(),
-  PRESCREENING_API_KEY: z.string().optional(),
-  GEMINI_API_KEY: z.string().optional(),
 
   // Billing DB (db_bill) — optional, only needed when billing features are used
   BILL_DB_HOST:     z.string().default(""),
@@ -130,12 +113,6 @@ const envSchema = z.object({
   BILL_DB_USER:     z.string().default(""),
   BILL_DB_PASSWORD: z.string().default(""),
   BILL_DB_NAME:     z.string().default("db_bill"),
-
-  // Cloudinary — optional, enables cloud storage for employee profile photos
-  // When absent, photos are stored on local filesystem (default)
-  CLOUDINARY_CLOUD_NAME: z.string().optional(),
-  CLOUDINARY_API_KEY:    z.string().optional(),
-  CLOUDINARY_API_SECRET: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -196,19 +173,12 @@ if (parsed.data.NODE_ENV === "production") {
     console.error("[FATAL] DIGIO_CLIENT_ID and DIGIO_CLIENT_SECRET must be set when BGV_PROVIDER=digio.");
     process.exit(1);
   }
-  if (parsed.data.BGV_PROVIDER === "befisc_luckpay" && (!parsed.data.LUCKPAY_BASIC_TOKEN || !parsed.data.LUCKPAY_CLIENT_ID || !parsed.data.CRIMESCAN_API_KEY)) {
-    console.error("[FATAL] LUCKPAY_BASIC_TOKEN, LUCKPAY_CLIENT_ID, and CRIMESCAN_API_KEY must be set when BGV_PROVIDER=befisc_luckpay.");
-    process.exit(1);
-  }
 }
 
 export const env = {
   ...parsed.data,
   LMS_DB_USER: parsed.data.LMS_DB_USER || parsed.data.DB_USER,
   LMS_DB_PASSWORD: parsed.data.LMS_DB_PASSWORD || parsed.data.DB_PASSWORD,
-  LMS_WRITE_DB_HOST: parsed.data.LMS_WRITE_DB_HOST || parsed.data.LMS_DB_HOST,
-  LMS_WRITE_DB_PORT: parsed.data.LMS_WRITE_DB_PORT || parsed.data.LMS_DB_PORT,
-  LMS_WRITE_DB_NAME: parsed.data.LMS_WRITE_DB_NAME || parsed.data.LMS_DB_NAME,
   LEGACY_SYNC_ENABLED: parsed.data.LEGACY_SYNC_ENABLED === 'true',
   LEGACY_SYNC_PARALLEL_DOMAINS: parsed.data.LEGACY_SYNC_PARALLEL_DOMAINS !== 'false',
   ENABLE_SCHEDULERS: parsed.data.ENABLE_SCHEDULERS === 'true',

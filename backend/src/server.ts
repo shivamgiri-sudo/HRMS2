@@ -9,16 +9,10 @@ import { legacySyncWorker } from "./workers/legacy-sync-worker.js";
 import { startAccessExpiryScheduler } from "./workers/access-expiry.worker.js";
 import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
 import { startPayrollWindowClosureScheduler } from "./modules/payroll/payroll-window.cron.js";
-import { getOverdueErasureRequests } from "./modules/privacy/dpdpErasure.service.js";
-import { startBreachSlaCron } from "./modules/privacy/dpdp-breach-sla.cron.js";
 import { startOfficialEmailComplianceScheduler } from "./workers/official-email-compliance.worker.js";
 import { startIntegrationScheduler } from "./workers/integration-scheduler.worker.js";
 import { startLeaveMonthlyWorker } from "./workers/leave-monthly-credit.worker.js";
 import { startAnnualLeaveWorker } from "./workers/leave-annual-el-credit.worker.js";
-import { startKpiDailySyncWorker } from "./workers/kpi-daily-sync.worker.js";
-import { startAprVicidialSyncWorker } from "./workers/apr-vicidial-sync.worker.js";
-import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
-import { startPayrollNightlyRecalcWorker } from "./workers/payroll-nightly-recalc.worker.js";
 import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-db.service.js";
 
 function startServer() {
@@ -36,29 +30,7 @@ function startServer() {
       startLeaveMonthlyWorker();
       startAnnualLeaveWorker();
       startPayrollWindowClosureScheduler();
-      startKpiDailySyncWorker();
-      startAprVicidialSyncWorker();
-      startLmsSyncWorker();
-      startPayrollNightlyRecalcWorker();
-
-      startBreachSlaCron();
-
-      // DPDP §12 — 30-day SLA alert: runs daily, logs overdue erasure requests
-      setInterval(async () => {
-        try {
-          const overdue = await getOverdueErasureRequests();
-          if (overdue.length > 0) {
-            console.warn(
-              `[dpdp-sla] ${overdue.length} erasure request(s) approaching/past 30-day DPDP deadline:`,
-              overdue.map((r) => ({ id: r.id, days_pending: r.days_pending }))
-            );
-          }
-        } catch (err) {
-          console.error("[dpdp-sla] SLA check failed:", err);
-        }
-      }, 24 * 60 * 60 * 1000);
-
-      console.log(`[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, kpi-daily, apr-vicidial, lms-sync, payroll-nightly-recalc, dpdp-sla started`);
+      console.log(`[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window started`);
     } else {
       console.log(`[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)`);
     }

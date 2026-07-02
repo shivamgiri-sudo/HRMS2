@@ -13,9 +13,6 @@ const legacyConfig: sql.config = {
     trustServerCertificate: env.NCOSEC_DB_TRUST_CERT === 'true',
     enableArithAbort: true,
     readOnlyIntent: true,
-    // CRITICAL: useUTC false prevents mssql driver from converting DATETIME to UTC
-    // NCOSEC stores IST wall-clock times; we want them as-is with no conversion
-    useUTC: false,
   },
   connectionTimeout: 15000,
   requestTimeout: 60000,
