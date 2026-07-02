@@ -1,0 +1,41 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.env
+.vercel
+
+# Local dev tools with credentials — never commit
+backend/mysql-tunnel.cjs
+backend/*.tunnel.cjs
+
+# Local disk uploads — never commit uploaded files
+backend/uploads/
+
+# Backend env files with credentials — never commit
+backend/.env.production
+backend/.env.test
+backups/
+.env
+.claude/settings.json
+backend/.env.backup

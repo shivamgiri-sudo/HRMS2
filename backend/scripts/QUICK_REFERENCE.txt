@@ -1,0 +1,420 @@
+================================================================================
+PROCESS QUALITY RANKING & OPTIMAL TEAM COMPOSITION ANALYSIS
+Quick Reference Card
+================================================================================
+
+OUTPUT FORMAT: PROCESS | QUALITY_RANK | VARIANCE | OPTIMAL_SHIFT | FATIGUE_FACTOR
+
+================================================================================
+1. COLUMN DEFINITIONS
+================================================================================
+
+PROCESS
+  → Campaign/process name
+  → Use: Identifies which business process to optimize
+
+QUALITY_RANK
+  → Ranked position by quality (1 = Best, N = Worst)
+  → Range: 1-N (depends on # of unique processes)
+  → Interpretation: Lower = higher avg quality; prioritize resources here
+  → Action: Rank 1-3 = ELITE (allocate best staff)
+           Rank 4-10 = Good (monitor)
+           Rank 11+ = At-Risk (immediate action)
+
+AVG_QUALITY
+  → Average quality percentage across all calls
+  → Range: 0-100%
+  → Thresholds:
+    85%+   = ELITE (best in industry)
+    80-85% = HIGH (good performance)
+    75-80% = MEDIUM (acceptable, monitor)
+    70-75% = DEVELOPING (requires intervention)
+    <70%   = AT_RISK (urgent action required)
+
+VARIANCE
+  → Standard deviation of quality scores
+  → Range: 0-50 (higher = more inconsistent)
+  → Classification:
+    <8   = STABLE (highly predictable)
+    8-12 = MODERATE (typical, acceptable)
+    >12  = VOLATILE (inconsistency issues - investigate team stability)
+
+OPTIMAL_SHIFT
+  → Which shift window shows best performance
+  → Values: Morning (8-12), Afternoon (13-17), Evening (18-22), Night (0-7/23)
+  → Use: Route complex/high-value work to optimal shift
+  → Quality gain: 5-10% by shifting work to optimal window
+
+FATIGUE_FACTOR
+  → Weekly/hourly fatigue indicator
+  → Scale: 1 (Best) to 3 (Worst)
+    1 = Tue-Thu, 9-11AM, 2-4PM (use for complex work)
+    2 = Mon/Fri, 8AM, 5-6PM (use for mixed work)
+    3 = Sat-Sun, 12-1PM lunch, 6-10PM evening (routine only)
+  → Use: Schedule appropriate workload by fatigue level
+
+================================================================================
+2. PROCESS TIER CLASSIFICATION
+================================================================================
+
+TIER_1_ELITE
+  → Rank: 1-3
+  → Avg Quality: ≥85%
+  → Variance: <10
+  → Action: Expand allocation + use as training model
+  → Staffing: Senior/experienced agents
+
+TIER_2_HIGH
+  → Rank: 4-5
+  → Avg Quality: 80-85%
+  → Variance: <12
+  → Action: Maintain + replicate TIER_1 practices
+  → Staffing: Mix of senior and mid-level
+
+TIER_3_GOOD
+  → Rank: 6-10
+  → Avg Quality: 75-80%
+  → Variance: <15
+  → Action: Monitor + implement coaching
+  → Staffing: Mid-level agents
+
+TIER_4_DEVELOPING
+  → Rank: 11+
+  → Avg Quality: 70-75%
+  → Variance: 12-18
+  → Action: Development program + increased supervision
+  → Staffing: Junior + mentors
+
+TIER_5_AT_RISK
+  → Rank: N
+  → Avg Quality: <70%
+  → Variance: >18
+  → Action: URGENT - restructure/retrain/suspend
+  → Staffing: Restructure required
+
+================================================================================
+3. QUICK DECISION MATRIX
+================================================================================
+
+Scenario: You see these results. What do you do?
+
+PROCESS A: Rank=1, Quality=86%, Variance=7.8, Optimal_Shift=Morning, Fatigue=1
+  → DECISION: EXPAND
+    - Allocate best agents here
+    - Route all complex work to morning shift
+    - Study their processes and replicate
+
+PROCESS B: Rank=3, Quality=82%, Variance=14.5, Optimal_Shift=Afternoon, Fatigue=2
+  → DECISION: INVESTIGATE + STABILIZE
+    - High variance suggests inconsistent team
+    - Conduct agent-level QA
+    - May have 1-2 weak performers
+    - Increase coaching for specific agents
+
+PROCESS C: Rank=8, Quality=76%, Variance=9.2, Optimal_Shift=Morning, Fatigue=2
+  → DECISION: MONITOR
+    - Acceptable quality; no immediate action
+    - Rebalance roster: move work from Process D to here
+    - Document practices; share with lower-tier processes
+
+PROCESS D: Rank=12, Quality=68%, Variance=22.1, Optimal_Shift=Night, Fatigue=3
+  → DECISION: CRITICAL - RESTRUCTURE IMMEDIATELY
+    - Quality below acceptable threshold
+    - High variance: team instability
+    - Assigned to night shift + high fatigue = worst combo
+    - Actions:
+      1. Reduce team size by 25%
+      2. Reallocate staff to morning shifts
+      3. Move to afternoon with experienced mentor
+      4. Implement daily coaching
+      5. Re-assess in 2 weeks
+
+================================================================================
+4. FATIGUE PATTERN CHART
+================================================================================
+
+HOUR-OF-DAY QUALITY PATTERN (90-day average):
+
+Hour    Quality    Phase              Recommendation
+----    -------    -----              ---------------
+8       78%        Morning Start      Routine work, training
+9-11    84%        MORNING PEAK ★★★   Complex work, VIP calls
+12-13   71%        LUNCH VALLEY       Automation, routine only
+14-17   80%        Afternoon Good     Mixed work, standard volume
+18-20   76%        Evening            Overflow, junior training
+21-23   72%        Late Evening       Minimal volume, defer
+0-7     68%        Night              Critical issues only
+
+DAY-OF-WEEK QUALITY PATTERN:
+
+Day         Quality    Fatigue Factor    Recommendation
+---         -------    -------          ---------------
+Monday      80%        2                 Mid-week quality; routine+complex
+Tuesday     82%        1                 PEAK - complex work here
+Wednesday   83%        1                 PEAK - complex work here
+Thursday    81%        1                 Good quality; mixed work
+Friday      77%        2                 Friday fatigue; routine work
+Saturday    73%        3                 Weekend; automation preferred
+Sunday      70%        3                 Weekend low; defer to Monday
+
+OPTIMAL WINDOW (best combo):
+→ Tuesday-Thursday, 9-11 AM or 2-4 PM (Fatigue Factor = 1)
+→ Quality: 83-84%
+→ Use for: High-value customers, complex issues, strategic accounts
+
+================================================================================
+5. TEAM COMPOSITION RULES
+================================================================================
+
+OPTIMAL TEAM SIZE BY WORKLOAD:
+
+Team Size   Avg Quality   Status        Action
+---------   -----------   ------        ------
+1-5         86%+          LEAN          OK - monitor for overload
+6-10        82-85%        OPTIMAL       Maintain - standard config
+11-15       77-80%        STRETCHED     Monitor - at threshold
+16-20       72-77%        OVERLOADED    Warning - watch closely
+21+         <70%          CRISIS        RESTRUCTURE IMMEDIATELY
+
+SPAN OF CONTROL RULE:
+→ Optimal manager span: 8-12 direct reports
+→ Max stable span: 12-14 reports
+→ Beyond 15: quality decline visible (-5-10%)
+→ Beyond 20: systemic failure (-15-25%)
+
+ACTION RULES:
+IF team_size > 14 AND avg_quality < 78%:
+  → Split into 2 teams (better staffing + separate managers)
+  → Expected quality improvement: +8-12%
+
+IF team_size > 20:
+  → Emergency restructuring required
+  → Split into 3 teams minimum
+  → Promote 2 team leads
+
+IF avg_quality DECLINING despite stable team:
+  → Agent turnover, burnout, or skill gaps
+  → Check variance: if high, individual performance issues
+  → If low but declining: team-wide fatigue or scope creep
+
+================================================================================
+6. SHIFT OPTIMIZATION STRATEGY
+================================================================================
+
+MORNING SHIFT (8 AM - 12 PM)
+  Quality: 80-84%
+  Best for: Complex technical, high-value, negotiations
+  Staffing: Senior agents, SMEs
+  Call type: 20% Volume, 60% Revenue-impact
+
+AFTERNOON SHIFT (1 PM - 5 PM)
+  Quality: 78-82%
+  Best for: Balanced (routine + medium-complexity)
+  Staffing: Mid-tier + junior with mentors
+  Call type: 35% Volume, 25% Revenue-impact
+
+EVENING SHIFT (6 PM - 10 PM)
+  Quality: 76-80%
+  Best for: Overflow, routine, after-hours
+  Staffing: Junior agents, training opportunity
+  Call type: 35% Volume, 10% Revenue-impact
+
+NIGHT SHIFT (11 PM - 7 AM)
+  Quality: 68-75%
+  Best for: Outsource or automate
+  Staffing: Minimal or offshore
+  Call type: 10% Volume, 5% Revenue-impact
+
+ALLOCATION STRATEGY:
+→ Route 60% of complex work to morning shifts
+→ Route 70% of routine to evening/night
+→ Expected quality improvement: +5-8%
+→ Expected volume capacity: +10% (same agents, better routing)
+
+================================================================================
+7. IMPROVEMENT ROADMAP (4-Week Plan)
+================================================================================
+
+WEEK 1: ANALYSIS & BENCHMARKING
+  □ Run all 5 optimization queries
+  □ Generate scorecard (this output)
+  □ Identify top 3 action items
+  □ Schedule manager meetings
+
+WEEK 2: QUICK WINS (Roster Rebalancing)
+  □ Move 20% staff from poor process-shift combos to optimal
+  □ Implement morning shift complex-work routing
+  □ Expected: +5% quality
+  □ Effort: 2-3 days scheduling
+
+WEEK 3: STABILIZATION (High-Variance Processes)
+  □ Conduct agent-level QA for high-variance processes
+  □ Increase coaching for below-average performers
+  □ Implement daily quality huddles
+  □ Expected: +3-5% quality
+  □ Effort: Ongoing coaching
+
+WEEK 4: STRUCTURAL (Restructure At-Risk Teams)
+  □ Split teams >14 agents
+  □ Promote junior leads
+  □ Reallocate to morning optimal shifts
+  □ Expected: +8-12% quality
+  □ Effort: 1-2 weeks stabilization
+
+ONGOING: CONTINUOUS MONITORING
+  □ Weekly quality trending
+  □ Monthly variance review
+  □ Quarterly benchmarking
+  □ Capture incremental gains
+
+================================================================================
+8. RED FLAGS & RESPONSES
+================================================================================
+
+RED FLAG: Process has high quality (85%+) but variance > 15%
+  PROBLEM: Hidden weak performers in elite process
+  RESPONSE:
+    1. Drill down to agent-level analysis
+    2. Identify below-avg performers
+    3. Assign to mentors
+    4. Increase 1-on-1 coaching
+  EXPECTED: Variance drops to <10% in 2-3 weeks
+
+RED FLAG: Quality drops >10% on Friday
+  PROBLEM: Friday fatigue / week-end anticipation
+  RESPONSE:
+    1. Offer Friday incentive bonus
+    2. Route easier calls on Friday
+    3. Rotate Monday-off for Friday teams
+    4. Shorten Friday shift (6 hrs instead of 8)
+  EXPECTED: Friday quality improves 5-8%
+
+RED FLAG: Evening/Night shift quality <70%
+  PROBLEM: Cannot scale to off-peak with current team
+  RESPONSE:
+    1. Implement offshore/remote teams for evenings
+    2. Automate routine calls
+    3. Rotate senior staff to evening (mentoring)
+    4. Hire and train evening specialists
+  EXPECTED: Evening quality improves to 75%+
+
+RED FLAG: Optimal shift quality drops 5+ points vs. last month
+  PROBLEM: Possible agent turnover, skills drift, or burnout
+  RESPONSE:
+    1. Check turnover rate for team
+    2. Review new hire onboarding
+    3. Assess manager engagement levels
+    4. Check for scope creep or training gaps
+  EXPECTED: Root cause identified within 1 week
+
+================================================================================
+9. CALCULATION REFERENCE
+================================================================================
+
+Quality Rank Formula:
+  RANK = ROW_NUMBER() OVER (ORDER BY AVG(quality_percentage) DESC)
+
+Variance Classification:
+  IF variance < 8:    "STABLE" (Coefficient of Variation < 0.10)
+  IF variance 8-12:   "MODERATE" (Coefficient of Variation 0.10-0.15)
+  IF variance > 12:   "VOLATILE" (Coefficient of Variation > 0.15)
+
+Process Tier Assignment:
+  TIER_1: rank 1-3 AND quality >= 85% AND variance < 10
+  TIER_2: rank 4-5 AND quality >= 80% AND variance < 12
+  TIER_3: rank 6-10 AND quality >= 75% AND variance < 15
+  TIER_4: rank 11+ AND quality >= 70% AND quality < 75%
+  TIER_5: quality < 70%
+
+Fatigue Factor Calculation:
+  day_factor = 1 (Tue-Thu) | 2 (Mon/Fri) | 3 (Sat-Sun)
+  hour_factor = 1 (9-11AM, 2-4PM) | 2 (8AM, 5-6PM) | 3 (12-1PM, 6-10PM)
+  fatigue_factor = day_factor + hour_factor (scale: 2-6)
+
+Recommended Workload by Fatigue:
+  Fatigue 2-3:   Complex, high-value work only
+  Fatigue 4-5:   Mixed work
+  Fatigue 6+:    Routine, automation-preferred
+
+================================================================================
+10. EXAMPLE DATASET & INTERPRETATION
+================================================================================
+
+Sample Output:
+
+Process_Name     Rank  Quality  Variance  Shift       Fatigue  Tier
+Collection       1     86.2%    7.8       Morning     1        ELITE
+Sales_Premium    2     84.5%    9.2       Morning     1        ELITE
+Tech_Support     3     82.1%    10.5      Morning     2        HIGH
+Billing          4     79.8%    11.3      Afternoon   2        GOOD
+Complaints       5     72.3%    18.5      Morning     3        AT_RISK
+
+INTERPRETATION:
+
+Collection (Rank 1):
+  → Quality 86.2%: ELITE performance
+  → Variance 7.8: STABLE (very consistent)
+  → Shift: Morning (allocate best staff here)
+  → Action: EXPAND allocation; use as training model
+
+Sales_Premium (Rank 2):
+  → Quality 84.5%: ELITE performance
+  → Variance 9.2: STABLE
+  → Shift: Morning (also optimal)
+  → Action: MAINTAIN + replicate processes with Rank 3-4
+
+Tech_Support (Rank 3):
+  → Quality 82.1%: Good but slightly lower
+  → Variance 10.5: STABLE
+  → Shift: Morning (suggested, but 2% variance suggests flexibility)
+  → Action: MONITOR; candidate for best-practice replication
+
+Billing (Rank 4):
+  → Quality 79.8%: ACCEPTABLE (mid-range)
+  → Variance 11.3: MODERATE (some inconsistency)
+  → Shift: Afternoon (not optimal for morning)
+  → Action: MONITOR + assess agent stability
+
+Complaints (Rank 5):
+  → Quality 72.3%: AT-RISK (<75% threshold)
+  → Variance 18.5: VOLATILE (high inconsistency - red flag!)
+  → Shift: Morning (but not helping quality)
+  → Fatigue: 3 (worst fatigue level)
+  → Action: URGENT - investigate team stability, high variance suggests
+           weak performers or poor management; recommend:
+             1. Agent-level QA audit
+             2. Reduce team size
+             3. Increase coaching
+             4. Reallocate to afternoon shift with mentor support
+             5. Re-assess in 2 weeks
+
+================================================================================
+SUMMARY
+================================================================================
+
+USE THIS FRAMEWORK TO:
+  1. Identify best-performing processes (TIER_1)
+  2. Allocate resources to high-ROI windows (Morning optimal shift)
+  3. Right-size teams to prevent quality decline (Optimal = 6-10 agents)
+  4. Schedule work by fatigue patterns (Complex in morning, routine in evening)
+  5. Restructure at-risk processes (Quality <70%)
+  6. Benchmark and replicate success (Copy TIER_1 practices)
+
+EXPECTED OUTCOMES (4 weeks):
+  → Overall quality improvement: +8-15%
+  → Variance reduction: -20-30% (more stable)
+  → Roster utilization: +10-15% (better work allocation)
+  → Agent satisfaction: +5-10% (reduced fatigue, better shift placement)
+  → Turnover reduction: -10-20% (proper sizing, mentoring)
+
+NEXT STEPS:
+  1. Share this scorecard with operations leadership
+  2. Prioritize top 3 action items
+  3. Implement changes in week 1-2 (quick wins)
+  4. Measure results weekly
+  5. Adjust and iterate
+
+================================================================================
+Version: 1.0 | Generated: 2026-06-21 | Valid: 90-day data lookback
+Last Updated: 2026-06-21
+================================================================================

@@ -1,0 +1,356 @@
+name: Local Deployment Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - "playwright.config.ts"
+      - "e2e/**"
+      - "src/**"
+      - "backend/**"
+      - ".github/workflows/local-deployment-smoke.yml"
+
+jobs:
+  smoke:
+    name: Build, migrate, seed, login and browser smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: mas_hrms
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      # Opt into the future GitHub JavaScript action runtime now.
+      # Project runtime is still controlled by setup-node below.
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+      NODE_ENV: development
+      PORT: 5055
+      FRONTEND_URL: http://localhost:8080
+      ACTIVE_DB_PROVIDER: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: rootpass
+      DB_NAME: mas_hrms
+      DB_POOL_MAX: 10
+      JWT_SECRET: local-ci-jwt-secret-minimum-32-characters
+      PORTAL_JWT_SECRET: local-ci-portal-secret-minimum-32-characters
+      PAYROLL_BANK_KEY: local-ci-bank-key-32-characters
+      COMM_SECRET: local-ci-comm-secret-32-characters
+      ENABLE_SCHEDULERS: "false"
+      SEED_DEMO_DATA: "false"
+      LEGACY_SYNC_ENABLED: "false"
+      PORTAL_DEMO_BYPASS: "false"
+      INTERNAL_DEMO_BYPASS: "false"
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: 587
+      SMTP_USER: ""
+      SMTP_PASS: ""
+      SMTP_FROM: noreply@example.com
+      SMTP_FROM_NAME: MAS Callnet HRMS
+      NCOSEC_DB_HOST: ""
+      NCOSEC_DB_PORT: 1433
+      NCOSEC_DB_USER: ""
+      NCOSEC_DB_PASSWORD: ""
+      NCOSEC_DB_NAME: NCOSEC
+      NCOSEC_DB_ENCRYPT: "false"
+      DIALER_DB_HOST: ""
+      DIALER_DB_PORT: 3306
+      DIALER_DB_USER: ""
+      DIALER_DB_PASSWORD: ""
+      DIALER_DB_NAME: ""
+
+      VITE_HRMS_API_URL: http://localhost:5055
+      VITE_ENABLE_DEMO_LOGIN: "true"
+      PLAYWRIGHT_BASE_URL: http://localhost:8080
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Backend typecheck
+        working-directory: backend
+        run: |
+          echo "::group::Backend typecheck"
+          npm run typecheck
+          echo "::endgroup::"
+
+      - name: Backend build
+        working-directory: backend
+        run: |
+          echo "::group::Backend build"
+          npm run build
+          echo "::endgroup::"
+
+      - name: Frontend build
+        run: |
+          echo "::group::Frontend build"
+          npm run build
+          echo "::endgroup::"
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start backend and run migrations
+        working-directory: backend
+        run: |
+          npm start > ../backend-smoke.log 2>&1 &
+          echo $! > ../backend-smoke.pid
+
+      - name: Wait for backend health
+        run: |
+          echo "::group::Backend health"
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const deadline = Date.now() + 120000;
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+          function dumpBackendLog() {
+            try {
+              console.error('\n----- backend-smoke.log -----');
+              console.error(fs.readFileSync('backend-smoke.log', 'utf8').slice(-12000));
+              console.error('----- end backend-smoke.log -----\n');
+            } catch (error) {
+              console.error('Could not read backend-smoke.log:', error instanceof Error ? error.message : String(error));
+            }
+          }
+
+          async function main() {
+            let lastText = '';
+            let attempt = 0;
+            while (Date.now() < deadline) {
+              attempt++;
+              try {
+                const res = await fetch('http://localhost:5055/api/health');
+                lastText = await res.text();
+                if (res.ok) {
+                  const json = JSON.parse(lastText);
+                  if (
+                    json?.db === 'ok' &&
+                    json?.migrations?.status === 'ok' &&
+                    Array.isArray(json?.migrations?.failed) &&
+                    json.migrations.failed.length === 0
+                  ) {
+                    console.log('Backend healthy after ' + attempt + ' attempts');
+                    console.log(JSON.stringify(json, null, 2));
+                    return;
+                  }
+                  console.log('  attempt ' + attempt + ': HTTP ' + res.status + ' - ' + lastText.substring(0, 120));
+                }
+              } catch (error) {
+                lastText = error instanceof Error ? error.message : String(error);
+                console.log('  attempt ' + attempt + ': ' + lastText);
+              }
+              await sleep(3000);
+            }
+            console.error('Backend did not become healthy within 120 s. Last response/error:');
+            console.error(lastText);
+            dumpBackendLog();
+            process.exit(1);
+          }
+
+          main();
+          NODE
+          echo "::endgroup::"
+
+      - name: Seed demo auth users
+        working-directory: backend
+        run: |
+          echo "::group::Seed demo auth"
+          npm run seed:demo
+          echo "::endgroup::"
+
+      - name: Validate demo logins
+        run: |
+          echo "::group::Validate API logins"
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const users = [
+            ['admin@mascallnet.com', 'Admin@123'],
+            ['hr@mascallnet.com',    'Hr@123456'],
+            ['tl@mascallnet.com',    'TeamLead@1'],
+          ];
+
+          async function login(identifier, password) {
+            const res = await fetch('http://localhost:5055/api/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ identifier, password }),
+            });
+            const text = await res.text();
+            if (!res.ok) throw new Error(identifier + ' login failed: HTTP ' + res.status + ' ' + text);
+            const json = JSON.parse(text);
+            if (!json?.data?.accessToken || !json?.data?.refreshToken) {
+              throw new Error(identifier + ' login response missing tokens: ' + text);
+            }
+            console.log('login ok: ' + identifier);
+          }
+
+          async function main() {
+            for (const [identifier, password] of users) await login(identifier, password);
+            console.log('All API logins validated');
+          }
+
+          main().catch((error) => {
+            console.error(error);
+            try {
+              console.error('\n----- backend-smoke.log -----');
+              console.error(fs.readFileSync('backend-smoke.log', 'utf8').slice(-12000));
+              console.error('----- end backend-smoke.log -----\n');
+            } catch {}
+            process.exit(1);
+          });
+          NODE
+          echo "::endgroup::"
+
+      - name: Start frontend preview
+        run: |
+          npx vite preview > frontend-smoke.log 2>&1 &
+          echo $! > frontend-smoke.pid
+
+      - name: Wait for frontend
+        run: |
+          echo "::group::Frontend preview"
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const deadline = Date.now() + 90000;
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+          async function main() {
+            let lastText = '';
+            let attempt = 0;
+            while (Date.now() < deadline) {
+              attempt++;
+              try {
+                const res = await fetch('http://localhost:8080/');
+                lastText = await res.text();
+                if (res.ok) {
+                  console.log('Frontend ready after ' + attempt + ' attempts');
+                  return;
+                }
+                console.log('  attempt ' + attempt + ': HTTP ' + res.status);
+              } catch (error) {
+                lastText = error instanceof Error ? error.message : String(error);
+                console.log('  attempt ' + attempt + ': ' + lastText);
+              }
+              await sleep(3000);
+            }
+            console.error('Frontend preview did not start within 90 s. Last error:');
+            console.error(lastText);
+            try {
+              console.error('\n----- frontend-smoke.log -----');
+              console.error(fs.readFileSync('frontend-smoke.log', 'utf8').slice(-8000));
+              console.error('----- end frontend-smoke.log -----\n');
+            } catch {}
+            process.exit(1);
+          }
+
+          main();
+          NODE
+          echo "::endgroup::"
+
+      - name: Run Playwright browser smoke
+        run: |
+          echo "::group::Playwright browser smoke"
+          npm run test:e2e:smoke
+          echo "::endgroup::"
+
+      - name: Failure summary
+        if: failure()
+        run: |
+          echo "## CI Failure Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -f backend-smoke.log ]; then
+            echo "### Backend log (last 200 lines)" >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -200 backend-smoke.log >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "--- backend-smoke.log (last 200 lines) ---"
+            tail -200 backend-smoke.log
+          else
+            echo "backend-smoke.log not found" >> "$GITHUB_STEP_SUMMARY"
+            echo "backend-smoke.log not found"
+          fi
+
+          if [ -f frontend-smoke.log ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Frontend log (last 200 lines)" >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -200 frontend-smoke.log >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "--- frontend-smoke.log (last 200 lines) ---"
+            tail -200 frontend-smoke.log
+          fi
+
+          if [ -d playwright-report ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### playwright-report contents" >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' '```' >> "$GITHUB_STEP_SUMMARY"
+            ls -la playwright-report/ >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+            printf '%s\n' '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "--- playwright-report ---"
+            ls -la playwright-report/ || true
+          fi
+
+          if [ -d test-results ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### test-results contents" >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' '```' >> "$GITHUB_STEP_SUMMARY"
+            ls -la test-results/ >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+            printf '%s\n' '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "--- test-results ---"
+            ls -la test-results/ || true
+          fi
+
+      - name: Upload smoke artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-deployment-smoke-artifacts
+          path: |
+            backend-smoke.log
+            frontend-smoke.log
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Stop backend and frontend
+        if: always()
+        run: |
+          if [ -f backend-smoke.pid ]; then
+            kill "$(cat backend-smoke.pid)" 2>/dev/null || true
+          fi
+          if [ -f frontend-smoke.pid ]; then
+            kill "$(cat frontend-smoke.pid)" 2>/dev/null || true
+          fi

@@ -1,0 +1,48 @@
+name: PeopleOS CI Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Build, typecheck and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Typecheck backend
+        working-directory: backend
+        run: npm run typecheck
+
+      - name: Test backend
+        working-directory: backend
+        run: npm test
+
+      - name: Build backend
+        working-directory: backend
+        run: npm run build

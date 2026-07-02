@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MAS Callnet — Client Portal Wireframe</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0a0f1e; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; }
+
+  .shell { display: flex; height: 100vh; overflow: hidden; }
+
+  /* Sidebar */
+  .sidebar { width: 220px; background: #0f172a; border-right: 1px solid #1e293b; display: flex; flex-direction: column; flex-shrink: 0; }
+  .sidebar-logo { padding: 16px; border-bottom: 1px solid #1e293b; }
+  .sidebar-logo .brand { font-size: 14px; font-weight: 700; color: #38bdf8; }
+  .sidebar-logo .client { font-size: 11px; color: #64748b; margin-top: 2px; }
+  .sidebar-nav { flex: 1; padding: 8px 0; overflow-y: auto; }
+  .nav-section { padding: 8px 16px 4px; font-size: 10px; color: #475569; text-transform: uppercase; letter-spacing: 0.08em; }
+  .nav-item { display: flex; align-items: center; gap: 8px; padding: 7px 16px; cursor: pointer; color: #94a3b8; border-left: 2px solid transparent; transition: all 0.15s; }
+  .nav-item:hover { background: #1e293b; color: #e2e8f0; }
+  .nav-item.active { background: #1e293b; color: #38bdf8; border-left-color: #38bdf8; }
+  .nav-item .rag { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .rag-green { background: #22c55e; }
+  .rag-amber { background: #f59e0b; }
+  .rag-red { background: #ef4444; }
+  .nav-badge { margin-left: auto; background: #1e3a5f; color: #38bdf8; font-size: 10px; padding: 1px 6px; border-radius: 10px; }
+
+  /* Main */
+  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .topbar { background: #0f172a; border-bottom: 1px solid #1e293b; padding: 0 20px; height: 48px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .topbar-title { font-size: 14px; font-weight: 600; color: #e2e8f0; }
+  .topbar-meta { font-size: 11px; color: #64748b; }
+  .topbar-right { display: flex; gap: 10px; align-items: center; }
+  .chip { background: #1e293b; border: 1px solid #334155; padding: 3px 10px; border-radius: 12px; font-size: 11px; color: #94a3b8; cursor: pointer; }
+  .chip.active { background: #1e3a5f; border-color: #38bdf8; color: #38bdf8; }
+
+  .content { flex: 1; overflow-y: auto; padding: 16px 20px; }
+
+  /* Overview cards */
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+  .kpi-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 12px; position: relative; overflow: hidden; }
+  .kpi-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+  .kpi-card.green::before { background: #22c55e; }
+  .kpi-card.amber::before { background: #f59e0b; }
+  .kpi-card.red::before { background: #ef4444; }
+  .kpi-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 0.06em; }
+  .kpi-value { font-size: 24px; font-weight: 700; margin: 4px 0 2px; }
+  .kpi-card.green .kpi-value { color: #22c55e; }
+  .kpi-card.amber .kpi-value { color: #f59e0b; }
+  .kpi-card.red .kpi-value { color: #ef4444; }
+  .kpi-target { font-size: 11px; color: #475569; }
+  .kpi-trend { font-size: 11px; margin-top: 4px; }
+  .kpi-sparkline { display: flex; align-items: flex-end; gap: 2px; height: 20px; margin-top: 6px; }
+  .spark-bar { width: 6px; background: #334155; border-radius: 1px; }
+
+  /* Glide path */
+  .section-title { font-size: 12px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .section-title .badge-red { background: #450a0a; color: #ef4444; font-size: 10px; padding: 1px 8px; border-radius: 10px; text-transform: none; letter-spacing: 0; }
+  .section-title .badge-amber { background: #431407; color: #f59e0b; font-size: 10px; padding: 1px 8px; border-radius: 10px; text-transform: none; letter-spacing: 0; }
+
+  .glide-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  .glide-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 14px; }
+  .glide-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+  .glide-metric { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+  .glide-gap { font-size: 11px; }
+  .gap-red { color: #ef4444; }
+  .gap-amber { color: #f59e0b; }
+
+  /* Chart mockup */
+  .chart-area { background: #0a0f1e; border-radius: 6px; padding: 10px; position: relative; height: 90px; margin-bottom: 10px; }
+  .chart-line { position: absolute; bottom: 10px; left: 10px; right: 10px; }
+  .chart-labels { display: flex; justify-content: space-between; font-size: 9px; color: #475569; padding: 0 2px; }
+  .legend { display: flex; gap: 12px; margin-top: 4px; }
+  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #64748b; }
+  .legend-dot { width: 8px; height: 2px; border-radius: 1px; }
+
+  /* Action plan */
+  .action-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+  .action-table th { font-size: 10px; color: #475569; text-transform: uppercase; padding: 6px 8px; text-align: left; border-bottom: 1px solid #1e293b; }
+  .action-table td { padding: 8px; border-bottom: 1px solid #1e293b; font-size: 12px; color: #cbd5e1; vertical-align: top; }
+  .action-table tr:last-child td { border-bottom: none; }
+  .owner-tag { background: #1e293b; padding: 2px 8px; border-radius: 10px; font-size: 10px; white-space: nowrap; }
+  .owner-analyst { color: #818cf8; }
+  .owner-tl { color: #34d399; }
+  .owner-pm { color: #f472b6; }
+  .owner-bh { color: #fb923c; }
+  .status-tag { padding: 2px 8px; border-radius: 10px; font-size: 10px; white-space: nowrap; }
+  .status-done { background: #052e16; color: #22c55e; }
+  .status-wip { background: #1c1917; color: #f59e0b; }
+  .status-planned { background: #1e1b4b; color: #818cf8; }
+
+  /* Governance */
+  .gov-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+  .gov-level { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 12px; }
+  .gov-level-title { font-size: 11px; font-weight: 600; margin-bottom: 8px; }
+  .gov-level.analyst .gov-level-title { color: #818cf8; }
+  .gov-level.tl .gov-level-title { color: #34d399; }
+  .gov-level.pm .gov-level-title { color: #f472b6; }
+  .gov-level.bh .gov-level-title { color: #fb923c; }
+  .gov-item { display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 11px; color: #94a3b8; }
+  .gov-item .check { width: 14px; height: 14px; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 9px; flex-shrink: 0; }
+  .check-done { background: #052e16; color: #22c55e; }
+  .check-miss { background: #1e293b; color: #475569; }
+  .gov-pct { font-size: 18px; font-weight: 700; text-align: center; margin-top: 8px; }
+
+  /* Attrition */
+  .attr-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+  .attr-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 12px; }
+
+  /* Commentary */
+  .commentary { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .commentary-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .commentary-author { font-size: 12px; color: #94a3b8; }
+  .commentary-date { font-size: 11px; color: #475569; }
+  .commentary-body { font-size: 12px; color: #cbd5e1; line-height: 1.6; }
+  .commentary-ack { margin-top: 12px; padding-top: 12px; border-top: 1px solid #1e293b; display: flex; gap: 8px; align-items: center; }
+  .ack-btn { background: #1e3a5f; border: 1px solid #38bdf8; color: #38bdf8; padding: 5px 14px; border-radius: 6px; font-size: 11px; cursor: pointer; }
+  .ack-text { font-size: 11px; color: #475569; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid #1e293b; margin-bottom: 16px; }
+  .tab { padding: 10px 16px; font-size: 12px; color: #64748b; cursor: pointer; border-bottom: 2px solid transparent; }
+  .tab.active { color: #38bdf8; border-bottom-color: #38bdf8; }
+  .tab:hover { color: #94a3b8; }
+
+  svg text { font-family: -apple-system, sans-serif; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <div class="brand">MAS Callnet</div>
+      <div class="client">Client Portal</div>
+      <div style="margin-top:8px;padding:6px 8px;background:#1e293b;border-radius:6px">
+        <div style="font-size:11px;color:#94a3b8">Logged in as</div>
+        <div style="font-size:12px;color:#e2e8f0;font-weight:600">Rahul Sharma</div>
+        <div style="font-size:10px;color:#64748b">Airtel — Ops Head</div>
+      </div>
+    </div>
+    <div class="sidebar-nav">
+      <div class="nav-section">Overview</div>
+      <div class="nav-item active">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Account Overview
+      </div>
+
+      <div class="nav-section">My Processes</div>
+      <div class="nav-item">
+        <span class="rag rag-amber"></span>
+        Inbound Support
+      </div>
+      <div class="nav-item">
+        <span class="rag rag-red"></span>
+        Outbound Sales
+        <span class="nav-badge">3 alerts</span>
+      </div>
+      <div class="nav-item">
+        <span class="rag rag-green"></span>
+        QA Audit
+      </div>
+
+      <div class="nav-section">Reports</div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Monthly Reports
+      </div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Trend Analysis
+      </div>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title">Outbound Sales — May 2026</div>
+        <div class="topbar-meta">Process Manager: Vikram Nair &nbsp;·&nbsp; Branch: Delhi NCR &nbsp;·&nbsp; HC: 87 / 100</div>
+      </div>
+      <div class="topbar-right">
+        <div class="chip active">May 2026</div>
+        <div class="chip">Apr</div>
+        <div class="chip">Mar</div>
+        <div style="background:#ef4444;color:white;padding:4px 10px;border-radius:12px;font-size:11px;font-weight:600">⚠ 3 Metrics Off Track</div>
+        <div style="background:#1e293b;padding:4px 10px;border-radius:6px;font-size:11px;color:#94a3b8;cursor:pointer">⬇ Export PDF</div>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active">Performance</div>
+      <div class="tab">Glide Paths</div>
+      <div class="tab">Action Plans</div>
+      <div class="tab">Governance</div>
+      <div class="tab">Attrition</div>
+      <div class="tab">Commentary</div>
+    </div>
+
+    <div class="content">
+
+      <!-- KPI Scorecards -->
+      <div class="section-title">
+        KPI Scorecards — Current Month
+        <span class="badge-red">3 Red</span>
+        <span class="badge-amber">2 Amber</span>
+      </div>
+      <div class="kpi-grid">
+        <div class="kpi-card red">
+          <div class="kpi-label">Conversion Rate</div>
+          <div class="kpi-value">4.2%</div>
+          <div class="kpi-target">Target: 7.0% &nbsp;·&nbsp; Gap: -2.8%</div>
+          <div class="kpi-trend" style="color:#ef4444">↓ Was 5.1% last month</div>
+          <div class="kpi-sparkline">
+            <div class="spark-bar" style="height:60%;background:#ef4444"></div>
+            <div class="spark-bar" style="height:75%;background:#ef4444"></div>
+            <div class="spark-bar" style="height:70%;background:#f59e0b"></div>
+            <div class="spark-bar" style="height:55%;background:#ef4444"></div>
+            <div class="spark-bar" style="height:50%;background:#ef4444"></div>
+          </div>
+        </div>
+        <div class="kpi-card amber">
+          <div class="kpi-label">AHT (seconds)</div>
+          <div class="kpi-value">312</div>
+          <div class="kpi-target">Target: 280s &nbsp;·&nbsp; Gap: +32s</div>
+          <div class="kpi-trend" style="color:#f59e0b">→ Flat for 2 months</div>
+          <div class="kpi-sparkline">
+            <div class="spark-bar" style="height:80%;background:#f59e0b"></div>
+            <div class="spark-bar" style="height:85%;background:#f59e0b"></div>
+            <div class="spark-bar" style="height:80%;background:#f59e0b"></div>
+            <div class="spark-bar" style="height:82%;background:#f59e0b"></div>
+            <div class="spark-bar" style="height:82%;background:#f59e0b"></div>
+          </div>
+        </div>
+        <div class="kpi-card green">
+          <div class="kpi-label">CSAT Score</div>
+          <div class="kpi-value">88%</div>
+          <div class="kpi-target">Target: 85% &nbsp;·&nbsp; +3%</div>
+          <div class="kpi-trend" style="color:#22c55e">↑ Improving 3 months</div>
+          <div class="kpi-sparkline">
+            <div class="spark-bar" style="height:70%;background:#22c55e"></div>
+            <div class="spark-bar" style="height:75%;background:#22c55e"></div>
+            <div class="spark-bar" style="height:80%;background:#22c55e"></div>
+            <div class="spark-bar" style="height:85%;background:#22c55e"></div>
+            <div class="spark-bar" style="height:90%;background:#22c55e"></div>
+          </div>
+        </div>
+        <div class="kpi-card red">
+          <div class="kpi-label">Attendance %</div>
+          <div class="kpi-value">88%</div>
+          <div class="kpi-target">Target: 94% &nbsp;·&nbsp; Gap: -6%</div>
+          <div class="kpi-trend" style="color:#ef4444">↓ Down from 91%</div>
+          <div class="kpi-sparkline">
+            <div class="spark-bar" style="height:90%;background:#22c55e"></div>
+            <div class="spark-bar" style="height:85%;background:#f59e0b"></div>
+            <div class="spark-bar" style="height:75%;background:#f59e0b"></div>
+            <div class="spark-bar" style="height:70%;background:#ef4444"></div>
+            <div class="spark-bar" style="height:65%;background:#ef4444"></div>
+          </div>
+        </div>
+        <div class="kpi-card amber">
+          <div class="kpi-label">Shrinkage %</div>
+          <div class="kpi-value">14%</div>
+          <div class="kpi-target">Target: ≤10% &nbsp;·&nbsp; Gap: +4%</div>
+          <div class="kpi-trend" style="color:#f59e0b">↑ Worsening</div>
+          <div class="kpi-sparkline">
+            <div class="spark-bar" style="height:40%;background:#22c55e"></div>
+            <div class="spark-bar" style="height:55%;background:#f59e0b"></div>
+            <div class="spark-bar" style="height:65%;background:#f59e0b"></div>
+            <div class="spark-bar" style="height:75%;background:#ef4444"></div>
+            <div class="spark-bar" style="height:80%;background:#f59e0b"></div>
+          </div>
+        </div>
+        <div class="kpi-card green">
+          <div class="kpi-label">Quality Score</div>
+          <div class="kpi-value">91%</div>
+          <div class="kpi-target">Target: 88% &nbsp;·&nbsp; +3%</div>
+          <div class="kpi-trend" style="color:#22c55e">↑ On track</div>
+          <div class="kpi-sparkline">
+            <div class="spark-bar" style="height:75%;background:#22c55e"></div>
+            <div class="spark-bar" style="height:80%;background:#22c55e"></div>
+            <div class="spark-bar" style="height:82%;background:#22c55e"></div>
+            <div class="spark-bar" style="height:88%;background:#22c55e"></div>
+            <div class="spark-bar" style="height:91%;background:#22c55e"></div>
+          </div>
+        </div>
+        <div class="kpi-card red">
+          <div class="kpi-label">Dials / Agent / Day</div>
+          <div class="kpi-value">98</div>
+          <div class="kpi-target">Target: 120 &nbsp;·&nbsp; Gap: -22</div>
+          <div class="kpi-trend" style="color:#ef4444">↓ Consistent shortfall</div>
+          <div class="kpi-sparkline">
+            <div class="spark-bar" style="height:80%;background:#f59e0b"></div>
+            <div class="spark-bar" style="height:75%;background:#ef4444"></div>
+            <div class="spark-bar" style="height:70%;background:#ef4444"></div>
+            <div class="spark-bar" style="height:72%;background:#ef4444"></div>
+            <div class="spark-bar" style="height:70%;background:#ef4444"></div>
+          </div>
+        </div>
+        <div class="kpi-card green">
+          <div class="kpi-label">Schedule Adherence</div>
+          <div class="kpi-value">93%</div>
+          <div class="kpi-target">Target: 90% &nbsp;·&nbsp; +3%</div>
+          <div class="kpi-trend" style="color:#22c55e">↑ On track</div>
+          <div class="kpi-sparkline">
+            <div class="spark-bar" style="height:85%;background:#22c55e"></div>
+            <div class="spark-bar" style="height:88%;background:#22c55e"></div>
+            <div class="spark-bar" style="height:90%;background:#22c55e"></div>
+            <div class="spark-bar" style="height:92%;background:#22c55e"></div>
+            <div class="spark-bar" style="height:93%;background:#22c55e"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Glide Paths for off-track metrics -->
+      <div class="section-title">Glide Path — Off-Track Metrics <span class="badge-red">Committed improvement trajectory</span></div>
+      <div class="glide-grid">
+        <div class="glide-card">
+          <div class="glide-header">
+            <div>
+              <div class="glide-metric">Conversion Rate</div>
+              <div style="font-size:11px;color:#64748b;margin-top:2px">Current: 4.2% &nbsp;·&nbsp; Target: 7.0%</div>
+            </div>
+            <div class="glide-gap gap-red">-2.8pp gap</div>
+          </div>
+          <svg width="100%" height="80" viewBox="0 0 300 80">
+            <!-- Target line -->
+            <line x1="0" y1="10" x2="300" y2="10" stroke="#22c55e" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>
+            <text x="302" y="13" fill="#22c55e" font-size="8">7.0%</text>
+            <!-- Committed glide path -->
+            <polyline points="30,65 80,58 130,48 180,35 230,22 280,12" stroke="#38bdf8" stroke-width="1.5" fill="none" stroke-dasharray="5,3"/>
+            <!-- Actual so far -->
+            <polyline points="30,68 80,66 130,70 180,67" stroke="#ef4444" stroke-width="2" fill="none"/>
+            <circle cx="180" cy="67" r="3" fill="#ef4444"/>
+            <!-- Today marker -->
+            <line x1="180" y1="0" x2="180" y2="80" stroke="#475569" stroke-width="1" stroke-dasharray="2,2"/>
+            <text x="182" y="8" fill="#475569" font-size="7">Today</text>
+            <!-- Month labels -->
+            <text x="25" y="78" fill="#475569" font-size="7">Feb</text>
+            <text x="75" y="78" fill="#475569" font-size="7">Mar</text>
+            <text x="125" y="78" fill="#475569" font-size="7">Apr</text>
+            <text x="175" y="78" fill="#475569" font-size="7">May</text>
+            <text x="225" y="78" fill="#475569" font-size="7">Jun</text>
+            <text x="275" y="78" fill="#475569" font-size="7">Jul</text>
+          </svg>
+          <div class="legend">
+            <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>Actual</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#38bdf8;border-top:1px dashed #38bdf8"></div>Committed</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#22c55e;opacity:0.5"></div>Target</div>
+          </div>
+          <div style="margin-top:8px;padding:6px 8px;background:#450a0a;border-radius:4px;font-size:11px;color:#fca5a5">
+            ⚠ Actual tracking 1.2pp below committed path — action plan review triggered
+          </div>
+        </div>
+
+        <div class="glide-card">
+          <div class="glide-header">
+            <div>
+              <div class="glide-metric">Attendance %</div>
+              <div style="font-size:11px;color:#64748b;margin-top:2px">Current: 88% &nbsp;·&nbsp; Target: 94%</div>
+            </div>
+            <div class="glide-gap gap-red">-6pp gap</div>
+          </div>
+          <svg width="100%" height="80" viewBox="0 0 300 80">
+            <line x1="0" y1="10" x2="300" y2="10" stroke="#22c55e" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>
+            <text x="302" y="13" fill="#22c55e" font-size="8">94%</text>
+            <polyline points="30,30 80,32 130,40 180,52 230,35 280,15" stroke="#38bdf8" stroke-width="1.5" fill="none" stroke-dasharray="5,3"/>
+            <polyline points="30,25 80,28 130,38 180,55" stroke="#ef4444" stroke-width="2" fill="none"/>
+            <circle cx="180" cy="55" r="3" fill="#ef4444"/>
+            <line x1="180" y1="0" x2="180" y2="80" stroke="#475569" stroke-width="1" stroke-dasharray="2,2"/>
+            <text x="182" y="8" fill="#475569" font-size="7">Today</text>
+            <text x="25" y="78" fill="#475569" font-size="7">Feb</text>
+            <text x="75" y="78" fill="#475569" font-size="7">Mar</text>
+            <text x="125" y="78" fill="#475569" font-size="7">Apr</text>
+            <text x="175" y="78" fill="#475569" font-size="7">May</text>
+            <text x="225" y="78" fill="#475569" font-size="7">Jun</text>
+            <text x="275" y="78" fill="#475569" font-size="7">Jul</text>
+          </svg>
+          <div class="legend">
+            <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>Actual</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#38bdf8"></div>Committed</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#22c55e;opacity:0.5"></div>Target</div>
+          </div>
+          <div style="margin-top:8px;padding:6px 8px;background:#431407;border-radius:4px;font-size:11px;color:#fed7aa">
+            Committed to recover to 91% by Jun. Transport issue root-caused.
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Plan -->
+      <div class="section-title">Action Plan — Conversion Rate Recovery</div>
+      <table class="action-table">
+        <thead>
+          <tr>
+            <th>Action</th>
+            <th>Owner Level</th>
+            <th>Owner</th>
+            <th>Due</th>
+            <th>Status</th>
+            <th>Impact</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Daily pitch practice — 20 min morning huddle, recorded for QA review</td>
+            <td><span class="owner-tag owner-tl">Team Lead</span></td>
+            <td style="color:#64748b">All TLs</td>
+            <td>Ongoing</td>
+            <td><span class="status-tag status-wip">In Progress</span></td>
+            <td style="color:#f59e0b">Medium</td>
+          </tr>
+          <tr>
+            <td>Identify bottom 10 agents by conversion — dedicated coaching plan per agent</td>
+            <td><span class="owner-tag owner-pm">Process Mgr</span></td>
+            <td style="color:#64748b">Vikram Nair</td>
+            <td>10 Jun</td>
+            <td><span class="status-tag status-done">Done</span></td>
+            <td style="color:#22c55e">High</td>
+          </tr>
+          <tr>
+            <td>Script revision — objection handling module updated with client product team</td>
+            <td><span class="owner-tag owner-pm">Process Mgr</span></td>
+            <td style="color:#64748b">Vikram Nair</td>
+            <td>15 Jun</td>
+            <td><span class="status-tag status-wip">In Progress</span></td>
+            <td style="color:#22c55e">High</td>
+          </tr>
+          <tr>
+            <td>Dialer list quality audit — flag low-intent segments for exclusion</td>
+            <td><span class="owner-tag owner-analyst">Analyst</span></td>
+            <td style="color:#64748b">Priya R.</td>
+            <td>5 Jun</td>
+            <td><span class="status-tag status-done">Done</span></td>
+            <td style="color:#f59e0b">Medium</td>
+          </tr>
+          <tr>
+            <td>Incentive restructure — top performer bonus increased 15% for Jun–Jul</td>
+            <td><span class="owner-tag owner-bh">Branch Head</span></td>
+            <td style="color:#64748b">Anita Singh</td>
+            <td>1 Jun</td>
+            <td><span class="status-tag status-done">Done</span></td>
+            <td style="color:#22c55e">High</td>
+          </tr>
+          <tr>
+            <td>Weekly war room — Fri 4pm, TLs + PM + QA, conversion deep-dive</td>
+            <td><span class="owner-tag owner-pm">Process Mgr</span></td>
+            <td style="color:#64748b">Vikram Nair</td>
+            <td>Every Fri</td>
+            <td><span class="status-tag status-wip">In Progress</span></td>
+            <td style="color:#f59e0b">Medium</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Governance Checklist -->
+      <div class="section-title">Governance Checklist — May 2026</div>
+      <div class="gov-grid">
+        <div class="gov-level analyst">
+          <div class="gov-level-title">Analyst</div>
+          <div class="gov-item"><div class="check check-done">✓</div>Daily dialer report</div>
+          <div class="gov-item"><div class="check check-done">✓</div>Attendance tracker updated</div>
+          <div class="gov-item"><div class="check check-done">✓</div>Shrinkage report (weekly)</div>
+          <div class="gov-item"><div class="check check-done">✓</div>KPI deck prepared</div>
+          <div class="gov-item"><div class="check check-miss">○</div>Root cause analysis — conversion</div>
+          <div class="gov-pct" style="color:#22c55e">80%</div>
+        </div>
+        <div class="gov-level tl">
+          <div class="gov-level-title">Team Leader</div>
+          <div class="gov-item"><div class="check check-done">✓</div>Morning huddle (22/23 days)</div>
+          <div class="gov-item"><div class="check check-done">✓</div>Agent 1:1 coaching (4/wk)</div>
+          <div class="gov-item"><div class="check check-miss">○</div>Low performer escalation</div>
+          <div class="gov-item"><div class="check check-done">✓</div>Floor walk log</div>
+          <div class="gov-item"><div class="check check-done">✓</div>Attrition risk flagged</div>
+          <div class="gov-pct" style="color:#f59e0b">80%</div>
+        </div>
+        <div class="gov-level pm">
+          <div class="gov-level-title">Process Manager</div>
+          <div class="gov-item"><div class="check check-done">✓</div>Weekly client call done</div>
+          <div class="gov-item"><div class="check check-done">✓</div>Action plan updated</div>
+          <div class="gov-item"><div class="check check-done">✓</div>QA calibration (2/month)</div>
+          <div class="gov-item"><div class="check check-miss">○</div>MBR deck submitted</div>
+          <div class="gov-item"><div class="check check-done">✓</div>Escalation log reviewed</div>
+          <div class="gov-pct" style="color:#f59e0b">80%</div>
+        </div>
+        <div class="gov-level bh">
+          <div class="gov-level-title">Branch Head</div>
+          <div class="gov-item"><div class="check check-done">✓</div>Monthly business review</div>
+          <div class="gov-item"><div class="check check-done">✓</div>Resource gap approved</div>
+          <div class="gov-item"><div class="check check-done">✓</div>Incentive plan signed off</div>
+          <div class="gov-item"><div class="check check-done">✓</div>Attrition action reviewed</div>
+          <div class="gov-item"><div class="check check-miss">○</div>Senior client escalation call</div>
+          <div class="gov-pct" style="color:#f59e0b">80%</div>
+        </div>
+      </div>
+
+      <!-- Management Commentary -->
+      <div class="section-title">Management Commentary — May 2026</div>
+      <div class="commentary">
+        <div class="commentary-header">
+          <div class="commentary-author">Vikram Nair — Process Manager, Outbound Sales</div>
+          <div class="commentary-date">Posted 31 May 2026</div>
+        </div>
+        <div class="commentary-body">
+          <strong>What went well:</strong> CSAT and Quality scores are tracking above target for the third consecutive month. Schedule adherence has improved significantly following the roster restructure in April.<br><br>
+          <strong>Challenges:</strong> Conversion rate dropped to 4.2% in May, down from 5.1% in April. Root cause identified as two factors — (1) dialer list quality degraded due to a stale data batch imported w/e 12 May, now resolved; (2) 4 senior agents who were consistently above 8% conversion resigned in April (attrition impact with a lag).<br><br>
+          <strong>Action being taken:</strong> Script revision with your product team is scheduled for 15 June. Bottom-10 agents are in an intensive coaching plan. Branch Head has approved a revised incentive structure for June–July to retain and motivate high performers. War rooms running every Friday.<br><br>
+          <strong>Committed glide path:</strong> 5.2% by June, 6.1% by July, 7.0% target by August.
+        </div>
+        <div class="commentary-ack">
+          <button class="ack-btn">✓ Acknowledge & Accept</button>
+          <button style="background:transparent;border:1px solid #334155;color:#94a3b8;padding:5px 14px;border-radius:6px;font-size:11px;cursor:pointer">💬 Add Comment</button>
+          <div class="ack-text">Acknowledging confirms you have reviewed this commentary and accept the committed plan.</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</body>
+</html>

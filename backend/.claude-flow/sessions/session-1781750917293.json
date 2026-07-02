@@ -1,0 +1,14 @@
+{
+  "id": "session-1781750917293",
+  "startedAt": "2026-06-18T02:48:37.293Z",
+  "cwd": "/home/shuvam/hrms-audit/backend",
+  "context": {},
+  "metrics": {
+    "edits": 22,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "endedAt": "2026-06-18T16:06:16.372Z",
+  "duration": 47859079
+}

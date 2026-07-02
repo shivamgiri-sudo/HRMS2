@@ -1,0 +1,14 @@
+{
+  "id": "session-1780333456330",
+  "startedAt": "2026-06-01T17:04:16.330Z",
+  "cwd": "/home/shuvam/mas-callnet-hrms",
+  "context": {},
+  "metrics": {
+    "edits": 17,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "endedAt": "2026-06-02T03:20:51.296Z",
+  "duration": 36994967
+}

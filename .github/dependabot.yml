@@ -1,0 +1,84 @@
+# Dependabot configuration file
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
+
+version: 2
+updates:
+  # NPM dependencies
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "your-org/maintainers"
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Group minor and patch updates for production dependencies
+      production-minor:
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group all dev dependencies together
+      dev-dependencies:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group React ecosystem updates
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "react-router*"
+          - "@types/react*"
+      # Group Radix UI updates
+      radix-ui:
+        patterns:
+          - "@radix-ui/*"
+      # Group TanStack updates
+      tanstack:
+        patterns:
+          - "@tanstack/*"
+      # Group Supabase updates
+      supabase:
+        patterns:
+          - "@supabase/*"
+    ignore:
+      # Ignore major version updates for stability (review manually)
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(ci)"
+
+  # Docker (for docker-compose.yml)
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(docker)"

@@ -1,0 +1,129 @@
+<h2>AI Insights Opportunity Map — MAS Callnet HRMS</h2>
+<p class="subtitle">We found <strong>11 modules</strong> where Gemini AI can add real value. Which areas do you want to prioritise first?</p>
+
+<style>
+  .module-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 20px; }
+  .module-card {
+    border: 2px solid #e2e8f0; border-radius: 14px; padding: 16px 18px;
+    cursor: pointer; transition: all 0.2s; background: #fff;
+    position: relative;
+  }
+  .module-card:hover { border-color: #6366f1; background: #f5f3ff; transform: translateY(-2px); box-shadow: 0 4px 16px #6366f122; }
+  .module-card.selected { border-color: #6366f1; background: #ede9fe; }
+  .module-card .badge {
+    display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; padding: 2px 8px; border-radius: 999px; margin-bottom: 8px;
+  }
+  .badge.high { background: #fef2f2; color: #dc2626; }
+  .badge.medium { background: #fff7ed; color: #ea580c; }
+  .badge.quick { background: #f0fdf4; color: #16a34a; }
+  .module-card h3 { font-size: 15px; font-weight: 700; margin: 0 0 6px; color: #1e293b; }
+  .module-card p { font-size: 12px; color: #64748b; margin: 0 0 10px; line-height: 1.5; }
+  .insight-count { font-size: 11px; font-weight: 600; color: #6366f1; }
+  .icon { font-size: 22px; margin-bottom: 6px; }
+  .legend { display: flex; gap: 16px; margin-top: 6px; font-size: 11px; color: #64748b; }
+  .legend span { display: flex; align-items: center; gap: 4px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+</style>
+
+<div class="legend">
+  <span><span class="dot" style="background:#dc2626"></span> High Impact</span>
+  <span><span class="dot" style="background:#ea580c"></span> Medium Impact</span>
+  <span><span class="dot" style="background:#16a34a"></span> Quick Win</span>
+</div>
+
+<div class="module-grid">
+
+  <div class="module-card" data-choice="dashboard" onclick="toggleSelect(this)">
+    <div class="icon">🎯</div>
+    <span class="badge high">High Impact</span>
+    <h3>Dashboards</h3>
+    <p>CEO, HR, Management & Employee dashboards — AI summarises workforce health, flags risks, predicts bottlenecks</p>
+    <div class="insight-count">5 insight placements →</div>
+  </div>
+
+  <div class="module-card" data-choice="ats" onclick="toggleSelect(this)">
+    <div class="icon">🧲</div>
+    <span class="badge high">High Impact</span>
+    <h3>ATS & Recruitment</h3>
+    <p>Pipeline health, conversion rates, recruiter performance, sourcing channel analysis + resume CV parsing (already live)</p>
+    <div class="insight-count">4 insight placements →</div>
+  </div>
+
+  <div class="module-card" data-choice="attendance" onclick="toggleSelect(this)">
+    <div class="icon">🕐</div>
+    <span class="badge high">High Impact</span>
+    <h3>Attendance</h3>
+    <p>Pattern detection for late arrivals, absenteeism trends, WFH vs WFO balance, late mark prediction</p>
+    <div class="insight-count">3 insight placements →</div>
+  </div>
+
+  <div class="module-card" data-choice="performance" onclick="toggleSelect(this)">
+    <div class="icon">📈</div>
+    <span class="badge high">High Impact</span>
+    <h3>Performance & KPI</h3>
+    <p>Rating trajectory, goal forecasting, team benchmarking, at-risk employee detection, coaching recommendations</p>
+    <div class="insight-count">6 insight placements →</div>
+  </div>
+
+  <div class="module-card" data-choice="leave" onclick="toggleSelect(this)">
+    <div class="icon">🗓️</div>
+    <span class="badge medium">Medium Impact</span>
+    <h3>Leave Management</h3>
+    <p>Approval trend analysis, leave exhaustion forecasting, year-end planning, escalation alerts</p>
+    <div class="insight-count">4 insight placements →</div>
+  </div>
+
+  <div class="module-card" data-choice="payroll" onclick="toggleSelect(this)">
+    <div class="icon">💰</div>
+    <span class="badge medium">Medium Impact</span>
+    <h3>Payroll</h3>
+    <p>Trend forecasting, anomaly detection in salary runs, salary band outliers, month-on-month cost analysis</p>
+    <div class="insight-count">5 insight placements →</div>
+  </div>
+
+  <div class="module-card" data-choice="wfm" onclick="toggleSelect(this)">
+    <div class="icon">👥</div>
+    <span class="badge medium">Medium Impact</span>
+    <h3>WFM & Roster</h3>
+    <p>Roster compliance alerts, headcount gap prediction, shift conflict analysis, adherence optimisation</p>
+    <div class="insight-count">4 insight placements →</div>
+  </div>
+
+  <div class="module-card" data-choice="employee" onclick="toggleSelect(this)">
+    <div class="icon">🧑‍💼</div>
+    <span class="badge quick">Quick Win</span>
+    <h3>Employee Profile</h3>
+    <p>Career development suggestions, leave pattern insights, attendance anomaly nudges, peer benchmarking</p>
+    <div class="insight-count">4 insight placements →</div>
+  </div>
+
+  <div class="module-card" data-choice="onboarding" onclick="toggleSelect(this)">
+    <div class="icon">🚀</div>
+    <span class="badge quick">Quick Win</span>
+    <h3>Onboarding</h3>
+    <p>Stuck pipeline detection, document completeness check, batch recommendations, time-to-join analysis</p>
+    <div class="insight-count">3 insight placements →</div>
+  </div>
+
+  <div class="module-card" data-choice="quality" onclick="toggleSelect(this)">
+    <div class="icon">⭐</div>
+    <span class="badge medium">Medium Impact</span>
+    <h3>Quality & Operations</h3>
+    <p>Agent performance narrative, teachability scores, top-performer trait analysis, attrition risk summaries</p>
+    <div class="insight-count">4 insight placements →</div>
+  </div>
+
+  <div class="module-card" data-choice="exit" onclick="toggleSelect(this)">
+    <div class="icon">🚪</div>
+    <span class="badge quick">Quick Win</span>
+    <h3>Exit Management</h3>
+    <p>Resignation pattern detection, exit interview sentiment analysis, flight-risk scoring, retention suggestions</p>
+    <div class="insight-count">3 insight placements →</div>
+  </div>
+
+</div>
+
+<div style="margin-top:20px; padding:14px 18px; background:#f8fafc; border-radius:10px; font-size:13px; color:#475569;">
+  <strong>Select the modules you want to build first</strong> (you can pick multiple). We'll design the AI insight component pattern and placement for each one you choose.
+</div>
