@@ -278,7 +278,7 @@ export default function NativeHROnboardingRequests() {
       offered_ctc: '', department_id: '', designation_id: '', reporting_manager_id: '',
       pf_eligible: true, esi_eligible: true, selected_package_id: '',
     });
-    hrmsApi.get<unknown>(`/api/ats/bgv/status?candidateId=${row.candidate_id}`)
+    hrmsApi.get<unknown>(`/api/ats/bgv/status/${row.candidate_id}`)
       .then((r: any) => { const d = r?.data ?? r; if (d && typeof d === 'object') setBgv(d as BgvData); })
       .catch(() => {});
     // Fetch onboarding profile to display PF opt-out consent status (non-blocking)
