@@ -7,8 +7,8 @@ import { Calendar } from "@/components/ui/calendar";
 import { ChevronLeft, ChevronRight, Users, CalendarDays } from "lucide-react";
 import { useTeamLeaves, useIsManager } from "@/hooks/useTeamLeaves";
 import { Skeleton } from "@/components/ui/skeleton";
-import { format, isSameDay, isWithinInterval, parseISO, addMonths, subMonths } from "date-fns";
-import { cn, normalizeDate } from "@/lib/utils";
+import { format, isSameDay, isWithinInterval, parseISO, addMonths, subMonths, isValid } from "date-fns";
+import { cn, formatDate, normalizeDate } from "@/lib/utils";
 
 export function TeamLeaveCalendar() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -43,6 +43,8 @@ export function TeamLeaveCalendar() {
     ? teamLeaves.filter((leave) => {
         const start = parseISO(normalizeDate(leave.start_date));
         const end = parseISO(normalizeDate(leave.end_date));
+        if (!isValid(start) || !isValid(end)) return false;
+
         return isWithinInterval(selectedDate, { start, end }) || 
                isSameDay(selectedDate, start) || 
                isSameDay(selectedDate, end);
@@ -54,6 +56,8 @@ export function TeamLeaveCalendar() {
     const dates: Date[] = [];
     const start = parseISO(normalizeDate(leave.start_date));
     const end = parseISO(normalizeDate(leave.end_date));
+    if (!isValid(start) || !isValid(end)) return dates;
+
     const current = new Date(start);
     while (current <= end) {
       dates.push(new Date(current));
@@ -61,6 +65,12 @@ export function TeamLeaveCalendar() {
     }
     return dates;
   });
+
+  const formatLeaveRange = (startDate: string, endDate: string) => {
+    const start = formatDate(startDate, "MMM d");
+    const end = formatDate(endDate, "MMM d");
+    return [start, end].filter(Boolean).join(" - ") || "Dates pending";
+  };
 
   const modifiers = {
     hasLeave: leaveDates,
@@ -148,7 +158,7 @@ export function TeamLeaveCalendar() {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">{leave.employee_name}</p>
                         <p className="text-xs text-muted-foreground">
-                          {format(parseISO(normalizeDate(leave.start_date)), "MMM d")} - {format(parseISO(normalizeDate(leave.end_date)), "MMM d")}
+                          {formatLeaveRange(leave.start_date, leave.end_date)}
                         </p>
                       </div>
                       <Badge variant="secondary" className="text-xs shrink-0">

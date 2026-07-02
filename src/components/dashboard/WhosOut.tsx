@@ -5,8 +5,7 @@ import { UserX } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Skeleton } from "@/components/ui/skeleton";
-import { format, parseISO } from "date-fns";
-import { normalizeDate } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
 
 interface LeaveInfo {
   id: string;
@@ -22,7 +21,8 @@ function getLeaveDurationLabel(leave: LeaveInfo): string {
     return "Today only";
   }
 
-  return `Until ${format(parseISO(normalizeDate(leave.to_date)), "MMM d")}`;
+  const formattedEndDate = formatDate(leave.to_date, "MMM d");
+  return formattedEndDate ? `Until ${formattedEndDate}` : "Today only";
 }
 
 export function WhosOut() {
