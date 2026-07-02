@@ -8,10 +8,13 @@ import { format, parseISO, isValid } from "date-fns";
  * the rendered date one day back in UTC+ timezones (e.g. IST).
  * Appending T00:00:00 (no Z) forces local-time interpretation.
  */
-export function normalizeDate(value: string): string {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
-    ? `${value.trim()}T00:00:00`
-    : value;
+export function normalizeDate(value: string | null | undefined): string {
+  if (!value) return "";
+
+  const trimmedValue = String(value).trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(trimmedValue)
+    ? `${trimmedValue}T00:00:00`
+    : trimmedValue;
 }
 
 /** Parse a date-only or full ISO string as local time (no UTC shift). */
