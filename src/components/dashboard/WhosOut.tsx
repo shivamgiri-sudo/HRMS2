@@ -13,8 +13,16 @@ interface LeaveInfo {
   employee_name: string;
   employee_avatar?: string;
   leave_type: string;
-  from_date: string;
-  to_date: string;
+  from_date: string | null;
+  to_date: string | null;
+}
+
+function getLeaveDurationLabel(leave: LeaveInfo): string {
+  if (!leave.to_date || leave.from_date === leave.to_date) {
+    return "Today only";
+  }
+
+  return `Until ${format(parseISO(normalizeDate(leave.to_date)), "MMM d")}`;
 }
 
 export function WhosOut() {
@@ -81,9 +89,7 @@ export function WhosOut() {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{leave.employee_name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {leave.from_date === leave.to_date
-                      ? "Today only"
-                      : `Until ${format(parseISO(normalizeDate(leave.to_date)), "MMM d")}`}
+                    {getLeaveDurationLabel(leave)}
                   </p>
                 </div>
                 <Badge variant="outline" className="text-xs shrink-0">
