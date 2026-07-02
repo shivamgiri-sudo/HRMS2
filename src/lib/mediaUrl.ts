@@ -16,6 +16,9 @@ const API_BASE = apiBaseUrl();
 export function normalizeMediaUrl(url?: string | null): string | undefined {
   if (!url) return undefined;
   if (/^https?:\/\//i.test(url) || url.startsWith("data:")) return url;
+  if (url.startsWith("/api/files/employee-photos/")) {
+    return `${API_BASE}${url.replace("/api/files/employee-photos/", "/uploads/employee-photos/")}`;
+  }
   if (url.startsWith("/api/")) return `${API_BASE}${url}`;
   if (url.startsWith("/uploads/")) return `${API_BASE}${url}`;
   return url;
