@@ -549,7 +549,14 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
        LEFT JOIN process_master p ON p.id = e.process_id
        LEFT JOIN department_master dept ON dept.id = e.department_id
        LEFT JOIN employee_emergency_contact eec
-         ON eec.employee_id = e.id AND eec.contact_seq = 1
+         ON eec.employee_id = e.id
+        AND eec.id = (
+          SELECT ec2.id
+            FROM employee_emergency_contact ec2
+           WHERE ec2.employee_id = e.id
+           ORDER BY COALESCE(ec2.is_primary, 0) DESC, COALESCE(ec2.contact_seq, 1) ASC, ec2.created_at ASC
+           LIMIT 1
+        )
       WHERE e.id = ? LIMIT 1`,
     [targetId]
   );

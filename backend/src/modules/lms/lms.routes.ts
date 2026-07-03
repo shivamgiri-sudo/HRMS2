@@ -14,6 +14,66 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 
 router.use(requireAuth);
 
+const LMS_PORTAL_URLS = {
+  trainee: "https://mcnlms.teammas.in/lms",
+  coordinator: "https://mcnlms.teammas.in/coordinator",
+  admin: "https://mcnlms.teammas.in/admin",
+} as const;
+
+type LmsPortal = keyof typeof LMS_PORTAL_URLS;
+
+function normalizePortal(value: unknown): LmsPortal {
+  const portal = String(value ?? "trainee").toLowerCase();
+  if (portal === "employee" || portal === "learner") return "trainee";
+  if (portal === "coordinator") return "coordinator";
+  if (portal === "admin") return "admin";
+  return "trainee";
+}
+
+// GET /api/lms/launch-context?portal=admin|coordinator|trainee
+// Compatibility endpoint used by the embedded LMS frame. It returns a stable
+// deep-link context even when LMS bridge SSO is not configured, so HRMS pages do
+// not fail with a route error.
+router.get("/launch-context", h(async (req: AuthenticatedRequest, res: Response) => {
+  const portal = normalizePortal(req.query.portal);
+  const userId = req.authUser!.id;
+  const employee = await getEmployeeForUser(userId);
+  const userRoles = ((req as any).userRoles ?? []) as string[];
+
+  let access: Awaited<ReturnType<typeof lmsService.getAccessForEmployee>> | null = null;
+  let bridgeError: string | null = null;
+  try {
+    if (employee) {
+      access = await lmsService.getAccessForEmployee(employee, userRoles);
+    }
+  } catch (err) {
+    bridgeError = err instanceof Error ? err.message : "LMS access lookup failed";
+  }
+
+  const roleAllowed =
+    portal === "trainee" ||
+    (portal === "coordinator" && (access?.access.coordinator || userRoles.some((r) => ["admin", "hr", "super_admin", "trainer", "lms_coordinator"].includes(String(r).toLowerCase())))) ||
+    (portal === "admin" && (access?.access.admin || userRoles.some((r) => ["admin", "hr", "ceo", "super_admin", "lms_admin"].includes(String(r).toLowerCase()))));
+
+  if (!roleAllowed) {
+    return res.status(403).json({ success: false, message: "You do not have access to this LMS portal" });
+  }
+
+  const portalUrl = LMS_PORTAL_URLS[portal];
+  return res.json({
+    success: true,
+    data: {
+      portal,
+      portal_url: portalUrl,
+      embed_url: portalUrl,
+      lms_token: null,
+      lms_user_type: portal,
+      bridge_error: bridgeError,
+      access,
+    },
+  });
+}));
+
 // Get LMS deep-link URLs for authenticated employee (own) or admin/hr for any employee
 router.get("/launch-urls/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
@@ -25,9 +85,9 @@ router.get("/launch-urls/:employeeId", h(async (req: AuthenticatedRequest, res: 
     }
   }
   res.json({ success: true, data: {
-    learner_url: "https://mcnlms.teammas.in/lms",
-    coordinator_url: "https://mcnlms.teammas.in/coordinator",
-    admin_url: "https://mcnlms.teammas.in/admin",
+    learner_url: LMS_PORTAL_URLS.trainee,
+    coordinator_url: LMS_PORTAL_URLS.coordinator,
+    admin_url: LMS_PORTAL_URLS.admin,
   }});
 }));
 

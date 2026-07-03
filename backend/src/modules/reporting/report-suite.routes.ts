@@ -56,6 +56,26 @@ async function queryRows(sql: string, params: unknown[], limit: number) {
   return rows;
 }
 
+function humanizeCode(code: string) {
+  return code
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function fallbackReport(code: string) {
+  return {
+    sql: `SELECT
+            ? AS report_code,
+            ? AS report_name,
+            'PENDING_DATA_BUILDER' AS report_status,
+            'This report tile is available in HRMS, but its dedicated backend data builder is not configured yet.' AS note,
+            NOW() AS generated_at`,
+    params: [code, humanizeCode(code)],
+  };
+}
+
 reportSuiteRouter.get("/catalog", h(async (_req, res) => res.json({ success: true, data: CATALOG })));
 
 reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll", "wfm", "manager", "ceo"), h(async (req, res) => {
@@ -270,10 +290,14 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
               WHERE e.id IS NULL
               ORDER BY ibd.activity_date DESC, ibd.employee_code`;
       break;
-    default:
-      return res.status(404).json({ success: false, message: "Unknown report code", available: CATALOG });
+    default: {
+      const fallback = fallbackReport(code);
+      sql = fallback.sql;
+      params.push(...fallback.params);
+      break;
+    }
   }
 
   const data = await queryRows(sql, params, limit);
-  return res.json({ success: true, code, data, meta: { count: data.length, limit } });
+  return res.json({ success: true, code, data, meta: { count: data.length, limit, fallback: data[0]?.report_status === "PENDING_DATA_BUILDER" } });
 }));

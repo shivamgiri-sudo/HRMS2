@@ -169,8 +169,9 @@ export interface PendingCandidate {
 }
 
 export async function getMyPendingCandidates(recruiterName?: string): Promise<PendingCandidate[]> {
-  if (!recruiterName) return [];
-  const params: unknown[] = [recruiterName];
+  const params: unknown[] = [];
+  const recruiterClause = recruiterName ? "AND recruiter_assigned_name = ?" : "";
+  if (recruiterName) params.push(recruiterName);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        id,
@@ -187,7 +188,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
        ) AS pending_minutes
      FROM ats_candidate
      WHERE active_status = 1
-       AND recruiter_assigned_name = ?
+       ${recruiterClause}
        AND status = 'Waiting'
      ORDER BY pending_minutes DESC`,
     params

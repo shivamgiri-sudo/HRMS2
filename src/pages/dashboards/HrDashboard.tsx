@@ -11,6 +11,8 @@ import type { KpiMetric } from "@/components/dashboard";
 import { useUserRole } from "@/hooks/useUserRole";
 import { Button } from "@/components/ui/button";
 import { AIInsightPanel } from "@/components/ai";
+import { hrmsApi } from "@/lib/hrmsApi";
+import { normalizeDashboardSummary } from "@/lib/dashboardCompat";
 
 const DASHBOARD_CODE = "HR_DASHBOARD";
 
@@ -58,13 +60,9 @@ export default function HrDashboard() {
     setSummaryLoading(true);
     setFetchError(null);
 
-    fetch(`/api/dashboards/${DASHBOARD_CODE}/summary`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`Summary fetch failed: ${res.status}`);
-        return res.json();
-      })
+    hrmsApi.get(`/api/dashboards/${DASHBOARD_CODE}/summary`)
       .then((json) => {
-        if (!cancelled) setSummary(json?.data ?? json);
+        if (!cancelled) setSummary(normalizeDashboardSummary<HrSummary>(DASHBOARD_CODE, json as any));
       })
       .catch((err) => {
         if (!cancelled) setFetchError(err.message ?? "Failed to load HR dashboard summary.");

@@ -16,6 +16,8 @@ import { Button } from "@/components/ui/button";
 import { useExecutiveQualitySummary } from "../../hooks/useExecutiveQuality";
 import { useOrgKpiSummary } from "../../hooks/useOrgKpiSummary";
 import { AIInsightPanel } from "@/components/ai";
+import { hrmsApi } from "@/lib/hrmsApi";
+import { normalizeDashboardSummary } from "@/lib/dashboardCompat";
 
 const DASHBOARD_CODE = "CEO_DASHBOARD";
 
@@ -90,13 +92,9 @@ export default function CeoDashboard() {
     if (processId) params.set("processId", processId);
     const qs = params.toString() ? `?${params.toString()}` : "";
 
-    fetch(`/api/dashboards/${DASHBOARD_CODE}/summary${qs}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`Summary fetch failed: ${res.status}`);
-        return res.json();
-      })
+    hrmsApi.get(`/api/dashboards/${DASHBOARD_CODE}/summary${qs}`)
       .then((json) => {
-        if (!cancelled) setSummary(json?.data ?? json);
+        if (!cancelled) setSummary(normalizeDashboardSummary<CeoSummary>(DASHBOARD_CODE, json as any));
       })
       .catch((err) => {
         if (!cancelled) setFetchError(err.message ?? "Failed to load dashboard summary.");
@@ -106,11 +104,7 @@ export default function CeoDashboard() {
       });
 
     setInsightsLoading(true);
-    fetch(`/api/dashboards/${DASHBOARD_CODE}/good-bad-insights${qs}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`Insights fetch failed: ${res.status}`);
-        return res.json();
-      })
+    hrmsApi.get(`/api/dashboards/${DASHBOARD_CODE}/good-bad-insights${qs}`)
       .then((json) => {
         if (!cancelled) setInsights(json?.data ?? json);
       })
