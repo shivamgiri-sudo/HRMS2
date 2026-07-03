@@ -10,6 +10,7 @@ import { convertCandidateToEmployee } from "./ats.convert.service.js";
 import onboardingRouter from "./ats.onboarding.routes.js";
 import onboardingFullRouter from "./onboarding-full.routes.js";
 import bgvVerificationRouter from "./bgv-verification.routes.js";
+import { recruiterHiringRouter } from "./recruiter-hiring.routes.js";
 import multer from "multer";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -29,6 +30,7 @@ atsRouter.post("/candidates",                    h(c.createCandidate.bind(c)));
 // ── PUBLIC — candidate onboarding with token (no auth required) ──────────────
 atsRouter.use("/onboarding-full", onboardingFullRouter);
 atsRouter.use("/bgv", bgvVerificationRouter);
+atsRouter.use(recruiterHiringRouter);
 
 // ── PUBLIC — candidate file upload (1 hour window after registration) ────────
 // Configure multer for candidate uploads

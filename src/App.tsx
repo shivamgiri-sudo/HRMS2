@@ -67,6 +67,8 @@ const NativeATSWaitingQueue = lazy(() => import("./pages/NativeATSWaitingQueue")
 const NativeATSCandidateMaster = lazy(() => import("./pages/NativeATSCandidateMaster"));
 const NativeATSRecruiterWorkspace = lazy(() => import("./pages/NativeATSRecruiterWorkspace"));
 const NativeATSDashboardV2 = lazy(() => import("./pages/NativeATSDashboardV2"));
+const NativeATSHiringEntry = lazy(() => import("./pages/NativeATSHiringEntry"));
+const NativeATSHiringDashboard = lazy(() => import("./pages/NativeATSHiringDashboard"));
 const NativeATSSourcingAnalysis = lazy(() => import("./pages/NativeATSSourcingAnalysis"));
 const NativeATSExtensions = lazy(() => import("./pages/NativeATSExtensions"));
 const NativeATSFormConfig = lazy(() => import("./pages/NativeATSFormConfig"));
@@ -313,6 +315,10 @@ const App = () => (
               <Route path="/ats/candidate-registration" element={<ProtectedRoute><NativeATSCandidateRegistration /></ProtectedRoute>} />
               <Route path="/ats/registration-enhanced" element={<ProtectedRoute><NativeATSRegistrationEnhanced /></ProtectedRoute>} />
               <Route path="/ats/recruiter/my-candidates" element={<ProtectedRoute><Gate pageCode="ATS_RECRUITER_QUEUE"><NativeATSRecruiterWorkspace /></Gate></ProtectedRoute>} />
+              <Route path="/ats/recruiter/hiring-entry" element={<ProtectedRoute><Gate pageCode="ATS_RECRUITER_QUEUE"><NativeATSHiringEntry /></Gate></ProtectedRoute>} />
+              <Route path="/ats/recruiter/calling-entry" element={<ProtectedRoute><Gate pageCode="ATS_RECRUITER_QUEUE"><NativeATSHiringEntry /></Gate></ProtectedRoute>} />
+              <Route path="/ats/recruiter/hiring-dashboard" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSHiringDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/ats/recruiter/calling-dashboard" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSHiringDashboard /></Gate></ProtectedRoute>} />
               <Route path="/ats/onboarding-bridge" element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><NativeATSOnboardingBridge /></Gate></ProtectedRoute>} />
               <Route path="/ats/waiting-queue" element={<ProtectedRoute><Gate pageCode="ATS_WAITING_QUEUE"><NativeATSWaitingQueue /></Gate></ProtectedRoute>} />
               <Route path="/ats/candidate-master" element={<ProtectedRoute><Gate pageCode="ATS_CANDIDATE_MASTER"><NativeATSCandidateMaster /></Gate></ProtectedRoute>} />

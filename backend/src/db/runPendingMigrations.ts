@@ -223,6 +223,8 @@ const MIGRATION_MANIFEST: string[] = [
   "309_super_admin_full_page_access.sql",
   "342_bgv_provider_config_labels.sql",
   "1000_fix_engagement_schema_columns.sql",
+  "343_global_page_availability.sql",
+  "344_ats_recruiter_hiring_tracker.sql",
 ];
 
 export type MigrationHealth = {
