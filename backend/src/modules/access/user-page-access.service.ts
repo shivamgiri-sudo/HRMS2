@@ -1,5 +1,6 @@
 import { db } from "../../db/mysql.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 
 interface PageAccessPermissions {
   can_view: boolean;
@@ -23,16 +24,17 @@ interface PageCatalogEntry {
   page_path?: string;
   module?: string;
   description?: string;
+  active_status: number;
 }
 
 /**
  * Get all pages in the system (from page_catalog)
  */
-export async function listPageCatalog(): Promise<PageCatalogEntry[]> {
+export async function listPageCatalog(includeDisabled = false): Promise<PageCatalogEntry[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT page_code, page_name, page_path, module, description
+    `SELECT page_code, page_name, page_path, module, description, active_status
      FROM page_catalog
-     WHERE active_status = 1
+     ${includeDisabled ? "" : "WHERE active_status = 1"}
      ORDER BY module, page_name`
   );
   return rows as PageCatalogEntry[];
@@ -85,16 +87,20 @@ export async function getUserEffectivePageAccess(userId: string): Promise<Array<
       CASE WHEN upa.id IS NOT NULL THEN 'user' ELSE 'role' END AS source
      FROM user_roles ur
      LEFT JOIN role_page_access rpa ON rpa.role_key = ur.role_key AND rpa.active_status = 1
+     LEFT JOIN page_catalog pc ON pc.page_code = rpa.page_code
      LEFT JOIN user_page_access upa ON upa.user_id = ur.user_id AND upa.page_code = rpa.page_code AND upa.active_status = 1
      WHERE ur.user_id = ? AND ur.active_status = 1
+       AND COALESCE(pc.active_status, 1) = 1
 
      UNION
 
      SELECT
-      page_code, can_view, can_create, can_edit, can_delete, can_export, 'user' AS source
-     FROM user_page_access
-     WHERE user_id = ? AND active_status = 1
-       AND page_code NOT IN (
+      upa.page_code, upa.can_view, upa.can_create, upa.can_edit, upa.can_delete, upa.can_export, 'user' AS source
+     FROM user_page_access upa
+     LEFT JOIN page_catalog pc ON pc.page_code = upa.page_code
+     WHERE upa.user_id = ? AND upa.active_status = 1
+       AND COALESCE(pc.active_status, 1) = 1
+       AND upa.page_code NOT IN (
          SELECT DISTINCT rpa.page_code
          FROM user_roles ur
          JOIN role_page_access rpa ON rpa.role_key = ur.role_key
@@ -316,7 +322,7 @@ export async function listAllUserPageAccess(): Promise<any[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
       upa.user_id, u.email AS user_email,
-      upa.page_code, pc.page_name, pc.module,
+      upa.page_code, pc.page_name, pc.module, pc.active_status AS page_active,
       upa.can_view, upa.can_create, upa.can_edit, upa.can_delete, upa.can_export,
       upa.assigned_by, admin.email AS assigned_by_email,
       upa.assigned_at, upa.notes
@@ -328,4 +334,48 @@ export async function listAllUserPageAccess(): Promise<any[]> {
      ORDER BY u.email, pc.module, pc.page_name`
   );
   return rows;
+}
+
+
+export async function setPageCatalogActiveStatus(
+  pageCode: string,
+  active: boolean,
+  actorId: string,
+  notes?: string
+): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT page_code, page_name, active_status
+       FROM page_catalog
+      WHERE page_code = ?
+      LIMIT 1`,
+    [pageCode]
+  );
+
+  const existing = (rows as RowDataPacket[])[0] as any;
+  if (!existing) {
+    throw Object.assign(new Error("Page not found in catalog"), { statusCode: 404 });
+  }
+
+  const newStatus = active ? 1 : 0;
+  if (Number(existing.active_status) === newStatus) return;
+
+  await db.execute(
+    "UPDATE page_catalog SET active_status = ? WHERE page_code = ?",
+    [newStatus, pageCode]
+  );
+
+  await logSensitiveAction({
+    actor_user_id: actorId,
+    action_type: active ? "PAGE_ENABLED" : "PAGE_DISABLED",
+    module_key: "ACCESS_CONTROL",
+    entity_type: "page_catalog",
+    entity_id: pageCode,
+    change_summary: {
+      page_code: pageCode,
+      page_name: existing.page_name ?? null,
+      previous_active_status: Number(existing.active_status),
+      active_status: newStatus,
+      notes: notes ?? null,
+    },
+  });
 }

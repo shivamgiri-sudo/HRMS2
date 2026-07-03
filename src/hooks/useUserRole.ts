@@ -33,6 +33,7 @@ export type UserRoleData = {
   employeeName: string | null;
   scopes: WorkforceScope[];
   pages: WorkforcePageAccess[];
+  disabledPageCodes: string[];
 };
 
 const ROLE_ALIASES: Record<string, string[]> = {
@@ -108,6 +109,7 @@ export const useUserRole = () => {
               : null),
           scopes: data.scopes ?? [],
           pages: data.pages ?? data.pagePerms ?? [],
+          disabledPageCodes: (data.disabledPageCodes ?? []).map(String),
         };
       }
 
@@ -120,6 +122,7 @@ export const useUserRole = () => {
         employeeName: null,
         scopes: [],
         pages: [],
+        disabledPageCodes: [],
       };
     },
     enabled: !!user?.id,
@@ -167,12 +170,13 @@ export const useWorkforceAccess = () => {
         .map((permission) => permission.page_code),
     );
     const roleKeys = expandRoleKeys(roleQuery.data?.roleKeys ?? []);
+    const disabledPageSet = new Set(roleQuery.data?.disabledPageCodes ?? []);
 
     const isSuperAdmin = roleKeys.includes("super_admin");
 
     return {
-      canViewPage: (pageCode: string) => isSuperAdmin || pageSet.has(pageCode),
-      visiblePageCodes: Array.from(pageSet),
+      canViewPage: (pageCode: string) => !disabledPageSet.has(pageCode) && (isSuperAdmin || pageSet.has(pageCode)),
+      visiblePageCodes: Array.from(pageSet).filter((pageCode) => !disabledPageSet.has(pageCode)),
       roleKeys,
       scopes: roleQuery.data?.scopes ?? [],
       employeeId: roleQuery.data?.employeeId ?? null,

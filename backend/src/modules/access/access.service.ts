@@ -163,6 +163,7 @@ export interface AccessMeResponse {
     page_code: string; can_view: boolean; can_create: boolean;
     can_edit: boolean; can_delete: boolean; can_export: boolean;
   }>;
+  disabledPageCodes: string[];
 }
 
 export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
@@ -188,21 +189,31 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
   );
   const scopes = scopeRows as any[];
 
-  // 4. Page permissions — union of all role grants (most permissive wins)
+  const [disabledRows] = await db.execute<RowDataPacket[]>(
+    "SELECT page_code FROM page_catalog WHERE active_status = 0"
+  );
+  const disabledPageCodes = (disabledRows as RowDataPacket[]).map((row: any) => String(row.page_code));
+
+  // 4. Page permissions - union of all role grants (most permissive wins).
+  // page_catalog.active_status is the global compliance kill-switch:
+  // disabled pages are hidden even if a role or direct user assignment grants access.
   const allRoleKeys = [...new Set([...roles, ...scopes.map((s: any) => s.role_key)])];
   let pages: AccessMeResponse["pages"] = [];
   if (allRoleKeys.length > 0) {
     const placeholders = allRoleKeys.map(() => "?").join(",");
     const [pageRows] = await db.execute<RowDataPacket[]>(
-      `SELECT page_code,
-              MAX(can_view)   AS can_view,
-              MAX(can_create) AS can_create,
-              MAX(can_edit)   AS can_edit,
-              MAX(can_delete) AS can_delete,
-              MAX(can_export) AS can_export
-       FROM role_page_access
-       WHERE role_key IN (${placeholders}) AND active_status = 1
-       GROUP BY page_code`,
+      `SELECT rpa.page_code,
+              MAX(rpa.can_view)   AS can_view,
+              MAX(rpa.can_create) AS can_create,
+              MAX(rpa.can_edit)   AS can_edit,
+              MAX(rpa.can_delete) AS can_delete,
+              MAX(rpa.can_export) AS can_export
+       FROM role_page_access rpa
+       LEFT JOIN page_catalog pc ON pc.page_code = rpa.page_code
+       WHERE rpa.role_key IN (${placeholders})
+         AND rpa.active_status = 1
+         AND COALESCE(pc.active_status, 1) = 1
+       GROUP BY rpa.page_code`,
       allRoleKeys
     );
     pages = (pageRows as RowDataPacket[]).map((r: any) => ({
@@ -217,9 +228,12 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
 
   // 5. User page overrides — take precedence over role-based access
   const [userPageRows] = await db.execute<RowDataPacket[]>(
-    `SELECT page_code, can_view, can_create, can_edit, can_delete, can_export
-     FROM user_page_access
-     WHERE user_id = ? AND active_status = 1`,
+    `SELECT upa.page_code, upa.can_view, upa.can_create, upa.can_edit, upa.can_delete, upa.can_export
+     FROM user_page_access upa
+     LEFT JOIN page_catalog pc ON pc.page_code = upa.page_code
+     WHERE upa.user_id = ?
+       AND upa.active_status = 1
+       AND COALESCE(pc.active_status, 1) = 1`,
     [userId]
   );
 
@@ -253,5 +267,6 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
     roles,
     scopes,
     pages,
+    disabledPageCodes,
   };
 }

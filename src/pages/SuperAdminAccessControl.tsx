@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 
 interface PageCatalogEntry {
   page_code: string;
@@ -33,6 +34,7 @@ interface PageCatalogEntry {
   page_path?: string;
   module?: string;
   description?: string;
+  active_status: number;
 }
 
 interface UserForAccess {
@@ -90,7 +92,7 @@ export default function SuperAdminAccessControl() {
   const { data: pages = [] } = useQuery<PageCatalogEntry[]>({
     queryKey: ["page-catalog"],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: PageCatalogEntry[] }>("/api/access/pages/catalog");
+      const res = await hrmsApi.get<{ success: boolean; data: PageCatalogEntry[] }>("/api/access/pages/catalog?include_disabled=true");
       return res.data ?? [];
     },
   });
@@ -184,6 +186,24 @@ export default function SuperAdminAccessControl() {
     },
   });
 
+  const togglePageStatus = useMutation({
+    mutationFn: async (data: { page_code: string; active_status: boolean }) => {
+      return hrmsApi.patch(
+        `/api/access/pages/catalog/${encodeURIComponent(data.page_code)}/status`,
+        { active_status: data.active_status }
+      );
+    },
+    onSuccess: (_, variables) => {
+      toast.success(variables.active_status ? "Page enabled" : "Page disabled");
+      queryClient.invalidateQueries({ queryKey: ["page-catalog"] });
+      queryClient.invalidateQueries({ queryKey: ["user-page-access-all"] });
+      queryClient.invalidateQueries({ queryKey: ["user-role-workforce-os"] });
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.error || "Failed to update page status");
+    },
+  });
+
   const handleBulkAssign = () => {
     if (!selectedUserId) {
       toast.error("Please select a user");
@@ -255,7 +275,7 @@ export default function SuperAdminAccessControl() {
               <div>
                 <CardTitle className="text-2xl">Super Admin Access Control</CardTitle>
                 <CardDescription>
-                  Assign specific pages to individual users. User assignments override role-based access.
+                  Assign pages to users and globally hold pages until compliance approves release.
                 </CardDescription>
               </div>
             </div>
@@ -266,6 +286,7 @@ export default function SuperAdminAccessControl() {
           <TabsList>
             <TabsTrigger value="assign">Assign Access</TabsTrigger>
             <TabsTrigger value="overview">All Assignments</TabsTrigger>
+            <TabsTrigger value="global">Global Page Control</TabsTrigger>
           </TabsList>
 
           <TabsContent value="assign" className="space-y-6">
@@ -322,6 +343,9 @@ export default function SuperAdminAccessControl() {
                                   <div>
                                     <p className="font-medium">{page?.page_name || access.page_code}</p>
                                     <p className="text-xs text-muted-foreground">{access.page_code}</p>
+                                    {page?.active_status === 0 && (
+                                      <Badge variant="destructive" className="mt-1 text-xs">Globally disabled</Badge>
+                                    )}
                                   </div>
                                 </TableCell>
                                 <TableCell>
@@ -392,6 +416,9 @@ export default function SuperAdminAccessControl() {
                               <div className="flex-1">
                                 <p className="font-medium">{page.page_name}</p>
                                 <p className="text-xs text-muted-foreground">{page.page_code}</p>
+                                {page.active_status === 0 && (
+                                  <Badge variant="destructive" className="mt-1 text-xs">Globally disabled</Badge>
+                                )}
                                 {page.description && (
                                   <p className="text-xs text-muted-foreground mt-1">{page.description}</p>
                                 )}
@@ -539,6 +566,78 @@ export default function SuperAdminAccessControl() {
                     </TableBody>
                   </Table>
                 )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="global">
+            <Card>
+              <CardHeader>
+                <CardTitle>Global Page Control</CardTitle>
+                <CardDescription>
+                  Disabled pages are blocked for every user until re-enabled, regardless of role or direct assignment.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="relative mb-4">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search pages..."
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    className="pl-10"
+                  />
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Page</TableHead>
+                      <TableHead>Module</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Global Availability</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredPages.map(page => {
+                      const enabled = page.active_status !== 0;
+                      const locked = page.page_code === "ACCESS_CONTROL";
+                      return (
+                        <TableRow key={page.page_code}>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{page.page_name}</p>
+                              <p className="text-xs text-muted-foreground">{page.page_code}</p>
+                              {page.page_path && (
+                                <p className="text-xs text-muted-foreground">{page.page_path}</p>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{page.module || "Other"}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={enabled ? "secondary" : "destructive"}>
+                              {enabled ? "Enabled" : "Disabled"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="inline-flex items-center gap-3">
+                              <span className="text-sm text-muted-foreground">{enabled ? "Available" : "Held"}</span>
+                              <Switch
+                                checked={enabled}
+                                disabled={togglePageStatus.isPending || locked}
+                                onCheckedChange={(checked) => togglePageStatus.mutate({
+                                  page_code: page.page_code,
+                                  active_status: Boolean(checked),
+                                })}
+                              />
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
           </TabsContent>

@@ -23,6 +23,7 @@ import {
   bulkAssignUserPageAccess,
   getUserPageAccessAuditLog,
   listAllUserPageAccess,
+  setPageCatalogActiveStatus,
 } from "./user-page-access.service.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
@@ -316,9 +317,38 @@ router.get("/page-access", requireRole("admin"), h(async (_req: AuthenticatedReq
 // ============ USER PAGE ACCESS MANAGEMENT (ADMIN ONLY) ============
 
 // GET /api/access/pages/catalog — list all available pages
-router.get("/pages/catalog", requireRole("admin"), h(async (_req: AuthenticatedRequest, res: Response) => {
-  const pages = await listPageCatalog();
+router.get("/pages/catalog", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const includeDisabled = req.query.include_disabled === "true" || req.query.includeDisabled === "true";
+  const pages = await listPageCatalog(includeDisabled);
   res.json({ success: true, data: pages });
+}));
+
+// PATCH /api/access/pages/catalog/:pageCode/status - global compliance page availability switch
+router.patch("/pages/catalog/:pageCode/status", requireRole("super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const pageCode = String(req.params.pageCode || "").trim();
+  const rawStatus = req.body?.active_status ?? req.body?.active;
+
+  if (!pageCode) {
+    return res.status(400).json({ success: false, error: "pageCode required" });
+  }
+
+  const active = typeof rawStatus === "boolean"
+    ? rawStatus
+    : rawStatus === 1 || rawStatus === "1" || rawStatus === "true";
+
+  if (![true, false, 1, 0, "1", "0", "true", "false"].includes(rawStatus)) {
+    return res.status(400).json({ success: false, error: "active_status must be true/false or 1/0" });
+  }
+
+  if (pageCode === "ACCESS_CONTROL" && !active) {
+    return res.status(400).json({
+      success: false,
+      error: "ACCESS_CONTROL cannot be globally disabled because it is required to re-enable pages.",
+    });
+  }
+
+  await setPageCatalogActiveStatus(pageCode, active, req.authUser!.id, req.body?.notes ?? null);
+  res.json({ success: true, data: { page_code: pageCode, active_status: active ? 1 : 0 } });
 }));
 
 // GET /api/access/users-for-access — list all users for assignment
