@@ -125,6 +125,13 @@ function frontendBaseUrl() {
   return String(env.FRONTEND_URL || "http://localhost:8080").replace(/\/$/, "");
 }
 
+function safeExternalProviderUrl(value: unknown): string | null {
+  const url = String(value ?? "").trim();
+  if (!url) return null;
+  if (url.includes("/api/public/employee-documents/esign/")) return null;
+  return url;
+}
+
 function isPayrollDocument(code: string) {
   const normalized = String(code || "").trim().toUpperCase();
   return PAYROLL_DOCUMENT_CODES.has(normalized) || normalized.includes("EPF") || normalized.includes("STATUTORY");
@@ -670,7 +677,10 @@ async function getChecklistBundle(employeeId: string): Promise<JoiningChecklistI
       ORDER BY c.mandatory DESC, c.document_name ASC`,
     [employeeId],
   );
-  return rows as unknown as JoiningChecklistItem[];
+  return (rows as unknown as JoiningChecklistItem[]).map((row) => ({
+    ...row,
+    latest_esign_url: safeExternalProviderUrl(row.latest_esign_url),
+  }));
 }
 
 export async function getJoiningDocumentPack(employeeId: string, userId: string) {
@@ -989,8 +999,12 @@ export async function createJoiningDocumentEsignRequest(params: {
   const clientTransactionId = generateClientTransactionId("joining-doc");
   const transactionId = randomUUID();
   let providerReferenceId: string | null = null;
-  let providerUrl: string | null = tokenLink;
-  let responsePayload: Record<string, unknown> = { signLink: tokenLink };
+  let providerUrl: string | null = null;
+  let externalProviderUrl: string | null = null;
+  let responsePayload: Record<string, unknown> = {
+    internalLinkIssued: true,
+    publicTokenHash,
+  };
   let status = "link_generated";
   let errorMessage: string | null = null;
 
@@ -1004,13 +1018,27 @@ export async function createJoiningDocumentEsignRequest(params: {
         reason: checklist.document_name,
       });
       providerReferenceId = luckpay.providerReferenceId;
-      providerUrl = luckpay.providerUrl ?? tokenLink;
-      responsePayload = sanitizeProviderPayload(luckpay.response) as Record<string, unknown>;
+      externalProviderUrl = luckpay.providerUrl ?? null;
+      providerUrl = externalProviderUrl;
+      const luckpayResponse = luckpay.response && typeof luckpay.response === "object" && !Array.isArray(luckpay.response)
+        ? { ...(luckpay.response as Record<string, unknown>) }
+        : {};
+      delete luckpayResponse.signLink;
+      delete luckpayResponse.sign_link;
+      responsePayload = sanitizeProviderPayload({
+        ...luckpayResponse,
+        internalLinkIssued: true,
+        publicTokenHash,
+      }) as Record<string, unknown>;
       status = luckpay.status || "initiated";
     }
   } catch (error) {
     errorMessage = error instanceof Error ? error.message : String(error);
-    responsePayload = sanitizeProviderPayload({ signLink: tokenLink, fallback: true }) as Record<string, unknown>;
+    responsePayload = sanitizeProviderPayload({
+      internalLinkIssued: true,
+      publicTokenHash,
+      fallback: true,
+    }) as Record<string, unknown>;
     status = "fallback_internal_link";
   }
 
@@ -1063,7 +1091,7 @@ export async function createJoiningDocumentEsignRequest(params: {
   await recalculateDocumentProgress(params.employeeId);
   return {
     sign_link: tokenLink,
-    provider_url: providerUrl,
+    provider_url: externalProviderUrl,
     provider_status: status,
     fallback_message: errorMessage,
     pack: await getJoiningDocumentPack(params.employeeId, params.actorUserId),
@@ -1452,7 +1480,7 @@ export async function getJoiningDocumentEsignStatus(params: {
           provider: String(row.provider ?? "luckpay"),
           status: String(row.status ?? "not_started"),
           provider_reference_id: row.provider_reference_id ?? null,
-          provider_url: row.provider_url ?? null,
+          provider_url: safeExternalProviderUrl(row.provider_url),
           error_message: row.error_message ?? null,
           initiated_at: row.initiated_at ?? null,
           completed_at: row.completed_at ?? null,
