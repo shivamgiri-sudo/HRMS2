@@ -34,6 +34,7 @@ type RosterPattern = {
 };
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const NO_SHIFT_VALUE = "__no_shift__";
 
 export default function NativeRosterMasterBuilder() {
   const qc = useQueryClient();
@@ -410,16 +411,20 @@ export default function NativeRosterMasterBuilder() {
                         </div>
                         {!day.is_week_off && shifts && shifts.length > 0 && (
                           <Select
-                            value={day.shift_template_id || ""}
+                            value={day.shift_template_id || NO_SHIFT_VALUE}
                             onValueChange={(v) =>
-                              updatePatternDay(day.day_number, "shift_template_id", v || null)
+                              updatePatternDay(
+                                day.day_number,
+                                "shift_template_id",
+                                v === NO_SHIFT_VALUE ? null : v
+                              )
                             }
                           >
                             <SelectTrigger className="w-48">
                               <SelectValue placeholder="Select shift" />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="">No specific shift</SelectItem>
+                              <SelectItem value={NO_SHIFT_VALUE}>No specific shift</SelectItem>
                               {shifts.map((shift) => (
                                 <SelectItem key={shift.id} value={shift.id}>
                                   {shift.shift_name} ({shift.shift_code})

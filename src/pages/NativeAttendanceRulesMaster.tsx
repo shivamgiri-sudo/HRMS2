@@ -61,6 +61,8 @@ const SCOPE_COLORS: Record<ScopeType, string> = {
   global:             'bg-slate-100 text-slate-700',
 };
 
+const ANY_VALUE = "__any__";
+
 export default function NativeAttendanceRulesMaster() {
   const { toast } = useToast();
   const [rules, setRules] = useState<AttendanceRule[]>([]);
@@ -299,30 +301,30 @@ export default function NativeAttendanceRulesMaster() {
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-1">
               <Label className="text-xs">Designation</Label>
-              <Select value={simDesig} onValueChange={setSimDesig}>
+              <Select value={simDesig || ANY_VALUE} onValueChange={(value) => setSimDesig(value === ANY_VALUE ? '' : value)}>
                 <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Any</SelectItem>
+                  <SelectItem value={ANY_VALUE}>Any</SelectItem>
                   {designations.map(d => <SelectItem key={d.id} value={d.id}>{d.designation_code} — {d.designation_name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Process</Label>
-              <Select value={simProcess} onValueChange={setSimProcess}>
+              <Select value={simProcess || ANY_VALUE} onValueChange={(value) => setSimProcess(value === ANY_VALUE ? '' : value)}>
                 <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Any</SelectItem>
+                  <SelectItem value={ANY_VALUE}>Any</SelectItem>
                   {processes.map(p => <SelectItem key={p.id} value={p.id}>{p.process_name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Branch</Label>
-              <Select value={simBranch} onValueChange={setSimBranch}>
+              <Select value={simBranch || ANY_VALUE} onValueChange={(value) => setSimBranch(value === ANY_VALUE ? '' : value)}>
                 <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Any</SelectItem>
+                  <SelectItem value={ANY_VALUE}>Any</SelectItem>
                   {branches.map(b => <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>)}
                 </SelectContent>
               </Select>

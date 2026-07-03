@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { cn } from "@/lib/utils";
 
 interface Branch {
@@ -20,6 +21,8 @@ interface Process {
   name: string;
   branch_id?: string;
 }
+
+const ALL_VALUE = "__all__";
 
 export interface DateRange {
   from: string;
@@ -58,8 +61,7 @@ export function ScopedFilterBar({
   useEffect(() => {
     if (!showBranch && !showProcess) return;
     setLoadingBranches(true);
-    fetch("/api/org/branches")
-      .then((r) => r.ok ? r.json() : Promise.reject())
+    hrmsApi.get("/api/org/branches")
       .then((json) => {
         const list: Branch[] = Array.isArray(json)
           ? json
@@ -76,8 +78,7 @@ export function ScopedFilterBar({
     const url = selectedBranch
       ? `/api/org/processes?branch_id=${selectedBranch}`
       : "/api/org/processes";
-    fetch(url)
-      .then((r) => r.ok ? r.json() : Promise.reject())
+    hrmsApi.get(url)
       .then((json) => {
         const list: Process[] = Array.isArray(json)
           ? json
@@ -89,15 +90,17 @@ export function ScopedFilterBar({
   }, [showProcess, selectedBranch]);
 
   function handleBranchChange(value: string) {
-    setSelectedBranch(value);
+    const normalized = value === ALL_VALUE ? "" : value;
+    setSelectedBranch(normalized);
     setSelectedProcess("");
-    onBranchChange(value);
+    onBranchChange(normalized);
     onProcessChange("");
   }
 
   function handleProcessChange(value: string) {
-    setSelectedProcess(value);
-    onProcessChange(value);
+    const normalized = value === ALL_VALUE ? "" : value;
+    setSelectedProcess(normalized);
+    onProcessChange(normalized);
   }
 
   function handleDateFrom(e: React.ChangeEvent<HTMLInputElement>) {
@@ -123,12 +126,12 @@ export function ScopedFilterBar({
         loadingBranches ? (
           <Skeleton className="h-9 w-36" />
         ) : (
-          <Select value={selectedBranch} onValueChange={handleBranchChange}>
+          <Select value={selectedBranch || ALL_VALUE} onValueChange={handleBranchChange}>
             <SelectTrigger className="h-9 w-40 text-sm">
               <SelectValue placeholder="All Branches" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All Branches</SelectItem>
+              <SelectItem value={ALL_VALUE}>All Branches</SelectItem>
               {branches.map((b) => (
                 <SelectItem key={b.id} value={b.id}>
                   {b.name}
@@ -143,12 +146,12 @@ export function ScopedFilterBar({
         loadingProcesses ? (
           <Skeleton className="h-9 w-36" />
         ) : (
-          <Select value={selectedProcess} onValueChange={handleProcessChange}>
+          <Select value={selectedProcess || ALL_VALUE} onValueChange={handleProcessChange}>
             <SelectTrigger className="h-9 w-44 text-sm">
               <SelectValue placeholder="All Processes" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All Processes</SelectItem>
+              <SelectItem value={ALL_VALUE}>All Processes</SelectItem>
               {processes.map((p) => (
                 <SelectItem key={p.id} value={p.id}>
                   {p.name}

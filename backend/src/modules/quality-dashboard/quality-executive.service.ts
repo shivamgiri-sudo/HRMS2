@@ -161,26 +161,38 @@ export class QualityExecutiveService {
         [daysBack]
       );
 
-      // Risk summary - agents with quality < 70
-      const [riskAgents] = await conn.execute<RowDataPacket[]>(
+      const [agentQualityRows] = await conn.execute<RowDataPacket[]>(
         `SELECT
-           COUNT(DISTINCT CASE WHEN ROUND(AVG(cqa.quality_percentage), 2) < 60 THEN cqa.User END) as critical_count,
-           COUNT(DISTINCT CASE WHEN ROUND(AVG(cqa.quality_percentage), 2) >= 60 AND ROUND(AVG(cqa.quality_percentage), 2) < 70 THEN cqa.User END) as at_risk_count,
-           COUNT(DISTINCT CASE WHEN ROUND(AVG(cqa.quality_percentage), 2) >= 70 AND ROUND(AVG(cqa.quality_percentage), 2) < 80 THEN cqa.User END) as coaching_count
+           cqa.User as agent_code,
+           ROUND(AVG(cqa.quality_percentage), 2) as avg_quality
          FROM db_audit.call_quality_assessment cqa
          WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
-         GROUP BY 1`,
+         GROUP BY cqa.User`,
         [daysBack]
       );
 
-      const riskRow = riskAgents?.[0] as any;
+      const agentQualityScores = (agentQualityRows || [])
+        .map((row: any) => Number(row.avg_quality))
+        .filter((score) => Number.isFinite(score));
+
+      const sortedAgentScores = [...agentQualityScores].sort((a, b) => a - b);
+      const medianQuality =
+        sortedAgentScores.length === 0
+          ? 0
+          : sortedAgentScores.length % 2 === 1
+            ? sortedAgentScores[Math.floor(sortedAgentScores.length / 2)]!
+            : Math.round(
+                ((sortedAgentScores[sortedAgentScores.length / 2 - 1]! +
+                  sortedAgentScores[sortedAgentScores.length / 2]!) /
+                  2) *
+                  100
+              ) / 100;
 
       // Organization benchmarks
       const [benchmarks] = await conn.execute<RowDataPacket[]>(
         `SELECT
-           ROUND(AVG(cqa.quality_percentage), 2) as avg_quality,
-           ROUND(MEDIAN(cqa.quality_percentage), 2) as median_quality,
-           ROUND(STDDEV(cqa.quality_percentage), 2) as std_dev
+           ROUND(AVG(user_stats.quality_percentage), 2) as avg_quality,
+           ROUND(STDDEV(user_stats.quality_percentage), 2) as std_dev
          FROM (
            SELECT ROUND(AVG(cqa.quality_percentage), 2) as quality_percentage
            FROM db_audit.call_quality_assessment cqa
@@ -218,13 +230,13 @@ export class QualityExecutiveService {
           status: row.avg_quality >= 85 ? 'On Track' : row.avg_quality >= 75 ? 'At Risk' : 'Critical'
         })),
         risk_summary: {
-          critical_agents_count: riskRow?.critical_count || 0,
-          at_risk_agents_count: riskRow?.at_risk_count || 0,
-          coaching_priority_count: riskRow?.coaching_count || 0
+          critical_agents_count: agentQualityScores.filter((score) => score < 60).length,
+          at_risk_agents_count: agentQualityScores.filter((score) => score >= 60 && score < 70).length,
+          coaching_priority_count: agentQualityScores.filter((score) => score >= 70 && score < 80).length
         },
         org_benchmarks: {
           avg_quality: benchmarkRow?.avg_quality || 0,
-          median_quality: benchmarkRow?.median_quality || 0,
+          median_quality: medianQuality,
           std_deviation: benchmarkRow?.std_dev || 0
         }
       };
