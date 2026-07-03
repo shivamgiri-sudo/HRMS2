@@ -627,6 +627,27 @@ export async function getOnboardingDocument(documentId: string) {
   return (rows as RowDataPacket[])[0] ?? null;
 }
 
+export async function logOnboardingAuditAction(
+  candidateId: string,
+  action: string,
+  opts?: { section?: string; remarks?: string; performedBy?: string | null; ipAddress?: string | null }
+) {
+  await db.execute(
+    `INSERT INTO candidate_onboarding_audit_log
+       (id, candidate_id, action, section, remarks, performed_by, ip_address)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      randomUUID(),
+      candidateId,
+      action,
+      opts?.section ?? null,
+      opts?.remarks ?? null,
+      opts?.performedBy ?? null,
+      opts?.ipAddress ?? null,
+    ]
+  );
+}
+
 export async function deleteOnboardingDocument(token: string, documentId: string, meta?: { ip?: string; userAgent?: string }) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;

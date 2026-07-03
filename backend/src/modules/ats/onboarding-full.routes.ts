@@ -20,6 +20,7 @@ import {
   getFullOnboardingStatus,
   getOnboardingBlockers,
   getOnboardingDocument,
+  logOnboardingAuditAction,
   recordPrivacyConsent,
   listFullOnboardingRequests,
   payrollReviewFullOnboarding,
@@ -140,14 +141,18 @@ router.delete("/documents/:documentId", candidateWriteLimiter, h(async (req, res
   return res.json({ success: true, data: await deleteOnboardingDocument(token, req.params.documentId, meta(req)) });
 }));
 
-// Secure document preview — supports both token (candidate) and JWT (HR) auth
+// Secure document preview — supports both token (candidate) and JWT (HR) auth.
+// All previews are audit-logged.
 router.get("/documents/preview/:documentId", h(async (req, res) => {
   const token = String(req.query.token ?? "");
   const doc = await getOnboardingDocument(req.params.documentId);
   if (!doc) return res.status(404).json({ success: false, message: "Document not found" });
 
+  let actorId: string | null = null;
+  let candidateId: string | null = doc.candidate_id as string | null;
+
   if (token) {
-    try { await validateOnboardingToken(token); }
+    try { const td = await validateOnboardingToken(token); candidateId = td.candidate_id as string; }
     catch { return res.status(401).json({ success: false, message: "Invalid or expired token" }); }
   } else {
     try {
@@ -155,6 +160,7 @@ router.get("/documents/preview/:documentId", h(async (req, res) => {
       await new Promise<void>((resolve, reject) => {
         requireAuth(req as any, res as any, (err?: any) => err ? reject(err) : resolve());
       });
+      actorId = (req as any).authUser?.id ?? null;
     } catch { return res.status(401).json({ success: false, message: "Authentication required" }); }
   }
 
@@ -163,9 +169,44 @@ router.get("/documents/preview/:documentId", h(async (req, res) => {
 
   const mime = doc.mime_type || "application/octet-stream";
   const name = doc.file_original_name || `document-${req.params.documentId}`;
+
+  // Audit log the preview
+  await logOnboardingAuditAction(candidateId ?? doc.candidate_id as string, "DOCUMENT_VIEW", {
+    section: doc.doc_type ?? "document",
+    remarks: `Previewed document: ${name} (${req.params.documentId})`,
+    performedBy: actorId ?? token.slice(0, 8),
+    ipAddress: req.ip,
+  });
+
   res.setHeader("Content-Type", mime);
   res.setHeader("Content-Disposition", `inline; filename="${name}"`);
   res.setHeader("Cache-Control", "private, max-age=300");
+  const stream = fs.createReadStream(filePath);
+  stream.pipe(res);
+}));
+
+// Secure document download — forces download (attachment). Audit-logged.
+router.get("/documents/:documentId/download", requireAuth, requireRole("admin", "hr", "recruiter", "super_admin", "payroll", "finance"), h(async (req: AuthenticatedRequest, res) => {
+  const doc = await getOnboardingDocument(req.params.documentId);
+  if (!doc) return res.status(404).json({ success: false, message: "Document not found" });
+
+  const filePath = doc.file_path as string;
+  if (!filePath || !fs.existsSync(filePath)) return res.status(404).json({ success: false, message: "File not found on disk" });
+
+  const mime = doc.mime_type || "application/octet-stream";
+  const name = doc.file_original_name || `document-${req.params.documentId}`;
+
+  // Audit log the download
+  await logOnboardingAuditAction(doc.candidate_id as string, "DOCUMENT_DOWNLOAD", {
+    section: doc.doc_type ?? "document",
+    remarks: `Downloaded document: ${name} (${req.params.documentId})`,
+    performedBy: req.authUser!.id,
+    ipAddress: req.ip,
+  });
+
+  res.setHeader("Content-Type", mime);
+  res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+  res.setHeader("Cache-Control", "private, max-age=0, no-cache");
   const stream = fs.createReadStream(filePath);
   stream.pipe(res);
 }));
@@ -287,7 +328,7 @@ router.post("/autosave", h(async (req, res) => {
   return res.json({ success: true, savedAt: new Date().toISOString() });
 }));
 
-router.get("/autosave/:candidateId", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+router.get("/autosave/:candidateId", requireAuth, requireRole("admin", "super_admin", "hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT section, data_json, saved_at FROM candidate_onboarding_autosave WHERE candidate_id = ?`,
     [req.params.candidateId]
@@ -310,23 +351,23 @@ router.post("/languages", h(async (req, res) => {
 }));
 
 // ── HR/BGV/Admin review routes ────────────────────────────────────────────────
-router.get("/requests", requireAuth, requireRole("admin", "hr", "recruiter"), h(async (_req: AuthenticatedRequest, res) => {
+router.get("/requests", requireAuth, requireRole("admin", "super_admin", "hr", "recruiter", "payroll_hr"), h(async (_req: AuthenticatedRequest, res) => {
   return res.json({ success: true, data: await listFullOnboardingRequests(undefined) });
 }));
 
-router.get("/candidate/:candidateId", requireAuth, requireRole("admin", "hr", "recruiter"), h(async (req: AuthenticatedRequest, res) => {
+router.get("/candidate/:candidateId", requireAuth, requireRole("admin", "super_admin", "hr", "recruiter", "payroll_hr"), h(async (req: AuthenticatedRequest, res) => {
   return res.json({ success: true, data: await getFullOnboardingByCandidate(req.params.candidateId) });
 }));
 
-router.patch("/candidate/:candidateId/review", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+router.patch("/candidate/:candidateId/review", requireAuth, requireRole("admin", "super_admin", "hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res) => {
   return res.json({ success: true, data: await reviewFullOnboarding(req.params.candidateId, req.body, req.authUser!.id) });
 }));
 
-router.patch("/candidate/:candidateId/payroll-review", requireAuth, requireRole("admin", "payroll", "finance"), h(async (req: AuthenticatedRequest, res) => {
+router.patch("/candidate/:candidateId/payroll-review", requireAuth, requireRole("admin", "super_admin", "payroll", "payroll_hr", "finance"), h(async (req: AuthenticatedRequest, res) => {
   return res.json({ success: true, data: await payrollReviewFullOnboarding(req.params.candidateId, req.body, req.authUser!.id) });
 }));
 
-router.get("/candidate/:candidateId/bgv-readiness", requireAuth, requireRole("admin", "hr", "payroll"), h(async (req: AuthenticatedRequest, res) => {
+router.get("/candidate/:candidateId/bgv-readiness", requireAuth, requireRole("admin", "super_admin", "hr", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res) => {
   return res.json({ success: true, data: await checkBgvReadiness(req.params.candidateId) });
 }));
 

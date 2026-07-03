@@ -199,9 +199,17 @@ app.use(express.json({
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
 
-// Serve all uploaded files (onboarding docs, candidate files, offer letters, etc.)
+// Serve all uploaded files (candidate files, offer letters, etc.)
 // Files are stored under <cwd>/uploads/<category>/ and referenced as /uploads/<category>/<filename>
-app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
+// NOTE: /uploads/onboarding is NOT served here — onboarding docs use secure preview/download endpoints only.
+const uploadsPath = path.resolve(process.cwd(), "uploads");
+app.use("/uploads", (req, res, next) => {
+  // Block direct access to onboarding documents — they must go through secure endpoints
+  if (req.path.startsWith("/onboarding/")) {
+    return res.status(403).json({ success: false, message: "Direct access blocked. Use the secure document preview endpoint." });
+  }
+  express.static(uploadsPath)(req, res, next);
+});
 
 app.get("/", (_req, res) => res.json({ success: true, service: "MCN HRMS Backend API", version: "1.0.0" }));
 
@@ -359,7 +367,12 @@ app.use("/api/ats/super-admin", superAdminRouter);
 import { aiInsightsRouter } from "./modules/ai/ai-insights.routes.js";
 app.use("/api/ai", aiInsightsRouter);
 
-app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
+app.use("/uploads", (req, res, next) => {
+  if (req.path.startsWith("/onboarding/")) {
+    return res.status(403).json({ success: false, message: "Direct access blocked. Use the secure document preview endpoint." });
+  }
+  express.static(uploadsPath)(req, res, next);
+});
 
 app.use(notFoundHandler);
 app.use(errorHandler);

@@ -521,8 +521,8 @@ export function useOnboardingFull(token: string) {
     try {
       await hrmsApi.post(`${API}/privacy-consent`, { token });
       setPrivacyConsentAccepted(true);
-    } catch {
-      setPrivacyConsentAccepted(true);
+    } catch (e: any) {
+      setError(e?.message || "Failed to record privacy consent. Please try again.");
     }
   };
 

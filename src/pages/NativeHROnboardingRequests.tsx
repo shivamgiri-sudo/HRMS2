@@ -106,7 +106,7 @@ const SEL = 'w-full h-10 rounded-lg border border-slate-200 bg-white px-3 text-s
 export default function NativeHROnboardingRequests() {
   const { user } = useAuth();
   const role = (user as any)?.role ?? "";
-  const ALLOWED = ["admin", "super_admin", "hr", "recruiter"];
+  const ALLOWED = ["admin", "super_admin", "hr", "recruiter", "payroll_hr"];
   if (user && !ALLOWED.includes(role)) {
     return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
   }
@@ -116,6 +116,7 @@ export default function NativeHROnboardingRequests() {
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [filterBranch, setFilterBranch] = useState<string>('');
   const [loading, setLoading]     = useState(true);
+  const [loadError, setLoadError]   = useState<string | null>(null);
   const [selected, setSelected]   = useState<OnboardingRequest | null>(null);
   const [salaryPreview, setSalaryPreview] = useState<SalaryPreview | null>(null);
   const [calcLoading, setCalcLoading]     = useState(false);
@@ -124,7 +125,7 @@ export default function NativeHROnboardingRequests() {
   const [offerTab, setOfferTab]   = useState<'standard' | 'proposed'>('standard');
 
   // Candidate profile review panel
-  const [profilePanel, setProfilePanel] = useState<{ candidateId: string; data: any } | null>(null);
+  const [profilePanel, setProfilePanel] = useState<{ candidateId: string; data: any; error?: string | null } | null>(null);
   const [profilePanelLoading, setProfilePanelLoading] = useState(false);
   const [pushbackRemarks, setPushbackRemarks] = useState('');
   const [reviewSaving, setReviewSaving] = useState(false);
@@ -165,12 +166,15 @@ export default function NativeHROnboardingRequests() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const r = await hrmsApi.get<unknown>('/api/ats/onboarding/requests');
       const data = rowsFrom(r);
       setRows(data);
       setFiltered(data);
-    } catch { /* silent */ }
+    } catch {
+      setLoadError('Failed to load onboarding requests. Please try again.');
+    }
     finally { setLoading(false); }
   }, []);
 
@@ -335,7 +339,7 @@ export default function NativeHROnboardingRequests() {
     // Fetch onboarding profile to display PF opt-out consent status (non-blocking)
     hrmsApi.get<unknown>(`/api/ats/onboarding-full/candidate/${row.candidate_id}`)
       .then((r: any) => { const prof = r?.data?.profile ?? r?.profile ?? null; if (prof) setCandidateOnboardingProfile(prof); })
-      .catch((e) => console.warn("[onboarding]", e));
+      .catch(() => { /* non-fatal — PF status optional */ });
   };
 
   const submitOffer = async (submit: boolean) => {
@@ -369,11 +373,13 @@ export default function NativeHROnboardingRequests() {
   const openProfilePanel = async (candidateId: string) => {
     setProfilePanelLoading(true);
     setPushbackRemarks('');
-    setProfilePanel({ candidateId, data: null });
+    setProfilePanel({ candidateId, data: null, error: null } as any);
     try {
       const r = await hrmsApi.get<any>(`/api/ats/onboarding-full/candidate/${candidateId}`);
-      setProfilePanel({ candidateId, data: r?.data ?? r });
-    } catch { setProfilePanel(null); }
+      setProfilePanel({ candidateId, data: r?.data ?? r, error: null } as any);
+    } catch {
+      setProfilePanel({ candidateId, data: null, error: 'Failed to load profile data. The candidate may have missing information.' } as any);
+    }
     finally { setProfilePanelLoading(false); }
   };
 
@@ -421,14 +427,14 @@ export default function NativeHROnboardingRequests() {
               <p className="text-sm text-slate-400 mt-0.5">Candidates ready for employment offer creation</p>
             </div>
             <div className="flex items-center gap-2">
-              <div className="relative">
+              <div className="relative w-full sm:w-auto">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <input
                   type="text"
                   placeholder="Search candidates…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  className="h-9 pl-9 pr-4 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-56"
+                  className="h-9 pl-9 pr-4 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-full sm:w-56"
                 />
               </div>
             </div>
@@ -484,6 +490,15 @@ export default function NativeHROnboardingRequests() {
                 <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
                 <p className="text-sm text-slate-400">Loading requests…</p>
               </div>
+            </div>
+          ) : loadError ? (
+            <div className="text-center py-16 bg-white rounded-xl border border-slate-200">
+              <AlertTriangle className="h-10 w-10 mx-auto mb-3 text-red-300" />
+              <p className="font-semibold text-red-600 text-sm">{loadError}</p>
+              <Button variant="outline" size="sm" onClick={() => void load()}
+                className="mt-4 h-10 min-h-[44px] px-5 gap-1.5 border-slate-200 text-slate-600">
+                <Loader2 className="h-3.5 w-3.5" /> Retry
+              </Button>
             </div>
           ) : !filtered.length ? (
             <div className="text-center py-20 bg-white rounded-xl border border-slate-200">
@@ -567,13 +582,14 @@ export default function NativeHROnboardingRequests() {
       {profilePanel !== null && (
         <div className="fixed inset-0 z-50 flex">
           <div className="flex-1 bg-black/40" onClick={() => setProfilePanel(null)} />
-          <div className="w-full max-w-lg bg-white h-full overflow-y-auto shadow-2xl flex flex-col">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 sticky top-0 bg-white z-10">
+          <div className="w-full sm:max-w-lg bg-white h-full overflow-y-auto shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between px-4 sm:px-5 py-3 sm:py-4 border-b border-slate-100 sticky top-0 bg-white z-10">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="h-4 w-4 text-blue-500" />
-                <h2 className="font-bold text-slate-900 text-base">Profile Review</h2>
+                <h2 className="font-bold text-slate-900 text-sm sm:text-base">Profile Review</h2>
               </div>
-              <button onClick={() => setProfilePanel(null)} className="text-slate-400 hover:text-slate-700 text-xl leading-none p-1 hover:bg-slate-100 rounded-lg">×</button>
+              <button onClick={() => setProfilePanel(null)}
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-400 hover:text-slate-700 text-xl hover:bg-slate-100 rounded-lg">×</button>
             </div>
             {profilePanelLoading ? (
               <div className="flex-1 flex items-center justify-center">
@@ -593,7 +609,7 @@ export default function NativeHROnboardingRequests() {
                 </div>
               );
               const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
-                <div className="px-5 py-4 border-b border-slate-100">
+                <div className="px-4 sm:px-5 py-3 sm:py-4 border-b border-slate-100">
                   <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">{title}</p>
                   {children}
                 </div>
@@ -692,7 +708,7 @@ export default function NativeHROnboardingRequests() {
                   )}
 
                   {/* Pushback / Approve actions */}
-                  <div className="px-5 py-4 sticky bottom-0 bg-white border-t border-slate-200 space-y-3 shadow-[0_-2px_12px_rgba(0,0,0,0.04)]">
+                  <div className="px-4 sm:px-5 py-4 sticky bottom-0 bg-white border-t border-slate-200 space-y-3 shadow-[0_-2px_12px_rgba(0,0,0,0.04)]">
                     <div>
                       <label className="text-xs font-semibold text-slate-600 block mb-1.5">
                         Push-back Remarks <span className="text-slate-400 font-normal">(required if pushing back)</span>
@@ -708,13 +724,13 @@ export default function NativeHROnboardingRequests() {
                     <div className="flex gap-3">
                       <Button variant="outline" size="sm" disabled={reviewSaving}
                         onClick={() => submitReview('hr_review')}
-                        className="flex-1 border-amber-300 text-amber-700 hover:bg-amber-50 gap-1.5">
+                        className="flex-1 min-h-[44px] border-amber-300 text-amber-700 hover:bg-amber-50 gap-1.5">
                         {reviewSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <AlertTriangle className="h-3.5 w-3.5" />}
                         Push Back
                       </Button>
                       <Button size="sm" disabled={reviewSaving}
                         onClick={() => submitReview('approved')}
-                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5">
+                        className="flex-1 min-h-[44px] bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5">
                         {reviewSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
                         Approve
                       </Button>
@@ -723,8 +739,13 @@ export default function NativeHROnboardingRequests() {
                 </>
               );
             })() : (
-              <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">
-                Could not load profile data.
+              <div className="flex-1 flex flex-col items-center justify-center text-slate-400 text-sm gap-4 p-6">
+                <AlertTriangle className="h-8 w-8 text-red-300" />
+                <p className="text-red-600 font-semibold text-center">{profilePanel.error || 'Could not load profile data.'}</p>
+                <Button variant="outline" size="sm" onClick={() => openProfilePanel(profilePanel.candidateId)}
+                  className="min-h-[44px] gap-1.5 border-slate-200 text-slate-600">
+                  <Loader2 className="h-3.5 w-3.5" /> Retry
+                </Button>
               </div>
             )}
           </div>
@@ -837,7 +858,7 @@ export default function NativeHROnboardingRequests() {
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
 
             {/* Employment Details */}
-            <div className="p-5 border-b border-slate-100">
+            <div className="p-4 sm:p-5 border-b border-slate-100">
               <div className="flex items-center gap-2 mb-4">
                 <div className="h-7 w-7 rounded-lg bg-blue-50 flex items-center justify-center">
                   <Briefcase className="h-3.5 w-3.5 text-blue-600" />
@@ -975,7 +996,7 @@ export default function NativeHROnboardingRequests() {
             </div>
 
             {/* Compensation */}
-            <div className="p-5">
+            <div className="p-4 sm:p-5">
               <div className="flex items-center gap-2 mb-4">
                 <div className="h-7 w-7 rounded-lg bg-emerald-50 flex items-center justify-center">
                   <IndianRupee className="h-3.5 w-3.5 text-emerald-600" />
@@ -1097,7 +1118,7 @@ export default function NativeHROnboardingRequests() {
                     <TrendingUp className="h-4 w-4 text-slate-400" />
                     <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Monthly Salary Breakdown</p>
                   </div>
-                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
                     {[
                       { label: 'CTC / Gross',    value: salaryPreview.gross,            hl: 'blue' },
                       { label: 'Basic',           value: salaryPreview.basic },
@@ -1134,16 +1155,16 @@ export default function NativeHROnboardingRequests() {
             </div>
 
             {/* Actions */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 px-5 py-4 border-t border-slate-100 bg-slate-50/50 rounded-b-xl">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 px-4 sm:px-5 py-4 border-t border-slate-100 bg-slate-50/50 rounded-b-xl sticky bottom-0 sm:static shadow-[0_-2px_12px_rgba(0,0,0,0.04)] sm:shadow-none">
               <Button variant="outline" onClick={() => submitOffer(false)} disabled={saving}
-                className="h-10 px-6 border-slate-200 text-slate-700 font-semibold bg-white hover:bg-slate-50">
+                className="min-h-[44px] px-6 border-slate-200 text-slate-700 font-semibold bg-white hover:bg-slate-50">
                 {saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                 Save as Draft
               </Button>
               <Button onClick={() => submitOffer(true)}
                 disabled={saving || !offer.date_of_joining || !offer.salary_band ||
                   (offerTab === 'proposed' && (!proposedCtc || !proposedReason))}
-                className="h-10 px-8 bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-sm disabled:opacity-50">
+                className="min-h-[44px] px-8 bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-sm disabled:opacity-50">
                 {saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                 Submit to Branch Head
               </Button>

@@ -41,7 +41,7 @@ router.post('/submit-profile', h(async (req, res) => {
 router.post(
   '/send-token/:candidateId',
   requireAuth,
-  requireRole('hr', 'recruiter', 'admin'),
+  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
   h(async (req: AuthenticatedRequest, res) => {
     const candidateId = req.params!.candidateId;
     const userId = req.authUser!.id;
@@ -71,7 +71,7 @@ router.post(
 router.get(
   '/requests',
   requireAuth,
-  requireRole('hr', 'recruiter', 'admin'),
+  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
   h(async (req: AuthenticatedRequest, res) => {
     const scopeFilter = await buildScopeWhereClause(
       req.authUser!.id,
@@ -87,7 +87,7 @@ router.get(
 router.post(
   '/calculate-salary',
   requireAuth,
-  requireRole('hr', 'recruiter', 'admin'),
+  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
   h(async (req, res) => {
     const { ctc, bandCode, isMetro } = req.body;
     if (!ctc || !bandCode) { res.status(400).json({ error: 'ctc and bandCode required' }); return; }
@@ -103,7 +103,7 @@ router.post(
 router.post(
   '/requests/:id/offer',
   requireAuth,
-  requireRole('hr', 'recruiter', 'admin'),
+  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
   h(async (req: AuthenticatedRequest, res) => {
     const { submit, ...offerData } = req.body;
     const result = await saveOffer(req.params!.id, offerData, req.authUser!.id, Boolean(submit));
@@ -114,7 +114,7 @@ router.post(
 router.patch(
   '/requests/:id/offer',
   requireAuth,
-  requireRole('hr', 'recruiter', 'admin'),
+  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
   h(async (req: AuthenticatedRequest, res) => {
     const result = await saveOffer(req.params!.id, req.body, req.authUser!.id, false);
     res.json({ ok: true, ...result });
@@ -126,7 +126,7 @@ router.patch(
 router.post(
   '/candidates/:id/send-onboarding-link',
   requireAuth,
-  requireRole('recruiter', 'hr', 'branch_hr', 'admin'),
+  requireRole('recruiter', 'hr', 'branch_hr', 'admin', 'super_admin'),
   h(async (req: AuthenticatedRequest, res) => {
     const { id } = req.params!;
     const { db: database } = await import('../../db/mysql.js');
@@ -173,7 +173,7 @@ router.post(
 router.get(
   '/pending-approval',
   requireAuth,
-  requireRole('branch_head', 'admin'),
+  requireRole('branch_head', 'admin', 'super_admin'),
   h(async (req: AuthenticatedRequest, res) => {
     const scopeFilter = await buildScopeWhereClause(
       req.authUser!.id,
@@ -189,7 +189,7 @@ router.get(
 router.post(
   '/offers/:id/approve',
   requireAuth,
-  requireRole('branch_head', 'admin'),
+  requireRole('branch_head', 'admin', 'super_admin'),
   h(async (req: AuthenticatedRequest, res) => {
     const result = await approveOffer(req.params!.id, req.authUser!.id, req.body.remarks);
     res.json({ ok: true, ...result });
@@ -199,7 +199,7 @@ router.post(
 router.post(
   '/offers/:id/reject',
   requireAuth,
-  requireRole('branch_head', 'admin'),
+  requireRole('branch_head', 'admin', 'super_admin'),
   h(async (req: AuthenticatedRequest, res) => {
     if (!req.body.remarks) { res.status(400).json({ error: 'remarks required for rejection' }); return; }
     await rejectOffer(req.params!.id, req.authUser!.id, req.body.remarks);
