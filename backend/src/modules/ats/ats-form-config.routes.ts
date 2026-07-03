@@ -9,6 +9,7 @@ const h = (fn: any) => (req: any, res: any, next: any) => fn(req, res).catch(nex
 // PUBLIC — no auth required (registration form is public-facing)
 router.get('/form-config/bootstrap', h(async (_req: any, res: any) => {
   const data = await svc.getBootstrap();
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.json({ success: true, data });
 }));
 

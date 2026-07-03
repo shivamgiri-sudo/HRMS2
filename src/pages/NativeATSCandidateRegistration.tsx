@@ -622,13 +622,7 @@ export default function NativeATSCandidateRegistration() {
     return true;
   };
 
-  const fileToPublicPreview = (file: File): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
+  const fileToPublicPreview = (file: File) => URL.createObjectURL(file);
 
   const onResumeFile = (file: File | null) => {
     if (!file) return;
@@ -705,7 +699,7 @@ export default function NativeATSCandidateRegistration() {
     stopCam(false);
   };
 
-  const onSelfieFilePick = async (file: File | null) => {
+  const onSelfieFilePick = (file: File | null) => {
     if (!file) return;
     if (!/^image\//i.test(file.type)) {
       alert("Please select an image file.");
@@ -716,8 +710,7 @@ export default function NativeATSCandidateRegistration() {
       return;
     }
     update("selfieFile", file);
-    const url = await fileToPublicPreview(file);
-    setSelfiePreview(url);
+    setSelfiePreview(fileToPublicPreview(file));
   };
 
   const stopCam = (resetPreview = true) => {
