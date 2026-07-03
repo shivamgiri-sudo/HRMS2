@@ -503,9 +503,10 @@ export function Step3AddressKyc({
 // ── Step 4: Document Upload ────────────────────────────────────────────────────
 
 export function Step4Documents({
-  status, saving, consentAccepted, onUpload, onDelete,
+  status, token, saving, consentAccepted, onUpload, onDelete,
 }: {
   status: StatusData | null;
+  token: string;
   saving: boolean;
   consentAccepted: boolean;
   onUpload: (file: File, docType: string, docName: string, pageNo: string) => Promise<void>;
@@ -706,8 +707,8 @@ export function Step4Documents({
                       </span>
                     </td>
                     <td className="px-3 py-3">
-                      {d.file_url
-                        ? <a className="text-blue-600 font-bold text-xs underline hover:text-blue-800" href={d.file_url} target="_blank" rel="noreferrer">View</a>
+                      {d.id
+                        ? <a className="text-blue-600 font-bold text-xs underline hover:text-blue-800" href={`/api/ats/onboarding-full/documents/preview/${d.id}?token=${encodeURIComponent(token)}`} target="_blank" rel="noreferrer">View</a>
                         : <span className="text-slate-400 text-xs">—</span>
                       }
                     </td>

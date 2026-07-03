@@ -118,6 +118,11 @@ const NativePerformanceFeedbackTeamReports = lazy(() => import("./pages/NativePe
 // People
 const NativeEmployeeStatCard        = lazy(() => import("./pages/NativeEmployeeStatCard"));
 const NativeEmployee360             = lazy(() => import("./pages/NativeEmployee360"));
+const EmployeeJoiningDocumentsPage  = lazy(() => import("./pages/EmployeeJoiningDocumentsPage"));
+const EmployeeEpfCompliancePage     = lazy(() => import("./pages/EmployeeEpfCompliancePage"));
+const PayrollEpfCompliancePage      = lazy(() => import("./pages/PayrollEpfCompliancePage"));
+const EmployeeDocumentEsignReviewPage = lazy(() => import("./pages/EmployeeDocumentEsignReviewPage"));
+const EmployeeEpfComplianceReviewPage = lazy(() => import("./pages/EmployeeEpfComplianceReviewPage"));
 const NativePeopleExperienceCommandCenter = lazy(() => import("./pages/NativePeopleExperienceCommandCenter"));
 
 // Engagement
@@ -289,6 +294,8 @@ const App = () => (
               <Route path="/employees" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><Employees /></Gate></ProtectedRoute>} />
               <Route path="/employees/:id/360" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployee360 /></Gate></ProtectedRoute>} />
               <Route path="/employees/:id" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployeeStatCard /></Gate></ProtectedRoute>} />
+              <Route path="/employees/:employeeId/joining-documents" element={<ProtectedRoute roles={['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll', 'employee']}><EmployeeJoiningDocumentsPage /></ProtectedRoute>} />
+              <Route path="/employees/:employeeId/epf-compliance" element={<ProtectedRoute roles={['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll', 'employee']}><EmployeeEpfCompliancePage /></ProtectedRoute>} />
               <Route path="/onboarding" element={<ProtectedRoute roles={['admin','hr']}><Onboarding /></ProtectedRoute>} />
               <Route path="/onboarding-requests" element={<Navigate to="/onboarding?tab=requests" replace />} />
               <Route path="/leaves" element={<ProtectedRoute><Leaves /></ProtectedRoute>} />
@@ -439,6 +446,7 @@ const App = () => (
               <Route path="/customization/:id/edit" element={<ProtectedRoute><Gate pageCode="CUSTOMIZATION_MANAGER"><NativeCustomizationRuleEditor /></Gate></ProtectedRoute>} />
               <Route path="/payroll/payslips" element={<ProtectedRoute><Gate pageCode="PAYROLL_PAYSLIPS"><NativePayslipCenter /></Gate></ProtectedRoute>} />
               <Route path="/payroll/readiness" element={<ProtectedRoute><Gate pageCode="PAYROLL"><NativePayrollReadiness /></Gate></ProtectedRoute>} />
+              <Route path="/payroll/epf-compliance" element={<ProtectedRoute roles={['admin', 'super_admin', 'payroll_hr', 'payroll', 'hr', 'manager']}><PayrollEpfCompliancePage /></ProtectedRoute>} />
               <Route path="/payroll/tax-declaration" element={<ProtectedRoute><Gate pageCode="TAX_DECLARATION"><NativeTaxDeclaration /></Gate></ProtectedRoute>} />
               <Route path="/payroll/full-final" element={<ProtectedRoute><Gate pageCode="FULL_FINAL"><NativeFullFinal /></Gate></ProtectedRoute>} />
               <Route path="/payroll/statutory-config" element={<ProtectedRoute><Gate pageCode="STATUTORY_CONFIG"><NativeStatutoryConfig /></Gate></ProtectedRoute>} />
@@ -514,6 +522,8 @@ const App = () => (
 
               {/* Appointment e-sign */}
               <Route path="/letters/appointment-esign" element={<ProtectedRoute><Gate pageCode="APPOINTMENT_ESIGN"><NativeAppointmentEsign /></Gate></ProtectedRoute>} />
+              <Route path="/employee/joining-documents/esign/:token" element={<EmployeeDocumentEsignReviewPage />} />
+              <Route path="/employee/epf-compliance/review/:token" element={<EmployeeEpfComplianceReviewPage />} />
 
               {/* Exit / Resignation */}
               <Route path="/exit/resignation" element={<ProtectedRoute><Gate pageCode="RESIGNATION_MY_REQUEST"><NativeMyResignation /></Gate></ProtectedRoute>} />

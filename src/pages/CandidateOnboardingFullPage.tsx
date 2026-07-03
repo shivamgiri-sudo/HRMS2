@@ -163,6 +163,7 @@ export default function CandidateOnboardingFullPage() {
       {onb.step === 4 && (
         <Step4Documents
           status={onb.status}
+          token={token}
           saving={onb.saving}
           consentAccepted={onb.consentAccepted}
           onUpload={onb.uploadDoc}

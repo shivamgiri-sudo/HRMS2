@@ -26,7 +26,7 @@ export type DocRecord = {
   doc_name: string;
   page_no?: number;
   file_original_name?: string;
-  file_url?: string;
+  mime_type?: string;
   document_status: string;
   uploaded_at: string;
 };

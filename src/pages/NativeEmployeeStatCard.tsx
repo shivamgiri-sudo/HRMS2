@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowRightLeft,
@@ -454,13 +454,29 @@ export default function NativeEmployeeStatCard() {
               </div>
 
               {/* ── ID Card Button ───────────────────────────────────────── */}
-              <div className="flex gap-3">
+              <div className="flex flex-wrap gap-3">
                 <button
                   onClick={() => setShowIdCard(true)}
                   className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors"
                 >
                   <CreditCard className="h-4 w-4" /> View ID Card
                 </button>
+                {resolvedId && (
+                  <>
+                    <Link
+                      to={`/employees/${resolvedId}/joining-documents`}
+                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors"
+                    >
+                      <FileText className="h-4 w-4" /> Joining Documents
+                    </Link>
+                    <Link
+                      to={`/employees/${resolvedId}/epf-compliance`}
+                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors"
+                    >
+                      <Briefcase className="h-4 w-4" /> EPF Compliance
+                    </Link>
+                  </>
+                )}
               </div>
 
               {/* ── 6-Stat Grid ────────────────────────────────────────────── */}

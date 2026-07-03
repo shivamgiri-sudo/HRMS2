@@ -131,7 +131,7 @@ export async function getFullOnboardingStatus(token: string) {
   const candidateId = tokenData.candidate_id as string;
 
   const [documents] = await db.execute<RowDataPacket[]>(
-    `SELECT id, doc_type, doc_name, page_no, file_original_name, file_url, mime_type, file_size_bytes,
+    `SELECT id, doc_type, doc_name, page_no, file_original_name, mime_type, file_size_bytes,
             document_status, verification_method, verification_ref, uploaded_at
        FROM candidate_onboarding_document
       WHERE candidate_id = ? AND deleted_at IS NULL
@@ -661,7 +661,9 @@ export async function deleteOnboardingDocument(token: string, documentId: string
   return getFullOnboardingStatus(token);
 }
 
-export async function listFullOnboardingRequests(branchId?: string) {
+export async function listFullOnboardingRequests(filters?: { branchId?: string | null; processId?: string | null }) {
+  const branchId = filters?.branchId ?? null;
+  const processId = filters?.processId ?? null;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT p.*, c.candidate_code, c.full_name, c.mobile, c.email,
             br.branch_name, pm.process_name,
@@ -674,16 +676,24 @@ export async function listFullOnboardingRequests(branchId?: string) {
        LEFT JOIN candidate_onboarding_bank_detail bank ON bank.candidate_id = p.candidate_id
        LEFT JOIN candidate_onboarding_document doc ON doc.candidate_id = p.candidate_id AND doc.deleted_at IS NULL
       WHERE (? IS NULL OR c.applied_for_branch = ?)
+        AND (? IS NULL OR c.applied_for_process = ?)
       GROUP BY p.id, c.candidate_code, c.full_name, c.mobile, c.email, br.branch_name, pm.process_name, bank.verification_status
       ORDER BY p.updated_at DESC`,
-    [branchId ?? null, branchId ?? null]
+    [branchId, branchId, processId, processId]
   );
   return rows;
 }
 
 export async function getFullOnboardingByCandidate(candidateId: string) {
   const [profileRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [documents] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_document WHERE candidate_id = ? AND deleted_at IS NULL ORDER BY uploaded_at DESC`, [candidateId]);
+  const [documents] = await db.execute<RowDataPacket[]>(
+    `SELECT id, candidate_id, doc_type, doc_name, page_no, file_original_name, mime_type, file_size_bytes,
+            document_status, verification_method, verification_ref, uploaded_at
+       FROM candidate_onboarding_document
+      WHERE candidate_id = ? AND deleted_at IS NULL
+      ORDER BY uploaded_at DESC`,
+    [candidateId],
+  );
   const [bankRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]);
   const [qualificationRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]);
   const [familyRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_family WHERE candidate_id = ? LIMIT 1`, [candidateId]);

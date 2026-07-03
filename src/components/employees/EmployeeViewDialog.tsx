@@ -136,12 +136,20 @@ export function EmployeeViewDialog({ employee, open, onOpenChange }: EmployeeVie
               </div>
             </div>
 
-            <Button asChild variant="secondary" className="shrink-0 rounded-xl font-bold">
-              <Link to={`/employee-stat-card/${employee.id}`} onClick={() => onOpenChange(false)}>
-                Open full page
-                <ExternalLink className="ml-2 size-4" />
-              </Link>
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button asChild variant="secondary" className="shrink-0 rounded-xl font-bold">
+                <Link to={`/employee-stat-card/${employee.id}`} onClick={() => onOpenChange(false)}>
+                  Open full page
+                  <ExternalLink className="ml-2 size-4" />
+                </Link>
+              </Button>
+              <Button asChild variant="secondary" className="shrink-0 rounded-xl font-bold">
+                <Link to={`/employees/${employee.id}/joining-documents`} onClick={() => onOpenChange(false)}>
+                  Joining pack
+                  <ExternalLink className="ml-2 size-4" />
+                </Link>
+              </Button>
+            </div>
           </div>
         </header>
 

@@ -436,7 +436,9 @@ router.post("/languages", h(async (req, res) => {
 }));
 
 router.get("/requests", requireAuth, requireRole("admin", "super_admin", "hr", "manager", "payroll_hr"), h(async (req: AuthenticatedRequest, res) => {
-  const rows = await listFullOnboardingRequests(undefined);
+  const branchId = String(req.query.branchId ?? req.query.branch_id ?? "").trim() || null;
+  const processId = String(req.query.processId ?? req.query.process_id ?? "").trim() || null;
+  const rows = await listFullOnboardingRequests({ branchId, processId });
   if (ADMIN_ROLES.has(roleOf(req))) return res.json({ success: true, data: rows });
   const scopedRows = [];
   for (const row of rows as any[]) {

@@ -63,7 +63,7 @@ interface SalaryPreview {
 }
 
 type ManagerItem = { id: string; employee_code: string; full_name: string; grade?: string };
-type DocumentPreview = { id: string; title: string; mimeType?: string; downloadAllowed: boolean };
+type DocumentPreview = { id: string; title: string; fileName: string; mimeType?: string; downloadAllowed: boolean };
 
 const SEL = 'w-full min-h-[44px] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent';
 const ERR = 'mt-1 text-xs font-medium text-red-600';
@@ -162,6 +162,9 @@ export default function NativeHROnboardingRequests() {
   const [reviewSaving, setReviewSaving] = useState(false);
   const [pushbackRemarks, setPushbackRemarks] = useState('');
   const [documentPreview, setDocumentPreview] = useState<DocumentPreview | null>(null);
+  const [documentPreviewUrl, setDocumentPreviewUrl] = useState<string | null>(null);
+  const [documentPreviewLoading, setDocumentPreviewLoading] = useState(false);
+  const [documentPreviewError, setDocumentPreviewError] = useState<string | null>(null);
 
   const [bgv, setBgv] = useState<BgvData | null>(null);
   const [departments, setDepartments] = useState<MasterItem[]>([]);
@@ -195,6 +198,10 @@ export default function NativeHROnboardingRequests() {
   });
 
   const setF = (key: keyof typeof offer, value: unknown) => setOffer((p) => ({ ...p, [key]: value }));
+
+  useEffect(() => () => {
+    if (documentPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(documentPreviewUrl);
+  }, [documentPreviewUrl]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -415,6 +422,48 @@ export default function NativeHROnboardingRequests() {
     }
   };
 
+  const closeDocumentPreview = () => {
+    if (documentPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(documentPreviewUrl);
+    setDocumentPreview(null);
+    setDocumentPreviewUrl(null);
+    setDocumentPreviewLoading(false);
+    setDocumentPreviewError(null);
+  };
+
+  const openDocumentPreview = async (preview: DocumentPreview) => {
+    setDocumentPreview(preview);
+    setDocumentPreviewError(null);
+    setDocumentPreviewLoading(true);
+    try {
+      const blob = await hrmsApi.getBlob(`/api/ats/onboarding-full/documents/preview/${preview.id}`);
+      if (documentPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(documentPreviewUrl);
+      setDocumentPreviewUrl(URL.createObjectURL(blob));
+    } catch (e: any) {
+      setDocumentPreviewUrl(null);
+      setDocumentPreviewError(e?.message || 'Unable to preview this document.');
+    } finally {
+      setDocumentPreviewLoading(false);
+    }
+  };
+
+  const downloadDocumentPreview = async () => {
+    if (!documentPreview) return;
+    setDocumentPreviewError(null);
+    try {
+      const blob = await hrmsApi.getBlob(`/api/ats/onboarding-full/documents/${documentPreview.id}/download`);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = documentPreview.fileName || 'onboarding-document';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setDocumentPreviewError(e?.message || 'Unable to download this document.');
+    }
+  };
+
   if (user && !allowed) {
     return <DashboardLayout><div className="p-8 text-center font-bold text-red-600">You do not have access to this page.</div></DashboardLayout>;
   }
@@ -599,7 +648,7 @@ export default function NativeHROnboardingRequests() {
                   <div className="space-y-4">
                     <section className="rounded-xl border p-4"><p className="mb-2 font-bold text-slate-800">Personal</p><InfoRow label="Full Name" value={profile.data?.profile?.full_name_aadhaar || profile.data?.profile?.full_name} /><InfoRow label="Mobile" value={maskMobile(profile.data?.profile?.mobile)} /><InfoRow label="Email" value={maskEmail(profile.data?.profile?.personal_email_id)} /><InfoRow label="PAN" value={maskId(profile.data?.profile?.pan_number)} /><InfoRow label="Aadhaar" value={maskId(profile.data?.profile?.aadhar_number || profile.data?.profile?.aadhaar_number)} /></section>
                     <section className="rounded-xl border p-4"><p className="mb-2 font-bold text-slate-800">Bank</p><InfoRow label="Bank" value={profile.data?.bank?.bank_name} /><InfoRow label="Account" value={maskId(profile.data?.bank?.account_number)} /><InfoRow label="IFSC" value={profile.data?.bank?.ifsc_code} /></section>
-                    <section className="rounded-xl border p-4"><p className="mb-2 font-bold text-slate-800">Documents</p>{(profile.data?.documents ?? []).length ? (profile.data.documents as any[]).map((d) => <div key={d.id} className="flex items-center justify-between gap-3 border-b py-2 last:border-0"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-700">{d.document_type || d.doc_type || d.doc_name || 'Document'}</p><p className="text-xs text-slate-400">{d.file_original_name}</p></div><Button type="button" variant="outline" size="sm" onClick={() => setDocumentPreview({ id: d.id, title: d.document_type || d.doc_type || d.file_original_name || 'Document', mimeType: d.mime_type, downloadAllowed: canDownloadDocs(role) })} className="min-h-[44px] gap-1"><Eye className="h-3.5 w-3.5" /> Preview</Button></div>) : <p className="text-sm text-slate-400">No uploaded documents.</p>}</section>
+                    <section className="rounded-xl border p-4"><p className="mb-2 font-bold text-slate-800">Documents</p>{(profile.data?.documents ?? []).length ? (profile.data.documents as any[]).map((d) => <div key={d.id} className="flex items-center justify-between gap-3 border-b py-2 last:border-0"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-700">{d.document_type || d.doc_type || d.doc_name || 'Document'}</p><p className="text-xs text-slate-400">{d.file_original_name}</p></div><Button type="button" variant="outline" size="sm" onClick={() => void openDocumentPreview({ id: d.id, title: d.document_type || d.doc_type || d.file_original_name || 'Document', fileName: d.file_original_name || 'document', mimeType: d.mime_type, downloadAllowed: canDownloadDocs(role) })} className="min-h-[44px] gap-1"><Eye className="h-3.5 w-3.5" /> Preview</Button></div>) : <p className="text-sm text-slate-400">No uploaded documents.</p>}</section>
                   </div>
                 )}
               </div>
@@ -621,15 +670,19 @@ export default function NativeHROnboardingRequests() {
               <div className="flex items-center justify-between border-b px-4 py-3">
                 <div><p className="font-bold text-slate-900">{documentPreview.title}</p><p className="text-xs text-slate-400">Secure preview</p></div>
                 <div className="flex gap-2">
-                  {documentPreview.downloadAllowed && <a href={`/api/ats/onboarding-full/documents/${documentPreview.id}/download`} className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border px-3 text-sm font-semibold text-slate-700"><Download className="h-4 w-4" /> Download</a>}
-                  <button type="button" onClick={() => setDocumentPreview(null)} className="min-h-[44px] rounded-lg border px-3"><X className="h-5 w-5" /></button>
+                  {documentPreview.downloadAllowed && <button type="button" onClick={() => void downloadDocumentPreview()} className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border px-3 text-sm font-semibold text-slate-700"><Download className="h-4 w-4" /> Download</button>}
+                  <button type="button" onClick={closeDocumentPreview} className="min-h-[44px] rounded-lg border px-3"><X className="h-5 w-5" /></button>
                 </div>
               </div>
               <div className="flex-1 bg-slate-100 p-2">
-                {documentPreview.mimeType?.startsWith('image/') ? (
-                  <img src={`/api/ats/onboarding-full/documents/preview/${documentPreview.id}`} alt={documentPreview.title} className="mx-auto h-full max-h-full object-contain" />
+                {documentPreviewError ? (
+                  <ErrorBanner message={documentPreviewError} onRetry={() => void openDocumentPreview(documentPreview)} />
+                ) : documentPreviewLoading ? (
+                  <div className="flex h-full items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-slate-500" /></div>
+                ) : documentPreviewUrl && documentPreview.mimeType?.startsWith('image/') ? (
+                  <img src={documentPreviewUrl} alt={documentPreview.title} className="mx-auto h-full max-h-full object-contain" />
                 ) : (
-                  <iframe src={`/api/ats/onboarding-full/documents/preview/${documentPreview.id}`} title={documentPreview.title} className="h-full w-full rounded-lg bg-white" />
+                  <iframe src={documentPreviewUrl ?? undefined} title={documentPreview.title} className="h-full w-full rounded-lg bg-white" />
                 )}
               </div>
             </div>
