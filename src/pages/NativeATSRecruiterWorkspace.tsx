@@ -32,6 +32,27 @@ type HistoryRow = {
   skilltest_ai?: number | string;
   round2_result?: string;
   round3_result?: string;
+  second_round_interviewer_id?: string;
+  second_round_interviewer_name_snapshot?: string;
+  second_round_interviewer_branch_snapshot?: string;
+  second_round_interviewer_designation_snapshot?: string;
+  client_round_conducted?: number | string;
+  client_round_interviewer_name?: string;
+  client_round_result?: string;
+  client_round_remarks?: string;
+  followup_required?: number | string;
+  followup_date?: string;
+  followup_reason?: string;
+  hiring_source_snapshot?: string;
+  referee_employee_code_snapshot?: string;
+  referee_name_snapshot?: string;
+  calling_activity_id?: string;
+  candidate_called_at?: string;
+  interview_started_at?: string;
+  calling_source_snapshot?: string;
+  calling_last_remarks?: string;
+  calling_lineup_date?: string;
+  calling_turnup_status?: string;
   offer_salary?: string | number;
   offer_doj?: string;
   previous_submitted_time?: string;
@@ -80,6 +101,25 @@ type Form = {
   round3Result: string;
   round3Voc: string;
   round3Remarks: string;
+  secondRoundInterviewerId: string;
+  secondRoundInterviewerNameSnapshot: string;
+  clientRoundConducted: boolean;
+  clientRoundInterviewerName: string;
+  clientRoundResult: string;
+  clientRoundRemarks: string;
+  followupRequired: boolean;
+  followupDate: string;
+  followupReason: string;
+  hiringSourceSnapshot: string;
+  refereeEmployeeCodeSnapshot: string;
+  refereeNameSnapshot: string;
+  callingActivityId: string;
+  candidateCalledAt: string;
+  interviewStartedAt: string;
+  callingSourceSnapshot: string;
+  callingLastRemarks: string;
+  callingLineupDate: string;
+  callingTurnupStatus: string;
   offerSalary: string;
   offerDoj: string;
   reportingTiming: string;
@@ -122,6 +162,25 @@ const EMPTY_FORM: Form = {
   round3Result: "",
   round3Voc: "",
   round3Remarks: "",
+  secondRoundInterviewerId: "",
+  secondRoundInterviewerNameSnapshot: "",
+  clientRoundConducted: false,
+  clientRoundInterviewerName: "",
+  clientRoundResult: "",
+  clientRoundRemarks: "",
+  followupRequired: false,
+  followupDate: "",
+  followupReason: "",
+  hiringSourceSnapshot: "",
+  refereeEmployeeCodeSnapshot: "",
+  refereeNameSnapshot: "",
+  callingActivityId: "",
+  candidateCalledAt: "",
+  interviewStartedAt: "",
+  callingSourceSnapshot: "",
+  callingLastRemarks: "",
+  callingLineupDate: "",
+  callingTurnupStatus: "",
   offerSalary: "",
   offerDoj: "",
   reportingTiming: "",
@@ -223,15 +282,24 @@ function validateForm(form: Form): string | null {
   if (rank >= 3) {
     if (!form.round2Result) return "Round2 Result is required from Round 2 stage onwards.";
     if (form.round2Result === "Rejected" && !form.round2Voc) return "Round2 VOC is required when Round2 Result is Rejected.";
+    if (!form.secondRoundInterviewerId) return "Second Round Interviewer is required from Round 2 stage onwards.";
   }
   if (rank >= 4) {
     if (!form.round3Result) return "Round3 Result is required from Round 3 stage onwards.";
     if (form.round3Result === "Rejected" && !form.round3Voc) return "Round3 VOC is required when Round3 Result is Rejected.";
   }
+  if ((form.clientRoundConducted || form.clientRoundInterviewerName || form.clientRoundResult || form.clientRoundRemarks) && !form.clientRoundInterviewerName) {
+    return "Client Round Interviewer Name is required when client round details are captured.";
+  }
+  if (form.followupRequired) {
+    if (!form.followupDate) return "Follow-up Date is required when follow-up is required.";
+    if (!form.followupReason.trim()) return "Follow-up Reason is required when follow-up is required.";
+  }
   if (form.finalDecision === "Selected") {
     if (!form.offerSalary) return "Offer Salary is required when Final Decision is Selected.";
     if (!form.offerDoj) return "Date of Joining is required when Final Decision is Selected.";
     if (!form.reportingTiming) return "Reporting Timing is required when Final Decision is Selected.";
+    if (form.offerDoj < todayIso()) return "Date of Joining cannot be in the past.";
   }
   return null;
 }
@@ -265,6 +333,7 @@ export default function NativeATSRecruiterWorkspace() {
   const [dailyStats, setDailyStats] = useState<DailyStats | null>(null);
   const [config] = useState<Config>(DEFAULT_CONFIG);
   const [selected, setSelected] = useState<CandidateRow | null>(null);
+  const [interviewers, setInterviewers] = useState<Array<{ id: string; name: string; branch_name?: string | null; designation_name?: string | null }>>([]);
   const [form, setForm] = useState<Form>(EMPTY_FORM);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
@@ -316,6 +385,21 @@ export default function NativeATSRecruiterWorkspace() {
     }
   };
 
+  const loadInterviewersForBranch = async (branch?: string | null) => {
+    if (!branch) {
+      setInterviewers([]);
+      return;
+    }
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: Array<{ id: string; name: string; branch_name?: string | null; designation_name?: string | null }> }>(
+        `/api/ats/interviewers?branchName=${encodeURIComponent(branch)}&roundType=second_round&limit=50`
+      );
+      setInterviewers(res.data ?? []);
+    } catch {
+      setInterviewers([]);
+    }
+  };
+
   const loadWorkspace = async () => {
     setLoading(true);
     setMsg("Loading workspace…");
@@ -359,6 +443,7 @@ export default function NativeATSRecruiterWorkspace() {
 
   const openForm = (c: CandidateRow, resubmit = false, h?: HistoryRow) => {
     setSelected(c);
+    const asBool = (value: unknown) => value === 1 || value === "1" || value === true || value === "true" || value === "yes";
     setForm({
       ...EMPTY_FORM,
       processName: h?.interviewed_for_process || "",
@@ -368,9 +453,29 @@ export default function NativeATSRecruiterWorkspace() {
       skillResult: h?.skilltest_result || "",
       round2Result: h?.round2_result || "",
       round3Result: h?.round3_result || "",
+      secondRoundInterviewerId: h?.second_round_interviewer_id || "",
+      secondRoundInterviewerNameSnapshot: h?.second_round_interviewer_name_snapshot || "",
+      clientRoundConducted: asBool(h?.client_round_conducted),
+      clientRoundInterviewerName: h?.client_round_interviewer_name || "",
+      clientRoundResult: h?.client_round_result || "",
+      clientRoundRemarks: h?.client_round_remarks || "",
+      followupRequired: asBool(h?.followup_required),
+      followupDate: h?.followup_date || "",
+      followupReason: h?.followup_reason || "",
+      hiringSourceSnapshot: h?.hiring_source_snapshot || "",
+      refereeEmployeeCodeSnapshot: h?.referee_employee_code_snapshot || "",
+      refereeNameSnapshot: h?.referee_name_snapshot || "",
+      callingActivityId: h?.calling_activity_id || "",
+      candidateCalledAt: h?.candidate_called_at || "",
+      interviewStartedAt: h?.interview_started_at || "",
+      callingSourceSnapshot: h?.calling_source_snapshot || "",
+      callingLastRemarks: h?.calling_last_remarks || "",
+      callingLineupDate: h?.calling_lineup_date || "",
+      callingTurnupStatus: h?.calling_turnup_status || "",
       offerSalary: h?.offer_salary ? String(h.offer_salary) : "",
       offerDoj: h?.offer_doj || "",
     });
+    void loadInterviewersForBranch(c.branch ?? null);
     setMsg("");
     setScreen("form");
   };
@@ -413,6 +518,25 @@ export default function NativeATSRecruiterWorkspace() {
         round3Result: form.round3Result || null,
         round3Voc: form.round3Voc || null,
         round3Remarks: form.round3Remarks || null,
+        secondRoundInterviewerId: form.secondRoundInterviewerId || null,
+        secondRoundInterviewerNameSnapshot: form.secondRoundInterviewerNameSnapshot || null,
+        clientRoundConducted: form.clientRoundConducted,
+        clientRoundInterviewerName: form.clientRoundInterviewerName || null,
+        clientRoundResult: form.clientRoundResult || null,
+        clientRoundRemarks: form.clientRoundRemarks || null,
+        followupRequired: form.followupRequired,
+        followupDate: form.followupDate || null,
+        followupReason: form.followupReason || null,
+        hiringSourceSnapshot: form.hiringSourceSnapshot || null,
+        refereeEmployeeCodeSnapshot: form.refereeEmployeeCodeSnapshot || null,
+        refereeNameSnapshot: form.refereeNameSnapshot || null,
+        callingActivityId: form.callingActivityId || null,
+        candidateCalledAt: form.candidateCalledAt || null,
+        interviewStartedAt: form.interviewStartedAt || null,
+        callingSourceSnapshot: form.callingSourceSnapshot || null,
+        callingLastRemarks: form.callingLastRemarks || null,
+        callingLineupDate: form.callingLineupDate || null,
+        callingTurnupStatus: form.callingTurnupStatus || null,
         offerSalary: form.offerSalary ? Number(form.offerSalary) : null,
         offerDoj: form.offerDoj || null,
         reportingTiming: form.reportingTiming || null,
@@ -907,6 +1031,115 @@ export default function NativeATSRecruiterWorkspace() {
                 <div style={{ marginTop: 10 }}>{field("Round 3 Remarks", "round3Remarks", "textarea")}</div>
               </div>
             )}
+
+            {rank >= 3 && (
+              <div className="form-section sec-green">
+                <div className="sec-title" style={{ color: "#047857" }}>Second Round Interviewer</div>
+                <div className="rw-grid rw-2">
+                  <div>
+                    <label>Second Round Interviewer *</label>
+                    <select
+                      value={form.secondRoundInterviewerId}
+                      onChange={(e) => {
+                        const selectedInterviewer = interviewers.find((item) => item.id === e.target.value);
+                        updateForm({
+                          secondRoundInterviewerId: e.target.value,
+                          secondRoundInterviewerNameSnapshot: selectedInterviewer?.name || "",
+                        });
+                      }}
+                    >
+                      <option value="">Select interviewer</option>
+                      {interviewers.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}{item.designation_name ? ` · ${item.designation_name}` : ""}{item.branch_name ? ` · ${item.branch_name}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label>Interviewer Snapshot</label>
+                    <input value={form.secondRoundInterviewerNameSnapshot} readOnly placeholder="Auto-filled from selection" />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {rank >= 4 && (
+              <div className="form-section sec-orange">
+                <div className="sec-title" style={{ color: "#c2410c" }}>Client Round</div>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <input
+                    type="checkbox"
+                    checked={form.clientRoundConducted}
+                    onChange={(e) => updateForm({ clientRoundConducted: e.target.checked })}
+                  />
+                  Client round conducted
+                </label>
+                <div className="rw-grid rw-2">
+                  <div>
+                    <label>Client Round Interviewer Name</label>
+                    <input
+                      value={form.clientRoundInterviewerName}
+                      onChange={(e) => updateForm({ clientRoundInterviewerName: e.target.value })}
+                      placeholder="Manually enter client interviewer"
+                    />
+                  </div>
+                  <div>
+                    <label>Client Round Result</label>
+                    <select
+                      value={form.clientRoundResult}
+                      onChange={(e) => updateForm({ clientRoundResult: e.target.value })}
+                    >
+                      <option value="">Select result</option>
+                      {config.decisionOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div style={{ marginTop: 10 }}>{field("Client Round Remarks", "clientRoundRemarks", "textarea")}</div>
+              </div>
+            )}
+
+            <div className="form-section sec-gray">
+              <div className="sec-title" style={{ color: "#475569" }}>Calling Follow-up</div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <input
+                  type="checkbox"
+                  checked={form.followupRequired}
+                  onChange={(e) => updateForm({ followupRequired: e.target.checked })}
+                />
+                Follow-up required
+              </label>
+              <div className="rw-grid rw-3">
+                <div>
+                  <label>Follow-up Date</label>
+                  <input
+                    type="date"
+                    value={form.followupDate}
+                    onChange={(e) => updateForm({ followupDate: e.target.value })}
+                    disabled={!form.followupRequired}
+                  />
+                </div>
+                <div style={{ gridColumn: "span 2" }}>
+                  <label>Follow-up Reason</label>
+                  <input
+                    value={form.followupReason}
+                    onChange={(e) => updateForm({ followupReason: e.target.value })}
+                    disabled={!form.followupRequired}
+                    placeholder="Why we need to call again"
+                  />
+                </div>
+              </div>
+              <div className="rw-grid rw-2" style={{ marginTop: 10 }}>
+                <div>
+                  <label>Calling Activity ID</label>
+                  <input value={form.callingActivityId} onChange={(e) => updateForm({ callingActivityId: e.target.value })} placeholder="Link to calling tracker row" />
+                </div>
+                <div>
+                  <label>Calling Turn-up Status</label>
+                  <input value={form.callingTurnupStatus} onChange={(e) => updateForm({ callingTurnupStatus: e.target.value })} placeholder="Visited / Not reached / Rescheduled" />
+                </div>
+              </div>
+            </div>
 
             {/* Offer Details */}
             {form.finalDecision === "Selected" && (

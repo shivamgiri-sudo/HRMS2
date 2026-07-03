@@ -734,7 +734,7 @@ export async function importHiringActivityRows(
         errors.push({ row_number: rowNumber, column_name: null, error_message: message });
         await db.execute(
           `INSERT INTO ats_recruiter_hiring_import_error
-            (id, import_batch_id, row_number, column_name, error_message, raw_row)
+            (id, import_batch_id, \`row_number\`, column_name, error_message, raw_row)
            VALUES (UUID(), ?, ?, ?, ?, ?)`,
           [batchId, rowNumber, null, message, JSON.stringify(row)]
         );
@@ -753,7 +753,7 @@ export async function importHiringActivityRows(
       errors.push({ row_number: rowNumber, column_name: null, error_message: message });
       await db.execute(
         `INSERT INTO ats_recruiter_hiring_import_error
-          (id, import_batch_id, row_number, column_name, error_message, raw_row)
+          (id, import_batch_id, \`row_number\`, column_name, error_message, raw_row)
          VALUES (UUID(), ?, ?, ?, ?, ?)`,
         [batchId, rowNumber, null, message, JSON.stringify(row)]
       );
@@ -1105,7 +1105,7 @@ export async function readImportBatch(batchId: string) {
     [batchId]
   );
   const [errorRows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM ats_recruiter_hiring_import_error WHERE import_batch_id = ? ORDER BY row_number ASC`,
+    `SELECT * FROM ats_recruiter_hiring_import_error WHERE import_batch_id = ? ORDER BY \`row_number\` ASC`,
     [batchId]
   );
   return {

@@ -44,6 +44,7 @@ interface PerformanceMetrics {
 export default function NativeRecruiterPortal() {
   const [view, setView] = useState<'list' | 'interview' | 'metrics'>('list');
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [candidatePhotos, setCandidatePhotos] = useState<Record<string, string>>({});
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null);
   const [loading, setLoading] = useState(false);
@@ -71,6 +72,42 @@ export default function NativeRecruiterPortal() {
       loadMetrics();
     }
   }, [view]);
+
+  useEffect(() => {
+    const objectUrls: string[] = [];
+    let cancelled = false;
+
+    const loadCandidatePhotos = async () => {
+      const next: Record<string, string> = {};
+      for (const candidate of candidates) {
+        if (!candidate.selfie_url) continue;
+        try {
+          const blob = await hrmsApi.getBlob(candidate.selfie_url);
+          const objectUrl = URL.createObjectURL(blob);
+          objectUrls.push(objectUrl);
+          next[candidate.candidate_id] = objectUrl;
+        } catch {
+          // Silent fallback: show initials/avatar when secured file fetch is unavailable
+        }
+      }
+      if (!cancelled) {
+        setCandidatePhotos(next);
+      } else {
+        objectUrls.forEach((url) => URL.revokeObjectURL(url));
+      }
+    };
+
+    if (candidates.length > 0) {
+      void loadCandidatePhotos();
+    } else {
+      setCandidatePhotos({});
+    }
+
+    return () => {
+      cancelled = true;
+      objectUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [candidates]);
 
   const loadCandidates = async () => {
     setLoading(true);
@@ -224,9 +261,9 @@ export default function NativeRecruiterPortal() {
                 >
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex items-center gap-4">
-                      {candidate.selfie_url ? (
+                      {candidatePhotos[candidate.candidate_id] ? (
                         <img
-                          src={candidate.selfie_url}
+                          src={candidatePhotos[candidate.candidate_id]}
                           alt={candidate.full_name}
                           className="w-16 h-16 rounded-full object-cover border-2 border-purple-200"
                         />

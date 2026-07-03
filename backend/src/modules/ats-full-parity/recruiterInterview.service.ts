@@ -73,6 +73,28 @@ function nvlNum(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function boolish(v: unknown): boolean {
+  if (typeof v === "boolean") return v;
+  const normalized = String(v ?? "").trim().toLowerCase();
+  return ["1", "true", "yes", "y", "on"].includes(normalized);
+}
+
+function todayIsoLocal(): string {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function normalizeDateInput(value: unknown): string | null {
+  const textValue = nvl(value);
+  if (!textValue) return null;
+  const parsed = new Date(textValue);
+  if (Number.isNaN(parsed.getTime())) return textValue;
+  return parsed.toISOString().slice(0, 10);
+}
+
 // ── Recruiter resolve from JWT ────────────────────────────────────────────────
 
 /**
@@ -262,6 +284,28 @@ interface SubmissionInput {
   round3Result?: string;
   round3Voc?: string;
   round3Remarks?: string;
+  secondRoundInterviewerId?: string;
+  secondRoundInterviewerNameSnapshot?: string;
+  secondRoundInterviewerBranchSnapshot?: string;
+  secondRoundInterviewerDesignationSnapshot?: string;
+  secondRoundInterviewerOverrideReason?: string;
+  clientRoundConducted?: unknown;
+  clientRoundInterviewerName?: string;
+  clientRoundResult?: string;
+  clientRoundRemarks?: string;
+  followupRequired?: unknown;
+  followupDate?: string;
+  followupReason?: string;
+  hiringSourceSnapshot?: string;
+  refereeEmployeeCodeSnapshot?: string;
+  refereeNameSnapshot?: string;
+  callingActivityId?: string;
+  candidateCalledAt?: string;
+  interviewStartedAt?: string;
+  callingSourceSnapshot?: string;
+  callingLastRemarks?: string;
+  callingLineupDate?: string;
+  callingTurnupStatus?: string;
   offerSalary?: unknown;
   offerDoj?: string;
   reportingTiming?: string;
@@ -274,6 +318,8 @@ function validateSubmission(input: SubmissionInput) {
   const process = requireField(input.interviewedForProcess, "Interviewed for Process");
   const finalDecision = requireField(input.finalDecision, "Final Decision");
   const walkinEndStage = requireField(input.walkinEndStage, "Walk-in End Stage");
+  const clientRoundConducted = boolish(input.clientRoundConducted);
+  const followupRequired = boolish(input.followupRequired) || finalDecision === "Client Round - Pending" || finalDecision === "Hold";
 
   validateEnum(process, "Process", VALID_PROCESSES);
   validateEnum(finalDecision, "Final Decision", VALID_DECISIONS);
@@ -305,6 +351,7 @@ function validateSubmission(input: SubmissionInput) {
   // Round 2 mandatory from rank 3+
   if (rank >= 3) {
     requireField(input.round2Result, "Round2 Result");
+    requireField(input.secondRoundInterviewerId, "Second Round Interviewer");
     if (input.round2Result === "Rejected") {
       const voc = nvl(input.round2Voc);
       if (!voc) err("Round2 VOC is required when Round2 Result is Rejected", 400);
@@ -320,8 +367,23 @@ function validateSubmission(input: SubmissionInput) {
       const voc = nvl(input.round3Voc);
       if (!voc) err("Round3 VOC is required when Round3 Result is Rejected", 400);
       if (!GENERAL_VOC_OPTIONS.has(voc!))
-        err(`Invalid Round3 VOC: "${voc}". Must be one of the allowed General VOC options.`, 400);
+      err(`Invalid Round3 VOC: "${voc}". Must be one of the allowed General VOC options.`, 400);
     }
+  }
+
+  const clientRoundPayloadPresent =
+    clientRoundConducted ||
+    !!nvl(input.clientRoundInterviewerName) ||
+    !!nvl(input.clientRoundResult) ||
+    !!nvl(input.clientRoundRemarks);
+  if (clientRoundPayloadPresent && !nvl(input.clientRoundInterviewerName)) {
+    err("Client Round Interviewer Name is required when client round details are captured", 400);
+  }
+  if (followupRequired) {
+    const followupDate = nvl(input.followupDate);
+    const followupReason = nvl(input.followupReason);
+    if (!followupDate) err("Follow-up Date is required when follow-up is required", 400);
+    if (!followupReason) err("Follow-up Reason is required when follow-up is required", 400);
   }
 
   // Selected requires salary, DOJ, reporting timing; cascades round results
@@ -336,9 +398,13 @@ function validateSubmission(input: SubmissionInput) {
     requireField(input.offerSalary, "Offer Salary");
     requireField(input.offerDoj, "Date of Joining");
     requireField(input.reportingTiming, "Reporting Timing");
+    const offerDoj = nvl(input.offerDoj);
+    if (offerDoj && offerDoj < todayIsoLocal()) {
+      err("Date of Joining cannot be in the past", 400);
+    }
   }
 
-  return { process, finalDecision, walkinEndStage, rank, r1, r2, r3 };
+  return { process, finalDecision, walkinEndStage, rank, r1, r2, r3, clientRoundConducted, followupRequired };
 }
 
 // ── Submit interview update ───────────────────────────────────────────────────
@@ -368,6 +434,28 @@ export async function submitInterviewUpdate(
     round3Result: String(raw.round3Result || raw["Round3 Result"] || "").trim() || undefined,
     round3Voc: String(raw.round3Voc || raw["Round3 VOC"] || "").trim() || undefined,
     round3Remarks: String(raw.round3Remarks || raw["Round3 Remarks"] || "").trim() || undefined,
+    secondRoundInterviewerId: String(raw.secondRoundInterviewerId || raw["Second Round Interviewer ID"] || raw.second_round_interviewer_id || "").trim() || undefined,
+    secondRoundInterviewerNameSnapshot: String(raw.secondRoundInterviewerNameSnapshot || raw["Second Round Interviewer Name"] || raw.second_round_interviewer_name_snapshot || "").trim() || undefined,
+    secondRoundInterviewerBranchSnapshot: String(raw.secondRoundInterviewerBranchSnapshot || raw["Second Round Interviewer Branch"] || raw.second_round_interviewer_branch_snapshot || "").trim() || undefined,
+    secondRoundInterviewerDesignationSnapshot: String(raw.secondRoundInterviewerDesignationSnapshot || raw["Second Round Interviewer Designation"] || raw.second_round_interviewer_designation_snapshot || "").trim() || undefined,
+    secondRoundInterviewerOverrideReason: String(raw.secondRoundInterviewerOverrideReason || raw["Second Round Interviewer Override Reason"] || raw.second_round_interviewer_override_reason || "").trim() || undefined,
+    clientRoundConducted: raw.clientRoundConducted ?? raw["Client Round Conducted"] ?? raw.client_round_conducted ?? undefined,
+    clientRoundInterviewerName: String(raw.clientRoundInterviewerName || raw["Client Round Interviewer Name"] || raw.client_round_interviewer_name || "").trim() || undefined,
+    clientRoundResult: String(raw.clientRoundResult || raw["Client Round Result"] || raw.client_round_result || "").trim() || undefined,
+    clientRoundRemarks: String(raw.clientRoundRemarks || raw["Client Round Remarks"] || raw.client_round_remarks || "").trim() || undefined,
+    followupRequired: raw.followupRequired ?? raw["Follow-up Required"] ?? raw.followup_required ?? undefined,
+    followupDate: String(raw.followupDate || raw["Follow-up Date"] || raw.followup_date || "").trim() || undefined,
+    followupReason: String(raw.followupReason || raw["Follow-up Reason"] || raw.followup_reason || "").trim() || undefined,
+    hiringSourceSnapshot: String(raw.hiringSourceSnapshot || raw["Hiring Source Snapshot"] || raw.hiring_source_snapshot || "").trim() || undefined,
+    refereeEmployeeCodeSnapshot: String(raw.refereeEmployeeCodeSnapshot || raw["Referee Employee Code Snapshot"] || raw.referee_employee_code_snapshot || "").trim() || undefined,
+    refereeNameSnapshot: String(raw.refereeNameSnapshot || raw["Referee Name Snapshot"] || raw.referee_name_snapshot || "").trim() || undefined,
+    callingActivityId: String(raw.callingActivityId || raw["Calling Activity ID"] || raw.calling_activity_id || "").trim() || undefined,
+    candidateCalledAt: String(raw.candidateCalledAt || raw["Candidate Called At"] || raw.candidate_called_at || "").trim() || undefined,
+    interviewStartedAt: String(raw.interviewStartedAt || raw["Interview Started At"] || raw.interview_started_at || "").trim() || undefined,
+    callingSourceSnapshot: String(raw.callingSourceSnapshot || raw["Calling Source Snapshot"] || raw.calling_source_snapshot || "").trim() || undefined,
+    callingLastRemarks: String(raw.callingLastRemarks || raw["Calling Last Remarks"] || raw.calling_last_remarks || "").trim() || undefined,
+    callingLineupDate: String(raw.callingLineupDate || raw["Calling Lineup Date"] || raw.calling_lineup_date || "").trim() || undefined,
+    callingTurnupStatus: String(raw.callingTurnupStatus || raw["Calling Turnup Status"] || raw.calling_turnup_status || "").trim() || undefined,
     offerSalary: raw.offerSalary ?? raw["Offer Salary"] ?? null,
     offerDoj: String(raw.offerDoj || raw["Date of Joining"] || "").trim() || undefined,
     reportingTiming: String(raw.reportingTiming || raw["Reporting Timing"] || "").trim() || undefined,
@@ -395,7 +483,10 @@ export async function submitInterviewUpdate(
     const [candRows] = await conn.execute(
       `SELECT c.id, c.candidate_code, c.full_name, c.email,
               c.recruiter_id, c.recruiter_assigned_id, c.assigned_recruiter_id, c.recruiter_assigned_name,
-              c.applied_for_branch, c.branch_display_name, c.q_token, c.current_stage, c.status, c.created_date, c.created_time
+              c.applied_for_branch, c.branch_display_name, c.sourcing_channel, c.latest_calling_activity_id,
+              c.calling_source_snapshot, c.calling_last_remarks, c.calling_lineup_date, c.calling_turnup_status,
+              c.referee_employee_code, c.referee_name,
+              c.q_token, c.current_stage, c.status, c.created_date, c.created_time
        FROM ats_candidate c
        WHERE ${whereClause}
        LIMIT 1
@@ -425,6 +516,43 @@ export async function submitInterviewUpdate(
     const effectiveQToken = candidate.q_token ?? input.qToken ?? null;
 
     // Check for existing submission (upsert) — q_token may be NULL
+    const candidateBranch = candidate.branch_display_name ?? candidate.applied_for_branch ?? null;
+
+    let secondRoundInterviewerSnapshot: {
+      id: string;
+      name: string;
+      branch: string | null;
+      designation: string | null;
+    } | null = null;
+    if (nvl(input.secondRoundInterviewerId)) {
+      const [interviewerRows] = await conn.execute(
+        `SELECT e.id,
+                COALESCE(NULLIF(TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))), ''), e.full_name, e.employee_name, e.employee_code) AS interviewer_name,
+                COALESCE(b.branch_name, e.branch_name, e.branch_id) AS branch_name,
+                COALESCE(des.designation_name, e.designation_name) AS designation_name
+           FROM employees e
+           LEFT JOIN branch_master b ON b.id = e.branch_id
+           LEFT JOIN designation_master des ON des.id = e.designation_id
+          WHERE e.id = ?
+          LIMIT 1`,
+        [input.secondRoundInterviewerId]
+      );
+      const interviewer = (interviewerRows as any[])[0];
+      if (!interviewer) err("Second round interviewer not found", 404);
+      const interviewerBranch = nvl(interviewer.branch_name);
+      const normalizedCandidateBranch = candidateBranch?.trim().toLowerCase().replace(/\s+/g, " ");
+      const normalizedInterviewerBranch = interviewerBranch?.trim().toLowerCase().replace(/\s+/g, " ");
+      if (normalizedCandidateBranch && normalizedInterviewerBranch && normalizedCandidateBranch !== normalizedInterviewerBranch) {
+        err("Second round interviewer must be selected from the candidate's branch", 400);
+      }
+      secondRoundInterviewerSnapshot = {
+        id: String(interviewer.id),
+        name: String(interviewer.interviewer_name ?? "").trim(),
+        branch: interviewerBranch,
+        designation: nvl(interviewer.designation_name),
+      };
+    }
+
     const [existingRows] = await conn.execute(
       effectiveQToken
         ? `SELECT id, submitted_at, walkin_end_stage, final_decision
@@ -441,6 +569,28 @@ export async function submitInterviewUpdate(
 
     const submissionId = existing?.id ?? randomUUID();
     const isUpdate = !!existing;
+    const clientRoundConductedFlag = boolish(input.clientRoundConducted) ? 1 : 0;
+    const followupRequiredFlag = boolish(input.followupRequired) || finalDecision === "Client Round - Pending" || finalDecision === "Hold" ? 1 : 0;
+    const secondRoundInterviewerId = secondRoundInterviewerSnapshot?.id ?? nvl(input.secondRoundInterviewerId);
+    const secondRoundInterviewerNameSnapshot = secondRoundInterviewerSnapshot?.name ?? nvl(input.secondRoundInterviewerNameSnapshot);
+    const secondRoundInterviewerBranchSnapshot = secondRoundInterviewerSnapshot?.branch ?? nvl(input.secondRoundInterviewerBranchSnapshot);
+    const secondRoundInterviewerDesignationSnapshot = secondRoundInterviewerSnapshot?.designation ?? nvl(input.secondRoundInterviewerDesignationSnapshot);
+    const secondRoundInterviewerOverrideReason = nvl(input.secondRoundInterviewerOverrideReason);
+    const clientRoundInterviewerName = nvl(input.clientRoundInterviewerName);
+    const clientRoundResult = nvl(input.clientRoundResult);
+    const clientRoundRemarks = nvl(input.clientRoundRemarks);
+    const followupDate = normalizeDateInput(input.followupDate);
+    const followupReason = nvl(input.followupReason);
+    const hiringSourceSnapshot = nvl(input.hiringSourceSnapshot) ?? candidate.sourcing_channel ?? null;
+    const refereeEmployeeCodeSnapshot = nvl(input.refereeEmployeeCodeSnapshot) ?? candidate.referee_employee_code ?? null;
+    const refereeNameSnapshot = nvl(input.refereeNameSnapshot) ?? candidate.referee_name ?? null;
+    const callingActivityId = nvl(input.callingActivityId) ?? candidate.latest_calling_activity_id ?? null;
+    const candidateCalledAt = nvl(input.candidateCalledAt) ?? null;
+    const interviewStartedAt = nvl(input.interviewStartedAt) ?? null;
+    const callingSourceSnapshot = nvl(input.callingSourceSnapshot) ?? candidate.calling_source_snapshot ?? null;
+    const callingLastRemarks = nvl(input.callingLastRemarks) ?? candidate.calling_last_remarks ?? null;
+    const callingLineupDate = nvl(input.callingLineupDate) ?? candidate.calling_lineup_date ?? null;
+    const callingTurnupStatus = nvl(input.callingTurnupStatus) ?? candidate.calling_turnup_status ?? null;
 
     if (isUpdate) {
       await conn.execute(
@@ -464,6 +614,28 @@ export async function submitInterviewUpdate(
            round3_result = ?,
            round3_voc = ?,
            round3_remarks = ?,
+           second_round_interviewer_id = ?,
+           second_round_interviewer_name_snapshot = ?,
+           second_round_interviewer_branch_snapshot = ?,
+           second_round_interviewer_designation_snapshot = ?,
+           second_round_interviewer_override_reason = ?,
+           client_round_conducted = ?,
+           client_round_interviewer_name = ?,
+           client_round_result = ?,
+           client_round_remarks = ?,
+           followup_required = ?,
+           followup_date = ?,
+           followup_reason = ?,
+           hiring_source_snapshot = ?,
+           referee_employee_code_snapshot = ?,
+           referee_name_snapshot = ?,
+           calling_activity_id = ?,
+           candidate_called_at = ?,
+           interview_started_at = ?,
+           calling_source_snapshot = ?,
+           calling_last_remarks = ?,
+           calling_lineup_date = ?,
+           calling_turnup_status = ?,
            offer_salary = ?,
            offer_doj = ?,
            reporting_timing = ?,
@@ -494,6 +666,28 @@ export async function submitInterviewUpdate(
           r3,
           nvl(input.round3Voc),
           nvl(input.round3Remarks),
+          secondRoundInterviewerId,
+          secondRoundInterviewerNameSnapshot,
+          secondRoundInterviewerBranchSnapshot,
+          secondRoundInterviewerDesignationSnapshot,
+          secondRoundInterviewerOverrideReason,
+          clientRoundConductedFlag,
+          clientRoundInterviewerName,
+          clientRoundResult,
+          clientRoundRemarks,
+          followupRequiredFlag,
+          followupDate,
+          followupReason,
+          hiringSourceSnapshot,
+          refereeEmployeeCodeSnapshot,
+          refereeNameSnapshot,
+          callingActivityId,
+          candidateCalledAt,
+          interviewStartedAt,
+          callingSourceSnapshot,
+          callingLastRemarks,
+          callingLineupDate,
+          callingTurnupStatus,
           nvlNum(input.offerSalary),
           nvl(input.offerDoj),
           nvl(input.reportingTiming),
@@ -511,9 +705,16 @@ export async function submitInterviewUpdate(
             skilltest_typing, skilltest_ai, skilltest_result, skilltest_voc, skilltest_remarks,
             round2_result, round2_voc, round2_remarks,
             round3_result, round3_voc, round3_remarks,
+            second_round_interviewer_id, second_round_interviewer_name_snapshot,
+            second_round_interviewer_branch_snapshot, second_round_interviewer_designation_snapshot,
+            second_round_interviewer_override_reason, client_round_conducted, client_round_interviewer_name,
+            client_round_result, client_round_remarks, followup_required, followup_date, followup_reason,
+            hiring_source_snapshot, referee_employee_code_snapshot, referee_name_snapshot,
+            calling_activity_id, candidate_called_at, interview_started_at, calling_source_snapshot,
+            calling_last_remarks, calling_lineup_date, calling_turnup_status,
             offer_salary, offer_doj, reporting_timing, ot_details, performance_incentives,
             submitted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
           submissionId,
           candidate.id,
@@ -537,6 +738,28 @@ export async function submitInterviewUpdate(
           r3,
           nvl(input.round3Voc),
           nvl(input.round3Remarks),
+          secondRoundInterviewerId,
+          secondRoundInterviewerNameSnapshot,
+          secondRoundInterviewerBranchSnapshot,
+          secondRoundInterviewerDesignationSnapshot,
+          secondRoundInterviewerOverrideReason,
+          clientRoundConductedFlag,
+          clientRoundInterviewerName,
+          clientRoundResult,
+          clientRoundRemarks,
+          followupRequiredFlag,
+          followupDate,
+          followupReason,
+          hiringSourceSnapshot,
+          refereeEmployeeCodeSnapshot,
+          refereeNameSnapshot,
+          callingActivityId,
+          candidateCalledAt,
+          interviewStartedAt,
+          callingSourceSnapshot,
+          callingLastRemarks,
+          callingLineupDate,
+          callingTurnupStatus,
           nvlNum(input.offerSalary),
           nvl(input.offerDoj),
           nvl(input.reportingTiming),
@@ -555,6 +778,16 @@ export async function submitInterviewUpdate(
       r2,
       r3,
       recruiterCode: recruiterProfile.recruiterCode,
+      secondRoundInterviewerId,
+      secondRoundInterviewerNameSnapshot,
+      secondRoundInterviewerBranchSnapshot,
+      clientRoundConducted: clientRoundConductedFlag,
+      clientRoundInterviewerName,
+      clientRoundResult,
+      followupRequired: followupRequiredFlag,
+      followupDate,
+      hiringSourceSnapshot,
+      callingActivityId,
     };
     await conn.execute(
       `INSERT INTO ats_interview_submission_audit (id, submission_id, action, actor_user_id, snapshot)
@@ -584,6 +817,21 @@ export async function submitInterviewUpdate(
          round3_result = ?,
          round3_voc = ?,
          round3_remarks = ?,
+         second_round_interviewer_id = ?,
+         second_round_interviewer_name_snapshot = ?,
+         second_round_interviewer_branch_snapshot = ?,
+         client_round_conducted = ?,
+         client_round_interviewer_name = ?,
+         client_round_result = ?,
+         client_round_remarks = ?,
+         followup_required = ?,
+         followup_date = ?,
+         followup_reason = ?,
+         latest_calling_activity_id = ?,
+         calling_source_snapshot = ?,
+         calling_last_remarks = ?,
+         calling_lineup_date = ?,
+         calling_turnup_status = ?,
          offer_salary = ?,
          offer_doj = ?,
          reporting_shift = ?,
@@ -614,6 +862,21 @@ export async function submitInterviewUpdate(
         r3,
         nvl(input.round3Voc),
         nvl(input.round3Remarks),
+        secondRoundInterviewerId,
+        secondRoundInterviewerNameSnapshot,
+        secondRoundInterviewerBranchSnapshot,
+        clientRoundConductedFlag,
+        clientRoundInterviewerName,
+        clientRoundResult,
+        clientRoundRemarks,
+        followupRequiredFlag,
+        followupDate,
+        followupReason,
+        callingActivityId,
+        callingSourceSnapshot,
+        callingLastRemarks,
+        callingLineupDate,
+        callingTurnupStatus,
         nvlNum(input.offerSalary),
         nvl(input.offerDoj),
         nvl(input.reportingTiming),

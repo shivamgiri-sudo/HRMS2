@@ -65,7 +65,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'recruiter_assigned_name') = 0,
-  'ALTER TABLE ats_candidate ADD COLUMN recruiter_assigned_name VARCHAR(255) NULL',
+  'ALTER TABLE ats_candidate ADD COLUMN recruiter_assigned_name VARCHAR(191) NULL',
   'SELECT ''recruiter_assigned_name already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -105,7 +105,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'round1_voc') = 0,
-  'ALTER TABLE ats_candidate ADD COLUMN round1_voc VARCHAR(255) NULL',
+  'ALTER TABLE ats_candidate ADD COLUMN round1_voc TEXT NULL',
   'SELECT ''round1_voc already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -145,7 +145,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'skilltest_voc') = 0,
-  'ALTER TABLE ats_candidate ADD COLUMN skilltest_voc VARCHAR(255) NULL',
+  'ALTER TABLE ats_candidate ADD COLUMN skilltest_voc TEXT NULL',
   'SELECT ''skilltest_voc already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -169,7 +169,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'round2_voc') = 0,
-  'ALTER TABLE ats_candidate ADD COLUMN round2_voc VARCHAR(255) NULL',
+  'ALTER TABLE ats_candidate ADD COLUMN round2_voc TEXT NULL',
   'SELECT ''round2_voc already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -193,7 +193,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'second_round_interviewer_name_snapshot') = 0,
-  'ALTER TABLE ats_candidate ADD COLUMN second_round_interviewer_name_snapshot VARCHAR(255) NULL',
+  'ALTER TABLE ats_candidate ADD COLUMN second_round_interviewer_name_snapshot TEXT NULL',
   'SELECT ''second_round_interviewer_name_snapshot already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -201,7 +201,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'second_round_interviewer_branch_snapshot') = 0,
-  'ALTER TABLE ats_candidate ADD COLUMN second_round_interviewer_branch_snapshot VARCHAR(255) NULL',
+  'ALTER TABLE ats_candidate ADD COLUMN second_round_interviewer_branch_snapshot TEXT NULL',
   'SELECT ''second_round_interviewer_branch_snapshot already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -217,7 +217,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'client_round_interviewer_name') = 0,
-  'ALTER TABLE ats_candidate ADD COLUMN client_round_interviewer_name VARCHAR(255) NULL',
+  'ALTER TABLE ats_candidate ADD COLUMN client_round_interviewer_name TEXT NULL',
   'SELECT ''client_round_interviewer_name already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -265,7 +265,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'offer_performance_incentive') = 0,
-  'ALTER TABLE ats_candidate ADD COLUMN offer_performance_incentive VARCHAR(255) NULL',
+  'ALTER TABLE ats_candidate ADD COLUMN offer_performance_incentive TEXT NULL',
   'SELECT ''offer_performance_incentive already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -289,7 +289,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'referee_name') = 0,
-  'ALTER TABLE ats_candidate ADD COLUMN referee_name VARCHAR(255) NULL',
+  'ALTER TABLE ats_candidate ADD COLUMN referee_name TEXT NULL',
   'SELECT ''referee_name already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -297,7 +297,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'referee_branch') = 0,
-  'ALTER TABLE ats_candidate ADD COLUMN referee_branch VARCHAR(255) NULL',
+  'ALTER TABLE ats_candidate ADD COLUMN referee_branch TEXT NULL',
   'SELECT ''referee_branch already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -305,7 +305,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'referee_process') = 0,
-  'ALTER TABLE ats_candidate ADD COLUMN referee_process VARCHAR(255) NULL',
+  'ALTER TABLE ats_candidate ADD COLUMN referee_process TEXT NULL',
   'SELECT ''referee_process already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -815,11 +815,11 @@ CREATE TABLE IF NOT EXISTS ats_recruiter_hiring_import_batch (
 CREATE TABLE IF NOT EXISTS ats_recruiter_hiring_import_error (
   id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   import_batch_id CHAR(36) NOT NULL,
-  row_number INT NOT NULL,
+  `row_number` INT NOT NULL,
   column_name VARCHAR(255) NULL,
   error_message TEXT NOT NULL,
   raw_row JSON NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_arhie_batch (import_batch_id),
-  INDEX idx_arhie_row (row_number)
+  INDEX idx_arhie_row (`row_number`)
 );
