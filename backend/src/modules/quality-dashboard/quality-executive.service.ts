@@ -108,7 +108,7 @@ export class QualityExecutiveService {
       // Get top 10 performers
       const [topPerformers] = await conn.execute<RowDataPacket[]>(
         `SELECT
-           @rank := @rank + 1 as rank,
+           @rank := @rank + 1 as rank_position,
            cqa.User as agent_code,
            e.first_name,
            e.last_name,
@@ -129,7 +129,7 @@ export class QualityExecutiveService {
       // Get bottom 10 performers
       const [bottomPerformers] = await conn.execute<RowDataPacket[]>(
         `SELECT
-           @rank := @rank + 1 as rank,
+           @rank := @rank + 1 as rank_position,
            cqa.User as agent_code,
            e.first_name,
            e.last_name,
@@ -207,7 +207,7 @@ export class QualityExecutiveService {
       return {
         metrics: metrics,
         top_performers: (topPerformers || []).map((row: any) => ({
-          rank: row.rank,
+          rank: row.rank_position,
           agent_code: row.agent_code,
           agent_name: `${row.first_name} ${row.last_name || ''}`.trim(),
           quality_score: row.quality_score,
@@ -215,7 +215,7 @@ export class QualityExecutiveService {
           process: row.process || 'N/A'
         })),
         bottom_performers: (bottomPerformers || []).map((row: any) => ({
-          rank: row.rank,
+          rank: row.rank_position,
           agent_code: row.agent_code,
           agent_name: `${row.first_name} ${row.last_name || ''}`.trim(),
           quality_score: row.quality_score,
