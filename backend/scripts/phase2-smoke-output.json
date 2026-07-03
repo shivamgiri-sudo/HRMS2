@@ -1,12 +1,12 @@
 {
-  "timestamp": "2026-06-22T18:28:45.036Z",
+  "timestamp": "2026-07-03T11:39:42.068Z",
   "marker": "TEST_DEMO_HRMS2_SMOKE",
   "prefix": "TEST DEMO",
   "dbTarget": {
-    "NODE_ENV": "production",
-    "DB_HOST": "[redacted]",
+    "NODE_ENV": "development",
+    "DB_HOST": "192.168.10.6",
     "DB_NAME": "mas_hrms",
-    "DB_USER": "[redacted]"
+    "DB_USER": "shivam_user"
   },
   "migrations": {
     "265_ats_lifecycle_alignment.sql": "applied",
@@ -15,83 +15,81 @@
   },
   "smokeJwtGenerationMethod": "created TEST DEMO admin user, then used authService.login with real password verification",
   "rowIds": {
-    "branch": "8b87b6e6-a7f0-4baf-84e5-a4645a8095ee",
-    "process": "70836aaf-9b96-458d-ae44-0f472545baba",
-    "department": "6acbaa94-7d49-49d0-9b92-1b2d2311a7a8",
-    "designation": "6496020c-0196-48f5-a6a6-660783886ac9",
-    "costCentre": "5d587e9f-bb31-47c8-b955-4110cb42b271",
-    "salarySlab": "c19cb14f-3619-49e0-84e0-c68d9f6d6d69",
-    "salaryStructure": "7d3c25cc-3389-4f39-be2d-c839dab729f2",
-    "leaveType": "a1580311-d184-47e1-8c88-94dc201ce43f",
+    "branch": "47a2a2ff-024c-47ad-8e23-0164938a792c",
+    "process": "90254ad5-22dc-4582-914e-5600bfd93c8a",
+    "department": "db078b88-9011-46e5-a54e-b265139c5884",
+    "designation": "8b1d029c-71ec-4cbd-a16c-0a0785a540ce",
+    "costCentre": "4b3b2744-18ad-4e47-b23b-616c3ea33dea",
+    "salarySlab": "84aef27a-6401-44be-afca-b60b8b3c6004",
+    "salaryStructure": "42b54f7c-7457-4d3e-9d30-e11e0a36ea8e",
+    "leaveType": "aeead250-83a4-4863-8977-5791c21fb15d",
     "users": {
-      "admin": "696730bb-d83a-4c5a-b155-992aaa242f17",
-      "hr": "4b3f9e65-df15-4592-9a49-a8c725c7936b",
-      "recruiter": "109a6a51-15d6-4ca8-8f33-aa7d2620bbd7",
-      "payroll_hr": "7eea8732-c877-4c97-8b40-f11adaab281b",
-      "branch_head": "b080eb35-b93c-4878-93e6-89bd0e666676",
-      "wfm": "2abf3eab-6cf5-44d9-9389-693fa915feca",
-      "it": "fd38f404-4c8a-4532-904b-57499e5c79f1",
-      "branch_admin": "a0073601-db37-4dfc-a5f8-0bd67585036b",
-      "employee": "548caedd-373c-4955-a69a-1395e542e27b"
+      "admin": "c64556ed-6394-42ef-9ff6-83589d36fee6",
+      "hr": "ef18d672-a317-495e-b582-10757c55ee21",
+      "recruiter": "5f7e4852-7746-4cdc-ae46-5e8e00118958",
+      "payroll_hr": "e4f1dc4a-70dd-472f-8703-a1e3c5a5250c",
+      "branch_head": "1ccdbc4b-9e89-49a8-a35b-a737335a435e",
+      "wfm": "6c64587d-7218-42c5-8a44-a61b5031c502",
+      "it": "7464808b-4f5c-4577-be37-d3c7a1e82e6f",
+      "branch_admin": "7dc36301-322b-4a5a-8c27-7e911ba5bde1",
+      "employee": "4284fb55-34b5-47bc-884f-aaaf20e6505b"
     },
     "roleEmployees": {
-      "admin": "be84a6f6-98f2-4b9b-861f-682cf94b0a21",
-      "hr": "5768768a-1dc8-4dea-8a65-bb48aa86c4c0",
-      "recruiter": "677c8a9a-32db-42fa-8b42-d4b49a1f8048",
-      "payroll_hr": "b70fc8bf-cfb0-4716-8ddd-3f40bd67b42c",
-      "branch_head": "ca36e7a4-8d44-4289-a53e-51cd48c06c7a",
-      "wfm": "b64b134c-5f3b-40d0-a9bf-cfe122d5d029",
-      "it": "06169d0d-36d1-4a49-a47c-ea2a0853ae59",
-      "branch_admin": "4eac4020-25a7-42c7-9571-11c06b42c861",
-      "employee": "6e775755-28b5-490c-9830-2084a376e024"
+      "admin": "3202bf09-b928-4707-bf50-ca20079c239c",
+      "hr": "046de107-9d0a-4626-b90e-10f3bbec0d51",
+      "recruiter": "97ba3f17-4d69-4580-ab2e-7d7de421d858",
+      "payroll_hr": "83785bb6-64fa-418e-9f8a-851ec7c2a116",
+      "branch_head": "1870a515-9d1d-4ab4-b26e-507e0a5df20e",
+      "wfm": "a97aff99-bdce-4a1c-89df-6383242dccea",
+      "it": "5726a3a6-6e8e-4374-aff8-6054d8b0190f",
+      "branch_admin": "c8d0aabe-5ff9-44d6-b8f0-8b6ca3900ffb",
+      "employee": "d96ec2bd-2b57-42b6-b82a-d57dd42429cf"
     },
-    "recruiterRoster": "2292e20e-e2f2-4552-a25a-1a4b18d570ff",
-    "candidate": "f4f99ac8-3bdb-41be-8c75-2085b88aacf0",
-    "queueToken": "a76ef540-05bc-4e2d-8cb9-78b3f03b8dc1",
-    "recruiterAssignment": "6f7c7abb-cea5-4929-be48-327d685c2a63",
-    "interviewResult": "6d1bba23-d3cb-4465-b232-849a969bd97a",
-    "selectionEmailLog": "31bdd312-372c-4df0-a627-139bc1af7784",
-    "onboardingRequest": "988a8442-aed9-4f5b-addb-81259d5f732a",
-    "onboardingBridge": "1c0e66a3-be19-4cdc-8499-af6cd506186b",
-    "onboardingProfile": "99ac5d17-f861-4d3e-9462-db3abe4ec78e",
-    "bgvConsent": "ad4046b2-888e-4e0e-8bbe-3b38bdb609da",
-    "bgvVerification": "4",
+    "recruiterRoster": "902ed66d-cfee-481e-855e-9b84a1e7f6d8",
+    "candidate": "e7d183ce-7165-4ab9-bb60-5078dff7f166",
+    "queueToken": "cfbcea67-1013-44a3-850c-10dee5139fb8",
+    "recruiterAssignment": "5397b17c-2fc1-4899-8eb8-65bed24c980e",
+    "interviewResult": "037272af-9bce-46ea-9d84-9f13fa4f2b98",
+    "selectionEmailLog": "52a5968a-22c1-4944-b9b7-34081624b0de",
+    "onboardingRequest": "66420fce-8741-4721-ba96-b643badf3c67",
+    "onboardingBridge": "99b7bbeb-ad38-4565-a99f-6529b417924f",
+    "onboardingProfile": "fd46de6f-2b1f-4176-8d36-07bbab9f769d",
+    "bgvConsent": "52692847-6b4b-4e53-83a1-a677f4f32e03",
+    "bgvVerification": "5",
     "bgvChecks": [
-      "8af4002c-f93e-473a-a98c-747a02a74756",
-      "ac334570-de73-48fe-833d-be6c892d18ad"
+      "e0eb15b7-2f5c-494b-8eb0-80c2789b241d",
+      "ca79323b-afc2-4b0e-bdab-798837f4ed2d"
     ],
     "bgvDetails": [
-      "7",
-      "8"
+      "9",
+      "10"
     ],
-    "payrollValidation": "9e373f59-333b-42a0-bd46-75ffd4b01fce",
-    "salaryProposal": "798e810a-f8cd-48b1-a43f-bbce465fe6e7",
-    "offer": "357130e9-f381-43b5-9327-594a75647f12",
-    "branchHeadApproval": "8693a71e-db95-4b0c-8573-8f472f872329",
-    "employee": "6e775755-28b5-490c-9830-2084a376e024",
-    "employeeCode": "TDEMP182842",
-    "authUser": "77580725-670f-47f1-9407-833c30bd5b8a",
-    "salarySnapshot": "146118c1-5bcb-428f-98ad-d65eb0da18e2",
-    "salaryAssignment": "d5d6c0c0-6118-4bec-bb04-e8c678241d44",
+    "payrollValidation": "8da7d64f-dfcd-4c19-9c08-6cbe21001e8f",
+    "salaryProposal": "8c13b02e-fa92-4e8c-bf79-13f69608731d",
+    "offer": "71e6315d-1b3c-48c7-94d0-1ff65f6b548f",
+    "branchHeadApproval": "a08c5b63-2188-4ee9-b966-dc0169acd778",
+    "employee": "d96ec2bd-2b57-42b6-b82a-d57dd42429cf",
+    "employeeCode": "TDEMP113934",
+    "authUser": "792f209c-16bc-42d5-9201-2180ead66bb1",
+    "salarySnapshot": "7a8ddfe2-15c6-411a-a8b6-0bd7b17537b0",
+    "salaryAssignment": "ea06e0ce-9d9e-4bc1-8cd7-4a2710c688f2",
     "leaveLedgerIds": [
-      "7be87aa8-5ef9-4a64-aaca-d327e8618f07"
+      "a844c54b-9423-4b63-a6a6-de7295c1f9e7"
     ],
-    "nominee": "6b98729a-a044-42b7-8bfe-1420a35d2c16",
+    "nominee": "efc5bd2f-446d-46ef-b5be-57c8be6c3ab2",
     "provisioningTaskIds": [
-      "f4eb1ebd-51a8-44d9-b815-2f86310d1abb",
-      "51441267-64da-410a-8725-14837c1245b0",
-      "3238043f-fc7e-4120-8501-067739054689",
-      "986ab316-2a55-4315-8a49-c96df763853a"
+      "7dba10e0-a944-4810-b811-95fba916c473",
+      "a81957e9-01e8-4873-908c-494a4e488c1b",
+      "b69ace11-2fc7-4444-bae9-081a9c7f16c0",
+      "f491f150-3f05-4bdd-85ad-9182b32cf575"
     ],
-    "appointmentLetterRequest": "8206ef25-3823-4dbc-82e4-6bcfeb4e1060",
-    "smokeJwtUser": "696730bb-d83a-4c5a-b155-992aaa242f17"
+    "appointmentLetterRequest": "5ab4bba3-bee8-4895-9b2d-8fd4dd2f6d64",
+    "smokeJwtUser": "c64556ed-6394-42ef-9ff6-83589d36fee6"
   },
   "passedChecks": [
     "SMOKE_JWT generated by real login service",
-    "Admin second login policy requires 2FA",
     "28. First login forces password change",
     "20. Temporary password is random, not mobile-based",
-    "29. Second login requires 2FA",
     "1. TEST DEMO candidate registration creates ats_candidate",
     "2. TEST DEMO candidate appears in waiting queue",
     "3. TEST DEMO assigned recruiter sees candidate",
@@ -120,7 +118,9 @@
     "30. Exit flow still opens",
     "4. Non-assigned recruiter cannot submit decision"
   ],
-  "failedChecks": [],
+  "failedChecks": [
+    "29. Second login requires 2FA: twoFactorRequired was false"
+  ],
   "errors": [],
   "cleanupSql": [
     "-- DO NOT RUN UNTIL REVIEWED",
