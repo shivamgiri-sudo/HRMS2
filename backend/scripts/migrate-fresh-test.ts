@@ -159,6 +159,8 @@ const MIGRATION_MANIFEST: string[] = [
   "198_cosec_punch_evidence.sql",
   "199_employee_directory_indexes.sql",
   "200_employee_directory_process_index.sql",
+  "350_joining_document_public_token_hash_only.sql",
+  "351_sanitize_internal_sign_links.sql",
 ];
 
 async function main() {

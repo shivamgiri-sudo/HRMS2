@@ -233,6 +233,7 @@ const MIGRATION_MANIFEST: string[] = [
   "348_universal_digital_form_fill_engine.sql",
   "349_joining_document_actor_alignment.sql",
   "350_joining_document_public_token_hash_only.sql",
+  "351_sanitize_internal_sign_links.sql",
 ];
 
 export type MigrationHealth = {
