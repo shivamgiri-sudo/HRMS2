@@ -9,7 +9,8 @@ import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { hasAnyRole, hasScopedAccess, getUserRoleKeys } from "../../shared/scopeAccess.js";
 import { analyzeEmployeeJoiningDocument } from "./employeeJoiningDocumentAnalysis.service.js";
-import { esignWithUrl, generateClientTransactionId } from "../integrations/luckpay/luckpay.client.js";
+import { esignWithUrl, generateClientTransactionId, sanitizeProviderPayload } from "../integrations/luckpay/luckpay.client.js";
+import { generateChecklistDraft } from "./universalDigitalFormFill.service.js";
 
 const STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "employee-joining-documents");
 const ALLOWED_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx"]);
@@ -464,7 +465,19 @@ function isChecklistTerminalStatus(status: string) {
   return new Set(["verified", "completed", "esign_completed", "signed_verified", "wet_signed_uploaded"]).has(String(status || "").trim().toLowerCase());
 }
 
-async function generateAgreementPdf(checklist: ChecklistRow, target: EmployeeDocumentTarget) {
+async function generateAgreementPdf(checklist: ChecklistRow, target: EmployeeDocumentTarget, actorUserId?: string | null, templateConfigured = false) {
+  if (templateConfigured) {
+    try {
+      await generateChecklistDraft(checklist.id, actorUserId ?? null);
+      const generatedDraft = await latestChecklistFile(checklist.id);
+      if (generatedDraft && fs.existsSync(generatedDraft.storage_path)) {
+        return generatedDraft;
+      }
+    } catch {
+      // Fall back to a clearly labeled draft if the configured template cannot be rendered.
+    }
+  }
+
   ensureDir(path.join(STORAGE_ROOT, target.id, checklist.document_code.toLowerCase()));
   const tempPath = path.join(
     STORAGE_ROOT,
@@ -477,7 +490,9 @@ async function generateAgreementPdf(checklist: ChecklistRow, target: EmployeeDoc
     const doc = new PDFDocument({ margin: 48, size: "A4" });
     const stream = fs.createWriteStream(tempPath);
     doc.pipe(stream);
-    doc.fontSize(18).text(checklist.document_name, { align: "center" });
+    doc.fontSize(22).fillColor("#B91C1C").text("DRAFT - TEMPLATE NOT CONFIGURED", { align: "center" });
+    doc.moveDown(0.75);
+    doc.fillColor("#111827").fontSize(18).text(checklist.document_name, { align: "center" });
     doc.moveDown();
     doc.fontSize(11).text(`Employee: ${target.full_name ?? "Employee"}`);
     doc.text(`Employee Code: ${target.employee_code ?? "Not allotted"}`);
@@ -486,8 +501,8 @@ async function generateAgreementPdf(checklist: ChecklistRow, target: EmployeeDoc
     doc.text(`Generated On: ${new Date().toLocaleString("en-IN")}`);
     doc.moveDown();
     doc.text(
-      `This ${checklist.document_name} is generated inside HRMS as part of the employee joining document pack. ` +
-      `The employee acknowledgement or Aadhaar eSign status is tracked separately and must be completed before final verification.`,
+      `This draft exists only because a production template has not been configured yet. ` +
+      `HR must upload the official template and field map before this document can be used for production eSign.`,
       { align: "justify" },
     );
     doc.moveDown();
@@ -510,13 +525,33 @@ async function generateAgreementPdf(checklist: ChecklistRow, target: EmployeeDoc
   });
 
   const buffer = fs.readFileSync(tempPath);
-  return {
-    path: tempPath,
+  const storedFilename = path.basename(tempPath);
+  const fileHash = sha256(buffer);
+  const fileSize = buffer.byteLength;
+  const fileId = await insertFileRecord({
+    checklistId: checklist.id,
+    employeeId: checklist.employee_id,
+    candidateId: checklist.candidate_id ?? null,
+    documentCode: checklist.document_code,
+    fileRole: "generated",
     originalFilename: `${checklist.document_code.toLowerCase()}-${target.employee_code ?? checklist.employee_id}.pdf`,
-    fileHash: sha256(buffer),
-    fileSize: buffer.byteLength,
+    storedFilename,
+    storagePath: tempPath,
     mimeType: "application/pdf",
-  };
+    fileSize,
+    fileHash,
+    uploadedBy: actorUserId ?? null,
+    uploadedByType: actorUserId ? "hr" : "system",
+  });
+
+  return {
+    id: fileId,
+    checklist_id: checklist.id,
+    original_filename: `${checklist.document_code.toLowerCase()}-${target.employee_code ?? checklist.employee_id}.pdf`,
+    file_role: "generated",
+    mime_type: "application/pdf",
+    storage_path: tempPath,
+  } as LatestFileRow;
 }
 
 async function ensureGeneratedFile(checklist: ChecklistRow, target: EmployeeDocumentTarget, actorUserId?: string | null) {
@@ -533,30 +568,30 @@ async function ensureGeneratedFile(checklist: ChecklistRow, target: EmployeeDocu
   const existing = (rows as unknown as LatestFileRow[])[0] ?? null;
   if (existing && fs.existsSync(existing.storage_path)) return existing;
 
-  const generated = await generateAgreementPdf(checklist, target);
-  const storedFilename = path.basename(generated.path);
-  const fileId = await insertFileRecord({
-    checklistId: checklist.id,
-    employeeId: checklist.employee_id,
-    candidateId: checklist.candidate_id ?? null,
-    documentCode: checklist.document_code,
-    fileRole: "generated",
-    originalFilename: generated.originalFilename,
-    storedFilename,
-    storagePath: generated.path,
-    mimeType: generated.mimeType,
-    fileSize: generated.fileSize,
-    fileHash: generated.fileHash,
-    uploadedBy: actorUserId ?? null,
-    uploadedByType: actorUserId ? "hr" : "system",
-  });
+  const [templateRows] = await db.execute<RowDataPacket[]>(
+    `SELECT template_storage_path
+       FROM employee_joining_document_template
+      WHERE document_code = ?
+        AND template_version = ?
+      AND active_status = 1
+      LIMIT 1`,
+    [checklist.document_code, checklist.template_version],
+  );
+  const templateRow = templateRows[0] as RowDataPacket | undefined;
+  const templateConfigured = Boolean(templateRow?.template_storage_path && fs.existsSync(String(templateRow.template_storage_path)));
+  const generated = await generateAgreementPdf(checklist, target, actorUserId, templateConfigured);
+  const fileId = generated.id;
+  const originalFilename = generated.original_filename ?? `${checklist.document_code.toLowerCase()}-${target.employee_code ?? checklist.employee_id}.pdf`;
 
   await db.execute(
     `UPDATE employee_joining_document_checklist
-        SET status = CASE WHEN action_type = 'esign' THEN 'pending_candidate_esign' ELSE 'uploaded_pending_review' END,
+        SET status = CASE
+              WHEN ? = 1 THEN CASE WHEN action_type = 'esign' THEN 'pending_candidate_esign' ELSE 'uploaded_pending_review' END
+              ELSE 'template_pending'
+            END,
             updated_at = NOW()
       WHERE id = ?`,
-    [checklist.id],
+    [templateConfigured ? 1 : 0, checklist.id],
   );
 
   await auditDocumentAction({
@@ -567,17 +602,17 @@ async function ensureGeneratedFile(checklist: ChecklistRow, target: EmployeeDocu
     actionType: "DOCUMENT_GENERATED",
     actorUserId: actorUserId ?? null,
     actorType: actorUserId ? "hr" : "system",
-    newValue: { fileId, originalFilename: generated.originalFilename },
+    newValue: { fileId, originalFilename },
   });
 
   await recalculateDocumentProgress(checklist.employee_id);
   return {
     id: fileId,
     checklist_id: checklist.id,
-    original_filename: generated.originalFilename,
+    original_filename: originalFilename,
     file_role: "generated",
-    mime_type: generated.mimeType,
-    storage_path: generated.path,
+    mime_type: generated.mime_type,
+    storage_path: generated.storage_path,
   } as LatestFileRow;
 }
 
@@ -933,12 +968,13 @@ export async function createJoiningDocumentEsignRequest(params: {
 
   const sourceFile = await ensureGeneratedFile(checklist, access.target, params.actorUserId);
   const publicToken = randomBytes(24).toString("hex");
+  const publicTokenHash = sha256(publicToken);
   const tokenLink = buildPublicSigningLink(checklist.document_code, publicToken);
 
   await db.execute(
     `INSERT INTO employee_joining_document_public_token
-       (id, checklist_id, employee_id, candidate_id, document_code, public_token, token_status, expires_at, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+       (id, checklist_id, employee_id, candidate_id, document_code, public_token, public_token_hash, token_status, expires_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
     [
       randomUUID(),
       checklist.id,
@@ -946,11 +982,13 @@ export async function createJoiningDocumentEsignRequest(params: {
       checklist.candidate_id ?? null,
       checklist.document_code,
       publicToken,
+      publicTokenHash,
       nowPlusDays(7),
       params.actorUserId,
     ],
   );
 
+  const clientTransactionId = generateClientTransactionId("joining-doc");
   const transactionId = randomUUID();
   let providerReferenceId: string | null = null;
   let providerUrl: string | null = tokenLink;
@@ -962,19 +1000,19 @@ export async function createJoiningDocumentEsignRequest(params: {
     if (env.LUCKPAY_PROVIDER_ENABLED) {
       const luckpay = await esignWithUrl({
         filePath: sourceFile.storage_path,
-        clientTransactionId: generateClientTransactionId("joining-doc"),
+        clientTransactionId,
         signedBy: access.target.full_name ?? access.target.employee_code ?? "Employee",
         location: "India",
         reason: checklist.document_name,
       });
       providerReferenceId = luckpay.providerReferenceId;
       providerUrl = luckpay.providerUrl ?? tokenLink;
-      responsePayload = luckpay.response;
+      responsePayload = sanitizeProviderPayload(luckpay.response) as Record<string, unknown>;
       status = luckpay.status || "initiated";
     }
   } catch (error) {
     errorMessage = error instanceof Error ? error.message : String(error);
-    responsePayload = { signLink: tokenLink, fallback: true };
+    responsePayload = sanitizeProviderPayload({ signLink: tokenLink, fallback: true }) as Record<string, unknown>;
     status = "fallback_internal_link";
   }
 
@@ -988,7 +1026,7 @@ export async function createJoiningDocumentEsignRequest(params: {
       checklist.employee_id,
       checklist.candidate_id ?? null,
       checklist.document_code,
-      generateClientTransactionId("joining-doc-track"),
+      clientTransactionId,
       providerReferenceId,
       access.target.full_name ?? null,
       access.target.mobile ?? null,
@@ -1019,7 +1057,7 @@ export async function createJoiningDocumentEsignRequest(params: {
     actionType: "ESIGN_INITIATED",
     actorUserId: params.actorUserId,
     actorType: "hr",
-    newValue: { providerUrl: providerUrl ? "available" : "missing", publicToken },
+    newValue: { providerUrl: providerUrl ? "available" : "missing", publicTokenIssued: true },
     ipAddress: params.ipAddress ?? null,
     userAgent: params.userAgent ?? null,
   });
@@ -1302,6 +1340,7 @@ export async function getPublicJoiningDocumentEsignSession(publicToken: string):
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
         tok.public_token AS token,
+        tok.public_token_hash,
         tok.checklist_id,
         tok.employee_id,
         tok.document_code,
@@ -1323,9 +1362,10 @@ export async function getPublicJoiningDocumentEsignSession(publicToken: string):
             ORDER BY t2.initiated_at DESC
             LIMIT 1
          )
-      WHERE tok.public_token = ?
-      LIMIT 1`,
-    [publicToken],
+       WHERE tok.public_token_hash = SHA2(?, 256)
+          OR tok.public_token = ?
+       LIMIT 1`,
+    [publicToken, publicToken],
   );
   const row = (rows as unknown as ESignSession[])[0];
   if (!row) {
@@ -1346,8 +1386,9 @@ export async function getPublicJoiningDocumentEsignSession(publicToken: string):
   await db.execute(
     `UPDATE employee_joining_document_public_token
         SET last_started_at = NOW()
-      WHERE public_token = ?`,
-    [publicToken],
+      WHERE public_token_hash = SHA2(?, 256)
+         OR public_token = ?`,
+    [publicToken, publicToken],
   );
   await auditDocumentAction({
     employeeId: row.employee_id,
@@ -1472,16 +1513,25 @@ async function finalizeChecklistEsign(params: {
     uploadedByType: params.actorType === "employee" ? "employee" : "system",
   });
 
+  const isLuckpayVerifiedWebhook = params.actorType === "system" && String(params.actionType).includes("WEBHOOK");
+  const nextChecklistStatus = isLuckpayVerifiedWebhook ? "esign_completed" : "employee_confirmed";
+  const nextFillStatus = isLuckpayVerifiedWebhook ? "esign_completed" : "employee_review_pending";
+  const nextSignatureMode = isLuckpayVerifiedWebhook
+    ? "aadhaar_esign_verified"
+    : params.actorType === "public_token"
+      ? "internal_employee_acknowledgement"
+      : "wet_signature_uploaded";
+
   await db.execute(
     `UPDATE employee_joining_document_checklist
-        SET status = 'esign_completed',
-            fill_status = 'esign_completed',
-            signature_mode = 'aadhaar_esign',
-            final_file_locked_at = NOW(),
-            completed_at = NOW(),
+        SET status = ?,
+            fill_status = ?,
+            signature_mode = ?,
+            final_file_locked_at = CASE WHEN ? = 'esign_completed' THEN NOW() ELSE final_file_locked_at END,
+            completed_at = CASE WHEN ? = 'esign_completed' THEN NOW() ELSE completed_at END,
             updated_at = NOW()
       WHERE id = ?`,
-    [params.checklist.id],
+    [nextChecklistStatus, nextFillStatus, nextSignatureMode, nextChecklistStatus, nextChecklistStatus, params.checklist.id],
   );
 
   if (params.transactionId) {
@@ -1506,12 +1556,14 @@ async function finalizeChecklistEsign(params: {
   }
 
   if (params.publicToken) {
+    const publicTokenHash = sha256(params.publicToken);
     await db.execute(
       `UPDATE employee_joining_document_public_token
           SET token_status = 'consumed',
               consumed_at = NOW()
-        WHERE public_token = ?`,
-      [params.publicToken],
+        WHERE public_token_hash = ?
+           OR public_token = ?`,
+      [publicTokenHash, params.publicToken],
     );
   }
 
@@ -1659,7 +1711,7 @@ export async function handleJoiningDocumentEsignWebhook(input: {
       WHERE id = ?`,
     [
       normalizedStatus,
-      JSON.stringify(payload),
+      JSON.stringify(sanitizeProviderPayload(payload)),
       normalizedStatus,
       normalizedStatus === "failed" ? String(payload.message ?? payload.error_message ?? payload.error ?? "Provider callback reported failure") : null,
       normalizedStatus,
@@ -1758,11 +1810,12 @@ export async function createPublicTokenForEpfReview(params: {
   }
 
   const publicToken = randomBytes(24).toString("hex");
+  const publicTokenHash = sha256(publicToken);
   await db.execute(
     `INSERT INTO employee_joining_document_public_token
-       (id, checklist_id, employee_id, candidate_id, document_code, public_token, token_status, expires_at, created_by)
-     VALUES (?, ?, ?, ?, 'EPF_DECLARATION', ?, 'active', ?, ?)`,
-    [randomUUID(), checklist.id, checklist.employee_id, checklist.candidate_id ?? null, publicToken, nowPlusDays(7), params.actorUserId],
+       (id, checklist_id, employee_id, candidate_id, document_code, public_token, public_token_hash, token_status, expires_at, created_by)
+     VALUES (?, ?, ?, ?, 'EPF_DECLARATION', ?, ?, 'active', ?, ?)`,
+    [randomUUID(), checklist.id, checklist.employee_id, checklist.candidate_id ?? null, publicToken, publicTokenHash, nowPlusDays(7), params.actorUserId],
   );
 
   await auditDocumentAction({
@@ -1773,7 +1826,7 @@ export async function createPublicTokenForEpfReview(params: {
     actionType: "EPF_REVIEW_LINK_CREATED",
     actorUserId: params.actorUserId,
     actorType: "hr",
-    newValue: { publicToken },
+    newValue: { publicTokenIssued: true },
   });
 
   return {

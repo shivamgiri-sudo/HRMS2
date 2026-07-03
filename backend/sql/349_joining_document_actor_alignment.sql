@@ -51,3 +51,17 @@ SET @sql = IF(
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
+SET @public_token_hash_exists = (
+  SELECT COUNT(*)
+    FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE()
+     AND TABLE_NAME = 'employee_joining_document_public_token'
+     AND COLUMN_NAME = 'public_token_hash'
+);
+
+SET @sql = IF(
+  @public_token_hash_exists > 0,
+  'SELECT ''employee_joining_document_public_token.public_token_hash already exists'' AS note',
+  'ALTER TABLE employee_joining_document_public_token ADD COLUMN public_token_hash VARCHAR(64) NOT NULL AFTER public_token, ADD UNIQUE KEY uq_ejdpt_token_hash (public_token_hash)'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;

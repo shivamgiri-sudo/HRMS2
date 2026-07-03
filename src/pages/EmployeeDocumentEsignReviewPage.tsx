@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, Download, Loader2, PenSquare, Send } from "lucide-react";
 
@@ -27,7 +27,7 @@ export default function EmployeeDocumentEsignReviewPage() {
   const [comment, setComment] = useState("");
   const [result, setResult] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -35,24 +35,24 @@ export default function EmployeeDocumentEsignReviewPage() {
       const body = await response.json();
       if (!response.ok) throw new Error(body?.message || "Unable to load the secure review link.");
       setPayload(body.data);
-    } catch (err: any) {
-      setError(err?.message || "Unable to load the secure review link.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to load the secure review link.");
     } finally {
       setLoading(false);
     }
-  };
+  }, [token]);
 
-  useEffect(() => { void load(); }, [token]);
+  useEffect(() => { void load(); }, [load]);
 
   const act = async (action: "confirm" | "request_correction" | "esign") => {
     setBusy(action === "request_correction" ? "correction" : action);
     setError(null);
     setResult(null);
     try {
-      if (action === "esign" && payload?.session.provider_url && /^https?:/i.test(payload.session.provider_url)) {
-        window.open(payload.session.provider_url, "_blank", "noopener,noreferrer");
-      }
-      const response = await fetch(`/api/public/employee-documents/esign/${token}`, {
+      const url = action === "esign"
+        ? `/api/public/employee-documents/esign/${token}/start`
+        : `/api/public/employee-documents/esign/${token}`;
+      const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -64,10 +64,18 @@ export default function EmployeeDocumentEsignReviewPage() {
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body?.message || "Unable to complete this action.");
-      setResult(action === "esign" ? "Signature flow completed or redirected successfully." : action === "confirm" ? "Details confirmed successfully." : "Correction request sent to HR.");
-      await load();
-    } catch (err: any) {
-      setError(err?.message || "Unable to complete this action.");
+      if (action === "esign") {
+        const providerUrl = String(body?.data?.provider_url || payload?.session.provider_url || "");
+        if (providerUrl && /^https?:/i.test(providerUrl)) {
+          window.open(providerUrl, "_blank", "noopener,noreferrer");
+        }
+        setResult(body?.data?.fallback_message || "eSign request started. Completion waits for Luckpay confirmation.");
+      } else {
+        setResult(action === "confirm" ? "Details confirmed successfully." : "Correction request sent to HR.");
+        await load();
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to complete this action.");
     } finally {
       setBusy(null);
     }
@@ -133,13 +141,13 @@ export default function EmployeeDocumentEsignReviewPage() {
                   <Download className="h-4 w-4" /> Download draft
                 </a>
                 <button type="button" onClick={() => void act("confirm")} disabled={busy !== null} className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-4 text-sm font-semibold text-white hover:bg-emerald-400 disabled:opacity-70">
-                  {busy === "confirm" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Confirm details are correct
+                  {busy === "confirm" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Confirm Details
                 </button>
                 <button type="button" onClick={() => void act("request_correction")} disabled={busy !== null} className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 text-sm font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-70">
-                  {busy === "correction" ? <Loader2 className="h-4 w-4 animate-spin" /> : <PenSquare className="h-4 w-4" />} Request correction
+                  {busy === "correction" ? <Loader2 className="h-4 w-4 animate-spin" /> : <PenSquare className="h-4 w-4" />} Request Correction
                 </button>
                 <button type="button" onClick={() => void act("esign")} disabled={busy !== null} className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-2xl bg-cyan-500 px-4 text-sm font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-70">
-                  {busy === "esign" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Proceed to eSign
+                  {busy === "esign" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Proceed to Aadhaar eSign
                 </button>
               </div>
             </div>

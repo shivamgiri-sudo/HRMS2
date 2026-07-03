@@ -45,6 +45,9 @@ export interface QueueMetrics {
   active_recruiters: number;
 }
 
+const ROLE_EXPR = "COALESCE(NULLIF(c.role_applied, ''), NULLIF(pm.process_name, ''), NULLIF(c.applied_for_process, ''))";
+const BRANCH_EXPR = "COALESCE(NULLIF(qt.branch_name, ''), NULLIF(c.branch_display_name, ''), NULLIF(bm.branch_name, ''), NULLIF(c.applied_for_branch, ''))";
+
 /**
  * Get live queue with filters
  */
@@ -59,7 +62,7 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
 
   // Branch filter
   if (filters.branch) {
-    conditions.push('qt.branch_name = ?');
+    conditions.push(`${BRANCH_EXPR} = ?`);
     params.push(filters.branch);
   }
 
@@ -95,8 +98,8 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
       c.full_name as candidate_name,
       c.mobile,
       c.email,
-      COALESCE(c.role_applied, c.applied_for_process) as applied_role,
-      COALESCE(qt.branch_name, c.applied_for_branch) as branch_name,
+      ${ROLE_EXPR} as applied_role,
+      ${BRANCH_EXPR} as branch_name,
       c.branch_display_name,
       COALESCE(qt.queue_status, IF(qt.status='active','waiting',qt.status)) AS queue_status,
       COALESCE(qt.recruiter_id, qt.assigned_recruiter_id) AS recruiter_id,
@@ -116,6 +119,8 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
       ) as position_in_queue
     FROM ats_queue_token qt
     INNER JOIN ats_candidate c ON c.id = qt.candidate_id
+    LEFT JOIN process_master pm ON pm.id = c.applied_for_process
+    LEFT JOIN branch_master bm ON bm.id = c.applied_for_branch
     LEFT JOIN ats_recruiter_roster rr ON rr.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
     LEFT JOIN employees e ON e.id = rr.employee_id
     WHERE ${conditions.join(' AND ')}
@@ -192,8 +197,8 @@ export async function getNextCandidate(recruiterId: string, branch: string): Pro
       c.full_name as candidate_name,
       c.mobile,
       c.email,
-      COALESCE(c.role_applied, c.applied_for_process) as applied_role,
-      COALESCE(qt.branch_name, c.applied_for_branch) as branch_name,
+      ${ROLE_EXPR} as applied_role,
+      ${BRANCH_EXPR} as branch_name,
       c.branch_display_name,
       COALESCE(qt.queue_status, IF(qt.status='active','waiting',qt.status)) AS queue_status,
       COALESCE(qt.recruiter_id, qt.assigned_recruiter_id) AS recruiter_id,
@@ -207,11 +212,13 @@ export async function getNextCandidate(recruiterId: string, branch: string): Pro
       1 as position_in_queue
     FROM ats_queue_token qt
     INNER JOIN ats_candidate c ON c.id = qt.candidate_id
+    LEFT JOIN process_master pm ON pm.id = c.applied_for_process
+    LEFT JOIN branch_master bm ON bm.id = c.applied_for_branch
     LEFT JOIN ats_recruiter_roster rr ON rr.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
     LEFT JOIN employees e ON e.id = rr.employee_id
     WHERE (COALESCE(qt.recruiter_id, qt.assigned_recruiter_id) = ?
       OR qt.assigned_recruiter_id = ?)
-      AND COALESCE(qt.branch_name, c.applied_for_branch) = ?
+      AND ${BRANCH_EXPR} = ?
       AND (qt.queue_status = 'waiting' OR (qt.queue_status IS NULL AND qt.status = 'active'))
       AND DATE(qt.created_at) = CURDATE()
     ORDER BY qt.created_at ASC
@@ -313,8 +320,8 @@ export async function getRecruiterQueue(recruiterId: string): Promise<QueueEntry
       c.full_name as candidate_name,
       c.mobile,
       c.email,
-      COALESCE(c.role_applied, c.applied_for_process) as applied_role,
-      COALESCE(qt.branch_name, c.applied_for_branch) as branch_name,
+      ${ROLE_EXPR} as applied_role,
+      ${BRANCH_EXPR} as branch_name,
       c.branch_display_name,
       COALESCE(qt.queue_status, IF(qt.status='active','waiting',qt.status)) AS queue_status,
       COALESCE(qt.recruiter_id, qt.assigned_recruiter_id) AS recruiter_id,
@@ -335,6 +342,8 @@ export async function getRecruiterQueue(recruiterId: string): Promise<QueueEntry
       ) as position_in_queue
     FROM ats_queue_token qt
     INNER JOIN ats_candidate c ON c.id = qt.candidate_id
+    LEFT JOIN process_master pm ON pm.id = c.applied_for_process
+    LEFT JOIN branch_master bm ON bm.id = c.applied_for_branch
     LEFT JOIN ats_recruiter_roster rr ON rr.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
     LEFT JOIN employees e ON e.id = rr.employee_id
     WHERE COALESCE(qt.recruiter_id, qt.assigned_recruiter_id) = ?

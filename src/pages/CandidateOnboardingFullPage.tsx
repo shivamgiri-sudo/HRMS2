@@ -184,6 +184,7 @@ export default function CandidateOnboardingFullPage() {
           onVerifyBank={onb.verifyBank}
           onVerifyUan={onb.verifyUan}
           onDigilocker={onb.startDigilocker}
+          digilockerStatus={onb.status?.digilocker?.status}
         />
       )}
 

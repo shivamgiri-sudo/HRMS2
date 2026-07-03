@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useGeoCapture } from "@/hooks/useGeoCapture";
@@ -40,6 +41,16 @@ export type StatusData = {
   experience?: any;
   languages?: any[];
   saved_profile?: Record<string, any>;
+  digilocker?: {
+    status?: string;
+    verification_url?: string | null;
+    client_transaction_id?: string | null;
+  };
+  esign?: {
+    status?: string;
+    verification_url?: string | null;
+    client_transaction_id?: string | null;
+  };
 };
 
 export type BgvStatus = {
@@ -500,8 +511,10 @@ export function useOnboardingFull(token: string) {
   const startDigilocker = async () => {
     setSaving(true);
     try {
-      const res = await hrmsApi.post<{ data: { authUrl: string } }>(`${BGV}/digilocker/start`, { token, requestedDocuments: ["AADHAAR", "PAN"] });
-      window.location.href = res.data.authUrl;
+      const res = await hrmsApi.post<{ data: { redirectUrl?: string | null; verificationUrl?: string | null } }>(`${API}/digilocker/initiate`, { token });
+      const nextUrl = res.data?.redirectUrl ?? res.data?.verificationUrl;
+      if (!nextUrl) throw new Error("DigiLocker link was not returned by the server.");
+      window.location.href = nextUrl;
     } catch (e: any) { setError(e?.message || "DigiLocker link failed"); }
     finally { setSaving(false); }
   };

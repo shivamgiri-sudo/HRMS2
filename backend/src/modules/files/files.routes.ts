@@ -8,6 +8,13 @@ import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { authService } from "../auth/auth.service.js";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { verifyToken as verifyCandidatePortalToken } from "../ats/candidate-portal.service.js";
+import {
+  auditCandidateFileAccess,
+  findCandidateFileById,
+} from "../ats/candidate-file.service.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const UPLOADS_ROOT = path.resolve(__dirname, "../../../uploads");
@@ -50,6 +57,107 @@ const upload = multer({
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+
+async function resolveCandidateFileActor(req: AuthenticatedRequest): Promise<
+  | { actorType: "candidate"; candidateId: string; actorUserId: null; actorRole: null }
+  | { actorType: "employee"; candidateId?: string; actorUserId: string; actorRole: string | null }
+  | null
+> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+
+  const token = authHeader.replace("Bearer ", "").trim();
+
+  const candidate = verifyCandidatePortalToken(token);
+  if (candidate) {
+    return {
+      actorType: "candidate",
+      candidateId: candidate.candidate_id,
+      actorUserId: null,
+      actorRole: null,
+    };
+  }
+
+  const user = authService.verifyAccessToken(token);
+  if (!user) return null;
+  const ctx = await getUserRoleContext(user.id).catch(() => null);
+  const role = ctx?.primaryRole ?? null;
+  const allowedRoles = new Set(["admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo", "super_admin"]);
+  if (!role || !allowedRoles.has(role)) return null;
+
+  return {
+    actorType: "employee",
+    actorUserId: user.id,
+    actorRole: role,
+  };
+}
+
+router.get(
+  "/candidate/:fileId",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const file = await findCandidateFileById(req.params.fileId);
+    if (!file || file.status !== "active") {
+      return res.status(404).json({ error: "File not found" });
+    }
+
+    const actor = await resolveCandidateFileActor(req);
+    const actorAny = actor as any;
+    const candidateActor = actorAny?.actorType === "candidate" ? actorAny : null;
+    const employeeActor = actorAny?.actorType === "employee" ? actorAny : null;
+    const isCandidateOwner = !!candidateActor && candidateActor.candidateId === file.candidate_id;
+    const isHrmsEmployee = !!employeeActor;
+
+    if (!isCandidateOwner && !isHrmsEmployee) {
+      await auditCandidateFileAccess({
+        fileId: file.id,
+        candidateId: file.candidate_id,
+        actorUserId: employeeActor?.actorUserId ?? null,
+        actorType: actor?.actorType ?? "system",
+        action: req.query.download ? "download" : "view",
+        accessResult: "denied",
+        denialReason: "Unauthorized access",
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent") ?? null,
+      });
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    if (!fs.existsSync(file.storage_path)) {
+      await auditCandidateFileAccess({
+        fileId: file.id,
+        candidateId: file.candidate_id,
+        actorUserId: employeeActor?.actorUserId ?? null,
+        actorType: actor?.actorType ?? "system",
+        action: req.query.download ? "download" : "view",
+        accessResult: "denied",
+        denialReason: "Stored file missing on disk",
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent") ?? null,
+      });
+      return res.status(404).json({ error: "File not found" });
+    }
+
+    await auditCandidateFileAccess({
+      fileId: file.id,
+      candidateId: file.candidate_id,
+      actorUserId: employeeActor?.actorUserId ?? null,
+      actorType: actor?.actorType ?? "system",
+      action: req.query.download ? "download" : "view",
+      accessResult: "allowed",
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") ?? null,
+    });
+
+    if (file.mime_type) {
+      res.type(file.mime_type);
+    }
+    if (String(req.query.download ?? "") === "1") {
+      res.set("Content-Disposition", `attachment; filename="${path.basename(file.stored_filename)}"`);
+    }
+    res.set("Cache-Control", "private, no-store, max-age=0");
+    res.sendFile(file.storage_path);
+  })
+);
 
 // Allow public access to employee photos (no auth required)
 // Must come BEFORE other routes that use requireAuth

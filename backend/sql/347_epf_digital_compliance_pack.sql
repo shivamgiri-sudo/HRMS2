@@ -1,5 +1,3 @@
-USE mas_hrms;
-
 CREATE TABLE IF NOT EXISTS employee_epf_compliance_profile (
   id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   employee_id CHAR(36) NOT NULL,

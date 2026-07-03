@@ -13,11 +13,10 @@ import bgvVerificationRouter from "./bgv-verification.routes.js";
 import { recruiterHiringRouter } from "./recruiter-hiring.routes.js";
 import multer from "multer";
 import path from "path";
-import { fileURLToPath } from "url";
-import { randomUUID } from "crypto";
 
 import { atsQueueService } from "./ats.queue.service.js";
 import { verifyRecruiter, resolveRecruiterForActor, getMyPendingCandidates, getSubmissionHistory, getRecruiterDailyStats } from "../ats-full-parity/recruiterInterview.service.js";
+import { persistCandidateFile } from "./candidate-file.service.js";
 
 export const atsRouter = Router();
 
@@ -34,25 +33,8 @@ atsRouter.use(recruiterHiringRouter);
 
 // ── PUBLIC — candidate file upload (1 hour window after registration) ────────
 // Configure multer for candidate uploads
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const uploadDir = path.resolve(__dirname, "../../../uploads/candidates");
-const fs = await import("fs");
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-const candidateStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${randomUUID()}${ext}`);
-  },
-});
-
 const candidateUpload = multer({
-  storage: candidateStorage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
   fileFilter: (_req, file, cb) => {
     const allowed = [".pdf", ".jpg", ".jpeg", ".png"];
@@ -104,20 +86,30 @@ atsRouter.post(
       return res.status(400).json({ success: false, message: "No file uploaded" });
     }
 
-    const fileUrl = `/uploads/candidates/${req.file.filename}`;
+    const uploaded = await persistCandidateFile({
+      candidateId: id,
+      fileType: type,
+      originalFilename: req.file.originalname,
+      mimeType: req.file.mimetype,
+      buffer: req.file.buffer,
+      visibility: "private",
+    });
+
+    const secureUrl = `/api/files/candidate/${uploaded.id}`;
 
     // Store file reference in candidate record
     const updateField = type === "resume" ? "resume_url" : "selfie_url";
     await db.execute(
       `UPDATE ats_candidate SET ${updateField} = ? WHERE id = ?`,
-      [fileUrl, id]
+      [secureUrl, id]
     );
 
     return res.json({
       success: true,
-      path: fileUrl,
-      url: fileUrl,
-      filename: req.file.filename,
+      fileId: uploaded.id,
+      path: secureUrl,
+      url: secureUrl,
+      filename: uploaded.stored_filename,
       message: `${type} uploaded successfully`,
     });
   })

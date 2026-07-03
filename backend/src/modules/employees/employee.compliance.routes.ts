@@ -7,13 +7,13 @@ import multer from "multer";
 import type { NextFunction, Request, Response } from "express";
 import type { RowDataPacket } from "mysql2";
 
+import { env } from "../../config/env.js";
 import { db } from "../../db/mysql.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { buildScopeWhereClause, hasAnyRole } from "../../shared/scopeAccess.js";
 import {
-  completePublicJoiningDocumentEsign,
   createJoiningDocumentEsignRequest,
   createPublicTokenForEpfReview,
   deleteJoiningDocumentFile,
@@ -42,8 +42,17 @@ import {
   synchronizeChecklistFieldValues,
 } from "./universalDigitalFormFill.service.js";
 import { validateEpfCompliance } from "./epfComplianceValidation.service.js";
+import {
+  buildPublicTokenAuditValue,
+  hashIdentifier,
+  maskAadhaar,
+  maskPan,
+  maskUan,
+  sanitizeEpfAuditRecord,
+  verifyLuckpayWebhookSecret,
+} from "./employeeCompliancePrivacy.js";
 
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
+const h = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024 } });
 const TEMPLATE_STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "document-templates");
 const EPF_REVIEW_CONSENT_TEXT = "Please verify your EPF details. These details will be used for EPFO compliance, UAN/KYC processing, nomination, payroll PF deduction, and statutory filing.";
@@ -89,7 +98,21 @@ async function logEpfAudit(input: {
   );
 }
 
-function epfFormPayloads(profile: Record<string, any>, nominees: any[], validation: any, ecr: Record<string, any> | null) {
+type EpfValidationSummary = {
+  ready_for_submission?: boolean;
+  ecr_ready?: boolean;
+  missing_fields?: unknown[];
+  issues?: Array<{ severity?: string }>;
+};
+
+type EpfProfileRow = Record<string, unknown> & {
+  id?: string;
+  status?: string;
+  compliance_stage?: string;
+  last_submitted_at?: string | null;
+};
+
+function epfFormPayloads(profile: Record<string, unknown>, nominees: Array<Record<string, unknown>>, validation: EpfValidationSummary | null, ecr: Record<string, unknown> | null) {
   return {
     FORM_11: {
       employee_name: profile.employee_name ?? null,
@@ -131,7 +154,7 @@ function epfFormPayloads(profile: Record<string, any>, nominees: any[], validati
     },
     MISSING_DATA_ALERT: {
       missing_fields: validation?.missing_fields ?? [],
-      blockers: Array.isArray(validation?.issues) ? validation.issues.filter((issue: any) => issue.severity === "error") : [],
+      blockers: Array.isArray(validation?.issues) ? validation.issues.filter((issue) => issue.severity === "error") : [],
     },
     ECR_READINESS: {
       ecr_status: ecr?.ecr_status ?? "pending",
@@ -141,7 +164,7 @@ function epfFormPayloads(profile: Record<string, any>, nominees: any[], validati
   } as const;
 }
 
-function epfFormStatus(formCode: string, profileStatus: string, validation: any) {
+function epfFormStatus(formCode: string, profileStatus: string, validation: EpfValidationSummary | null) {
   if (profileStatus === "payroll_approved") return "approved";
   if (profileStatus === "correction_requested") return "pushback";
   if (profileStatus === "employee_review_pending") return "employee_review_pending";
@@ -152,10 +175,10 @@ function epfFormStatus(formCode: string, profileStatus: string, validation: any)
 
 async function upsertEpfFormInstances(params: {
   employeeId: string;
-  profile: Record<string, any>;
-  nominees: any[];
-  validation: any;
-  ecr: Record<string, any> | null;
+  profile: EpfProfileRow;
+  nominees: Array<Record<string, unknown>>;
+  validation: EpfValidationSummary | null;
+  ecr: Record<string, unknown> | null;
   actorUserId: string;
 }) {
   const payloads = epfFormPayloads(params.profile, params.nominees, params.validation, params.ecr);
@@ -196,8 +219,8 @@ async function upsertEpfFormInstances(params: {
 }
 
 async function buildConsentReceiptPdf(input: {
-  profile: Record<string, any>;
-  receipt: Record<string, any>;
+  profile: Record<string, unknown>;
+  receipt: Record<string, unknown>;
 }) {
   return await new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -254,7 +277,8 @@ async function ensureEpfProfile(employeeId: string, actorUserId: string) {
       WHERE e.id = ?`,
     [employeeId],
   );
-  if ((result as any).affectedRows === 0) {
+  const affectedRows = (result as { affectedRows?: number }).affectedRows ?? 0;
+  if (affectedRows === 0) {
     const err = new Error("Unable to initialize EPF profile") as Error & { statusCode?: number };
     err.statusCode = 409;
     throw err;
@@ -302,7 +326,7 @@ async function syncEpfValidation(employeeId: string, actorUserId: string) {
       basic_wage: Number(profile.basic_wage ?? 0),
       gross_monthly_wage: Number(profile.gross_monthly_wage ?? 0),
     },
-    nominees as any[],
+    nominees as Array<Record<string, unknown>>,
   );
 
   await db.execute(`DELETE FROM employee_epf_validation_result WHERE profile_id = ?`, [profile.id]);
@@ -419,7 +443,7 @@ async function getEpfCompliancePack(employeeId: string, actorUserId: string) {
   const forms = await upsertEpfFormInstances({
     employeeId,
     profile,
-    nominees: nominees as any[],
+    nominees: nominees as Array<Record<string, unknown>>,
     validation,
     ecr,
     actorUserId,
@@ -691,6 +715,9 @@ employeeJoiningDocumentsRouter.get("/:employeeId/epf-compliance/consent-receipt"
 
 employeeJoiningDocumentsRouter.put("/:employeeId/epf-compliance/profile", h(async (req: AuthenticatedRequest, res) => {
   const { profile } = await ensureEpfProfile(req.params.employeeId, req.authUser!.id);
+  const aadhaarMasked = maskAadhaar(req.body.aadhaar_number ?? req.body.aadhaar_masked ?? null);
+  const panMasked = maskPan(req.body.pan_number ?? req.body.pan_masked ?? null);
+  const uanMasked = maskUan(req.body.uan_number ?? req.body.uan_masked ?? null);
   await db.execute(
       `UPDATE employee_epf_compliance_profile
         SET employee_name = ?,
@@ -724,9 +751,9 @@ employeeJoiningDocumentsRouter.put("/:employeeId/epf-compliance/profile", h(asyn
       req.body.marital_status ?? null,
       req.body.mobile_number ?? null,
       req.body.personal_email ?? null,
-      req.body.aadhaar_number ?? req.body.aadhaar_masked ?? null,
-      req.body.pan_number ?? req.body.pan_masked ?? null,
-      req.body.uan_number ?? req.body.uan_masked ?? null,
+      aadhaarMasked,
+      panMasked,
+      uanMasked,
       req.body.previous_pf_member ? 1 : 0,
       req.body.previous_eps_member ? 1 : 0,
       req.body.international_worker ? 1 : 0,
@@ -744,8 +771,8 @@ employeeJoiningDocumentsRouter.put("/:employeeId/epf-compliance/profile", h(asyn
     actionType: "EPF_PROFILE_UPDATED",
     actorUserId: req.authUser!.id,
     actorType: "hr",
-    oldValue: profile,
-    newValue: req.body ?? {},
+    oldValue: sanitizeEpfAuditRecord(profile as Record<string, unknown>),
+    newValue: sanitizeEpfAuditRecord((req.body ?? {}) as Record<string, unknown>),
     ipAddress: req.ip,
     userAgent: req.get("user-agent") ?? null,
   });
@@ -834,7 +861,7 @@ employeeJoiningDocumentsRouter.post("/:employeeId/epf-compliance/review-link", h
     actionType: "EPF_REVIEW_LINK_CREATED",
     actorUserId: req.authUser!.id,
     actorType: "hr",
-    newValue: data,
+    newValue: buildPublicTokenAuditValue(),
     ipAddress: req.ip,
     userAgent: req.get("user-agent") ?? null,
   });
@@ -925,6 +952,7 @@ publicEmployeeDocumentRouter.get("/esign/:token/download", h(async (req, res) =>
 
 publicEmployeeDocumentRouter.post("/esign/:token", h(async (req, res) => {
   const action = String(req.body?.action ?? "");
+  const publicTokenHash = hashIdentifier(req.params.token);
   if (action === "confirm" || action === "request_correction") {
     const session = await getPublicJoiningDocumentEsignSession(req.params.token);
     const review = await employeeReviewChecklistByToken({
@@ -970,7 +998,7 @@ publicEmployeeDocumentRouter.post("/esign/:token", h(async (req, res) => {
         actionType: "EPF_EMPLOYEE_CONSENT_RECORDED",
         actorType: "public_token",
         remarks: req.body?.comment ?? null,
-        newValue: { actor_name: req.body?.actor_name ?? null, consent_token: req.params.token },
+        newValue: { actor_name: req.body?.actor_name ?? null, consent_token_hash: publicTokenHash },
         ipAddress: req.ip,
         userAgent: req.get("user-agent") ?? null,
       });
@@ -994,7 +1022,7 @@ publicEmployeeDocumentRouter.post("/esign/:token", h(async (req, res) => {
         actionType: "EPF_CORRECTION_REQUESTED",
         actorType: "public_token",
         remarks: req.body?.comment ?? null,
-        newValue: { actor_name: req.body?.actor_name ?? null },
+        newValue: { actor_name: req.body?.actor_name ?? null, public_token_hash: publicTokenHash },
         ipAddress: req.ip,
         userAgent: req.get("user-agent") ?? null,
       });
@@ -1003,43 +1031,52 @@ publicEmployeeDocumentRouter.post("/esign/:token", h(async (req, res) => {
   }
   if (action === "esign") {
     const session = await getPublicJoiningDocumentEsignSession(req.params.token);
-    const data = await completePublicJoiningDocumentEsign({
-      publicToken: req.params.token,
-      signerName: String(req.body?.signer_name ?? req.body?.actor_name ?? "Employee"),
-      signerRemarks: req.body?.comment ?? null,
+    const [profileRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM employee_epf_compliance_profile WHERE employee_id = ? LIMIT 1`,
+      [session.employee_id],
+    );
+    await logEpfAudit({
+      employeeId: String(session.employee_id),
+      profileId: String(profileRows[0]?.id ?? ""),
+      actionType: "EPF_ESIGN_STARTED",
+      actorType: "public_token",
+      remarks: req.body?.comment ?? null,
+      newValue: { public_token_hash: publicTokenHash, providerUrlIssued: Boolean(session.provider_url) },
       ipAddress: req.ip,
       userAgent: req.get("user-agent") ?? null,
     });
-    if (String(session.document_code).toUpperCase() === "EPF_DECLARATION") {
-      const [profileRows] = await db.execute<RowDataPacket[]>(
-        `SELECT id FROM employee_epf_compliance_profile WHERE employee_id = ? LIMIT 1`,
-        [session.employee_id],
-      );
-      await logEpfAudit({
-        employeeId: String(session.employee_id),
-        profileId: String(profileRows[0]?.id ?? ""),
-        actionType: "EPF_ESIGN_COMPLETED",
-        actorType: "public_token",
-        remarks: req.body?.comment ?? null,
-        newValue: data,
-        ipAddress: req.ip,
-        userAgent: req.get("user-agent") ?? null,
-      });
-    }
-    return res.json({ success: true, data });
+    return res.json({
+      success: true,
+      data: {
+        provider_url: session.provider_url,
+        tx_status: session.tx_status,
+        fallback_message: session.provider_url ? null : "Luckpay eSign is unavailable. Use the wet-sign fallback workflow.",
+      },
+    });
   }
   return res.status(400).json({ success: false, message: "Unsupported action" });
 }));
 
-publicEmployeeDocumentRouter.post("/esign/:token/start", h(async (req, res) => {
-  const data = await completePublicJoiningDocumentEsign({
-    publicToken: req.params.token,
-    signerName: String(req.body?.signer_name ?? req.body?.actor_name ?? "Employee"),
-    signerRemarks: req.body?.comment ?? null,
-    ipAddress: req.ip,
-    userAgent: req.get("user-agent") ?? null,
-  });
+publicEmployeeDocumentRouter.post("/esign/webhook/luckpay", h(async (req, res) => {
+  const configuredSecret = env.LUCKPAY_WEBHOOK_SECRET;
+  const webhookSecret = req.get("X-HRMS-Webhook-Secret");
+  if (!verifyLuckpayWebhookSecret(webhookSecret, configuredSecret)) {
+    return res.status(401).json({ success: false, message: "Unauthorized webhook" });
+  }
+  const data = await handleJoiningDocumentEsignWebhook(req.body);
   return res.json({ success: true, data });
+}));
+
+publicEmployeeDocumentRouter.post("/esign/:token/start", h(async (req, res) => {
+  const session = await getPublicJoiningDocumentEsignSession(req.params.token);
+  return res.json({
+    success: true,
+    data: {
+      provider_url: session.provider_url,
+      tx_status: session.tx_status,
+      fallback_message: session.provider_url ? null : "Luckpay eSign is unavailable. Use the wet-sign fallback workflow.",
+    },
+  });
 }));
 
 export const payrollEpfComplianceRouter = Router();

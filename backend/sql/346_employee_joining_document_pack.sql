@@ -1,5 +1,3 @@
-USE mas_hrms;
-
 CREATE TABLE IF NOT EXISTS employee_joining_document_template (
   id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   document_code VARCHAR(100) NOT NULL,
@@ -136,6 +134,7 @@ CREATE TABLE IF NOT EXISTS employee_joining_document_public_token (
   candidate_id CHAR(36) NULL,
   document_code VARCHAR(100) NOT NULL,
   public_token VARCHAR(255) NOT NULL,
+  public_token_hash VARCHAR(64) NOT NULL,
   token_status VARCHAR(40) NOT NULL DEFAULT 'active',
   expires_at DATETIME NOT NULL,
   consumed_at DATETIME NULL,
@@ -143,6 +142,7 @@ CREATE TABLE IF NOT EXISTS employee_joining_document_public_token (
   created_by CHAR(36) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_ejdpt_token (public_token),
+  UNIQUE KEY uq_ejdpt_token_hash (public_token_hash),
   INDEX idx_ejdpt_checklist (checklist_id),
   INDEX idx_ejdpt_employee (employee_id),
   CONSTRAINT fk_ejdpt_checklist FOREIGN KEY (checklist_id) REFERENCES employee_joining_document_checklist(id) ON DELETE CASCADE,

@@ -200,16 +200,16 @@ app.use(express.json({
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
 
-// Serve all uploaded files (candidate files, offer letters, etc.)
-// Files are stored under <cwd>/uploads/<category>/ and referenced as /uploads/<category>/<filename>
-// NOTE: onboarding docs are not served directly from the public uploads mount.
 const uploadsPath = path.resolve(process.cwd(), "uploads");
+
 app.use("/uploads", (req, res, next) => {
-  // Block direct access to onboarding documents — they must go through secure endpoints
   if (req.path.startsWith("/onboarding/")) {
-    return res.status(403).json({ success: false, message: "Direct access blocked. Use the secure document preview endpoint." });
+    return res.status(403).json({
+      success: false,
+      message: "Direct access blocked. Use the secure document preview endpoint.",
+    });
   }
-  express.static(uploadsPath)(req, res, next);
+  return express.static(uploadsPath)(req, res, next);
 });
 
 app.get("/", (_req, res) => res.json({ success: true, service: "MCN HRMS Backend API", version: "1.0.0" }));
@@ -256,9 +256,9 @@ app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
 app.use("/api/ats", atsFormConfigRouter);
 app.use("/api/ats/registration", registrationEnhancedRouter);
-app.use("/api/ats", atsRouter);
 app.use("/api/ats/queue", queuePublicRouter); // public display endpoints (no auth)
 app.use("/api/public/verify", employeeVerifyRouter); // public QR code verification (no auth)
+app.use("/api/ats", atsRouter);
 app.use("/api/ats/queue", queueRouter);
 app.use("/api/business-command", businessCommandRouter);
 app.use("/api/business-actions", businessActionsRouter);
@@ -371,13 +371,6 @@ app.use("/api/ats/super-admin", superAdminRouter);
 // ── AI Insights (Gemini-powered, role-aware, sanitized) ────────────────────
 import { aiInsightsRouter } from "./modules/ai/ai-insights.routes.js";
 app.use("/api/ai", aiInsightsRouter);
-
-app.use("/uploads", (req, res, next) => {
-  if (req.path.startsWith("/onboarding/")) {
-    return res.status(403).json({ success: false, message: "Direct access blocked. Use the secure document preview endpoint." });
-  }
-  express.static(uploadsPath)(req, res, next);
-});
 
 app.use(notFoundHandler);
 app.use(errorHandler);

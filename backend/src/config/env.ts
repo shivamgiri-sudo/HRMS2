@@ -107,8 +107,10 @@ const envSchema = z.object({
   LUCKPAY_ENV: z.enum(["staging", "production"]).default("staging"),
   LUCKPAY_BASE_URL: z.string().url().default("https://staging-api-banking.luckpay.in/apibanking/api/v1"),
   LUCKPAY_AUTH_URL: z.string().url().default("https://staging-api-banking.luckpay.in/apibanking/api/v1/auth/token"),
+  LUCKPAY_PROD_BASE_URL: z.string().url().default("https://api-banking.luckpay.in/apibanking/api/v1"),
   LUCKPAY_BASIC_TOKEN: z.string().optional(),
   LUCKPAY_CLIENT_ID: z.string().optional(),
+  LUCKPAY_WEBHOOK_SECRET: z.string().optional(),
   LUCKPAY_TOKEN_CACHE_TTL_SECONDS: z.coerce.number().int().min(1).default(45),
   LUCKPAY_TIMEOUT_MS: z.coerce.number().int().min(1000).default(60000),
   LUCKPAY_PROVIDER_ENABLED: z.string().default("false"),
@@ -182,6 +184,10 @@ if (parsed.data.NODE_ENV === "production") {
     console.error("[FATAL] DIGIO_CLIENT_ID and DIGIO_CLIENT_SECRET must be set when BGV_PROVIDER=digio.");
     process.exit(1);
   }
+  if (parsed.data.LUCKPAY_PROVIDER_ENABLED === "true" && !parsed.data.LUCKPAY_WEBHOOK_SECRET) {
+    console.error("[FATAL] LUCKPAY_WEBHOOK_SECRET must be set when LUCKPAY_PROVIDER_ENABLED=true.");
+    process.exit(1);
+  }
 }
 
 export const env = {
@@ -193,5 +199,5 @@ export const env = {
   ENABLE_SCHEDULERS: parsed.data.ENABLE_SCHEDULERS === 'true',
   OUTBOUND_ALLOW_PRIVATE_URLS: parsed.data.OUTBOUND_ALLOW_PRIVATE_URLS === 'true',
   SEED_DEMO_DATA: parsed.data.SEED_DEMO_DATA === 'true',
-  LUCKPAY_PROVIDER_ENABLED: parsed.data.LUCKPAY_PROVIDER_ENABLED === 'true',
+  LUCKPAY_PROVIDER_ENABLED: parsed.data.LUCKPAY_PROVIDER_ENABLED === "true",
 };

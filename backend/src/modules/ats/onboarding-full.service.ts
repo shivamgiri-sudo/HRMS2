@@ -3,8 +3,224 @@ import fs from "fs";
 import path from "path";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { hasScopedAccess } from "../../shared/scopeAccess.js";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { luckpayClient, sanitizeProviderPayload } from "../integrations/luckpay/luckpay.client.js";
 
 type ActorType = "candidate" | "hr" | "system";
+type AuthenticatedUser = NonNullable<AuthenticatedRequest["authUser"]>;
+export type OnboardingScopeFilter = { sql: string; params: unknown[] };
+export type OnboardingDocumentPermission = {
+  canPreview: boolean;
+  canDownload: boolean;
+  category: "general" | "sensitive" | "payroll";
+  reason?: string;
+};
+export type OnboardingDocumentAccessDecision = { allowed: boolean; reason?: string; roleKeys?: string[] };
+export type OnboardingDocumentAccessParams = {
+  user?: AuthenticatedUser & { roleKeys?: string[] };
+  candidateTokenData?: { candidate_id?: string | null };
+  document: Record<string, unknown>;
+  action: "preview" | "download";
+};
+
+const PAYROLL_DOCUMENT_KEYWORDS = [
+  "bank",
+  "account",
+  "ifsc",
+  "cheque",
+  "check",
+  "passbook",
+  "salary",
+  "ctc",
+  "pf",
+  "epf",
+  "uan",
+  "esic",
+  "form11",
+  "statutory",
+  "payroll",
+];
+
+const SENSITIVE_DOCUMENT_KEYWORDS = [
+  ...PAYROLL_DOCUMENT_KEYWORDS,
+  "aadhaar",
+  "aadhar",
+  "aadhaar_front",
+  "aadhaar_back",
+  "pan",
+  "passport",
+  "voter",
+  "driving",
+  "licence",
+  "license",
+  "kyc",
+  "identity",
+  "address",
+  "address_proof",
+  "bgv",
+  "court",
+  "criminal",
+];
+
+function normalizeDocumentText(doc: Partial<{ doc_type: unknown; doc_name: unknown; file_original_name: unknown }>) {
+  return [doc.doc_type, doc.doc_name, doc.file_original_name]
+    .map((value) => String(value ?? "").trim().toLowerCase())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function classifyOnboardingDocument(doc: Partial<{ doc_type: unknown; doc_name: unknown; file_original_name: unknown }>) {
+  const text = normalizeDocumentText(doc);
+  const isPayrollRelated = PAYROLL_DOCUMENT_KEYWORDS.some((keyword) => text.includes(keyword));
+  const isSensitive = isPayrollRelated || SENSITIVE_DOCUMENT_KEYWORDS.some((keyword) => text.includes(keyword));
+  return {
+    isPayrollRelated,
+    isSensitive,
+    category: (isPayrollRelated ? "payroll" : isSensitive ? "sensitive" : "general") as OnboardingDocumentPermission["category"],
+  };
+}
+
+function buildOnboardingDocumentUrl(documentId: string, options?: { token?: string; download?: boolean }) {
+  const base = options?.download
+    ? `/api/ats/onboarding-full/documents/${documentId}/download`
+    : `/api/ats/onboarding-full/documents/preview/${documentId}`;
+  if (!options?.token) return base;
+  const params = new URLSearchParams({ token: options.token });
+  return `${base}?${params.toString()}`;
+}
+
+function sanitizeOnboardingDocument(
+  row: Record<string, unknown>,
+  options?: { token?: string; permission?: OnboardingDocumentPermission }
+) {
+  const permission = options?.permission ?? { canPreview: true, canDownload: Boolean(options?.token), category: "general" };
+  if (!permission.canPreview) return null;
+  const { file_path: _filePath, ...rest } = row;
+  const id = String(row.id ?? "");
+  const previewUrl = buildOnboardingDocumentUrl(id, { token: options?.token });
+  const downloadUrl = permission.canDownload || Boolean(options?.token)
+    ? buildOnboardingDocumentUrl(id, { token: options?.token, download: true })
+    : null;
+
+  return {
+    ...rest,
+    file_url: previewUrl,
+    preview_url: previewUrl,
+    download_url: downloadUrl,
+    can_preview: true,
+    can_download: Boolean(downloadUrl),
+    document_category: permission.category,
+  };
+}
+
+export function getOnboardingDocumentPermission(
+  row: Partial<{ doc_type: unknown; doc_name: unknown; file_original_name: unknown }>,
+  roleKeys: string[]
+): OnboardingDocumentPermission {
+  const roles = new Set(roleKeys);
+  const classification = classifyOnboardingDocument(row);
+
+  if (roles.has("super_admin") || roles.has("admin") || roles.has("hr")) {
+    return { canPreview: true, canDownload: true, category: classification.category };
+  }
+
+  if (roles.has("payroll_hr") || roles.has("payroll")) {
+    if (!classification.isPayrollRelated) {
+      return {
+        canPreview: false,
+        canDownload: false,
+        category: classification.category,
+        reason: "Payroll access is restricted to payroll-related documents.",
+      };
+    }
+    return { canPreview: true, canDownload: true, category: classification.category };
+  }
+
+  if (roles.has("manager") || roles.has("process_manager")) {
+    return { canPreview: true, canDownload: false, category: classification.category };
+  }
+
+  if (roles.has("recruiter")) {
+    if (classification.isSensitive) {
+      return {
+        canPreview: false,
+        canDownload: false,
+        category: classification.category,
+        reason: "Recruiters cannot access sensitive payroll or statutory documents.",
+      };
+    }
+    return { canPreview: true, canDownload: false, category: classification.category };
+  }
+
+  return {
+    canPreview: false,
+    canDownload: false,
+    category: classification.category,
+    reason: "Your role does not have access to this document.",
+  };
+}
+
+export async function canAccessOnboardingDocument(
+  params: OnboardingDocumentAccessParams
+): Promise<OnboardingDocumentAccessDecision> {
+  const candidateId = String(params.document.candidate_id ?? "");
+  if (!candidateId) {
+    return { allowed: false, reason: "Document is missing candidate ownership metadata." };
+  }
+
+  if (params.candidateTokenData) {
+    if (String(params.candidateTokenData.candidate_id ?? "") !== candidateId) {
+      return { allowed: false, reason: "Candidate token cannot access another candidate's document." };
+    }
+    return { allowed: true, roleKeys: ["candidate"] };
+  }
+
+  if (!params.user?.id) {
+    return { allowed: false, reason: "Authentication required." };
+  }
+
+  const roleKeys = params.user.roleKeys?.length
+    ? params.user.roleKeys
+    : (await getUserRoleContext(params.user.id)).roleKeys;
+
+  if (!roleKeys.some((role) => [
+    "admin",
+    "super_admin",
+    "hr",
+    "manager",
+    "process_manager",
+    "payroll_hr",
+    "payroll",
+    "recruiter",
+  ].includes(role))) {
+    return { allowed: false, reason: "You are not authorized to access onboarding documents." };
+  }
+
+  const scopedAllowed = await hasScopedAccess(
+    params.user.id,
+    ["hr", "manager", "process_manager", "payroll_hr", "payroll", "recruiter"],
+    {
+      branchId: params.document.applied_for_branch ? String(params.document.applied_for_branch) : undefined,
+      processId: params.document.applied_for_process ? String(params.document.applied_for_process) : undefined,
+    },
+    { allowAdminBypass: true, requireScopeForNonAdmin: true }
+  );
+
+  if (!scopedAllowed) {
+    return { allowed: false, reason: "Forbidden for this branch/process scope.", roleKeys };
+  }
+
+  const permission = getOnboardingDocumentPermission(params.document, roleKeys);
+  const allowed = params.action === "download" ? permission.canDownload : permission.canPreview;
+  if (!allowed) {
+    return { allowed: false, reason: permission.reason ?? "Access denied for this document.", roleKeys };
+  }
+
+  return { allowed: true, roleKeys };
+}
 
 const hashValue = (value: unknown) => {
   const normalized = String(value ?? "").trim().toUpperCase();
@@ -45,6 +261,225 @@ async function logCandidateAction(candidateId: string, actionType: string, paylo
       meta?.userAgent ?? null,
     ]
   );
+}
+
+export async function auditOnboardingDocumentAccess(
+  row: Record<string, unknown>,
+  actionType:
+    | "PREVIEW_DOCUMENT"
+    | "DOWNLOAD_DOCUMENT"
+    | "PREVIEW_DOCUMENT_DENIED"
+    | "DOWNLOAD_DOCUMENT_DENIED",
+  meta?: { ip?: string; userAgent?: string; actorType?: ActorType; actorId?: string | null; roleKeys?: string[] }
+) {
+  const candidateId = String(row.candidate_id ?? "");
+  await logCandidateAction(candidateId, actionType, {
+    documentId: row.id ?? null,
+    docType: row.doc_type ?? null,
+    fileName: row.file_original_name ?? null,
+  }, meta);
+
+  if (meta?.actorType === "candidate" || !meta?.actorId) return;
+
+  await logSensitiveAction({
+    actor_user_id: meta.actorId,
+    actor_role: meta.roleKeys?.join(",") ?? "hr",
+    action_type: actionType,
+    module_key: "ATS_ONBOARDING",
+    entity_type: "candidate_onboarding_document",
+    entity_id: String(row.id ?? ""),
+    change_summary: {
+      candidate_id: candidateId,
+      doc_type: row.doc_type ?? null,
+      file_name: row.file_original_name ?? null,
+      access_mode: actionType.includes("DOWNLOAD") ? "download" : "preview",
+      access_outcome: actionType.endsWith("_DENIED") ? "denied" : "allowed",
+    },
+    ip_address: meta.ip,
+    user_agent: meta.userAgent,
+  });
+}
+
+async function ensureCandidateWithinScope(candidateId: string, scopeFilter?: OnboardingScopeFilter) {
+  const whereSql = scopeFilter?.sql ? ` AND (${scopeFilter.sql})` : "";
+  const params = scopeFilter?.params ?? [];
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.id
+       FROM ats_candidate c
+      WHERE c.id = ?${whereSql}
+      LIMIT 1`,
+    [candidateId, ...params]
+  );
+  if (!(rows as RowDataPacket[]).length) {
+    throw Object.assign(new Error("Forbidden for this branch/process scope"), { statusCode: 403 });
+  }
+}
+
+async function getLatestDigilockerStatus(candidateId: string) {
+  const [providerRows] = await db.execute<RowDataPacket[]>(
+    `SELECT service_type, status, provider_url, client_transaction_id, updated_at
+       FROM ats_provider_transaction_log
+      WHERE candidate_id = ? AND provider = 'luckpay' AND service_type = 'digilocker'
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1`,
+    [candidateId]
+  ).catch(() => [[] as RowDataPacket[]]);
+
+  if ((providerRows as RowDataPacket[]).length) {
+    const row = (providerRows as RowDataPacket[])[0];
+    return {
+      provider: "luckpay",
+      status: row.status ?? "initiated",
+      verification_url: row.provider_url ?? null,
+      client_transaction_id: row.client_transaction_id ?? null,
+      updated_at: row.updated_at ?? null,
+    };
+  }
+
+  const [sessionRows] = await db.execute<RowDataPacket[]>(
+    `SELECT session_id, status, auth_url, completed_at, initiated_at
+       FROM candidate_digilocker_sessions
+      WHERE candidate_id = ?
+      ORDER BY initiated_at DESC
+      LIMIT 1`,
+    [candidateId]
+  ).catch(() => [[] as RowDataPacket[]]);
+
+  if ((sessionRows as RowDataPacket[]).length) {
+    const row = (sessionRows as RowDataPacket[])[0];
+    return {
+      provider: "existing",
+      status: row.status ?? "not_started",
+      verification_url: row.auth_url ?? null,
+      client_transaction_id: row.session_id ?? null,
+      updated_at: row.completed_at ?? row.initiated_at ?? null,
+    };
+  }
+
+  return { provider: "luckpay", status: "not_started", verification_url: null, client_transaction_id: null, updated_at: null };
+}
+
+async function getLatestEsignStatus(candidateId: string) {
+  const [requestRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, current_state, candidate_esign_status, candidate_esign_url, esign_provider,
+            esign_transaction_id, updated_at
+       FROM appointment_letter_request
+      WHERE candidate_id = ?
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1`,
+    [candidateId]
+  ).catch(() => [[] as RowDataPacket[]]);
+
+  if ((requestRows as RowDataPacket[]).length) {
+    const row = (requestRows as RowDataPacket[])[0];
+    return {
+      request_id: row.id ?? null,
+      provider: row.esign_provider ?? "manual",
+      status: row.candidate_esign_status ?? row.current_state ?? "not_started",
+      verification_url: row.candidate_esign_url ?? null,
+      client_transaction_id: row.esign_transaction_id ?? null,
+      updated_at: row.updated_at ?? null,
+    };
+  }
+
+  return { request_id: null, provider: "manual", status: "not_started", verification_url: null, client_transaction_id: null, updated_at: null };
+}
+
+async function createProviderTransactionLog(params: {
+  candidateId: string;
+  provider: string;
+  serviceType: string;
+  clientTransactionId: string;
+  status: string;
+  requestPayload?: unknown;
+  initiatedBy?: string | null;
+  initiatedByType?: string | null;
+}) {
+  await db.execute(
+    `INSERT INTO ats_provider_transaction_log
+       (id, candidate_id, provider, service_type, client_transaction_id, status, request_payload, initiated_by, initiated_by_type)
+     VALUES (?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?)`,
+    [
+      randomUUID(),
+      params.candidateId,
+      params.provider,
+      params.serviceType,
+      params.clientTransactionId,
+      params.status,
+      JSON.stringify(sanitizeProviderPayload(params.requestPayload ?? null)),
+      params.initiatedBy ?? null,
+      params.initiatedByType ?? null,
+    ]
+  );
+}
+
+async function updateProviderTransactionLog(params: {
+  provider: string;
+  clientTransactionId: string;
+  status: string;
+  providerReferenceId?: string | null;
+  responsePayload?: unknown;
+  providerUrl?: string | null;
+  errorMessage?: string | null;
+}) {
+  await db.execute(
+    `UPDATE ats_provider_transaction_log
+        SET status = ?,
+            provider_reference_id = ?,
+            response_payload = CAST(? AS JSON),
+            provider_url = ?,
+            error_message = ?,
+            updated_at = NOW()
+      WHERE provider = ? AND client_transaction_id = ?`,
+    [
+      params.status,
+      params.providerReferenceId ?? null,
+      JSON.stringify(sanitizeProviderPayload(params.responsePayload ?? null)),
+      params.providerUrl ?? null,
+      params.errorMessage ?? null,
+      params.provider,
+      params.clientTransactionId,
+    ]
+  );
+}
+
+async function resolveEsignSource(candidateId: string) {
+  const [requestRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, vault_path
+       FROM appointment_letter_request
+      WHERE candidate_id = ?
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1`,
+    [candidateId]
+  ).catch(() => [[] as RowDataPacket[]]);
+
+  const requestRow = (requestRows as RowDataPacket[])[0];
+  const requestId = requestRow?.id ? String(requestRow.id) : null;
+  const requestPath = requestRow?.vault_path ? String(requestRow.vault_path) : null;
+  if (requestPath && fs.existsSync(requestPath)) {
+    return { requestId, filePath: requestPath };
+  }
+
+  const [offerRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, pdf_path
+       FROM ats_offer_letters
+      WHERE candidate_id = ? AND pdf_path IS NOT NULL
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [candidateId]
+  ).catch(() => [[] as RowDataPacket[]]);
+
+  const offerRow = (offerRows as RowDataPacket[])[0];
+  const offerPath = offerRow?.pdf_path ? String(offerRow.pdf_path) : null;
+  if (offerPath && fs.existsSync(offerPath)) {
+    return {
+      requestId,
+      offerId: offerRow?.id ? String(offerRow.id) : null,
+      filePath: offerPath,
+    };
+  }
+
+  throw Object.assign(new Error("No generated appointment or offer letter PDF was found for eSign."), { statusCode: 400 });
 }
 
 async function triggerBgvAfterOnboardingSubmit(candidateId: string, meta?: { ip?: string; userAgent?: string }) {
@@ -131,7 +566,7 @@ export async function getFullOnboardingStatus(token: string) {
   const candidateId = tokenData.candidate_id as string;
 
   const [documents] = await db.execute<RowDataPacket[]>(
-    `SELECT id, doc_type, doc_name, page_no, file_original_name, mime_type, file_size_bytes,
+    `SELECT id, doc_type, doc_name, page_no, file_original_name, file_url, mime_type, file_size_bytes,
             document_status, verification_method, verification_ref, uploaded_at
        FROM candidate_onboarding_document
       WHERE candidate_id = ? AND deleted_at IS NULL
@@ -155,13 +590,23 @@ export async function getFullOnboardingStatus(token: string) {
     [candidateId]
   );
 
+  const sanitizedDocuments = (documents as RowDataPacket[])
+    .map((row) => sanitizeOnboardingDocument(row as Record<string, unknown>, { token }))
+    .filter(Boolean);
+  const [digilocker, esign] = await Promise.all([
+    getLatestDigilockerStatus(candidateId),
+    getLatestEsignStatus(candidateId),
+  ]);
+
   return {
     token: tokenData,
-    documents,
+    documents: sanitizedDocuments,
     bank: bankRows[0] ?? null,
     qualifications: qualificationRows,
     family: familyRows[0] ?? null,
     experience: experienceRows[0] ?? null,
+    digilocker,
+    esign,
   };
 }
 
@@ -598,8 +1043,7 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
   }
 
   const id = randomUUID();
-  const encodedToken = encodeURIComponent(token);
-  const fileUrl = `/api/ats/onboarding-full/documents/preview/${id}?token=${encodedToken}`;
+  const fileUrl = `secure:onboarding:${file.filename}`;
   await db.execute(
     `INSERT INTO candidate_onboarding_document
        (id, candidate_id, doc_type, doc_name, page_no, file_original_name, file_path, file_url, mime_type, file_size_bytes)
@@ -618,35 +1062,24 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
     ]
   );
   await logCandidateAction(candidateId, "UPLOAD_DOCUMENT", { documentId: id, docType: input.docType ?? input.doc_type }, meta);
-  return { id, fileUrl };
+  return {
+    id,
+    fileUrl: buildOnboardingDocumentUrl(id, { token }),
+    preview_url: buildOnboardingDocumentUrl(id, { token }),
+    download_url: buildOnboardingDocumentUrl(id, { token, download: true }),
+  };
 }
 
 export async function getOnboardingDocument(documentId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM candidate_onboarding_document WHERE id = ? AND deleted_at IS NULL LIMIT 1`, [documentId]
+    `SELECT doc.*, c.applied_for_branch, c.applied_for_process
+       FROM candidate_onboarding_document doc
+       JOIN ats_candidate c ON c.id = doc.candidate_id
+      WHERE doc.id = ? AND doc.deleted_at IS NULL
+      LIMIT 1`,
+    [documentId]
   );
   return (rows as RowDataPacket[])[0] ?? null;
-}
-
-export async function logOnboardingAuditAction(
-  candidateId: string,
-  action: string,
-  opts?: { section?: string; remarks?: string; performedBy?: string | null; ipAddress?: string | null }
-) {
-  await db.execute(
-    `INSERT INTO candidate_onboarding_audit_log
-       (id, candidate_id, action, section, remarks, performed_by, ip_address)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      randomUUID(),
-      candidateId,
-      action,
-      opts?.section ?? null,
-      opts?.remarks ?? null,
-      opts?.performedBy ?? null,
-      opts?.ipAddress ?? null,
-    ]
-  );
 }
 
 export async function deleteOnboardingDocument(token: string, documentId: string, meta?: { ip?: string; userAgent?: string }) {
@@ -662,64 +1095,114 @@ export async function deleteOnboardingDocument(token: string, documentId: string
   return getFullOnboardingStatus(token);
 }
 
-export async function listFullOnboardingRequests(filters?: { branchId?: string | null; processId?: string | null }) {
-  const branchId = filters?.branchId ?? null;
-  const processId = filters?.processId ?? null;
+export async function getOnboardingCandidateScope(candidateId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT p.*, c.candidate_code, c.full_name, c.mobile, c.email,
+    `SELECT id, applied_for_branch, applied_for_process
+       FROM ats_candidate
+       WHERE c.id = ?
+      LIMIT 1`,
+    [candidateId]
+  );
+  return (rows as RowDataPacket[])[0] ?? null;
+}
+
+export async function listFullOnboardingRequests(scopeFilter?: OnboardingScopeFilter) {
+  const whereSql = scopeFilter?.sql ? `WHERE (${scopeFilter.sql})` : "";
+  const params = scopeFilter?.params ?? [];
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT req.id, req.status, req.candidate_id,
+            p.profile_status,
+            c.candidate_code, c.full_name, c.mobile, c.email,
+            c.applied_for_process,
             br.branch_name, pm.process_name,
+            offer.id AS offer_id,
+            offer.status AS offer_status,
+            offer.offered_ctc,
             bank.verification_status AS bank_verification_status,
-            COUNT(doc.id) AS documents_uploaded
-       FROM candidate_onboarding_profile p
-       JOIN ats_candidate c ON c.id = p.candidate_id
+            COUNT(DISTINCT doc.id) AS documents_uploaded
+       FROM ats_onboarding_request req
+       JOIN ats_candidate c ON c.id = req.candidate_id
+       LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = req.candidate_id
        LEFT JOIN branch_master br ON br.id = c.applied_for_branch
        LEFT JOIN process_master pm ON pm.id = c.applied_for_process
-       LEFT JOIN candidate_onboarding_bank_detail bank ON bank.candidate_id = p.candidate_id
-       LEFT JOIN candidate_onboarding_document doc ON doc.candidate_id = p.candidate_id AND doc.deleted_at IS NULL
-      WHERE (? IS NULL OR c.applied_for_branch = ?)
-        AND (? IS NULL OR c.applied_for_process = ?)
-      GROUP BY p.id, c.candidate_code, c.full_name, c.mobile, c.email, br.branch_name, pm.process_name, bank.verification_status
-      ORDER BY p.updated_at DESC`,
-    [branchId, branchId, processId, processId]
+       LEFT JOIN candidate_onboarding_bank_detail bank ON bank.candidate_id = req.candidate_id
+       LEFT JOIN candidate_onboarding_document doc ON doc.candidate_id = req.candidate_id AND doc.deleted_at IS NULL
+       LEFT JOIN ats_employment_offer offer
+         ON offer.id = (
+           SELECT eo.id
+             FROM ats_employment_offer eo
+            WHERE eo.candidate_id = req.candidate_id
+            ORDER BY eo.updated_at DESC, eo.created_at DESC, eo.id DESC
+            LIMIT 1
+         )
+      ${whereSql}
+      GROUP BY req.id, req.status, req.candidate_id, p.profile_status,
+               c.candidate_code, c.full_name, c.mobile, c.email, c.applied_for_process,
+               br.branch_name, pm.process_name, offer.id, offer.status, offer.offered_ctc,
+               bank.verification_status
+      ORDER BY COALESCE(p.updated_at, req.updated_at, req.created_at) DESC`,
+    params
   );
   return rows;
 }
 
-export async function getFullOnboardingByCandidate(candidateId: string) {
+export async function getFullOnboardingByCandidate(
+  candidateId: string,
+  options?: { viewerRoleKeys?: string[]; scopeFilter?: OnboardingScopeFilter }
+) {
+  await ensureCandidateWithinScope(candidateId, options?.scopeFilter);
   const [profileRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [documents] = await db.execute<RowDataPacket[]>(
-    `SELECT id, candidate_id, doc_type, doc_name, page_no, file_original_name, mime_type, file_size_bytes,
-            document_status, verification_method, verification_ref, uploaded_at
-       FROM candidate_onboarding_document
-      WHERE candidate_id = ? AND deleted_at IS NULL
-      ORDER BY uploaded_at DESC`,
-    [candidateId],
-  );
+  const [documents] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_document WHERE candidate_id = ? AND deleted_at IS NULL ORDER BY uploaded_at DESC`, [candidateId]);
   const [bankRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]);
   const [qualificationRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]);
   const [familyRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_family WHERE candidate_id = ? LIMIT 1`, [candidateId]);
   const [experienceRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  return { profile: profileRows[0] ?? null, documents, bank: bankRows[0] ?? null, qualifications: qualificationRows, family: familyRows[0] ?? null, experience: experienceRows[0] ?? null };
+  const [digilocker, esign] = await Promise.all([
+    getLatestDigilockerStatus(candidateId),
+    getLatestEsignStatus(candidateId),
+  ]);
+  const viewerRoleKeys = options?.viewerRoleKeys ?? [];
+  const sanitizedDocuments = (documents as RowDataPacket[])
+    .map((row) => sanitizeOnboardingDocument(
+      row as Record<string, unknown>,
+      viewerRoleKeys.length > 0 ? { permission: getOnboardingDocumentPermission(row as Record<string, unknown>, viewerRoleKeys) } : undefined
+    ))
+    .filter(Boolean);
+
+  return {
+    profile: profileRows[0] ?? null,
+    documents: sanitizedDocuments,
+    bank: bankRows[0] ?? null,
+    qualifications: qualificationRows,
+    family: familyRows[0] ?? null,
+    experience: experienceRows[0] ?? null,
+    digilocker,
+    esign,
+  };
 }
 
-export async function reviewFullOnboarding(candidateId: string, input: { status: "approved" | "rejected" | "hr_review"; remarks?: string }, reviewedBy: string) {
-  const dbStatus = input.status === "approved" ? "approved" : input.status === "rejected" ? "rejected" : "hr_review";
-
-  const requestStatusMap: Record<string, string> = {
-    approved: "approved",
+export async function reviewFullOnboarding(
+  candidateId: string,
+  input: { status: "approved" | "rejected" | "hr_review"; remarks?: string },
+  reviewedBy: string,
+  scopeFilter?: OnboardingScopeFilter
+) {
+  await ensureCandidateWithinScope(candidateId, scopeFilter);
+  const profileStatusMap: Record<string, string> = {
+    approved: "hr_approved",
     rejected: "rejected",
-    hr_review: "in_progress",
-  };
-  const candidateStatusMap: Record<string, string> = {
-    approved: "approved",
-    rejected: "rejected",
-    hr_review: "profile_submitted",
+    hr_review: "hr_pushback",
   };
 
-  await syncOnboardingStatus(candidateId, dbStatus, requestStatusMap[input.status] ?? "in_progress", candidateStatusMap[input.status] ?? "profile_submitted");
+  await syncOnboardingStatus(
+    candidateId,
+    profileStatusMap[input.status] ?? "hr_review",
+    profileStatusMap[input.status] ?? "hr_review",
+    profileStatusMap[input.status] ?? "hr_review"
+  );
   await logCandidateAction(candidateId, "HR_REVIEW", input, { actorType: "hr", actorId: reviewedBy });
 
-  if (input.status === "rejected" && input.remarks) {
+  if ((input.status === "rejected" || input.status === "hr_review") && input.remarks) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, review_remarks FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`, [candidateId]
     );
@@ -731,17 +1214,23 @@ export async function reviewFullOnboarding(candidateId: string, input: { status:
     }
   }
 
-  return getFullOnboardingByCandidate(candidateId);
+  return getFullOnboardingByCandidate(candidateId, { scopeFilter });
 }
 
-export async function payrollReviewFullOnboarding(candidateId: string, input: { status: "approved" | "rejected"; remarks?: string }, reviewedBy: string) {
-  const dbStatus = input.status === "approved" ? "approved" : "rejected";
-  await syncOnboardingStatus(candidateId, dbStatus,
-    input.status === "approved" ? "approved" : "rejected",
-    input.status === "approved" ? "approved" : "rejected"
+export async function payrollReviewFullOnboarding(
+  candidateId: string,
+  input: { status: "approved" | "rejected"; remarks?: string },
+  reviewedBy: string,
+  scopeFilter?: OnboardingScopeFilter
+) {
+  await ensureCandidateWithinScope(candidateId, scopeFilter);
+  const status = input.status === "approved" ? "payroll_hr_approved" : "rejected";
+  await syncOnboardingStatus(candidateId, status,
+    status,
+    status
   );
   await logCandidateAction(candidateId, "PAYROLL_REVIEW", input, { actorType: "hr", actorId: reviewedBy });
-  return getFullOnboardingByCandidate(candidateId);
+  return getFullOnboardingByCandidate(candidateId, { scopeFilter });
 }
 
 export async function checkBgvReadiness(candidateId: string): Promise<{ ready: boolean; missing: string[]; score: number }> {
@@ -803,6 +1292,175 @@ export async function recordPrivacyConsent(token: string) {
   );
   await logCandidateAction(candidate_id, "PRIVACY_CONSENT", null, { actorType: "candidate" });
   return { candidateId: candidate_id, consented: true };
+}
+
+export async function initiateCandidateDigilocker(candidateId: string, actor?: { initiatedBy?: string | null; initiatedByType?: string | null }) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, full_name, mobile
+       FROM ats_candidate
+      WHERE id = ?
+      LIMIT 1`,
+    [candidateId]
+  );
+  const candidate = (rows as RowDataPacket[])[0];
+  if (!candidate) throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+
+  const mobileNumber = String(candidate.mobile ?? "").replace(/\D/g, "").slice(-10);
+  if (mobileNumber.length !== 10) {
+    throw Object.assign(new Error("Candidate mobile number is missing or invalid for DigiLocker initiation."), { statusCode: 400 });
+  }
+
+  const clientTransactionId = luckpayClient.generateClientTransactionId("DIGI");
+  const requestPayload = {
+    clientTransactionId,
+    customerName: String(candidate.full_name ?? "Candidate"),
+    mobileNumber,
+  };
+
+  await createProviderTransactionLog({
+    candidateId,
+    provider: "luckpay",
+    serviceType: "digilocker",
+    clientTransactionId,
+    status: "initiated",
+    requestPayload,
+    initiatedBy: actor?.initiatedBy ?? null,
+    initiatedByType: actor?.initiatedByType ?? null,
+  });
+
+  try {
+    const result = await luckpayClient.initiateDigilockerWithUrl(requestPayload);
+    await updateProviderTransactionLog({
+      provider: "luckpay",
+      clientTransactionId,
+      status: result.status,
+      providerReferenceId: result.providerReferenceId,
+      responsePayload: result.sanitized,
+      providerUrl: result.verificationUrl,
+    });
+    return {
+      success: true,
+      clientTransactionId,
+      redirectUrl: result.verificationUrl,
+      verificationUrl: result.verificationUrl,
+      status: result.status,
+    };
+  } catch (error: unknown) {
+    await updateProviderTransactionLog({
+      provider: "luckpay",
+      clientTransactionId,
+      status: "failed",
+      errorMessage: String((error as Error)?.message ?? error),
+      responsePayload: sanitizeProviderPayload({ error: String((error as Error)?.message ?? error) }),
+    });
+    throw error;
+  }
+}
+
+export async function initiateCandidateDigilockerByToken(token: string) {
+  const tokenData = await validateOnboardingToken(token);
+  return initiateCandidateDigilocker(String(tokenData.candidate_id), {
+    initiatedBy: String(tokenData.candidate_id),
+    initiatedByType: "candidate",
+  });
+}
+
+export async function initiateCandidateEsign(
+  candidateId: string,
+  input: { location?: string; reason?: string },
+  actor: { initiatedBy: string; initiatedByType: string }
+) {
+  const [candidateRows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.id, c.full_name, br.branch_name
+       FROM ats_candidate c
+       LEFT JOIN branch_master br ON br.id = c.applied_for_branch
+      WHERE id = ?
+      LIMIT 1`,
+    [candidateId]
+  );
+  const candidate = (candidateRows as RowDataPacket[])[0];
+  if (!candidate) throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+
+  const source = await resolveEsignSource(candidateId);
+  const clientTransactionId = luckpayClient.generateClientTransactionId("ESIGN");
+  const requestPayload = {
+    clientTransactionId,
+    signedBy: String(candidate.full_name ?? "Candidate"),
+    location: input.location ?? String(candidate.branch_name ?? "Branch"),
+    reason: input.reason ?? "Signing Appointment Letter",
+  };
+
+  await createProviderTransactionLog({
+    candidateId,
+    provider: "luckpay",
+    serviceType: "esign",
+    clientTransactionId,
+    status: "initiated",
+    requestPayload,
+    initiatedBy: actor.initiatedBy,
+    initiatedByType: actor.initiatedByType,
+  });
+
+  let requestId = source.requestId ?? null;
+  if (!requestId) {
+    requestId = randomUUID();
+    await db.execute(
+      `INSERT INTO appointment_letter_request
+         (id, candidate_id, created_by, current_state, esign_provider, candidate_esign_status, company_sign_status, pdf_locked, manual_override_approved, created_at)
+       VALUES (?, ?, ?, 'candidate_esign_pending', 'luckpay', 'pending', 'pending', 0, 0, NOW())`,
+      [requestId, candidateId, actor.initiatedBy]
+    );
+  }
+
+  try {
+    const result = await luckpayClient.initiateEsignWithUrl({
+      filePath: source.filePath,
+      request: requestPayload,
+    });
+    await updateProviderTransactionLog({
+      provider: "luckpay",
+      clientTransactionId,
+      status: result.status,
+      providerReferenceId: result.providerReferenceId,
+      responsePayload: result.sanitized,
+      providerUrl: result.verificationUrl,
+    });
+
+    await db.execute(
+      `UPDATE appointment_letter_request
+          SET current_state = 'candidate_esign_pending',
+              esign_provider = 'luckpay',
+              esign_transaction_id = ?,
+              candidate_esign_url = ?,
+              candidate_esign_status = ?,
+              updated_at = NOW()
+        WHERE id = ?`,
+      [clientTransactionId, result.verificationUrl, result.status, requestId]
+    );
+
+    return {
+      success: true,
+      requestId,
+      clientTransactionId,
+      redirectUrl: result.verificationUrl,
+      verificationUrl: result.verificationUrl,
+      status: result.status,
+      sourceOfferId: source.offerId ?? null,
+    };
+  } catch (error: unknown) {
+    await updateProviderTransactionLog({
+      provider: "luckpay",
+      clientTransactionId,
+      status: "failed",
+      errorMessage: String((error as Error)?.message ?? error),
+      responsePayload: sanitizeProviderPayload({ error: String((error as Error)?.message ?? error) }),
+    });
+    throw error;
+  }
+}
+
+export function getLuckpayProviderRuntimeStatus() {
+  return luckpayClient.getRuntimeStatus();
 }
 
 export async function saveLanguages(

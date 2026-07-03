@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS ats_provider_transaction_log (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NOT NULL,
+  provider VARCHAR(50) NOT NULL,
+  service_type VARCHAR(80) NOT NULL,
+  client_transaction_id VARCHAR(100) NOT NULL,
+  provider_reference_id VARCHAR(150) NULL,
+  status VARCHAR(50) NOT NULL DEFAULT 'initiated',
+  request_payload JSON NULL,
+  response_payload JSON NULL,
+  error_message TEXT NULL,
+  provider_url TEXT NULL,
+  initiated_by CHAR(36) NULL,
+  initiated_by_type VARCHAR(30) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_provider_txn (provider, client_transaction_id),
+  KEY idx_aptl_candidate (candidate_id),
+  KEY idx_aptl_service_status (service_type, status)
+) ENGINE=InnoDB;

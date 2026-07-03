@@ -746,7 +746,7 @@ export function Step4Documents({
 
 export function Step5Bgv({
   bgv, bgvApiAvailable, consentAccepted, saving,
-  onConsent, onVerifyAadhaar, onVerifyPan, onVerifyBank, onVerifyUan, onDigilocker,
+  onConsent, onVerifyAadhaar, onVerifyPan, onVerifyBank, onVerifyUan, onDigilocker, digilockerStatus,
 }: {
   bgv: BgvStatus | null;
   bgvApiAvailable: boolean;
@@ -758,6 +758,7 @@ export function Step5Bgv({
   onVerifyBank: () => void;
   onVerifyUan: () => void;
   onDigilocker: () => void;
+  digilockerStatus?: string;
 }) {
   return (
     <Card className="border-t-4 border-t-indigo-500 shadow-sm border border-slate-200 rounded-xl overflow-hidden">
@@ -831,6 +832,9 @@ export function Step5Bgv({
         {/* Verification buttons */}
         <div>
           <p className="text-xs font-black uppercase tracking-wide text-slate-500 mb-3">Run Individual Verifications</p>
+          <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            DigiLocker status: <span className="font-bold capitalize text-slate-900">{digilockerStatus || "not_started"}</span>
+          </div>
           <div className="grid gap-2 grid-cols-2">
             {[
               { label: "Verify Aadhaar", onClick: onVerifyAadhaar, icon: "🪪" },

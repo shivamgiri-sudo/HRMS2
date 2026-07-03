@@ -1,5 +1,3 @@
-USE mas_hrms;
-
 CREATE TABLE IF NOT EXISTS document_template_field_map (
   id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   template_id CHAR(36) NULL,

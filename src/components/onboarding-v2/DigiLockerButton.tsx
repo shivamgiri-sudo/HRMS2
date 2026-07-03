@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ExternalLink, Loader2 } from 'lucide-react';
 
-const BGV_API = `${import.meta.env.VITE_HRMS_API_URL ?? 'http://localhost:5055'}/api/ats/bgv`;
+const ONBOARDING_API = `${import.meta.env.VITE_HRMS_API_URL ?? 'http://localhost:5055'}/api/ats/onboarding-full`;
 
 interface DigiLockerButtonProps {
   token: string;
@@ -25,14 +25,15 @@ export function DigiLockerButton({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${BGV_API}/digilocker/start`, {
+      const res = await fetch(`${ONBOARDING_API}/digilocker/initiate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token, requestedDocuments }),
       });
       const data = await res.json();
-      if (data.success && data.data?.authUrl) {
-        window.location.href = data.data.authUrl;
+      const nextUrl = data?.data?.redirectUrl ?? data?.data?.verificationUrl;
+      if (data.success && nextUrl) {
+        window.location.href = nextUrl;
       } else {
         setError('Could not start DigiLocker session. Please try again.');
       }
