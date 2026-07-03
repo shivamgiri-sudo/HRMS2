@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import mysql from "mysql2/promise";
+import type { RowDataPacket } from "mysql2";
 import { env } from "../config/env.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -263,10 +264,11 @@ export function getMigrationHealth(): MigrationHealth {
   };
 }
 
-function isIdempotentMigrationError(error: any): boolean {
-  const code = error?.code;
-  const errno = Number(error?.errno ?? 0);
-  const msg = String(error?.message ?? "").toLowerCase();
+function isIdempotentMigrationError(error: unknown): boolean {
+  const dbError = error as { code?: string; errno?: number; message?: string } | null | undefined;
+  const code = dbError?.code;
+  const errno = Number(dbError?.errno ?? 0);
+  const msg = String(dbError?.message ?? "").toLowerCase();
   return (
     // Named codes (mysql2 preferred)
     code === "ER_TABLE_EXISTS_ERROR" ||   // 1050
@@ -561,8 +563,8 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
     {
       const conn = await mysql.createConnection(connConfig);
       try {
-        const [rows] = await conn.query<any[]>("SELECT filename FROM schema_migrations");
-        for (const row of rows) appliedSet.add(row.filename);
+        const [rows] = await conn.query<RowDataPacket[]>("SELECT filename FROM schema_migrations");
+        for (const row of rows as RowDataPacket[]) appliedSet.add(String(row.filename));
       } finally {
         await conn.end();
       }
@@ -597,7 +599,7 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
         await conn.query("INSERT INTO schema_migrations (filename) VALUES (?)", [file]);
         migrationHealth.applied.push(file);
         console.log(`[migration] applied: ${file}`);
-      } catch (error: any) {
+      } catch (error: unknown) {
         if (isIdempotentMigrationError(error)) {
           // Record as applied even for idempotent errors (table/column already exists)
           const conn2 = await mysql.createConnection(connConfig);
@@ -612,7 +614,7 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
           migrationHealth.skipped.push(file);
           console.log(`[migration] already applied/idempotent: ${file}`);
         } else {
-          const message = error?.message ?? String(error);
+          const message = error instanceof Error ? error.message : String(error);
           migrationHealth.failed.push({ filename: file, error: message });
           console.error(`[migration] FAILED: ${file} — ${message}`);
         }
@@ -620,10 +622,10 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
         await conn.end();
       }
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     migrationHealth.failed.push({
       filename: "migration-runner",
-      error: error?.message ?? String(error),
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 

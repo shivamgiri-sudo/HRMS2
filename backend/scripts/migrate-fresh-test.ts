@@ -20,6 +20,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import mysql from "mysql2/promise";
+import type { RowDataPacket } from "mysql2";
 import { splitSql } from "../src/db/runPendingMigrations.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -169,9 +170,14 @@ async function main() {
 
   let mysqlVersion = "unknown";
   try {
-    const [[row]] = await adminConn.query<any[]>("SELECT VERSION() AS v");
+    const [rows] = await adminConn.query<RowDataPacket[]>("SELECT VERSION() AS v");
+    const row = rows[0] as (RowDataPacket & { v?: string }) | undefined;
     mysqlVersion = row?.v ?? "unknown";
-  } catch {}
+  } catch (error: unknown) {
+    console.warn(
+      `[migrate-fresh-test] Unable to determine MySQL version: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 
   console.log(`[migrate-fresh-test] MySQL version: ${mysqlVersion}`);
   console.log(`[migrate-fresh-test] Test database: ${TEST_DB}`);
@@ -223,11 +229,12 @@ async function main() {
         const stmt = statements[i];
         try {
           await conn.query(stmt);
-        } catch (err: any) {
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
           console.error(`\n[migrate-fresh-test] FAILED: ${file}`);
           console.error(`  Statement #${i + 1}:`);
           console.error("  " + stmt.replace(/\n/g, "\n  "));
-          console.error(`\n  Error: ${err?.message ?? String(err)}`);
+          console.error(`\n  Error: ${message}`);
           console.error(`  MySQL version: ${mysqlVersion}`);
           console.error(`\n  ${applied} file(s) applied before failure.\n`);
           await conn.end();
