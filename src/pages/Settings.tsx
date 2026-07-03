@@ -149,6 +149,15 @@ const BGV_PROVIDERS = [
 ];
 
 type BgvConfigRow = { setting_key: string; setting_value: string | null; label: string };
+type LuckpayRuntimeStatus = {
+  enabled: boolean;
+  environment: string;
+  baseUrl: string;
+  lastTokenSuccessAt: string | null;
+  lastApiFailureAt: string | null;
+  lastApiFailureMessage: string | null;
+  services: Record<string, boolean>;
+};
 
 const BgvProviderSettings = () => {
   const { toast } = useToast();
@@ -161,6 +170,18 @@ const BgvProviderSettings = () => {
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: BgvConfigRow[] }>('/api/ats/bgv/admin/provider-config');
       return res.data ?? [];
+    },
+  });
+
+  const { data: runtimeStatus } = useQuery<LuckpayRuntimeStatus | null>({
+    queryKey: ['luckpay-runtime-status'],
+    queryFn: async () => {
+      try {
+        const res = await hrmsApi.get<{ success: boolean; data: LuckpayRuntimeStatus }>('/api/ats/onboarding-full/provider-status');
+        return res.data ?? null;
+      } catch {
+        return null;
+      }
     },
   });
 
@@ -249,6 +270,40 @@ const BgvProviderSettings = () => {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {runtimeStatus && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={runtimeStatus.enabled ? "default" : "secondary"}>
+                {runtimeStatus.enabled ? "Luckpay Enabled" : "Luckpay Disabled"}
+              </Badge>
+              <Badge variant="outline">{runtimeStatus.environment}</Badge>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="text-sm text-slate-600">
+                <p className="font-medium text-slate-900">Base URL</p>
+                <p className="break-all">{runtimeStatus.baseUrl}</p>
+              </div>
+              <div className="text-sm text-slate-600">
+                <p className="font-medium text-slate-900">Last Token Success</p>
+                <p>{runtimeStatus.lastTokenSuccessAt ?? "Not yet recorded"}</p>
+              </div>
+              <div className="text-sm text-slate-600">
+                <p className="font-medium text-slate-900">Last API Failure</p>
+                <p>{runtimeStatus.lastApiFailureAt ?? "None recorded"}</p>
+              </div>
+              <div className="text-sm text-slate-600">
+                <p className="font-medium text-slate-900">Services</p>
+                <p>{Object.entries(runtimeStatus.services).filter(([, enabled]) => enabled).map(([key]) => key).join(", ")}</p>
+              </div>
+            </div>
+            {runtimeStatus.lastApiFailureMessage && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                Last failure: {runtimeStatus.lastApiFailureMessage}
+              </div>
+            )}
+          </div>
+        )}
+
         <div>
           <Label>Active Provider</Label>
           <select

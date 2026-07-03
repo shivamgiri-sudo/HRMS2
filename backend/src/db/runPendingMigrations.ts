@@ -225,6 +225,9 @@ const MIGRATION_MANIFEST: string[] = [
   "1000_fix_engagement_schema_columns.sql",
   "343_global_page_availability.sql",
   "344_ats_recruiter_hiring_tracker.sql",
+  "345_ats_walkin_recruiter_calling_security.sql",
+  "345_onboarding_status_pipeline_extended.sql",
+  "346_luckpay_provider_transaction_log.sql",
 ];
 
 export type MigrationHealth = {

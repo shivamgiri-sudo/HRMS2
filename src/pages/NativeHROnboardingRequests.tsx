@@ -1,15 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import {
   Loader2, Calculator, ChevronLeft, ShieldCheck, Users, Briefcase,
   IndianRupee, FileCheck, AlertTriangle, CheckCircle2,
   Clock, UserPlus, Lock, TrendingUp, Building2, Search,
-  ChevronRight, Star, Zap,
+  ChevronRight, Star, Zap, Send, Download, RefreshCcw, X,
 } from 'lucide-react';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -28,6 +27,17 @@ interface SalaryPreview {
 }
 interface MasterItem { id: string; name: string; code?: string; }
 interface SalaryBand { id: string; band_code: string; band_name: string; min_ctc: number; max_ctc: number; }
+type InlineDocument = {
+  id: string;
+  doc_name?: string;
+  doc_type?: string;
+  file_original_name?: string;
+  mime_type?: string;
+  file_url?: string;
+  preview_url?: string;
+  download_url?: string | null;
+  can_download?: boolean;
+};
 
 
 function rowsFrom(payload: unknown): OnboardingRequest[] {
@@ -39,6 +49,34 @@ function rowsFrom(payload: unknown): OnboardingRequest[] {
   return [];
 }
 
+function maskAadhaar(v: string): string {
+  if (!v) return v;
+  const d = v.replace(/\s/g, '');
+  if (d.length >= 8) return d.slice(0, 4) + ' XXXX XXXX';
+  return 'XXXX XXXX XXXX';
+}
+function maskPan(v: string): string {
+  if (!v || v.length < 6) return v || '—';
+  return v.slice(0, 3) + 'XXXXX' + v.slice(-2);
+}
+function maskBank(v: string): string {
+  if (!v || v.length < 6) return v || '—';
+  return 'XXXXXX' + v.slice(-4);
+}
+function maskUan(v: string): string {
+  if (!v) return v;
+  return v.slice(0, 4) + 'XXXX' + v.slice(-2);
+}
+function maskMobile(v: string): string {
+  if (!v || v.length < 6) return v || '—';
+  return v.slice(0, 3) + 'XXXXX' + v.slice(-3);
+}
+function maskEmail(v: string): string {
+  if (!v) return v;
+  const at = v.indexOf('@');
+  if (at < 2) return v;
+  return v[0] + '*****' + v.slice(at - 1);
+}
 function masterFrom(payload: unknown, nameKey = 'name'): MasterItem[] {
   const arr = Array.isArray(payload) ? payload : (payload as any)?.data ?? [];
   return (Array.isArray(arr) ? arr : []).map((r: any) => ({
@@ -75,14 +113,25 @@ const SEL = 'w-full h-10 rounded-lg border border-slate-200 bg-white px-3 text-s
   'hover:border-slate-300 transition-colors';
 
 export default function NativeHROnboardingRequests() {
+  const { user } = useAuth();
+  const role = (user as any)?.role ?? "";
+  const ALLOWED = ["admin", "super_admin", "hr", "manager", "payroll_hr"];
+  const canReviewProfiles = ["admin", "super_admin", "hr"].includes(role);
+  const canCreateOffer = ["admin", "super_admin", "hr"].includes(role);
   const [rows, setRows]           = useState<OnboardingRequest[]>([]);
   const [filtered, setFiltered]   = useState<OnboardingRequest[]>([]);
   const [search, setSearch]       = useState('');
+  const [filterStatus, setFilterStatus] = useState<string>('');
+  const [filterBranch, setFilterBranch] = useState<string>('');
   const [loading, setLoading]     = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [masterDataWarnings, setMasterDataWarnings] = useState<string[]>([]);
   const [selected, setSelected]   = useState<OnboardingRequest | null>(null);
   const [salaryPreview, setSalaryPreview] = useState<SalaryPreview | null>(null);
   const [calcLoading, setCalcLoading]     = useState(false);
   const [saving, setSaving]       = useState(false);
+  const [offerError, setOfferError] = useState<string | null>(null);
+  const [offerFieldErrors, setOfferFieldErrors] = useState<Record<string, boolean>>({});
   const [bgv, setBgv]             = useState<BgvData | null>(null);
   const [offerTab, setOfferTab]   = useState<'standard' | 'proposed'>('standard');
 
@@ -91,8 +140,17 @@ export default function NativeHROnboardingRequests() {
   const [profilePanelLoading, setProfilePanelLoading] = useState(false);
   const [pushbackRemarks, setPushbackRemarks] = useState('');
   const [reviewSaving, setReviewSaving] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [panelActionSaving, setPanelActionSaving] = useState<'digilocker' | 'esign' | null>(null);
   // PF opt-out consent status for the currently open candidate
   const [candidateOnboardingProfile, setCandidateOnboardingProfile] = useState<any>(null);
+  const [documentPreview, setDocumentPreview] = useState<{
+    document: InlineDocument;
+    blobUrl: string | null;
+    loading: boolean;
+    error: string | null;
+  } | null>(null);
+  const previewObjectUrlRef = useRef<string | null>(null);
 
   const [departments, setDepartments]   = useState<MasterItem[]>([]);
   const [designations, setDesignations] = useState<MasterItem[]>([]);
@@ -123,46 +181,101 @@ export default function NativeHROnboardingRequests() {
   const [proposedCtc, setProposedCtc]       = useState('');
   const [proposedReason, setProposedReason] = useState('');
 
+  const clearPreviewObjectUrl = useCallback(() => {
+    if (previewObjectUrlRef.current) {
+      URL.revokeObjectURL(previewObjectUrlRef.current);
+      previewObjectUrlRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearPreviewObjectUrl(), [clearPreviewObjectUrl]);
+
+  const addMasterDataWarning = useCallback((message: string) => {
+    setMasterDataWarnings(prev => prev.includes(message) ? prev : [...prev, message]);
+  }, []);
+
+  const clearOfferFieldError = (field: string) => {
+    setOfferFieldErrors(prev => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  };
+
   const setF = (key: keyof typeof offer, value: unknown) =>
     setOffer(p => ({ ...p, [key]: value }));
 
+  const updateOfferField = (key: keyof typeof offer, value: unknown, clearKeys: string[] = []) => {
+    setOfferError(null);
+    clearOfferFieldError(String(key));
+    clearKeys.forEach(clearOfferFieldError);
+    setF(key, value);
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const r = await hrmsApi.get<unknown>('/api/ats/onboarding/requests');
+      const r = await hrmsApi.get<unknown>('/api/ats/onboarding-full/requests');
       const data = rowsFrom(r);
       setRows(data);
       setFiltered(data);
-    } catch { /* silent */ }
+    } catch {
+      setLoadError('Unable to load onboarding requests.');
+    }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
 
-  // Search filter
+  // Search + status + branch filter
   useEffect(() => {
-    if (!search.trim()) { setFiltered(rows); return; }
-    const q = search.toLowerCase();
-    setFiltered(rows.filter(r =>
-      r.full_name?.toLowerCase().includes(q) ||
-      r.email?.toLowerCase().includes(q) ||
-      r.mobile?.includes(q) ||
-      r.candidate_code?.toLowerCase().includes(q) ||
-      r.branch_name?.toLowerCase().includes(q),
-    ));
-  }, [search, rows]);
+    let list = rows;
+    const q = search.toLowerCase().trim();
+    if (q) {
+      list = list.filter(r =>
+        r.full_name?.toLowerCase().includes(q) ||
+        r.email?.toLowerCase().includes(q) ||
+        r.mobile?.includes(q) ||
+        r.candidate_code?.toLowerCase().includes(q) ||
+        r.branch_name?.toLowerCase().includes(q),
+      );
+    }
+    if (filterStatus) {
+      list = list.filter(r =>
+        filterStatus === 'pending_offer' ? (r.profile_status === 'profile_submitted' && !r.offer_status) :
+        filterStatus === 'offered' ? !!r.offer_status :
+        filterStatus === 'onboarded' ? r.status === 'onboarded' :
+        true
+      );
+    }
+    if (filterBranch) {
+      list = list.filter(r => r.branch_name === filterBranch);
+    }
+    setFiltered(list);
+  }, [search, filterStatus, filterBranch, rows]);
 
   // Load masters
   useEffect(() => {
+    setMasterDataWarnings([]);
     hrmsApi.get<unknown>('/api/org/departments?active=1')
       .then(r => setDepartments(masterFrom(r, 'department_name')))
       .catch(() => hrmsApi.get<unknown>('/api/departments?active_status=1')
-        .then(r => setDepartments(masterFrom(r, 'department_name'))).catch(() => {}));
+        .then(r => setDepartments(masterFrom(r, 'department_name')))
+        .catch((e) => {
+          console.warn("[onboarding]", e);
+          addMasterDataWarning('Department master data is currently unavailable.');
+        }));
 
     hrmsApi.get<unknown>('/api/org/designations?active=1')
       .then(r => setDesignations(masterFrom(r, 'designation_name')))
       .catch(() => hrmsApi.get<unknown>('/api/designations?active_status=1')
-        .then(r => setDesignations(masterFrom(r, 'designation_name'))).catch(() => {}));
+        .then(r => setDesignations(masterFrom(r, 'designation_name')))
+        .catch((e) => {
+          console.warn("[onboarding]", e);
+          addMasterDataWarning('Designation master data is currently unavailable.');
+        }));
 
     hrmsApi.get<unknown>('/api/payroll-masters/bands').then((r: any) => {
       const arr = r?.data ?? (Array.isArray(r) ? r : []);
@@ -188,9 +301,10 @@ export default function NativeHROnboardingRequests() {
         { id:'13', band_code:'M', band_name:'Band M', min_ctc:100001, max_ctc:125000 },
         { id:'14', band_code:'N', band_name:'Band N', min_ctc:125001, max_ctc:500000 },
       ]);
+      addMasterDataWarning('Live salary bands could not be loaded. Fallback salary bands are being used.');
     });
 
-  }, []);
+  }, [addMasterDataWarning]);
 
   // Cascading: cost centres by branch
   useEffect(() => {
@@ -236,7 +350,14 @@ export default function NativeHROnboardingRequests() {
 
   const selectPackage = (pkgId: string) => {
     const pkg = packages.find(p => p.id === pkgId);
-    if (!pkg) { setSelectedPackage(null); setSalaryPreview(null); return; }
+    setOfferError(null);
+    clearOfferFieldError('compensation');
+    if (!pkg) {
+      setSelectedPackage(null);
+      setSalaryPreview(null);
+      setOffer(p => ({ ...p, selected_package_id: '', offered_ctc: '' }));
+      return;
+    }
     setSelectedPackage(pkg);
     setOffer(p => ({ ...p, offered_ctc: String(pkg.package_amount), selected_package_id: pkgId }));
     setSalaryPreview({
@@ -261,10 +382,76 @@ export default function NativeHROnboardingRequests() {
     finally { setCalcLoading(false); }
   };
 
+  const validateOfferForm = () => {
+    const nextErrors: Record<string, boolean> = {};
+    const missing: string[] = [];
+    const isProposed = offerTab === 'proposed';
+    const ctcToUse = isProposed ? Number(proposedCtc) : Number(offer.offered_ctc || selectedPackage?.package_amount || 0);
+
+    if (!offer.date_of_joining) { nextErrors.date_of_joining = true; missing.push('DOJ'); }
+    if (!ctcToUse) { nextErrors.compensation = true; missing.push('CTC/package'); }
+    if (!offer.salary_band) { nextErrors.salary_band = true; missing.push('salary band'); }
+    if (!offer.department_id) { nextErrors.department_id = true; missing.push('department'); }
+    if (!offer.designation_id) { nextErrors.designation_id = true; missing.push('designation'); }
+    if (!offer.cost_centre) { nextErrors.cost_centre = true; missing.push('cost centre'); }
+    if (!offer.reporting_manager_id) { nextErrors.reporting_manager_id = true; missing.push('reporting manager'); }
+    if (isProposed && !proposedReason.trim()) { nextErrors.proposed_reason = true; missing.push('exception reason'); }
+
+    return {
+      ctcToUse,
+      nextErrors,
+      message: missing.length ? `Please complete the required fields: ${missing.join(', ')}.` : null,
+    };
+  };
+
+  const openDocumentPreview = async (document: InlineDocument) => {
+    clearPreviewObjectUrl();
+    setReviewError(null);
+    setDocumentPreview({ document, blobUrl: null, loading: true, error: null });
+    try {
+      const blob = await hrmsApi.getBlob(document.preview_url || document.file_url || '');
+      const objectUrl = URL.createObjectURL(blob);
+      previewObjectUrlRef.current = objectUrl;
+      setDocumentPreview({ document, blobUrl: objectUrl, loading: false, error: null });
+    } catch {
+      setDocumentPreview({
+        document,
+        blobUrl: null,
+        loading: false,
+        error: 'Unable to preview document.',
+      });
+    }
+  };
+
+  const closeDocumentPreview = () => {
+    clearPreviewObjectUrl();
+    setDocumentPreview(null);
+  };
+
+  const downloadDocument = async (document: InlineDocument) => {
+    if (!document.download_url) return;
+    setReviewError(null);
+    try {
+      const blob = await hrmsApi.getBlob(document.download_url);
+      const objectUrl = URL.createObjectURL(blob);
+      const link = globalThis.document.createElement('a');
+      link.href = objectUrl;
+      link.download = document.file_original_name || document.doc_name || 'document';
+      globalThis.document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error: any) {
+      setReviewError(error?.message || 'Unable to download document.');
+    }
+  };
+
   const openCandidate = (row: OnboardingRequest) => {
     setSelected(row);
     setBgv(null);
     setCandidateOnboardingProfile(null);
+    setOfferError(null);
+    setOfferFieldErrors({});
     setOfferTab('standard');
     setProposedCtc('');
     setProposedReason('');
@@ -272,6 +459,7 @@ export default function NativeHROnboardingRequests() {
     setSelectedPackage(null);
     setManagerOpen(false);
     setManagerSearch('');
+    closeDocumentPreview();
     setOffer({
       emp_type: 'OnRoll', date_of_joining: '', date_of_salary: '',
       cost_centre: '', role_type: 'Analyst', salary_band: '',
@@ -280,22 +468,25 @@ export default function NativeHROnboardingRequests() {
     });
     hrmsApi.get<unknown>(`/api/ats/bgv/status/${row.candidate_id}`)
       .then((r: any) => { const d = r?.data ?? r; if (d && typeof d === 'object') setBgv(d as BgvData); })
-      .catch(() => {});
+      .catch((e) => console.warn("[onboarding]", e));
     // Fetch onboarding profile to display PF opt-out consent status (non-blocking)
     hrmsApi.get<unknown>(`/api/ats/onboarding-full/candidate/${row.candidate_id}`)
       .then((r: any) => { const prof = r?.data?.profile ?? r?.profile ?? null; if (prof) setCandidateOnboardingProfile(prof); })
-      .catch(() => {});
+      .catch((e) => console.warn("[onboarding]", e));
   };
 
   const submitOffer = async (submit: boolean) => {
     if (!selected) return;
     const isProposed = offerTab === 'proposed' && proposedCtc;
-    const ctcToUse   = isProposed ? Number(proposedCtc) : Number(offer.offered_ctc);
-    if (!ctcToUse || !offer.date_of_joining) {
-      alert('Date of Joining and CTC are required');
+    const validation = validateOfferForm();
+    if (validation.message) {
+      setOfferFieldErrors(validation.nextErrors);
+      setOfferError(validation.message);
       return;
     }
+    const ctcToUse = validation.ctcToUse;
     setSaving(true);
+    setOfferError(null);
     try {
       const payload = {
         ...offer,
@@ -311,13 +502,18 @@ export default function NativeHROnboardingRequests() {
       await load();
       setSelected(null);
       setSalaryPreview(null);
-    } catch (e: any) { alert(e?.message ?? 'Failed to save offer'); }
+    } catch (e: any) {
+      setOfferError(e?.message ?? 'Failed to save offer.');
+    }
     finally { setSaving(false); }
   };
 
   const openProfilePanel = async (candidateId: string) => {
     setProfilePanelLoading(true);
     setPushbackRemarks('');
+    setReviewError(null);
+    setPanelActionSaving(null);
+    closeDocumentPreview();
     setProfilePanel({ candidateId, data: null });
     try {
       const r = await hrmsApi.get<any>(`/api/ats/onboarding-full/candidate/${candidateId}`);
@@ -329,10 +525,11 @@ export default function NativeHROnboardingRequests() {
   const submitReview = async (status: 'approved' | 'hr_review') => {
     if (!profilePanel) return;
     if (status === 'hr_review' && !pushbackRemarks.trim()) {
-      alert('Please enter remarks explaining what needs to be corrected.');
+      setReviewError('Please enter remarks explaining what needs to be corrected.');
       return;
     }
     setReviewSaving(true);
+    setReviewError(null);
     try {
       await hrmsApi.patch(`/api/ats/onboarding-full/candidate/${profilePanel.candidateId}/review`, {
         status,
@@ -340,20 +537,65 @@ export default function NativeHROnboardingRequests() {
       });
       setProfilePanel(null);
       await load();
-    } catch (e: any) { alert(e?.message ?? 'Failed to save review'); }
+    } catch (e: any) {
+      setReviewError(e?.message ?? 'Failed to save review.');
+    }
     finally { setReviewSaving(false); }
   };
 
-  // ── Stats ──────────────────────────────────────────────────────────────────
-  const pendingOfferCount  = rows.filter(r => r.profile_status === 'profile_submitted' && !r.offer_status).length;
-  const submittedCount     = rows.filter(r => r.offer_status === 'submitted').length;
-  const draftCount         = rows.filter(r => r.offer_status === 'draft').length;
+  const refreshProfilePanel = async () => {
+    if (!profilePanel?.candidateId) return;
+    const r = await hrmsApi.get<any>(`/api/ats/onboarding-full/candidate/${profilePanel.candidateId}`);
+    setProfilePanel({ candidateId: profilePanel.candidateId, data: r?.data ?? r });
+  };
+
+  const triggerProfileAction = async (action: 'digilocker' | 'esign') => {
+    if (!profilePanel?.candidateId) return;
+    setPanelActionSaving(action);
+    setReviewError(null);
+    try {
+      const endpoint = action === 'digilocker'
+        ? `/api/ats/onboarding-full/candidate/${profilePanel.candidateId}/digilocker/initiate`
+        : `/api/ats/onboarding-full/candidate/${profilePanel.candidateId}/esign/initiate`;
+      await hrmsApi.post(endpoint, {});
+      await refreshProfilePanel();
+    } catch (e: any) {
+      setReviewError(e?.message ?? `Failed to initiate ${action}.`);
+    } finally {
+      setPanelActionSaving(null);
+    }
+  };
+
+  // ── Derived ────────────────────────────────────────────────────────────────
+  const branchOptions = [...new Set(rows.map(r => r.branch_name).filter(Boolean))].sort() as string[];
+  const kpiTotal        = rows.length;
+  const kpiPendingOffer = rows.filter(r => r.profile_status === 'profile_submitted' && !r.offer_status).length;
+  const kpiOffered      = rows.filter(r => !!r.offer_status).length;
+  const kpiOnboarded    = rows.filter(r => r.status === 'onboarded').length;
+  const kpiDraft        = rows.filter(r => r.offer_status === 'draft').length;
+  const kpiSubmitted    = rows.filter(r => r.offer_status === 'submitted').length;
+  const employmentSectionError = Boolean(
+    offerFieldErrors.date_of_joining ||
+    offerFieldErrors.department_id ||
+    offerFieldErrors.designation_id ||
+    offerFieldErrors.cost_centre ||
+    offerFieldErrors.reporting_manager_id
+  );
+  const compensationSectionError = Boolean(
+    offerFieldErrors.salary_band ||
+    offerFieldErrors.compensation ||
+    offerFieldErrors.proposed_reason
+  );
+
+  if (user && !ALLOWED.includes(role)) {
+    return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
+  }
 
   // ── List View ──────────────────────────────────────────────────────────────
   if (!selected) return (
     <DashboardLayout>
       <div className="min-h-screen bg-slate-50/50">
-        <div className="max-w-full px-6 py-6 space-y-5">
+        <div className="max-w-full px-4 py-6 sm:px-6 space-y-5">
 
           {/* Header */}
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -365,38 +607,81 @@ export default function NativeHROnboardingRequests() {
               <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Onboarding Requests</h1>
               <p className="text-sm text-slate-400 mt-0.5">Candidates ready for employment offer creation</p>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="relative">
+            <div className="flex w-full sm:w-auto items-center gap-2">
+              <div className="relative w-full sm:w-auto">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <input
                   type="text"
                   placeholder="Search candidates…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  className="h-9 pl-9 pr-4 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-64"
+                  className="h-9 w-full sm:w-56 pl-9 pr-4 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
             </div>
           </div>
 
-          {/* Stats Row */}
-          <div className="grid grid-cols-3 gap-4">
+          {loadError && rows.length > 0 && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <span>{loadError}</span>
+              <Button variant="outline" size="sm" onClick={() => void load()} className="border-red-200 bg-white text-red-700 hover:bg-red-50">
+                <RefreshCcw className="h-3.5 w-3.5 mr-1.5" />
+                Retry
+              </Button>
+            </div>
+          )}
+
+          {masterDataWarnings.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 space-y-1">
+              <p className="font-semibold">Some supporting master data is degraded.</p>
+              <p className="text-xs text-amber-700">{masterDataWarnings.join(' ')}</p>
+            </div>
+          )}
+
+          {/* KPI Stats Row */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {[
-              { label: 'Pending Offer',    value: pendingOfferCount, color: 'text-blue-600',   bg: 'bg-blue-50',   icon: <UserPlus className="h-4 w-4" /> },
-              { label: 'Submitted',        value: submittedCount,    color: 'text-amber-600',  bg: 'bg-amber-50',  icon: <Clock className="h-4 w-4" /> },
-              { label: 'Draft',            value: draftCount,        color: 'text-slate-600',  bg: 'bg-slate-100', icon: <FileCheck className="h-4 w-4" /> },
+              { label: 'Total',      value: kpiTotal,        color: 'text-blue-600',   bg: 'bg-blue-50',   icon: <Users className="h-4 w-4" /> },
+              { label: 'Pending Offer', value: kpiPendingOffer, color: 'text-amber-600',  bg: 'bg-amber-50',  icon: <Clock className="h-4 w-4" /> },
+              { label: 'Offer Sent',   value: kpiSubmitted,   color: 'text-indigo-600', bg: 'bg-indigo-50', icon: <Send className="h-4 w-4" /> },
+              { label: 'Draft',       value: kpiDraft,        color: 'text-slate-600',  bg: 'bg-slate-100', icon: <FileCheck className="h-4 w-4" /> },
+              { label: 'Onboarded',   value: kpiOnboarded,    color: 'text-emerald-600',bg: 'bg-emerald-50',icon: <CheckCircle2 className="h-4 w-4" /> },
+              { label: 'Offered',     value: kpiOffered,      color: 'text-purple-600', bg: 'bg-purple-50', icon: <Star className="h-4 w-4" /> },
             ].map(s => (
-              <div key={s.label} className={`rounded-xl border border-slate-200 bg-white p-4 flex items-center gap-3`}>
-                <div className={`h-9 w-9 rounded-lg ${s.bg} flex items-center justify-center ${s.color}`}>{s.icon}</div>
-                <div>
-                  <p className="text-xl font-bold text-slate-900 tabular-nums">{s.value}</p>
-                  <p className="text-xs text-slate-500 font-medium">{s.label}</p>
+              <div key={s.label} className="rounded-xl border border-slate-200 bg-white p-3 flex items-center gap-3 shadow-sm">
+                <div className={`h-8 w-8 rounded-lg ${s.bg} flex items-center justify-center ${s.color}`}>{s.icon}</div>
+                <div className="min-w-0">
+                  <p className="text-lg font-bold text-slate-900 tabular-nums">{s.value}</p>
+                  <p className="text-[10px] text-slate-500 font-semibold truncate">{s.label}</p>
                 </div>
               </div>
             ))}
           </div>
 
-          {/* Table */}
+          {/* Filter Bar */}
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={filterStatus}
+              onChange={e => setFilterStatus(e.target.value)}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value="">All Statuses</option>
+              <option value="pending_offer">Pending Offer</option>
+              <option value="offered">Offered</option>
+              <option value="onboarded">Onboarded</option>
+            </select>
+            <select
+              value={filterBranch}
+              onChange={e => setFilterBranch(e.target.value)}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value="">All Branches</option>
+              {branchOptions.map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
+            <span className="text-[11px] text-slate-400 font-medium ml-auto">{filtered.length} candidate{filtered.length !== 1 ? 's' : ''}</span>
+          </div>
+
+          {/* Responsive Card List */}
           {loading ? (
             <div className="flex items-center justify-center h-64 bg-white rounded-xl border border-slate-200">
               <div className="flex flex-col items-center gap-3">
@@ -404,104 +689,107 @@ export default function NativeHROnboardingRequests() {
                 <p className="text-sm text-slate-400">Loading requests…</p>
               </div>
             </div>
+          ) : loadError && !rows.length ? (
+            <div className="rounded-2xl border border-red-200 bg-white px-6 py-10 text-center shadow-sm">
+              <AlertTriangle className="h-10 w-10 mx-auto mb-3 text-red-400" />
+              <p className="text-base font-semibold text-slate-900">Unable to load onboarding requests.</p>
+              <p className="mt-1 text-sm text-slate-500">The request list could not be fetched right now.</p>
+              <Button onClick={() => void load()} className="mt-5 bg-red-600 hover:bg-red-700 text-white">
+                <RefreshCcw className="h-4 w-4 mr-2" />
+                Retry
+              </Button>
+            </div>
+          ) : !filtered.length ? (
+            <div className="text-center py-20 bg-white rounded-xl border border-slate-200">
+              <Users className="h-10 w-10 mx-auto mb-3 text-slate-200" />
+              <p className="font-semibold text-slate-500 text-sm">
+                {search || filterStatus || filterBranch ? 'No candidates match your filters' : 'No onboarding requests'}
+              </p>
+              <p className="text-xs mt-1 text-slate-400">
+                {search || filterStatus || filterBranch ? 'Try different search or filter criteria' : 'Candidates appear here after submitting their onboarding form'}
+              </p>
+            </div>
           ) : (
-            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200">
-                      {['Code', 'Candidate', 'Mobile', 'Branch / Process', 'Profile', 'Offer', 'Action'].map(h => (
-                        <th key={h} className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider whitespace-nowrap">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filtered.map(r => {
-                      const si = STATUS_CFG[r.profile_status] ?? { label: r.profile_status, color: 'bg-slate-100 text-slate-600' };
-                      return (
-                        <tr key={r.id} className="hover:bg-blue-50/20 transition-colors">
-                          <td className="px-4 py-3 font-mono text-xs text-slate-400 whitespace-nowrap">{r.candidate_code}</td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2.5">
-                              <div className="h-8 w-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white text-xs font-bold shrink-0">
-                                {r.full_name?.charAt(0)?.toUpperCase()}
-                              </div>
-                              <div>
-                                <p className="font-semibold text-slate-900 text-sm">{r.full_name}</p>
-                                <p className="text-xs text-slate-400">{r.email}</p>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-slate-600 whitespace-nowrap text-xs">{r.mobile}</td>
-                          <td className="px-4 py-3">
-                            <p className="text-slate-700 font-medium text-xs">{r.branch_name || '—'}</p>
-                            <p className="text-slate-400 text-[11px]">{r.applied_for_process || r.process_name || '—'}</p>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${si.color}`}>
-                              {si.label}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">
-                            {r.offer_status
-                              ? <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-indigo-100 text-indigo-700 capitalize">{r.offer_status}</span>
-                              : <span className="text-slate-300 text-xs">—</span>}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap">
-                            <div className="flex items-center gap-2">
-                              <Button size="sm" variant="outline" onClick={() => openProfilePanel(r.candidate_id)}
-                                className="h-8 gap-1 border-slate-200 text-slate-600 text-xs px-2.5">
-                                <FileCheck className="h-3.5 w-3.5" /> View
-                              </Button>
-                              {r.profile_status === 'profile_submitted' && !r.offer_status && (
-                                <Button size="sm" onClick={() => openCandidate(r)}
-                                  className="h-8 gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm px-3">
-                                  <UserPlus className="h-3.5 w-3.5" /> Create Offer
-                                </Button>
-                              )}
-                              {r.offer_status === 'draft' && (
-                                <Button size="sm" variant="outline" onClick={() => openCandidate(r)}
-                                  className="h-8 gap-1.5 border-slate-200 text-slate-600 text-xs px-3">
-                                  Edit Draft
-                                </Button>
-                              )}
-                              {r.offer_status === 'submitted' && (
-                                <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
-                                  <Clock className="h-3 w-3" /> Pending
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                {!filtered.length && (
-                  <div className="text-center py-20 text-slate-400">
-                    <Users className="h-10 w-10 mx-auto mb-3 opacity-20" />
-                    <p className="font-semibold text-slate-500 text-sm">
-                      {search ? 'No candidates match your search' : 'No onboarding requests'}
-                    </p>
-                    <p className="text-xs mt-1 text-slate-400">
-                      {search ? 'Try different keywords' : 'Candidates appear here after submitting their onboarding form'}
-                    </p>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {filtered.map(r => {
+                const si = STATUS_CFG[r.profile_status] ?? { label: r.profile_status, color: 'bg-slate-100 text-slate-600' };
+                return (
+                  <div key={r.id} className="bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-200 transition-all p-4 flex flex-col gap-3">
+                    {/* Top: avatar + name + status */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="h-9 w-9 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white text-sm font-bold shrink-0">
+                          {r.full_name?.charAt(0)?.toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-slate-900 text-sm truncate">{r.full_name}</p>
+                          <p className="text-[10px] text-slate-400 font-mono truncate">{r.candidate_code}</p>
+                        </div>
+                      </div>
+                      <span className={`shrink-0 inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold ${si.color}`}>
+                        {si.label}
+                      </span>
+                    </div>
+                    {/* Details */}
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-600">
+                      <p className="truncate"><span className="text-slate-400">Branch:</span> {r.branch_name || '—'}</p>
+                      <p className="truncate"><span className="text-slate-400">Process:</span> {r.applied_for_process || r.process_name || '—'}</p>
+                      <p className="truncate"><span className="text-slate-400">Mobile:</span> {r.mobile ? maskMobile(r.mobile) : '—'}</p>
+                      <p className="truncate"><span className="text-slate-400">Email:</span> {r.email ? maskEmail(r.email) : '—'}</p>
+                    </div>
+                    {/* Offer status + actions */}
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                      <div>
+                        {r.offer_status ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-indigo-100 text-indigo-700 capitalize">
+                            {r.offer_status === 'submitted' && <Clock className="h-3 w-3" />}
+                            {r.offer_status === 'draft' && <FileCheck className="h-3 w-3" />}
+                            {r.offer_status}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-400">No offer yet</span>
+                        )}
+                      </div>
+                      <div className="flex gap-1.5">
+                        <Button size="sm" variant="ghost" onClick={() => openProfilePanel(r.candidate_id)}
+                          className="h-7 gap-1 text-slate-500 text-[10px] px-2 hover:bg-slate-100">
+                          <FileCheck className="h-3 w-3" /> {canReviewProfiles ? 'Review' : 'View'}
+                        </Button>
+                        {canCreateOffer && r.profile_status === 'profile_submitted' && !r.offer_status && (
+                          <Button size="sm" onClick={() => openCandidate(r)}
+                            className="h-7 gap-1 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-semibold shadow-sm px-2.5">
+                            <UserPlus className="h-3 w-3" /> Offer
+                          </Button>
+                        )}
+                        {canCreateOffer && r.offer_status === 'draft' && (
+                          <Button size="sm" variant="outline" onClick={() => openCandidate(r)}
+                            className="h-7 gap-1 border-slate-200 text-slate-600 text-[10px] px-2">
+                            Edit Draft
+                          </Button>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                )}
-              </div>
+                );
+              })}
             </div>
           )}
         </div>
       </div>
 
-      {/* Candidate Profile Review Panel */}
+      {/* Candidate Profile Review Drawer */}
       {profilePanel !== null && (
         <div className="fixed inset-0 z-50 flex">
           <div className="flex-1 bg-black/40" onClick={() => setProfilePanel(null)} />
           <div className="w-full max-w-lg bg-white h-full overflow-y-auto shadow-2xl flex flex-col">
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 sticky top-0 bg-white z-10">
-              <h2 className="font-bold text-slate-900 text-base">Candidate Profile Review</h2>
-              <button onClick={() => setProfilePanel(null)} className="text-slate-400 hover:text-slate-700 text-xl leading-none">×</button>
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-blue-500" />
+                <h2 className="font-bold text-slate-900 text-base">Profile Review</h2>
+              </div>
+              <button onClick={() => setProfilePanel(null)} className="text-slate-400 hover:text-slate-700 p-1 hover:bg-slate-100 rounded-lg">
+                <X className="h-5 w-5" />
+              </button>
             </div>
             {profilePanelLoading ? (
               <div className="flex-1 flex items-center justify-center">
@@ -513,10 +801,12 @@ export default function NativeHROnboardingRequests() {
               const docs: any[] = profilePanel.data.documents ?? [];
               const quals: any[] = profilePanel.data.qualifications ?? [];
               const exp = profilePanel.data.experience ?? {};
+              const digilocker = profilePanel.data.digilocker ?? {};
+              const esign = profilePanel.data.esign ?? {};
               const fmtBool = (v: any) => v ? 'Yes' : v === 0 ? 'No' : '—';
               const Row = ({ label, value }: { label: string; value: any }) => (
-                <div className="flex py-1.5 border-b border-slate-50 last:border-0">
-                  <span className="text-xs text-slate-400 w-40 shrink-0">{label}</span>
+                <div className="flex flex-col gap-1 py-1.5 border-b border-slate-50 last:border-0 sm:flex-row">
+                  <span className="text-xs text-slate-400 sm:w-40 sm:shrink-0">{label}</span>
                   <span className="text-xs text-slate-800 font-medium break-all">{value ?? '—'}</span>
                 </div>
               );
@@ -528,6 +818,11 @@ export default function NativeHROnboardingRequests() {
               );
               return (
                 <>
+                  {reviewError && (
+                    <div className="mx-5 mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                      {reviewError}
+                    </div>
+                  )}
                   <Section title="Personal Details">
                     <Row label="Full Name" value={p.full_name_aadhaar || p.full_name} />
                     <Row label="Date of Birth" value={p.date_of_birth} />
@@ -536,9 +831,9 @@ export default function NativeHROnboardingRequests() {
                     <Row label="Blood Group" value={p.blood_group} />
                     <Row label="Father's Name" value={p.father_name} />
                     <Row label="Mother's Name" value={p.mother_name} />
-                    <Row label="Mobile" value={p.mobile} />
-                    <Row label="Alternate Mobile" value={p.alt_mobile_number || p.alternate_mobile} />
-                    <Row label="Personal Email" value={p.personal_email_id} />
+                    <Row label="Mobile" value={maskMobile(p.mobile)} />
+                    <Row label="Alternate Mobile" value={p.alt_mobile_number || p.alternate_mobile ? maskMobile(p.alt_mobile_number || p.alternate_mobile) : '—'} />
+                    <Row label="Personal Email" value={maskEmail(p.personal_email_id)} />
                   </Section>
                   <Section title="Address">
                     <Row label="Current Address" value={p.present_address || p.current_address} />
@@ -547,19 +842,57 @@ export default function NativeHROnboardingRequests() {
                     <Row label="PIN Code" value={p.pin_code} />
                   </Section>
                   <Section title="Identity Documents">
-                    <Row label="Aadhaar" value={p.aadhar_number || p.aadhaar_number} />
-                    <Row label="PAN" value={p.pan_number} />
-                    <Row label="Voter ID" value={p.voter_id} />
-                    <Row label="Driving Licence" value={p.driving_license} />
-                    <Row label="Passport" value={p.passport_number} />
-                    <Row label="UAN" value={p.uan_number} />
-                    <Row label="ESIC" value={p.esic_number} />
+                    <Row label="Aadhaar" value={maskAadhaar(p.aadhar_number || p.aadhaar_number)} />
+                    <Row label="PAN" value={maskPan(p.pan_number)} />
+                    <Row label="Voter ID" value={p.voter_id ? maskPan(p.voter_id) : '—'} />
+                    <Row label="Driving Licence" value={p.driving_license ? maskPan(p.driving_license) : '—'} />
+                    <Row label="Passport" value={p.passport_number ? maskPan(p.passport_number) : '—'} />
+                    <Row label="UAN" value={maskUan(p.uan_number)} />
+                    <Row label="ESIC" value={p.esic_number ? maskUan(p.esic_number) : '—'} />
                   </Section>
                   <Section title="Bank Details">
                     <Row label="Bank Name" value={bank.bank_name} />
-                    <Row label="Account Number" value={bank.account_number} />
+                    <Row label="Account Number" value={maskBank(bank.account_number)} />
                     <Row label="IFSC" value={bank.ifsc_code} />
                     <Row label="Account Type" value={bank.account_type} />
+                  </Section>
+                  <Section title="Digital Verification">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">DigiLocker</p>
+                        <Row label="Status" value={String(digilocker.status ?? 'not_started').replace(/_/g, ' ')} />
+                        <Row label="Transaction" value={digilocker.client_transaction_id} />
+                        <div className="pt-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8"
+                            disabled={!canReviewProfiles || panelActionSaving === 'digilocker'}
+                            onClick={() => void triggerProfileAction('digilocker')}
+                          >
+                            {panelActionSaving === 'digilocker' ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
+                            Initiate DigiLocker
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">eSign</p>
+                        <Row label="Status" value={String(esign.status ?? 'not_started').replace(/_/g, ' ')} />
+                        <Row label="Transaction" value={esign.client_transaction_id} />
+                        <div className="pt-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8"
+                            disabled={!canReviewProfiles || panelActionSaving === 'esign'}
+                            onClick={() => void triggerProfileAction('esign')}
+                          >
+                            {panelActionSaving === 'esign' ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
+                            Initiate eSign
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
                   </Section>
                   {quals.length > 0 && (
                     <Section title="Qualifications">
@@ -610,46 +943,65 @@ export default function NativeHROnboardingRequests() {
                   {docs.length > 0 && (
                     <Section title={`Uploaded Documents (${docs.length})`}>
                       {docs.map((d: any, i: number) => (
-                        <div key={i} className="flex items-center justify-between py-1">
-                          <span className="text-xs text-slate-700">{d.document_type || d.doc_type || `Document ${i + 1}`}</span>
-                          {d.file_url && (
-                            <a href={d.file_url} target="_blank" rel="noreferrer"
-                              className="text-xs text-blue-600 hover:underline">View</a>
-                          )}
+                        <div key={i} className="flex items-center justify-between gap-3 py-2">
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium text-slate-700 truncate">{d.document_type || d.doc_type || d.doc_name || `Document ${i + 1}`}</p>
+                            <p className="text-[10px] text-slate-400 truncate">{d.file_original_name || d.doc_name || 'Secure document'}</p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Button size="sm" variant="outline" className="h-7 text-[10px] px-2" onClick={() => void openDocumentPreview(d as InlineDocument)}>
+                              View
+                            </Button>
+                            {d.can_download && (
+                              <Button size="sm" variant="ghost" className="h-7 text-[10px] px-2 text-slate-600" onClick={() => void downloadDocument(d as InlineDocument)}>
+                                <Download className="h-3 w-3 mr-1" />
+                                Download
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       ))}
                     </Section>
                   )}
 
                   {/* Pushback / Approve actions */}
-                  <div className="px-5 py-4 sticky bottom-0 bg-white border-t border-slate-200 space-y-3">
-                    <div>
-                      <label className="text-xs font-semibold text-slate-600 block mb-1.5">
-                        Push-back Remarks <span className="text-slate-400 font-normal">(required if pushing back)</span>
-                      </label>
-                      <textarea
-                        rows={2}
-                        className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                        placeholder="e.g. Address proof missing, DOB mismatch with Aadhaar…"
-                        value={pushbackRemarks}
-                        onChange={e => setPushbackRemarks(e.target.value)}
-                      />
+                  {canReviewProfiles ? (
+                    <div className="px-5 py-4 sticky bottom-0 bg-white border-t border-slate-200 space-y-3 shadow-[0_-2px_12px_rgba(0,0,0,0.04)]">
+                      <div>
+                        <label className="text-xs font-semibold text-slate-600 block mb-1.5">
+                          Push-back Remarks <span className="text-slate-400 font-normal">(required if pushing back)</span>
+                        </label>
+                        <textarea
+                          rows={2}
+                          className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                          placeholder="e.g. Address proof missing, DOB mismatch with Aadhaar…"
+                          value={pushbackRemarks}
+                          onChange={e => {
+                            setReviewError(null);
+                            setPushbackRemarks(e.target.value);
+                          }}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-3 sm:flex-row">
+                        <Button variant="outline" size="sm" disabled={reviewSaving}
+                          onClick={() => submitReview('hr_review')}
+                          className="flex-1 border-amber-300 text-amber-700 hover:bg-amber-50 gap-1.5">
+                          {reviewSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+                          Push Back
+                        </Button>
+                        <Button size="sm" disabled={reviewSaving}
+                          onClick={() => submitReview('approved')}
+                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5">
+                          {reviewSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                          Approve
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex gap-3">
-                      <Button variant="outline" size="sm" disabled={reviewSaving}
-                        onClick={() => submitReview('hr_review')}
-                        className="flex-1 border-amber-300 text-amber-700 hover:bg-amber-50 gap-1.5">
-                        {reviewSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <AlertTriangle className="h-3.5 w-3.5" />}
-                        Push Back for Edit
-                      </Button>
-                      <Button size="sm" disabled={reviewSaving}
-                        onClick={() => submitReview('approved')}
-                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5">
-                        {reviewSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                        Approve Profile
-                      </Button>
+                  ) : (
+                    <div className="px-5 py-4 sticky bottom-0 bg-white border-t border-slate-200 text-xs text-slate-500">
+                      Read-only access for your role. Review actions are restricted.
                     </div>
-                  </div>
+                  )}
                 </>
               );
             })() : (
@@ -660,6 +1012,61 @@ export default function NativeHROnboardingRequests() {
           </div>
         </div>
       )}
+
+      {documentPreview && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-3 sm:p-6">
+          <div className="flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-900">
+                  {documentPreview.document.file_original_name || documentPreview.document.doc_name || 'Document preview'}
+                </p>
+                <p className="text-xs text-slate-500">Secure preview inside HRMS</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {documentPreview.document.can_download && documentPreview.document.download_url && (
+                  <Button size="sm" variant="outline" onClick={() => void downloadDocument(documentPreview.document)}>
+                    <Download className="mr-1.5 h-3.5 w-3.5" />
+                    Download
+                  </Button>
+                )}
+                <Button size="icon" variant="ghost" onClick={closeDocumentPreview}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto bg-slate-100 p-3 sm:p-4">
+              {documentPreview.loading ? (
+                <div className="flex h-full min-h-[320px] items-center justify-center">
+                  <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+                </div>
+              ) : documentPreview.error ? (
+                <div className="flex h-full min-h-[320px] items-center justify-center">
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    {documentPreview.error}
+                  </div>
+                </div>
+              ) : documentPreview.blobUrl ? (
+                String(documentPreview.document.mime_type || '').startsWith('image/') ? (
+                  <div className="flex min-h-[320px] items-center justify-center">
+                    <img
+                      src={documentPreview.blobUrl}
+                      alt={documentPreview.document.file_original_name || 'Document preview'}
+                      className="max-h-full max-w-full rounded-xl object-contain"
+                    />
+                  </div>
+                ) : (
+                  <iframe
+                    title={documentPreview.document.file_original_name || 'Document preview'}
+                    src={documentPreview.blobUrl}
+                    className="h-full min-h-[70vh] w-full rounded-xl bg-white"
+                  />
+                )
+              ) : null}
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 
@@ -667,7 +1074,7 @@ export default function NativeHROnboardingRequests() {
   return (
     <DashboardLayout>
       <div className="min-h-screen bg-slate-50/50">
-        <div className="max-w-full px-6 py-5 space-y-4">
+        <div className="max-w-7xl mx-auto px-4 py-5 sm:px-6 space-y-4">
 
           {/* Breadcrumb */}
           <div className="flex items-center gap-2 text-sm text-slate-500">
@@ -699,8 +1106,8 @@ export default function NativeHROnboardingRequests() {
                 </span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-4 pt-4 border-t border-slate-100">
-                <InfoCell label="Mobile"      value={selected.mobile} />
-                <InfoCell label="Email"       value={selected.email} small />
+                <InfoCell label="Mobile"      value={selected.mobile ? selected.mobile.slice(0, 3) + 'XXXXX' + selected.mobile.slice(-3) : '—'} />
+                <InfoCell label="Email"       value={selected.email ? (selected.email.includes('@') ? selected.email[0] + '*****' + selected.email.slice(selected.email.indexOf('@') - 1) : selected.email) : '—'} small />
                 <InfoCell label="Branch"      value={selected.branch_name || '—'} />
                 <InfoCell label="Process/LOB" value={selected.applied_for_process || selected.process_name || '—'} />
               </div>
@@ -763,11 +1170,23 @@ export default function NativeHROnboardingRequests() {
             </div>
           )}
 
+          {offerError && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {offerError}
+            </div>
+          )}
+
+          {masterDataWarnings.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              {masterDataWarnings.join(' ')}
+            </div>
+          )}
+
           {/* Main Form */}
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
 
             {/* Employment Details */}
-            <div className="p-5 border-b border-slate-100">
+            <div className={`p-5 border-b border-slate-100 ${employmentSectionError ? 'bg-red-50/40 ring-1 ring-inset ring-red-200' : ''}`}>
               <div className="flex items-center gap-2 mb-4">
                 <div className="h-7 w-7 rounded-lg bg-blue-50 flex items-center justify-center">
                   <Briefcase className="h-3.5 w-3.5 text-blue-600" />
@@ -778,39 +1197,39 @@ export default function NativeHROnboardingRequests() {
               <div className="grid gap-x-5 gap-y-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
 
                 <FL label="Employment Type" required>
-                  <select className={SEL} style={{ backgroundColor: 'white', color: '#1e293b' }} value={offer.emp_type} onChange={e => setF('emp_type', e.target.value)}>
+                  <select className={SEL} style={{ backgroundColor: 'white', color: '#1e293b' }} value={offer.emp_type} onChange={e => updateOfferField('emp_type', e.target.value)}>
                     {EMP_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </FL>
 
-                <FL label="Date of Joining" required>
+                <FL label="Date of Joining" required error={offerFieldErrors.date_of_joining}>
                   <input type="date" className={SEL + ' px-2'} style={{ backgroundColor: 'white', color: '#1e293b' }}
-                    value={offer.date_of_joining} onChange={e => setF('date_of_joining', e.target.value)} />
+                    value={offer.date_of_joining} onChange={e => updateOfferField('date_of_joining', e.target.value)} />
                 </FL>
 
                 <FL label="Salary Start Date" hint="Blank = same as joining">
                   <input type="date" className={SEL + ' px-2'} style={{ backgroundColor: 'white', color: '#1e293b' }}
-                    value={offer.date_of_salary} onChange={e => setF('date_of_salary', e.target.value)} />
+                    value={offer.date_of_salary} onChange={e => updateOfferField('date_of_salary', e.target.value)} />
                 </FL>
 
-                <FL label="Department" required>
-                  <select className={SEL} style={{ backgroundColor: 'white', color: '#1e293b' }} value={offer.department_id} onChange={e => setF('department_id', e.target.value)}>
+                <FL label="Department" required error={offerFieldErrors.department_id}>
+                  <select className={SEL} style={{ backgroundColor: 'white', color: '#1e293b' }} value={offer.department_id} onChange={e => updateOfferField('department_id', e.target.value)}>
                     <option value="">— Select —</option>
                     {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                   </select>
                 </FL>
 
-                <FL label="Designation" required>
-                  <select className={SEL} style={{ backgroundColor: 'white', color: '#1e293b' }} value={offer.designation_id} onChange={e => setF('designation_id', e.target.value)}>
+                <FL label="Designation" required error={offerFieldErrors.designation_id}>
+                  <select className={SEL} style={{ backgroundColor: 'white', color: '#1e293b' }} value={offer.designation_id} onChange={e => updateOfferField('designation_id', e.target.value)}>
                     <option value="">— Select —</option>
                     {designations.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                   </select>
                 </FL>
 
-                <FL label="Cost Centre" required hint={!costCentres.length && selected?.branch_name ? 'None for branch' : undefined}>
+                <FL label="Cost Centre" required error={offerFieldErrors.cost_centre} hint={!costCentres.length && selected?.branch_name ? 'None for branch' : undefined}>
                   <select className={SEL} style={{ backgroundColor: 'white', color: '#1e293b' }}
                     value={offer.cost_centre}
-                    onChange={e => { setF('cost_centre', e.target.value); setSelectedPackage(null); setSalaryPreview(null); }}>
+                    onChange={e => { updateOfferField('cost_centre', e.target.value); setSelectedPackage(null); setSalaryPreview(null); }}>
                     <option value="">— Select —</option>
                     {costCentres.map(c => (
                       <option key={c.cost_centre_code} value={c.cost_centre_code}>
@@ -826,7 +1245,7 @@ export default function NativeHROnboardingRequests() {
                   </div>
                 </FL>
 
-                <FL label={`Reporting Manager${managers.length > 0 ? ` (${managers.length})` : ''}`}>
+                <FL label={`Reporting Manager${managers.length > 0 ? ` (${managers.length})` : ''}`} error={offerFieldErrors.reporting_manager_id}>
                   {(() => {
                     const selectedMgr = managers.find(m => m.id === offer.reporting_manager_id);
                     const filteredMgrs = managerSearch.trim()
@@ -865,7 +1284,7 @@ export default function NativeHROnboardingRequests() {
                             <div className="max-h-52 overflow-y-auto">
                               <div
                                 className="px-3 py-2 text-sm text-slate-400 hover:bg-slate-50 cursor-pointer"
-                                onClick={() => { setF('reporting_manager_id', ''); setManagerOpen(false); setManagerSearch(''); }}
+                                onClick={() => { updateOfferField('reporting_manager_id', ''); setManagerOpen(false); setManagerSearch(''); }}
                               >
                                 — None —
                               </div>
@@ -876,7 +1295,7 @@ export default function NativeHROnboardingRequests() {
                                 <div
                                   key={m.id}
                                   className={`px-3 py-2 text-sm cursor-pointer hover:bg-blue-50 ${offer.reporting_manager_id === m.id ? 'bg-blue-50 font-semibold text-blue-700' : 'text-slate-800'}`}
-                                  onClick={() => { setF('reporting_manager_id', m.id); setManagerOpen(false); setManagerSearch(''); }}
+                                  onClick={() => { updateOfferField('reporting_manager_id', m.id); setManagerOpen(false); setManagerSearch(''); }}
                                 >
                                   <span className="font-medium">{m.full_name}</span>
                                   <span className="ml-2 text-xs text-slate-400">{m.employee_code}</span>
@@ -895,7 +1314,7 @@ export default function NativeHROnboardingRequests() {
                 </FL>
 
                 <FL label="Role Type">
-                  <select className={SEL} style={{ backgroundColor: 'white', color: '#1e293b' }} value={offer.role_type} onChange={e => setF('role_type', e.target.value)}>
+                  <select className={SEL} style={{ backgroundColor: 'white', color: '#1e293b' }} value={offer.role_type} onChange={e => updateOfferField('role_type', e.target.value)}>
                     <option value="Analyst">Analyst</option>
                     <option value="SupportStaff">Support Staff</option>
                   </select>
@@ -905,7 +1324,7 @@ export default function NativeHROnboardingRequests() {
             </div>
 
             {/* Compensation */}
-            <div className="p-5">
+            <div className={`p-5 ${compensationSectionError ? 'bg-red-50/40 ring-1 ring-inset ring-red-200' : ''}`}>
               <div className="flex items-center gap-2 mb-4">
                 <div className="h-7 w-7 rounded-lg bg-emerald-50 flex items-center justify-center">
                   <IndianRupee className="h-3.5 w-3.5 text-emerald-600" />
@@ -915,10 +1334,10 @@ export default function NativeHROnboardingRequests() {
 
               <div className="grid gap-x-5 gap-y-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
 
-                <FL label="Salary Band" required hint={selectedBand ? `${fmt(selectedBand.min_ctc)} – ${fmt(selectedBand.max_ctc)}/mo` : undefined}>
+                <FL label="Salary Band" required error={offerFieldErrors.salary_band} hint={selectedBand ? `${fmt(selectedBand.min_ctc)} – ${fmt(selectedBand.max_ctc)}/mo` : undefined}>
                   <select className={SEL} style={{ backgroundColor: 'white', color: '#1e293b' }}
                     value={offer.salary_band}
-                    onChange={e => { setF('salary_band', e.target.value); setSelectedPackage(null); setSalaryPreview(null); }}>
+                    onChange={e => { updateOfferField('salary_band', e.target.value, ['compensation']); setSelectedPackage(null); setSalaryPreview(null); }}>
                     <option value="">— Select Band —</option>
                     {salaryBands.map(b => (
                       <option key={b.band_code} value={b.band_code}>
@@ -930,7 +1349,7 @@ export default function NativeHROnboardingRequests() {
 
                 {offerTab === 'standard' ? (
                   <div className="lg:col-span-2">
-                    <FL label="Salary Package" required>
+                    <FL label="Salary Package" required error={offerFieldErrors.compensation}>
                       {packages.length > 0 ? (
                         <div className="space-y-1.5">
                           <select className={SEL} style={{ backgroundColor: 'white', color: '#1e293b' }}
@@ -952,7 +1371,7 @@ export default function NativeHROnboardingRequests() {
                         <div className="space-y-1.5">
                           <input type="number" className={SEL}
                             style={{ backgroundColor: 'white', color: '#1e293b' }}
-                            value={offer.offered_ctc} onChange={e => setF('offered_ctc', e.target.value)}
+                            value={offer.offered_ctc} onChange={e => updateOfferField('offered_ctc', e.target.value, ['compensation'])}
                             placeholder="Enter monthly CTC" />
                           <p className="text-[10px] text-amber-600">No packages found. Enter manually.</p>
                           <Button variant="outline" size="sm" onClick={calcSalaryManual}
@@ -970,9 +1389,9 @@ export default function NativeHROnboardingRequests() {
                     </FL>
                   </div>
                 ) : (
-                  <FL label="Proposed Monthly CTC (₹)" required>
+                  <FL label="Proposed Monthly CTC (₹)" required error={offerFieldErrors.compensation}>
                     <input type="number" className={SEL} style={{ backgroundColor: 'white', color: '#1e293b', borderColor: '#fbbf24' }}
-                      value={proposedCtc} onChange={e => setProposedCtc(e.target.value)} placeholder="e.g. 18000" />
+                      value={proposedCtc} onChange={e => { setOfferError(null); clearOfferFieldError('compensation'); setProposedCtc(e.target.value); }} placeholder="e.g. 18000" />
                   </FL>
                 )}
 
@@ -1007,9 +1426,9 @@ export default function NativeHROnboardingRequests() {
 
               {offerTab === 'proposed' && (
                 <div className="mt-4">
-                  <FL label="Reason for Exception" required>
+                  <FL label="Reason for Exception" required error={offerFieldErrors.proposed_reason}>
                     <input className={SEL} style={{ backgroundColor: 'white', color: '#1e293b', borderColor: '#fbbf24' }}
-                      value={proposedReason} onChange={e => setProposedReason(e.target.value)}
+                      value={proposedReason} onChange={e => { setOfferError(null); clearOfferFieldError('proposed_reason'); setProposedReason(e.target.value); }}
                       placeholder="e.g. Experienced candidate — skill premium negotiated" />
                   </FL>
                 </div>
@@ -1064,15 +1483,14 @@ export default function NativeHROnboardingRequests() {
             </div>
 
             {/* Actions */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 px-5 py-4 border-t border-slate-100 bg-slate-50/50 rounded-b-xl">
+            <div className="sticky bottom-0 z-10 flex flex-col items-stretch gap-3 px-5 py-4 border-t border-slate-100 bg-white/95 backdrop-blur rounded-b-xl sm:flex-row sm:items-center">
               <Button variant="outline" onClick={() => submitOffer(false)} disabled={saving}
                 className="h-10 px-6 border-slate-200 text-slate-700 font-semibold bg-white hover:bg-slate-50">
                 {saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                 Save as Draft
               </Button>
               <Button onClick={() => submitOffer(true)}
-                disabled={saving || !offer.date_of_joining || !offer.salary_band ||
-                  (offerTab === 'proposed' && (!proposedCtc || !proposedReason))}
+                disabled={saving}
                 className="h-10 px-8 bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-sm disabled:opacity-50">
                 {saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                 Submit to Branch Head
@@ -1111,16 +1529,16 @@ function InfoCell({ label, value, small }: { label: string; value: string; small
   );
 }
 
-function FL({ label, required, hint, children }: {
-  label: string; required?: boolean; hint?: string; children: React.ReactNode;
+function FL({ label, required, hint, error, children }: {
+  label: string; required?: boolean; hint?: string; error?: boolean; children: React.ReactNode;
 }) {
   return (
-    <div>
-      <Label className="text-xs font-semibold text-slate-600 mb-1 block">
+    <div className={error ? 'rounded-xl border border-red-200 bg-red-50/40 p-2' : ''}>
+      <Label className={`text-xs font-semibold mb-1 block ${error ? 'text-red-700' : 'text-slate-600'}`}>
         {label}{required && <span className="text-red-500 ml-0.5">*</span>}
       </Label>
       {children}
-      {hint && <p className="text-[10px] text-slate-400 mt-0.5">{hint}</p>}
+      {error ? <p className="text-[10px] text-red-600 mt-0.5">This field is required.</p> : hint ? <p className="text-[10px] text-slate-400 mt-0.5">{hint}</p> : null}
     </div>
   );
 }
