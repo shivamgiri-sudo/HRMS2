@@ -98,6 +98,8 @@ export default function CandidateOnboardingFullPage() {
           .filter(Boolean).join(" · ") || undefined
       }
       completion={onb.completion}
+      autosaveStatus={onb.autosaveStatus}
+      sectionComplete={onb.sectionComplete}
       stepLabels={stepLabelsArray}
       onStepClick={(n) => onb.setStep(n as Step)}
       saving={onb.saving}

@@ -1,5 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { createHmac, timingSafeEqual } from "crypto";
+import rateLimit from "express-rate-limit";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -38,6 +39,13 @@ const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
 const meta = (req: Request) => ({ ip: req.ip, userAgent: req.get("user-agent") ?? undefined });
 
+/** 30 req/min per IP — general BGV read (status, queue) */
+const bgvReadLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false, message: { success: false, message: "Too many requests, please slow down" } });
+/** 10 req/min per IP — BGV verification endpoints (hits third-party APIs with cost) */
+const bgvVerifyLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, message: { success: false, message: "Too many verification requests, please slow down" } });
+/** 5 req/min per IP — BGV consent and DigiLocker start */
+const bgvSensitiveLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { success: false, message: "Too many requests, please slow down" } });
+
 async function requireBgvCandidateScope(req: AuthenticatedRequest, candidateId: string): Promise<void> {
   const candidate = await atsService.getCandidate(candidateId);
   const allowed = await hasScopedAccess(req.authUser!.id, ["admin", "hr", "recruiter"], { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined }, { allowAdminBypass: true });
@@ -45,50 +53,50 @@ async function requireBgvCandidateScope(req: AuthenticatedRequest, candidateId: 
 }
 
 // Public token-driven candidate BGV routes. Mount before global requireAuth.
-router.post("/consent", h(async (req, res) => {
+router.post("/consent", bgvSensitiveLimiter, h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.status(201).json({ success: true, data: await saveBgvConsentByToken(token, req.body, meta(req)) });
 }));
 
-router.get("/status", h(async (req, res) => {
+router.get("/status", bgvReadLimiter, h(async (req, res) => {
   const token = String(req.query.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await getBgvStatusByToken(token) });
 }));
 
-router.post("/verify/pan", h(async (req, res) => {
+router.post("/verify/pan", bgvVerifyLimiter, h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await verifyPanByToken(token, req.body, meta(req)) });
 }));
 
-router.post("/verify/bank", h(async (req, res) => {
+router.post("/verify/bank", bgvVerifyLimiter, h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await verifyBankByToken(token, req.body, meta(req)) });
 }));
 
-router.post("/verify/uan", h(async (req, res) => {
+router.post("/verify/uan", bgvVerifyLimiter, h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await verifyUanByToken(token, req.body, meta(req)) });
 }));
 
-router.post("/verify/aadhaar-offline", h(async (req, res) => {
+router.post("/verify/aadhaar-offline", bgvVerifyLimiter, h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await verifyAadhaarOfflineByToken(token, req.body, meta(req)) });
 }));
 
-router.post("/verify/address-doc", h(async (req, res) => {
+router.post("/verify/address-doc", bgvVerifyLimiter, h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   if (!req.body.docType || !req.body.documentNumber) return res.status(400).json({ success: false, message: "docType and documentNumber required" });
   return res.json({ success: true, data: await verifyAddressDocByToken(token, { docType: req.body.docType, documentNumber: req.body.documentNumber }, meta(req)) });
 }));
 
-router.post("/verify/education", h(async (req, res) => {
+router.post("/verify/education", bgvVerifyLimiter, h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   if (!req.body.boardType || !req.body.yearOfPassing) return res.status(400).json({ success: false, message: "boardType and yearOfPassing required" });
@@ -101,13 +109,13 @@ router.post("/verify/education", h(async (req, res) => {
   }, meta(req)) });
 }));
 
-router.post("/verify/court", h(async (req, res) => {
+router.post("/verify/court", bgvVerifyLimiter, h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await verifyCourtByToken(token, meta(req)) });
 }));
 
-router.post("/digilocker/start", h(async (req, res) => {
+router.post("/digilocker/start", bgvSensitiveLimiter, h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await startDigilockerByToken(token, Array.isArray(req.body.requestedDocuments) ? req.body.requestedDocuments : [], meta(req)) });

@@ -1,5 +1,5 @@
 import React from "react";
-import { CheckCircle2, Loader2, X, AlertCircle } from "lucide-react";
+import { CheckCircle2, Loader2, X, AlertCircle, TriangleAlert } from "lucide-react";
 
 interface OnboardingMobileShellProps {
   children: React.ReactNode;
@@ -8,6 +8,8 @@ interface OnboardingMobileShellProps {
   candidateName: string;
   branchProcess?: string;
   completion: number;
+  autosaveStatus?: "idle" | "saving" | "saved" | "error";
+  sectionComplete?: Record<number, boolean>;
   stepLabels: string[];
   onStepClick: (n: number) => void;
   saving: boolean;
@@ -118,12 +120,28 @@ export default function OnboardingMobileShell({
           </div>
         </div>
 
+        {/* ── Autosave status badge ──────────────────────────────────────── */}
+        {autosaveStatus && autosaveStatus !== "idle" && (
+          <div className="px-4 pb-1">
+            <div className={[
+              "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold transition-all duration-300",
+              autosaveStatus === "saving" ? "bg-blue-50 text-blue-700" : "",
+              autosaveStatus === "saved" ? "bg-emerald-50 text-emerald-700" : "",
+              autosaveStatus === "error" ? "bg-red-50 text-red-700" : "",
+            ].join(" ")}>
+              {autosaveStatus === "saving" && <><Loader2 className="h-3 w-3 animate-spin" /> Saving…</>}
+              {autosaveStatus === "saved" && <><CheckCircle2 className="h-3 w-3" /> Saved</>}
+              {autosaveStatus === "error" && <><TriangleAlert className="h-3 w-3" /> Save failed</>}
+            </div>
+          </div>
+        )}
+
         {/* ── Scrollable step chips ────────────────────────────────────────── */}
         <div className="flex gap-1.5 overflow-x-auto px-4 pb-3 scrollbar-none">
           {stepLabels.map((label, idx) => {
             const num = idx + 1;
             const isActive = num === currentStep;
-            const isDone = num < currentStep;
+            const isComplete = sectionComplete?.[num] ?? false;
             return (
               <button
                 key={num}
@@ -134,12 +152,12 @@ export default function OnboardingMobileShell({
                   "flex-shrink-0 flex items-center gap-1 rounded-full px-3 py-1.5 text-[10px] font-bold whitespace-nowrap border transition-all duration-200 min-h-[30px] select-none active:scale-95",
                   isActive
                     ? "bg-blue-600 text-white border-blue-600 shadow-sm scale-[1.04]"
-                    : isDone
+                    : isComplete
                     ? "bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100"
                     : "bg-white text-slate-400 border-slate-200 hover:border-slate-300 hover:text-slate-600",
                 ].join(" ")}
               >
-                {isDone ? (
+                {isComplete ? (
                   <CheckCircle2 className="h-3 w-3 flex-shrink-0" />
                 ) : (
                   <span className={`flex-shrink-0 w-3.5 h-3.5 rounded-full text-[8px] font-bold flex items-center justify-center ${isActive ? "bg-white/20 text-white" : "bg-slate-200 text-slate-500"}`}>

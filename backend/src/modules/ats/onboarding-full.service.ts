@@ -1,4 +1,6 @@
 import { randomUUID, createHash } from "crypto";
+import fs from "fs";
+import path from "path";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
@@ -557,10 +559,43 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
   return { candidateId, status: "submitted" };
 }
 
+const MAGIC_BYTES: Record<string, Uint8Array[]> = {
+  pdf: [new Uint8Array([0x25, 0x50, 0x44, 0x46])],
+  jpg: [new Uint8Array([0xFF, 0xD8, 0xFF])],
+  jpeg: [new Uint8Array([0xFF, 0xD8, 0xFF])],
+  png: [new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])],
+  webp: [new Uint8Array([0x52, 0x49, 0x46, 0x46]), new Uint8Array([0x57, 0x45, 0x42, 0x50])],
+};
+
+function validateFileMagicBytes(filePath: string, ext: string): boolean {
+  const signatures = MAGIC_BYTES[ext.toLowerCase()];
+  if (!signatures) return true;
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const buf = Buffer.alloc(16);
+    const bytesRead = fs.readSync(fd, buf, 0, 16, 0);
+    if (bytesRead < signatures[0].length) return false;
+    for (const sig of signatures) {
+      if (sig.length > bytesRead) continue;
+      const matches = sig.every((b, i) => buf[i] === b);
+      if (matches) return true;
+    }
+    return false;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 export async function uploadOnboardingDocument(token: string, file: Express.Multer.File, input: Record<string, unknown>, meta?: { ip?: string; userAgent?: string }) {
   if (!file) throw Object.assign(new Error("File is required"), { statusCode: 400 });
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
+
+  const ext = path.extname(file.originalname).toLowerCase().replace(".", "");
+  if (!validateFileMagicBytes(file.path, ext)) {
+    fs.unlink(file.path, () => {});
+    throw Object.assign(new Error("File content does not match its extension. Upload cancelled."), { statusCode: 400 });
+  }
 
   const id = randomUUID();
   const fileUrl = `/uploads/onboarding/${file.filename}`;
@@ -583,6 +618,13 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
   );
   await logCandidateAction(candidateId, "UPLOAD_DOCUMENT", { documentId: id, docType: input.docType ?? input.doc_type }, meta);
   return { id, fileUrl };
+}
+
+export async function getOnboardingDocument(documentId: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM candidate_onboarding_document WHERE id = ? AND deleted_at IS NULL LIMIT 1`, [documentId]
+  );
+  return (rows as RowDataPacket[])[0] ?? null;
 }
 
 export async function deleteOnboardingDocument(token: string, documentId: string, meta?: { ip?: string; userAgent?: string }) {
@@ -630,13 +672,73 @@ export async function getFullOnboardingByCandidate(candidateId: string) {
 
 export async function reviewFullOnboarding(candidateId: string, input: { status: "approved" | "rejected" | "hr_review"; remarks?: string }, reviewedBy: string) {
   const dbStatus = input.status === "approved" ? "approved" : input.status === "rejected" ? "rejected" : "hr_review";
-  await db.execute(
-    `UPDATE candidate_onboarding_profile SET profile_status = ?, reviewed_by = ?, reviewed_at = NOW(), review_remarks = ?, updated_at = NOW()
-      WHERE candidate_id = ?`,
-    [dbStatus, reviewedBy, input.remarks ?? null, candidateId]
-  );
+
+  const requestStatusMap: Record<string, string> = {
+    approved: "approved",
+    rejected: "rejected",
+    hr_review: "in_progress",
+  };
+  const candidateStatusMap: Record<string, string> = {
+    approved: "approved",
+    rejected: "rejected",
+    hr_review: "profile_submitted",
+  };
+
+  await syncOnboardingStatus(candidateId, dbStatus, requestStatusMap[input.status] ?? "in_progress", candidateStatusMap[input.status] ?? "profile_submitted");
   await logCandidateAction(candidateId, "HR_REVIEW", input, { actorType: "hr", actorId: reviewedBy });
+
+  if (input.status === "rejected" && input.remarks) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, review_remarks FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`, [candidateId]
+    );
+    if ((rows as RowDataPacket[]).length > 0) {
+      await db.execute(
+        `UPDATE candidate_onboarding_profile SET review_remarks = ?, updated_at = NOW() WHERE candidate_id = ?`,
+        [input.remarks, candidateId]
+      );
+    }
+  }
+
   return getFullOnboardingByCandidate(candidateId);
+}
+
+export async function payrollReviewFullOnboarding(candidateId: string, input: { status: "approved" | "rejected"; remarks?: string }, reviewedBy: string) {
+  const dbStatus = input.status === "approved" ? "approved" : "rejected";
+  await syncOnboardingStatus(candidateId, dbStatus,
+    input.status === "approved" ? "approved" : "rejected",
+    input.status === "approved" ? "approved" : "rejected"
+  );
+  await logCandidateAction(candidateId, "PAYROLL_REVIEW", input, { actorType: "hr", actorId: reviewedBy });
+  return getFullOnboardingByCandidate(candidateId);
+}
+
+export async function checkBgvReadiness(candidateId: string): Promise<{ ready: boolean; missing: string[]; score: number }> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ?`, [candidateId]
+  );
+  const checks = rows as RowDataPacket[];
+  const mandatoryChecks = ["pan", "aadhaar_offline", "bank", "address_doc", "education_doc", "employment", "criminal"];
+  const missing: string[] = [];
+
+  let score = 0;
+  let verifiedCount = 0;
+
+  for (const required of mandatoryChecks) {
+    const match = checks.find((c: any) => c.check_type === required);
+    if (!match || match.status === "not_started" || match.status === "failed") {
+      missing.push(required);
+    } else if (match.status === "verified" || match.status === "waived") {
+      verifiedCount++;
+    }
+  }
+
+  score = mandatoryChecks.length > 0 ? Math.round((verifiedCount / mandatoryChecks.length) * 100) : 0;
+
+  return {
+    ready: missing.length === 0 && verifiedCount >= 3,
+    missing,
+    score,
+  };
 }
 
 // Single source-of-truth sync: keeps ats_candidate, ats_onboarding_request, and
@@ -661,22 +763,42 @@ export async function syncOnboardingStatus(
   );
 }
 
+export async function recordPrivacyConsent(token: string) {
+  const { candidate_id } = await validateOnboardingToken(token);
+  await db.execute(
+    `UPDATE candidate_onboarding_profile SET dpdp_consent = 1, dpdp_consent_at = NOW(), updated_at = NOW() WHERE candidate_id = ?`,
+    [candidate_id]
+  );
+  await logCandidateAction(candidate_id, "PRIVACY_CONSENT", null, { actorType: "candidate" });
+  return { candidateId: candidate_id, consented: true };
+}
+
 export async function saveLanguages(
   token: string,
   languages: Array<{ language_name: string; can_read?: boolean; can_write?: boolean; can_speak?: boolean; proficiency?: string }>
 ) {
   const { candidate_id } = await validateOnboardingToken(token);
   if (!Array.isArray(languages) || languages.length === 0) return { deleted: 0, inserted: 0 };
-  const [del] = await db.execute(`DELETE FROM candidate_onboarding_language WHERE candidate_id = ?`, [candidate_id]);
-  for (const lang of languages) {
-    if (!lang.language_name?.trim()) continue;
-    await db.execute(
-      `INSERT INTO candidate_onboarding_language (id, candidate_id, language_name, can_read, can_write, can_speak, proficiency)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?)`,
-      [candidate_id, lang.language_name.trim(), lang.can_read ? 1 : 0, lang.can_write ? 1 : 0, lang.can_speak ? 1 : 0, lang.proficiency ?? null]
-    );
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [del] = await conn.execute(`DELETE FROM candidate_onboarding_language WHERE candidate_id = ?`, [candidate_id]);
+    for (const lang of languages) {
+      if (!lang.language_name?.trim()) continue;
+      await conn.execute(
+        `INSERT INTO candidate_onboarding_language (id, candidate_id, language_name, can_read, can_write, can_speak, proficiency)
+         VALUES (UUID(), ?, ?, ?, ?, ?, ?)`,
+        [candidate_id, lang.language_name.trim(), lang.can_read ? 1 : 0, lang.can_write ? 1 : 0, lang.can_speak ? 1 : 0, lang.proficiency ?? null]
+      );
+    }
+    await conn.commit();
+    return { candidateId: candidate_id, deleted: (del as any).affectedRows ?? 0, inserted: languages.length };
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
   }
-  return { candidateId: candidate_id, deleted: (del as any).affectedRows ?? 0, inserted: languages.length };
 }
 
 export async function saveStatutory(token: string, input: Record<string, unknown>) {
@@ -724,23 +846,33 @@ export async function saveFamilyMembers(
 ) {
   const { candidate_id } = await validateOnboardingToken(token);
   if (!Array.isArray(members)) throw Object.assign(new Error("members must be an array"), { statusCode: 400 });
-  await db.execute(`DELETE FROM candidate_onboarding_family_member WHERE candidate_id = ?`, [candidate_id]);
-  for (const m of members) {
-    await db.execute(
-      `INSERT INTO candidate_onboarding_family_member
-         (id, candidate_id, member_name, relation, dob, occupation, is_dependent)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?)`,
-      [
-        candidate_id,
-        m.memberName ?? null,
-        m.relation ?? null,
-        m.dob ?? null,
-        m.occupation ?? null,
-        m.isDependent ? 1 : 0,
-      ]
-    );
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.execute(`DELETE FROM candidate_onboarding_family_member WHERE candidate_id = ?`, [candidate_id]);
+    for (const m of members) {
+      await conn.execute(
+        `INSERT INTO candidate_onboarding_family_member
+           (id, candidate_id, member_name, relation, dob, occupation, is_dependent)
+         VALUES (UUID(), ?, ?, ?, ?, ?, ?)`,
+        [
+          candidate_id,
+          m.memberName ?? null,
+          m.relation ?? null,
+          m.dob ?? null,
+          m.occupation ?? null,
+          m.isDependent ? 1 : 0,
+        ]
+      );
+    }
+    await conn.commit();
+    return { candidateId: candidate_id, inserted: members.length };
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
   }
-  return { candidateId: candidate_id, inserted: members.length };
 }
 
 export async function saveNominees(
@@ -765,24 +897,34 @@ export async function saveNominees(
     );
   }
 
-  await db.execute(`DELETE FROM candidate_onboarding_nominee WHERE candidate_id = ?`, [candidate_id]);
-  for (const n of nominees) {
-    await db.execute(
-      `INSERT INTO candidate_onboarding_nominee
-         (id, candidate_id, nominee_name, relation, dob, share_percentage, aadhar_last4, is_primary)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        candidate_id,
-        n.nomineeName ?? null,
-        n.relation ?? null,
-        n.dob ?? null,
-        n.sharePercentage != null ? n.sharePercentage : null,
-        n.aadharLast4 ?? null,
-        n.isPrimary ? 1 : 0,
-      ]
-    );
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.execute(`DELETE FROM candidate_onboarding_nominee WHERE candidate_id = ?`, [candidate_id]);
+    for (const n of nominees) {
+      await conn.execute(
+        `INSERT INTO candidate_onboarding_nominee
+           (id, candidate_id, nominee_name, relation, dob, share_percentage, aadhar_last4, is_primary)
+         VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          candidate_id,
+          n.nomineeName ?? null,
+          n.relation ?? null,
+          n.dob ?? null,
+          n.sharePercentage != null ? n.sharePercentage : null,
+          n.aadharLast4 ?? null,
+          n.isPrimary ? 1 : 0,
+        ]
+      );
+    }
+    await conn.commit();
+    return { candidateId: candidate_id, inserted: nominees.length, totalSharePct: total };
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
   }
-  return { candidateId: candidate_id, inserted: nominees.length, totalSharePct: total };
 }
 
 export async function updateSectionStatus(

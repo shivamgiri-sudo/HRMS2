@@ -5,6 +5,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import { randomUUID, createHash } from "crypto";
+import rateLimit from "express-rate-limit";
 
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
@@ -13,11 +14,15 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import {
   addQualification,
+  checkBgvReadiness,
   deleteOnboardingDocument,
   getFullOnboardingByCandidate,
   getFullOnboardingStatus,
   getOnboardingBlockers,
+  getOnboardingDocument,
+  recordPrivacyConsent,
   listFullOnboardingRequests,
+  payrollReviewFullOnboarding,
   reviewFullOnboarding,
   saveBankDetails,
   saveEmployeeDetails,
@@ -41,6 +46,22 @@ const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
 const meta = (req: Request) => ({ ip: req.ip, userAgent: req.get("user-agent") ?? undefined });
 
+/** 60 req/min per IP — general candidate onboarding read/write */
+const candidateReadLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 60, standardHeaders: true, legacyHeaders: false,
+  message: { success: false, message: "Too many requests, please slow down" },
+});
+/** 10 req/min per IP — document upload, submit, and sensitive operations */
+const candidateWriteLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false,
+  message: { success: false, message: "Too many requests, please slow down" },
+});
+/** 5 req/min per IP — submission endpoint */
+const candidateSubmitLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false,
+  message: { success: false, message: "Too many submission attempts, please wait" },
+});
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadDir = path.resolve(__dirname, "../../../uploads/onboarding");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
@@ -58,82 +79,112 @@ const upload = multer({
 });
 
 // Public token-driven candidate routes. Mount this BEFORE requireAuth in ats.routes.ts.
-router.get("/validate-token", h(async (req, res) => {
+router.get("/validate-token", candidateReadLimiter, h(async (req, res) => {
   const token = String(req.query.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await validateOnboardingToken(token) });
 }));
 
-router.get("/status", h(async (req, res) => {
+router.get("/status", candidateReadLimiter, h(async (req, res) => {
   const token = String(req.query.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await getFullOnboardingStatus(token) });
 }));
 
-router.post("/employee-details", h(async (req, res) => {
+router.post("/employee-details", candidateWriteLimiter, h(async (req, res) => {
   const { token, ...input } = req.body;
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await saveEmployeeDetails(token, input, meta(req)) });
 }));
 
-router.post("/bank-details", h(async (req, res) => {
+router.post("/bank-details", candidateWriteLimiter, h(async (req, res) => {
   const { token, ...input } = req.body;
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await saveBankDetails(token, input, meta(req)) });
 }));
 
-router.post("/qualification", h(async (req, res) => {
+router.post("/qualification", candidateWriteLimiter, h(async (req, res) => {
   const { token, ...input } = req.body;
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.status(201).json({ success: true, data: await addQualification(token, input, meta(req)) });
 }));
 
-router.post("/family", h(async (req, res) => {
+router.post("/family", candidateWriteLimiter, h(async (req, res) => {
   const { token, ...input } = req.body;
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await saveFamilyDetails(token, input, meta(req)) });
 }));
 
-router.post("/experience", h(async (req, res) => {
+router.post("/experience", candidateWriteLimiter, h(async (req, res) => {
   const { token, ...input } = req.body;
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await saveExperienceDetails(token, input, meta(req)) });
 }));
 
-router.post("/final-section", h(async (req, res) => {
+router.post("/final-section", candidateWriteLimiter, h(async (req, res) => {
   const { token, ...input } = req.body;
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await saveFinalSection(token, input, meta(req)) });
 }));
 
-router.post("/documents", upload.single("file"), h(async (req, res) => {
+router.post("/documents", candidateWriteLimiter, upload.single("file"), h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   if (!req.file) return res.status(400).json({ success: false, message: "file required" });
   return res.status(201).json({ success: true, data: await uploadOnboardingDocument(token, req.file, req.body, meta(req)) });
 }));
 
-router.delete("/documents/:documentId", h(async (req, res) => {
-  const token = String(req.body.token ?? req.query.token ?? "");
+router.delete("/documents/:documentId", candidateWriteLimiter, h(async (req, res) => {
+  const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await deleteOnboardingDocument(token, req.params.documentId, meta(req)) });
 }));
 
-router.post("/progress", h(async (req, res) => {
+// Secure document preview — supports both token (candidate) and JWT (HR) auth
+router.get("/documents/preview/:documentId", h(async (req, res) => {
+  const token = String(req.query.token ?? "");
+  const doc = await getOnboardingDocument(req.params.documentId);
+  if (!doc) return res.status(404).json({ success: false, message: "Document not found" });
+
+  if (token) {
+    try { await validateOnboardingToken(token); }
+    catch { return res.status(401).json({ success: false, message: "Invalid or expired token" }); }
+  } else {
+    try {
+      const { requireAuth } = await import("../../middleware/authMiddleware.js");
+      await new Promise<void>((resolve, reject) => {
+        requireAuth(req as any, res as any, (err?: any) => err ? reject(err) : resolve());
+      });
+    } catch { return res.status(401).json({ success: false, message: "Authentication required" }); }
+  }
+
+  const filePath = doc.file_path as string;
+  if (!filePath || !fs.existsSync(filePath)) return res.status(404).json({ success: false, message: "File not found on disk" });
+
+  const mime = doc.mime_type || "application/octet-stream";
+  const name = doc.file_original_name || `document-${req.params.documentId}`;
+  res.setHeader("Content-Type", mime);
+  res.setHeader("Content-Disposition", `inline; filename="${name}"`);
+  res.setHeader("Cache-Control", "private, max-age=300");
+  const stream = fs.createReadStream(filePath);
+  stream.pipe(res);
+}));
+
+router.post("/progress", candidateWriteLimiter, h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   const stepIdx = Number(req.body.stepIdx ?? req.body.step_idx ?? 0);
   return res.json({ success: true, data: await saveProgress(token, stepIdx) });
 }));
 
-router.post("/submit", h(async (req, res) => {
+router.post("/submit", candidateSubmitLimiter, h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   const geo = { submit_lat: req.body.submit_lat ?? null, submit_lng: req.body.submit_lng ?? null };
   return res.json({ success: true, data: await submitFullOnboarding(token, { ...meta(req), ...geo }) });
 }));
 
-router.post("/statutory", h(async (req, res) => {
+router.post("/statutory", candidateWriteLimiter, h(async (req, res) => {
   const { token, ...input } = req.body;
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await saveStatutory(token, input) });
@@ -244,6 +295,13 @@ router.get("/autosave/:candidateId", requireAuth, requireRole("admin", "hr"), h(
   return res.json({ success: true, data: rows });
 }));
 
+// ── Privacy consent route ──────────────────────────────────────────────────────
+router.post("/privacy-consent", h(async (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ success: false, message: "token required" });
+  return res.json({ success: true, data: await recordPrivacyConsent(token) });
+}));
+
 // ── Language proficiency route ────────────────────────────────────────────────
 router.post("/languages", h(async (req, res) => {
   const { token, languages } = req.body;
@@ -262,6 +320,14 @@ router.get("/candidate/:candidateId", requireAuth, requireRole("admin", "hr", "r
 
 router.patch("/candidate/:candidateId/review", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
   return res.json({ success: true, data: await reviewFullOnboarding(req.params.candidateId, req.body, req.authUser!.id) });
+}));
+
+router.patch("/candidate/:candidateId/payroll-review", requireAuth, requireRole("admin", "payroll", "finance"), h(async (req: AuthenticatedRequest, res) => {
+  return res.json({ success: true, data: await payrollReviewFullOnboarding(req.params.candidateId, req.body, req.authUser!.id) });
+}));
+
+router.get("/candidate/:candidateId/bgv-readiness", requireAuth, requireRole("admin", "hr", "payroll"), h(async (req: AuthenticatedRequest, res) => {
+  return res.json({ success: true, data: await checkBgvReadiness(req.params.candidateId) });
 }));
 
 // ── New routes added by migration 298 ────────────────────────────────────────

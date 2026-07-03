@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { RefreshCcw, ShieldCheck, AlertTriangle, CheckCircle2, Send, PackageCheck, ChevronDown, ChevronUp } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatISTDate } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -84,6 +86,12 @@ const CHECK_LABELS: Record<string, string> = {
 };
 
 export default function NativeBGVVerificationCenter() {
+  const { user } = useAuth();
+  const role = (user as any)?.role ?? "";
+  const ALLOWED = ["admin", "super_admin", "hr", "recruiter"];
+  if (user && !ALLOWED.includes(role)) {
+    return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
+  }
   const [queue, setQueue] = useState<QueueRow[]>([]);
   const [selected, setSelected] = useState<BgvStatus | null>(null);
   const [selectedId, setSelectedId] = useState("");

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,7 +10,7 @@ import {
   Loader2, Calculator, ChevronLeft, ShieldCheck, Users, Briefcase,
   IndianRupee, FileCheck, AlertTriangle, CheckCircle2,
   Clock, UserPlus, Lock, TrendingUp, Building2, Search,
-  ChevronRight, Star, Zap,
+  ChevronRight, Star, Zap, Send,
 } from 'lucide-react';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -39,6 +40,34 @@ function rowsFrom(payload: unknown): OnboardingRequest[] {
   return [];
 }
 
+function maskAadhaar(v: string): string {
+  if (!v) return v;
+  const d = v.replace(/\s/g, '');
+  if (d.length >= 8) return d.slice(0, 4) + ' XXXX XXXX';
+  return 'XXXX XXXX XXXX';
+}
+function maskPan(v: string): string {
+  if (!v || v.length < 6) return v || '—';
+  return v.slice(0, 3) + 'XXXXX' + v.slice(-2);
+}
+function maskBank(v: string): string {
+  if (!v || v.length < 6) return v || '—';
+  return 'XXXXXX' + v.slice(-4);
+}
+function maskUan(v: string): string {
+  if (!v) return v;
+  return v.slice(0, 4) + 'XXXX' + v.slice(-2);
+}
+function maskMobile(v: string): string {
+  if (!v || v.length < 6) return v || '—';
+  return v.slice(0, 3) + 'XXXXX' + v.slice(-3);
+}
+function maskEmail(v: string): string {
+  if (!v) return v;
+  const at = v.indexOf('@');
+  if (at < 2) return v;
+  return v[0] + '*****' + v.slice(at - 1);
+}
 function masterFrom(payload: unknown, nameKey = 'name'): MasterItem[] {
   const arr = Array.isArray(payload) ? payload : (payload as any)?.data ?? [];
   return (Array.isArray(arr) ? arr : []).map((r: any) => ({
@@ -75,9 +104,17 @@ const SEL = 'w-full h-10 rounded-lg border border-slate-200 bg-white px-3 text-s
   'hover:border-slate-300 transition-colors';
 
 export default function NativeHROnboardingRequests() {
+  const { user } = useAuth();
+  const role = (user as any)?.role ?? "";
+  const ALLOWED = ["admin", "super_admin", "hr", "recruiter"];
+  if (user && !ALLOWED.includes(role)) {
+    return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
+  }
   const [rows, setRows]           = useState<OnboardingRequest[]>([]);
   const [filtered, setFiltered]   = useState<OnboardingRequest[]>([]);
   const [search, setSearch]       = useState('');
+  const [filterStatus, setFilterStatus] = useState<string>('');
+  const [filterBranch, setFilterBranch] = useState<string>('');
   const [loading, setLoading]     = useState(true);
   const [selected, setSelected]   = useState<OnboardingRequest | null>(null);
   const [salaryPreview, setSalaryPreview] = useState<SalaryPreview | null>(null);
@@ -139,30 +176,44 @@ export default function NativeHROnboardingRequests() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Search filter
+  // Search + status + branch filter
   useEffect(() => {
-    if (!search.trim()) { setFiltered(rows); return; }
-    const q = search.toLowerCase();
-    setFiltered(rows.filter(r =>
-      r.full_name?.toLowerCase().includes(q) ||
-      r.email?.toLowerCase().includes(q) ||
-      r.mobile?.includes(q) ||
-      r.candidate_code?.toLowerCase().includes(q) ||
-      r.branch_name?.toLowerCase().includes(q),
-    ));
-  }, [search, rows]);
+    let list = rows;
+    const q = search.toLowerCase().trim();
+    if (q) {
+      list = list.filter(r =>
+        r.full_name?.toLowerCase().includes(q) ||
+        r.email?.toLowerCase().includes(q) ||
+        r.mobile?.includes(q) ||
+        r.candidate_code?.toLowerCase().includes(q) ||
+        r.branch_name?.toLowerCase().includes(q),
+      );
+    }
+    if (filterStatus) {
+      list = list.filter(r =>
+        filterStatus === 'pending_offer' ? (r.profile_status === 'profile_submitted' && !r.offer_status) :
+        filterStatus === 'offered' ? !!r.offer_status :
+        filterStatus === 'onboarded' ? r.status === 'onboarded' :
+        true
+      );
+    }
+    if (filterBranch) {
+      list = list.filter(r => r.branch_name === filterBranch);
+    }
+    setFiltered(list);
+  }, [search, filterStatus, filterBranch, rows]);
 
   // Load masters
   useEffect(() => {
     hrmsApi.get<unknown>('/api/org/departments?active=1')
       .then(r => setDepartments(masterFrom(r, 'department_name')))
       .catch(() => hrmsApi.get<unknown>('/api/departments?active_status=1')
-        .then(r => setDepartments(masterFrom(r, 'department_name'))).catch(() => {}));
+        .then(r => setDepartments(masterFrom(r, 'department_name'))).catch((e) => console.warn("[onboarding]", e)));
 
     hrmsApi.get<unknown>('/api/org/designations?active=1')
       .then(r => setDesignations(masterFrom(r, 'designation_name')))
       .catch(() => hrmsApi.get<unknown>('/api/designations?active_status=1')
-        .then(r => setDesignations(masterFrom(r, 'designation_name'))).catch(() => {}));
+        .then(r => setDesignations(masterFrom(r, 'designation_name'))).catch((e) => console.warn("[onboarding]", e)));
 
     hrmsApi.get<unknown>('/api/payroll-masters/bands').then((r: any) => {
       const arr = r?.data ?? (Array.isArray(r) ? r : []);
@@ -280,11 +331,11 @@ export default function NativeHROnboardingRequests() {
     });
     hrmsApi.get<unknown>(`/api/ats/bgv/status/${row.candidate_id}`)
       .then((r: any) => { const d = r?.data ?? r; if (d && typeof d === 'object') setBgv(d as BgvData); })
-      .catch(() => {});
+      .catch((e) => console.warn("[onboarding]", e));
     // Fetch onboarding profile to display PF opt-out consent status (non-blocking)
     hrmsApi.get<unknown>(`/api/ats/onboarding-full/candidate/${row.candidate_id}`)
       .then((r: any) => { const prof = r?.data?.profile ?? r?.profile ?? null; if (prof) setCandidateOnboardingProfile(prof); })
-      .catch(() => {});
+      .catch((e) => console.warn("[onboarding]", e));
   };
 
   const submitOffer = async (submit: boolean) => {
@@ -344,10 +395,14 @@ export default function NativeHROnboardingRequests() {
     finally { setReviewSaving(false); }
   };
 
-  // ── Stats ──────────────────────────────────────────────────────────────────
-  const pendingOfferCount  = rows.filter(r => r.profile_status === 'profile_submitted' && !r.offer_status).length;
-  const submittedCount     = rows.filter(r => r.offer_status === 'submitted').length;
-  const draftCount         = rows.filter(r => r.offer_status === 'draft').length;
+  // ── Derived ────────────────────────────────────────────────────────────────
+  const branchOptions = [...new Set(rows.map(r => r.branch_name).filter(Boolean))].sort() as string[];
+  const kpiTotal        = rows.length;
+  const kpiPendingOffer = rows.filter(r => r.profile_status === 'profile_submitted' && !r.offer_status).length;
+  const kpiOffered      = rows.filter(r => !!r.offer_status).length;
+  const kpiOnboarded    = rows.filter(r => r.status === 'onboarded').length;
+  const kpiDraft        = rows.filter(r => r.offer_status === 'draft').length;
+  const kpiSubmitted    = rows.filter(r => r.offer_status === 'submitted').length;
 
   // ── List View ──────────────────────────────────────────────────────────────
   if (!selected) return (
@@ -365,7 +420,7 @@ export default function NativeHROnboardingRequests() {
               <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Onboarding Requests</h1>
               <p className="text-sm text-slate-400 mt-0.5">Candidates ready for employment offer creation</p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <input
@@ -373,30 +428,56 @@ export default function NativeHROnboardingRequests() {
                   placeholder="Search candidates…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  className="h-9 pl-9 pr-4 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-64"
+                  className="h-9 pl-9 pr-4 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-56"
                 />
               </div>
             </div>
           </div>
 
-          {/* Stats Row */}
-          <div className="grid grid-cols-3 gap-4">
+          {/* KPI Stats Row */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {[
-              { label: 'Pending Offer',    value: pendingOfferCount, color: 'text-blue-600',   bg: 'bg-blue-50',   icon: <UserPlus className="h-4 w-4" /> },
-              { label: 'Submitted',        value: submittedCount,    color: 'text-amber-600',  bg: 'bg-amber-50',  icon: <Clock className="h-4 w-4" /> },
-              { label: 'Draft',            value: draftCount,        color: 'text-slate-600',  bg: 'bg-slate-100', icon: <FileCheck className="h-4 w-4" /> },
+              { label: 'Total',      value: kpiTotal,        color: 'text-blue-600',   bg: 'bg-blue-50',   icon: <Users className="h-4 w-4" /> },
+              { label: 'Pending Offer', value: kpiPendingOffer, color: 'text-amber-600',  bg: 'bg-amber-50',  icon: <Clock className="h-4 w-4" /> },
+              { label: 'Offer Sent',   value: kpiSubmitted,   color: 'text-indigo-600', bg: 'bg-indigo-50', icon: <Send className="h-4 w-4" /> },
+              { label: 'Draft',       value: kpiDraft,        color: 'text-slate-600',  bg: 'bg-slate-100', icon: <FileCheck className="h-4 w-4" /> },
+              { label: 'Onboarded',   value: kpiOnboarded,    color: 'text-emerald-600',bg: 'bg-emerald-50',icon: <CheckCircle2 className="h-4 w-4" /> },
+              { label: 'Offered',     value: kpiOffered,      color: 'text-purple-600', bg: 'bg-purple-50', icon: <Star className="h-4 w-4" /> },
             ].map(s => (
-              <div key={s.label} className={`rounded-xl border border-slate-200 bg-white p-4 flex items-center gap-3`}>
-                <div className={`h-9 w-9 rounded-lg ${s.bg} flex items-center justify-center ${s.color}`}>{s.icon}</div>
-                <div>
-                  <p className="text-xl font-bold text-slate-900 tabular-nums">{s.value}</p>
-                  <p className="text-xs text-slate-500 font-medium">{s.label}</p>
+              <div key={s.label} className="rounded-xl border border-slate-200 bg-white p-3 flex items-center gap-3 shadow-sm">
+                <div className={`h-8 w-8 rounded-lg ${s.bg} flex items-center justify-center ${s.color}`}>{s.icon}</div>
+                <div className="min-w-0">
+                  <p className="text-lg font-bold text-slate-900 tabular-nums">{s.value}</p>
+                  <p className="text-[10px] text-slate-500 font-semibold truncate">{s.label}</p>
                 </div>
               </div>
             ))}
           </div>
 
-          {/* Table */}
+          {/* Filter Bar */}
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={filterStatus}
+              onChange={e => setFilterStatus(e.target.value)}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value="">All Statuses</option>
+              <option value="pending_offer">Pending Offer</option>
+              <option value="offered">Offered</option>
+              <option value="onboarded">Onboarded</option>
+            </select>
+            <select
+              value={filterBranch}
+              onChange={e => setFilterBranch(e.target.value)}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value="">All Branches</option>
+              {branchOptions.map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
+            <span className="text-[11px] text-slate-400 font-medium ml-auto">{filtered.length} candidate{filtered.length !== 1 ? 's' : ''}</span>
+          </div>
+
+          {/* Responsive Card List */}
           {loading ? (
             <div className="flex items-center justify-center h-64 bg-white rounded-xl border border-slate-200">
               <div className="flex flex-col items-center gap-3">
@@ -404,104 +485,95 @@ export default function NativeHROnboardingRequests() {
                 <p className="text-sm text-slate-400">Loading requests…</p>
               </div>
             </div>
+          ) : !filtered.length ? (
+            <div className="text-center py-20 bg-white rounded-xl border border-slate-200">
+              <Users className="h-10 w-10 mx-auto mb-3 text-slate-200" />
+              <p className="font-semibold text-slate-500 text-sm">
+                {search || filterStatus || filterBranch ? 'No candidates match your filters' : 'No onboarding requests'}
+              </p>
+              <p className="text-xs mt-1 text-slate-400">
+                {search || filterStatus || filterBranch ? 'Try different search or filter criteria' : 'Candidates appear here after submitting their onboarding form'}
+              </p>
+            </div>
           ) : (
-            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200">
-                      {['Code', 'Candidate', 'Mobile', 'Branch / Process', 'Profile', 'Offer', 'Action'].map(h => (
-                        <th key={h} className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider whitespace-nowrap">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filtered.map(r => {
-                      const si = STATUS_CFG[r.profile_status] ?? { label: r.profile_status, color: 'bg-slate-100 text-slate-600' };
-                      return (
-                        <tr key={r.id} className="hover:bg-blue-50/20 transition-colors">
-                          <td className="px-4 py-3 font-mono text-xs text-slate-400 whitespace-nowrap">{r.candidate_code}</td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2.5">
-                              <div className="h-8 w-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white text-xs font-bold shrink-0">
-                                {r.full_name?.charAt(0)?.toUpperCase()}
-                              </div>
-                              <div>
-                                <p className="font-semibold text-slate-900 text-sm">{r.full_name}</p>
-                                <p className="text-xs text-slate-400">{r.email}</p>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-slate-600 whitespace-nowrap text-xs">{r.mobile}</td>
-                          <td className="px-4 py-3">
-                            <p className="text-slate-700 font-medium text-xs">{r.branch_name || '—'}</p>
-                            <p className="text-slate-400 text-[11px]">{r.applied_for_process || r.process_name || '—'}</p>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${si.color}`}>
-                              {si.label}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">
-                            {r.offer_status
-                              ? <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-indigo-100 text-indigo-700 capitalize">{r.offer_status}</span>
-                              : <span className="text-slate-300 text-xs">—</span>}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap">
-                            <div className="flex items-center gap-2">
-                              <Button size="sm" variant="outline" onClick={() => openProfilePanel(r.candidate_id)}
-                                className="h-8 gap-1 border-slate-200 text-slate-600 text-xs px-2.5">
-                                <FileCheck className="h-3.5 w-3.5" /> View
-                              </Button>
-                              {r.profile_status === 'profile_submitted' && !r.offer_status && (
-                                <Button size="sm" onClick={() => openCandidate(r)}
-                                  className="h-8 gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm px-3">
-                                  <UserPlus className="h-3.5 w-3.5" /> Create Offer
-                                </Button>
-                              )}
-                              {r.offer_status === 'draft' && (
-                                <Button size="sm" variant="outline" onClick={() => openCandidate(r)}
-                                  className="h-8 gap-1.5 border-slate-200 text-slate-600 text-xs px-3">
-                                  Edit Draft
-                                </Button>
-                              )}
-                              {r.offer_status === 'submitted' && (
-                                <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
-                                  <Clock className="h-3 w-3" /> Pending
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                {!filtered.length && (
-                  <div className="text-center py-20 text-slate-400">
-                    <Users className="h-10 w-10 mx-auto mb-3 opacity-20" />
-                    <p className="font-semibold text-slate-500 text-sm">
-                      {search ? 'No candidates match your search' : 'No onboarding requests'}
-                    </p>
-                    <p className="text-xs mt-1 text-slate-400">
-                      {search ? 'Try different keywords' : 'Candidates appear here after submitting their onboarding form'}
-                    </p>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {filtered.map(r => {
+                const si = STATUS_CFG[r.profile_status] ?? { label: r.profile_status, color: 'bg-slate-100 text-slate-600' };
+                return (
+                  <div key={r.id} className="bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-200 transition-all p-4 flex flex-col gap-3">
+                    {/* Top: avatar + name + status */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="h-9 w-9 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white text-sm font-bold shrink-0">
+                          {r.full_name?.charAt(0)?.toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-slate-900 text-sm truncate">{r.full_name}</p>
+                          <p className="text-[10px] text-slate-400 font-mono truncate">{r.candidate_code}</p>
+                        </div>
+                      </div>
+                      <span className={`shrink-0 inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold ${si.color}`}>
+                        {si.label}
+                      </span>
+                    </div>
+                    {/* Details */}
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-600">
+                      <p className="truncate"><span className="text-slate-400">Branch:</span> {r.branch_name || '—'}</p>
+                      <p className="truncate"><span className="text-slate-400">Process:</span> {r.applied_for_process || r.process_name || '—'}</p>
+                      <p className="truncate"><span className="text-slate-400">Mobile:</span> {r.mobile ? maskMobile(r.mobile) : '—'}</p>
+                      <p className="truncate"><span className="text-slate-400">Email:</span> {r.email ? maskEmail(r.email) : '—'}</p>
+                    </div>
+                    {/* Offer status + actions */}
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                      <div>
+                        {r.offer_status ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-indigo-100 text-indigo-700 capitalize">
+                            {r.offer_status === 'submitted' && <Clock className="h-3 w-3" />}
+                            {r.offer_status === 'draft' && <FileCheck className="h-3 w-3" />}
+                            {r.offer_status}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-400">No offer yet</span>
+                        )}
+                      </div>
+                      <div className="flex gap-1.5">
+                        <Button size="sm" variant="ghost" onClick={() => openProfilePanel(r.candidate_id)}
+                          className="h-7 gap-1 text-slate-500 text-[10px] px-2 hover:bg-slate-100">
+                          <FileCheck className="h-3 w-3" /> Review
+                        </Button>
+                        {r.profile_status === 'profile_submitted' && !r.offer_status && (
+                          <Button size="sm" onClick={() => openCandidate(r)}
+                            className="h-7 gap-1 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-semibold shadow-sm px-2.5">
+                            <UserPlus className="h-3 w-3" /> Offer
+                          </Button>
+                        )}
+                        {r.offer_status === 'draft' && (
+                          <Button size="sm" variant="outline" onClick={() => openCandidate(r)}
+                            className="h-7 gap-1 border-slate-200 text-slate-600 text-[10px] px-2">
+                            Edit Draft
+                          </Button>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                )}
-              </div>
+                );
+              })}
             </div>
           )}
         </div>
       </div>
 
-      {/* Candidate Profile Review Panel */}
+      {/* Candidate Profile Review Drawer */}
       {profilePanel !== null && (
         <div className="fixed inset-0 z-50 flex">
           <div className="flex-1 bg-black/40" onClick={() => setProfilePanel(null)} />
           <div className="w-full max-w-lg bg-white h-full overflow-y-auto shadow-2xl flex flex-col">
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 sticky top-0 bg-white z-10">
-              <h2 className="font-bold text-slate-900 text-base">Candidate Profile Review</h2>
-              <button onClick={() => setProfilePanel(null)} className="text-slate-400 hover:text-slate-700 text-xl leading-none">×</button>
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-blue-500" />
+                <h2 className="font-bold text-slate-900 text-base">Profile Review</h2>
+              </div>
+              <button onClick={() => setProfilePanel(null)} className="text-slate-400 hover:text-slate-700 text-xl leading-none p-1 hover:bg-slate-100 rounded-lg">×</button>
             </div>
             {profilePanelLoading ? (
               <div className="flex-1 flex items-center justify-center">
@@ -536,9 +608,9 @@ export default function NativeHROnboardingRequests() {
                     <Row label="Blood Group" value={p.blood_group} />
                     <Row label="Father's Name" value={p.father_name} />
                     <Row label="Mother's Name" value={p.mother_name} />
-                    <Row label="Mobile" value={p.mobile} />
-                    <Row label="Alternate Mobile" value={p.alt_mobile_number || p.alternate_mobile} />
-                    <Row label="Personal Email" value={p.personal_email_id} />
+                    <Row label="Mobile" value={maskMobile(p.mobile)} />
+                    <Row label="Alternate Mobile" value={p.alt_mobile_number || p.alternate_mobile ? maskMobile(p.alt_mobile_number || p.alternate_mobile) : '—'} />
+                    <Row label="Personal Email" value={maskEmail(p.personal_email_id)} />
                   </Section>
                   <Section title="Address">
                     <Row label="Current Address" value={p.present_address || p.current_address} />
@@ -547,17 +619,17 @@ export default function NativeHROnboardingRequests() {
                     <Row label="PIN Code" value={p.pin_code} />
                   </Section>
                   <Section title="Identity Documents">
-                    <Row label="Aadhaar" value={p.aadhar_number || p.aadhaar_number} />
-                    <Row label="PAN" value={p.pan_number} />
-                    <Row label="Voter ID" value={p.voter_id} />
-                    <Row label="Driving Licence" value={p.driving_license} />
-                    <Row label="Passport" value={p.passport_number} />
-                    <Row label="UAN" value={p.uan_number} />
-                    <Row label="ESIC" value={p.esic_number} />
+                    <Row label="Aadhaar" value={maskAadhaar(p.aadhar_number || p.aadhaar_number)} />
+                    <Row label="PAN" value={maskPan(p.pan_number)} />
+                    <Row label="Voter ID" value={p.voter_id ? maskPan(p.voter_id) : '—'} />
+                    <Row label="Driving Licence" value={p.driving_license ? maskPan(p.driving_license) : '—'} />
+                    <Row label="Passport" value={p.passport_number ? maskPan(p.passport_number) : '—'} />
+                    <Row label="UAN" value={maskUan(p.uan_number)} />
+                    <Row label="ESIC" value={p.esic_number ? maskUan(p.esic_number) : '—'} />
                   </Section>
                   <Section title="Bank Details">
                     <Row label="Bank Name" value={bank.bank_name} />
-                    <Row label="Account Number" value={bank.account_number} />
+                    <Row label="Account Number" value={maskBank(bank.account_number)} />
                     <Row label="IFSC" value={bank.ifsc_code} />
                     <Row label="Account Type" value={bank.account_type} />
                   </Section>
@@ -612,17 +684,15 @@ export default function NativeHROnboardingRequests() {
                       {docs.map((d: any, i: number) => (
                         <div key={i} className="flex items-center justify-between py-1">
                           <span className="text-xs text-slate-700">{d.document_type || d.doc_type || `Document ${i + 1}`}</span>
-                          {d.file_url && (
-                            <a href={d.file_url} target="_blank" rel="noreferrer"
-                              className="text-xs text-blue-600 hover:underline">View</a>
-                          )}
+                          <a href={`/api/ats/onboarding-full/documents/preview/${d.id}`} target="_blank" rel="noreferrer"
+                            className="text-xs text-blue-600 hover:underline">View</a>
                         </div>
                       ))}
                     </Section>
                   )}
 
                   {/* Pushback / Approve actions */}
-                  <div className="px-5 py-4 sticky bottom-0 bg-white border-t border-slate-200 space-y-3">
+                  <div className="px-5 py-4 sticky bottom-0 bg-white border-t border-slate-200 space-y-3 shadow-[0_-2px_12px_rgba(0,0,0,0.04)]">
                     <div>
                       <label className="text-xs font-semibold text-slate-600 block mb-1.5">
                         Push-back Remarks <span className="text-slate-400 font-normal">(required if pushing back)</span>
@@ -640,13 +710,13 @@ export default function NativeHROnboardingRequests() {
                         onClick={() => submitReview('hr_review')}
                         className="flex-1 border-amber-300 text-amber-700 hover:bg-amber-50 gap-1.5">
                         {reviewSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <AlertTriangle className="h-3.5 w-3.5" />}
-                        Push Back for Edit
+                        Push Back
                       </Button>
                       <Button size="sm" disabled={reviewSaving}
                         onClick={() => submitReview('approved')}
                         className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5">
                         {reviewSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                        Approve Profile
+                        Approve
                       </Button>
                     </div>
                   </div>
@@ -699,8 +769,8 @@ export default function NativeHROnboardingRequests() {
                 </span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-4 pt-4 border-t border-slate-100">
-                <InfoCell label="Mobile"      value={selected.mobile} />
-                <InfoCell label="Email"       value={selected.email} small />
+                <InfoCell label="Mobile"      value={selected.mobile ? selected.mobile.slice(0, 3) + 'XXXXX' + selected.mobile.slice(-3) : '—'} />
+                <InfoCell label="Email"       value={selected.email ? (selected.email.includes('@') ? selected.email[0] + '*****' + selected.email.slice(selected.email.indexOf('@') - 1) : selected.email) : '—'} small />
                 <InfoCell label="Branch"      value={selected.branch_name || '—'} />
                 <InfoCell label="Process/LOB" value={selected.applied_for_process || selected.process_name || '—'} />
               </div>

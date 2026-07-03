@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useAuth } from "@/contexts/AuthContext";
 
 type Row = {
   id?: string;
@@ -36,6 +37,12 @@ const badgeTone = (value: string) => {
 };
 
 export default function NativeATSOnboardingBridge() {
+  const { user } = useAuth();
+  const role = (user as any)?.role ?? "";
+  const ALLOWED = ["admin", "super_admin", "hr", "recruiter"];
+  if (user && !ALLOWED.includes(role)) {
+    return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
+  }
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -153,8 +160,8 @@ export default function NativeATSOnboardingBridge() {
                           <div className="text-xs text-slate-500">{r.candidate_code || "-"}</div>
                         </td>
                         <td className="p-4 text-slate-600">
-                          <div>{r.mobile || "-"}</div>
-                          <div className="text-xs">{r.email || "-"}</div>
+                          <div>{r.mobile ? r.mobile.slice(0, 3) + 'XXXXX' + r.mobile.slice(-3) : "-"}</div>
+                          <div className="text-xs">{r.email && r.email.includes('@') ? r.email[0] + '*****' + r.email.slice(r.email.indexOf('@') - 1) : "-"}</div>
                         </td>
                         <td className="p-4 text-slate-600">
                           <div>{r.branch_name || "-"}</div>

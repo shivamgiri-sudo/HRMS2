@@ -168,7 +168,10 @@ export function useOnboardingFull(token: string) {
   const [pfOptOutSaving, setPfOptOutSaving] = useState(false);
   const [pfOptOutConsented, setPfOptOutConsented] = useState(false);
   const [pfOptOutConsentedAt, setPfOptOutConsentedAt] = useState<string | null>(null);
+  const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [sectionComplete, setSectionComplete] = useState<Record<number, boolean>>({});
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autosaveClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const geoCapture = useGeoCapture();
 
   const load = useCallback(async () => {
@@ -182,10 +185,12 @@ export function useOnboardingFull(token: string) {
       setOtpVerified(Boolean(sp.otp_verified));
 
       // Try BGV status separately — if it fails we note it and continue (non-blocking)
+      let bgvConsent = false;
       try {
         const bgvRes = await hrmsApi.get<{ data: BgvStatus }>(`${BGV}/status?token=${encodeURIComponent(token)}`);
         setBgv(bgvRes.data);
-        setConsentAccepted(Boolean(bgvRes.data?.consent));
+        bgvConsent = Boolean(bgvRes.data?.consent);
+        setConsentAccepted(bgvConsent);
         setBgvApiAvailable(true);
       } catch {
         setBgvApiAvailable(false);
@@ -292,6 +297,19 @@ export function useOnboardingFull(token: string) {
         setPfOptOutConsented(Boolean(sp.pf_opt_out_elected) && Boolean(sp.pf_opt_out_consented_at));
         setPfOptOutConsentedAt(sp.pf_opt_out_consented_at ?? null);
       }
+
+      // Build section-level completion map from saved data
+      const sc: Record<number, boolean> = {};
+      sc[2] = !!(sp.employee_name && sp.mobile_number && sp.personal_email_id && sp.date_of_birth);
+      sc[3] = !!(sp.permanent_address && sp.pan_number && sp.aadhaar_number);
+      sc[4] = (s?.documents?.length ?? 0) > 0;
+      sc[5] = bgvConsent;
+      sc[6] = !!(s.bank?.bank_name && s.bank?.ifsc_code);
+      sc[7] = (s.qualifications?.length ?? 0) > 0;
+      sc[8] = !!(s.experience && s.experience.working_experience);
+      sc[9] = !!(s.family || (s.languages?.length ?? 0) > 0);
+      sc[10] = Boolean(sp.statutory_declaration_accepted);
+      setSectionComplete(sc);
     } catch (e: any) {
       setError(e?.message || "Unable to load onboarding.");
     } finally {
@@ -303,13 +321,24 @@ export function useOnboardingFull(token: string) {
 
   const autosave = useCallback((section: string, data: unknown) => {
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    if (autosaveClearTimer.current) clearTimeout(autosaveClearTimer.current);
     autosaveTimer.current = setTimeout(() => {
-      hrmsApi.post(`${API}/autosave`, { token, section, data }).catch(() => {});
+      setAutosaveStatus("saving");
+      hrmsApi.post(`${API}/autosave`, { token, section, data })
+        .then(() => {
+          setAutosaveStatus("saved");
+          autosaveClearTimer.current = setTimeout(() => setAutosaveStatus("idle"), 2500);
+        })
+        .catch((e) => {
+          console.warn("[onboarding] Autosave failed:", e);
+          setAutosaveStatus("error");
+          autosaveClearTimer.current = setTimeout(() => setAutosaveStatus("idle"), 3000);
+        });
     }, 1500);
   }, [token]);
 
   const updateSectionStatus = useCallback((section: string, isComplete: boolean) => {
-    return hrmsApi.put(`${API}/section-status`, { token, section, isComplete }).catch(() => {});
+    return hrmsApi.put(`${API}/section-status`, { token, section, isComplete }).catch((e) => console.warn("[onboarding] Background operation failed:", e));
   }, [token]);
 
   const getBlockers = useCallback(() => {
@@ -346,7 +375,7 @@ export function useOnboardingFull(token: string) {
     setSaving(true);
     try {
       await hrmsApi.post(`${API}/employee-details`, { token, ...employee });
-      updateSectionStatus("personal", true).catch(() => {});
+      updateSectionStatus("personal", true).catch((e) => console.warn("[onboarding] Background operation failed:", e));
       await load();
     } catch (e: any) {
       setError(e?.message || "Failed to save personal details");
@@ -358,7 +387,7 @@ export function useOnboardingFull(token: string) {
     setSaving(true);
     try {
       await hrmsApi.post(`${API}/statutory`, { token, ...statutory });
-      updateSectionStatus("statutory", true).catch(() => {});
+      updateSectionStatus("statutory", true).catch((e) => console.warn("[onboarding] Background operation failed:", e));
       await load();
     } catch (e: any) {
       setError(e?.message || "Failed to save statutory details");
@@ -369,7 +398,7 @@ export function useOnboardingFull(token: string) {
     setSaving(true);
     try {
       await hrmsApi.post(`${API}/bank-details`, { token, ...bank });
-      updateSectionStatus("bank", true).catch(() => {});
+      updateSectionStatus("bank", true).catch((e) => console.warn("[onboarding] Background operation failed:", e));
       await load();
     } catch (e: any) {
       setError(e?.message || "Failed to save bank details");
@@ -382,7 +411,7 @@ export function useOnboardingFull(token: string) {
     try {
       await hrmsApi.post(`${API}/qualification`, { token, ...qual });
       setQual(EMPTY_QUAL);
-      updateSectionStatus("education", true).catch(() => {});
+      updateSectionStatus("education", true).catch((e) => console.warn("[onboarding] Background operation failed:", e));
       await load();
     } catch (e: any) {
       setError(e?.message || "Failed to add qualification");
@@ -395,7 +424,7 @@ export function useOnboardingFull(token: string) {
       await hrmsApi.post(`${API}/experience`, { token, ...experience });
       await hrmsApi.post(`${API}/family`, { token, ...family });
       if (languages.length > 0) await hrmsApi.post(`${API}/languages`, { token, languages });
-      updateSectionStatus("experience", true).catch(() => {});
+      updateSectionStatus("experience", true).catch((e) => console.warn("[onboarding] Background operation failed:", e));
       await load();
     } catch (e: any) {
       setError(e?.message || "Failed to save experience details");
@@ -490,10 +519,9 @@ export function useOnboardingFull(token: string) {
 
   const recordPrivacyConsent = async () => {
     try {
-      await hrmsApi.post("/api/privacy/consent/recruitment", { token });
+      await hrmsApi.post(`${API}/privacy-consent`, { token });
       setPrivacyConsentAccepted(true);
     } catch {
-      // Non-fatal — record failure silently; consent still marked locally
       setPrivacyConsentAccepted(true);
     }
   };
@@ -519,7 +547,7 @@ export function useOnboardingFull(token: string) {
       else if (step === 10) await saveStatutory(); // Statutory
     } catch { /* error shown in banner; still allow advance */ }
     setStep((s) => Math.min(10, s + 1) as Step);
-    hrmsApi.post(`${API}/progress`, { token, stepIdx: Math.min(10, step) }).catch(() => {});
+    hrmsApi.post(`${API}/progress`, { token, stepIdx: Math.min(10, step) }).catch((e) => console.warn("[onboarding] Background operation failed:", e));
   };
 
   const uploadDoc = async (file: File, docType: string, docName: string, pageNo: string) => {
@@ -536,7 +564,7 @@ export function useOnboardingFull(token: string) {
     if (isCheque && docId) {
       setBank((prev) => ({ ...prev, cancelledChequeDocumentId: docId }));
       // Persist linkage immediately so it's saved with next bank save
-      hrmsApi.post(`${API}/bank-details`, { token, ...bank, cancelledChequeDocumentId: docId }).catch(() => {});
+      hrmsApi.post(`${API}/bank-details`, { token, ...bank, cancelledChequeDocumentId: docId }).catch((e) => console.warn("[onboarding] Background operation failed:", e));
     }
 
     if (consentAccepted) {
@@ -582,5 +610,6 @@ export function useOnboardingFull(token: string) {
     sendOtp, verifyOtp, grantConsent, verifyPan, verifyBank, verifyAadhaar, verifyUan,
     startDigilocker, lookupIfsc, uploadDoc, deleteDoc, submit,
     updateSectionStatus, getBlockers, saveFamily, saveNominees, recordPrivacyConsent,
+    autosaveStatus, sectionComplete,
   };
 }

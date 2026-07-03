@@ -1,120 +1,19 @@
 import { useState } from "react";
 import {
-  AlertCircle, CheckCircle2, Loader2, Plus, Trash2, Info, Shield,
+  AlertCircle, CheckCircle2, Loader2, Plus, Trash2, Shield,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import {
+  F, RO, SectionHead, InfoBox, YNChip,
+} from "./OnboardingFormPrimitives";
 import type {
   QualForm, ExperienceForm, FamilyForm, LanguageRow,
   StatutoryForm, StatusData, BgvStatus, BankForm,
 } from "./useOnboardingFull";
 import { EMPTY_QUAL } from "./useOnboardingFull";
-
-// ── Form primitives ───────────────────────────────────────────────────────────
-
-function F({
-  label, value, onChange, type = "text", opts, mode, placeholder, required, helpText, error: fieldError,
-}: {
-  label: string; value: string; onChange: (v: string) => void;
-  type?: string; opts?: string[]; mode?: string; placeholder?: string;
-  required?: boolean; helpText?: string; error?: string;
-}) {
-  return (
-    <div className="space-y-1">
-      <Label className="text-sm font-semibold text-slate-700">
-        {label}{required && <span className="text-red-500 ml-1">*</span>}
-      </Label>
-      {opts ? (
-        <select
-          className={`flex min-h-[48px] w-full rounded-xl border-2 bg-white px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors ${fieldError ? "border-red-400" : "border-slate-200 hover:border-slate-300"}`}
-          value={value || ""}
-          onChange={(e) => onChange(e.target.value)}
-        >
-          <option value="">Select…</option>
-          {opts.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
-      ) : (
-        <Input
-          type={type}
-          inputMode={mode as any}
-          value={value || ""}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder}
-          className={`min-h-[48px] text-base rounded-xl border-2 transition-colors focus:ring-2 focus:ring-blue-400 ${fieldError ? "border-red-400" : "border-slate-200 hover:border-slate-300 focus:border-blue-400"}`}
-        />
-      )}
-      {fieldError && (
-        <p className="text-xs text-red-600 font-semibold flex items-center gap-1">
-          <AlertCircle className="h-3 w-3" /> {fieldError}
-        </p>
-      )}
-      {helpText && !fieldError && <p className="text-xs text-slate-500">{helpText}</p>}
-    </div>
-  );
-}
-
-function RO({ label, value }: { label: string; value?: any }) {
-  return (
-    <div className="rounded-xl border-2 bg-slate-50 border-slate-200 p-3">
-      <p className="text-[10px] font-black uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-1 font-semibold text-slate-900 text-sm break-words">{value || "—"}</p>
-    </div>
-  );
-}
-
-function SectionHead({ children, sub }: { children: React.ReactNode; sub?: string }) {
-  return (
-    <div className="mt-7 mb-4 pb-2 border-b-2 border-slate-100">
-      <p className="text-[11px] font-black uppercase tracking-[0.15em] text-slate-500">{children}</p>
-      {sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
-    </div>
-  );
-}
-
-function InfoBox({ children, variant = "info" }: { children: React.ReactNode; variant?: "info" | "warning" | "success" }) {
-  const styles = {
-    info: "bg-blue-50 border-blue-200 text-blue-800",
-    warning: "bg-amber-50 border-amber-200 text-amber-800",
-    success: "bg-emerald-50 border-emerald-200 text-emerald-800",
-  };
-  const icons = { info: Info, warning: AlertCircle, success: CheckCircle2 };
-  const Icon = icons[variant];
-  return (
-    <div className={`rounded-xl border-2 p-4 flex items-start gap-3 text-sm leading-relaxed ${styles[variant]}`}>
-      <Icon className="h-4 w-4 flex-shrink-0 mt-0.5" />
-      <div>{children}</div>
-    </div>
-  );
-}
-
-function YNChip({ label, value, onChange, helpText }: {
-  label: string; value: boolean | null; onChange: (v: boolean) => void; helpText?: string;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <Label className="text-sm font-semibold text-slate-700">{label}</Label>
-      <div className="flex gap-2">
-        {[{ l: "Yes", v: true }, { l: "No", v: false }].map(({ l, v }) => (
-          <button
-            key={l}
-            type="button"
-            onClick={() => onChange(v)}
-            className={`flex-1 rounded-xl px-4 py-3 text-sm font-bold border-2 transition-all min-h-[48px] active:scale-95 ${
-              value === v
-                ? v ? "bg-emerald-600 text-white border-emerald-600 shadow-md" : "bg-slate-700 text-white border-slate-700 shadow-md"
-                : "bg-white text-slate-700 border-slate-300 hover:border-slate-500"
-            }`}
-          >
-            {value === v && <span className="mr-1">{v ? "✓" : "✗"}</span>}{l}
-          </button>
-        ))}
-      </div>
-      {helpText && <p className="text-xs text-slate-500">{helpText}</p>}
-    </div>
-  );
-}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
+import { formatISTDate } from '@/lib/utils';
+import { useAuth } from "@/contexts/AuthContext";
 import { ChevronRight, Calendar, DollarSign, User, Building, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -57,6 +59,12 @@ interface SalaryBreakdown {
 // ── Main Component ─────────────────────────────────────────────────────────────
 
 export default function NativePayrollHRValidation() {
+  const { user } = useAuth();
+  const role = (user as any)?.role ?? "";
+  const ALLOWED = ["admin", "super_admin", "hr", "payroll_head"];
+  if (user && !ALLOWED.includes(role)) {
+    return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
+  }
   const [view, setView] = useState<'list' | 'validate'>('list');
   const [candidates, setCandidates] = useState<PendingCandidate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<PendingCandidate | null>(null);

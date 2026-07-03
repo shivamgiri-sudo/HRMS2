@@ -44,14 +44,44 @@ async function getCandidateIdentity(candidateId: string) {
 }
 
 async function createOrUpdateCheck(candidateId: string, checkType: string, status: string, input: Record<string, unknown>) {
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
+    [candidateId, checkType]
+  );
+  if ((existing as any[]).length > 0) {
+    const existingId = (existing[0] as any).id;
+    await db.execute(
+      `UPDATE candidate_bgv_check
+         SET status = ?, source_document_id = ?, provider_key = ?, provider_request_id = ?,
+             provider_reference_id = ?, match_score = ?, matched_name = ?, matched_dob = ?,
+             result_summary = ?, result_json = ?, risk_flags_json = ?,
+             verified_at = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [
+        status,
+        input.sourceDocumentId ?? null,
+        input.providerKey ?? null,
+        input.providerRequestId ?? null,
+        input.providerReferenceId ?? null,
+        input.matchScore ?? null,
+        input.matchedName ?? null,
+        input.matchedDob ?? null,
+        input.resultSummary ?? null,
+        input.resultJson ? JSON.stringify(input.resultJson) : null,
+        input.riskFlags ? JSON.stringify(input.riskFlags) : null,
+        status === "verified" ? new Date() : null,
+        existingId,
+      ]
+    );
+    return existingId;
+  }
   const checkId = randomUUID();
   await db.execute(
     `INSERT INTO candidate_bgv_check
        (id, candidate_id, check_type, source_document_id, provider_key, provider_request_id,
         provider_reference_id, status, match_score, matched_name, matched_dob, result_summary,
         result_json, risk_flags_json, verified_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE updated_at = NOW()`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       checkId,
       candidateId,

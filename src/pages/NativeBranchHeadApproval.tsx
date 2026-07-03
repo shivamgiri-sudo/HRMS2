@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -34,6 +35,12 @@ function offersFrom(payload: unknown): PendingOffer[] {
 }
 
 export default function NativeBranchHeadApproval() {
+  const { user } = useAuth();
+  const role = (user as any)?.role ?? "";
+  const ALLOWED = ["admin", "super_admin", "hr", "branch_head"];
+  if (user && !ALLOWED.includes(role)) {
+    return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
+  }
   const [offers, setOffers] = useState<PendingOffer[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
@@ -124,7 +131,7 @@ export default function NativeBranchHeadApproval() {
                         <strong>₹{o.net_in_hand?.toLocaleString('en-IN')}</strong>
                       </div>
                       <div>
-                        <span className="text-muted-foreground">Mobile:</span> {o.mobile}
+                        <span className="text-muted-foreground">Mobile:</span> {o.mobile ? o.mobile.slice(0, 3) + 'XXXXX' + o.mobile.slice(-3) : '—'}
                       </div>
                     </div>
 
