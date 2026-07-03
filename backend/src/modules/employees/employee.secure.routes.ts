@@ -201,6 +201,10 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
             e.country, e.pincode,
             d.designation_name, b.branch_name, b.call_centre_code,
             p.process_name, dept.dept_name, cc.cost_centre_name,
+            eec.name AS emergency_name,
+            eec.relationship AS emergency_relationship,
+            eec.mobile AS emergency_mobile,
+            eec.address AS emergency_address,
             COALESCE(
               NULLIF(TRIM(CONCAT(manager.first_name, ' ', COALESCE(manager.last_name, ''))), ''),
               manager.full_name
@@ -213,6 +217,15 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
        LEFT JOIN department_master dept ON dept.id = e.department_id
        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
        LEFT JOIN employees manager ON manager.id = COALESCE(e.reporting_manager_id, e.manager_id)
+       LEFT JOIN employee_emergency_contact eec
+         ON eec.employee_id = e.id
+        AND eec.id = (
+          SELECT ec2.id
+            FROM employee_emergency_contact ec2
+           WHERE ec2.employee_id = e.id
+           ORDER BY COALESCE(ec2.is_primary, 0) DESC, COALESCE(ec2.contact_seq, 1) ASC, ec2.created_at ASC
+           LIMIT 1
+        )
       WHERE e.id = ?
       LIMIT 1`,
     [targetId],
@@ -323,7 +336,15 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
   return res.json({
     success: true,
     data: {
-      employee: emp,
+      employee: {
+        ...emp,
+        emergency_contact: emp.emergency_name ? {
+          name: emp.emergency_name,
+          relationship: emp.emergency_relationship,
+          mobile: emp.emergency_mobile,
+          address: emp.emergency_address,
+        } : null,
+      },
       leave_balances: leaveBalances,
       attendance: attendance ?? { present_days: 0, working_days: 0, attendance_pct: null },
       performance: performanceRows[0] ?? null,
