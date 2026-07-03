@@ -39,6 +39,8 @@ router.get("/launch-context", h(async (req: AuthenticatedRequest, res: Response)
   const userId = req.authUser!.id;
   const employee = await getEmployeeForUser(userId);
   const userRoles = ((req as any).userRoles ?? []) as string[];
+  const isLmsAdmin = await hasRole(userId, "admin", "hr", "ceo", "super_admin", "lms_admin");
+  const isLmsCoordinator = isLmsAdmin || await hasRole(userId, "trainer", "lms_coordinator");
 
   let access: Awaited<ReturnType<typeof lmsService.getAccessForEmployee>> | null = null;
   let bridgeError: string | null = null;
@@ -52,8 +54,8 @@ router.get("/launch-context", h(async (req: AuthenticatedRequest, res: Response)
 
   const roleAllowed =
     portal === "trainee" ||
-    (portal === "coordinator" && (access?.access.coordinator || userRoles.some((r) => ["admin", "hr", "super_admin", "trainer", "lms_coordinator"].includes(String(r).toLowerCase())))) ||
-    (portal === "admin" && (access?.access.admin || userRoles.some((r) => ["admin", "hr", "ceo", "super_admin", "lms_admin"].includes(String(r).toLowerCase()))));
+    (portal === "coordinator" && (access?.access.coordinator || isLmsCoordinator || userRoles.some((r) => ["admin", "hr", "super_admin", "trainer", "lms_coordinator"].includes(String(r).toLowerCase())))) ||
+    (portal === "admin" && (access?.access.admin || isLmsAdmin || userRoles.some((r) => ["admin", "hr", "ceo", "super_admin", "lms_admin"].includes(String(r).toLowerCase()))));
 
   if (!roleAllowed) {
     return res.status(403).json({ success: false, message: "You do not have access to this LMS portal" });
