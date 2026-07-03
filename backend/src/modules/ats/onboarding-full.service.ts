@@ -598,7 +598,8 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
   }
 
   const id = randomUUID();
-  const fileUrl = `/uploads/onboarding/${file.filename}`;
+  const encodedToken = encodeURIComponent(token);
+  const fileUrl = `/api/ats/onboarding-full/documents/preview/${id}?token=${encodedToken}`;
   await db.execute(
     `INSERT INTO candidate_onboarding_document
        (id, candidate_id, doc_type, doc_name, page_no, file_original_name, file_path, file_url, mime_type, file_size_bytes)

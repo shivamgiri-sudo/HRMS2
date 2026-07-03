@@ -225,9 +225,11 @@ const MIGRATION_MANIFEST: string[] = [
   "1000_fix_engagement_schema_columns.sql",
   "343_global_page_availability.sql",
   "344_ats_recruiter_hiring_tracker.sql",
+  "345_onboarding_status_pipeline_extended.sql",
   "346_employee_joining_document_pack.sql",
   "347_epf_digital_compliance_pack.sql",
   "348_universal_digital_form_fill_engine.sql",
+  "349_joining_document_actor_alignment.sql",
 ];
 
 export type MigrationHealth = {

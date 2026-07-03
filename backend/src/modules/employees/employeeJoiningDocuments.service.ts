@@ -448,10 +448,20 @@ async function insertFileRecord(params: {
       params.fileSize,
       params.fileHash,
       params.uploadedBy ?? null,
-      params.uploadedByType === "candidate" ? "candidate" : params.uploadedByType === "system" ? "system" : "hr",
+      params.uploadedByType === "candidate"
+        ? "candidate"
+        : params.uploadedByType === "system"
+          ? "system"
+          : params.uploadedByType === "employee"
+            ? "employee"
+            : "hr",
     ],
   );
   return id;
+}
+
+function isChecklistTerminalStatus(status: string) {
+  return new Set(["verified", "completed", "esign_completed", "signed_verified", "wet_signed_uploaded"]).has(String(status || "").trim().toLowerCase());
 }
 
 async function generateAgreementPdf(checklist: ChecklistRow, target: EmployeeDocumentTarget) {
@@ -664,6 +674,93 @@ export async function getJoiningDocumentPack(employeeId: string, userId: string)
     checklist,
     audit: auditRows,
   };
+}
+
+export async function generateJoiningDocumentChecklist(employeeId: string, userId: string) {
+  const access = await resolveEmployeeDocumentAccessContext(userId, employeeId);
+  await ensureChecklistRows(access.target, userId);
+  await recalculateDocumentProgress(employeeId);
+  await auditDocumentAction({
+    employeeId,
+    candidateId: access.target.candidate_id,
+    actionType: "CHECKLIST_GENERATED",
+    actorUserId: userId,
+    actorType: access.isSelf ? "employee" : "hr",
+    newValue: { generated: true },
+  });
+  return getJoiningDocumentPack(employeeId, userId);
+}
+
+export async function updateJoiningDocumentChecklistStatus(params: {
+  employeeId: string;
+  checklistId: string;
+  actorUserId: string;
+  status: string;
+  remarks?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}) {
+  const access = await resolveEmployeeDocumentAccessContext(params.actorUserId, params.employeeId);
+  const checklist = await fetchChecklistRow(params.checklistId);
+  if (!checklist || checklist.employee_id !== params.employeeId) {
+    const err = new Error("Checklist item not found") as Error & { statusCode?: number };
+    err.statusCode = 404;
+    throw err;
+  }
+  const nextStatus = String(params.status ?? "").trim().toLowerCase();
+  if (!nextStatus) {
+    const err = new Error("status is required") as Error & { statusCode?: number };
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const normalizedVerificationStatus =
+    nextStatus === "verified"
+      ? "verified"
+      : nextStatus === "needs_correction" || nextStatus === "correction_requested"
+        ? "needs_correction"
+        : null;
+
+  await db.execute(
+    `UPDATE employee_joining_document_checklist
+        SET status = ?,
+            verification_status = COALESCE(?, verification_status),
+            verification_remarks = CASE WHEN ? IS NULL OR ? = '' THEN verification_remarks ELSE ? END,
+            verified_by = CASE WHEN ? = 'verified' THEN ? ELSE verified_by END,
+            verified_at = CASE WHEN ? = 'verified' THEN NOW() ELSE verified_at END,
+            completed_at = CASE WHEN ? THEN COALESCE(completed_at, NOW()) ELSE completed_at END,
+            updated_at = NOW()
+      WHERE id = ?`,
+    [
+      nextStatus,
+      normalizedVerificationStatus,
+      params.remarks ?? null,
+      params.remarks ?? null,
+      params.remarks ?? null,
+      nextStatus,
+      params.actorUserId,
+      nextStatus,
+      isChecklistTerminalStatus(nextStatus) ? 1 : 0,
+      checklist.id,
+    ],
+  );
+
+  await auditDocumentAction({
+    employeeId: checklist.employee_id,
+    candidateId: checklist.candidate_id ?? null,
+    checklistId: checklist.id,
+    documentCode: checklist.document_code,
+    actionType: "CHECKLIST_STATUS_UPDATED",
+    actorUserId: params.actorUserId,
+    actorType: access.isSelf ? "employee" : "hr",
+    remarks: params.remarks ?? null,
+    newValue: { status: nextStatus },
+    ipAddress: params.ipAddress ?? null,
+    userAgent: params.userAgent ?? null,
+  });
+
+  await recalculateDocumentProgress(params.employeeId);
+  return getJoiningDocumentPack(params.employeeId, params.actorUserId);
 }
 
 export async function uploadJoiningDocument(params: {
@@ -1025,6 +1122,103 @@ export async function getJoiningDocumentFileForAccess(params: {
   };
 }
 
+export async function getChecklistDocumentFileForAccess(params: {
+  employeeId: string;
+  checklistId: string;
+  actorUserId: string;
+  action: "preview" | "download";
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}) {
+  await resolveEmployeeDocumentAccessContext(params.actorUserId, params.employeeId);
+  const checklist = await fetchChecklistRow(params.checklistId);
+  if (!checklist || checklist.employee_id !== params.employeeId) {
+    const err = new Error("Checklist item not found") as Error & { statusCode?: number };
+    err.statusCode = 404;
+    throw err;
+  }
+  const file = await latestChecklistFile(checklist.id);
+  if (!file?.id) {
+    const err = new Error("Document file is not available yet") as Error & { statusCode?: number };
+    err.statusCode = 404;
+    throw err;
+  }
+  return getJoiningDocumentFileForAccess({
+    fileId: file.id,
+    actorUserId: params.actorUserId,
+    action: params.action,
+    ipAddress: params.ipAddress ?? null,
+    userAgent: params.userAgent ?? null,
+  });
+}
+
+export async function deleteJoiningDocumentFile(params: {
+  employeeId: string;
+  checklistId: string;
+  fileId: string;
+  actorUserId: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}) {
+  const access = await resolveEmployeeDocumentAccessContext(params.actorUserId, params.employeeId);
+  const checklist = await fetchChecklistRow(params.checklistId);
+  if (!checklist || checklist.employee_id !== params.employeeId) {
+    const err = new Error("Checklist item not found") as Error & { statusCode?: number };
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, storage_path, original_filename, file_role
+       FROM employee_joining_document_file
+      WHERE id = ?
+        AND checklist_id = ?
+        AND deleted_at IS NULL
+      LIMIT 1`,
+    [params.fileId, params.checklistId],
+  );
+  const file = rows[0] as (RowDataPacket & {
+    id: string;
+    storage_path: string | null;
+    original_filename: string | null;
+    file_role: string;
+  }) | undefined;
+  if (!file) {
+    const err = new Error("Document file not found") as Error & { statusCode?: number };
+    err.statusCode = 404;
+    throw err;
+  }
+  if (String(file.file_role).toLowerCase() === "signed") {
+    const err = new Error("Signed documents are locked and cannot be deleted") as Error & { statusCode?: number };
+    err.statusCode = 409;
+    throw err;
+  }
+
+  await db.execute(
+    `UPDATE employee_joining_document_file
+        SET deleted_at = NOW()
+      WHERE id = ?
+        AND deleted_at IS NULL`,
+    [params.fileId],
+  );
+
+  await auditDocumentAction({
+    employeeId: checklist.employee_id,
+    candidateId: checklist.candidate_id ?? null,
+    checklistId: checklist.id,
+    documentCode: checklist.document_code,
+    actionType: "DOCUMENT_FILE_DELETED",
+    actorUserId: params.actorUserId,
+    actorType: access.isSelf ? "employee" : "hr",
+    newValue: { fileId: params.fileId, fileName: file.original_filename ?? null },
+    ipAddress: params.ipAddress ?? null,
+    userAgent: params.userAgent ?? null,
+  });
+
+  await recalculateDocumentProgress(params.employeeId);
+  return getJoiningDocumentPack(params.employeeId, params.actorUserId);
+}
+
 export async function listJoiningDocumentTemplates() {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, document_code, document_name, document_category, template_version, requires_candidate_esign, requires_hr_upload, requires_hr_verification, is_mandatory, active_status, created_at, updated_at
@@ -1166,6 +1360,184 @@ export async function getPublicJoiningDocumentEsignSession(publicToken: string):
   return row;
 }
 
+export async function getJoiningDocumentEsignStatus(params: {
+  employeeId: string;
+  checklistId: string;
+  actorUserId: string;
+}) {
+  await resolveEmployeeDocumentAccessContext(params.actorUserId, params.employeeId);
+  const checklist = await fetchChecklistRow(params.checklistId);
+  if (!checklist || checklist.employee_id !== params.employeeId) {
+    const err = new Error("Checklist item not found") as Error & { statusCode?: number };
+    err.statusCode = 404;
+    throw err;
+  }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        tx.id,
+        tx.provider,
+        tx.status,
+        tx.provider_reference_id,
+        tx.provider_url,
+        tx.error_message,
+        tx.initiated_at,
+        tx.completed_at,
+        tok.public_token,
+        tok.token_status,
+        tok.expires_at
+       FROM employee_joining_document_checklist c
+       LEFT JOIN employee_document_esign_transaction tx
+         ON tx.id = (
+           SELECT t2.id
+             FROM employee_document_esign_transaction t2
+            WHERE t2.checklist_id = c.id
+            ORDER BY t2.initiated_at DESC
+            LIMIT 1
+         )
+       LEFT JOIN employee_joining_document_public_token tok
+         ON tok.id = (
+           SELECT p2.id
+             FROM employee_joining_document_public_token p2
+            WHERE p2.checklist_id = c.id
+            ORDER BY p2.created_at DESC
+            LIMIT 1
+         )
+      WHERE c.id = ?
+      LIMIT 1`,
+    [params.checklistId],
+  );
+  const row = rows[0] ?? null;
+  return {
+    checklist_id: params.checklistId,
+    document_code: checklist.document_code,
+    checklist_status: checklist.status,
+    transaction: row
+      ? {
+          id: String(row.id ?? ""),
+          provider: String(row.provider ?? "luckpay"),
+          status: String(row.status ?? "not_started"),
+          provider_reference_id: row.provider_reference_id ?? null,
+          provider_url: row.provider_url ?? null,
+          error_message: row.error_message ?? null,
+          initiated_at: row.initiated_at ?? null,
+          completed_at: row.completed_at ?? null,
+        }
+      : null,
+    public_token: row?.public_token ?? null,
+    public_token_status: row?.token_status ?? null,
+    public_token_expires_at: row?.expires_at ?? null,
+  };
+}
+
+async function finalizeChecklistEsign(params: {
+  checklist: ChecklistRow;
+  signerName: string;
+  signerRemarks?: string | null;
+  transactionId?: string | null;
+  publicToken?: string | null;
+  actorType: ActorType;
+  actionType: string;
+  actorUserId?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}) {
+  const target = await getEmployeeDocumentTarget(params.checklist.employee_id);
+  if (!target) {
+    const err = new Error("Employee not found") as Error & { statusCode?: number };
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const sourceFile = await ensureGeneratedFile(params.checklist, target, params.actorUserId ?? null);
+  const originalBuffer = fs.readFileSync(sourceFile.storage_path);
+  const signedCopy = await writeSecureFile({
+    employeeId: params.checklist.employee_id,
+    documentCode: params.checklist.document_code,
+    fileName: `${params.checklist.document_code.toLowerCase()}-signed.pdf`,
+    content: originalBuffer,
+  });
+  const signedFileId = await insertFileRecord({
+    checklistId: params.checklist.id,
+    employeeId: params.checklist.employee_id,
+    candidateId: params.checklist.candidate_id ?? null,
+    documentCode: params.checklist.document_code,
+    fileRole: "signed",
+    originalFilename: `${params.checklist.document_name}.pdf`,
+    storedFilename: signedCopy.storedFilename,
+    storagePath: signedCopy.storagePath,
+    mimeType: "application/pdf",
+    fileSize: originalBuffer.byteLength,
+    fileHash: signedCopy.fileHash,
+    uploadedBy: params.actorUserId ?? null,
+    uploadedByType: params.actorType === "employee" ? "employee" : "system",
+  });
+
+  await db.execute(
+    `UPDATE employee_joining_document_checklist
+        SET status = 'esign_completed',
+            fill_status = 'esign_completed',
+            signature_mode = 'aadhaar_esign',
+            final_file_locked_at = NOW(),
+            completed_at = NOW(),
+            updated_at = NOW()
+      WHERE id = ?`,
+    [params.checklist.id],
+  );
+
+  if (params.transactionId) {
+    await db.execute(
+      `UPDATE employee_document_esign_transaction
+          SET status = 'signed',
+              signed_file_id = ?,
+              completed_at = NOW(),
+              response_payload = JSON_SET(COALESCE(response_payload, JSON_OBJECT()), '$.signerName', ?, '$.remarks', ?)
+        WHERE id = ?`,
+      [signedFileId, params.signerName.trim(), params.signerRemarks ?? null, params.transactionId],
+    ).catch(async () => {
+      await db.execute(
+        `UPDATE employee_document_esign_transaction
+            SET status = 'signed',
+                signed_file_id = ?,
+                completed_at = NOW()
+          WHERE id = ?`,
+        [signedFileId, params.transactionId],
+      );
+    });
+  }
+
+  if (params.publicToken) {
+    await db.execute(
+      `UPDATE employee_joining_document_public_token
+          SET token_status = 'consumed',
+              consumed_at = NOW()
+        WHERE public_token = ?`,
+      [params.publicToken],
+    );
+  }
+
+  await auditDocumentAction({
+    employeeId: params.checklist.employee_id,
+    candidateId: params.checklist.candidate_id ?? null,
+    checklistId: params.checklist.id,
+    documentCode: params.checklist.document_code,
+    actionType: params.actionType,
+    actorUserId: params.actorUserId ?? null,
+    actorType: params.actorType,
+    remarks: params.signerRemarks ?? null,
+    newValue: { signerName: params.signerName.trim(), signedFileId },
+    ipAddress: params.ipAddress ?? null,
+    userAgent: params.userAgent ?? null,
+  });
+
+  await recalculateDocumentProgress(params.checklist.employee_id);
+  return {
+    success: true,
+    employee_id: params.checklist.employee_id,
+    checklist_id: params.checklist.id,
+    signed_file_id: signedFileId,
+  };
+}
+
 export async function getPublicJoiningDocumentDraftFile(publicToken: string) {
   const session = await getPublicJoiningDocumentEsignSession(publicToken);
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -1212,97 +1584,138 @@ export async function completePublicJoiningDocumentEsign(params: {
     err.statusCode = 404;
     throw err;
   }
-  const target = await getEmployeeDocumentTarget(session.employee_id);
-  if (!target) {
-    const err = new Error("Employee not found") as Error & { statusCode?: number };
-    err.statusCode = 404;
-    throw err;
-  }
-
-  const sourceFile = await ensureGeneratedFile(checklist, target, null);
-  const originalBuffer = fs.readFileSync(sourceFile.storage_path);
-  const signedCopy = await writeSecureFile({
-    employeeId: session.employee_id,
-    documentCode: session.document_code,
-    fileName: `${session.document_code.toLowerCase()}-signed.pdf`,
-    content: originalBuffer,
-  });
-  const signedFileId = await insertFileRecord({
-    checklistId: checklist.id,
-    employeeId: checklist.employee_id,
-    candidateId: checklist.candidate_id ?? null,
-    documentCode: checklist.document_code,
-    fileRole: "signed",
-    originalFilename: `${checklist.document_name}.pdf`,
-    storedFilename: signedCopy.storedFilename,
-    storagePath: signedCopy.storagePath,
-    mimeType: "application/pdf",
-    fileSize: originalBuffer.byteLength,
-    fileHash: signedCopy.fileHash,
-    uploadedByType: "system",
-  });
-
-  await db.execute(
-    `UPDATE employee_joining_document_checklist
-        SET status = 'esign_completed',
-            fill_status = 'esign_completed',
-            signature_mode = 'aadhaar_esign',
-            final_file_locked_at = NOW(),
-            completed_at = NOW(),
-            updated_at = NOW()
-      WHERE id = ?`,
-    [checklist.id],
-  );
-
-  await db.execute(
-    `UPDATE employee_document_esign_transaction
-        SET status = 'signed',
-            signed_file_id = ?,
-            completed_at = NOW(),
-            response_payload = JSON_SET(COALESCE(response_payload, JSON_OBJECT()), '$.signerName', ?, '$.remarks', ?)
+  const [txRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id
+       FROM employee_document_esign_transaction
       WHERE checklist_id = ?
       ORDER BY initiated_at DESC
       LIMIT 1`,
-    [signedFileId, params.signerName.trim(), params.signerRemarks ?? null, checklist.id],
-  ).catch(async () => {
-    await db.execute(
-      `UPDATE employee_document_esign_transaction
-          SET status = 'signed',
-              signed_file_id = ?,
-              completed_at = NOW()
-        WHERE checklist_id = ?`,
-      [signedFileId, checklist.id],
-    );
-  });
-
-  await db.execute(
-    `UPDATE employee_joining_document_public_token
-        SET token_status = 'consumed',
-            consumed_at = NOW()
-      WHERE public_token = ?`,
-    [params.publicToken],
+    [checklist.id],
   );
-
-  await auditDocumentAction({
-    employeeId: checklist.employee_id,
-    candidateId: checklist.candidate_id ?? null,
-    checklistId: checklist.id,
-    documentCode: checklist.document_code,
-    actionType: "PUBLIC_ESIGN_COMPLETED",
+  return finalizeChecklistEsign({
+    checklist,
+    signerName: params.signerName,
+    signerRemarks: params.signerRemarks ?? null,
+    transactionId: String(txRows[0]?.id ?? ""),
+    publicToken: params.publicToken,
     actorType: "public_token",
-    remarks: params.signerRemarks ?? null,
-    newValue: { signerName: params.signerName.trim(), signedFileId },
+    actionType: "PUBLIC_ESIGN_COMPLETED",
     ipAddress: params.ipAddress ?? null,
     userAgent: params.userAgent ?? null,
   });
+}
 
-  await recalculateDocumentProgress(checklist.employee_id);
-  return {
-    success: true,
-    employee_id: checklist.employee_id,
-    checklist_id: checklist.id,
-    signed_file_id: signedFileId,
-  };
+export async function handleJoiningDocumentEsignWebhook(input: {
+  payload: Record<string, unknown>;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}) {
+  const payload = input.payload ?? {};
+  const providerReferenceId = String(
+    payload.provider_reference_id ??
+    payload.providerReferenceId ??
+    payload.reference_id ??
+    payload.referenceId ??
+    payload.transaction_id ??
+    payload.transactionId ??
+    "",
+  ).trim();
+  const clientTransactionId = String(payload.client_transaction_id ?? payload.clientTransactionId ?? "").trim();
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, checklist_id, employee_id, candidate_id, document_code, status
+       FROM employee_document_esign_transaction
+      WHERE (? <> '' AND provider_reference_id = ?)
+         OR (? <> '' AND client_transaction_id = ?)
+      ORDER BY initiated_at DESC
+      LIMIT 1`,
+    [providerReferenceId, providerReferenceId, clientTransactionId, clientTransactionId],
+  );
+  const tx = rows[0] as (RowDataPacket & {
+    id: string;
+    checklist_id: string;
+    employee_id: string;
+    candidate_id: string | null;
+    document_code: string;
+    status: string;
+  }) | undefined;
+  if (!tx) {
+    return { matched: false, processed: false };
+  }
+
+  const rawStatus = String(payload.status ?? payload.event ?? payload.result ?? "").trim().toLowerCase();
+  const normalizedStatus = rawStatus.includes("sign") || rawStatus.includes("success") || rawStatus.includes("complete")
+    ? "signed"
+    : rawStatus.includes("fail") || rawStatus.includes("reject") || rawStatus.includes("error")
+      ? "failed"
+      : rawStatus || "received";
+
+  await db.execute(
+    `UPDATE employee_document_esign_transaction
+        SET status = ?,
+            response_payload = ?,
+            error_message = CASE WHEN ? = 'failed' THEN ? ELSE error_message END,
+            completed_at = CASE WHEN ? IN ('signed', 'failed') THEN NOW() ELSE completed_at END,
+            updated_at = NOW()
+      WHERE id = ?`,
+    [
+      normalizedStatus,
+      JSON.stringify(payload),
+      normalizedStatus,
+      normalizedStatus === "failed" ? String(payload.message ?? payload.error_message ?? payload.error ?? "Provider callback reported failure") : null,
+      normalizedStatus,
+      tx.id,
+    ],
+  );
+
+  if (normalizedStatus === "signed") {
+    const checklist = await fetchChecklistRow(String(tx.checklist_id));
+    if (!checklist) {
+      const err = new Error("Checklist item not found for eSign webhook") as Error & { statusCode?: number };
+      err.statusCode = 404;
+      throw err;
+    }
+    const signerName = String(payload.signer_name ?? payload.signerName ?? payload.employee_name ?? "Employee").trim() || "Employee";
+    return {
+      matched: true,
+      processed: true,
+      result: await finalizeChecklistEsign({
+        checklist,
+        signerName,
+        signerRemarks: String(payload.remarks ?? payload.comment ?? "").trim() || null,
+        transactionId: tx.id,
+        actorType: "system",
+        actionType: "LUCKPAY_WEBHOOK_ESIGN_COMPLETED",
+        ipAddress: input.ipAddress ?? null,
+        userAgent: input.userAgent ?? null,
+      }),
+    };
+  }
+
+  const checklist = await fetchChecklistRow(String(tx.checklist_id));
+  if (checklist && normalizedStatus === "failed") {
+    await db.execute(
+      `UPDATE employee_joining_document_checklist
+          SET fill_status = 'esign_failed',
+              status = 'esign_failed',
+              updated_at = NOW()
+        WHERE id = ?`,
+      [checklist.id],
+    );
+    await auditDocumentAction({
+      employeeId: checklist.employee_id,
+      candidateId: checklist.candidate_id ?? null,
+      checklistId: checklist.id,
+      documentCode: checklist.document_code,
+      actionType: "LUCKPAY_WEBHOOK_ESIGN_FAILED",
+      actorType: "system",
+      remarks: String(payload.message ?? payload.error_message ?? payload.error ?? "Provider callback failure"),
+      newValue: { transactionId: tx.id, providerReferenceId: providerReferenceId || null },
+      ipAddress: input.ipAddress ?? null,
+      userAgent: input.userAgent ?? null,
+    });
+  }
+
+  return { matched: true, processed: true, status: normalizedStatus };
 }
 
 export async function listEmployeeJoiningDocumentAudit(employeeId: string, userId: string) {

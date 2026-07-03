@@ -16,13 +16,19 @@ import {
   completePublicJoiningDocumentEsign,
   createJoiningDocumentEsignRequest,
   createPublicTokenForEpfReview,
+  deleteJoiningDocumentFile,
+  generateJoiningDocumentChecklist,
+  getChecklistDocumentFileForAccess,
   getJoiningDocumentFileForAccess,
+  getJoiningDocumentEsignStatus,
   getPublicJoiningDocumentDraftFile,
   getJoiningDocumentPack,
   getPublicJoiningDocumentEsignSession,
+  handleJoiningDocumentEsignWebhook,
   listJoiningDocumentTemplates,
   resolveEmployeeDocumentAccessContext,
   reviewJoiningDocument,
+  updateJoiningDocumentChecklistStatus,
   upsertJoiningDocumentTemplate,
   uploadJoiningDocument,
 } from "./employeeJoiningDocuments.service.js";
@@ -430,6 +436,16 @@ async function getEpfCompliancePack(employeeId: string, actorUserId: string) {
 }
 
 export const employeeJoiningDocumentsRouter = Router();
+
+employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/esign/webhook/luckpay", h(async (req, res) => {
+  const data = await handleJoiningDocumentEsignWebhook({
+    payload: (req.body ?? {}) as Record<string, unknown>,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data });
+}));
+
 employeeJoiningDocumentsRouter.use(requireAuth);
 
 employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents", h(async (req: AuthenticatedRequest, res) => {
@@ -437,7 +453,25 @@ employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents", h(async (re
   return res.json({ success: true, data });
 }));
 
+employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/generate-checklist", h(async (req: AuthenticatedRequest, res) => {
+  const data = await generateJoiningDocumentChecklist(req.params.employeeId, req.authUser!.id);
+  return res.status(201).json({ success: true, data });
+}));
+
 employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/checklist/:checklistId/upload", upload.single("file"), h(async (req: AuthenticatedRequest, res) => {
+  if (!req.file) return res.status(400).json({ success: false, message: "file is required" });
+  const data = await uploadJoiningDocument({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    file: req.file,
+    actorUserId: req.authUser!.id,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.status(201).json({ success: true, data });
+}));
+
+employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/:checklistId/upload", upload.single("file"), h(async (req: AuthenticatedRequest, res) => {
   if (!req.file) return res.status(400).json({ success: false, message: "file is required" });
   const data = await uploadJoiningDocument({
     employeeId: req.params.employeeId,
@@ -467,7 +501,50 @@ employeeJoiningDocumentsRouter.patch("/:employeeId/joining-documents/checklist/:
   return res.json({ success: true, data });
 }));
 
+employeeJoiningDocumentsRouter.patch("/:employeeId/joining-documents/:checklistId/verify", h(async (req: AuthenticatedRequest, res) => {
+  const decision = String(req.body.decision ?? "verified");
+  if (decision !== "verified" && decision !== "needs_correction") {
+    return res.status(400).json({ success: false, message: "decision must be verified or needs_correction" });
+  }
+  const data = await reviewJoiningDocument({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+    decision,
+    remarks: req.body.remarks ?? null,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data });
+}));
+
+employeeJoiningDocumentsRouter.patch("/:employeeId/joining-documents/:checklistId/status", h(async (req: AuthenticatedRequest, res) => {
+  const status = String(req.body?.status ?? "").trim();
+  if (!status) return res.status(400).json({ success: false, message: "status is required" });
+  const data = await updateJoiningDocumentChecklistStatus({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+    status,
+    remarks: req.body?.remarks ?? null,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data });
+}));
+
 employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/checklist/:checklistId/esign-link", h(async (req: AuthenticatedRequest, res) => {
+  const data = await createJoiningDocumentEsignRequest({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data });
+}));
+
+employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/:checklistId/esign/initiate", h(async (req: AuthenticatedRequest, res) => {
   const data = await createJoiningDocumentEsignRequest({
     employeeId: req.params.employeeId,
     checklistId: req.params.checklistId,
@@ -504,6 +581,34 @@ employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/files/:fileId
   fs.createReadStream(file.storagePath).pipe(res);
 }));
 
+employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/:checklistId/preview", h(async (req: AuthenticatedRequest, res) => {
+  const file = await getChecklistDocumentFileForAccess({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+    action: "preview",
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  res.setHeader("Content-Type", file.mimeType);
+  res.setHeader("Content-Disposition", `inline; filename="${file.fileName.replace(/"/g, "")}"`);
+  fs.createReadStream(file.storagePath).pipe(res);
+}));
+
+employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/:checklistId/download", h(async (req: AuthenticatedRequest, res) => {
+  const file = await getChecklistDocumentFileForAccess({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+    action: "download",
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  res.setHeader("Content-Type", file.mimeType);
+  res.setHeader("Content-Disposition", `attachment; filename="${file.fileName.replace(/"/g, "")}"`);
+  fs.createReadStream(file.storagePath).pipe(res);
+}));
+
 employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/checklist/:checklistId/review", h(async (req: AuthenticatedRequest, res) => {
   await resolveEmployeeDocumentAccessContext(req.authUser!.id, req.params.employeeId);
   await synchronizeChecklistFieldValues(req.params.checklistId, req.authUser!.id);
@@ -526,6 +631,27 @@ employeeJoiningDocumentsRouter.put("/:employeeId/joining-documents/checklist/:ch
 employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/checklist/:checklistId/generate-draft", h(async (req: AuthenticatedRequest, res) => {
   await resolveEmployeeDocumentAccessContext(req.authUser!.id, req.params.employeeId);
   const data = await generateChecklistDraft(req.params.checklistId, req.authUser!.id);
+  return res.json({ success: true, data });
+}));
+
+employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/:checklistId/esign/status", h(async (req: AuthenticatedRequest, res) => {
+  const data = await getJoiningDocumentEsignStatus({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+  });
+  return res.json({ success: true, data });
+}));
+
+employeeJoiningDocumentsRouter.delete("/:employeeId/joining-documents/:checklistId/files/:fileId", h(async (req: AuthenticatedRequest, res) => {
+  const data = await deleteJoiningDocumentFile({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    fileId: req.params.fileId,
+    actorUserId: req.authUser!.id,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
   return res.json({ success: true, data });
 }));
 
@@ -903,6 +1029,17 @@ publicEmployeeDocumentRouter.post("/esign/:token", h(async (req, res) => {
     return res.json({ success: true, data });
   }
   return res.status(400).json({ success: false, message: "Unsupported action" });
+}));
+
+publicEmployeeDocumentRouter.post("/esign/:token/start", h(async (req, res) => {
+  const data = await completePublicJoiningDocumentEsign({
+    publicToken: req.params.token,
+    signerName: String(req.body?.signer_name ?? req.body?.actor_name ?? "Employee"),
+    signerRemarks: req.body?.comment ?? null,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data });
 }));
 
 export const payrollEpfComplianceRouter = Router();

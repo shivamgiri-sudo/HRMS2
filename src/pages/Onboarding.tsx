@@ -269,7 +269,9 @@ const Onboarding = () => {
     const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
     // Legacy URLs or full URLs — use as-is
     const isLegacyUrl = filePath.startsWith("https://") || filePath.startsWith("http://");
-    return isLegacyUrl ? filePath : `${HRMS_API}/api/files/employee-documents/${filePath}`;
+    if (isLegacyUrl) return filePath;
+    if (filePath.startsWith("/api/")) return `${HRMS_API}${filePath}`;
+    return `${HRMS_API}/api/files/employee-documents/${filePath}`;
   };
 
   const handleViewDocument = async (filePath: string) => {
@@ -280,7 +282,10 @@ const Onboarding = () => {
   };
 
   const handleDownloadDocument = async (filePath: string, fileName: string) => {
-    const url = getDocumentUrl(filePath);
+    let url = getDocumentUrl(filePath);
+    if (url?.includes("/api/ats/onboarding-full/documents/preview/")) {
+      url = url.replace("/documents/preview/", "/documents/").replace(/(\?[^#]*)?$/, (match) => `/download${match || ""}`);
+    }
     if (url) {
       const link = document.createElement('a');
       link.href = url;

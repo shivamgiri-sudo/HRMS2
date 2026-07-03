@@ -202,7 +202,7 @@ app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
 
 // Serve all uploaded files (candidate files, offer letters, etc.)
 // Files are stored under <cwd>/uploads/<category>/ and referenced as /uploads/<category>/<filename>
-// NOTE: /uploads/onboarding is NOT served here — onboarding docs use secure preview/download endpoints only.
+// NOTE: onboarding docs are not served directly from the public uploads mount.
 const uploadsPath = path.resolve(process.cwd(), "uploads");
 app.use("/uploads", (req, res, next) => {
   // Block direct access to onboarding documents — they must go through secure endpoints

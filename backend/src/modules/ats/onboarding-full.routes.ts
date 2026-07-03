@@ -62,7 +62,7 @@ const candidateSubmitLimiter = rateLimit({
 });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const uploadDir = path.resolve(__dirname, "../../../uploads/onboarding");
+const uploadDir = path.resolve(__dirname, "../../../private-storage/onboarding-documents");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 const upload = multer({
   storage: multer.diskStorage({
