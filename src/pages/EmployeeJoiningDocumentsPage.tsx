@@ -21,7 +21,8 @@ type ChecklistItem = {
   latest_file_mime: string | null;
   latest_esign_status: string | null;
   latest_esign_url: string | null;
-  public_token: string | null;
+  publicTokenIssued: number;
+  public_token_status: string | null;
   public_token_expires_at: string | null;
   verification_status: string | null;
   verification_remarks: string | null;
@@ -283,7 +284,7 @@ export default function EmployeeJoiningDocumentsPage() {
                         <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
                           <p>Latest file: <span className="font-semibold text-slate-700">{item.latest_file_name || "Not generated yet"}</span></p>
                           <p>Verification: <span className="font-semibold text-slate-700">{statusText(item.verification_status || "pending")}</span></p>
-                          <p>Employee link: <span className="font-semibold text-slate-700">{item.public_token ? "Issued" : "Not issued"}</span></p>
+                          <p>Employee link: <span className="font-semibold text-slate-700">{item.publicTokenIssued ? "Issued" : "Not issued"}</span></p>
                           <p>eSign: <span className="font-semibold text-slate-700">{statusText(item.latest_esign_status || "not_started")}</span></p>
                         </div>
                       </div>

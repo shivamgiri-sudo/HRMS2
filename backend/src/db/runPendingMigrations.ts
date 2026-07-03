@@ -232,6 +232,7 @@ const MIGRATION_MANIFEST: string[] = [
   "347_epf_digital_compliance_pack.sql",
   "348_universal_digital_form_fill_engine.sql",
   "349_joining_document_actor_alignment.sql",
+  "350_joining_document_public_token_hash_only.sql",
 ];
 
 export type MigrationHealth = {

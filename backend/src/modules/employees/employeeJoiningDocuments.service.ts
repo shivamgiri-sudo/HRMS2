@@ -41,9 +41,9 @@ export type JoiningChecklistItem = {
   latest_file_mime: string | null;
   latest_esign_status: string | null;
   latest_esign_url: string | null;
-  public_token: string | null;
   public_token_status: string | null;
   public_token_expires_at: string | null;
+  publicTokenIssued: number;
   analysis_result_json: unknown;
 };
 
@@ -97,7 +97,6 @@ type LatestFileRow = {
 };
 
 type ESignSession = {
-  token: string;
   checklist_id: string;
   employee_id: string;
   document_code: string;
@@ -638,9 +637,9 @@ async function getChecklistBundle(employeeId: string): Promise<JoiningChecklistI
         lf.mime_type AS latest_file_mime,
         tx.status AS latest_esign_status,
         tx.provider_url AS latest_esign_url,
-        tok.public_token,
         tok.token_status AS public_token_status,
-        tok.expires_at AS public_token_expires_at
+        tok.expires_at AS public_token_expires_at,
+        CASE WHEN tok.token_status IS NOT NULL THEN 1 ELSE 0 END AS publicTokenIssued
        FROM employee_joining_document_checklist c
        LEFT JOIN employee_joining_document_file lf
          ON lf.id = (
@@ -974,14 +973,13 @@ export async function createJoiningDocumentEsignRequest(params: {
   await db.execute(
     `INSERT INTO employee_joining_document_public_token
        (id, checklist_id, employee_id, candidate_id, document_code, public_token, public_token_hash, token_status, expires_at, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, NULL, ?, 'active', ?, ?)`,
     [
       randomUUID(),
       checklist.id,
       checklist.employee_id,
       checklist.candidate_id ?? null,
       checklist.document_code,
-      publicToken,
       publicTokenHash,
       nowPlusDays(7),
       params.actorUserId,
@@ -1339,7 +1337,6 @@ export async function upsertJoiningDocumentTemplate(params: {
 export async function getPublicJoiningDocumentEsignSession(publicToken: string): Promise<ESignSession> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
-        tok.public_token AS token,
         tok.public_token_hash,
         tok.checklist_id,
         tok.employee_id,
@@ -1363,9 +1360,8 @@ export async function getPublicJoiningDocumentEsignSession(publicToken: string):
             LIMIT 1
          )
        WHERE tok.public_token_hash = SHA2(?, 256)
-          OR tok.public_token = ?
        LIMIT 1`,
-    [publicToken, publicToken],
+    [publicToken],
   );
   const row = (rows as unknown as ESignSession[])[0];
   if (!row) {
@@ -1386,9 +1382,8 @@ export async function getPublicJoiningDocumentEsignSession(publicToken: string):
   await db.execute(
     `UPDATE employee_joining_document_public_token
         SET last_started_at = NOW()
-      WHERE public_token_hash = SHA2(?, 256)
-         OR public_token = ?`,
-    [publicToken, publicToken],
+      WHERE public_token_hash = SHA2(?, 256)`,
+    [publicToken],
   );
   await auditDocumentAction({
     employeeId: row.employee_id,
@@ -1423,7 +1418,6 @@ export async function getJoiningDocumentEsignStatus(params: {
         tx.error_message,
         tx.initiated_at,
         tx.completed_at,
-        tok.public_token,
         tok.token_status,
         tok.expires_at
        FROM employee_joining_document_checklist c
@@ -1464,9 +1458,9 @@ export async function getJoiningDocumentEsignStatus(params: {
           completed_at: row.completed_at ?? null,
         }
       : null,
-    public_token: row?.public_token ?? null,
     public_token_status: row?.token_status ?? null,
     public_token_expires_at: row?.expires_at ?? null,
+    publicTokenIssued: Boolean(row?.token_status),
   };
 }
 
@@ -1561,9 +1555,8 @@ async function finalizeChecklistEsign(params: {
       `UPDATE employee_joining_document_public_token
           SET token_status = 'consumed',
               consumed_at = NOW()
-        WHERE public_token_hash = ?
-           OR public_token = ?`,
-      [publicTokenHash, params.publicToken],
+        WHERE public_token_hash = ?`,
+      [publicTokenHash],
     );
   }
 
@@ -1814,8 +1807,8 @@ export async function createPublicTokenForEpfReview(params: {
   await db.execute(
     `INSERT INTO employee_joining_document_public_token
        (id, checklist_id, employee_id, candidate_id, document_code, public_token, public_token_hash, token_status, expires_at, created_by)
-     VALUES (?, ?, ?, ?, 'EPF_DECLARATION', ?, ?, 'active', ?, ?)`,
-    [randomUUID(), checklist.id, checklist.employee_id, checklist.candidate_id ?? null, publicToken, publicTokenHash, nowPlusDays(7), params.actorUserId],
+     VALUES (?, ?, ?, ?, 'EPF_DECLARATION', NULL, ?, 'active', ?, ?)`,
+    [randomUUID(), checklist.id, checklist.employee_id, checklist.candidate_id ?? null, publicTokenHash, nowPlusDays(7), params.actorUserId],
   );
 
   await auditDocumentAction({

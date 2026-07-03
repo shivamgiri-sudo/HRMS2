@@ -824,14 +824,15 @@ export async function employeeReviewChecklistByToken(params: {
   ipAddress?: string | null;
   userAgent?: string | null;
 }) {
+  const publicTokenHash = createHash("sha256").update(String(params.publicToken ?? "").trim()).digest("hex");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT checklist_id, employee_id, document_code
        FROM employee_joining_document_public_token
-      WHERE public_token = ?
+      WHERE public_token_hash = ?
         AND token_status = 'active'
         AND expires_at > NOW()
       LIMIT 1`,
-    [params.publicToken],
+    [publicTokenHash],
   );
   const tokenRow = rows[0];
   if (!tokenRow) {

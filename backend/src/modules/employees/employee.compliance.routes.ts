@@ -971,7 +971,7 @@ publicEmployeeDocumentRouter.post("/esign/:token", h(async (req, res) => {
            FROM employee_epf_compliance_profile p
           WHERE p.employee_id = ?`,
         [
-          req.params.token,
+          hashIdentifier(req.params.token),
           EPF_REVIEW_CONSENT_TEXT,
           req.ip,
           req.get("user-agent") ?? null,

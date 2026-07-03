@@ -2,6 +2,9 @@ import express from "express";
 import request from "supertest";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { db } from "../src/db/mysql.js";
+import { hashIdentifier } from "../src/modules/employees/employeeCompliancePrivacy.js";
+
 const employeeJoiningDocumentsServiceMocks = vi.hoisted(() => ({
   createJoiningDocumentEsignRequest: vi.fn(),
   createPublicTokenForEpfReview: vi.fn(),
@@ -60,6 +63,7 @@ vi.mock("../src/modules/employees/epfComplianceValidation.service.js", () => ({
 }));
 
 process.env.LUCKPAY_WEBHOOK_SECRET = "shared-secret";
+const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 
 let publicEmployeeDocumentRouter: Awaited<typeof import("../src/modules/employees/employee.compliance.routes.js")>["publicEmployeeDocumentRouter"];
 
@@ -70,6 +74,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockExecute.mockResolvedValue([[], []]);
 });
 
 function buildApp() {
@@ -126,5 +131,34 @@ describe("public employee document eSign routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.data.provider_url).toBe("https://luckpay.example/esign");
     expect(res.body.data.tx_status).toBe("initiated");
+  });
+
+  it("stores hashed EPF consent tokens instead of raw tokens", async () => {
+    employeeJoiningDocumentsServiceMocks.getPublicJoiningDocumentEsignSession.mockResolvedValueOnce({
+      checklist_id: "check-1",
+      employee_id: "emp-1",
+      document_code: "EPF_DECLARATION",
+      document_name: "EPF Declaration",
+      employee_name: "Employee One",
+      employee_code: "EMP001",
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      token_status: "active",
+      provider_url: null,
+      tx_status: null,
+    });
+    universalFormFillMocks.employeeReviewChecklistByToken.mockResolvedValueOnce({ success: true });
+
+    const app = buildApp();
+    const token = "review-token-123";
+
+    const res = await request(app)
+      .post(`/api/public/employee-documents/esign/${token}`)
+      .send({ action: "confirm", record_epf_consent: true, actor_name: "Test Employee" });
+
+    expect(res.status).toBe(200);
+    const consentInsert = mockExecute.mock.calls.find((call) => String(call[0]).includes("INSERT INTO employee_epf_consent_receipt"));
+    expect(consentInsert).toBeDefined();
+    expect(consentInsert?.[1]?.[0]).toBe(hashIdentifier(token));
+    expect(consentInsert?.[1]?.[0]).not.toBe(token);
   });
 });
