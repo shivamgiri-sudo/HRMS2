@@ -7,6 +7,39 @@ const router = Router();
 const h = (fn: any) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 /**
+ * Format a Date as "YYYY-MM-DD HH:mm:ss" in IST (Asia/Kolkata).
+ * This is used INSTEAD of passing Date objects to mysql2 to avoid
+ * timezone-dependent serialization. Passing a Date object lets mysql2
+ * format it using the OS local timezone, which differs between servers.
+ * An explicit IST string ensures the DB stores the correct wall-clock time.
+ */
+function fmtISTDatetime(dt: Date): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(dt);
+  const get = (t: string) => parts.find(p => p.type === t)!.value;
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
+}
+
+/**
+ * Parses event_datetime from COSEC, tagging IST offset if no timezone is present.
+ * COSEC sends ISO 8601 without timezone (e.g. "2026-07-04T10:15:04").
+ * Without a timezone suffix, JS's `new Date()` treats it as UTC,
+ * which causes mysql2 (with timezone:'local' = IST) to store IST+5:30 = 15:45.
+ * We add +05:30 explicitly so JS parses it correctly as IST.
+ */
+function parseCosecEventDatetime(raw: string): Date | null {
+  const trimmed = raw.trim();
+  const hasTimezone = /[+-]\d{2}:\d{2}$/.test(trimmed) || trimmed.endsWith('Z');
+  const isoStr = hasTimezone ? trimmed : trimmed.endsWith('Z') ? trimmed : trimmed + '+05:30';
+  const d = new Date(isoStr);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/**
  * POST /api/wfm/biometric-punch
  *
  * Live webhook — Matrix Cosec calls this on every punch event.
@@ -29,11 +62,13 @@ router.post(
       return res.status(400).json({ error: 'user_id and event_datetime are required' });
     }
 
-    const punchTime = new Date(event_datetime);
-    if (isNaN(punchTime.getTime())) {
+    const punchTime = parseCosecEventDatetime(event_datetime);
+    if (!punchTime) {
       return res.status(400).json({ error: 'Invalid event_datetime — use ISO 8601 format' });
     }
 
+    // Format as IST string for DB storage — explicit, timezone-independent
+    const punchTimeIST = fmtISTDatetime(punchTime);
     const punchDate = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Kolkata',
       year: 'numeric',
@@ -61,6 +96,8 @@ router.post(
     const emp = (empInfo[0] as any) ?? {};
 
     // Store one deduplicated biometric row per employee/date.
+    // Uses punchTimeIST (explicit IST string) instead of the Date object to
+    // avoid timezone-dependent serialization by mysql2.
     await db.execute(`
       INSERT INTO integration_biometric_daily
         (id, integration_key, source_table, employee_code, activity_date,
@@ -78,7 +115,7 @@ router.post(
           )
         ),
         updated_at = NOW()
-    `, [emp.employee_code, punchDate, punchTime, punchTime]);
+    `, [emp.employee_code, punchDate, punchTimeIST, punchTimeIST]);
 
     const [logRow] = await db.execute<RowDataPacket[]>(
       `SELECT first_punch, last_punch, biometric_minutes

@@ -300,8 +300,17 @@ router.post('/clock-in', h(async (req: AuthenticatedRequest, res: Response) => {
 
   const { work_mode, latitude, longitude, location_name } = req.body;
   const nowDate = new Date();
-  const today = nowDate.toISOString().slice(0, 10);
-  const now   = nowDate.toISOString();
+  // Use explicit IST format instead of .toISOString() (UTC) to avoid depending
+  // on MySQL session timezone for DATETIME conversion.
+  const nowIST = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(nowDate);
+  const g = (t: string) => nowIST.find(p => p.type === t)!.value;
+  const today = `${g('year')}-${g('month')}-${g('day')}`;
+  const now   = `${g('year')}-${g('month')}-${g('day')} ${g('hour')}:${g('minute')}:${g('second')}`;
   const id = randomUUID();
   const [existing] = await db.execute<RowDataPacket[]>(
     'SELECT id FROM attendance_daily_record WHERE employee_id = ? AND record_date = ? LIMIT 1',
@@ -351,12 +360,20 @@ router.post('/clock-out', h(async (req: AuthenticatedRequest, res: Response) => 
     return res.status(403).json({ success: false, error: 'Forbidden: record does not belong to you' });
   }
 
-  const now = new Date().toISOString();
+  const nowDate = new Date();
+  const now = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(nowDate);
+  const g = (t: string) => now.find(p => p.type === t)!.value;
+  const nowStr = `${g('year')}-${g('month')}-${g('day')} ${g('hour')}:${g('minute')}:${g('second')}`;
   await db.execute(
     `UPDATE attendance_daily_record
      SET clock_out_time = ?, clock_out_lat = ?, clock_out_lng = ?, clock_out_location = ?
      WHERE id = ?`,
-    [now, latitude ?? null, longitude ?? null, location_name ?? null, record_id]
+    [nowStr, latitude ?? null, longitude ?? null, location_name ?? null, record_id]
   );
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT adr.*,
