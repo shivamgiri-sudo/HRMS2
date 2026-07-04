@@ -249,15 +249,40 @@ export async function getSubmissionHistory(recruiterCode?: string | null, _roste
   return rows;
 }
 
-export async function getRecruiterDailyStats(recruiterName: string): Promise<Record<string, unknown>> {
+export async function getRecruiterDailyStats(
+  recruiterName: string,
+  recruiterCode?: string | null,
+): Promise<Record<string, unknown>> {
+  const filters: string[] = [];
+  const params: unknown[] = [];
+
+  if (recruiterCode) {
+    filters.push("s.recruiter_code = ?");
+    params.push(recruiterCode);
+  }
+
+  if (recruiterName) {
+    filters.push(`EXISTS (
+      SELECT 1
+      FROM ats_candidate c
+      WHERE c.id = s.candidate_id
+        AND COALESCE(c.recruiter_assigned_name, c.recruiter_name) = ?
+    )`);
+    params.push(recruiterName);
+  }
+
+  if (filters.length === 0) {
+    return { total_submissions: 0, selected_count: 0, rejected_count: 0 };
+  }
+
   const [rows] = await db.execute<DailyStatsRow[]>(
     `SELECT
        COUNT(*) AS total_submissions,
-       SUM(CASE WHEN final_decision = 'Selected' THEN 1 ELSE 0 END) AS selected_count,
-       SUM(CASE WHEN final_decision = 'Rejected' THEN 1 ELSE 0 END) AS rejected_count
-     FROM ats_interview_submission
-     WHERE recruiter_name = ? AND DATE(submitted_at) = CURDATE()`,
-    [recruiterName],
+       SUM(CASE WHEN s.final_decision = 'Selected' THEN 1 ELSE 0 END) AS selected_count,
+       SUM(CASE WHEN s.final_decision = 'Rejected' THEN 1 ELSE 0 END) AS rejected_count
+     FROM ats_interview_submission s
+     WHERE (${filters.join(" OR ")}) AND DATE(s.submitted_at) = CURDATE()`,
+    params,
   );
   return rows[0] ?? { total_submissions: 0, selected_count: 0, rejected_count: 0 };
 }

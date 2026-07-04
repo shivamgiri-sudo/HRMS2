@@ -34,11 +34,16 @@ async function logEmail(
   status: 'sent' | 'failed' | 'skipped',
   error?: string,
 ) {
-  await db.execute(
-    `INSERT INTO ats_email_log (id, candidate_id, email_type, sent_to, status, error_message)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [randomUUID(), candidateId, type, sentTo, status, error ?? null],
-  );
+  try {
+    await db.execute(
+      `INSERT INTO ats_email_log (id, candidate_id, email_type, sent_to, status, error_message)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [randomUUID(), candidateId, type, sentTo, status, error ?? null],
+    );
+  } catch (logError: unknown) {
+    const message = logError instanceof Error ? logError.message : String(logError);
+    console.warn(`[ATS-EMAIL] failed to log ${type} email for ${candidateId}: ${message}`);
+  }
 }
 
 async function send(

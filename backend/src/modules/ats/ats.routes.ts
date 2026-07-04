@@ -336,14 +336,16 @@ atsRouter.get("/recruiter/daily-stats", requireRole("admin", "hr", "super_admin"
   const userRoles = (req.userRoles ?? []) as string[];
   const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
   let recruiterName: string | undefined;
+  let recruiterCode: string | null = null;
   if (isPrivileged && req.query.recruiterName) {
     recruiterName = String(req.query.recruiterName).trim();
   } else {
     const profile = await resolveRecruiterForActor(req.authUser!.id);
     if (!profile) return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
     recruiterName = profile.name;
+    recruiterCode = profile.recruiterCode ?? null;
   }
-  const stats = await getRecruiterDailyStats(recruiterName!);
+  const stats = await getRecruiterDailyStats(recruiterName!, recruiterCode);
   return res.json({ success: true, data: stats });
 }));
 

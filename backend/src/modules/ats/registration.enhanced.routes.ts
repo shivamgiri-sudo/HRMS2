@@ -53,6 +53,20 @@ interface CandidateCodeRow extends RowDataPacket {
   candidate_code: string | null;
 }
 
+interface ExistingCandidateRow extends RowDataPacket {
+  id: string;
+  candidate_code: string | null;
+  current_stage: string | null;
+  profile_status: string | null;
+  employee_code: string | null;
+}
+
+interface ExistingTokenRow extends RowDataPacket {
+  id: string;
+  token_number: string | null;
+  recruiter_id: string | null;
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -74,6 +88,15 @@ function getErrorStatus(error: unknown): number {
   }
 
   return 500;
+}
+
+function normalizeSourceChannel(source: string | null | undefined): string {
+  const value = String(source ?? "").trim();
+  if (!value) return "Walk-In";
+  const lowered = value.toLowerCase();
+  if (lowered === "walk-in" || lowered === "walk in" || lowered === "walkin") return "Walk-In";
+  if (lowered === "reference" || lowered === "referral" || lowered === "employee referral") return "Reference";
+  return value;
 }
 
 // ── 1. Get branch aliases (display names) ─────────────────────────────────────
@@ -121,6 +144,7 @@ const enhancedRegistrationSchema = z.object({
   branchDisplayName: z.string().min(1),
   preferredRecruiterId: z.string().uuid().optional(),
   recruiterName: z.string().optional(), // fallback when UUID not available
+  referredBy: z.string().trim().nullable().optional(),
   roleApplied: z.string().min(1),
   address: z.string().optional(),
   education: z.string().min(1),
@@ -151,34 +175,125 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
     }
 
     const branchName = branchData.canonical_key;
+    const sourceChannel = normalizeSourceChannel(input.sourcingChannel);
+    const autoAssign = sourceChannel === "Walk-In" || sourceChannel === "Reference";
+    const walkInDate = new Date().toISOString().slice(0, 10);
 
-    // 2. Create through the canonical service so duplicate checks, candidate
-    // codes, normalized source values, and the first journey event stay aligned.
-    const candidate = await atsService.createCandidate({
-      fullName: input.name,
-      mobile: input.mobile,
-      email: input.email ?? null,
-      gender: input.gender ?? null,
-      dateOfBirth: input.dateOfBirth ?? null,
-      education: input.education,
-      experience: input.experience,
-      appliedForProcess: input.roleApplied,
-      appliedForRole: input.roleApplied,
-      appliedForBranch: branchName,
-      sourcingChannel: input.sourcingChannel,
-      walkInDate: new Date().toISOString().slice(0, 10),
-      address: input.address ?? null,
-      preferredShift: input.preferredShift ?? null,
-      profileStatus: "registered",
-    }, null);
-    const candidateId = candidate.id;
+    // 2. Reuse the ATS candidate when hiring-entry/calling created the lead first.
+    // Candidate registration is the walk-in continuation of that same person, not a brand-new record.
+    const [existingCandidateRows] = await db.execute<ExistingCandidateRow[]>(
+      `SELECT id, candidate_code, current_stage, profile_status, employee_code
+       FROM ats_candidate
+       WHERE mobile = ? AND active_status = 1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [input.mobile]
+    );
+    const existingCandidate = existingCandidateRows[0] ?? null;
+
+    if (existingCandidate && (existingCandidate.employee_code || existingCandidate.profile_status === "onboarded")) {
+      return res.status(409).json({
+        success: false,
+        message: "This mobile is already linked to an onboarded candidate",
+      });
+    }
+
+    let candidateId: string;
+    if (existingCandidate) {
+      await db.execute(
+        `UPDATE ats_candidate
+         SET full_name = ?,
+             email = ?,
+             gender = ?,
+             date_of_birth = ?,
+             applied_for_process = ?,
+             applied_for_role = ?,
+             role_applied = ?,
+             applied_for_branch = ?,
+             branch_display_name = ?,
+             sourcing_channel = ?,
+             referred_by = ?,
+             walk_in_date = ?,
+             address = ?,
+             education = ?,
+             experience = ?,
+             rotational_shift = ?,
+             preferred_shift = ?,
+             night_shift_ok = ?,
+             leaves_in_3months = ?,
+             owns_two_wheeler = ?,
+             id_proof_available = ?,
+             education_proof_available = ?,
+             profile_status = 'registered',
+             current_stage = CASE
+               WHEN current_stage IS NULL OR current_stage IN ('Applied', 'New', 'Screening')
+               THEN 'Arrived'
+               ELSE current_stage
+             END,
+             updated_at = NOW()
+         WHERE id = ?`,
+        [
+          input.name,
+          input.email ?? null,
+          input.gender ?? null,
+          input.dateOfBirth ?? null,
+          input.roleApplied,
+          input.roleApplied,
+          input.roleApplied,
+          branchName,
+          input.branchDisplayName,
+          sourceChannel,
+          input.referredBy ?? null,
+          walkInDate,
+          input.address ?? null,
+          input.education,
+          input.experience,
+          input.rotationalShift ?? null,
+          input.preferredShift ?? null,
+          input.nightShiftOk ?? null,
+          input.leavesIn3months ?? null,
+          input.ownsTwoWheeler ?? null,
+          input.idProofAvailable ?? null,
+          input.educationProofAvailable ?? null,
+          existingCandidate.id,
+        ]
+      );
+      candidateId = existingCandidate.id;
+    } else {
+      const candidate = await atsService.createCandidate({
+        fullName: input.name,
+        mobile: input.mobile,
+        email: input.email ?? null,
+        gender: input.gender ?? null,
+        dateOfBirth: input.dateOfBirth ?? null,
+        education: input.education,
+        experience: input.experience,
+        appliedForProcess: input.roleApplied,
+        appliedForRole: input.roleApplied,
+        appliedForBranch: branchName,
+        sourcingChannel: sourceChannel,
+        walkInDate,
+        address: input.address ?? null,
+        preferredShift: input.preferredShift ?? null,
+        profileStatus: "registered",
+      }, null);
+      candidateId = candidate.id;
+    }
 
     // Resolve preferred recruiter to a roster UUID.
     // preferredRecruiterId is an employee UUID (sent by both old and enhanced forms).
     // Fallback: look up by employee name → find employee → ensureRecruiterInRoster.
     let resolvedRecruiterId: string | null = null;
 
-    if (input.preferredRecruiterId) {
+    if (autoAssign) {
+      const availableRecruiters = await getAvailableRecruiters(branchName);
+      if (availableRecruiters.length > 0) {
+        const pick = availableRecruiters[Math.floor(Math.random() * availableRecruiters.length)];
+        resolvedRecruiterId = pick.id;
+      }
+    }
+
+    if (!resolvedRecruiterId && input.preferredRecruiterId && !autoAssign) {
       // Resolve employee UUID → roster UUID (idempotent upsert)
       const [empRows] = await db.execute<RecruiterEmployeeRow[]>(
         `SELECT e.id, e.first_name, e.last_name, e.mobile,
@@ -203,7 +318,7 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       }
     }
 
-    if (!resolvedRecruiterId && input.recruiterName) {
+    if (!resolvedRecruiterId && input.recruiterName && !autoAssign) {
       // Fallback: look up by name — try roster first, then employees
       const [rosterRows] = await db.execute<RecruiterIdRow[]>(
         `SELECT r.id FROM ats_recruiter_roster r
@@ -243,9 +358,16 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
 
     await db.execute(
       `UPDATE ats_candidate
-       SET branch_display_name = ?, preferred_recruiter_id = ?, recruiter_name = ?
+       SET branch_display_name = ?, preferred_recruiter_id = ?, recruiter_name = ?, referred_by = ?, sourcing_channel = ?
        WHERE id = ?`,
-      [input.branchDisplayName, resolvedRecruiterId ?? null, input.recruiterName ?? null, candidateId]
+      [
+        input.branchDisplayName,
+        resolvedRecruiterId ?? null,
+        autoAssign ? null : input.recruiterName ?? null,
+        input.referredBy ?? null,
+        sourceChannel,
+        candidateId,
+      ]
     );
 
     // 4. Assign recruiter (smart assignment with fallback)
@@ -255,16 +377,57 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
     );
 
     // 5. Generate token if recruiter assigned
-    let tokenNumber = null;
+    let tokenNumber: string | null = null;
     if (assignmentResult.assignedRecruiterId) {
-      tokenNumber = await generateTokenNumber(branchName);
+      const [existingTokenRows] = await db.execute<ExistingTokenRow[]>(
+        `SELECT id, token_number, recruiter_id
+         FROM ats_queue_token
+         WHERE candidate_id = ?
+           AND (status = 'active' OR queue_status IN ('waiting', 'called', 'in_interview'))
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [candidateId]
+      );
+      const existingToken = existingTokenRows[0] ?? null;
+
+      if (existingToken) {
+        tokenNumber = existingToken.token_number ?? await generateTokenNumber(branchName);
+        await db.execute(
+          `UPDATE ats_queue_token
+           SET recruiter_id = ?,
+               branch_name = ?,
+               token_number = ?,
+               status = 'active',
+               queue_status = COALESCE(queue_status, 'waiting'),
+               updated_at = NOW()
+           WHERE id = ?`,
+          [assignmentResult.assignedRecruiterId, branchName, tokenNumber, existingToken.id]
+        );
+      } else {
+        tokenNumber = await generateTokenNumber(branchName);
+        await db.execute(
+          `INSERT INTO ats_queue_token (
+            id, candidate_id, token, arrival_time, current_stage, status,
+            branch_name, token_number, recruiter_id, queue_status
+          ) VALUES (UUID(), ?, UUID(), NOW(), 'Arrived', 'active', ?, ?, ?, 'waiting')`,
+          [candidateId, branchName, tokenNumber, assignmentResult.assignedRecruiterId]
+        );
+      }
 
       await db.execute(
-        `INSERT INTO ats_queue_token (
-          id, candidate_id, token, arrival_time, current_stage, status,
-          branch_name, token_number, recruiter_id, queue_status
-        ) VALUES (UUID(), ?, UUID(), NOW(), 'Arrived', 'active', ?, ?, ?, 'waiting')`,
-        [candidateId, branchName, tokenNumber, assignmentResult.assignedRecruiterId]
+        `UPDATE ats_candidate
+         SET q_token = ?,
+             status = 'Waiting',
+             current_stage = CASE
+               WHEN current_stage IS NULL OR current_stage IN ('Applied', 'New', 'Screening')
+               THEN 'Arrived'
+               ELSE current_stage
+             END,
+             created_date = COALESCE(created_date, ?),
+             created_time = COALESCE(created_time, TIME(?)),
+             updated_at = NOW()
+         WHERE id = ?`,
+        [tokenNumber, walkInDate, `${walkInDate} 09:00:00`, candidateId]
       );
     }
 

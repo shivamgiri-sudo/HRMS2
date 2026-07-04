@@ -8,8 +8,20 @@ type BranchAlias = {
   alias: string;
 };
 
+const WALKIN_OPTION_ID = "special:walkin";
+const REFERENCE_OPTION_ID = "special:reference";
+
 type RecruiterDetail = {
   name: string;
+  email: string | null;
+  mobile: string | null;
+};
+
+type RecruiterChoice = {
+  id: string;
+  label: string;
+  employee_code: string | null;
+  employee_id: string | null;
   email: string | null;
   mobile: string | null;
 };
@@ -25,6 +37,7 @@ type Bootstrap = {
   branchOptions: string[];
   branchAliases?: BranchAlias[];
   recruiterDetails?: RecruiterDetail[];
+  sourceOptions: string[];
   yesNoOptions: string[];
   preferredShiftOptions: string[];
   nightShiftComfortOptions: string[];
@@ -39,7 +52,10 @@ type CandidateFormData = {
   experience: string;
   gender: string;
   roleApplied: string;
+  sourceType: string;
   recruiterName: string;
+  recruiterId: string;
+  referredBy: string;
   branch: string;
   rotationalShift: string;
   preferredShift: string;
@@ -93,7 +109,10 @@ const EMPTY_FORM: CandidateFormData = {
   experience: "",
   gender: "",
   roleApplied: "",
+  sourceType: "Walk-In",
   recruiterName: "",
+  recruiterId: "",
+  referredBy: "",
   branch: "",
   rotationalShift: "",
   preferredShift: "",
@@ -115,6 +134,7 @@ const DEFAULT_BOOTSTRAP: Bootstrap = {
   recruiterOptions: [],
   branchOptions: [],
   branchAliases: [],
+  sourceOptions: ["Walk-In", "Reference", "Other"],
   yesNoOptions: ["Yes", "No"],
   preferredShiftOptions: [],
   nightShiftComfortOptions: [],
@@ -344,8 +364,8 @@ export default function NativeATSCandidateRegistration() {
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [selfiePreview, setSelfiePreview] = useState<string>("");
   const [consentGiven, setConsentGiven] = useState(false);
-  const [branchRecruiters, setBranchRecruiters] = useState<string[]>([]);
-  const [branchRecruitersData, setBranchRecruitersData] = useState<{ name: string; employee_id?: string | null; email?: string | null; mobile?: string | null }[]>([]);
+  const [branchRecruiters, setBranchRecruiters] = useState<RecruiterChoice[]>([]);
+  const [branchRecruitersData, setBranchRecruitersData] = useState<RecruiterChoice[]>([]);
 
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -371,7 +391,10 @@ export default function NativeATSCandidateRegistration() {
       experience: form.experience,
       gender: form.gender,
       roleApplied: form.roleApplied,
+      sourceType: form.sourceType,
       recruiterName: form.recruiterName,
+      recruiterId: form.recruiterId,
+      referredBy: form.referredBy,
       branch: form.branch,
       rotationalShift: form.rotationalShift,
       preferredShift: form.preferredShift,
@@ -396,11 +419,22 @@ export default function NativeATSCandidateRegistration() {
     if (!branch) { setBranchRecruiters([]); setBranchRecruitersData([]); return; }
     hrmsApi.get(`/api/ats/form-config/recruiters-by-branch?branch=${encodeURIComponent(branch)}`)
       .then((res: any) => {
-        const list: { name: string; employee_id?: string | null; email?: string | null; mobile?: string | null }[] = res?.data ?? [];
-        setBranchRecruiters(list.map(r => r.name));
+        const list: RecruiterChoice[] = (res?.data ?? []).map((r: any) => ({
+          id: String(r.employee_id ?? ""),
+          label: `${String(r.name ?? "").trim()}${r.employee_code ? ` · ${r.employee_code}` : ""}`,
+          employee_code: r.employee_code ?? null,
+          employee_id: r.employee_id ?? null,
+          email: r.email ?? null,
+          mobile: r.mobile ?? null,
+        })).filter((r: RecruiterChoice) => !!r.id);
+        setBranchRecruiters(list);
         setBranchRecruitersData(list);
         // Auto-clear recruiter if no longer valid for this branch
-        setForm(prev => list.find(r => r.name === prev.recruiterName) ? prev : { ...prev, recruiterName: "" });
+        setForm(prev => {
+          const keepsSpecial = prev.recruiterId === WALKIN_OPTION_ID || prev.recruiterId === REFERENCE_OPTION_ID;
+          if (keepsSpecial || list.find(r => r.id === prev.recruiterId)) return prev;
+          return { ...prev, recruiterId: "", recruiterName: "", sourceType: "Other" };
+        });
       })
       .catch(() => { setBranchRecruiters([]); setBranchRecruitersData([]); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -435,6 +469,7 @@ export default function NativeATSCandidateRegistration() {
         recruiterDetails:        data.recruiterDetails    ?? [],
         branchOptions,
         branchAliases:           data.branchAliases       ?? [],
+        sourceOptions:           data.sourceOptions       ?? ["Walk-In", "Reference", "Other"],
         yesNoOptions:            ["Yes","No"],
         preferredShiftOptions:   data.preferredShiftOptions   ?? ["Morning","Afternoon","Night","Rotational"],
         nightShiftComfortOptions:data.nightShiftComfortOptions ?? ["Comfortable","Not Comfortable","On Request"],
@@ -449,6 +484,7 @@ export default function NativeATSCandidateRegistration() {
         recruiterOptions:         ["Admin","HR Team","Sourcer"],
         branchOptions:            ["Mumbai","Delhi","Bangalore","Hyderabad","Chennai","Pune"],
         branchAliases:            [],
+        sourceOptions:            ["Walk-In", "Reference", "Other"],
         yesNoOptions:             ["Yes","No"],
         preferredShiftOptions:    ["Morning","Afternoon","Night","Rotational"],
         nightShiftComfortOptions: ["Comfortable","Not Comfortable","On Request"],
@@ -605,6 +641,11 @@ export default function NativeATSCandidateRegistration() {
         errors.push(`${field.label} is required`);
       }
     });
+
+    if (form.sourceType === "Reference" && !String(form.referredBy || "").trim()) {
+      nextErrors.referredBy = "Referrer employee name is required";
+      errors.push("Referrer employee name is required");
+    }
 
     setErrors(nextErrors);
 
@@ -766,15 +807,10 @@ export default function NativeATSCandidateRegistration() {
     const step3 = window.setTimeout(() => setLoadingStep(3), 1400);
 
     try {
-      // Convert display name back to canonical branch name
-      const selectedBranchAlias = bootstrap.branchAliases?.find(a => a.display === coreData.branch);
-      const canonicalBranch = selectedBranchAlias?.canonical || coreData.branch;
-
-      // Resolve recruiter UUID from the branch-filtered recruiter list
-      const branchRecruiterFull = (branchRecruitersData || []).find(
-        (r: any) => r.name === coreData.recruiterName
-      );
-      const preferredRecruiterId = branchRecruiterFull?.employee_id || null;
+      const preferredRecruiterId =
+        coreData.sourceType === "Other" && coreData.recruiterId && !coreData.recruiterId.startsWith("special:")
+          ? coreData.recruiterId
+          : null;
 
       const payload = {
         name:                     coreData.name,
@@ -783,7 +819,7 @@ export default function NativeATSCandidateRegistration() {
         gender:                   coreData.gender || null,
         roleApplied:              coreData.roleApplied || null,
         branchDisplayName:        coreData.branch,
-        sourcingChannel:          'Walk-In',
+        sourcingChannel:          coreData.sourceType || 'Walk-In',
         address:                  coreData.address || null,
         education:                coreData.education || null,
         experience:               coreData.experience || null,
@@ -794,7 +830,8 @@ export default function NativeATSCandidateRegistration() {
         ownsTwoWheeler:           yesNoToInt(coreData.ownTwoWheeler),
         idProofAvailable:         yesNoToInt(coreData.idProofAvailable),
         educationProofAvailable:  yesNoToInt(coreData.educationProofAvailable),
-        recruiterName:            coreData.recruiterName || null,
+        recruiterName:            coreData.sourceType === "Other" ? (coreData.recruiterName || null) : null,
+        referredBy:               coreData.sourceType === "Reference" ? (coreData.referredBy || null) : null,
         ...(preferredRecruiterId ? { preferredRecruiterId } : {}),
       };
       const apiRes = await hrmsApi.post<{ success: boolean; candidateId?: string; candidate_code?: string; branchName?: string; recruiter?: any; message?: string; data?: any }>(
@@ -964,10 +1001,9 @@ export default function NativeATSCandidateRegistration() {
 
     if (f.t === "select") {
       // Recruiter dropdown: ONLY show branch-scoped recruiters (must select branch first)
-      const options: string[] = f.k === "recruiterName"
-        ? (form.branch ? branchRecruiters : [])
-        : (f.ok ? (bootstrap[f.ok] as string[]) || [] : []);
-      const hasValue = String(value || "").length > 0;
+      const hasValue = f.k === "recruiterName"
+        ? String(form.recruiterId || "").length > 0
+        : String(value || "").length > 0;
       const isValid = hasValue;
       const selectClass = `native-ats-si ${error ? 'error' : ''} ${isValid ? 'valid' : ''}`;
 
@@ -976,16 +1012,72 @@ export default function NativeATSCandidateRegistration() {
           <label className="native-ats-fl">{f.lb}</label>
           <div className="native-ats-iw native-ats-sw">
             <span className="native-ats-ii">{f.ic}</span>
-            <select className={selectClass} value={String(value || "")} onChange={(e) => update(f.k, e.target.value)} disabled={f.k === "recruiterName" && !form.branch}>
-              <option value="">{f.k === "recruiterName" && !form.branch ? "-- Select Branch First --" : `-- Select ${f.lb} --`}</option>
-              {options.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
+            {f.k === "recruiterName" ? (
+              <select
+                className={selectClass}
+                value={form.recruiterId || ""}
+                onChange={(e) => {
+                  const selectedId = e.target.value;
+                  if (selectedId === WALKIN_OPTION_ID) {
+                    setForm((prev) => ({ ...prev, recruiterId: WALKIN_OPTION_ID, recruiterName: "Walk-In", sourceType: "Walk-In", referredBy: "" }));
+                    setErrors((prev) => ({ ...prev, recruiterName: "", referredBy: "" }));
+                    return;
+                  }
+                  if (selectedId === REFERENCE_OPTION_ID) {
+                    setForm((prev) => ({ ...prev, recruiterId: REFERENCE_OPTION_ID, recruiterName: "Reference", sourceType: "Reference" }));
+                    setErrors((prev) => ({ ...prev, recruiterName: "" }));
+                    return;
+                  }
+                  const selectedRecruiter = branchRecruiters.find((item) => item.id === selectedId);
+                  setForm((prev) => ({
+                    ...prev,
+                    recruiterId: selectedId,
+                    recruiterName: selectedRecruiter?.label ?? "",
+                    sourceType: "Other",
+                    referredBy: "",
+                  }));
+                  setErrors((prev) => ({ ...prev, recruiterName: "", referredBy: "" }));
+                }}
+                disabled={!form.branch}
+              >
+                <option value="">{!form.branch ? "-- Select Branch First --" : "-- Select Recruiter / Source --"}</option>
+                <option value={WALKIN_OPTION_ID}>Walk-In (auto assign)</option>
+                <option value={REFERENCE_OPTION_ID}>Reference (auto assign)</option>
+                {branchRecruiters.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <select className={selectClass} value={String(value || "")} onChange={(e) => update(f.k, e.target.value)}>
+                <option value="">{`-- Select ${f.lb} --`}</option>
+                {(((f.ok ? (bootstrap[f.ok] as string[]) || [] : []) as string[])).map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+            )}
             {isValid && <span style={{ position: 'absolute', right: 36, fontSize: 16, color: '#10b981', pointerEvents: 'none' }}>✓</span>}
           </div>
+          {f.k === "recruiterName" && form.sourceType === "Reference" && (
+            <div style={{ marginTop: 10 }}>
+              <label className="native-ats-fl">Employee Reference Name</label>
+              <div className="native-ats-iw">
+                <span className="native-ats-ii">Ref</span>
+                <input
+                  className={`native-ats-ti ${errors.referredBy ? 'error' : ''} ${form.referredBy ? 'valid' : ''}`}
+                  type="text"
+                  value={form.referredBy}
+                  placeholder="Enter referring employee name"
+                  onChange={(e) => update("referredBy", e.target.value.trimStart())}
+                  maxLength={255}
+                />
+              </div>
+              <div className={`native-ats-fe ${errors.referredBy ? "show" : ""}`}>{errors.referredBy}</div>
+            </div>
+          )}
           <div className={`native-ats-fe ${error ? "show" : ""}`}>{error}</div>
         </div>
       );
@@ -1358,6 +1450,7 @@ export default function NativeATSCandidateRegistration() {
   const renderForm = () => {
     // Calculate completion percentage
     const requiredFields = ['name', 'mobile', 'email', 'address', 'education', 'experience', 'gender', 'roleApplied', 'recruiterName', 'branch', 'rotationalShift', 'preferredShift', 'nightShiftComfort', 'leavesRequired', 'ownTwoWheeler', 'idProofAvailable', 'educationProofAvailable'];
+    if (form.sourceType === "Reference") requiredFields.push('referredBy');
     const filledFields = requiredFields.filter(k => {
       const val = form[k as keyof CandidateFormData];
       return val && String(val).trim().length > 0 && !errors[k];

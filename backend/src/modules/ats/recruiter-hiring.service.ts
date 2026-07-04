@@ -1120,30 +1120,71 @@ export async function searchInterviewers(branchName: string | null, query: strin
   const branch = branchName || (userId ? await getCurrentUserBranch(userId) : null);
   const q = `%${query ?? ""}%`;
   const round = roundType || "ops_round";
-  const [rows] = await db.execute<InterviewerRow[]>(
-    `SELECT
-        e.id,
-        e.employee_code,
-        COALESCE(e.first_name, '') AS first_name,
-        COALESCE(e.last_name, '') AS last_name,
-        COALESCE(e.mobile, e.alternate_mobile) AS mobile,
-        COALESCE(e.official_email, e.office_email, e.email) AS email,
-        b.branch_name,
-        d.dept_name,
-        des.designation_name
-      FROM employees e
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN department_master d ON d.id = e.department_id
-      LEFT JOIN designation_master des ON des.id = e.designation_id
-      WHERE e.active_status = 1
-        AND (? IS NULL OR b.branch_name = ? OR b.branch_code = ?)
-        AND (
-          CONCAT_WS(' ', e.first_name, e.last_name, e.employee_code, COALESCE(e.official_email, e.office_email, e.email)) LIKE ?
-        )
-      ORDER BY e.first_name, e.last_name
-      LIMIT ?`,
-    [branch, branch, branch, q, limit]
-  );
+  let rows: InterviewerRow[] = [];
+
+  const runQuery = async (sql: string, params: unknown[]) => {
+    const [result] = await db.execute<InterviewerRow[]>(sql, params);
+    return result;
+  };
+
+  if (branch) {
+    rows = await runQuery(
+      `SELECT
+          e.id,
+          e.employee_code,
+          COALESCE(e.first_name, '') AS first_name,
+          COALESCE(e.last_name, '') AS last_name,
+          COALESCE(e.mobile, e.alternate_mobile) AS mobile,
+          COALESCE(e.official_email, e.office_email, e.email) AS email,
+          b.branch_name,
+          d.dept_name,
+          des.designation_name
+        FROM employees e
+        LEFT JOIN branch_master b ON b.id = e.branch_id
+        LEFT JOIN department_master d ON d.id = e.department_id
+        LEFT JOIN designation_master des ON des.id = e.designation_id
+        WHERE e.active_status = 1
+          AND (b.branch_name = ? OR b.branch_code = ? OR b.branch_name LIKE CONCAT('%', ?, '%'))
+          AND (
+            CONCAT_WS(' ', e.first_name, e.last_name, e.employee_code, COALESCE(e.official_email, e.office_email, e.email)) LIKE ?
+            OR e.employee_code LIKE ?
+          )
+        ORDER BY e.first_name, e.last_name
+        LIMIT ?`,
+      [branch, branch, branch, q, q, limit]
+    );
+  }
+
+  if (rows.length === 0) {
+    rows = await runQuery(
+      `SELECT
+          e.id,
+          e.employee_code,
+          COALESCE(e.first_name, '') AS first_name,
+          COALESCE(e.last_name, '') AS last_name,
+          COALESCE(e.mobile, e.alternate_mobile) AS mobile,
+          COALESCE(e.official_email, e.office_email, e.email) AS email,
+          b.branch_name,
+          d.dept_name,
+          des.designation_name
+        FROM employees e
+        LEFT JOIN branch_master b ON b.id = e.branch_id
+        LEFT JOIN department_master d ON d.id = e.department_id
+        LEFT JOIN designation_master des ON des.id = e.designation_id
+        WHERE e.active_status = 1
+          AND (
+            CONCAT_WS(' ', e.first_name, e.last_name, e.employee_code, COALESCE(e.official_email, e.office_email, e.email)) LIKE ?
+            OR e.employee_code LIKE ?
+            OR COALESCE(e.first_name, '') LIKE ?
+            OR COALESCE(e.last_name, '') LIKE ?
+          )
+        ORDER BY CASE WHEN ? IS NOT NULL AND (b.branch_name = ? OR b.branch_code = ?) THEN 0 ELSE 1 END,
+                 e.first_name,
+                 e.last_name
+        LIMIT ?`,
+      [q, q, q, q, branch, branch, branch, limit]
+    );
+  }
 
   return rows.map((row) => ({
     id: row.id,

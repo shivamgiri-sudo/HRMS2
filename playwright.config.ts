@@ -1,38 +1,29 @@
 import { defineConfig, devices } from '@playwright/test';
 
-/**
- * Playwright config for HRMS1 browser smoke tests.
- *
- * Target: http://localhost:8080 (vite dev or vite preview)
- * Backend: http://localhost:5055
- *
- * Run locally:
- *   npm run test:e2e:smoke
- *
- * Demo login is enabled via VITE_ENABLE_DEMO_LOGIN=true — tests bypass the real
- * backend auth call and use localStorage-backed demo sessions from demoCreds.ts.
- * This keeps smoke tests deterministic with no seeded DB dependency.
- */
 export default defineConfig({
-  testDir: './e2e',
-  testMatch: '**/*.smoke.ts',
+  testDir: './tests/e2e',
+  testMatch: '**/*.spec.ts',
 
-  timeout: 30_000,
-  expect: { timeout: 8_000 },
+  timeout: 120_000,
+  expect: { timeout: 15_000 },
   retries: process.env.CI ? 1 : 0,
   workers: 1,
+  fullyParallel: false,
 
   reporter: [
     ['list'],
     ['html', { outputFolder: 'playwright-report', open: 'never' }],
+    ['json', { outputFile: 'playwright-results.json' }],
   ],
 
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:8080',
-    headless: true,
+    baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:8080',
+    headless: !process.env.E2E_HEADED,
     screenshot: 'only-on-failure',
-    trace: 'on-first-retry',
+    trace: process.env.CI ? 'on-first-retry' : 'on',
     video: 'off',
+    actionTimeout: 15_000,
+    navigationTimeout: 30_000,
   },
 
   projects: [
