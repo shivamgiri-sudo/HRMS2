@@ -510,7 +510,7 @@ async function buildActivityActorContext(actorUserId: string): Promise<ActivityA
         e.id AS employee_id,
         e.employee_code,
         COALESCE(NULLIF(e.full_name, ''), TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')))) AS employee_name,
-        COALESCE(b.branch_name, e.branch_name, e.branch_id) AS branch_name
+        COALESCE(b.branch_name, b.branch_code, e.branch_id) AS branch_name
        FROM employees e
        LEFT JOIN branch_master b ON b.id = e.branch_id
       WHERE e.user_id = ?
@@ -714,7 +714,7 @@ export function parseRecruiterSheet(buffer: Buffer, fileName: string): HiringShe
 
 async function getCurrentUserBranch(userId: string): Promise<string | null> {
   const [rows] = await db.execute<BranchNameRow[]>(
-    `SELECT COALESCE(b.branch_name, e.branch_name, e.branch_id) AS branch_name
+    `SELECT COALESCE(b.branch_name, b.branch_code, e.branch_id) AS branch_name
        FROM employees e
        LEFT JOIN branch_master b ON b.id = e.branch_id
       WHERE e.user_id = ?
@@ -830,8 +830,8 @@ export async function listHiringActivity(userId: string, role: string | undefine
     params.push(userId, userId);
   }
 
-  const page = filters.page ?? 1;
-  const limit = filters.limit ?? 50;
+  const page = Math.max(1, Math.trunc(Number(filters.page) || 1));
+  const limit = Math.min(Math.max(1, Math.trunc(Number(filters.limit) || 50)), 100);
   const offset = (page - 1) * limit;
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -839,8 +839,8 @@ export async function listHiringActivity(userId: string, role: string | undefine
        FROM ats_recruiter_hiring_activity
       WHERE ${sql}
       ORDER BY activity_date DESC, created_at DESC
-      LIMIT ? OFFSET ?`,
-    [...params, limit, offset]
+      LIMIT ${limit} OFFSET ${offset}`,
+    params
   );
   const [count] = await db.execute<CountRow[]>(
     `SELECT COUNT(*) AS total
