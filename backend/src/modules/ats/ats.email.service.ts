@@ -59,8 +59,15 @@ async function send(
     return { ok: true };
   }
   const fromAddr = env.SMTP_FROM || env.SMTP_USER;
+  const finalHtml = /<html[\s>]/i.test(html)
+    ? html
+    : atsFrame({
+        eyebrow: "MAS Callnet HRMS",
+        title: subject.replace(/[^\x20-\x7E]/g, "-"),
+        body: html,
+      });
   try {
-    await transporter.sendMail({ from: `"MAS Callnet" <${fromAddr}>`, to, subject, html });
+    await transporter.sendMail({ from: `"MAS Callnet" <${fromAddr}>`, to, subject: subject.replace(/[^\x20-\x7E]/g, "-"), html: finalHtml });
     await logEmail(candidateId, type, to, 'sent');
     return { ok: true };
   } catch (err: unknown) {
@@ -68,6 +75,52 @@ async function send(
     await logEmail(candidateId, type, to, 'failed', msg);
     return { ok: false, error: msg };
   }
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function atsFrame(input: {
+  eyebrow: string;
+  title: string;
+  body: string;
+  actionLabel?: string;
+  actionUrl?: string;
+  note?: string;
+}): string {
+  const action = input.actionLabel && input.actionUrl
+    ? `<p style="margin:26px 0 10px"><a href="${escapeHtml(input.actionUrl)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;padding:13px 22px;border-radius:999px;font-weight:800">${escapeHtml(input.actionLabel)}</a></p>`
+    : "";
+  const note = input.note
+    ? `<div style="margin-top:22px;border-left:4px solid #f59e0b;background:#fffbeb;border-radius:12px;padding:14px 16px;color:#92400e;font-size:14px;line-height:1.6">${input.note}</div>`
+    : "";
+
+  return `<!doctype html>
+<html>
+<body style="margin:0;background:#eef2f7;font-family:Arial,Helvetica,sans-serif;color:#111827">
+  <div style="max-width:660px;margin:0 auto;padding:28px 16px">
+    <div style="overflow:hidden;border-radius:24px;background:#ffffff;box-shadow:0 18px 50px rgba(15,23,42,.12)">
+      <div style="background:linear-gradient(135deg,#083344,#0f766e 58%,#f59e0b);padding:30px;color:#ffffff">
+        <div style="font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#ccfbf1">${escapeHtml(input.eyebrow)}</div>
+        <h1 style="margin:10px 0 0;font-size:28px;line-height:1.22">${escapeHtml(input.title)}</h1>
+      </div>
+      <div style="padding:30px;font-size:15px;line-height:1.75">
+        ${input.body}
+        ${action}
+        ${note}
+        <p style="margin:30px 0 0;color:#64748b">Regards,<br><strong>MAS Callnet Talent Team</strong></p>
+      </div>
+    </div>
+    <p style="margin:14px 0 0;text-align:center;font-size:11px;color:#94a3b8">This is an automated HRMS notification. Please keep candidate and employee information confidential.</p>
+  </div>
+</body>
+</html>`;
 }
 
 export async function sendRegistrationEmail(params: {

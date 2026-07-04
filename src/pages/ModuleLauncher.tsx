@@ -19,9 +19,12 @@ const iconMap: Record<string, JSX.Element> = {
 
 type PageRow = {
   page_code: string;
-  module_code: string;
+  module_code?: string | null;
+  module?: string | null;
   page_name: string;
   page_description: string | null;
+  description?: string | null;
+  page_path?: string | null;
   route_path: string | null;
   display_order: number;
   is_base_hrms_page?: boolean;
@@ -51,9 +54,16 @@ export default function ModuleLauncher() {
     queryFn: async () => {
       if (!access.visiblePageCodes.length) return [] as PageRow[];
       try {
-        const res = await hrmsApi.get<{ success?: boolean; data?: PageRow[] }>("/api/access/pages/my-catalog");
-        const catalog = Array.isArray(res.data) ? res.data : [];
-        return catalog.filter((page) => access.visiblePageCodes.includes(page.page_code));
+        const res = await hrmsApi.get<{ success?: boolean; data?: PageRow[] } | PageRow[]>("/api/access/pages/my-catalog");
+        const catalog = Array.isArray(res) ? res : Array.isArray(res.data) ? res.data : [];
+        return catalog
+          .filter((page) => access.visiblePageCodes.includes(page.page_code))
+          .map((page) => ({
+            ...page,
+            module_code: page.module_code ?? page.module ?? page.page_code.split("_")[0] ?? "HRMS",
+            page_description: page.page_description ?? page.description ?? "Open workspace",
+            route_path: page.route_path ?? page.page_path ?? "/dashboard",
+          }));
       } catch {
         return access.visiblePageCodes.map(fallbackPageFromCode);
       }
@@ -63,8 +73,9 @@ export default function ModuleLauncher() {
 
   const grouped = useMemo(() => {
     return pages.reduce<Record<string, PageRow[]>>((acc, page) => {
-      acc[page.module_code] = acc[page.module_code] || [];
-      acc[page.module_code].push(page);
+      const moduleCode = page.module_code ?? page.module ?? "HRMS";
+      acc[moduleCode] = acc[moduleCode] || [];
+      acc[moduleCode].push(page);
       return acc;
     }, {});
   }, [pages]);

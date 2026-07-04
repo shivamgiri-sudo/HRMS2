@@ -204,6 +204,7 @@ const NativeDocumentVerification = lazy(() => import("./pages/NativeDocumentVeri
 const NativeRosterPreference = lazy(() => import("./pages/NativeRosterPreference"));
 
 const NativeMigrationConsole = lazy(() => import("./pages/NativeMigrationConsole"));
+const NativeAuditLog = lazy(() => import("./pages/NativeAuditLog"));
 const NativeExitManagement = lazy(() => import("./pages/NativeExitManagement"));
 const NativeKPIConfiguration = lazy(() => import("./pages/NativeKPIConfiguration"));
 const NativeProcessConfig = lazy(() => import("./pages/NativeProcessConfig"));
@@ -473,6 +474,7 @@ const App = () => (
               <Route path="/communication/preferences" element={<ProtectedRoute><NativeNotificationPreferences /></ProtectedRoute>} />
               <Route path="/settings/communication-config" element={<ProtectedRoute roles={['admin']}><Suspense fallback={<PageLoader />}><NativeCommunicationConfig /></Suspense></ProtectedRoute>} />
               <Route path="/migration-console" element={<ProtectedRoute roles={['admin']}><NativeMigrationConsole /></ProtectedRoute>} />
+              <Route path="/audit-log" element={<ProtectedRoute roles={['admin', 'super_admin', 'hr', 'payroll_head', 'wfm']}><NativeAuditLog /></ProtectedRoute>} />
               <Route path="/exit-management" element={<ProtectedRoute><Gate pageCode="EXIT_COMMAND_CENTER"><NativeExitManagement /></Gate></ProtectedRoute>} />
               <Route path="/exit/command-center" element={<ProtectedRoute><Gate pageCode="EXIT_COMMAND_CENTER"><NativeExitCommandCenter /></Gate></ProtectedRoute>} />
               <Route path="/kpi-config" element={<ProtectedRoute><Gate pageCode="KPI_CONFIG"><NativeKPIConfiguration /></Gate></ProtectedRoute>} />
