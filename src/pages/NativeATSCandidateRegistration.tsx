@@ -11,6 +11,9 @@ type BranchAlias = {
 const WALKIN_OPTION_ID = "special:walkin";
 const REFERENCE_OPTION_ID = "special:reference";
 
+const normalizeRecruiterLookupValue = (value: string) =>
+  value.trim().toLowerCase().replace(/\s+/g, " ");
+
 type RecruiterDetail = {
   name: string;
   email: string | null;
@@ -412,6 +415,18 @@ export default function NativeATSCandidateRegistration() {
     () => branchRecruiters.find((item) => item.id === form.recruiterId) ?? null,
     [branchRecruiters, form.recruiterId]
   );
+
+  const findRecruiterChoice = (rawValue: string) => {
+    const normalized = normalizeRecruiterLookupValue(rawValue);
+    if (!normalized) return null;
+
+    return branchRecruiters.find((item) => {
+      const code = normalizeRecruiterLookupValue(String(item.employee_code ?? ""));
+      const label = normalizeRecruiterLookupValue(item.label);
+      const name = normalizeRecruiterLookupValue(String(item.name ?? ""));
+      return label === normalized || name === normalized || (!!code && code === normalized);
+    }) ?? null;
+  };
 
   useEffect(() => {
     loadBootstrap();
@@ -1052,9 +1067,10 @@ export default function NativeATSCandidateRegistration() {
                     const nextValue = e.target.value;
                     setRecruiterSearch(nextValue);
 
-                    const normalized = nextValue.trim().toLowerCase();
+                    const normalized = normalizeRecruiterLookupValue(nextValue);
                     if (!normalized) {
                       setForm((prev) => ({ ...prev, recruiterId: "", recruiterName: "", sourceType: "", referredBy: "" }));
+                      setErrors((prev) => ({ ...prev, recruiterName: "", referredBy: "" }));
                       return;
                     }
 
@@ -1070,14 +1086,7 @@ export default function NativeATSCandidateRegistration() {
                       return;
                     }
 
-                    const selectedRecruiter = branchRecruiters.find((item) => {
-                      const code = String(item.employee_code ?? "").trim().toLowerCase();
-                      return (
-                        item.label.trim().toLowerCase() === normalized ||
-                        String(item.name ?? "").trim().toLowerCase() === normalized ||
-                        (!!code && code === normalized)
-                      );
-                    });
+                    const selectedRecruiter = findRecruiterChoice(nextValue);
 
                     if (selectedRecruiter) {
                       setForm((prev) => ({
@@ -1088,7 +1097,10 @@ export default function NativeATSCandidateRegistration() {
                         referredBy: "",
                       }));
                       setErrors((prev) => ({ ...prev, recruiterName: "", referredBy: "" }));
+                      return;
                     }
+
+                    setForm((prev) => ({ ...prev, recruiterId: "", recruiterName: "", sourceType: "", referredBy: "" }));
                   }}
                   onBlur={() => {
                     if (!recruiterSearch.trim()) return;
