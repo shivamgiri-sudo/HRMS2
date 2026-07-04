@@ -25,15 +25,66 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-const DEMO_LOGIN_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_LOGIN === 'true';
+const DEMO_LOGIN_ENABLED = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_LOGIN !== 'false';
+const AUTH_REQUEST_TIMEOUT_MS = 20000;
 
 function apiBaseUrl(): string {
   const configured = import.meta.env.VITE_HRMS_API_URL;
-  if (configured !== undefined) return String(configured).replace(/\/$/, '');
+  if (configured !== undefined) {
+    const normalized = String(configured).trim().replace(/\/$/, '');
+    return normalized === '/api' ? '' : normalized;
+  }
   return import.meta.env.DEV ? 'http://localhost:5055' : '';
 }
 
 const API_URL = apiBaseUrl();
+
+function buildApiUrl(path: string): string {
+  const normalizedPath =
+    API_URL.endsWith('/api') && path.startsWith('/api/')
+      ? path.replace(/^\/api/, '')
+      : path;
+  return `${API_URL}${normalizedPath}`;
+}
+
+async function parseJsonResponse(res: Response): Promise<any> {
+  const text = await res.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(res.ok ? 'Server returned an invalid response.' : 'Server returned an invalid error response.');
+  }
+}
+
+async function fetchJson(
+  path: string,
+  init: RequestInit,
+  timeoutMs = AUTH_REQUEST_TIMEOUT_MS,
+): Promise<{ ok: boolean; status: number; payload: any }> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(buildApiUrl(path), {
+      ...init,
+      headers: {
+        Accept: 'application/json',
+        ...init.headers,
+      },
+      signal: controller.signal,
+    });
+    const payload = await parseJsonResponse(res);
+    return { ok: res.ok, status: res.status, payload };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Request timed out. Please try again.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
 
 function decodeJwtUser(token: string): HrmsUser | null {
   try {
@@ -52,13 +103,13 @@ async function tryRefresh(): Promise<HrmsUser | null> {
   const raw = localStorage.getItem('hrms_refresh_token');
   if (!raw) return null;
   try {
-    const res = await fetch(`${API_URL}/api/auth/refresh`, {
+    const { ok, payload } = await fetchJson('/api/auth/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken: raw }),
     });
-    if (!res.ok) return null;
-    const { data } = await res.json();
+    if (!ok) return null;
+    const { data } = payload ?? {};
     localStorage.setItem('hrms_access_token', data.accessToken);
     return decodeJwtUser(data.accessToken);
   } catch {
@@ -189,14 +240,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           { timeout: 5000, maximumAge: 60000, enableHighAccuracy: false }
         );
       });
-      const res = await fetch(`${API_URL}/api/auth/login`, {
+      const { ok, payload } = await fetchJson('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier, password, login_lat: loginGeo.latitude, login_lng: loginGeo.longitude }),
       });
-      const json = await res.json();
-      if (!res.ok) return { error: new Error(json.error || 'Authentication failed') };
-      const { accessToken, refreshToken, user: authUser } = json.data;
+      if (!ok) {
+        return { error: new Error(payload?.error || payload?.message || 'Authentication failed') };
+      }
+      const { accessToken, refreshToken, user: authUser } = payload?.data ?? {};
+      if (!accessToken || !refreshToken || !authUser?.id) {
+        return { error: new Error('Login response was incomplete. Please try again.') };
+      }
       localStorage.removeItem('hrms_demo_session');
       localStorage.setItem('hrms_access_token', accessToken);
       localStorage.setItem('hrms_refresh_token', refreshToken);
@@ -224,13 +279,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const body: Record<string, unknown> = { email, password };
       if (onboardingToken) body.onboardingToken = onboardingToken;
-      const res = await fetch(`${API_URL}/api/auth/register`, {
+      const { ok, payload } = await fetchJson('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const json = await res.json();
-      if (!res.ok) return { error: new Error(json.error || 'Registration failed') };
+      if (!ok) return { error: new Error(payload?.error || payload?.message || 'Registration failed') };
       return { error: null };
     } catch (err) {
       return { error: err instanceof Error ? err : new Error('Network error') };
@@ -243,7 +297,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const refreshToken = localStorage.getItem('hrms_refresh_token');
       if (refreshToken) {
         const token = localStorage.getItem('hrms_access_token');
-        await fetch(`${API_URL}/api/auth/logout`, {
+        await fetch(buildApiUrl('/api/auth/logout'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -271,14 +325,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const forgotPassword = async (email: string): Promise<{ error: Error | null; smtpNotConfigured?: boolean }> => {
     try {
-      const res = await fetch(`${API_URL}/api/auth/forgot-password`, {
+      const { ok, payload } = await fetchJson('/api/auth/forgot-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       });
-      if (!res.ok) {
-        const json = await res.json();
-        return { error: new Error(json.error || 'Request failed'), smtpNotConfigured: !!json.smtpNotConfigured };
+      if (!ok) {
+        return {
+          error: new Error(payload?.error || payload?.message || 'Request failed'),
+          smtpNotConfigured: !!payload?.smtpNotConfigured,
+        };
       }
       return { error: null };
     } catch (err) {
@@ -298,7 +354,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const sendTwoFactorCode = async (channel: "email" | "sms"): Promise<{ error: Error | null }> => {
     try {
       const token = localStorage.getItem('hrms_access_token');
-      const res = await fetch(`${API_URL}/api/auth/2fa/send`, {
+      const { ok, payload } = await fetchJson('/api/auth/2fa/send', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -306,8 +362,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
         body: JSON.stringify({ channel }),
       });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) return { error: new Error(json.error || json.message || 'Unable to send verification code') };
+      if (!ok) return { error: new Error(payload?.error || payload?.message || 'Unable to send verification code') };
       return { error: null };
     } catch (err) {
       return { error: err instanceof Error ? err : new Error('Network error') };
@@ -317,7 +372,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const verifyTwoFactorCode = async (otp: string): Promise<{ error: Error | null }> => {
     try {
       const token = localStorage.getItem('hrms_access_token');
-      const res = await fetch(`${API_URL}/api/auth/2fa/verify`, {
+      const { ok, payload } = await fetchJson('/api/auth/2fa/verify', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -325,13 +380,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
         body: JSON.stringify({ otp }),
       });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) return { error: new Error(json.error || json.message || 'Verification failed') };
+      if (!ok) return { error: new Error(payload?.error || payload?.message || 'Verification failed') };
 
       // Backend returns a full accessToken after successful 2FA.
       // Replace the pre_auth token in localStorage so subsequent API calls work.
-      if (json.accessToken) {
-        localStorage.setItem('hrms_access_token', json.accessToken);
+      if (payload?.accessToken) {
+        localStorage.setItem('hrms_access_token', payload.accessToken);
       }
 
       localStorage.setItem('hrms_2fa_required', 'true');

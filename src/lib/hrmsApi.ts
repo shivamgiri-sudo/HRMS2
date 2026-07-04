@@ -33,6 +33,12 @@ function getAuthHeader(): Record<string, string> {
   return {};
 }
 
+function normalizeRequestPath(path: string): string {
+  return HRMS_API_URL.endsWith("/api") && path.startsWith("/api/")
+    ? path.replace(/^\/api/, "")
+    : path;
+}
+
 function addLegacyDataAlias(path: string, payload: unknown): void {
   if (!LEGACY_DOUBLE_DATA_PATHS.some((prefix) => path.startsWith(prefix))) return;
   if (!payload || typeof payload !== "object" || !("data" in payload)) return;
@@ -71,10 +77,7 @@ async function parseResponse(res: Response): Promise<unknown> {
 async function request<T>(method: string, path: string, body?: unknown, timeoutMs = 30000): Promise<T> {
   const headers = getAuthHeader();
 
-  const normalizedPath =
-    HRMS_API_URL === "/api" && path.startsWith("/api/")
-      ? path.replace(/^\/api/, "")
-      : path;
+  const normalizedPath = normalizeRequestPath(path);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -126,10 +129,7 @@ async function request<T>(method: string, path: string, body?: unknown, timeoutM
 async function requestRaw(method: string, path: string): Promise<string> {
   const headers = getAuthHeader();
 
-  const normalizedPath =
-    HRMS_API_URL === "/api" && path.startsWith("/api/")
-      ? path.replace(/^\/api/, "")
-      : path;
+  const normalizedPath = normalizeRequestPath(path);
 
   const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
     method,
@@ -165,10 +165,7 @@ export function getAuthToken(): string | null {
 
 async function requestForm<T>(path: string, body: FormData): Promise<T> {
   const headers = getAuthHeader();
-  const normalizedPath =
-    HRMS_API_URL === "/api" && path.startsWith("/api/")
-      ? path.replace(/^\/api/, "")
-      : path;
+  const normalizedPath = normalizeRequestPath(path);
   const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
     method: "POST",
     headers, // No Content-Type — browser sets multipart boundary automatically
@@ -185,10 +182,7 @@ async function requestForm<T>(path: string, body: FormData): Promise<T> {
 
 async function requestBlob(path: string): Promise<Blob> {
   const headers = getAuthHeader();
-  const normalizedPath =
-    HRMS_API_URL === "/api" && path.startsWith("/api/")
-      ? path.replace(/^\/api/, "")
-      : path;
+  const normalizedPath = normalizeRequestPath(path);
   const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
     method: "GET",
     headers: { ...headers },

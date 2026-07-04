@@ -60,6 +60,7 @@ interface ExistingCandidateRow extends RowDataPacket {
   current_stage: string | null;
   profile_status: string | null;
   employee_code: string | null;
+  active_status: number | null;
 }
 
 interface ExistingTokenRow extends RowDataPacket {
@@ -183,9 +184,9 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
     // 2. Reuse the ATS candidate when hiring-entry/calling created the lead first.
     // Candidate registration is the walk-in continuation of that same person, not a brand-new record.
     const [existingCandidateRows] = await db.execute<ExistingCandidateRow[]>(
-      `SELECT id, candidate_code, current_stage, profile_status, employee_code
+      `SELECT id, candidate_code, current_stage, profile_status, employee_code, active_status
        FROM ats_candidate
-       WHERE mobile = ? AND active_status = 1
+       WHERE mobile = ?
        ORDER BY created_at DESC
        LIMIT 1`,
       [input.mobile]
@@ -225,6 +226,7 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
              owns_two_wheeler = ?,
              id_proof_available = ?,
              education_proof_available = ?,
+             active_status = 1,
              profile_status = 'registered',
              current_stage = CASE
                WHEN current_stage IS NULL OR current_stage IN ('Applied', 'New', 'Screening')
