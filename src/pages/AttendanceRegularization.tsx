@@ -14,97 +14,60 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { CalendarCheck, Loader2, RefreshCw, Send } from "lucide-react";
+import { CalendarCheck, Loader2, MapPin, RefreshCw, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type RequestStatus =
-  | "submitted"
-  | "pending_manager"
-  | "pending_admin"
-  | "approved"
-  | "rejected"
-  | "cancelled";
+type ReasonCode = { code: string; label: string; allowed_for: string };
 
-type RegularizationDetail = {
+type RegularizationRecord = {
   id: string;
-  request_id: string;
-  attendance_date: string;
-  current_status: string | null;
-  current_login_time: string | null;
-  current_logout_time: string | null;
-  requested_login_time: string | null;
-  requested_logout_time: string | null;
-  attendance_source: string | null;
-  payroll_impact_required: boolean;
-  created_at: string;
-  updated_at: string;
-};
-
-type ApprovalStage = {
-  id: string;
-  request_id: string;
-  stage_no: number;
-  stage_name: string;
-  approver_role: string | null;
+  employee_id: string;
+  session_date: string;
+  requested_status: "present" | "half_day" | "absent" | null;
+  reason: string;
+  reason_code: string | null;
+  requested_by_type: "employee" | "manager";
+  branch_id: string | null;
+  supporting_note: string | null;
   status: string;
-  remarks: string | null;
-  assigned_at: string;
-  acted_at: string | null;
-};
-
-type ActionLog = {
-  id: string;
-  request_id: string;
-  action: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  reviewer_note: string | null;
+  dispute_type: string | null;
   old_status: string | null;
   new_status: string | null;
-  remarks: string | null;
+  old_punch_in: string | null;
+  old_punch_out: string | null;
+  new_punch_in: string | null;
+  new_punch_out: string | null;
+  payroll_impact: number;
+  payroll_head_approval_required: number;
+  supporting_doc_id: string | null;
+  escalated_to: string | null;
+  latitude: number | null;
+  longitude: number | null;
   created_at: string;
+  updated_at: string;
+  employee_name?: string;
+  employee_code?: string;
+  reason_label?: string;
 };
 
-type EmployeeRequest = {
-  id: string;
-  request_no: string;
-  employee_id: string | null;
-  submitted_by: string | null;
-  request_type_code: string;
-  title: string;
-  reason: string | null;
-  current_status: RequestStatus;
-  current_stage_no: number;
-  current_stage_name: string | null;
-  current_owner_role: string | null;
-  source_module: string | null;
-  source_date: string | null;
-  payroll_impact_status: string;
-  submitted_at: string | null;
-  final_decision_at: string | null;
-  created_at: string;
-  regularization_request_detail?: RegularizationDetail[];
-  request_approval_stage?: ApprovalStage[];
-  request_action_log?: ActionLog[];
-};
-
-// ── Constants ─────────────────────────────────────────────────────────────
+// ── Constants ──────────────────────────────────────────────────────────────
 
 const statusLabel: Record<string, string> = {
-  submitted: "Submitted",
-  pending_manager: "Pending Manager",
-  pending_admin: "Pending Admin / WFM",
+  pending: "Pending",
   approved: "Approved",
   rejected: "Rejected",
   cancelled: "Cancelled",
 };
 
-const CURRENT_STATUS_OPTIONS = [
-  { value: "Absent", label: "Absent" },
-  { value: "Present", label: "Present" },
-  { value: "Half Day", label: "Half Day" },
-  { value: "Missing Punch", label: "Missing Punch" },
-  { value: "Late In", label: "Late In" },
-  { value: "Early Out", label: "Early Out" },
+const REQUESTED_STATUS_OPTIONS = [
+  { value: "present", label: "Present", lwp: 0 },
+  { value: "half_day", label: "Half Day", lwp: 0.5 },
+  { value: "absent", label: "Absent", lwp: 1.0 },
 ];
 
 const DISPUTE_TYPES = [
@@ -121,7 +84,7 @@ const DISPUTE_TYPES = [
   { value: "manual_punch_correction", label: "Manual Punch Correction" },
 ];
 
-// ── Zod schema ────────────────────────────────────────────────────────────
+// ── Zod schema ─────────────────────────────────────────────────────────────
 
 const regularizationSchema = z
   .object({
@@ -129,21 +92,16 @@ const regularizationSchema = z
       .string()
       .min(1, "Attendance date is required")
       .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
-      .refine(
-        (d) => new Date(d + "T00:00:00") <= new Date(),
-        "Cannot regularize a future date"
-      ),
+      .refine((d) => new Date(d + "T00:00:00") <= new Date(), "Cannot regularize a future date"),
+    requestedStatus: z.enum(["present", "half_day", "absent"], { required_error: "Select requested status" }),
+    reasonCode: z.string().min(1, "Select a reason"),
     currentStatus: z.string().optional(),
     currentLoginTime: z.string().optional(),
     currentLogoutTime: z.string().optional(),
     requestedLoginTime: z.string().optional(),
     requestedLogoutTime: z.string().optional(),
     disputeType: z.string().nullable().optional(),
-    reason: z.string().max(500, "Reason must be 500 characters or less").optional(),
-  })
-  .refine((d) => d.requestedLoginTime || d.requestedLogoutTime, {
-    message: "At least one requested time (login or logout) is required",
-    path: ["requestedLoginTime"],
+    supportingNote: z.string().max(500, "Must be 500 characters or less").optional(),
   })
   .refine(
     (d) => {
@@ -155,51 +113,71 @@ const regularizationSchema = z
 
 type FormValues = z.infer<typeof regularizationSchema>;
 
-// ── Component ─────────────────────────────────────────────────────────────
+// ── Component ──────────────────────────────────────────────────────────────
 
 export default function AttendanceRegularization() {
   const geoCapture = useGeoCapture();
   const { toast } = useToast();
-  const [requests, setRequests] = useState<EmployeeRequest[]>([]);
+  const [requests, setRequests] = useState<RegularizationRecord[]>([]);
+  const [reasonCodes, setReasonCodes] = useState<ReasonCode[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [geoStatus, setGeoStatus] = useState<"idle" | "capturing" | "captured" | "failed">("idle");
   const [filterStatus, setFilterStatus] = useState("all");
-  const [selectedRequest, setSelectedRequest] = useState<EmployeeRequest | null>(null);
+  const [selectedRequest, setSelectedRequest] = useState<RegularizationRecord | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const [currentEmployeeId, setCurrentEmployeeId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"mine" | "team">("mine");
+  const [teamRequests, setTeamRequests] = useState<RegularizationRecord[]>([]);
+  const [teamLoading, setTeamLoading] = useState(false);
+  const [isManager, setIsManager] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState<RegularizationRecord | null>(null);
+  const [showReviewModal, setShowReviewModal] = useState(false);
 
   const [searchParams] = useSearchParams();
-  const linkedEmployeeId = searchParams.get("employeeId");
+  const linkedEmployeeId = searchParams.get("date");
 
   const form = useForm<FormValues>({
     resolver: zodResolver(regularizationSchema),
     defaultValues: {
       attendanceDate: new Date().toISOString().slice(0, 10),
-      currentStatus: "Absent",
+      requestedStatus: "present",
+      reasonCode: "",
+      currentStatus: "",
       currentLoginTime: "",
       currentLogoutTime: "",
-      requestedLoginTime: "09:30",
-      requestedLogoutTime: "18:30",
+      requestedLoginTime: "",
+      requestedLogoutTime: "",
       disputeType: null,
-      reason: "",
+      supportingNote: "",
     },
   });
 
   const filteredRequests = useMemo(() => {
     if (filterStatus === "all") return requests;
-    return requests.filter((item) => item.current_status === filterStatus);
+    return requests.filter((item) => item.status === filterStatus);
   }, [requests, filterStatus]);
 
-  const stats = useMemo(() => ({
-    total: requests.length,
-    pendingManager: requests.filter((r) => r.current_status === "pending_manager").length,
-    pendingAdmin: requests.filter((r) => r.current_status === "pending_admin").length,
-    approved: requests.filter((r) => r.current_status === "approved").length,
-    rejected: requests.filter((r) => r.current_status === "rejected").length,
-  }), [requests]);
+  const stats = useMemo(
+    () => ({
+      total: requests.length,
+      pending: requests.filter((r) => r.status === "pending").length,
+      approved: requests.filter((r) => r.status === "approved").length,
+      rejected: requests.filter((r) => r.status === "rejected").length,
+      cancelled: requests.filter((r) => r.status === "cancelled").length,
+    }),
+    [requests]
+  );
 
   async function loadRequests() {
     setIsLoading(true);
     try {
       const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/wfm/regularizations/mine");
-      setRequests((res.data ?? []) as EmployeeRequest[]);
+      const data = (res.data ?? []) as RegularizationRecord[];
+      setRequests(data);
+      if (data.length > 0 && !currentEmployeeId) {
+        setCurrentEmployeeId(data[0].employee_id);
+      }
     } catch {
       setRequests([]);
     } finally {
@@ -207,28 +185,111 @@ export default function AttendanceRegularization() {
     }
   }
 
+  async function fetchAttendanceForDate(date: string) {
+    if (!currentEmployeeId || !date) return;
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: any }>(
+        `/api/wfm/attendance/day-detail/${currentEmployeeId}/${date}`
+      );
+      const record = res.data?.attendance_record;
+      if (record) {
+        form.setValue("currentStatus", record.attendance_status || "");
+        form.setValue("currentLoginTime", record.clock_in_time?.slice(0, 5) || "");
+        form.setValue("currentLogoutTime", record.clock_out_time?.slice(0, 5) || "");
+      }
+    } catch {
+      // Attendance record not available — user can fill manually
+    }
+  }
+
+  async function loadTeamPending() {
+    setTeamLoading(true);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/wfm/regularizations?status=pending");
+      setTeamRequests((res.data ?? []) as RegularizationRecord[]);
+      setIsManager(true);
+    } catch {
+      setTeamRequests([]);
+      setIsManager(false);
+      setActiveTab("mine");
+    } finally {
+      setTeamLoading(false);
+    }
+  }
+
+  const reviewMutation = useMutation({
+    mutationFn: async ({ id, status, reviewerNote }: { id: string; status: "approved" | "rejected"; reviewerNote: string }) => {
+      return hrmsApi.patch(`/api/wfm/regularizations/${id}/review`, { status, reviewerNote: reviewerNote || null });
+    },
+    onSuccess: () => {
+      toast({ title: "Review submitted", description: "The regularization request has been updated." });
+      setShowReviewModal(false);
+      setReviewTarget(null);
+      loadTeamPending();
+      loadRequests();
+    },
+    onError: (err: any) =>
+      toast({
+        title: "Review failed",
+        description: err?.response?.data?.error ?? err?.message ?? "Failed to submit review.",
+        variant: "destructive",
+      }),
+  });
+
+  async function loadReasonCodes() {
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: ReasonCode[] }>("/api/wfm/regularizations/reasons");
+      setReasonCodes(res.data ?? []);
+    } catch {
+      // non-fatal
+    }
+  }
+
+  const watchedDate = form.watch("attendanceDate");
+
   useEffect(() => {
     loadRequests();
+    loadReasonCodes();
     const dateParam = searchParams.get("date");
     if (dateParam) form.setValue("attendanceDate", dateParam);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (currentEmployeeId && watchedDate) {
+      fetchAttendanceForDate(watchedDate);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentEmployeeId, watchedDate]);
+
+  useEffect(() => {
+    if (activeTab === "team") {
+      loadTeamPending();
+    }
+  }, [activeTab]);
+
   const submitMutation = useMutation({
     mutationFn: async (values: FormValues) => {
-      const geo = await geoCapture();
+      setGeoStatus("capturing");
+      let geo = { latitude: null as number | null, longitude: null as number | null };
+      try {
+        geo = await geoCapture();
+        setGeoStatus("captured");
+      } catch {
+        setGeoStatus("failed");
+      }
       return hrmsApi.post("/api/wfm/regularizations", {
         sessionDate: values.attendanceDate,
+        requestedStatus: values.requestedStatus,
+        reasonCode: values.reasonCode,
+        reason: values.supportingNote?.trim() || values.reasonCode,
+        disputeType: values.disputeType || null,
         oldStatus: values.currentStatus || null,
         oldPunchIn: values.currentLoginTime || null,
         oldPunchOut: values.currentLogoutTime || null,
         newPunchIn: values.requestedLoginTime || null,
         newPunchOut: values.requestedLogoutTime || null,
-        disputeType: values.disputeType || null,
-        reason:
-          values.reason?.trim() ||
-          `Login: ${values.requestedLoginTime ?? ""} Logout: ${values.requestedLogoutTime ?? ""}`.trim(),
-        supportingNote: values.reason?.trim() || null,
+        supportingNote: values.supportingNote?.trim() || null,
         latitude: geo.latitude,
         longitude: geo.longitude,
       });
@@ -236,14 +297,18 @@ export default function AttendanceRegularization() {
     onSuccess: () => {
       form.reset({
         attendanceDate: new Date().toISOString().slice(0, 10),
-        currentStatus: "Absent",
+        requestedStatus: "present",
+        reasonCode: "",
+        currentStatus: "",
         currentLoginTime: "",
         currentLogoutTime: "",
-        requestedLoginTime: "09:30",
-        requestedLogoutTime: "18:30",
+        requestedLoginTime: "",
+        requestedLogoutTime: "",
         disputeType: null,
-        reason: "",
+        supportingNote: "",
       });
+      setGeoStatus("idle");
+      setShowConfirm(false);
       toast({ title: "Request submitted", description: "Your regularization request has been recorded." });
       loadRequests();
     },
@@ -255,9 +320,8 @@ export default function AttendanceRegularization() {
       }),
   });
 
-  function getDetail(request: EmployeeRequest) {
-    return request.regularization_request_detail?.[0] || null;
-  }
+  const selectedStatus = form.watch("requestedStatus");
+  const lwpValue = REQUESTED_STATUS_OPTIONS.find((o) => o.value === selectedStatus)?.lwp ?? 0;
 
   return (
     <DashboardLayout>
@@ -286,19 +350,18 @@ export default function AttendanceRegularization() {
 
         {linkedEmployeeId && (
           <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-            Deep-linked from notification — Employee ID:{" "}
-            <span className="font-mono font-bold">{linkedEmployeeId}</span>. The date below has been
-            pre-filled.
+            Pre-filled from link — Date:{" "}
+            <span className="font-mono font-bold">{linkedEmployeeId}</span>.
           </div>
         )}
 
         {/* Stats */}
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <StatCard label="Total Requests" value={stats.total} />
-          <StatCard label="Pending Manager" value={stats.pendingManager} accent="amber" />
-          <StatCard label="Pending Admin" value={stats.pendingAdmin} accent="sky" />
+          <StatCard label="Pending" value={stats.pending} accent="amber" />
           <StatCard label="Approved" value={stats.approved} accent="emerald" />
           <StatCard label="Rejected" value={stats.rejected} accent="rose" />
+          <StatCard label="Cancelled" value={stats.cancelled} accent="sky" />
         </div>
 
         {/* Submission Form */}
@@ -310,10 +373,10 @@ export default function AttendanceRegularization() {
 
           <Form {...form}>
             <form
-              onSubmit={form.handleSubmit((v) => submitMutation.mutate(v))}
+              onSubmit={form.handleSubmit(() => setShowConfirm(true))}
               className="mt-5 space-y-6"
             >
-              {/* Row 1: Date + Dispute Type */}
+              {/* Row 1: Date + Requested Status */}
               <div className="grid gap-4 md:grid-cols-2">
                 <FormField
                   control={form.control}
@@ -334,6 +397,42 @@ export default function AttendanceRegularization() {
 
                 <FormField
                   control={form.control}
+                  name="requestedStatus"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        Requested Status <span className="text-rose-500">*</span>
+                      </FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select status" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {REQUESTED_STATUS_OPTIONS.map((o) => (
+                            <SelectItem key={o.value} value={o.value}>
+                              {o.label} (LWP: {o.lwp})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        LWP impact: <span className="font-semibold">{lwpValue}</span>
+                        {lwpValue > 0 && (
+                          <span className="text-rose-500"> — This will affect your salary</span>
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {/* Row 2: Dispute Type + Reason Code */}
+              <div className="grid gap-4 md:grid-cols-2">
+                <FormField
+                  control={form.control}
                   name="disputeType"
                   render={({ field }) => (
                     <FormItem>
@@ -346,15 +445,42 @@ export default function AttendanceRegularization() {
                         onValueChange={(v) => field.onChange(v === "none" ? null : v)}
                       >
                         <FormControl>
-                          <SelectTrigger className="bg-white !text-slate-900 [&>span]:!text-slate-900">
+                          <SelectTrigger>
                             <SelectValue placeholder="Select dispute type" />
                           </SelectTrigger>
                         </FormControl>
-                        <SelectContent className="bg-white !text-slate-900">
+                        <SelectContent>
                           <SelectItem value="none">None</SelectItem>
                           {DISPUTE_TYPES.map((dt) => (
                             <SelectItem key={dt.value} value={dt.value}>
                               {dt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="reasonCode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        Reason <span className="text-rose-500">*</span>
+                      </FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select a reason" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {reasonCodes.map((rc) => (
+                            <SelectItem key={rc.code} value={rc.code}>
+                              {rc.label}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -377,20 +503,7 @@ export default function AttendanceRegularization() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Current Status</FormLabel>
-                        <Select value={field.value ?? ""} onValueChange={field.onChange}>
-                          <FormControl>
-                            <SelectTrigger className="bg-white !text-slate-900 [&>span]:!text-slate-900">
-                              <SelectValue placeholder="Select status" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent className="bg-white !text-slate-900">
-                            {CURRENT_STATUS_OPTIONS.map((o) => (
-                              <SelectItem key={o.value} value={o.value}>
-                                {o.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <Input placeholder="e.g. Absent, Late In" {...field} />
                         <FormMessage />
                       </FormItem>
                     )}
@@ -447,13 +560,10 @@ export default function AttendanceRegularization() {
                   name="requestedLoginTime"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>
-                        Requested Login Time <span className="text-rose-500">*</span>
-                      </FormLabel>
+                      <FormLabel>Requested Login Time</FormLabel>
                       <FormControl>
                         <Input type="time" {...field} />
                       </FormControl>
-                      <FormDescription>At least one of login/logout is required.</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -464,9 +574,7 @@ export default function AttendanceRegularization() {
                   name="requestedLogoutTime"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>
-                        Requested Logout Time <span className="text-rose-500">*</span>
-                      </FormLabel>
+                      <FormLabel>Requested Logout Time</FormLabel>
                       <FormControl>
                         <Input type="time" {...field} />
                       </FormControl>
@@ -477,16 +585,16 @@ export default function AttendanceRegularization() {
                 />
               </div>
 
-              {/* Reason */}
+              {/* Supporting Note */}
               <FormField
                 control={form.control}
-                name="reason"
+                name="supportingNote"
                 render={({ field }) => {
                   const len = field.value?.length ?? 0;
                   return (
                     <FormItem>
                       <FormLabel>
-                        Reason{" "}
+                        Supporting Note{" "}
                         <span className="text-slate-400 font-normal text-xs">(optional)</span>
                       </FormLabel>
                       <FormControl>
@@ -497,9 +605,7 @@ export default function AttendanceRegularization() {
                         />
                       </FormControl>
                       <div className="flex items-center justify-between">
-                        <FormDescription>
-                          If left blank, the requested times will be used as the reason.
-                        </FormDescription>
+                        <FormDescription>Provide additional context if needed.</FormDescription>
                         <span
                           className={cn(
                             "text-xs tabular-nums",
@@ -515,7 +621,16 @@ export default function AttendanceRegularization() {
                 }}
               />
 
-              <div className="flex justify-end">
+              {/* Geo + Submit */}
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <MapPin className="h-3.5 w-3.5" />
+                  {geoStatus === "idle" && <span>Location will be captured on submit</span>}
+                  {geoStatus === "capturing" && <span className="text-amber-600">Capturing location…</span>}
+                  {geoStatus === "captured" && <span className="text-emerald-600">Location captured</span>}
+                  {geoStatus === "failed" && <span className="text-rose-500">Location unavailable</span>}
+                </div>
+
                 <Button type="submit" disabled={submitMutation.isPending} className="w-full sm:w-auto">
                   {submitMutation.isPending ? (
                     <>
@@ -534,80 +649,115 @@ export default function AttendanceRegularization() {
           </Form>
         </div>
 
-        {/* Requests List */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h2 className="text-base font-semibold text-slate-950">Regularization Requests</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Review request status, approval stages, and audit trail.
-              </p>
+        {/* Tabs: My Requests / Team Pending */}
+        {isManager && (
+          <div className="flex gap-1 rounded-2xl border border-slate-200 bg-slate-100 p-1 w-fit">
+            <button
+              onClick={() => setActiveTab("mine")}
+              className={cn(
+                "rounded-xl px-4 py-2 text-sm font-medium transition-colors",
+                activeTab === "mine" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              My Requests
+            </button>
+            <button
+              onClick={() => setActiveTab("team")}
+              className={cn(
+                "rounded-xl px-4 py-2 text-sm font-medium transition-colors",
+                activeTab === "team" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              Team Pending {teamRequests.length > 0 && <span className="ml-1.5 rounded-full bg-amber-500 px-1.5 py-0.5 text-xs text-white">{teamRequests.length}</span>}
+            </button>
+          </div>
+        )}
+
+        {/* My Requests */}
+        {activeTab === "mine" && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-slate-950">My Regularization Requests</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Review your past requests and their approval status.
+                </p>
+              </div>
+
+              <Select value={filterStatus} onValueChange={setFilterStatus}>
+                <SelectTrigger className="w-full md:w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="approved">Approved</SelectItem>
+                  <SelectItem value="rejected">Rejected</SelectItem>
+                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
-            <Select value={filterStatus} onValueChange={setFilterStatus}>
-              <SelectTrigger className="w-full md:w-52 bg-white !text-slate-900 [&>span]:!text-slate-900">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-white !text-slate-900">
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="pending_manager">Pending Manager</SelectItem>
-                <SelectItem value="pending_admin">Pending Admin / WFM</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
-                <SelectItem value="rejected">Rejected</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
-            {isLoading ? (
-              <div className="flex items-center gap-2 p-6 text-sm text-slate-500">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading requests…
-              </div>
-            ) : filteredRequests.length === 0 ? (
-              <div className="p-8 text-center text-sm text-slate-500">
-                No regularization requests found.
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-200 text-sm">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <Th>Request No</Th>
-                      <Th>Date</Th>
-                      <Th>Status</Th>
-                      <Th>Stage</Th>
-                      <Th>Requested Time</Th>
-                      <Th>Payroll</Th>
-                      <Th>Actions</Th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 bg-white">
-                    {filteredRequests.map((request) => {
-                      const detail = getDetail(request);
-                      return (
+            <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+              {isLoading ? (
+                <div className="flex items-center gap-2 p-6 text-sm text-slate-500">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading requests…
+                </div>
+              ) : filteredRequests.length === 0 ? (
+                <div className="p-8 text-center text-sm text-slate-500">
+                  No regularization requests found.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-slate-200 text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <Th>Date</Th>
+                        <Th>Requested Status</Th>
+                        <Th>Reason</Th>
+                        <Th>Current</Th>
+                        <Th>Requested Time</Th>
+                        <Th>Status</Th>
+                        <Th>Actions</Th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {filteredRequests.map((request) => (
                         <tr key={request.id} className="hover:bg-slate-50">
                           <Td>
-                            <div className="font-semibold text-slate-950">{request.request_no}</div>
-                            <div className="mt-0.5 text-xs text-slate-400">
+                            <div className="font-medium text-slate-950">
+                              {formatDate(request.session_date)}
+                            </div>
+                            <div className="text-xs text-slate-400">
                               {formatDateTime(request.created_at)}
                             </div>
                           </Td>
-                          <Td>{detail?.attendance_date || "—"}</Td>
                           <Td>
-                            <StatusBadge status={request.current_status} />
+                            <div className="capitalize">{request.requested_status || "—"}</div>
                           </Td>
                           <Td>
-                            <div className="text-slate-900">{request.current_stage_name || "—"}</div>
-                            <div className="text-xs text-slate-400">
-                              {request.current_owner_role || "—"}
+                            <div className="text-slate-900">{request.reason_label || request.reason_code || "—"}</div>
+                            <div className="max-w-[200px] truncate text-xs text-slate-400" title={request.reason}>
+                              {request.reason}
                             </div>
                           </Td>
                           <Td>
-                            <div>In: {detail?.requested_login_time || "—"}</div>
-                            <div>Out: {detail?.requested_logout_time || "—"}</div>
+                            <div className="text-xs">
+                              <span className="text-slate-400">Status:</span> {request.old_status || "—"}
+                            </div>
+                            <div className="text-xs text-slate-400">
+                              {request.old_punch_in || "?"} → {request.old_punch_out || "?"}
+                            </div>
                           </Td>
-                          <Td>{request.payroll_impact_status}</Td>
+                          <Td>
+                            <div>
+                              {request.new_punch_in || "—"} → {request.new_punch_out || "—"}
+                            </div>
+                          </Td>
+                          <Td>
+                            <StatusBadge status={request.status} />
+                          </Td>
                           <Td>
                             <div className="flex flex-wrap gap-2">
                               <button
@@ -616,30 +766,147 @@ export default function AttendanceRegularization() {
                               >
                                 View
                               </button>
-
                             </div>
                           </Td>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Team Pending */}
+        {activeTab === "team" && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-slate-950">Team Pending Regularizations</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {teamRequests.length} request{teamRequests.length !== 1 ? "s" : ""} pending your review.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+              {teamLoading ? (
+                <div className="flex items-center gap-2 p-6 text-sm text-slate-500">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading team requests…
+                </div>
+              ) : teamRequests.length === 0 ? (
+                <div className="p-8 text-center text-sm text-slate-500">
+                  No pending team regularization requests.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-slate-200 text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <Th>Employee</Th>
+                        <Th>Date</Th>
+                        <Th>Requested</Th>
+                        <Th>Reason</Th>
+                        <Th>Current → Requested</Th>
+                        <Th>Pending For</Th>
+                        <Th>Actions</Th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {teamRequests.map((request) => (
+                        <tr key={request.id} className="hover:bg-slate-50">
+                          <Td>
+                            <div className="font-medium text-slate-950">{request.employee_name || "—"}</div>
+                            <div className="text-xs text-slate-400">{request.employee_code || "—"}</div>
+                          </Td>
+                          <Td>{formatDate(request.session_date)}</Td>
+                          <Td>
+                            <span className="capitalize">{request.requested_status || "—"}</span>
+                          </Td>
+                          <Td>
+                            <div className="text-slate-900">{request.reason_label || request.reason_code || "—"}</div>
+                            <div className="max-w-[180px] truncate text-xs text-slate-400" title={request.reason}>
+                              {request.reason}
+                            </div>
+                          </Td>
+                          <Td>
+                            <div className="text-xs text-slate-400">
+                              {request.old_punch_in || "?"} → {request.old_punch_out || "?"}
+                            </div>
+                            <div className="text-xs font-medium text-teal-600">
+                              {request.new_punch_in || "—"} → {request.new_punch_out || "—"}
+                            </div>
+                          </Td>
+                          <Td>
+                            <span className="text-xs text-slate-500">{daysSince(request.created_at)}</span>
+                          </Td>
+                          <Td>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                onClick={() => {
+                                  setReviewTarget(request);
+                                  setShowReviewModal(true);
+                                }}
+                                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setReviewTarget(request);
+                                  setShowReviewModal(true);
+                                }}
+                                className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          </Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Confirm Dialog */}
+      {showConfirm && (
+        <ConfirmDialog
+          onConfirm={() => {
+            const values = form.getValues();
+            submitMutation.mutate(values);
+          }}
+          onCancel={() => setShowConfirm(false)}
+          lwpValue={lwpValue}
+          isPending={submitMutation.isPending}
+        />
+      )}
+
+      {/* Review Modal */}
+      {showReviewModal && reviewTarget && (
+        <ReviewDialog
+          request={reviewTarget}
+          onClose={() => { setShowReviewModal(false); setReviewTarget(null); }}
+          onReview={(id, status, reviewerNote) => reviewMutation.mutate({ id, status, reviewerNote })}
+          isPending={reviewMutation.isPending}
+        />
+      )}
 
       {/* Detail Modal */}
       {selectedRequest && (
         <DetailDialog request={selectedRequest} onClose={() => setSelectedRequest(null)} />
       )}
-
     </DashboardLayout>
   );
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────
+// ── Sub-components ─────────────────────────────────────────────────────────
 
 function StatCard({
   label,
@@ -680,9 +947,7 @@ function Td({ children }: { children: ReactNode }) {
 
 function StatusBadge({ status }: { status: string }) {
   const statusMap: Record<string, string> = {
-    submitted: "pending",
-    pending_manager: "pending",
-    pending_admin: "pending",
+    pending: "pending",
     approved: "success",
     rejected: "failed",
     cancelled: "cancelled",
@@ -695,32 +960,196 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function ReviewDialog({
+  request,
+  onClose,
+  onReview,
+  isPending,
+}: {
+  request: RegularizationRecord;
+  onClose: () => void;
+  onReview: (id: string, status: "approved" | "rejected", reviewerNote: string) => void;
+  isPending: boolean;
+}) {
+  const [reviewerNote, setReviewerNote] = useState("");
+  const [selectedAction, setSelectedAction] = useState<"approved" | "rejected" | null>(null);
+  const [confirmStep, setConfirmStep] = useState(false);
+
+  if (confirmStep && selectedAction) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+          <h3 className="text-lg font-semibold text-slate-950">
+            {selectedAction === "approved" ? "Approve" : "Reject"} Regularization
+          </h3>
+          <p className="mt-2 text-sm text-slate-600">
+            {selectedAction === "approved"
+              ? "This will update the employee's attendance record. Are you sure?"
+              : "The employee will be notified of the rejection."}
+          </p>
+          {reviewerNote && (
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+              Note: {reviewerNote}
+            </div>
+          )}
+          <div className="mt-5 flex justify-end gap-3">
+            <button
+              onClick={() => setConfirmStep(false)}
+              disabled={isPending}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Back
+            </button>
+            <Button
+              onClick={() => onReview(request.id, selectedAction, reviewerNote)}
+              disabled={isPending}
+              variant={selectedAction === "approved" ? "default" : "destructive"}
+            >
+              {isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {selectedAction === "approved" ? "Approving…" : "Rejecting…"}
+                </>
+              ) : (
+                selectedAction === "approved" ? "Confirm Approve" : "Confirm Reject"
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-950">Review Regularization</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              {request.employee_name} — {formatDate(request.session_date)}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="text-slate-500">Requested Status</div>
+            <div className="font-medium capitalize">{request.requested_status || "—"}</div>
+            <div className="text-slate-500">Reason</div>
+            <div>{request.reason_label || request.reason_code || "—"}</div>
+            <div className="text-slate-500">Current Punch</div>
+            <div>{request.old_punch_in || "?"} → {request.old_punch_out || "?"}</div>
+            <div className="text-slate-500">Requested Punch</div>
+            <div className="font-medium text-teal-600">{request.new_punch_in || "—"} → {request.new_punch_out || "—"}</div>
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <label className="text-sm font-medium text-slate-700">Reviewer Note <span className="text-slate-400 font-normal">(optional)</span></label>
+          <textarea
+            value={reviewerNote}
+            onChange={(e) => setReviewerNote(e.target.value)}
+            placeholder="Add a note explaining your decision…"
+            className="mt-1.5 w-full rounded-xl border border-slate-200 p-3 text-sm outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-400 min-h-[72px] resize-none"
+          />
+        </div>
+
+        <div className="mt-5 flex justify-end gap-3">
+          <button
+            onClick={() => { setSelectedAction("rejected"); setConfirmStep(true); }}
+            disabled={isPending}
+            className="rounded-xl border border-rose-200 px-4 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"
+          >
+            Reject
+          </button>
+          <button
+            onClick={() => { setSelectedAction("approved"); setConfirmStep(true); }}
+            disabled={isPending}
+            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+          >
+            Approve
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmDialog({
+  onConfirm,
+  onCancel,
+  lwpValue,
+  isPending,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+  lwpValue: number;
+  isPending: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+        <h3 className="text-lg font-semibold text-slate-950">Confirm Submission</h3>
+        {lwpValue > 0 && (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            This request will result in <strong>LWP of {lwpValue}</strong>, which may affect your
+            salary.
+          </div>
+        )}
+        <p className="mt-3 text-sm text-slate-600">
+          Are you sure you want to submit this regularization request?
+        </p>
+        <div className="mt-5 flex justify-end gap-3">
+          <button
+            onClick={onCancel}
+            disabled={isPending}
+            className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <Button onClick={onConfirm} disabled={isPending}>
+            {isPending ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Submitting…
+              </>
+            ) : (
+              "Confirm & Submit"
+            )}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DetailDialog({
   request,
   onClose,
 }: {
-  request: EmployeeRequest;
+  request: RegularizationRecord;
   onClose: () => void;
 }) {
-  const detail = request.regularization_request_detail?.[0] || null;
-  const stages = [...(request.request_approval_stage || [])].sort(
-    (a, b) => a.stage_no - b.stage_no
-  );
-  const logs = [...(request.request_action_log || [])].sort(
-    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-  );
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
-      <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-400">
               Request Detail
             </p>
-            <h3 className="mt-1 text-xl font-semibold text-slate-950">{request.request_no}</h3>
+            <h3 className="mt-1 text-xl font-semibold text-slate-950">
+              {formatDate(request.session_date)}
+            </h3>
             <div className="mt-2">
-              <StatusBadge status={request.current_status} />
+              <StatusBadge status={request.status} />
             </div>
           </div>
 
@@ -736,86 +1165,32 @@ function DetailDialog({
           <div className="rounded-2xl border border-slate-200 p-4">
             <h4 className="text-sm font-semibold text-slate-950">Attendance Correction</h4>
             <div className="mt-4 grid gap-3 text-sm">
-              <InfoRow label="Attendance Date" value={detail?.attendance_date} />
-              <InfoRow label="Current Status" value={detail?.current_status} />
-              <InfoRow label="Current Login" value={detail?.current_login_time} />
-              <InfoRow label="Current Logout" value={detail?.current_logout_time} />
-              <InfoRow label="Requested Login" value={detail?.requested_login_time} />
-              <InfoRow label="Requested Logout" value={detail?.requested_logout_time} />
+              <InfoRow label="Session Date" value={formatDate(request.session_date)} />
+              <InfoRow label="Requested Status" value={request.requested_status ? capitalize(request.requested_status) : "—"} />
+              <InfoRow label="Reason Code" value={request.reason_label || request.reason_code || "—"} />
               <InfoRow label="Reason" value={request.reason} />
-              <InfoRow label="Payroll Impact" value={request.payroll_impact_status} />
+              <InfoRow label="Supporting Note" value={request.supporting_note} />
+              <InfoRow label="Old Status" value={request.old_status} />
+              <InfoRow label="Old Punch" value={request.old_punch_in && request.old_punch_out ? `${request.old_punch_in} → ${request.old_punch_out}` : "—"} />
+              <InfoRow label="New Punch" value={request.new_punch_in && request.new_punch_out ? `${request.new_punch_in} → ${request.new_punch_out}` : "—"} />
+              <InfoRow label="Dispute Type" value={request.dispute_type ? capitalize(request.dispute_type.replace(/_/g, " ")) : "—"} />
+              <InfoRow label="Payroll Impact" value={request.payroll_impact ? "Yes" : "No"} />
             </div>
           </div>
 
           <div className="rounded-2xl border border-slate-200 p-4">
-            <h4 className="text-sm font-semibold text-slate-950">Approval Stages</h4>
-            <div className="mt-4 space-y-3">
-              {stages.map((stage) => (
-                <div key={stage.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-950">
-                        Stage {stage.stage_no}: {stage.stage_name}
-                      </p>
-                      <p className="mt-0.5 text-xs text-slate-500">
-                        Role: {stage.approver_role || "—"}
-                      </p>
-                    </div>
-                    <StatusBadge status={stage.status} />
-                  </div>
-                  {stage.remarks && (
-                    <p className="mt-2 text-xs text-slate-500">Remarks: {stage.remarks}</p>
-                  )}
-                  {stage.acted_at && (
-                    <p className="mt-1 text-xs text-slate-400">
-                      Acted at: {formatDateTime(stage.acted_at)}
-                    </p>
-                  )}
-                </div>
-              ))}
-              {stages.length === 0 && (
-                <p className="text-sm text-slate-400">No approval stages recorded yet.</p>
-              )}
+            <h4 className="text-sm font-semibold text-slate-950">Review & Status</h4>
+            <div className="mt-4 grid gap-3 text-sm">
+              <InfoRow label="Requested By" value={request.requested_by_type === "manager" ? "Manager" : "Employee"} />
+              <InfoRow label="Submitted By" value={request.employee_name ? `${request.employee_name} (${request.employee_code || ""})` : "—"} />
+              <InfoRow label="Status" value={statusLabel[request.status] || request.status} />
+              <InfoRow label="Reviewed By" value={request.reviewed_by || "—"} />
+              <InfoRow label="Reviewed At" value={formatDateTime(request.reviewed_at)} />
+              <InfoRow label="Reviewer Note" value={request.reviewer_note} />
+              <InfoRow label="Created At" value={formatDateTime(request.created_at)} />
+              <InfoRow label="Updated At" value={formatDateTime(request.updated_at)} />
+              <InfoRow label="Location" value={request.latitude && request.longitude ? `${request.latitude}, ${request.longitude}` : "—"} />
             </div>
-          </div>
-        </div>
-
-        <div className="mt-4 rounded-2xl border border-slate-200 p-4">
-          <h4 className="text-sm font-semibold text-slate-950">Audit Log</h4>
-          <div className="mt-4 overflow-hidden rounded-xl border border-slate-200">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
-              <thead className="bg-slate-50">
-                <tr>
-                  <Th>Action</Th>
-                  <Th>Old Status</Th>
-                  <Th>New Status</Th>
-                  <Th>Remarks</Th>
-                  <Th>Created At</Th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {logs.map((log) => (
-                  <tr key={log.id}>
-                    <Td>{log.action}</Td>
-                    <Td>{log.old_status || "—"}</Td>
-                    <Td>{log.new_status || "—"}</Td>
-                    <Td>
-                      <span title={log.remarks ?? undefined} className="block max-w-[200px] truncate">
-                        {log.remarks || "—"}
-                      </span>
-                    </Td>
-                    <Td>{formatDateTime(log.created_at)}</Td>
-                  </tr>
-                ))}
-                {logs.length === 0 && (
-                  <tr>
-                    <td className="p-4 text-center text-sm text-slate-400" colSpan={5}>
-                      No audit entries yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
           </div>
         </div>
       </div>
@@ -832,10 +1207,27 @@ function InfoRow({ label, value }: { label: string; value?: string | null }) {
   );
 }
 
+function formatDate(value?: string | null) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("en-IN", { dateStyle: "medium" }).format(new Date(value + "T00:00:00"));
+}
+
 function formatDateTime(value?: string | null) {
   if (!value) return "—";
   return new Intl.DateTimeFormat("en-IN", {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function daysSince(dateStr: string) {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const days = Math.floor(diff / 86400000);
+  if (days === 0) return "Today";
+  if (days === 1) return "1 day";
+  return `${days} days`;
+}
+
+function capitalize(s: string) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }

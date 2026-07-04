@@ -273,3 +273,11 @@ wfmRegularizationSecureRouter.patch("/regularizations/:id/review", h(async (req:
 
   return res.json({ success: true, data, message: `Regularization ${status}` });
 }));
+
+// ── Reason codes ──────────────────────────────────────────────────────────
+wfmRegularizationSecureRouter.get("/regularizations/reasons", h(async (req: any, res: any) => {
+  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
+  const isManager = await checkRole(req.authUser.id, 'admin', 'hr', 'wfm', 'manager', 'assistant_manager', 'tl', 'branch_head', 'process_manager');
+  const data = await wfmService.listReasons(isManager ? undefined : 'employee');
+  return res.json({ success: true, data });
+}));

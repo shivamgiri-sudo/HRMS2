@@ -201,6 +201,17 @@ export const wfmService = {
     input: RegularizationInput & { employeeId: string; requestedByType?: 'employee' | 'manager' },
     _userId: string
   ): Promise<AttendanceRegularization> {
+    // Duplicate check — block if a pending regularization already exists for this date
+    const [dupRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM attendance_regularization
+        WHERE employee_id = ? AND session_date = ? AND status = 'pending'
+        LIMIT 1`,
+      [input.employeeId, input.sessionDate]
+    );
+    if ((dupRows as RowDataPacket[]).length > 0) {
+      throw new Error('A pending regularization request already exists for this date');
+    }
+
     // Validate reason_code if provided
     if (input.reasonCode) {
       const [rr] = await db.execute<RowDataPacket[]>(

@@ -75,48 +75,7 @@ wfmRouter.post("/sessions/clock-out", h(wfmController.clockOut.bind(wfmControlle
 wfmRouter.get("/sessions",            requireRole("admin", "wfm", "manager"), h(wfmController.listSessions.bind(wfmController)));
 wfmRouter.post("/sessions/break",     h(wfmController.logBreak.bind(wfmController))); // Employee self-service
 
-// Regularization reason codes
-wfmRouter.get("/regularizations/reasons", h(async (req: any, res: any) => {
-  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
-  const isManager = await checkRole(req.authUser.id, 'admin', 'hr', 'wfm', 'manager');
-  const data = await wfmService.listReasons(isManager ? undefined : 'employee');
-  return res.json({ success: true, data });
-}));
-
-// Regularization
-wfmRouter.post("/regularizations", h(async (req: any, res: any) => {
-  const { regularizationSchema } = await import("./wfm.validation.js");
-  const input = regularizationSchema.parse(req.body);
-  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
-  const isManager = await checkRole(req.authUser.id, 'admin', 'hr', 'wfm', 'manager');
-  const requestedByType = isManager ? 'manager' : 'employee';
-  const emp = isManager
-    ? (req.body.employeeId ? { id: req.body.employeeId } : await getEmployeeForUser(req.authUser.id))
-    : await getEmployeeForUser(req.authUser.id);
-  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
-  // Employees can only submit for themselves
-  if (!isManager) {
-    const selfEmp = await getEmployeeForUser(req.authUser.id);
-    if (!selfEmp || selfEmp.id !== emp.id) {
-      return res.status(403).json({ success: false, error: 'Forbidden' });
-    }
-  }
-  const data = await wfmService.submitRegularization(
-    { ...input, employeeId: emp.id, requestedByType } as any,
-    req.authUser.id
-  );
-  return res.status(201).json({ success: true, data, message: "Regularization submitted" });
-}));
-
-// GET /api/wfm/regularizations/mine — employee sees own regularization requests
-wfmRouter.get("/regularizations/mine", h(async (req: any, res: any) => {
-  const emp = await getEmployeeForUser(req.authUser.id);
-  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
-  const data = await wfmService.listRegularizations({ employeeId: emp.id });
-  return res.json({ success: true, data });
-}));
-wfmRouter.get("/regularizations",               requireRole("admin", "wfm", "manager"), h(wfmController.listRegularizations.bind(wfmController)));
-wfmRouter.patch("/regularizations/:id/review",  requireRole("admin", "wfm", "manager"), h(wfmController.reviewRegularization.bind(wfmController)));
+// Regularization routes moved to wfm.regularization.secure.routes.ts
 
 // Live tracker
 wfmRouter.get("/live", requireRole("admin", "wfm", "manager", "branch_head", "process_manager", "tl"), async (req: any, res: any, next: any) => {

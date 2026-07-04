@@ -95,6 +95,8 @@ export const DISPUTE_TYPES = [
 
 export type DisputeType = typeof DISPUTE_TYPES[number];
 
+const MAX_LOOKBACK_DAYS = 90;
+
 export const regularizationSchema = z.object({
   // employeeId removed - derived from auth token for security
   sessionDate:     z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
@@ -111,14 +113,25 @@ export const regularizationSchema = z.object({
   newPunchIn:      z.string().regex(TIME_REGEX, "Time must be HH:MM").nullable().optional(),
   newPunchOut:     z.string().regex(TIME_REGEX, "Time must be HH:MM").nullable().optional(),
   supportingDocId: z.string().trim().nullable().optional(),
-}).refine(d => {
-  const today = new Date();
-  today.setHours(23, 59, 59, 999);
-  return new Date(d.sessionDate) <= today;
-}, {
-  message: "Cannot regularize a future date",
-  path: ["sessionDate"],
-});
+})
+  .refine(d => {
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    return new Date(d.sessionDate) <= today;
+  }, {
+    message: "Cannot regularize a future date",
+    path: ["sessionDate"],
+  })
+  .refine(d => {
+    const sessionDate = new Date(d.sessionDate);
+    const lookback = new Date();
+    lookback.setDate(lookback.getDate() - MAX_LOOKBACK_DAYS);
+    lookback.setHours(0, 0, 0, 0);
+    return sessionDate >= lookback;
+  }, {
+    message: `Cannot regularize dates older than ${MAX_LOOKBACK_DAYS} days`,
+    path: ["sessionDate"],
+  });
 
 export const reviewRegularizationSchema = z.object({
   status: z.enum(["approved", "rejected"]),
