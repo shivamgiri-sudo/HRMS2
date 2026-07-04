@@ -971,6 +971,13 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     return sanitizeProviderPayload(data) as Record<string, unknown>;
   }
 
+  private providerString(value: unknown): string | null {
+    if (value === null || value === undefined) return null;
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    return null;
+  }
+
   private toLuckpayError(error: unknown): Error {
     const status = Number((error as { response?: { status?: number } })?.response?.status ?? 502);
     const responseData = (error as { response?: { data?: unknown } })?.response?.data;
@@ -996,7 +1003,10 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     const status: VerificationStatus = ["valid", "verified", "success", "active"].includes(apiStatus)
       ? "verified"
       : apiStatus.includes("mismatch") ? "mismatch" : "failed";
-    const matchedName = d.pan_name ?? d.name ?? d.full_name ?? null;
+    const matchedName = this.providerString(d.pan_name ?? d.name ?? d.full_name);
+    const matchedDob = this.providerString(d.dob);
+    const message = this.providerString(d.message);
+    const failureReason = this.providerString(d.failure_reason);
     return {
       status,
       providerKey: this.providerKey,
@@ -1004,9 +1014,9 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
       matchScore: roughNameMatchScore(input.candidateName, matchedName),
       matchedName,
-      matchedDob: d.dob ?? null,
-      resultSummary: d.message ?? `PAN check: ${status}`,
-      riskFlags: status === "verified" ? [] : [String(d.failure_reason ?? "PAN_CHECK_FAILED").toUpperCase()],
+      matchedDob,
+      resultSummary: message ?? `PAN check: ${status}`,
+      riskFlags: status === "verified" ? [] : [String(failureReason ?? "PAN_CHECK_FAILED").toUpperCase()],
       raw: this.sanitizedRaw(d),
     };
   }
@@ -1021,8 +1031,10 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       verificationMode: "PENNY_DROP",
     });
     const apiStatus = String(d.status ?? d.result ?? "").toLowerCase();
-    const matchedName = d.registered_name ?? d.account_holder_name ?? d.name ?? null;
+    const matchedName = this.providerString(d.registered_name ?? d.account_holder_name ?? d.name);
     const score = roughNameMatchScore(input.accountHolderName ?? input.candidateName, matchedName);
+    const message = this.providerString(d.message);
+    const failureReason = this.providerString(d.failure_reason);
     const status: VerificationStatus = ["valid", "verified", "success", "active"].includes(apiStatus)
       ? "verified"
       : apiStatus.includes("mismatch") || score < 60 ? "mismatch" : "failed";
@@ -1033,8 +1045,8 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       providerReferenceId: String(d.reference_id ?? d.utr ?? d.transaction_id ?? requestId),
       matchScore: score,
       matchedName,
-      resultSummary: d.message ?? `Bank check: ${status}`,
-      riskFlags: status === "verified" ? [] : [String(d.failure_reason ?? "BANK_CHECK_FAILED").toUpperCase()],
+      resultSummary: message ?? `Bank check: ${status}`,
+      riskFlags: status === "verified" ? [] : [String(failureReason ?? "BANK_CHECK_FAILED").toUpperCase()],
       raw: this.sanitizedRaw(d),
     };
   }
@@ -1049,8 +1061,10 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     const status: VerificationStatus = ["valid", "verified", "success", "active"].includes(apiStatus)
       ? "verified"
       : apiStatus.includes("mismatch") ? "mismatch" : "failed";
-    const matchedName = d.name ?? d.member_name ?? d.full_name ?? null;
+    const matchedName = this.providerString(d.name ?? d.member_name ?? d.full_name);
     const history = Array.isArray(d.employment_history) ? d.employment_history : Array.isArray(d.establishments) ? d.establishments : [];
+    const message = this.providerString(d.message);
+    const failureReason = this.providerString(d.failure_reason);
     return {
       status,
       providerKey: this.providerKey,
@@ -1058,8 +1072,8 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
       matchScore: roughNameMatchScore(input.candidateName, matchedName),
       matchedName,
-      resultSummary: d.message ?? `UAN/employment check: ${status}`,
-      riskFlags: status === "verified" ? [] : [String(d.failure_reason ?? "UAN_CHECK_FAILED").toUpperCase()],
+      resultSummary: message ?? `UAN/employment check: ${status}`,
+      riskFlags: status === "verified" ? [] : [String(failureReason ?? "UAN_CHECK_FAILED").toUpperCase()],
       raw: this.sanitizedRaw(d),
       employmentHistory: history,
     };
@@ -1166,7 +1180,7 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     return {
       state: String(d.state ?? state),
       authUrl: String(d.auth_url ?? d.redirect_url ?? d.access_link ?? d.redirectUrl ?? d.verificationUrl ?? d.verification_url ?? ""),
-      expiresAt: d.expires_at ? new Date(d.expires_at) : new Date(Date.now() + 30 * 60 * 1000),
+      expiresAt: this.providerString(d.expires_at) ? new Date(this.providerString(d.expires_at)!) : new Date(Date.now() + 30 * 60 * 1000),
     };
   }
 

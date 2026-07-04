@@ -28,7 +28,7 @@ branchHeadApprovalRouter.use(requireRole('admin', 'manager', 'branch_head'));
 // ── 1. Get pending approvals ──────────────────────────────────────────────────
 branchHeadApprovalRouter.get('/pending', h(async (req, res) => {
   try {
-    const branchHeadId = req.authUser.id;
+    const branchHeadId = req.authUser!.id;
     const approvals = await getPendingApprovals(branchHeadId);
 
     return res.json({
@@ -48,7 +48,7 @@ branchHeadApprovalRouter.post('/process', h(async (req, res) => {
   try {
     const input: ApprovalInput = {
       approval_id: req.body.approval_id,
-      branch_head_id: req.authUser.id,
+      branch_head_id: req.authUser!.id,
       approval_status: req.body.approval_status,
       remarks: req.body.remarks,
     };
@@ -99,7 +99,7 @@ branchHeadApprovalRouter.get('/history/:candidateId', h(async (req: Request, res
 // ── 4. Get branch head statistics ─────────────────────────────────────────────
 branchHeadApprovalRouter.get('/stats', h(async (req, res) => {
   try {
-    const branchHeadId = req.authUser.id;
+    const branchHeadId = req.authUser!.id;
     const stats = await getBranchHeadStats(branchHeadId);
 
     return res.json({

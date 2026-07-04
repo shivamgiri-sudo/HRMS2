@@ -24,8 +24,10 @@ import { wfmService } from "../wfm/wfm.service.js";
 export const attendanceDisputeRouter = Router();
 attendanceDisputeRouter.use(requireAuth);
 
-const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
+type RequiredAuthRequest = AuthenticatedRequest & { authUser: NonNullable<AuthenticatedRequest["authUser"]> };
+
+const h = (fn: (req: RequiredAuthRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req as RequiredAuthRequest, res).catch(next);
 
 interface AttendanceDisputeRow extends RowDataPacket {
   id: string;
@@ -212,7 +214,7 @@ function auditDispute(
   extra: { old?: Record<string, unknown>; next?: Record<string, unknown> } = {},
 ): void {
   void logSensitiveAction({
-    actor_user_id: req.authUser.id,
+    actor_user_id: req.authUser!.id,
     actor_role: actorRole,
     action_type: actionType,
     module_key: "attendance",

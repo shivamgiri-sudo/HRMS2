@@ -1,4 +1,4 @@
-import { Router, type NextFunction, type Request, type Response } from "express";
+import { Router, type NextFunction, type Request, type RequestHandler, type Response } from "express";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
@@ -30,10 +30,10 @@ const twoFactorLimiter = rateLimit({
 });
 
 const router = Router();
-type AnyRequest = Request & { authUser: NonNullable<AuthenticatedRequest["authUser"]> };
+type AnyRequest = Request & { authUser?: AuthenticatedRequest["authUser"] };
 
 const h = (fn: (req: AnyRequest, res: Response) => Promise<unknown>) =>
-  (req: AnyRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
+  ((req: Request, res: Response, next: NextFunction) => fn(req as AnyRequest, res).catch(next)) as RequestHandler;
 
 interface ReportingRow extends RowDataPacket {
   reporting_manager_id: string | null;
@@ -121,7 +121,7 @@ async function isReportingDownline(requesterEmployeeId: string, targetEmployeeId
 
   while (currentEmployeeId && !visited.has(currentEmployeeId)) {
     visited.add(currentEmployeeId);
-    const result = await db.execute<ReportingRow[]>(
+    const result: [ReportingRow[], unknown] = await db.execute<ReportingRow[]>(
       `SELECT reporting_manager_id
          FROM employees
         WHERE id = ? AND active_status = 1
@@ -369,7 +369,7 @@ router.post("/change-password", requireAuth, h(async (req, res) => {
   if (String(newPassword).length < 8) {
     return res.status(400).json({ error: "New password must be at least 8 characters" });
   }
-  await authService.changePassword(req.authUser.id, String(currentPassword), String(newPassword));
+  await authService.changePassword(req.authUser!.id, String(currentPassword), String(newPassword));
   return res.json({ success: true });
 }));
 
@@ -378,7 +378,7 @@ router.post("/2fa/send", requireAuth, twoFactorLimiter, h(async (req, res) => {
   if (!["email", "sms"].includes(channel)) {
     return res.status(400).json({ success: false, error: "channel must be email or sms" });
   }
-  await sendTwoFactorChallenge(req.authUser.id, channel);
+  await sendTwoFactorChallenge(req.authUser!.id, channel);
   return res.json({ success: true, message: "Verification code sent" });
 }));
 
@@ -387,7 +387,7 @@ router.post("/2fa/verify", requireAuth, twoFactorLimiter, h(async (req, res) => 
   if (!/^\d{6}$/.test(otp)) {
     return res.status(400).json({ success: false, error: "A valid 6 digit code is required" });
   }
-  await verifyTwoFactorChallenge(req.authUser.id, otp);
+  await verifyTwoFactorChallenge(req.authUser!.id, otp);
 
   // Exchange the pre_auth token for a full access token.
   // The authorization header still carries the pre_auth token at this point.
@@ -445,7 +445,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req, res) => {
     `SELECT role_key
        FROM user_roles
       WHERE user_id = ? AND active_status = 1`,
-    [req.authUser.id]
+    [req.authUser!.id]
   );
   const roles = new Set(roleRows.map((row) => String(row.role_key)));
   const requesterRole = roles.has("super_admin")
@@ -471,7 +471,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req, res) => {
       WHERE e.user_id = ? AND e.active_status = 1
       ORDER BY e.updated_at DESC
       LIMIT 1`,
-    [req.authUser.id]
+    [req.authUser!.id]
   );
   const requesterDesignation = requesterRows[0]?.designation
     ? String(requesterRows[0].designation)
@@ -574,7 +574,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req, res) => {
     });
   }
 
-  if (targetUserId === req.authUser.id) {
+  if (targetUserId === req.authUser!.id) {
     return res.status(403).json({
       success: false,
       error: "Use Change Password to update your own password"
@@ -613,7 +613,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req, res) => {
   );
 
   await logSensitiveAction({
-    actor_user_id: req.authUser.id,
+    actor_user_id: req.authUser!.id,
     action_type: "ADMIN_PASSWORD_RESET",
     module_key: "AUTH",
     entity_type: "auth_user",

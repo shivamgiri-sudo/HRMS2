@@ -7,8 +7,18 @@ import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { atsFullParityService as svc } from "./atsFullParity.service.js";
 import { submitInterviewUpdate, resolveRecruiterForActor } from "./recruiterInterview.service.js";
+import type { RowDataPacket } from "mysql2";
 
 export const atsFullParityRouter = Router();
+
+interface RecruiterLookupRow extends RowDataPacket {
+  id: string;
+  name: string;
+  recruiter_code: string;
+  email?: string | null;
+  branch?: string | null;
+  employee_id?: string | null;
+}
 
 type AsyncHandler = (req: AuthenticatedRequest | Request, res: Response) => Promise<unknown>;
 
@@ -107,7 +117,10 @@ atsFullParityRouter.get("/journey", requireRole("admin", "hr", "recruiter", "man
     const allowed = await hasScopedAccess(
       req.authUser!.id,
       ["recruiter", "manager", "branch_head", "process_manager"],
-      { branchId: candidate.applied_for_branch ?? null, processId: candidate.applied_for_process ?? null },
+      {
+        branchId: typeof candidate.applied_for_branch === "string" ? candidate.applied_for_branch : null,
+        processId: typeof candidate.applied_for_process === "string" ? candidate.applied_for_process : null,
+      },
       { allowAdminBypass: true },
     );
     if (!allowed) return res.status(403).json({ success: false, message: "Access denied: candidate outside your scope" });
@@ -125,7 +138,7 @@ atsFullParityRouter.post("/recruiter-submission", requireRole("admin", "hr", "re
   if (isPrivileged && bodyCode) {
     // Admin/HR may submit on behalf of any active recruiter
     const { db: _db } = await import("../../db/mysql.js");
-    const [recRows] = await _db.execute<Array<{ id: string; name: string; recruiter_code: string; email?: string | null; branch?: string | null; employee_id?: string | null }>>(
+    const [recRows] = await _db.execute<RecruiterLookupRow[]>(
       `SELECT id, name, recruiter_code, email, branch, employee_id FROM ats_recruiter_roster WHERE recruiter_code = ? AND active_status = 1 LIMIT 1`,
       [bodyCode]
     );

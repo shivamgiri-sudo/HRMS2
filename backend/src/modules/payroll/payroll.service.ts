@@ -146,9 +146,9 @@ export const payrollService = {
     if (employeeId) {
       try {
         const result = await getEffectiveConfig(employeeId, 'salary_component', null, { components });
-        if (result.config.additional_components) {
+        if (Array.isArray(result.config.additional_components)) {
           components = [...components, ...result.config.additional_components];
-        } else if (result.config.components) {
+        } else if (Array.isArray(result.config.components)) {
           components = result.config.components;
         }
       } catch (err) {

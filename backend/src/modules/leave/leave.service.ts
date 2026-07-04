@@ -28,7 +28,7 @@ export const leaveService = {
     if (employeeId) {
       for (const type of types) {
         try {
-          const result = await getEffectiveConfig(employeeId, 'leave_type', type.id, type);
+          const result = await getEffectiveConfig(employeeId, 'leave_type', type.id, type as unknown as Record<string, unknown>);
           Object.assign(type, result.config);
         } catch (err) {
           // Skip customization on error

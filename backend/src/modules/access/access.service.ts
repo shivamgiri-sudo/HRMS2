@@ -175,7 +175,16 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
     last_name: string | null;
     full_name: string | null;
   };
-  type ScopeRow = RowDataPacket & { role_key: string | null };
+  type ScopeRow = RowDataPacket & {
+    id?: string | null;
+    role_key?: string | null;
+    scope_type?: string | null;
+    branch_id?: string | null;
+    process_id?: string | null;
+    lob_id?: string | null;
+    department_id?: string | null;
+    manager_employee_id?: string | null;
+  };
   type DisabledPageRow = RowDataPacket & { page_code: string };
   type PageRow = RowDataPacket & {
     page_code: string;
@@ -284,7 +293,16 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
       full_name: emp.full_name ?? null,
     } : null,
     roles,
-    scopes,
+    scopes: scopes.map((scope) => ({
+      id: String(scope.id ?? ""),
+      role_key: String(scope.role_key ?? ""),
+      scope_type: String(scope.scope_type ?? ""),
+      branch_id: scope.branch_id ?? null,
+      process_id: scope.process_id ?? null,
+      lob_id: scope.lob_id ?? null,
+      department_id: scope.department_id ?? null,
+      manager_employee_id: scope.manager_employee_id ?? null,
+    })),
     pages,
     disabledPageCodes,
   };

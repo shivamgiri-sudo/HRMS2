@@ -24,6 +24,10 @@ interface AuthUserRow extends RowDataPacket {
   active_status: number | null;
 }
 
+interface OrgSettingRow extends RowDataPacket {
+  setting_value: string | null;
+}
+
 interface AuthUserIdRow extends RowDataPacket {
   id: string;
   is_blocked: number | null;
@@ -164,7 +168,7 @@ export const authService = {
     if (user.is_blocked) throw new Error('Account is blocked');
 
     // CRITICAL: Block inactive employees from logging in
-    if (user.active_status === 0 || user.active_status === false) {
+    if (Number(user.active_status ?? 1) === 0) {
       throw new Error('Account is inactive. Please contact HR for assistance.');
     }
 
@@ -191,7 +195,7 @@ export const authService = {
     const mustChangePassword = Number(user.must_change_password ?? 0) === 1;
 
     // Check global 2FA toggle in org_settings
-    const [tfaSettingRows] = await db.execute<{ setting_value: string | null }[]>(
+    const [tfaSettingRows] = await db.execute<OrgSettingRow[]>(
       "SELECT setting_value FROM org_settings WHERE setting_key = 'two_factor_enabled' LIMIT 1"
     );
     const tfaEnabled = tfaSettingRows[0]?.setting_value !== 'false';

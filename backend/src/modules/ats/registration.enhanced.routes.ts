@@ -123,11 +123,11 @@ registrationEnhancedRouter.get("/recruiters/:branchName", async (req, res) => {
 
     return res.json({
       success: true,
-      data: recruiters.map((r: RecruiterRow) => ({
+      data: recruiters.map((r) => ({
         id: r.id,                      // roster id (FK-safe for ats_candidate.recruiter_id)
         employee_id: r.employee_id,    // actual employee UUID — frontend sends this as preferredRecruiterId
         employee_code: r.employee_code,
-        name: `${r.first_name} ${r.last_name}`.trim(),
+        name: `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim() || r.employee_code || "Recruiter",
         mobile: r.mobile,
         email: r.email,
         present_today: Boolean(r.present_today),
@@ -292,7 +292,7 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       const availableRecruiters = await getAvailableRecruiters(branchName);
       if (availableRecruiters.length > 0) {
         const pick = availableRecruiters[Math.floor(Math.random() * availableRecruiters.length)];
-        resolvedRecruiterId = pick.id;
+        resolvedRecruiterId = pick.id ?? null;
       }
     }
 
@@ -476,6 +476,10 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
     }
 
     // 7. Send emails (async, don't wait)
+    const recruiterEmail = recruiterDetails?.email ?? null;
+    const recruiterName = recruiterDetails?.name ?? "Recruiter";
+    const recruiterMobile = recruiterDetails?.mobile ?? "Not available";
+
     if (input.email && recruiterDetails) {
       const registrationDate = new Date().toLocaleString('en-US', {
         dateStyle: 'medium',
@@ -489,22 +493,24 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
         candidateName: input.name,
         tokenNumber: tokenNumber || 'Pending',
         branchDisplayName: input.branchDisplayName,
-        recruiterName: recruiterDetails.name,
-        recruiterMobile: recruiterDetails.mobile,
+        recruiterName,
+        recruiterMobile,
         registrationDate,
       }).catch((err) => console.error('Failed to send candidate email:', err));
 
       // Send recruiter notification
-      sendRecruiterNotificationEmail({
-        candidateId,
-        to: recruiterDetails.email,
-        recruiterName: recruiterDetails.name,
-        candidateName: input.name,
-        candidateMobile: input.mobile,
-        tokenNumber: tokenNumber || 'Pending',
-        branchDisplayName: input.branchDisplayName,
-        roleApplied: input.roleApplied || 'Not specified',
-      }).catch((err) => console.error('Failed to send recruiter email:', err));
+      if (recruiterEmail) {
+        sendRecruiterNotificationEmail({
+          candidateId,
+          to: recruiterEmail,
+          recruiterName,
+          candidateName: input.name,
+          candidateMobile: input.mobile,
+          tokenNumber: tokenNumber || 'Pending',
+          branchDisplayName: input.branchDisplayName,
+          roleApplied: input.roleApplied || 'Not specified',
+        }).catch((err) => console.error('Failed to send recruiter email:', err));
+      }
     }
 
     // 8. Fetch candidate_code for the success response

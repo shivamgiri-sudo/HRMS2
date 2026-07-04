@@ -6,6 +6,7 @@
  */
 
 import { Request, Response } from 'express';
+import type { RowDataPacket } from 'mysql2';
 import { db as pool } from '../../db/mysql.js';
 
 interface AttritionRiskAgent {
@@ -138,7 +139,7 @@ export async function getPerformanceDegradation(req: Request, res: Response) {
       LIMIT ?
     `;
 
-    const [rows] = await pool.query(query, [parseInt(daysBack as string) || 90, parseInt(limit as string) || 50]);
+    const [rows] = await pool.query<RowDataPacket[]>(query, [parseInt(daysBack as string) || 90, parseInt(limit as string) || 50]);
     res.json({
       success: true,
       analysis_type: 'PERFORMANCE_DEGRADATION',
@@ -216,7 +217,7 @@ export async function getAbsenteeismCorrelation(req: Request, res: Response) {
       LIMIT ?
     `;
 
-    const [rows] = await pool.query(query, [
+    const [rows] = await pool.query<RowDataPacket[]>(query, [
       parseInt(daysBack as string) || 60,
       parseInt(daysBack as string) || 60,
       parseInt(limit as string) || 50
@@ -348,7 +349,7 @@ export async function getCompoundRiskProfile(req: Request, res: Response) {
       LIMIT ?
     `;
 
-    const [rows] = await pool.query(query, [parseInt(limit as string) || 50]);
+    const [rows] = await pool.query<RowDataPacket[]>(query, [parseInt(limit as string) || 50]);
 
     res.json({
       success: true,
@@ -445,7 +446,7 @@ export async function getQualityVelocity(req: Request, res: Response) {
       LIMIT ?
     `;
 
-    const [rows] = await pool.query(query, [parseInt(limit as string) || 50]);
+    const [rows] = await pool.query<RowDataPacket[]>(query, [parseInt(limit as string) || 50]);
 
     res.json({
       success: true,
@@ -553,7 +554,7 @@ export async function getEarlyWarningIndicators(req: Request, res: Response) {
       LIMIT ?
     `;
 
-    const [rows] = await pool.query(query, [parseInt(limit as string) || 50]);
+    const [rows] = await pool.query<RowDataPacket[]>(query, [parseInt(limit as string) || 50]);
 
     res.json({
       success: true,
@@ -635,7 +636,7 @@ export async function getConsolidatedRiskReport(req: Request, res: Response) {
       LIMIT ?
     `;
 
-    const [rows] = await pool.query(query, [parseInt(limit as string) || 100]);
+    const [rows] = await pool.query<RowDataPacket[]>(query, [parseInt(limit as string) || 100]);
 
     res.json({
       success: true,

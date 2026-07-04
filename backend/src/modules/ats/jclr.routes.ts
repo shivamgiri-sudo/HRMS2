@@ -70,7 +70,7 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
       f.band_grade ?? null,
       f.branch_id ?? null,
       f.shift_id ?? null,
-      req.authUser.id,
+      req.authUser!.id,
     ]
   );
   // Create work item for BM approval
@@ -93,7 +93,7 @@ router.post('/:candidateId/approve', requireAuth, requireWriteAccess, requireRol
   }
   await db.execute(
     'UPDATE jclr_entries SET bm_approved_by=?, bm_approved_at=NOW(), bm_remarks=?, status=\'approved\' WHERE candidate_id=?',
-    [req.authUser.id, remarks, candidateId]
+    [req.authUser!.id, remarks, candidateId]
   );
   await db.execute(
     'UPDATE ats_candidate SET current_stage=\'bm_jclr_approved\', updated_at=NOW() WHERE id=?',
@@ -102,7 +102,7 @@ router.post('/:candidateId/approve', requireAuth, requireWriteAccess, requireRol
   await db.execute(
     `INSERT INTO ats_candidate_stage_log (id,candidate_id,from_stage,to_stage,stage_date,remarks,updated_by)
      VALUES (UUID(),?,'bm_jclr_pending','bm_jclr_approved',NOW(),?,?)`,
-    [candidateId, remarks, req.authUser.id]
+    [candidateId, remarks, req.authUser!.id]
   ).catch(() => {});
   // Work item for JCLR entry
   await db.execute(

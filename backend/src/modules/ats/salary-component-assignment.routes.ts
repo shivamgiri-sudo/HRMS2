@@ -90,7 +90,7 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
       f.employer_esi != null ? Number(f.employer_esi) : null,
       f.ctc != null ? Number(f.ctc) : null,
       f.net_estimate != null ? Number(f.net_estimate) : null,
-      req.authUser.id,
+      req.authUser!.id,
       f.approval_reference ?? null,
     ]
   );
@@ -104,7 +104,7 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
     `INSERT INTO sensitive_action_log
        (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, created_at)
      VALUES (UUID(), ?, 'SALARY_COMPONENTS_ASSIGNED', 'payroll', 'ats_candidate', ?, ?, NOW())`,
-    [req.authUser.id, candidateId, JSON.stringify({
+    [req.authUser!.id, candidateId, JSON.stringify({
       salary_slab: f.salary_slab ?? null,
       approval_reference: f.approval_reference ?? null,
       gross: f.gross ?? null,

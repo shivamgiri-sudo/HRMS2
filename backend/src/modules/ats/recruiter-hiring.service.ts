@@ -11,6 +11,8 @@ export type DuplicateMode = "insert_duplicates_with_warning" | "update_existing"
 
 export type HiringSheetRow = Record<string, unknown>;
 
+type CandidateBridgeRecord = RowDataPacket & { id: string };
+
 export type NormalizedHiringActivity = {
   activity_date: string;
   activity_month: string | null;
@@ -879,7 +881,7 @@ async function findDuplicate(normalized: NormalizedHiringActivity): Promise<{ id
       normalized.process_name,
     ]
   );
-  return rows[0] ?? null;
+  return rows[0]?.id ? { id: String(rows[0].id) } : null;
 }
 
 async function persistActivity(
@@ -1146,7 +1148,7 @@ export async function importHiringActivityRows(
   };
 }
 
-async function resolveCandidateByActivity(activity: NormalizedHiringActivity) {
+async function resolveCandidateByActivity(activity: NormalizedHiringActivity): Promise<CandidateBridgeRecord | null> {
   const mobile = activity.mobile;
   const name = activity.candidate_name;
   const email = activity.candidate_email;
@@ -1164,7 +1166,7 @@ async function resolveCandidateByActivity(activity: NormalizedHiringActivity) {
     if (params[0] === null || params[0] === undefined || params[0] === "") continue;
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     const candidate = rows[0];
-    if (candidate) return candidate;
+    if (candidate?.id) return candidate as CandidateBridgeRecord;
   }
   return null;
 }
@@ -1311,7 +1313,7 @@ export async function createTokenFromActivity(activityId: string, actorUserId: s
   const normalized = mapSheetRow(activity).normalized;
   if (!normalized) throw Object.assign(new Error("Invalid hiring activity row"), { statusCode: 400 });
 
-  let candidate = await resolveCandidateByActivity(normalized);
+  let candidate: { id: string } | null = await resolveCandidateByActivity(normalized);
   if (!candidate) {
     const created = await createCandidateFromActivity(activityId, actorUserId);
     candidate = created.candidate;
@@ -1350,7 +1352,7 @@ export async function sendOnboardingFromActivity(activityId: string, actorUserId
     throw Object.assign(new Error("Candidate must be selected before onboarding"), { statusCode: 400 });
   }
 
-  let candidate = await resolveCandidateByActivity(normalized);
+  let candidate: { id: string } | null = await resolveCandidateByActivity(normalized);
   if (!candidate) {
     const created = await createCandidateFromActivity(activityId, actorUserId);
     candidate = created.candidate;

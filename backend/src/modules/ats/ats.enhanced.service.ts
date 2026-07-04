@@ -47,9 +47,9 @@ export async function resolveBranchFromAlias(displayName: string) {
 // and returns their roster id. Uses INSERT … ON DUPLICATE KEY UPDATE so it's
 // idempotent — safe to call on every walk-in registration.
 export async function ensureRecruiterInRoster(
-  employee: { id: string; first_name: string; last_name: string; mobile: string | null; email: string | null; branch_name: string }
+  employee: { id: string; first_name: string | null; last_name: string | null; mobile: string | null; email: string | null; branch_name: string | null }
 ): Promise<string> {
-  const fullName = `${employee.first_name} ${employee.last_name ?? ''}`.trim();
+  const fullName = `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() || "Recruiter";
 
   // Check if already in roster (keyed by employee_id)
   const [existing] = await db.execute<RowDataPacket[]>(
@@ -67,7 +67,7 @@ export async function ensureRecruiterInRoster(
        (id, name, email, mobile, branch, employee_id, active_status, active_flag,
         available_today, daily_capacity, assigned_today)
      VALUES (?, ?, ?, ?, ?, ?, 1, 'Y', 'Y', 999, 0)`,
-    [rosterId, fullName, employee.email ?? null, employee.mobile ?? null, employee.branch_name, employee.id]
+    [rosterId, fullName, employee.email ?? null, employee.mobile ?? null, employee.branch_name ?? "Unmapped", employee.id]
   );
   return rosterId;
 }
@@ -179,7 +179,7 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
         );
 
         recruiterLoads.sort((a, b) => a.queueCount - b.queueCount);
-        assignedRecruiterId = recruiterLoads[0].recruiterId;
+        assignedRecruiterId = recruiterLoads[0]?.recruiterId ?? null;
         assignmentReason = 'Preferred recruiter unavailable, reassigned to available recruiter';
       } else {
         assignedRecruiterId = null;
@@ -195,7 +195,7 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
 
     if (candRows.length === 0) throw new Error('Candidate not found');
 
-    const branchName = candRows[0].applied_for_branch;
+    const branchName = String(candRows[0].applied_for_branch ?? "");
     const availableRecruiters = await getAvailableRecruiters(branchName);
 
     if (availableRecruiters.length > 0) {
@@ -211,7 +211,7 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
       );
 
       recruiterLoads.sort((a, b) => a.queueCount - b.queueCount);
-      assignedRecruiterId = recruiterLoads[0].recruiterId;
+      assignedRecruiterId = recruiterLoads[0]?.recruiterId ?? null;
       assignmentReason = 'Auto-assigned to available recruiter';
     } else {
       assignedRecruiterId = null;

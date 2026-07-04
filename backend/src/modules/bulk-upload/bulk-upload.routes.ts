@@ -1,6 +1,5 @@
 import { Router, type NextFunction, type Response } from "express";
 import { randomUUID } from "crypto";
-import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";

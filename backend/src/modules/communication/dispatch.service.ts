@@ -235,7 +235,7 @@ class DispatchService {
       "UPDATE dispatch_log SET status = 'queued', retry_count = retry_count + 1 WHERE id = ?",
       [dispatchId]
     );
-    this._deliver(dispatchId, log.channel, log.recipient_contact, { html: log.body_preview }).catch(err =>
+    this._deliver(dispatchId, log.channel, log.recipient_contact, { html: log.body_preview ?? "" }).catch(err =>
       console.error(`[dispatch] retry delivery failed for ${dispatchId}:`, err)
     );
   }

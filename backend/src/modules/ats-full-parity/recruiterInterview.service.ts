@@ -115,8 +115,8 @@ export async function resolveRecruiterForActor(userId: string): Promise<Recruite
   if (!rec) return null;
   return {
     id: rec.id,
-    name: rec.name,
-    recruiterCode: rec.recruiter_code,
+    name: rec.name || "Recruiter",
+    recruiterCode: rec.recruiter_code ?? "",
     branch: rec.branch ?? "",
     email: rec.email ?? null,
     employeeId: rec.employee_id ?? null,
@@ -146,7 +146,7 @@ export async function verifyRecruiter(recruiterCode: string, pin: string): Promi
   if (!rec) err("Invalid recruiter credentials", 401);
   if (!rec.active_status) err("Recruiter account is inactive", 403);
 
-  const pinMatch = await bcrypt.compare(pin, rec.pin_hash);
+  const pinMatch = rec.pin_hash ? await bcrypt.compare(pin, rec.pin_hash) : false;
   if (!pinMatch) err("Invalid recruiter credentials", 401);
 
   // Biometric availability check
@@ -168,8 +168,8 @@ export async function verifyRecruiter(recruiterCode: string, pin: string): Promi
 
   return {
     id: rec.id,
-    name: rec.name,
-    recruiterCode: rec.recruiter_code,
+    name: rec.name || "Recruiter",
+    recruiterCode: rec.recruiter_code ?? "",
     branch: rec.branch ?? "",
     email: rec.email ?? null,
     employeeId: rec.employee_id ?? null,
@@ -217,14 +217,14 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
   );
   return rows.map((r) => ({
     candidateId: r.id,
-    candidateCode: r.candidate_code,
-    fullName: r.full_name,
-    mobile: r.mobile,
+    candidateCode: r.candidate_code ?? r.id,
+    fullName: r.full_name ?? "Candidate",
+    mobile: r.mobile ?? "",
     qToken: r.q_token ?? null,
     process: r.applied_for_process ?? null,
     branch: r.applied_for_branch ?? null,
     pendingMinutes: Number(r.pending_minutes ?? 0),
-    status: r.status,
+    status: r.status ?? "Waiting",
   }));
 }
 
@@ -587,9 +587,9 @@ export async function submitInterviewUpdate(
     const whereClause = input.candidateId
       ? "(c.id = ? OR c.candidate_code = ?)"
       : "c.q_token = ?";
-    const whereParams = input.candidateId
+    const whereParams: unknown[] = input.candidateId
       ? [input.candidateId, input.candidateId]
-      : [input.qToken];
+      : [input.qToken ?? ""];
 
     const [candRows] = await conn.execute<InterviewCandidateRow[]>(
       `SELECT c.id, c.candidate_code, c.full_name, c.email,
@@ -602,7 +602,7 @@ export async function submitInterviewUpdate(
        WHERE ${whereClause}
        LIMIT 1
        FOR UPDATE`,
-      whereParams
+      whereParams as string[]
     );
     const candidate = candRows[0];
     if (!candidate) err("Candidate not found", 404);
@@ -646,7 +646,7 @@ export async function submitInterviewUpdate(
            LEFT JOIN designation_master des ON des.id = e.designation_id
           WHERE e.id = ?
           LIMIT 1`,
-        [input.secondRoundInterviewerId]
+        [String(input.secondRoundInterviewerId)]
       );
       const interviewer = interviewerRows[0];
       if (!interviewer) err("Second round interviewer not found", 404);
@@ -1002,7 +1002,7 @@ export async function submitInterviewUpdate(
     await conn.execute(
       `INSERT INTO ats_candidate_stage_log (id, candidate_id, from_stage, to_stage, remarks, updated_by)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [randomUUID(), candidate.id, candidate.current_stage || candidate.status, walkinEndStage, nvl(raw.remarks), actorUserId ?? null]
+      [randomUUID(), candidate.id, candidate.current_stage || candidate.status || null, walkinEndStage, nvl(raw.remarks), actorUserId ?? null]
     );
 
     if ((raw.proxySubmission === true || raw.proxySubmission === "true") && actorUserId) {
@@ -1030,7 +1030,7 @@ export async function submitInterviewUpdate(
       sendRejectedEmail({
         candidateId: candidate.id,
         to: candidate.email,
-        candidateName: candidate.full_name,
+        candidateName: candidate.full_name ?? "Candidate",
         branchName: candidate.branch_display_name ?? candidate.applied_for_branch ?? "",
       }).catch((e: unknown) => console.error("[ats] rejection email failed:", e instanceof Error ? e.message : String(e)));
     }

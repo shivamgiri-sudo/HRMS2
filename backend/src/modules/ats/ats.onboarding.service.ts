@@ -627,7 +627,7 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
         `INSERT INTO employee_nominee
            (id, employee_id, nominee_name, relationship, date_of_birth, share_percentage, nominee_for, mobile, address)
          VALUES (UUID(), ?, ?, ?, ?, ?, 'gratuity', NULL, NULL)`,
-        [employeeId, nomRow.nominee_name, nomRow.nominee_relation, nomRow.nominee_date_of_birth, nomRow.nominee1_share_pct ?? 100]
+        [employeeId, nomRow.nominee_name, nomRow.nominee_relation ?? null, nomRow.nominee_date_of_birth ?? null, nomRow.nominee1_share_pct ?? 100]
       );
     }
     if (nomRow?.nominee2_name) {
@@ -635,7 +635,7 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
         `INSERT INTO employee_nominee
            (id, employee_id, nominee_name, relationship, date_of_birth, share_percentage, nominee_for, mobile, address)
          VALUES (UUID(), ?, ?, ?, ?, ?, 'gratuity', NULL, NULL)`,
-        [employeeId, nomRow.nominee2_name, nomRow.nominee2_relation, nomRow.nominee2_dob, nomRow.nominee2_share_pct ?? 0]
+        [employeeId, nomRow.nominee2_name, nomRow.nominee2_relation ?? null, nomRow.nominee2_dob ?? null, nomRow.nominee2_share_pct ?? 0]
       );
     }
 

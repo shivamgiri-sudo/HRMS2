@@ -80,7 +80,7 @@ superAdminRouter.post('/grant-access', h(async (req, res) => {
       });
     }
 
-    const grantedBy = req.authUser.employee_code || req.authUser.id;
+    const grantedBy = req.authUser!.id;
 
     await grantModuleAccess(module_name, employee_code, grantedBy, remarks);
 
@@ -128,7 +128,7 @@ superAdminRouter.post('/bulk-grant', h(async (req, res) => {
       });
     }
 
-    const grantedBy = req.authUser.employee_code || req.authUser.id;
+    const grantedBy = req.authUser!.id;
 
     const result = await bulkGrantAccess(module_name, employee_codes, grantedBy, remarks);
 

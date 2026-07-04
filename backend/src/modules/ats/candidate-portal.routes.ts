@@ -1,4 +1,4 @@
-import { Router, type NextFunction, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
 import {
   candidateLogin,
   getCandidateProfile,
@@ -13,8 +13,8 @@ import {
 export const candidatePortalRouter = Router();
 
 interface CandidateAuthRequest extends Request {
-  candidateId: string;
-  candidateCode: string;
+  candidateId?: string;
+  candidateCode?: string;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -24,7 +24,7 @@ function getErrorMessage(error: unknown): string {
 /**
  * Candidate authentication middleware
  */
-function candidateAuth(req: CandidateAuthRequest, res: Response, next: NextFunction) {
+const candidateAuth: RequestHandler = (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -44,10 +44,10 @@ function candidateAuth(req: CandidateAuthRequest, res: Response, next: NextFunct
     });
   }
 
-  req.candidateId = decoded.candidate_id;
-  req.candidateCode = decoded.candidate_code;
+  (req as CandidateAuthRequest).candidateId = decoded.candidate_id;
+  (req as CandidateAuthRequest).candidateCode = decoded.candidate_code;
   next();
-}
+};
 
 // ── 1. Candidate Login ─────────────────────────────────────────────────────────
 candidatePortalRouter.post('/login', async (req: Request, res: Response) => {
@@ -82,7 +82,7 @@ candidatePortalRouter.post('/login', async (req: Request, res: Response) => {
 // ── 2. Get Candidate Profile ───────────────────────────────────────────────────
 candidatePortalRouter.get('/profile', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
   try {
-    const profile = await getCandidateProfile(req.candidateId);
+    const profile = await getCandidateProfile(req.candidateId!);
 
     if (!profile) {
       return res.status(404).json({
@@ -106,7 +106,7 @@ candidatePortalRouter.get('/profile', candidateAuth, async (req: CandidateAuthRe
 // ── 3. Get Onboarding Tasks ────────────────────────────────────────────────────
 candidatePortalRouter.get('/tasks', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
   try {
-    const tasks = await getCandidateTasks(req.candidateId);
+    const tasks = await getCandidateTasks(req.candidateId!);
 
     return res.json({
       success: true,
@@ -123,7 +123,7 @@ candidatePortalRouter.get('/tasks', candidateAuth, async (req: CandidateAuthRequ
 // ── 4. Get Uploaded Documents ──────────────────────────────────────────────────
 candidatePortalRouter.get('/documents', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
   try {
-    const documents = await getCandidateDocuments(req.candidateId);
+    const documents = await getCandidateDocuments(req.candidateId!);
 
     return res.json({
       success: true,
@@ -150,7 +150,7 @@ candidatePortalRouter.post('/upload-document', candidateAuth, async (req: Candid
     }
 
     const result = await uploadCandidateDocument(
-      req.candidateId,
+      req.candidateId!,
       document_type,
       file_name,
       file_url
@@ -181,7 +181,7 @@ candidatePortalRouter.post('/complete-task', candidateAuth, async (req: Candidat
       });
     }
 
-    await markTaskCompleted(req.candidateId, task_id);
+    await markTaskCompleted(req.candidateId!, task_id);
 
     return res.json({
       success: true,

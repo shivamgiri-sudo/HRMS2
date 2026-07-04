@@ -98,23 +98,27 @@ export async function getUnifiedCandidateCount(): Promise<{
   );
 
   // Old system count (adjust query based on actual schema)
-  let oldCount: CountRow[] = [];
+  let oldCountValue = 0;
+  let oldEarliest: string | null = null;
   try {
-    [oldCount] = await db.execute<CountRow[]>(
+    const [oldCount] = await db.execute<CountRow[]>(
       `SELECT COUNT(*) as count, MIN(created_at) as earliest, MAX(created_at) as latest
        FROM ${OLD_DB_CONFIG.database}.${OLD_DB_CONFIG.candidatesTable}
        WHERE status != 'deleted'`
     );
+    oldCountValue = oldCount[0]?.count || 0;
+    oldEarliest = oldCount[0]?.earliest || null;
   } catch {
-    oldCount = [{ count: 0, earliest: null, latest: null }];
+    oldCountValue = 0;
+    oldEarliest = null;
   }
 
   return {
-    total: (newCount[0]?.count || 0) + (oldCount[0]?.count || 0),
+    total: (newCount[0]?.count || 0) + oldCountValue,
     from_new_system: newCount[0]?.count || 0,
-    from_old_system: oldCount[0]?.count || 0,
+    from_old_system: oldCountValue,
     date_range: {
-      earliest: oldCount[0]?.earliest || newCount[0]?.earliest || new Date().toISOString(),
+      earliest: oldEarliest || newCount[0]?.earliest || new Date().toISOString(),
       latest: newCount[0]?.latest || new Date().toISOString(),
     },
   };
@@ -191,7 +195,13 @@ export async function getSourceChannelROI(): Promise<{
 
   // TODO: Merge with old system data
 
-  return newData;
+  return newData.map((row) => ({
+    source_channel: row.source_channel,
+    total_candidates: Number(row.total_candidates ?? 0),
+    total_hired: Number(row.total_hired ?? 0),
+    conversion_rate: Number(row.conversion_rate ?? 0),
+    avg_time_to_hire_days: Number(row.avg_time_to_hire_days ?? 0),
+  }));
 }
 
 /**

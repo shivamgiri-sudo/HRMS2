@@ -284,7 +284,7 @@ atsRouter.post("/recruiter/verify", h(async (req: AuthenticatedRequest, res: Res
 // Admin/hr/super_admin may inspect all or filter by supplying ?recruiterName=.
 // Any other role sees only their own queue derived from the JWT â†’ employee â†’ roster chain.
 atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const userRoles = (req.userRoles ?? []) as string[];
+  const userRoles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
   const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
   const overrideName = String(req.query.recruiterName ?? "").trim();
 
@@ -310,7 +310,7 @@ atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "super_admi
 // GET /api/ats/recruiter/submission-history â€” submission history for the authenticated recruiter.
 // Admin/hr/super_admin may inspect all or filter by supplying ?recruiterCode=.
 atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const userRoles = (req.userRoles ?? []) as string[];
+  const userRoles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
   const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
   const overrideCode = String(req.query.recruiterCode ?? "").trim();
 
@@ -336,7 +336,7 @@ atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super
 
 // GET /api/ats/recruiter/daily-stats â€” today's KPI summary for the authenticated recruiter.
 atsRouter.get("/recruiter/daily-stats", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const userRoles = (req.userRoles ?? []) as string[];
+  const userRoles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
   const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
   let recruiterName: string | undefined;
   let recruiterCode: string | null = null;
