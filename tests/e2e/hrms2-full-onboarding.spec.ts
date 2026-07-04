@@ -4,6 +4,7 @@ import { ApiHelper } from './helpers/api';
 import { ensureDummyDocuments, getDocPath, DOC_NAMES } from './helpers/documents';
 import { TEST_CANDIDATE, NOMINEE, EMERGENCY_CONTACT, E2E_RUN_ID, E2E_MARKER } from './fixtures/testCandidate';
 import { query, queryOne, closePool, verifyRecord } from './helpers/db';
+import { assertSafeE2EEnvironment } from './helpers/env';
 import fs from 'fs';
 import path from 'path';
 
@@ -45,6 +46,9 @@ async function setupApi(token: string) {
 }
 
 test.describe('HRMS2 Full Candidate → Employee Onboarding E2E', () => {
+  test.beforeAll(() => {
+    assertSafeE2EEnvironment();
+  });
 
   // ── Stage 0: Setup ───────────────────────────────────────────────────────
   test.describe('Stage 0: Setup & Login', () => {
@@ -61,7 +65,7 @@ test.describe('HRMS2 Full Candidate → Employee Onboarding E2E', () => {
       adminToken = await loginAs(page, 'admin');
       expect(adminToken).toBeTruthy();
       api = await setupApi(adminToken);
-      const me = await api.get('/api/me');
+      const me = await api.get('/api/employees/me');
       expect(me.ok).toBeTruthy();
     });
 
@@ -134,19 +138,17 @@ test.describe('HRMS2 Full Candidate → Employee Onboarding E2E', () => {
       const api = new ApiHelper(ctx, adminToken);
 
       const createRes = await api.post('/api/ats/candidates', {
-        full_name: TEST_CANDIDATE.fullName,
-        first_name: TEST_CANDIDATE.fullName.split(' ')[0],
-        last_name: TEST_CANDIDATE.fullName.split(' ').slice(1).join(' '),
+        fullName: TEST_CANDIDATE.fullName,
         mobile: TEST_CANDIDATE.mobile,
         email: TEST_CANDIDATE.email,
         gender: TEST_CANDIDATE.gender,
-        dob: TEST_CANDIDATE.dob,
+        dateOfBirth: TEST_CANDIDATE.dob,
         education: TEST_CANDIDATE.education,
         experience: TEST_CANDIDATE.experience,
-        process_name: TEST_CANDIDATE.appliedForProcess,
-        branch_name: TEST_CANDIDATE.appliedForBranch,
-        expected_ctc_monthly: TEST_CANDIDATE.expectedCtcMonthly,
-        e2e_run_id: E2E_RUN_ID,
+        appliedForProcess: TEST_CANDIDATE.appliedForProcess,
+        appliedForBranch: TEST_CANDIDATE.appliedForBranch,
+        sourcingChannel: 'e2e_test',
+        remarks: `E2E test run ${E2E_RUN_ID}`,
       });
 
       expect(createRes.ok).toBeTruthy();
@@ -163,14 +165,15 @@ test.describe('HRMS2 Full Candidate → Employee Onboarding E2E', () => {
     });
 
     test('move candidate to selected stage', async () => {
+      // Use DB direct update to bypass state machine (skip interview pipeline for E2E)
+      await query("UPDATE ats_candidate SET current_stage = 'Selected' WHERE id = ?", [candidateId]);
+
+      // Verify via API
       const ctx = await request.newContext();
       const api = new ApiHelper(ctx, adminToken);
-
-      const stageRes = await api.post(`/api/ats/candidates/${candidateId}/move-stage`, {
-        stage: 'selected',
-        remarks: 'E2E test - selected for onboarding',
-      });
-      expect(stageRes.ok || stageRes.status === 400).toBeTruthy();
+      const getRes = await api.get(`/api/ats/candidates/${candidateId}`);
+      expect(getRes.ok).toBeTruthy();
+      expect(getRes.body.data?.current_stage).toBe('Selected');
     });
   });
 
@@ -181,15 +184,9 @@ test.describe('HRMS2 Full Candidate → Employee Onboarding E2E', () => {
       const ctx = await request.newContext();
       const api = new ApiHelper(ctx, adminToken);
 
-      const sendRes = await api.post(`/api/ats/onboarding/candidates/${candidateId}/send-onboarding-link`, {});
-      if (!sendRes.ok) {
-        // Try alternative endpoint
-        const sendRes2 = await api.post(`/api/ats/onboarding/send-token/${candidateId}`, {});
-        expect(sendRes2.ok).toBeTruthy();
-        onboardingToken = sendRes2.body.data?.token || sendRes2.body.data?.onboarding_token;
-      } else {
-        onboardingToken = sendRes.body.data?.token || sendRes.body.data?.onboarding_token;
-      }
+      const sendRes = await api.post(`/api/ats/onboarding/send-token/${candidateId}`, {});
+      expect(sendRes.ok).toBeTruthy();
+      onboardingToken = sendRes.body.token || sendRes.body.data?.token || sendRes.body.data?.onboarding_token;
       expect(onboardingToken).toBeTruthy();
     });
 
@@ -810,7 +807,9 @@ test.describe('HRMS2 Full Candidate → Employee Onboarding E2E', () => {
           const payload = typeof esignTx.response_payload === 'string'
             ? JSON.parse(esignTx.response_payload) : esignTx.response_payload;
           expect(payload?.signLink || payload?.sign_link).toBeFalsy();
+          expect(JSON.stringify(payload)).not.toContain('/api/public/employee-documents/esign/');
         }
+        expect(String(esignTx.provider_url || '')).not.toContain('/api/public/employee-documents/esign/');
       }
     });
   });
@@ -859,6 +858,30 @@ test.describe('HRMS2 Full Candidate → Employee Onboarding E2E', () => {
         expect(jsonStr).not.toContain(panRaw);
         // Full bank account should not appear
         expect(jsonStr).not.toContain(bankRaw);
+      }
+    });
+
+    test('joining document public tokens are hash-only', async () => {
+      const tokens = await query(
+        'SELECT public_token, public_token_hash FROM employee_joining_document_public_token WHERE employee_id = ?',
+        [employeeId]
+      );
+
+      for (const token of tokens) {
+        expect(token.public_token || null).toBeNull();
+        expect(token.public_token_hash).toBeTruthy();
+        expect(String(token.public_token_hash)).not.toContain('/api/public/employee-documents/esign/');
+      }
+    });
+
+    test('joining document audit logs do not leak public signing links', async () => {
+      const auditRows = await query(
+        'SELECT * FROM employee_joining_document_audit_log WHERE employee_id = ? LIMIT 50',
+        [employeeId]
+      );
+
+      for (const row of auditRows) {
+        expect(JSON.stringify(row)).not.toContain('/api/public/employee-documents/esign/');
       }
     });
   });

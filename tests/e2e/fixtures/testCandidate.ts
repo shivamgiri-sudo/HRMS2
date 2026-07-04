@@ -9,7 +9,7 @@ export const TEST_CANDIDATE = {
   dob: '1998-04-15',
   gender: 'Male',
   maritalStatus: 'Single',
-  mobile: '9876501234',
+  mobile: `98765${String(Date.now()).slice(-5)}`,
   alternateMobile: '9876501235',
   email: `aman.test.verma+hrms2e2e-${RUN_ID}@example.com`,
   personalEmail: `aman.test.verma+personal-${RUN_ID}@example.com`,

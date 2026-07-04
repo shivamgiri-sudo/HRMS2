@@ -1,17 +1,21 @@
 import mysql from 'mysql2/promise';
+import { assertSafeE2EEnvironment, requiredEnv } from './env';
 
 const DB_CONFIG = {
   host: process.env.E2E_DB_HOST ?? 'localhost',
   port: Number(process.env.E2E_DB_PORT ?? 3306),
-  user: process.env.E2E_DB_USER ?? 'root',
+  user: process.env.E2E_DB_USER ?? '',
   password: process.env.E2E_DB_PASSWORD ?? '',
-  database: process.env.E2E_DB_NAME ?? 'mas_hrms',
+  database: process.env.E2E_DB_NAME ?? '',
 };
 
 let pool: mysql.Pool | null = null;
 
 async function getPool(): Promise<mysql.Pool> {
   if (!pool) {
+    assertSafeE2EEnvironment();
+    DB_CONFIG.user = requiredEnv('E2E_DB_USER');
+    DB_CONFIG.database = requiredEnv('E2E_DB_NAME');
     pool = mysql.createPool({
       ...DB_CONFIG,
       waitForConnections: true,
