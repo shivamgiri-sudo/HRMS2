@@ -28,10 +28,15 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const DEMO_LOGIN_ENABLED = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_LOGIN !== 'false';
 const AUTH_REQUEST_TIMEOUT_MS = 20000;
 
+function isLocalApiUrl(value: string): boolean {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?($|\/)/i.test(value);
+}
+
 function apiBaseUrl(): string {
   const configured = import.meta.env.VITE_HRMS_API_URL;
   if (configured !== undefined) {
     const normalized = String(configured).trim().replace(/\/$/, '');
+    if (import.meta.env.PROD && isLocalApiUrl(normalized)) return '';
     return normalized === '/api' ? '' : normalized;
   }
   return import.meta.env.DEV ? 'http://localhost:5055' : '';

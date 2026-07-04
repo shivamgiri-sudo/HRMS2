@@ -1,6 +1,14 @@
-const HRMS_API_URL = (import.meta.env.VITE_HRMS_API_URL !== undefined && import.meta.env.VITE_HRMS_API_URL !== '')
-  ? String(import.meta.env.VITE_HRMS_API_URL).replace(/\/$/, '')
-  : (import.meta.env.DEV ? 'http://localhost:5055' : '');
+function apiBaseUrl(): string {
+  const configured = import.meta.env.VITE_HRMS_API_URL;
+  if (configured !== undefined && configured !== '') {
+    const normalized = String(configured).trim().replace(/\/$/, '');
+    if (import.meta.env.PROD && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?($|\/)/i.test(normalized)) return '';
+    return normalized;
+  }
+  return import.meta.env.DEV ? 'http://localhost:5055' : '';
+}
+
+const HRMS_API_URL = apiBaseUrl();
 
 function getPortalToken(): string | null {
   return localStorage.getItem("portal_token");
