@@ -52,6 +52,7 @@ interface AvgDurationRow extends RowDataPacket {
 
 const ROLE_EXPR = "COALESCE(NULLIF(c.role_applied, ''), NULLIF(pm.process_name, ''), NULLIF(c.applied_for_process, ''))";
 const BRANCH_EXPR = "COALESCE(NULLIF(qt.branch_name, ''), NULLIF(c.branch_display_name, ''), NULLIF(bm.branch_name, ''), NULLIF(c.applied_for_branch, ''))";
+const queueTimeExpr = (alias: string) => `COALESCE(${alias}.arrival_time, ${alias}.created_at)`;
 
 /**
  * Get live queue with filters
@@ -62,7 +63,7 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
 
   // Date filter (default to today)
   const targetDate = filters.date || new Date().toISOString().split('T')[0];
-  conditions.push('DATE(qt.created_at) = ?');
+  conditions.push(`DATE(${queueTimeExpr('qt')}) = ?`);
   params.push(targetDate);
 
   // Branch filter
@@ -118,8 +119,8 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
       (
         SELECT COUNT(*) + 1
         FROM ats_queue_token qt2
-        WHERE qt2.created_at < qt.created_at
-          AND DATE(qt2.created_at) = DATE(qt.created_at)
+        WHERE ${queueTimeExpr('qt2')} < ${queueTimeExpr('qt')}
+          AND DATE(${queueTimeExpr('qt2')}) = DATE(${queueTimeExpr('qt')})
           AND (qt2.queue_status IN ('waiting', 'called') OR (qt2.queue_status IS NULL AND qt2.status = 'active'))
       ) as position_in_queue
     FROM ats_queue_token qt
@@ -133,8 +134,8 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
         qt.queue_status IN ('waiting','called','in_interview','completed','no_show')
         OR (qt.queue_status IS NULL AND qt.status = 'active')
       )
-    ORDER BY
-      CASE COALESCE(qt.queue_status, 'waiting')
+      ORDER BY
+        CASE COALESCE(qt.queue_status, 'waiting')
         WHEN 'in_interview' THEN 1
         WHEN 'called' THEN 2
         WHEN 'waiting' THEN 3
@@ -142,7 +143,7 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
         WHEN 'no_show' THEN 5
         ELSE 6
       END,
-      qt.created_at ASC`,
+       ${queueTimeExpr('qt')} ASC`,
     params
   );
 
@@ -154,7 +155,7 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
  */
 export async function getQueueMetrics(branch?: string, date?: string): Promise<QueueMetrics> {
   const targetDate = date || new Date().toISOString().split('T')[0];
-  const branchCondition = branch ? 'AND qt.branch_name = ?' : '';
+  const branchCondition = branch ? `AND ${BRANCH_EXPR} = ?` : '';
   const params: unknown[] = branch ? [targetDate, branch] : [targetDate];
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -164,7 +165,7 @@ export async function getQueueMetrics(branch?: string, date?: string): Promise<Q
       SUM(CASE WHEN COALESCE(qt.queue_status, IF(qt.status='active','waiting',qt.status)) = 'completed' THEN 1 ELSE 0 END) as total_completed_today,
       ROUND(AVG(
         CASE WHEN qt.called_at IS NOT NULL
-        THEN TIMESTAMPDIFF(MINUTE, qt.created_at, qt.called_at)
+        THEN TIMESTAMPDIFF(MINUTE, COALESCE(qt.arrival_time, qt.created_at), qt.called_at)
         ELSE NULL END
       ), 2) as average_wait_time,
       ROUND(AVG(
@@ -174,7 +175,9 @@ export async function getQueueMetrics(branch?: string, date?: string): Promise<Q
       ), 2) as average_interview_duration,
       COUNT(DISTINCT COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)) as active_recruiters
     FROM ats_queue_token qt
-    WHERE DATE(qt.created_at) = ? ${branchCondition}`,
+    INNER JOIN ats_candidate c ON c.id = qt.candidate_id
+    LEFT JOIN branch_master bm ON bm.id = c.applied_for_branch
+    WHERE DATE(${queueTimeExpr('qt')}) = ? ${branchCondition}`,
     params
   );
 
@@ -225,8 +228,8 @@ export async function getNextCandidate(recruiterId: string, branch: string): Pro
       OR qt.assigned_recruiter_id = ?)
       AND ${BRANCH_EXPR} = ?
       AND (qt.queue_status = 'waiting' OR (qt.queue_status IS NULL AND qt.status = 'active'))
-      AND DATE(qt.created_at) = CURDATE()
-    ORDER BY qt.created_at ASC
+      AND DATE(${queueTimeExpr('qt')}) = CURDATE()
+    ORDER BY ${queueTimeExpr('qt')} ASC
     LIMIT 1`,
     [recruiterId, recruiterId, branch]
   );
@@ -281,7 +284,7 @@ async function updateEstimatedWaitTimes(): Promise<void> {
     FROM ats_queue_token
     WHERE queue_status = 'completed'
       AND interview_completed_at IS NOT NULL
-      AND DATE(created_at) = CURDATE()
+      AND DATE(COALESCE(arrival_time, created_at)) = CURDATE()
     GROUP BY branch_name`
   );
 
@@ -299,15 +302,15 @@ async function updateEstimatedWaitTimes(): Promise<void> {
        SELECT
          qt1.id,
          COUNT(qt2.id) * 15 AS wait_time
-       FROM ats_queue_token qt1
-       LEFT JOIN ats_queue_token qt2
-         ON qt2.branch_name = qt1.branch_name
-         AND qt2.queue_status IN ('called', 'in_interview')
-         AND qt2.created_at < qt1.created_at
-         AND DATE(qt2.created_at) = CURDATE()
-       WHERE qt1.queue_status = 'waiting'
-         AND DATE(qt1.created_at) = CURDATE()
-       GROUP BY qt1.id
+        FROM ats_queue_token qt1
+        LEFT JOIN ats_queue_token qt2
+          ON qt2.branch_name = qt1.branch_name
+          AND qt2.queue_status IN ('called', 'in_interview')
+          AND COALESCE(qt2.arrival_time, qt2.created_at) < COALESCE(qt1.arrival_time, qt1.created_at)
+          AND DATE(COALESCE(qt2.arrival_time, qt2.created_at)) = CURDATE()
+        WHERE qt1.queue_status = 'waiting'
+          AND DATE(COALESCE(qt1.arrival_time, qt1.created_at)) = CURDATE()
+        GROUP BY qt1.id
      ) AS sub ON sub.id = qt.id
      SET qt.estimated_wait_time = sub.wait_time`
   );
@@ -342,8 +345,8 @@ export async function getRecruiterQueue(recruiterId: string): Promise<QueueEntry
         FROM ats_queue_token qt2
         WHERE COALESCE(qt2.recruiter_id, qt2.assigned_recruiter_id) = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
           AND (qt2.queue_status IN ('waiting', 'called') OR (qt2.queue_status IS NULL AND qt2.status = 'active'))
-          AND qt2.created_at < qt.created_at
-          AND DATE(qt2.created_at) = CURDATE()
+          AND ${queueTimeExpr('qt2')} < ${queueTimeExpr('qt')}
+          AND DATE(${queueTimeExpr('qt2')}) = CURDATE()
       ) as position_in_queue
     FROM ats_queue_token qt
     INNER JOIN ats_candidate c ON c.id = qt.candidate_id
@@ -356,8 +359,8 @@ export async function getRecruiterQueue(recruiterId: string): Promise<QueueEntry
         qt.queue_status IN ('waiting', 'called', 'in_interview')
         OR (qt.queue_status IS NULL AND qt.status = 'active')
       )
-      AND DATE(qt.created_at) = CURDATE()
-    ORDER BY qt.created_at ASC`,
+      AND DATE(${queueTimeExpr('qt')}) = CURDATE()
+    ORDER BY ${queueTimeExpr('qt')} ASC`,
     [recruiterId]
   );
 
@@ -387,13 +390,13 @@ export async function getQueuePosition(candidateId: string): Promise<number> {
       (
         SELECT COUNT(*) + 1
         FROM ats_queue_token qt2
-        WHERE qt2.created_at < qt.created_at
-          AND DATE(qt2.created_at) = CURDATE()
+        WHERE ${queueTimeExpr('qt2')} < ${queueTimeExpr('qt')}
+          AND DATE(${queueTimeExpr('qt2')}) = CURDATE()
           AND (qt2.queue_status IN ('waiting', 'called') OR (qt2.queue_status IS NULL AND qt2.status = 'active'))
       ) as position
     FROM ats_queue_token qt
     WHERE qt.candidate_id = ?
-      AND DATE(qt.created_at) = CURDATE()
+      AND DATE(${queueTimeExpr('qt')}) = CURDATE()
       AND (qt.queue_status IS NULL OR qt.queue_status NOT IN ('completed','no_show'))
       AND (qt.status IS NULL OR qt.status = 'active')
     LIMIT 1`,

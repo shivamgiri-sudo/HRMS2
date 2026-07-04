@@ -5,6 +5,7 @@ import { db } from "../../db/mysql.js";
 import { atsService } from "./ats.service.js";
 import { atsQueueService } from "./ats.queue.service.js";
 import { sendOnboardingToken } from "./ats.onboarding.service.js";
+import { resolveRecruiterForActor } from "../ats-full-parity/recruiterInterview.service.js";
 
 export type DuplicateMode = "insert_duplicates_with_warning" | "update_existing" | "skip_duplicates";
 
@@ -93,6 +94,28 @@ export type HiringDashboard = {
   bySource: Array<{ label: string; total: number; contacted: number; selected: number; joined: number }>;
   byProcess: Array<{ label: string; total: number; contacted: number; selected: number; joined: number }>;
   byBranch: Array<{ label: string; total: number; contacted: number; selected: number; joined: number }>;
+};
+
+export type HiringActivityBootstrap = {
+  actor: {
+    userId: string;
+    recruiterName: string;
+    recruiterEmployeeId: string | null;
+    recruiterCode: string | null;
+    branchName: string;
+    activityDate: string;
+    activityMonth: string;
+  };
+  options: {
+    processOptions: string[];
+    sourceOptions: string[];
+    positionOptions: string[];
+    wpGroupOptions: string[];
+    callingOutcomeOptions: string[];
+    genderOptions: string[];
+    educationOptions: string[];
+    experienceOptions: string[];
+  };
 };
 
 export type HiringFilters = {
@@ -185,8 +208,38 @@ interface ImportBatchRow extends RowDataPacket {
   [key: string]: unknown;
 }
 
+type ActivityActorContext = {
+  userId: string;
+  activity_date: string;
+  activity_month: string;
+  recruiter_id: string;
+  recruiter_employee_id: string | null;
+  recruiter_code: string | null;
+  recruiter_name_snapshot: string;
+  branch_name: string;
+  location_name: string;
+};
+
 const TRUE_VALUES = new Set(["yes", "y", "true", "1", "selected", "joined", "walkin", "contacted"]);
 const FALSE_VALUES = new Set(["", "no", "n", "false", "0", "null", "undefined"]);
+
+const DEFAULT_HIRING_OPTION_LISTS = {
+  processOptions: [] as string[],
+  sourceOptions: ["Walk-In", "Reference", "Job Portal", "Consultancy", "Employee Referral"],
+  positionOptions: [] as string[],
+  wpGroupOptions: [] as string[],
+  callingOutcomeOptions: [
+    "Interested - Will Visit",
+    "Callback Requested",
+    "Not Contacted",
+    "No Response",
+    "Not Interested",
+    "Wrong Number / Invalid",
+  ],
+  genderOptions: ["Male", "Female", "Other"],
+  educationOptions: ["10th Pass", "12th Pass", "Graduate", "Post Graduate", "Diploma"],
+  experienceOptions: ["Fresher", "0-1 Year", "1-2 Years", "2-3 Years", "3+ Years"],
+};
 
 const HEADER_ALIASES: Record<string, string[]> = {
   activity_date: ["Date"],
@@ -274,17 +327,17 @@ export function normalizeMobile(value: unknown): string | null {
 }
 
 export function parseSheetDate(value: unknown): string | null {
+  const toIsoDate = (year: number, month: number, day: number) =>
+    `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
   if (value === null || value === undefined || value === "") return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
+    return toIsoDate(value.getFullYear(), value.getMonth() + 1, value.getDate());
   }
   if (typeof value === "number" && Number.isFinite(value)) {
     const parsed = XLSX.SSF.parse_date_code(value);
     if (parsed) {
-      const yyyy = String(parsed.y).padStart(4, "0");
-      const mm = String(parsed.m).padStart(2, "0");
-      const dd = String(parsed.d).padStart(2, "0");
-      return `${yyyy}-${mm}-${dd}`;
+      return toIsoDate(parsed.y, parsed.m, parsed.d);
     }
   }
   const raw = text(value);
@@ -293,19 +346,60 @@ export function parseSheetDate(value: unknown): string | null {
   if (excelMatch) {
     const parsed = XLSX.SSF.parse_date_code(Number(raw));
     if (parsed) {
-      const yyyy = String(parsed.y).padStart(4, "0");
-      const mm = String(parsed.m).padStart(2, "0");
-      const dd = String(parsed.d).padStart(2, "0");
-      return `${yyyy}-${mm}-${dd}`;
+      return toIsoDate(parsed.y, parsed.m, parsed.d);
     }
+  }
+  const dmyMatch = raw.match(/^(\d{1,2})[-/\s]([A-Za-z]{3,9}|\d{1,2})[-/\s](\d{2,4})$/);
+  if (dmyMatch) {
+    const [, dayRaw, monthRaw, yearRaw] = dmyMatch;
+    const day = Number(dayRaw);
+    const monthText = monthRaw.toLowerCase();
+    const monthByName: Record<string, number> = {
+      jan: 1,
+      january: 1,
+      feb: 2,
+      february: 2,
+      mar: 3,
+      march: 3,
+      apr: 4,
+      april: 4,
+      may: 5,
+      jun: 6,
+      june: 6,
+      jul: 7,
+      july: 7,
+      aug: 8,
+      august: 8,
+      sep: 9,
+      sept: 9,
+      september: 9,
+      oct: 10,
+      october: 10,
+      nov: 11,
+      november: 11,
+      dec: 12,
+      december: 12,
+    };
+    const month = monthByName[monthText] ?? Number(monthRaw);
+    const numericYear = Number(yearRaw);
+    const year = yearRaw.length === 2 ? 2000 + numericYear : numericYear;
+    if (Number.isInteger(day) && Number.isInteger(month) && Number.isInteger(year) && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return toIsoDate(year, month, day);
+    }
+  }
+  const isoMatch = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoMatch) {
+    return toIsoDate(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
   }
   const direct = new Date(raw);
   if (!Number.isNaN(direct.getTime())) {
-    return direct.toISOString().slice(0, 10);
+    return toIsoDate(direct.getFullYear(), direct.getMonth() + 1, direct.getDate());
   }
   const alt = raw.replace(/'/g, " ");
   const parsedAlt = new Date(alt);
-  if (!Number.isNaN(parsedAlt.getTime())) return parsedAlt.toISOString().slice(0, 10);
+  if (!Number.isNaN(parsedAlt.getTime())) {
+    return toIsoDate(parsedAlt.getFullYear(), parsedAlt.getMonth() + 1, parsedAlt.getDate());
+  }
   return null;
 }
 
@@ -322,6 +416,156 @@ export function normalizeMonth(value: unknown): string | null {
     return date.toLocaleDateString("en-IN", { month: "short", year: "2-digit" }).replace(/\s/g, "-");
   }
   return compact;
+}
+
+function getIstDateParts(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return {
+    yyyy: get("year"),
+    mm: get("month"),
+    dd: get("day"),
+  };
+}
+
+function getCurrentIstDate() {
+  const { yyyy, mm, dd } = getIstDateParts();
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function getCurrentIstMonthLabel() {
+  const date = new Date(`${getCurrentIstDate()}T00:00:00+05:30`);
+  return date
+    .toLocaleDateString("en-IN", { month: "short", year: "2-digit", timeZone: "Asia/Kolkata" })
+    .replace(/\s/g, "-");
+}
+
+function deriveContactedFlag(outcome: string | null) {
+  const lowered = String(outcome ?? "").trim().toLowerCase();
+  if (!lowered) return 0;
+  if (
+    lowered.includes("not contacted") ||
+    lowered.includes("no response") ||
+    lowered.includes("no answer") ||
+    lowered.includes("switched off") ||
+    lowered.includes("wrong number") ||
+    lowered.includes("invalid") ||
+    lowered.includes("busy")
+  ) {
+    return 0;
+  }
+  return 1;
+}
+
+function deriveCurrentStatus(outcome: string | null) {
+  const lowered = String(outcome ?? "").trim().toLowerCase();
+  if (!lowered) return null;
+  if (lowered.includes("callback")) return "Callback Pending";
+  if (
+    lowered.includes("not contacted") ||
+    lowered.includes("no response") ||
+    lowered.includes("no answer") ||
+    lowered.includes("wrong number") ||
+    lowered.includes("invalid") ||
+    lowered.includes("busy") ||
+    lowered.includes("switched off")
+  ) {
+    return "Not Contacted";
+  }
+  if (lowered.includes("interested") || lowered.includes("visit") || lowered.includes("walk-in") || lowered.includes("walkin")) {
+    return "Expected Walk-In";
+  }
+  if (lowered.includes("not interested")) return "Closed - Not Interested";
+  return outcome;
+}
+
+async function getOptionList(configKey: string, fallback: string[]) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT config_value FROM ats_form_config WHERE config_key = ? LIMIT 1`,
+    [configKey]
+  );
+  const raw = rows[0]?.config_value;
+  if (Array.isArray(raw)) return raw.map(String);
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map(String);
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+async function buildActivityActorContext(actorUserId: string): Promise<ActivityActorContext> {
+  const recruiterProfile = await resolveRecruiterForActor(actorUserId).catch(() => null);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        e.id AS employee_id,
+        e.employee_code,
+        COALESCE(NULLIF(e.full_name, ''), TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')))) AS employee_name,
+        COALESCE(b.branch_name, e.branch_name, e.branch_id) AS branch_name
+       FROM employees e
+       LEFT JOIN branch_master b ON b.id = e.branch_id
+      WHERE e.user_id = ?
+      LIMIT 1`,
+    [actorUserId]
+  );
+  const employee = rows[0] ?? {};
+  const branchName = text(recruiterProfile?.branch) ?? text(employee.branch_name) ?? "Unmapped";
+  const recruiterName =
+    text(recruiterProfile?.name) ??
+    text(employee.employee_name) ??
+    text(employee.employee_code) ??
+    "Recruiter";
+
+  return {
+    userId: actorUserId,
+    activity_date: getCurrentIstDate(),
+    activity_month: getCurrentIstMonthLabel(),
+    recruiter_id: actorUserId,
+    recruiter_employee_id: text(recruiterProfile?.employeeId) ?? text(employee.employee_id),
+    recruiter_code: text(recruiterProfile?.recruiterCode) ?? text(employee.employee_code),
+    recruiter_name_snapshot: recruiterName,
+    branch_name: branchName,
+    location_name: branchName,
+  };
+}
+
+function buildManualActivityPayload(payload: Record<string, unknown>, actor: ActivityActorContext) {
+  const recruiterRemarks =
+    text(payload.recruiter_remarks) ??
+    text(payload.calling_outcome) ??
+    text(payload.recruiterRemarks) ??
+    null;
+
+  const contactedFlag =
+    payload.contacted_flag !== undefined ? parseBool(payload.contacted_flag) : deriveContactedFlag(recruiterRemarks);
+
+  return {
+    ...payload,
+    activity_date: actor.activity_date,
+    activity_month: actor.activity_month,
+    recruiter_id: actor.recruiter_id,
+    recruiter_employee_id: actor.recruiter_employee_id,
+    recruiter_code: actor.recruiter_code,
+    recruiter_name_snapshot: actor.recruiter_name_snapshot,
+    branch_name: actor.branch_name,
+    location_name: actor.location_name,
+    recruiter_remarks: recruiterRemarks,
+    current_status: text(payload.current_status) ?? deriveCurrentStatus(recruiterRemarks),
+    contacted_flag: contactedFlag,
+    walkin_flag: payload.walkin_flag !== undefined ? parseBool(payload.walkin_flag) : 0,
+    final_selection_flag: payload.final_selection_flag !== undefined ? parseBool(payload.final_selection_flag) : 0,
+    joined_flag: payload.joined_flag !== undefined ? parseBool(payload.joined_flag) : 0,
+    source_system: text(payload.source_system) ?? "HRMS",
+  };
 }
 
 function normalizeStatus(value: unknown): string | null {
@@ -480,6 +724,51 @@ async function getCurrentUserBranch(userId: string): Promise<string | null> {
   return text(rows[0]?.branch_name);
 }
 
+export async function getHiringActivityBootstrap(userId: string): Promise<HiringActivityBootstrap> {
+  const actor = await buildActivityActorContext(userId);
+  const [
+    processOptions,
+    sourceOptions,
+    positionOptions,
+    wpGroupOptions,
+    callingOutcomeOptions,
+    genderOptions,
+    educationOptions,
+    experienceOptions,
+  ] = await Promise.all([
+    getOptionList("hiringProcessOptions", DEFAULT_HIRING_OPTION_LISTS.processOptions),
+    getOptionList("hiringSourceOptions", DEFAULT_HIRING_OPTION_LISTS.sourceOptions),
+    getOptionList("hiringPositionOptions", DEFAULT_HIRING_OPTION_LISTS.positionOptions),
+    getOptionList("hiringWpGroupOptions", DEFAULT_HIRING_OPTION_LISTS.wpGroupOptions),
+    getOptionList("hiringCallingOutcomeOptions", DEFAULT_HIRING_OPTION_LISTS.callingOutcomeOptions),
+    getOptionList("genderOptions", DEFAULT_HIRING_OPTION_LISTS.genderOptions),
+    getOptionList("educationOptions", DEFAULT_HIRING_OPTION_LISTS.educationOptions),
+    getOptionList("experienceOptions", DEFAULT_HIRING_OPTION_LISTS.experienceOptions),
+  ]);
+
+  return {
+    actor: {
+      userId,
+      recruiterName: actor.recruiter_name_snapshot,
+      recruiterEmployeeId: actor.recruiter_employee_id,
+      recruiterCode: actor.recruiter_code,
+      branchName: actor.branch_name,
+      activityDate: actor.activity_date,
+      activityMonth: actor.activity_month,
+    },
+    options: {
+      processOptions,
+      sourceOptions,
+      positionOptions,
+      wpGroupOptions,
+      callingOutcomeOptions,
+      genderOptions,
+      educationOptions,
+      experienceOptions,
+    },
+  };
+}
+
 function buildFilterSql(filters: HiringFilters, scopedOnly: boolean) {
   const clauses: string[] = ["1=1"];
   const params: unknown[] = [];
@@ -618,6 +907,73 @@ async function persistActivity(
     return { action: "updated" as const, id: duplicate.id, duplicateOf: duplicate.id };
   }
 
+  const insertValues = [
+    insertId,
+    normalized.activity_date,
+    normalized.activity_month,
+    normalized.recruiter_id,
+    normalized.recruiter_employee_id,
+    normalized.recruiter_code,
+    normalized.recruiter_name_snapshot,
+    normalized.hiring_source,
+    normalized.wp_group,
+    normalized.position_name,
+    normalized.location_name,
+    normalized.branch_name,
+    normalized.process_name,
+    normalized.candidate_name,
+    normalized.gender,
+    normalized.mobile,
+    normalized.candidate_email,
+    normalized.education_qualification,
+    normalized.experience_level,
+    normalized.candidate_location,
+    normalized.recruiter_remarks,
+    normalized.recruiter_rejection_reason,
+    normalized.pi_hr_interviewer_date,
+    normalized.pi_hr_interviewer_name,
+    normalized.hr_interview_status,
+    normalized.hr_rejection_reason,
+    normalized.ai_assessment_score,
+    normalized.ai_interview_result,
+    normalized.ops_interviewer_employee_id,
+    normalized.ops_interviewer_name,
+    normalized.ops_interviewer_branch_snapshot,
+    normalized.ops_interview_status,
+    normalized.ops_rejection_reason,
+    normalized.salary_package_inr,
+    normalized.offer_letter_status,
+    normalized.joining_status,
+    normalized.batch_no,
+    normalized.current_status,
+    normalized.joined_candidate_emp_code,
+    normalized.emp_referral_details,
+    normalized.referee_employee_id,
+    normalized.referee_employee_code,
+    normalized.referee_name,
+    normalized.referee_branch,
+    normalized.referee_process,
+    normalized.referral_relationship,
+    normalized.referral_remarks,
+    normalized.referral_validation_status,
+    normalized.walkin_flag,
+    normalized.final_selection_flag,
+    normalized.joined_flag,
+    normalized.contacted_flag,
+    normalized.linked_candidate_id,
+    normalized.queue_token_id,
+    normalized.onboarding_bridge_id,
+    normalized.employee_id,
+    duplicate ? 1 : normalized.duplicate_warning,
+    duplicate?.id ?? normalized.duplicate_of_activity_id,
+    normalized.duplicate_override_reason,
+    normalized.import_batch_id,
+    normalized.source_system,
+    JSON.stringify(normalized.raw_sheet_payload ?? {}),
+    actorUserId,
+    actorUserId,
+  ];
+
   await db.execute(
     `INSERT INTO ats_recruiter_hiring_activity
       (id, activity_date, activity_month, recruiter_id, recruiter_employee_id, recruiter_code, recruiter_name_snapshot,
@@ -631,73 +987,8 @@ async function persistActivity(
        referral_remarks, referral_validation_status, walkin_flag, final_selection_flag, joined_flag, contacted_flag,
        linked_candidate_id, queue_token_id, onboarding_bridge_id, employee_id, duplicate_warning, duplicate_of_activity_id,
        duplicate_override_reason, import_batch_id, source_system, raw_sheet_payload, created_by, updated_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      insertId,
-      normalized.activity_date,
-      normalized.activity_month,
-      normalized.recruiter_id,
-      normalized.recruiter_employee_id,
-      normalized.recruiter_code,
-      normalized.recruiter_name_snapshot,
-      normalized.hiring_source,
-      normalized.wp_group,
-      normalized.position_name,
-      normalized.location_name,
-      normalized.branch_name,
-      normalized.process_name,
-      normalized.candidate_name,
-      normalized.gender,
-      normalized.mobile,
-      normalized.candidate_email,
-      normalized.education_qualification,
-      normalized.experience_level,
-      normalized.candidate_location,
-      normalized.recruiter_remarks,
-      normalized.recruiter_rejection_reason,
-      normalized.pi_hr_interviewer_date,
-      normalized.pi_hr_interviewer_name,
-      normalized.hr_interview_status,
-      normalized.hr_rejection_reason,
-      normalized.ai_assessment_score,
-      normalized.ai_interview_result,
-      normalized.ops_interviewer_employee_id,
-      normalized.ops_interviewer_name,
-      normalized.ops_interviewer_branch_snapshot,
-      normalized.ops_interview_status,
-      normalized.ops_rejection_reason,
-      normalized.salary_package_inr,
-      normalized.offer_letter_status,
-      normalized.joining_status,
-      normalized.batch_no,
-      normalized.current_status,
-      normalized.joined_candidate_emp_code,
-      normalized.emp_referral_details,
-      normalized.referee_employee_id,
-      normalized.referee_employee_code,
-      normalized.referee_name,
-      normalized.referee_branch,
-      normalized.referee_process,
-      normalized.referral_relationship,
-      normalized.referral_remarks,
-      normalized.referral_validation_status,
-      normalized.walkin_flag,
-      normalized.final_selection_flag,
-      normalized.joined_flag,
-      normalized.contacted_flag,
-      normalized.linked_candidate_id,
-      normalized.queue_token_id,
-      normalized.onboarding_bridge_id,
-      normalized.employee_id,
-      duplicate ? 1 : normalized.duplicate_warning,
-      duplicate?.id ?? normalized.duplicate_of_activity_id,
-      normalized.duplicate_override_reason,
-      normalized.import_batch_id,
-      normalized.source_system,
-      JSON.stringify(normalized.raw_sheet_payload ?? {}),
-      actorUserId,
-      actorUserId,
-    ]
+     VALUES (${insertValues.map(() => "?").join(", ")})`,
+    insertValues
   );
 
   return { action: "inserted" as const, id: insertId, duplicateOf: duplicate?.id ?? null };
@@ -708,7 +999,8 @@ export async function upsertHiringActivity(
   actorUserId: string,
   duplicateMode: DuplicateMode = "insert_duplicates_with_warning"
 ) {
-  const { normalized, errors } = mapSheetRow(payload);
+  const actor = await buildActivityActorContext(actorUserId);
+  const { normalized, errors } = mapSheetRow(buildManualActivityPayload(payload, actor));
   if (!normalized) {
     throw Object.assign(new Error(errors.join("; ")), { statusCode: 400, validationErrors: errors });
   }
@@ -738,7 +1030,8 @@ export async function updateHiringActivityById(
     throw Object.assign(new Error("Hiring activity not found"), { statusCode: 404 });
   }
 
-  const { normalized, errors } = mapSheetRow({ ...rows[0], ...payload });
+  const actor = await buildActivityActorContext(actorUserId);
+  const { normalized, errors } = mapSheetRow(buildManualActivityPayload({ ...rows[0], ...payload }, actor));
   if (!normalized || errors.length) {
     throw Object.assign(new Error(errors.join("; ") || "Invalid hiring activity row"), { statusCode: 400, validationErrors: errors });
   }
@@ -885,6 +1178,66 @@ async function syncActivityCandidateLink(activityId: string, candidateId: string
       WHERE id = ?`,
     [candidateId, queueTokenId, activityId]
   );
+}
+
+export async function syncHiringActivityFromCandidateRegistration(params: {
+  mobile: string;
+  candidateId: string;
+  queueTokenId?: string | null;
+  branchName?: string | null;
+  processName?: string | null;
+  activityDate?: string | null;
+}) {
+  const activityDate = params.activityDate ?? getCurrentIstDate();
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id
+       FROM ats_recruiter_hiring_activity
+      WHERE mobile = ?
+        AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        AND (linked_candidate_id IS NULL OR linked_candidate_id = ?)
+      ORDER BY
+        CASE WHEN activity_date = ? THEN 0 ELSE 1 END,
+        CASE WHEN ? IS NOT NULL AND branch_name = ? THEN 0 ELSE 1 END,
+        CASE WHEN ? IS NOT NULL AND process_name = ? THEN 0 ELSE 1 END,
+        created_at DESC
+      LIMIT 1`,
+    [
+      params.mobile,
+      params.candidateId,
+      activityDate,
+      params.branchName ?? null,
+      params.branchName ?? null,
+      params.processName ?? null,
+      params.processName ?? null,
+    ]
+  );
+
+  const activityId = text(rows[0]?.id);
+  if (!activityId) return null;
+
+  await db.execute(
+    `UPDATE ats_recruiter_hiring_activity
+        SET linked_candidate_id = ?,
+            queue_token_id = COALESCE(?, queue_token_id),
+            walkin_flag = 1,
+            contacted_flag = 1,
+            current_status = 'Arrived',
+            branch_name = COALESCE(NULLIF(branch_name, ''), ?),
+            location_name = COALESCE(NULLIF(location_name, ''), ?),
+            process_name = COALESCE(NULLIF(process_name, ''), ?),
+            updated_at = NOW()
+      WHERE id = ?`,
+    [
+      params.candidateId,
+      params.queueTokenId ?? null,
+      params.branchName ?? null,
+      params.branchName ?? null,
+      params.processName ?? null,
+      activityId,
+    ]
+  );
+
+  return activityId;
 }
 
 export async function createCandidateFromActivity(activityId: string, actorUserId: string) {

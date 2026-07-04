@@ -27,6 +27,11 @@ const OPTION_GROUPS = [
   { key: 'preferredShiftOptions',   label: 'Preferred Shift Options'    },
   { key: 'nightShiftComfortOptions',label: 'Night Shift Comfort Options'},
   { key: 'genderOptions',           label: 'Gender Options'             },
+  { key: 'hiringProcessOptions',    label: 'Hiring Entry Process Options' },
+  { key: 'hiringSourceOptions',     label: 'Hiring Entry Source Options' },
+  { key: 'hiringPositionOptions',   label: 'Hiring Entry Position Options' },
+  { key: 'hiringWpGroupOptions',    label: 'Hiring Entry WP Group Options' },
+  { key: 'hiringCallingOutcomeOptions', label: 'Hiring Entry Calling Outcome Options' },
 ];
 
 export default function NativeATSFormConfig() {

@@ -9,6 +9,7 @@ import {
   createCandidateFromActivity,
   createTokenFromActivity,
   type DuplicateMode,
+  getHiringActivityBootstrap,
   getCallingDashboard,
   getHiringDashboard,
   importHiringActivityRows,
@@ -83,6 +84,15 @@ recruiterHiringRouter.get("/interviewers", async (req: AuthenticatedRequest, res
     const roundType = req.query.roundType ? String(req.query.roundType) : "ops_round";
     const limit = Math.min(Number(req.query.limit ?? 20) || 20, 50);
     const data = await searchInterviewers(branchName, q, roundType, limit, req.authUser?.id);
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
+  }
+});
+
+recruiterHiringRouter.get("/recruiter/hiring-activity/bootstrap", async (req: AuthenticatedRequest, res) => {
+  try {
+    const data = await getHiringActivityBootstrap(req.authUser!.id);
     return res.json({ success: true, data });
   } catch (error: unknown) {
     return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });

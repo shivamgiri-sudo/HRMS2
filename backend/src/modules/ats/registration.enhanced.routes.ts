@@ -11,6 +11,7 @@ import {
   generateTokenNumber,
 } from "./ats.enhanced.service.js";
 import { atsService } from "./ats.service.js";
+import { syncHiringActivityFromCandidateRegistration } from "./recruiter-hiring.service.js";
 import {
   sendCandidateSuccessEmail,
   sendRecruiterNotificationEmail,
@@ -432,6 +433,24 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
     }
 
     // 6. Get recruiter details — assignedRecruiterId is a roster id, join to employees for contact info
+    const [latestTokenRows] = await db.execute<ExistingTokenRow[]>(
+      `SELECT id, token_number, recruiter_id
+       FROM ats_queue_token
+       WHERE candidate_id = ?
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [candidateId]
+    );
+
+    await syncHiringActivityFromCandidateRegistration({
+      mobile: input.mobile,
+      candidateId,
+      queueTokenId: latestTokenRows[0]?.id ?? null,
+      branchName,
+      processName: input.roleApplied,
+      activityDate: walkInDate,
+    });
+
     let recruiterDetails = null;
     if (assignmentResult.assignedRecruiterId) {
       const [recRows] = await db.execute<RecruiterContactRow[]>(

@@ -30,6 +30,12 @@ interface DisplayPayload {
   ts: number;
 }
 
+interface DisplayStreamEvent {
+  success?: boolean;
+  data?: Omit<DisplayPayload, "ts">;
+  ts?: number;
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const TICKER_TIPS = [
@@ -132,8 +138,10 @@ export default function WaitingRoomDisplay() {
       .then((j) => {
         if (j.success && Array.isArray(j.data)) {
           setBranches(j.data);
-          if (!localStorage.getItem("wr_branch") && j.data.length > 0) {
-            setSelectedBranch(j.data[0]);
+          const savedBranch = localStorage.getItem("wr_branch") ?? "";
+          if (savedBranch && !j.data.includes(savedBranch)) {
+            localStorage.removeItem("wr_branch");
+            setSelectedBranch("");
           }
         }
       })
@@ -186,8 +194,10 @@ export default function WaitingRoomDisplay() {
 
     es.onmessage = (e) => {
       try {
-        const payload: DisplayPayload = JSON.parse(e.data);
-        applyPayload(payload);
+        const payload: DisplayStreamEvent = JSON.parse(e.data);
+        if (payload.data) {
+          applyPayload({ ...payload.data, ts: payload.ts ?? Date.now() });
+        }
       } catch {/* malformed */}
     };
 
@@ -209,7 +219,11 @@ export default function WaitingRoomDisplay() {
   // Persist branch selection
   const handleBranchChange = (b: string) => {
     setSelectedBranch(b);
-    localStorage.setItem("wr_branch", b);
+    if (b) {
+      localStorage.setItem("wr_branch", b);
+    } else {
+      localStorage.removeItem("wr_branch");
+    }
   };
 
   const waitingQueue = queue.filter((q) => q.queue_status === "waiting").slice(0, 8);

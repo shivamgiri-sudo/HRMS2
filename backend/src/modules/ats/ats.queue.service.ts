@@ -23,7 +23,16 @@ const WAIT_ALERT_MINUTES = 20;
 export const atsQueueService = {
   async createToken(candidateId: string, arrivalTime: string): Promise<AtsQueueToken> {
     // Verify candidate exists and is active
-    const candidate = await atsService.getCandidate(candidateId);
+    const candidate = await atsService.getCandidate(candidateId).catch((error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : typeof error === "string" ? error : "Candidate not found";
+      throw Object.assign(new Error(message), {
+        statusCode:
+          typeof error === "object" && error !== null && "statusCode" in error
+            ? Number((error as { statusCode?: unknown }).statusCode) || 404
+            : 404,
+      });
+    });
     if (!candidate.active_status) {
       throw Object.assign(new Error("Candidate not found"), { statusCode: 404 as const });
     }
