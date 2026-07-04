@@ -282,6 +282,30 @@ describe("Composite Befisc/Luckpay adapter", () => {
     );
     expect(session.authUrl).toBe("https://luckpay.example/digilocker");
   });
+
+  it("TC-PROV-28: Luckpay auth failures throw sanitized errors", async () => {
+    expect.assertions(2);
+    vi.spyOn(axios, "post").mockRejectedValueOnce({
+      response: {
+        status: 403,
+        data: {
+          code: "AUTH_023",
+          message: "IP address 115.241.59.220 is not whitelisted",
+        },
+      },
+      config: {
+        headers: {
+          Authorization: "Basic test-basic-token",
+        },
+      },
+    });
+
+    const adapter = buildAdapterFromDbConfig(luckpayCfg);
+    await adapter.verifyPan({ panNumber: "ABCDE1234F" }).catch((error) => {
+      expect(String(error.message)).toContain("IP address 115.241.59.220 is not whitelisted");
+      expect(String(error.message)).not.toContain("test-basic-token");
+    });
+  });
 });
 
 // ── requireFormApiKey guard logic ─────────────────────────────────────────────

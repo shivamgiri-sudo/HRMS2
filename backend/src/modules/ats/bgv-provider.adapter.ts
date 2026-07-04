@@ -916,10 +916,15 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     }
 
     const authUrl = `${this.luckpayBaseUrl()}/auth/token`;
-    const res = await axios.post(authUrl, undefined, {
-      headers: { Authorization: `Basic ${this.cfg.luckpay_basic_token}` },
-      timeout: env.LUCKPAY_TIMEOUT_MS,
-    });
+    let res;
+    try {
+      res = await axios.post(authUrl, undefined, {
+        headers: { Authorization: `Basic ${this.cfg.luckpay_basic_token}` },
+        timeout: env.LUCKPAY_TIMEOUT_MS,
+      });
+    } catch (error) {
+      throw this.toLuckpayError(error);
+    }
     const payload = res.data?.data ?? res.data ?? {};
     const token = String(payload.accessToken ?? payload.access_token ?? payload.token ?? "");
     if (!token) throw new Error("Luckpay auth token response did not include an access token.");
@@ -931,14 +936,19 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
 
   private async postLuckpay(path: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     const accessToken = await this.getLuckpayAccessToken();
-    const res = await axios.post(`${this.luckpayBaseUrl()}${path}`, payload, {
-      headers: {
-        Authorization: this.cfg.luckpay_client_id!,
-        "X-Access-Token": `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      timeout: env.LUCKPAY_TIMEOUT_MS,
-    });
+    let res;
+    try {
+      res = await axios.post(`${this.luckpayBaseUrl()}${path}`, payload, {
+        headers: {
+          Authorization: this.cfg.luckpay_client_id!,
+          "X-Access-Token": `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        timeout: env.LUCKPAY_TIMEOUT_MS,
+      });
+    } catch (error) {
+      throw this.toLuckpayError(error);
+    }
     const data = res.data?.data ?? res.data ?? {};
     return data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : { data };
   }
@@ -959,6 +969,20 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
 
   private sanitizedRaw(data: Record<string, unknown>): Record<string, unknown> {
     return sanitizeProviderPayload(data) as Record<string, unknown>;
+  }
+
+  private toLuckpayError(error: unknown): Error {
+    const status = Number((error as { response?: { status?: number } })?.response?.status ?? 502);
+    const responseData = (error as { response?: { data?: unknown } })?.response?.data;
+    const sanitized = sanitizeProviderPayload(responseData) as Record<string, unknown> | null;
+    const providerMessage = sanitized && typeof sanitized === "object"
+      ? String(sanitized.message ?? sanitized.error ?? sanitized.status ?? "")
+      : "";
+    const message = providerMessage || "Luckpay provider request failed";
+    return Object.assign(new Error(`Luckpay provider request failed: ${message}`), {
+      statusCode: status >= 400 && status < 600 ? status : 502,
+      providerPayload: sanitized,
+    });
   }
 
   async verifyPan(input: PanVerificationInput): Promise<VerificationResult> {
