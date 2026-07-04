@@ -14,6 +14,8 @@ describe("Luckpay payload sanitization", () => {
         bank_account: "1234567890123456",
         file_path: "/tmp/luckpay.pdf",
         contactPhone: "9876543210",
+        idNumber: "ABCDE1234F",
+        identifier: "100200300400",
         referenceId: "ref-123",
         children: [{ otp: "123456" }],
       },
@@ -25,6 +27,8 @@ describe("Luckpay payload sanitization", () => {
     expect(serialized).not.toContain("token-secret-123");
     expect(serialized).not.toContain("abcdef");
     expect(serialized).not.toContain("123456789012");
+    expect(serialized).not.toContain("ABCDE1234F");
+    expect(serialized).not.toContain("100200300400");
     expect(serialized).not.toContain("/tmp/luckpay.pdf");
     expect(serialized).toContain("ref-123");
     expect(String((sanitized as Record<string, unknown>).accessToken ?? "")).toContain("...");

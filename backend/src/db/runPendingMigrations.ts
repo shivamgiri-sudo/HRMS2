@@ -236,6 +236,7 @@ const MIGRATION_MANIFEST: string[] = [
   "350_joining_document_public_token_hash_only.sql",
   "351_sanitize_internal_sign_links.sql",
   "352_ats_email_log_extended_types.sql",
+  "353_luckpay_production_provider_config.sql",
 ];
 
 export type MigrationHealth = {

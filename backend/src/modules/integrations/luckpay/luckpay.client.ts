@@ -44,6 +44,8 @@ const SECRET_KEYWORDS = [
   "otp",
   "file_path",
   "path",
+  "idnumber",
+  "identifier",
 ];
 
 const state: CachedToken = {
