@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
+import { apiUrl } from "@/lib/apiBase";
 import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
@@ -761,14 +762,13 @@ export default function BulkUploadHub() {
     try {
       const batchNo = `BATCH-${Date.now()}`;
 
-      const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
       const token = getAuthToken();
 
       // Upload file to local storage
       const formData = new FormData();
       formData.append("file", selectedFile);
       const uploadResponse = await fetch(
-        `${HRMS_API}/api/files/upload?category=bulk-uploads`,
+        apiUrl('/api/files/upload?category=bulk-uploads'),
         { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData }
       );
       if (!uploadResponse.ok) throw new Error("File upload failed");

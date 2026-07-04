@@ -1,15 +1,8 @@
-function apiBaseUrl(): string {
-  const configured = import.meta.env.VITE_HRMS_API_URL;
-  if (configured !== undefined) {
-    const normalized = String(configured).trim().replace(/\/$/, "");
-    if (import.meta.env.PROD && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?($|\/)/i.test(normalized)) return "";
-    return normalized;
-  }
-  return import.meta.env.DEV ? "http://localhost:5055" : "";
-}
+import { apiBaseUrl } from "@/lib/apiBase";
 
 // Production uses the same-origin /api proxy when VITE_HRMS_API_URL is not set.
 const HRMS_API_URL = apiBaseUrl();
+const DEMO_LOGIN_ENABLED = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_LOGIN === "true";
 
 const LEGACY_DOUBLE_DATA_PATHS = [
   "/api/clients",
@@ -23,7 +16,7 @@ function getAuthHeader(): Record<string, string> {
   const mysqlToken = localStorage.getItem("hrms_access_token");
   if (mysqlToken) return { Authorization: `Bearer ${mysqlToken}` };
 
-  const demoRaw = localStorage.getItem("hrms_demo_session");
+  const demoRaw = DEMO_LOGIN_ENABLED ? localStorage.getItem("hrms_demo_session") : null;
   if (demoRaw) {
     try {
       const demo = JSON.parse(demoRaw);
@@ -153,7 +146,7 @@ export function getAuthToken(): string | null {
   const mysqlToken = localStorage.getItem("hrms_access_token");
   if (mysqlToken) return mysqlToken;
 
-  const demoRaw = localStorage.getItem("hrms_demo_session");
+  const demoRaw = DEMO_LOGIN_ENABLED ? localStorage.getItem("hrms_demo_session") : null;
   if (demoRaw) {
     try {
       const demo = JSON.parse(demoRaw);

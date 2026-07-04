@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { apiBaseUrl } from "@/lib/apiBase";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -58,7 +59,7 @@ export function TaxDocumentsViewer({ employeeId }: TaxDocumentsViewerProps) {
       const pathMatch = fileUrl.match(/employee-documents\/(.+)/);
       const filePath = pathMatch ? pathMatch[1] : fileUrl;
 
-      const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
+      const HRMS_API = apiBaseUrl();
       const fetchUrl = filePath?.startsWith("https://") ? filePath : `${HRMS_API}/api/files/documents/${filePath}`;
       const resp = await fetch(fetchUrl);
       const data = await resp.blob();

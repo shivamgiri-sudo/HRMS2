@@ -1,10 +1,4 @@
-function apiBaseUrl(): string {
-  const configured =
-    (import.meta as any).env?.VITE_HRMS_API_URL ||
-    (import.meta as any).env?.VITE_API_URL;
-  if (configured !== undefined && configured !== "") return String(configured).replace(/\/$/, "");
-  return (import.meta as any).env?.DEV ? "http://localhost:5055" : "";
-}
+import { apiBaseUrl } from "@/lib/apiBase";
 
 const API_BASE = apiBaseUrl();
 

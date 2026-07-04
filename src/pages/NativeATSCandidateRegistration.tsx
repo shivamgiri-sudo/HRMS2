@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { apiUrl } from "@/lib/apiBase";
 import { CompanyLogo } from "@/components/CompanyLogo";
 
 type BranchAlias = {
@@ -818,8 +819,7 @@ export default function NativeATSCandidateRegistration() {
     // Backend requires mobile to verify upload ownership
     formData.append("mobile", String(form.mobile || "").replace(/\D/g, ""));
 
-    const apiBase = import.meta.env.VITE_HRMS_API_URL || (import.meta.env.DEV ? "http://localhost:5055" : "");
-    const res = await fetch(`${apiBase}/api/ats/candidates/${candidateId}/upload`, {
+    const res = await fetch(apiUrl(`/api/ats/candidates/${candidateId}/upload`), {
       method: "POST",
       body: formData,
     });
@@ -1386,7 +1386,6 @@ export default function NativeATSCandidateRegistration() {
     setScanMode('scanning');
     setScanStatus('Analysing resume with AI…');
     try {
-      const apiBase = import.meta.env.VITE_HRMS_API_URL || (import.meta.env.DEV ? 'http://localhost:5055' : '');
       const fd = new FormData();
       if (scanFile) {
         fd.append('file', scanFile);
@@ -1405,7 +1404,7 @@ export default function NativeATSCandidateRegistration() {
         nightShiftComfortOptions: bootstrap.nightShiftComfortOptions ?? [],
       }));
 
-      const resp = await fetch(`${apiBase}/api/ats/registration/parse-resume`, {
+      const resp = await fetch(apiUrl('/api/ats/registration/parse-resume'), {
         method: 'POST',
         body: fd,
       });

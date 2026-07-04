@@ -86,16 +86,7 @@ function fmtDate(raw: string | undefined): string {
 }
 
 function getToken(): string {
-  return (
-    localStorage.getItem("hrms_access_token") ||
-    (() => {
-      try {
-        return JSON.parse(localStorage.getItem("hrms_demo_session") || "{}")?.access_token || "";
-      } catch {
-        return "";
-      }
-    })()
-  );
+  return localStorage.getItem("hrms_access_token") || "";
 }
 
 async function apiGet<T>(path: string): Promise<T> {

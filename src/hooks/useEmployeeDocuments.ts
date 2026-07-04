@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { apiUrl } from "@/lib/apiBase";
 import { toast } from "sonner";
 
 export interface EmployeeDocument {
@@ -44,9 +45,8 @@ export function useUploadDocument() {
       formData.append("document_name", file.name);
 
       const token = localStorage.getItem("hrms_access_token");
-      const apiBase = import.meta.env.VITE_HRMS_API_URL || (import.meta.env.DEV ? "http://localhost:5055" : "");
       const uploadRes = await fetch(
-        `${apiBase}/api/employee-docs/${employeeId}/upload`,
+        apiUrl(`/api/employee-docs/${employeeId}/upload`),
         {
           method: "POST",
           headers: token ? { Authorization: `Bearer ${token}` } : {},

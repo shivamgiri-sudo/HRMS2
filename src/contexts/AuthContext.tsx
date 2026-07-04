@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, ReactNode } fro
 import { useQueryClient } from "@tanstack/react-query";
 import { getDemoCred, buildDemoSession } from "@/lib/demoCreds";
 import { useGeoCapture } from "@/hooks/useGeoCapture";
+import { apiUrl } from "@/lib/apiBase";
 
 export interface HrmsUser {
   id: string;
@@ -25,32 +26,8 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-const DEMO_LOGIN_ENABLED = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_LOGIN !== 'false';
+const DEMO_LOGIN_ENABLED = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_LOGIN === 'true';
 const AUTH_REQUEST_TIMEOUT_MS = 20000;
-
-function isLocalApiUrl(value: string): boolean {
-  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?($|\/)/i.test(value);
-}
-
-function apiBaseUrl(): string {
-  const configured = import.meta.env.VITE_HRMS_API_URL;
-  if (configured !== undefined) {
-    const normalized = String(configured).trim().replace(/\/$/, '');
-    if (import.meta.env.PROD && isLocalApiUrl(normalized)) return '';
-    return normalized === '/api' ? '' : normalized;
-  }
-  return import.meta.env.DEV ? 'http://localhost:5055' : '';
-}
-
-const API_URL = apiBaseUrl();
-
-function buildApiUrl(path: string): string {
-  const normalizedPath =
-    API_URL.endsWith('/api') && path.startsWith('/api/')
-      ? path.replace(/^\/api/, '')
-      : path;
-  return `${API_URL}${normalizedPath}`;
-}
 
 async function parseJsonResponse(res: Response): Promise<any> {
   const text = await res.text();
@@ -71,7 +48,7 @@ async function fetchJson(
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetch(buildApiUrl(path), {
+    const res = await fetch(apiUrl(path), {
       ...init,
       headers: {
         Accept: 'application/json',
@@ -193,7 +170,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem('hrms_refresh_token');
       }
 
-      // Demo sessions are only checked if no real JWT token exists
+      // Demo sessions are only checked if no real JWT token exists and local demo mode is explicit.
       if (DEMO_LOGIN_ENABLED) {
         const demoRaw = localStorage.getItem('hrms_demo_session');
         if (demoRaw) {
@@ -208,6 +185,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             localStorage.removeItem('hrms_demo_session');
           }
         }
+      } else {
+        localStorage.removeItem('hrms_demo_session');
       }
 
       setUser(null);
@@ -302,7 +281,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const refreshToken = localStorage.getItem('hrms_refresh_token');
       if (refreshToken) {
         const token = localStorage.getItem('hrms_access_token');
-        await fetch(buildApiUrl('/api/auth/logout'), {
+        await fetch(apiUrl('/api/auth/logout'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

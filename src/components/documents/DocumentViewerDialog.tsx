@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Download, Loader2, FileText, ExternalLink } from "lucide-react";
 import { format } from "date-fns";
+import { apiBaseUrl } from "@/lib/apiBase";
 
 interface DocumentInfo {
   id: string;
@@ -79,7 +80,7 @@ export function DocumentViewerDialog({
       const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(filePath);
       setFileType(isPdf ? "pdf" : isImage ? "image" : "other");
 
-      const HRMS_API = (import.meta.env.VITE_HRMS_API_URL || import.meta.env.VITE_API_URL || "http://localhost:5056").replace(/\/$/, "");
+      const HRMS_API = apiBaseUrl();
       const fileUrl = documentInfo.file_url.startsWith("http") ? documentInfo.file_url
         : documentInfo.file_url.startsWith("/api/") ? `${HRMS_API}${documentInfo.file_url}`
         : `${HRMS_API}/api/files/employee-documents/${documentInfo.file_url}`;
@@ -106,7 +107,7 @@ export function DocumentViewerDialog({
     if (!documentInfo || !documentInfo.file_url) return;
 
     try {
-      const HRMS_API = (import.meta.env.VITE_HRMS_API_URL || import.meta.env.VITE_API_URL || "http://localhost:5056").replace(/\/$/, "");
+      const HRMS_API = apiBaseUrl();
       const fileUrl = documentInfo.file_url.startsWith("http") ? documentInfo.file_url
         : documentInfo.file_url.startsWith("/api/") ? `${HRMS_API}${documentInfo.file_url}`
         : `${HRMS_API}/api/files/employee-documents/${documentInfo.file_url}`;

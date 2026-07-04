@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { apiUrl } from "@/lib/apiBase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -104,8 +105,7 @@ export default function NativeAuditLog() {
     try {
       const { getAuthToken } = await import("@/lib/hrmsApi");
       const token = getAuthToken();
-      const baseUrl = import.meta.env.VITE_HRMS_API_URL?.replace(/\/$/, "") || (import.meta.env.DEV ? "http://localhost:5056" : "");
-      const res = await fetch(`${baseUrl}/api/audit/export`, {
+      const res = await fetch(apiUrl('/api/audit/export'), {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({

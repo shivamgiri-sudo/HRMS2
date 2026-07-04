@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { apiUrl } from "@/lib/apiBase";
 import { Users, Building2, UserCheck, FileText, Camera, Upload, CheckCircle, AlertCircle } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -169,8 +170,7 @@ export default function NativeATSRegistrationEnhanced() {
     body.append("file", file);
     body.append("type", type);
     body.append("mobile", form.mobile);
-    const apiBase = import.meta.env.VITE_HRMS_API_URL || (import.meta.env.DEV ? "http://localhost:5055" : "");
-    const response = await fetch(`${apiBase}/api/ats/candidates/${candidateId}/upload`, {
+    const response = await fetch(apiUrl(`/api/ats/candidates/${candidateId}/upload`), {
       method: "POST",
       body,
     });
