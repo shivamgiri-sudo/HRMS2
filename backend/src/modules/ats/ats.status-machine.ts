@@ -4,7 +4,8 @@ import { db } from "../../db/mysql.js";
 
 // Valid ATS stage transitions: from -> allowed tos
 const ALLOWED_TRANSITIONS: Record<string, string[]> = {
-  "Applied":         ["Screening", "Rejected", "Hold"],
+  "Applied":         ["Screening", "Selected", "Rejected", "Hold"],
+  "New":             ["Screening", "Selected", "Rejected", "Hold"],
   "Screening":       ["Written Test", "HR Interview", "Rejected", "Hold"],
   "Written Test":    ["HR Interview", "Rejected", "Hold"],
   "HR Interview":    ["Manager Interview", "Operations Interview", "Selected", "Rejected", "Hold"],
@@ -16,10 +17,35 @@ const ALLOWED_TRANSITIONS: Record<string, string[]> = {
   "Declined":        ["Hold"],
   "Rejected":        [],
   "Joined":          [],
+  "Converted":       [],
 };
 
 // Stages that are final (no further movement except Hold override by admin)
-const TERMINAL_STAGES = new Set(["Joined", "Rejected"]);
+const TERMINAL_STAGES = new Set(["Joined", "Rejected", "Converted"]);
+
+const STAGE_ALIASES: Record<string, string> = {
+  applied: "Applied",
+  new: "New",
+  screening: "Screening",
+  written_test: "Written Test",
+  "written test": "Written Test",
+  hr_interview: "HR Interview",
+  "hr interview": "HR Interview",
+  manager_interview: "Manager Interview",
+  "manager interview": "Manager Interview",
+  operations_interview: "Operations Interview",
+  ops_interview: "Operations Interview",
+  "operations interview": "Operations Interview",
+  "ops interview": "Operations Interview",
+  selected: "Selected",
+  offered: "Offered",
+  offer_pending: "Offered",
+  joined: "Joined",
+  converted: "Converted",
+  declined: "Declined",
+  rejected: "Rejected",
+  hold: "Hold",
+};
 
 export interface TransitionResult {
   success: boolean;
@@ -47,10 +73,15 @@ export async function transitionCandidateState(
   const fromStage: string = candidate.current_stage ?? "Applied";
 
   // Normalise case for lookup
-  const normalizeStage = (s: string) =>
-    Object.keys(ALLOWED_TRANSITIONS).find(
-      (k) => k.toLowerCase() === s.trim().toLowerCase(),
-    ) ?? s.trim();
+  const normalizeStage = (s: string) => {
+    const trimmed = s.trim();
+    const alias = STAGE_ALIASES[trimmed.toLowerCase()];
+    if (alias) return alias;
+
+    return Object.keys(ALLOWED_TRANSITIONS).find(
+      (k) => k.toLowerCase() === trimmed.toLowerCase(),
+    ) ?? trimmed;
+  };
 
   const normFrom = normalizeStage(fromStage);
   const normTo   = normalizeStage(toStage);

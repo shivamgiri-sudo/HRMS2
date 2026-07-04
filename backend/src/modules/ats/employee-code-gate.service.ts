@@ -8,6 +8,7 @@ interface BoolRow extends RowDataPacket {
   validation_status?: string | null;
   status?: string | null;
   employee_code?: string | null;
+  employee_id?: string | null;
   id?: string | null;
 }
 
@@ -15,11 +16,56 @@ export interface GateCheckResult {
   canGenerate: boolean;
   blockers: string[];
   checklist: Record<string, boolean>;
+  alreadyGenerated?: boolean;
+  employeeCode?: string | null;
+  employeeId?: string | null;
+}
+
+async function findExistingEmployeeCode(candidateId: string): Promise<{
+  employeeCode: string | null;
+  employeeId: string | null;
+}> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        COALESCE(c.employee_code, e.employee_code, e_by_email.employee_code) AS employee_code,
+        COALESCE(e.id, e_by_email.id) AS employee_id
+       FROM ats_candidate c
+       LEFT JOIN appointment_letter_request alr ON alr.candidate_id = c.id
+       LEFT JOIN employees e ON e.id = alr.employee_id
+       LEFT JOIN employees e_by_email
+         ON e_by_email.email = c.email OR e_by_email.official_email = c.email
+       WHERE c.id = ?
+         AND COALESCE(c.employee_code, e.employee_code, e_by_email.employee_code) IS NOT NULL
+       ORDER BY e.created_at DESC, e_by_email.created_at DESC
+       LIMIT 1`,
+    [candidateId],
+  ).catch(() => [[]] as RowDataPacket[][]);
+
+  const row = Array.isArray(rows) ? rows[0] as BoolRow | undefined : undefined;
+  return {
+    employeeCode: row?.employee_code ?? null,
+    employeeId: row?.employee_id ?? null,
+  };
 }
 
 export async function checkEmployeeCodeGate(candidateId: string): Promise<GateCheckResult> {
   const blockers: string[] = [];
   const checklist: Record<string, boolean> = {};
+
+  const existing = await findExistingEmployeeCode(candidateId);
+  if (existing.employeeCode) {
+    return {
+      canGenerate: false,
+      alreadyGenerated: true,
+      employeeCode: existing.employeeCode,
+      employeeId: existing.employeeId,
+      blockers: [],
+      checklist: {
+        employee_code_generated: true,
+        employee_master_created: Boolean(existing.employeeId),
+      },
+    };
+  }
 
   // 1. Onboarding submitted
   const [cop] = await db.execute<RowDataPacket[]>(
@@ -87,7 +133,9 @@ export async function checkEmployeeCodeGate(candidateId: string): Promise<GateCh
   if (Array.isArray(dup) && dup.length > 0 && (dup[0] as BoolRow).employee_code) {
     return {
       canGenerate: false,
-      blockers: ['Employee code already generated: ' + (dup[0] as BoolRow).employee_code],
+      alreadyGenerated: true,
+      employeeCode: (dup[0] as BoolRow).employee_code ?? null,
+      blockers: [],
       checklist,
     };
   }
