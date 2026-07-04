@@ -260,7 +260,8 @@ export async function saveOffer(
     const [bhRows] = await db.execute<RowDataPacket[]>(
       `SELECT u.email FROM auth_user u
        JOIN user_roles ur ON ur.user_id = u.id
-       WHERE ur.role_key IN ('branch_head', 'admin') AND u.branch_id = ?
+       LEFT JOIN employees e ON e.user_id = u.id AND e.active_status = 1
+       WHERE ur.role_key IN ('branch_head', 'admin') AND e.branch_id = ?
        LIMIT 1`,
       [req.branch_id],
     );
@@ -270,7 +271,7 @@ export async function saveOffer(
   const [bandRows] = await db.execute<RowDataPacket[]>(
     `SELECT basic_pct, hra_pct FROM salary_band_master WHERE band_code = ?`,
     [offerData.salary_band ?? 'D'],
-  );
+  ).catch(() => [[] as RowDataPacket[]]);
   const band = (bandRows as RowDataPacket[])[0] ?? { basic_pct: 40, hra_pct: 40 };
   const components: SalaryComponents = calculateSalary(
     Number(offerData.offered_ctc),

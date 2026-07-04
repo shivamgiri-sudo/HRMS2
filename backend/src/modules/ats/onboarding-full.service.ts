@@ -12,6 +12,13 @@ import { luckpayClient, sanitizeProviderPayload } from "../integrations/luckpay/
 type ActorType = "candidate" | "hr" | "system";
 type AuthenticatedUser = NonNullable<AuthenticatedRequest["authUser"]>;
 export type OnboardingScopeFilter = { sql: string; params: unknown[] };
+
+function normalizeCandidateScopeSql(sql: string) {
+  return sql
+    .replaceAll("c.applied_for_branch", "COALESCE(br_scope.id, c.applied_for_branch)")
+    .replaceAll("c.applied_for_process", "COALESCE(pm_scope.id, c.applied_for_process)");
+}
+
 export type OnboardingDocumentPermission = {
   canPreview: boolean;
   canDownload: boolean;
@@ -313,11 +320,19 @@ export async function auditOnboardingDocumentAccess(
 }
 
 async function ensureCandidateWithinScope(candidateId: string, scopeFilter?: OnboardingScopeFilter) {
-  const whereSql = scopeFilter?.sql ? ` AND (${scopeFilter.sql})` : "";
+  const whereSql = scopeFilter?.sql ? ` AND (${normalizeCandidateScopeSql(scopeFilter.sql)})` : "";
   const params = scopeFilter?.params ?? [];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id
        FROM ats_candidate c
+       LEFT JOIN branch_master br_scope
+         ON br_scope.id = c.applied_for_branch
+         OR br_scope.branch_name = c.applied_for_branch
+         OR br_scope.branch_code = c.applied_for_branch
+       LEFT JOIN process_master pm_scope
+         ON pm_scope.id = c.applied_for_process
+         OR pm_scope.process_name = c.applied_for_process
+         OR pm_scope.process_code = c.applied_for_process
       WHERE c.id = ?${whereSql}
       LIMIT 1`,
     [candidateId, ...params]
@@ -495,7 +510,7 @@ async function resolveEsignSource(candidateId: string) {
 }
 
 async function triggerBgvAfterOnboardingSubmit(candidateId: string, meta?: { ip?: string; userAgent?: string }) {
-  const checkTypes = ["aadhaar", "digilocker", "pan", "court", "education_doc", "employment", "address"];
+  const checkTypes = ["pan", "aadhaar_offline", "bank", "address_doc", "education_doc", "employment", "criminal"];
   for (const checkType of checkTypes) {
     const [existing] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
@@ -505,7 +520,7 @@ async function triggerBgvAfterOnboardingSubmit(candidateId: string, meta?: { ip?
     await db.execute(
       `INSERT INTO candidate_bgv_check
          (id, candidate_id, check_type, provider_key, status, result_summary, result_json)
-       VALUES (?, ?, ?, 'system', 'pending', 'Auto-created after onboarding submit', CAST(? AS JSON))`,
+       VALUES (?, ?, ?, 'system', 'not_started', 'Auto-created after onboarding submit', CAST(? AS JSON))`,
       [randomUUID(), candidateId, checkType, JSON.stringify({ source: "onboarding_submit" })]
     );
   }
@@ -724,43 +739,37 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
 
   await db.execute(
     `UPDATE ats_candidate SET
-       title = ?, relation = ?, father_husband_name = ?, father_name = ?, gender = ?, marital_status = ?,
-       date_of_birth = ?, blood_group = ?, nominee_name = ?, nominee_relation = ?, nominee_date_of_birth = ?,
-       permanent_address = ?, permanent_state = ?, permanent_city = ?, permanent_pincode = ?,
-       current_address = ?, present_state = ?, present_city = ?, present_pincode = ?, alt_mobile_number = ?,
-       personal_email_id = ?, official_email_id = ?,
-       pan_number = COALESCE(?, pan_number), pan_number_hash = COALESCE(?, pan_number_hash),
-       aadhar_number = COALESCE(?, aadhar_number), aadhar_number_hash = COALESCE(?, aadhar_number_hash),
-       source_type = ?, source = ?, profile_status = 'profile_in_progress', updated_at = NOW()
+       father_name = COALESCE(?, father_name),
+       gender = COALESCE(?, gender),
+       date_of_birth = COALESCE(?, date_of_birth),
+       permanent_address = COALESCE(?, permanent_address),
+       current_address = COALESCE(?, current_address),
+       mobile = COALESCE(?, mobile),
+       email = COALESCE(?, email),
+       pan_number = COALESCE(?, pan_number),
+       pan_number_masked = COALESCE(?, pan_number_masked),
+       pan_number_hash = COALESCE(?, pan_number_hash),
+       aadhar_number = COALESCE(?, aadhar_number),
+       aadhar_number_masked = COALESCE(?, aadhar_number_masked),
+       aadhar_number_hash = COALESCE(?, aadhar_number_hash),
+       source_details = COALESCE(?, source_details),
+       profile_status = IF(profile_status IN ('profile_submitted', 'onboarded', 'rejected'), profile_status, 'onboarding_sent'),
+       updated_at = NOW()
      WHERE id = ?`,
     [
-      input.title ?? null,
-      input.relation ?? null,
-      input.fatherHusbandName ?? input.father_name ?? null,
       input.fatherHusbandName ?? input.father_name ?? null,
       input.gender ?? tokenData.gender ?? null,
-      input.maritalStatus ?? null,
       input.dateOfBirth ?? tokenData.date_of_birth ?? null,
-      input.bloodGroup ?? null,
-      input.nominee ?? input.nomineeName ?? null,
-      input.nomineeRelation ?? null,
-      input.nomineeDateOfBirth ?? null,
       input.permanentAddress ?? null,
-      input.permanentState ?? null,
-      input.permanentCity ?? null,
-      input.permanentPincode ?? null,
       input.presentAddress ?? input.current_address ?? null,
-      input.presentState ?? null,
-      input.presentCity ?? null,
-      input.presentPincode ?? null,
-      input.altMobileNumber ?? null,
+      input.mobileNumber ?? tokenData.mobile ?? null,
       input.personalEmailId ?? tokenData.email ?? null,
-      input.officialEmailId ?? null,
+      panMasked,
       panMasked,
       panHash,
       aadhaarMasked,
+      aadhaarMasked,
       aadhaarHash,
-      input.sourceType ?? tokenData.source_type ?? null,
       input.source ?? tokenData.source ?? null,
       candidateId,
     ]
@@ -1111,7 +1120,7 @@ export async function getOnboardingCandidateScope(candidateId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, applied_for_branch, applied_for_process
        FROM ats_candidate
-       WHERE c.id = ?
+       WHERE id = ?
       LIMIT 1`,
     [candidateId]
   );
@@ -1119,7 +1128,7 @@ export async function getOnboardingCandidateScope(candidateId: string) {
 }
 
 export async function listFullOnboardingRequests(scopeFilter?: OnboardingScopeFilter) {
-  const whereSql = scopeFilter?.sql ? `WHERE (${scopeFilter.sql})` : "";
+  const whereSql = scopeFilter?.sql ? `WHERE (${normalizeCandidateScopeSql(scopeFilter.sql)})` : "";
   const params = scopeFilter?.params ?? [];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT req.id, req.status, req.candidate_id,
@@ -1137,6 +1146,14 @@ export async function listFullOnboardingRequests(scopeFilter?: OnboardingScopeFi
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = req.candidate_id
        LEFT JOIN branch_master br ON br.id = c.applied_for_branch
        LEFT JOIN process_master pm ON pm.id = c.applied_for_process
+       LEFT JOIN branch_master br_scope
+         ON br_scope.id = c.applied_for_branch
+         OR br_scope.branch_name = c.applied_for_branch
+         OR br_scope.branch_code = c.applied_for_branch
+       LEFT JOIN process_master pm_scope
+         ON pm_scope.id = c.applied_for_process
+         OR pm_scope.process_name = c.applied_for_process
+         OR pm_scope.process_code = c.applied_for_process
        LEFT JOIN candidate_onboarding_bank_detail bank ON bank.candidate_id = req.candidate_id
        LEFT JOIN candidate_onboarding_document doc ON doc.candidate_id = req.candidate_id AND doc.deleted_at IS NULL
        LEFT JOIN ats_employment_offer offer
@@ -1282,17 +1299,95 @@ export async function syncOnboardingStatus(
   requestStatus: string,
   candidateProfileStatus: string
 ) {
+  const profileAllowed = new Set([
+    "draft",
+    "employee_details_saved",
+    "bank_details_saved",
+    "statutory_saved",
+    "qualifications_saved",
+    "experience_saved",
+    "family_saved",
+    "nominee_saved",
+    "language_saved",
+    "final_saved",
+    "submitted",
+    "hr_review",
+    "hr_pushback",
+    "rejected",
+  ]);
+  const requestAllowed = new Set([
+    "pending",
+    "in_progress",
+    "approved",
+    "selected",
+    "onboarding_link_sent",
+    "profile_in_progress",
+    "profile_submitted",
+    "hr_review",
+    "hr_pushback",
+    "hr_approved",
+    "offer_draft",
+    "offer_submitted",
+    "branch_head_pending",
+    "branch_head_approved",
+    "payroll_hr_pending",
+    "payroll_hr_approved",
+    "bgv_pending",
+    "bgv_completed",
+    "appointment_pending",
+    "appointment_sent",
+    "appointment_signed",
+    "employee_creation_pending",
+    "employee_created",
+    "onboarded",
+    "rejected",
+    "cancelled",
+    "payroll_pending",
+    "payroll_approved",
+  ]);
+  const candidateAllowed = new Set([
+    "registered",
+    "selected",
+    "onboarding_sent",
+    "profile_submitted",
+    "onboarded",
+    "rejected",
+  ]);
+  const candidateStatusMap: Record<string, string> = {
+    submitted: "profile_submitted",
+    profile_in_progress: "onboarding_sent",
+    profile_submitted: "profile_submitted",
+    hr_review: "profile_submitted",
+    hr_pushback: "profile_submitted",
+    hr_approved: "profile_submitted",
+    payroll_hr_approved: "profile_submitted",
+    employee_created: "onboarded",
+    onboarded: "onboarded",
+    rejected: "rejected",
+  };
+  const profileStatusMap: Record<string, string> = {
+    hr_approved: "submitted",
+    payroll_hr_approved: "submitted",
+    employee_created: "submitted",
+    onboarded: "submitted",
+  };
+  const mappedProfileStatus = profileStatusMap[profileStatus] ?? profileStatus;
+  const safeProfileStatus = profileAllowed.has(mappedProfileStatus) ? mappedProfileStatus : "submitted";
+  const safeRequestStatus = requestAllowed.has(requestStatus) ? requestStatus : "profile_submitted";
+  const mappedCandidateStatus = candidateStatusMap[candidateProfileStatus] ?? candidateProfileStatus;
+  const safeCandidateStatus = candidateAllowed.has(mappedCandidateStatus) ? mappedCandidateStatus : "profile_submitted";
+
   await db.execute(
     `UPDATE ats_candidate SET profile_status = ?, updated_at = NOW() WHERE id = ?`,
-    [candidateProfileStatus, candidateId]
+    [safeCandidateStatus, candidateId]
   );
   await db.execute(
     `UPDATE ats_onboarding_request SET status = ?, updated_at = NOW() WHERE candidate_id = ?`,
-    [requestStatus, candidateId]
+    [safeRequestStatus, candidateId]
   );
   await db.execute(
     `UPDATE candidate_onboarding_profile SET profile_status = ?, updated_at = NOW() WHERE candidate_id = ?`,
-    [profileStatus, candidateId]
+    [safeProfileStatus, candidateId]
   );
 }
 
