@@ -41,6 +41,12 @@ function maskBankAccount(value: unknown): string | null {
   return s.length >= 4 ? `XXXXXX${s.slice(-4)}` : 'XXXXXXXXXX';
 }
 
+function normalizeOfferRoleType(value: unknown): 'Analyst' | 'SupportStaff' {
+  const normalized = String(value ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+  if (normalized === 'supportstaff' || normalized === 'support') return 'SupportStaff';
+  return 'Analyst';
+}
+
 // ── Token Generation ──────────────────────────────────────────────────────────
 
 export async function sendOnboardingToken(
@@ -302,7 +308,7 @@ export async function saveOffer(
       [
         offerData.emp_type ?? 'OnRoll', offerData.date_of_joining, offerData.date_of_salary ?? null,
         offerData.profile ?? null, offerData.department_id ?? null, offerData.designation_id ?? null,
-        offerData.cost_centre ?? null, offerData.reporting_manager_id ?? null, offerData.role_type ?? null,
+        offerData.cost_centre ?? null, offerData.reporting_manager_id ?? null, normalizeOfferRoleType(offerData.role_type),
         offerData.salary_band ?? null,
         components.offered_ctc, components.basic, components.hra, components.conveyance,
         components.da, components.special_allowance, components.other_allowance, components.bonus, components.gross,
@@ -327,7 +333,7 @@ export async function saveOffer(
         offerId, requestId, req.candidate_id,
         offerData.emp_type ?? 'OnRoll', offerData.date_of_joining, offerData.date_of_salary ?? null,
         offerData.profile ?? null, offerData.department_id ?? null, offerData.designation_id ?? null,
-        offerData.cost_centre ?? null, offerData.reporting_manager_id ?? null, offerData.role_type ?? null,
+        offerData.cost_centre ?? null, offerData.reporting_manager_id ?? null, normalizeOfferRoleType(offerData.role_type),
         offerData.salary_band ?? null,
         components.offered_ctc, components.basic, components.hra, components.conveyance,
         components.da, components.special_allowance, components.other_allowance, components.bonus, components.gross,
