@@ -31,6 +31,9 @@ atsRouter.post("/candidates",                    h(c.createCandidate.bind(c)));
 // â”€â”€ PUBLIC â€” candidate onboarding with token (no auth required) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 atsRouter.use("/onboarding-full", onboardingFullRouter);
 atsRouter.use("/bgv", bgvVerificationRouter);
+// Keep onboarding mounted before recruiterHiringRouter; that router installs
+// root-level auth/role middleware and can otherwise intercept /onboarding/*.
+atsRouter.use("/onboarding", onboardingRouter);
 atsRouter.use(recruiterHiringRouter);
 
 // â”€â”€ PUBLIC â€” candidate file upload (1 hour window after registration) â”€â”€â”€â”€â”€â”€â”€â”€
@@ -349,8 +352,4 @@ atsRouter.get("/recruiter/daily-stats", requireRole("admin", "hr", "super_admin"
   return res.json({ success: true, data: stats });
 }));
 
-// Onboarding flow â€” token generation, profile submission, offer mgmt, approve/reject
-atsRouter.use("/onboarding", onboardingRouter);
-
-
-
+export default atsRouter;
