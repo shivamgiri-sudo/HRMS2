@@ -531,11 +531,11 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
               COALESCE(p.date_of_birth, c.date_of_birth) AS date_of_birth,
               COALESCE(p.personal_email_id, c.email) AS personal_email,
               c.mobile AS personal_phone,
-              p.alternate_mobile,
+              p.alt_mobile_number AS alternate_mobile,
               NULL AS pan_number,
               NULL AS aadhar_number,
               NULL AS uan_number,
-              p.current_address,
+              p.present_address AS current_address,
               p.personal_email_id
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
