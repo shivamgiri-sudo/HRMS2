@@ -24,7 +24,7 @@ function getErrorMessage(error: unknown): string {
 /**
  * Candidate authentication middleware
  */
-function candidateAuth(req: CandidateAuthRequest, res: Response, next: NextFunction) {
+function candidateAuth(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -44,8 +44,8 @@ function candidateAuth(req: CandidateAuthRequest, res: Response, next: NextFunct
     });
   }
 
-  req.candidateId = decoded.candidate_id;
-  req.candidateCode = decoded.candidate_code;
+  (req as CandidateAuthRequest).candidateId = decoded.candidate_id;
+  (req as CandidateAuthRequest).candidateCode = decoded.candidate_code;
   next();
 }
 
@@ -80,9 +80,9 @@ candidatePortalRouter.post('/login', async (req: Request, res: Response) => {
 });
 
 // ── 2. Get Candidate Profile ───────────────────────────────────────────────────
-candidatePortalRouter.get('/profile', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
+candidatePortalRouter.get('/profile', candidateAuth, async (req: Request, res: Response) => {
   try {
-    const profile = await getCandidateProfile(req.candidateId);
+    const profile = await getCandidateProfile((req as CandidateAuthRequest).candidateId);
 
     if (!profile) {
       return res.status(404).json({
@@ -104,9 +104,9 @@ candidatePortalRouter.get('/profile', candidateAuth, async (req: CandidateAuthRe
 });
 
 // ── 3. Get Onboarding Tasks ────────────────────────────────────────────────────
-candidatePortalRouter.get('/tasks', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
+candidatePortalRouter.get('/tasks', candidateAuth, async (req: Request, res: Response) => {
   try {
-    const tasks = await getCandidateTasks(req.candidateId);
+    const tasks = await getCandidateTasks((req as CandidateAuthRequest).candidateId);
 
     return res.json({
       success: true,
@@ -121,9 +121,9 @@ candidatePortalRouter.get('/tasks', candidateAuth, async (req: CandidateAuthRequ
 });
 
 // ── 4. Get Uploaded Documents ──────────────────────────────────────────────────
-candidatePortalRouter.get('/documents', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
+candidatePortalRouter.get('/documents', candidateAuth, async (req: Request, res: Response) => {
   try {
-    const documents = await getCandidateDocuments(req.candidateId);
+    const documents = await getCandidateDocuments((req as CandidateAuthRequest).candidateId);
 
     return res.json({
       success: true,
@@ -138,7 +138,7 @@ candidatePortalRouter.get('/documents', candidateAuth, async (req: CandidateAuth
 });
 
 // ── 5. Upload Document ─────────────────────────────────────────────────────────
-candidatePortalRouter.post('/upload-document', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
+candidatePortalRouter.post('/upload-document', candidateAuth, async (req: Request, res: Response) => {
   try {
     const { document_type, file_name, file_url } = req.body;
 
@@ -150,7 +150,7 @@ candidatePortalRouter.post('/upload-document', candidateAuth, async (req: Candid
     }
 
     const result = await uploadCandidateDocument(
-      req.candidateId,
+      (req as CandidateAuthRequest).candidateId,
       document_type,
       file_name,
       file_url
@@ -170,7 +170,7 @@ candidatePortalRouter.post('/upload-document', candidateAuth, async (req: Candid
 });
 
 // ── 6. Mark Task as Completed ──────────────────────────────────────────────────
-candidatePortalRouter.post('/complete-task', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
+candidatePortalRouter.post('/complete-task', candidateAuth, async (req: Request, res: Response) => {
   try {
     const { task_id } = req.body;
 
@@ -181,7 +181,7 @@ candidatePortalRouter.post('/complete-task', candidateAuth, async (req: Candidat
       });
     }
 
-    await markTaskCompleted(req.candidateId, task_id);
+    await markTaskCompleted((req as CandidateAuthRequest).candidateId, task_id);
 
     return res.json({
       success: true,

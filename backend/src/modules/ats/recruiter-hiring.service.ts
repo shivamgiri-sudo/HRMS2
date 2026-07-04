@@ -5,6 +5,7 @@ import { db } from "../../db/mysql.js";
 import { atsService } from "./ats.service.js";
 import { atsQueueService } from "./ats.queue.service.js";
 import { sendOnboardingToken } from "./ats.onboarding.service.js";
+import type { AtsCandidate } from "./ats.types.js";
 
 export type DuplicateMode = "insert_duplicates_with_warning" | "update_existing" | "skip_duplicates";
 
@@ -95,6 +96,20 @@ export type HiringDashboard = {
   byBranch: Array<{ label: string; total: number; contacted: number; selected: number; joined: number }>;
 };
 
+export type HiringActivityContext = {
+  mobile: string;
+  latestActivity: Record<string, unknown> | null;
+  candidate: Record<string, unknown> | null;
+  latestSubmission: Record<string, unknown> | null;
+  onboarding: Record<string, unknown> | null;
+  suggestions: {
+    alreadySelected: boolean;
+    alreadyOnboarded: boolean;
+    alreadyRostered: boolean;
+    suggestedStatus: string | null;
+  };
+};
+
 export type HiringFilters = {
   fromDate?: string;
   toDate?: string;
@@ -143,6 +158,10 @@ interface DashboardSummaryRow extends RowDataPacket {
   total_records: number;
   total_contacted: number;
   not_contacted: number;
+  callback_pending: number;
+  confirmed_for_interview: number;
+  turned_up: number;
+  interviewed: number;
   shortlisted: number;
   recruiter_rejected: number;
   hr_selected: number;
@@ -152,6 +171,8 @@ interface DashboardSummaryRow extends RowDataPacket {
   ops_selected: number;
   ops_rejected: number;
   final_selected: number;
+  onboarded: number;
+  rostered: number;
   offer_letter_issued: number;
   joined: number;
   joining_pending: number;
@@ -183,6 +204,36 @@ interface InterviewerRow extends RowDataPacket {
 
 interface ImportBatchRow extends RowDataPacket {
   [key: string]: unknown;
+}
+
+interface CandidateLookupRow extends RowDataPacket {
+  id: string;
+  candidate_code: string | null;
+  full_name: string | null;
+  mobile: string | null;
+  email: string | null;
+  profile_status: string | null;
+  status: string | null;
+  current_stage: string | null;
+  applied_for_process: string | null;
+  applied_for_branch: string | null;
+  q_token: string | null;
+}
+
+interface SubmissionLookupRow extends RowDataPacket {
+  id: string;
+  submitted_at: string | null;
+  final_decision: string | null;
+  walkin_end_stage: string | null;
+  round2_result: string | null;
+  second_round_interviewer_name_snapshot: string | null;
+}
+
+interface OnboardingLookupRow extends RowDataPacket {
+  id: string;
+  status: string | null;
+  onboarding_token_expires_at: string | null;
+  joining_date: string | null;
 }
 
 const TRUE_VALUES = new Set(["yes", "y", "true", "1", "selected", "joined", "walkin", "contacted"]);
@@ -480,6 +531,24 @@ async function getCurrentUserBranch(userId: string): Promise<string | null> {
   return text(rows[0]?.branch_name);
 }
 
+function isPrivilegedRole(role: string | undefined) {
+  return ["admin", "hr", "super_admin"].includes(role ?? "");
+}
+
+function scopedActivityClause(role: string | undefined) {
+  return isPrivilegedRole(role) ? "" : " AND (created_by = ? OR recruiter_id = ?)";
+}
+
+function suggestedStatusFromContext(activity: RowDataPacket | undefined, candidate: CandidateLookupRow | undefined, submission: SubmissionLookupRow | undefined, onboarding: OnboardingLookupRow | undefined) {
+  if (activity?.employee_id || activity?.joined_candidate_emp_code) return "Rostered";
+  if (onboarding?.status && ["submitted", "approved", "completed", "onboarding_complete"].includes(String(onboarding.status).toLowerCase())) {
+    return "Onboarded";
+  }
+  if (submission?.final_decision === "Selected") return "Selected";
+  if (activity?.walkin_flag === 1 || activity?.queue_token_id) return "Turned Up";
+  return text(activity?.current_status) ?? null;
+}
+
 function buildFilterSql(filters: HiringFilters, scopedOnly: boolean) {
   const clauses: string[] = ["1=1"];
   const params: unknown[] = [];
@@ -535,7 +604,7 @@ function buildFilterSql(filters: HiringFilters, scopedOnly: boolean) {
 }
 
 export async function listHiringActivity(userId: string, role: string | undefined, filters: HiringFilters) {
-  const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
+  const scopedOnly = !isPrivilegedRole(role);
   const { sql, params } = buildFilterSql(filters, scopedOnly);
   if (scopedOnly) {
     params.push(userId, userId);
@@ -568,6 +637,88 @@ export async function listHiringActivity(userId: string, role: string | undefine
   };
 }
 
+export async function getHiringActivityContext(userId: string, role: string | undefined, mobileInput: string): Promise<HiringActivityContext | null> {
+  const mobile = normalizeMobile(mobileInput);
+  if (!mobile) {
+    throw Object.assign(new Error("Valid mobile number is required"), { statusCode: 400 });
+  }
+
+  const activityParams: unknown[] = [mobile];
+  if (!isPrivilegedRole(role)) {
+    activityParams.push(userId, userId);
+  }
+
+  const [activityRows] = await db.execute<RowDataPacket[]>(
+    `SELECT *
+       FROM ats_recruiter_hiring_activity
+      WHERE mobile = ?${scopedActivityClause(role)}
+      ORDER BY activity_date DESC, created_at DESC
+      LIMIT 1`,
+    activityParams
+  );
+
+  const activity = activityRows[0];
+  if (!activity) {
+    return null;
+  }
+
+  const candidateId = text(activity.linked_candidate_id);
+  let candidate: CandidateLookupRow | undefined;
+  let latestSubmission: SubmissionLookupRow | undefined;
+  let onboarding: OnboardingLookupRow | undefined;
+
+  if (candidateId) {
+    const [candidateRows] = await db.execute<CandidateLookupRow[]>(
+      `SELECT id, candidate_code, full_name, mobile, email, profile_status, status, current_stage,
+              applied_for_process, applied_for_branch, q_token
+         FROM ats_candidate
+        WHERE id = ?
+        LIMIT 1`,
+      [candidateId]
+    );
+    candidate = candidateRows[0];
+
+    const [submissionRows] = await db.execute<SubmissionLookupRow[]>(
+      `SELECT id, submitted_at, final_decision, walkin_end_stage, round2_result, second_round_interviewer_name_snapshot
+         FROM ats_interview_submission
+        WHERE candidate_id = ?
+        ORDER BY submitted_at DESC, id DESC
+        LIMIT 1`,
+      [candidateId]
+    );
+    latestSubmission = submissionRows[0];
+
+    const [onboardingRows] = await db.execute<OnboardingLookupRow[]>(
+      `SELECT id, status, onboarding_token_expires_at, joining_date
+         FROM ats_onboarding_bridge
+        WHERE candidate_id = ?
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT 1`,
+      [candidateId]
+    );
+    onboarding = onboardingRows[0];
+  }
+
+  const suggestedStatus = suggestedStatusFromContext(activity, candidate, latestSubmission, onboarding);
+  const alreadySelected = (latestSubmission?.final_decision ?? activity.final_selection_flag) === "Selected" || Number(activity.final_selection_flag ?? 0) === 1;
+  const alreadyOnboarded = !!onboarding?.status && ["submitted", "approved", "completed", "onboarding_complete"].includes(String(onboarding.status).toLowerCase());
+  const alreadyRostered = !!(activity.employee_id || activity.joined_candidate_emp_code);
+
+  return {
+    mobile,
+    latestActivity: activity ?? null,
+    candidate: candidate ?? null,
+    latestSubmission: latestSubmission ?? null,
+    onboarding: onboarding ?? null,
+    suggestions: {
+      alreadySelected,
+      alreadyOnboarded,
+      alreadyRostered,
+      suggestedStatus,
+    },
+  };
+}
+
 async function findDuplicate(normalized: NormalizedHiringActivity): Promise<{ id: string } | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id
@@ -590,7 +741,7 @@ async function findDuplicate(normalized: NormalizedHiringActivity): Promise<{ id
       normalized.process_name,
     ]
   );
-  return rows[0] ?? null;
+  return rows[0] ? { id: String(rows[0].id) } : null;
 }
 
 async function persistActivity(
@@ -853,7 +1004,7 @@ export async function importHiringActivityRows(
   };
 }
 
-async function resolveCandidateByActivity(activity: NormalizedHiringActivity) {
+async function resolveCandidateByActivity(activity: NormalizedHiringActivity): Promise<AtsCandidate | null> {
   const mobile = activity.mobile;
   const name = activity.candidate_name;
   const email = activity.candidate_email;
@@ -870,7 +1021,7 @@ async function resolveCandidateByActivity(activity: NormalizedHiringActivity) {
   for (const [sql, params] of queries) {
     if (params[0] === null || params[0] === undefined || params[0] === "") continue;
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-    const candidate = rows[0];
+    const candidate = rows[0] as AtsCandidate | undefined;
     if (candidate) return candidate;
   }
   return null;
@@ -1004,6 +1155,24 @@ export async function sendOnboardingFromActivity(activityId: string, actorUserId
   }
 
   const result = await sendOnboardingToken(candidate.id, actorUserId);
+  const [bridgeRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id
+       FROM ats_onboarding_bridge
+      WHERE candidate_id = ?
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1`,
+    [candidate.id]
+  );
+  const bridgeId = text(bridgeRows[0]?.id);
+  if (bridgeId) {
+    await db.execute(
+      `UPDATE ats_recruiter_hiring_activity
+          SET onboarding_bridge_id = ?,
+              updated_at = NOW()
+        WHERE id = ?`,
+      [bridgeId, activityId]
+    );
+  }
   return { candidate, ...result };
 }
 
@@ -1034,13 +1203,17 @@ async function aggregateBy(column: string, filters: HiringFilters, scopedOnly: b
 }
 
 export async function getHiringDashboard(userId: string, role: string | undefined, filters: HiringFilters): Promise<HiringDashboard> {
-  const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
+  const scopedOnly = !isPrivilegedRole(role);
   const { sql, params } = await applyActivityFilters(filters, scopedOnly, userId);
   const [summary] = await db.execute<DashboardSummaryRow[]>(
     `SELECT
         COUNT(*) AS total_records,
         SUM(CASE WHEN contacted_flag = 1 THEN 1 ELSE 0 END) AS total_contacted,
         SUM(CASE WHEN contacted_flag = 0 THEN 1 ELSE 0 END) AS not_contacted,
+        SUM(CASE WHEN current_status IN ('Callback Pending', 'Callback Requested', 'Call Back') THEN 1 ELSE 0 END) AS callback_pending,
+        SUM(CASE WHEN current_status IN ('Confirmed for Interview', 'Will Come', 'Lineup Confirmed') THEN 1 ELSE 0 END) AS confirmed_for_interview,
+        SUM(CASE WHEN walkin_flag = 1 OR queue_token_id IS NOT NULL THEN 1 ELSE 0 END) AS turned_up,
+        SUM(CASE WHEN hr_interview_status IS NOT NULL OR ops_interview_status IS NOT NULL OR ai_interview_result IS NOT NULL THEN 1 ELSE 0 END) AS interviewed,
         SUM(CASE WHEN recruiter_remarks = 'Shortlisted' THEN 1 ELSE 0 END) AS shortlisted,
         SUM(CASE WHEN recruiter_remarks = 'Rejected' THEN 1 ELSE 0 END) AS recruiter_rejected,
         SUM(CASE WHEN hr_interview_status = 'Selected' THEN 1 ELSE 0 END) AS hr_selected,
@@ -1049,7 +1222,14 @@ export async function getHiringDashboard(userId: string, role: string | undefine
         SUM(CASE WHEN ai_interview_result IN ('Rejected','Fail') THEN 1 ELSE 0 END) AS ai_rejected,
         SUM(CASE WHEN ops_interview_status = 'Selected' THEN 1 ELSE 0 END) AS ops_selected,
         SUM(CASE WHEN ops_interview_status = 'Rejected' THEN 1 ELSE 0 END) AS ops_rejected,
-        SUM(CASE WHEN final_selection_flag = 1 THEN 1 ELSE 0 END) AS final_selected,
+        SUM(CASE WHEN final_selection_flag = 1 OR current_status IN ('Selected', 'Offer Shared', 'Onboarding In Progress', 'Joined', 'Rostered') THEN 1 ELSE 0 END) AS final_selected,
+        SUM(CASE WHEN EXISTS (
+              SELECT 1
+                FROM ats_onboarding_bridge ob
+               WHERE ob.candidate_id = ats_recruiter_hiring_activity.linked_candidate_id
+                 AND ob.status IN ('submitted', 'approved', 'completed', 'onboarding_complete')
+             ) OR joining_status IN ('Onboarded', 'Onboarding Complete') THEN 1 ELSE 0 END) AS onboarded,
+        SUM(CASE WHEN employee_id IS NOT NULL OR joined_candidate_emp_code IS NOT NULL OR joined_flag = 1 OR current_status = 'Rostered' THEN 1 ELSE 0 END) AS rostered,
         SUM(CASE WHEN offer_letter_status IN ('Issued','Sent','Offer Issued','Offer Sent') THEN 1 ELSE 0 END) AS offer_letter_issued,
         SUM(CASE WHEN joined_flag = 1 THEN 1 ELSE 0 END) AS joined,
         SUM(CASE WHEN joining_status IN ('Pending','Joining Pending','Offer Accepted') THEN 1 ELSE 0 END) AS joining_pending,
@@ -1067,6 +1247,10 @@ export async function getHiringDashboard(userId: string, role: string | undefine
     total_contacted: Number(summary[0]?.total_contacted ?? 0),
     contacted_pct: 0,
     not_contacted: Number(summary[0]?.not_contacted ?? 0),
+    callback_pending: Number(summary[0]?.callback_pending ?? 0),
+    confirmed_for_interview: Number(summary[0]?.confirmed_for_interview ?? 0),
+    turned_up: Number(summary[0]?.turned_up ?? 0),
+    interviewed: Number(summary[0]?.interviewed ?? 0),
     shortlisted: Number(summary[0]?.shortlisted ?? 0),
     recruiter_rejected: Number(summary[0]?.recruiter_rejected ?? 0),
     hr_selected: Number(summary[0]?.hr_selected ?? 0),
@@ -1076,6 +1260,8 @@ export async function getHiringDashboard(userId: string, role: string | undefine
     ops_selected: Number(summary[0]?.ops_selected ?? 0),
     ops_rejected: Number(summary[0]?.ops_rejected ?? 0),
     final_selected: Number(summary[0]?.final_selected ?? 0),
+    onboarded: Number(summary[0]?.onboarded ?? 0),
+    rostered: Number(summary[0]?.rostered ?? 0),
     offer_letter_issued: Number(summary[0]?.offer_letter_issued ?? 0),
     joined: Number(summary[0]?.joined ?? 0),
     joining_pending: Number(summary[0]?.joining_pending ?? 0),

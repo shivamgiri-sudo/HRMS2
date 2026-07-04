@@ -4,13 +4,14 @@ import { authService } from '../modules/auth/auth.service.js';
 import { getUserRoleContext } from '../shared/roleResolver.js';
 
 export interface AuthenticatedRequest extends Request {
-  authUser?: {
+  authUser: {
     id: string;
     email?: string;
     role?: string;
     isDemo?: boolean;
     isReadOnly?: boolean;
   };
+  userRoles?: string[];
 }
 
 type ReadOnlyRow = RowDataPacket & { is_read_only?: unknown };

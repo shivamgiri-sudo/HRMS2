@@ -30,10 +30,13 @@ const twoFactorLimiter = rateLimit({
 });
 
 const router = Router();
-type AnyRequest = Request & { authUser: NonNullable<AuthenticatedRequest["authUser"]> };
+type AnyRequest = Request & {
+  authUser: NonNullable<AuthenticatedRequest["authUser"]>;
+  userRoles?: string[];
+};
 
 const h = (fn: (req: AnyRequest, res: Response) => Promise<unknown>) =>
-  (req: AnyRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
+  (req: Request, res: Response, next: NextFunction) => fn(req as AnyRequest, res).catch(next);
 
 interface ReportingRow extends RowDataPacket {
   reporting_manager_id: string | null;
@@ -121,14 +124,13 @@ async function isReportingDownline(requesterEmployeeId: string, targetEmployeeId
 
   while (currentEmployeeId && !visited.has(currentEmployeeId)) {
     visited.add(currentEmployeeId);
-    const result = await db.execute<ReportingRow[]>(
+    const [rows] = await db.execute<ReportingRow[]>(
       `SELECT reporting_manager_id
          FROM employees
         WHERE id = ? AND active_status = 1
-        LIMIT 1`,
+         LIMIT 1`,
       [currentEmployeeId]
     );
-    const rows = result[0];
     const managerId: string | null = rows[0]?.reporting_manager_id
       ? String(rows[0].reporting_manager_id)
       : null;

@@ -1,5 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { timingSafeEqual } from "crypto";
+import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { env } from "../../config/env.js";
@@ -103,7 +104,10 @@ atsFullParityRouter.get("/journey", requireRole("admin", "hr", "recruiter", "man
   const { primaryRole: role, isSuperAdmin } = await getUserRoleContext(req.authUser?.id ?? "");
   const isPrivileged = isSuperAdmin || role === "hr" || role === "ceo";
   if (!isPrivileged) {
-    const candidate = data.candidate as Record<string, unknown>;
+    const candidate = data.candidate as {
+      applied_for_branch?: string | null;
+      applied_for_process?: string | null;
+    };
     const allowed = await hasScopedAccess(
       req.authUser!.id,
       ["recruiter", "manager", "branch_head", "process_manager"],
@@ -125,18 +129,26 @@ atsFullParityRouter.post("/recruiter-submission", requireRole("admin", "hr", "re
   if (isPrivileged && bodyCode) {
     // Admin/HR may submit on behalf of any active recruiter
     const { db: _db } = await import("../../db/mysql.js");
-    const [recRows] = await _db.execute<Array<{ id: string; name: string; recruiter_code: string; email?: string | null; branch?: string | null; employee_id?: string | null }>>(
+    const [recRows] = await _db.execute<RowDataPacket[]>(
       `SELECT id, name, recruiter_code, email, branch, employee_id FROM ats_recruiter_roster WHERE recruiter_code = ? AND active_status = 1 LIMIT 1`,
       [bodyCode]
     );
-    if (!recRows[0]) return res.status(403).json({ success: false, message: "Recruiter not found or inactive" });
+    const recruiterRow = recRows[0] as (RowDataPacket & {
+      id: string;
+      name: string;
+      recruiter_code: string;
+      email?: string | null;
+      branch?: string | null;
+      employee_id?: string | null;
+    }) | undefined;
+    if (!recruiterRow) return res.status(403).json({ success: false, message: "Recruiter not found or inactive" });
     recruiterProfile = {
-      id: recRows[0].id,
-      name: recRows[0].name,
-      recruiterCode: recRows[0].recruiter_code,
-      branch: recRows[0].branch ?? "",
-      email: recRows[0].email ?? null,
-      employeeId: recRows[0].employee_id ?? null,
+      id: recruiterRow.id,
+      name: recruiterRow.name,
+      recruiterCode: recruiterRow.recruiter_code,
+      branch: recruiterRow.branch ?? "",
+      email: recruiterRow.email ?? null,
+      employeeId: recruiterRow.employee_id ?? null,
     };
   } else {
     // Derive recruiter identity from JWT — prevents impersonation

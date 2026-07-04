@@ -1,6 +1,5 @@
 import { Router, type NextFunction, type Response } from "express";
 import { randomUUID } from "crypto";
-import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -9,7 +8,7 @@ import type { RowDataPacket } from "mysql2";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
+  (req: import("express").Request, res: Response, next: NextFunction) => fn(req as AuthenticatedRequest, res).catch(next);
 
 interface UploadBatchRow extends RowDataPacket {
   id: string;

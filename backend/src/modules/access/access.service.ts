@@ -175,7 +175,16 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
     last_name: string | null;
     full_name: string | null;
   };
-  type ScopeRow = RowDataPacket & { role_key: string | null };
+  type ScopeRow = RowDataPacket & {
+    id: string;
+    role_key: string | null;
+    scope_type: string;
+    branch_id: string | null;
+    process_id: string | null;
+    lob_id: string | null;
+    department_id: string | null;
+    manager_employee_id: string | null;
+  };
   type DisabledPageRow = RowDataPacket & { page_code: string };
   type PageRow = RowDataPacket & {
     page_code: string;
@@ -206,7 +215,18 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
      FROM user_assignment_scope WHERE user_id = ? AND active_status = 1`,
     [userId]
   );
-  const scopes = scopeRows as ScopeRow[];
+  const scopes = (scopeRows as ScopeRow[])
+    .filter((scope) => Boolean(scope.role_key))
+    .map((scope) => ({
+    id: scope.id,
+    role_key: scope.role_key ?? "",
+    scope_type: scope.scope_type,
+    branch_id: scope.branch_id,
+    process_id: scope.process_id,
+    lob_id: scope.lob_id,
+    department_id: scope.department_id,
+    manager_employee_id: scope.manager_employee_id,
+  }));
 
   const [disabledRows] = await db.execute<RowDataPacket[]>(
     "SELECT page_code FROM page_catalog WHERE active_status = 0"

@@ -121,6 +121,17 @@ function sha256(input: string | Buffer) {
   return createHash("sha256").update(input).digest("hex");
 }
 
+function isMissingJoiningDocumentStatusColumn(error: unknown) {
+  if (typeof error !== "object" || error === null) return false;
+  const code = String((error as { code?: unknown }).code ?? "");
+  const errno = Number((error as { errno?: unknown }).errno ?? NaN);
+  const message = String((error as { message?: unknown }).message ?? "");
+  return (
+    (code === "ER_BAD_FIELD_ERROR" || errno === 1054) &&
+    message.includes("joining_document_status")
+  );
+}
+
 function frontendBaseUrl() {
   return String(env.FRONTEND_URL || "http://localhost:8080").replace(/\/$/, "");
 }
@@ -142,30 +153,41 @@ function fileExtension(fileName: string) {
 }
 
 export async function getEmployeeDocumentTarget(employeeId: string): Promise<EmployeeDocumentTarget | null> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-        e.id,
-        e.employee_code,
-        COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS full_name,
-        COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS official_email,
-        e.mobile,
-        e.branch_id,
-        e.process_id,
-        e.lob_id,
-        e.department_id,
-        e.reporting_manager_id,
-        e.manager_id,
-        e.date_of_joining,
-        ob.candidate_id,
-        e.joining_document_status,
-        e.joining_document_completion_pct
-       FROM employees e
-       LEFT JOIN ats_onboarding_bridge ob ON ob.employee_id = e.id
-      WHERE e.id = ?
-      LIMIT 1`,
-    [employeeId],
-  );
-  return (rows as unknown as EmployeeDocumentTarget[])[0] ?? null;
+  const selectTarget = async (includeStatus: boolean) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+          e.id,
+          e.employee_code,
+          COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS full_name,
+          COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS official_email,
+          e.mobile,
+          e.branch_id,
+          e.process_id,
+          e.lob_id,
+          e.department_id,
+          e.reporting_manager_id,
+          e.manager_id,
+          e.date_of_joining,
+          ob.candidate_id,
+          ${includeStatus ? "e.joining_document_status" : "NULL"} AS joining_document_status,
+          e.joining_document_completion_pct
+         FROM employees e
+         LEFT JOIN ats_onboarding_bridge ob ON ob.employee_id = e.id
+        WHERE e.id = ?
+        LIMIT 1`,
+      [employeeId],
+    );
+    return (rows as unknown as EmployeeDocumentTarget[])[0] ?? null;
+  };
+
+  try {
+    return await selectTarget(true);
+  } catch (error) {
+    if (isMissingJoiningDocumentStatusColumn(error)) {
+      return await selectTarget(false);
+    }
+    throw error;
+  }
 }
 
 export async function resolveEmployeeDocumentAccessContext(userId: string, employeeId: string): Promise<AccessContext> {
@@ -330,23 +352,45 @@ async function recalculateDocumentProgress(employeeId: string) {
   const pct = total > 0 ? Number(((done / total) * 100).toFixed(2)) : 0;
   const status = total > 0 && done >= total ? "completed" : done > 0 ? "in_progress" : "pending";
 
-  await db.execute(
-    `UPDATE employees
-        SET joining_document_status = ?,
-            joining_document_completion_pct = ?,
-            joining_document_completed_at = CASE WHEN ? = 'completed' THEN COALESCE(joining_document_completed_at, NOW()) ELSE NULL END
-      WHERE id = ?`,
-    [status, pct, status, employeeId],
-  );
+  try {
+    await db.execute(
+      `UPDATE employees
+          SET joining_document_status = ?,
+              joining_document_completion_pct = ?,
+              joining_document_completed_at = CASE WHEN ? = 'completed' THEN COALESCE(joining_document_completed_at, NOW()) ELSE NULL END
+        WHERE id = ?`,
+      [status, pct, status, employeeId],
+    );
+  } catch (error) {
+    if (!isMissingJoiningDocumentStatusColumn(error)) throw error;
+    await db.execute(
+      `UPDATE employees
+          SET joining_document_completion_pct = ?,
+              joining_document_completed_at = CASE WHEN ? = 'completed' THEN COALESCE(joining_document_completed_at, NOW()) ELSE NULL END
+        WHERE id = ?`,
+      [pct, status, employeeId],
+    );
+  }
 
-  await db.execute(
-    `UPDATE ats_onboarding_bridge
-        SET joining_document_status = ?,
-            joining_document_completion_pct = ?,
-            joining_document_completed_at = CASE WHEN ? = 'completed' THEN COALESCE(joining_document_completed_at, NOW()) ELSE NULL END
-      WHERE employee_id = ?`,
-    [status, pct, status, employeeId],
-  ).catch(() => undefined);
+  try {
+    await db.execute(
+      `UPDATE ats_onboarding_bridge
+          SET joining_document_status = ?,
+              joining_document_completion_pct = ?,
+              joining_document_completed_at = CASE WHEN ? = 'completed' THEN COALESCE(joining_document_completed_at, NOW()) ELSE NULL END
+        WHERE employee_id = ?`,
+      [status, pct, status, employeeId],
+    );
+  } catch (error) {
+    if (!isMissingJoiningDocumentStatusColumn(error)) throw error;
+    await db.execute(
+      `UPDATE ats_onboarding_bridge
+          SET joining_document_completion_pct = ?,
+              joining_document_completed_at = CASE WHEN ? = 'completed' THEN COALESCE(joining_document_completed_at, NOW()) ELSE NULL END
+        WHERE employee_id = ?`,
+      [pct, status, employeeId],
+    ).catch(() => undefined);
+  }
 }
 
 function resolveRoleForUpload(ownerType: string): FileRole {
