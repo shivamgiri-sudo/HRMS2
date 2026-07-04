@@ -1,12 +1,14 @@
-import { Router } from "express";
-import { requireAuth } from "../../middleware/authMiddleware.js";
+import { Router, type NextFunction, type Response } from "express";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
 const router = Router();
-const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
 router.use(requireAuth);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -36,7 +38,7 @@ function nameMatchScore(a: string, b: string): number {
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 // POST /:candidateId/recalculate — recalculate name match for a candidate
-router.post("/:candidateId/recalculate", h(async (req: AuthenticatedRequest, res: any) => {
+router.post("/:candidateId/recalculate", h(async (req: AuthenticatedRequest, res: Response) => {
   const { candidateId } = req.params;
 
   const [profile] = await db.execute<RowDataPacket[]>(
@@ -70,9 +72,9 @@ router.post("/:candidateId/recalculate", h(async (req: AuthenticatedRequest, res
     return res.status(404).json({ success: false, message: "Candidate not found" });
   }
 
-  const p = profile[0] as any;
-  const b = bank[0] as any;
-  const edu = education[0] as any;
+  const p = profile[0] as RowDataPacket;
+  const b = bank[0] as RowDataPacket;
+  const edu = education[0] as RowDataPacket;
   const formName = p.employee_name || p.ats_name || "";
 
   const sources: { type: string; name: string }[] = [
@@ -88,8 +90,8 @@ router.post("/:candidateId/recalculate", h(async (req: AuthenticatedRequest, res
     'SELECT employee_name FROM employees WHERE ats_candidate_id = ? OR id = (SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1) LIMIT 1',
     [candidateId, candidateId]
   ).catch(() => [[]]);
-  if ((empRows as any[]).length > 0) {
-    sources.push({ type: 'employee_master', name: (empRows as any)[0].employee_name ?? '' });
+  if (empRows.length > 0) {
+    sources.push({ type: 'employee_master', name: String(empRows[0].employee_name ?? '') });
   }
 
   // Source 6: Appointment letter (if generated)
@@ -97,8 +99,8 @@ router.post("/:candidateId/recalculate", h(async (req: AuthenticatedRequest, res
     'SELECT candidate_name FROM appointment_letter_request WHERE candidate_id = ? LIMIT 1',
     [candidateId]
   ).catch(() => [[]]);
-  if ((letterRows as any[]).length > 0 && (letterRows as any)[0].candidate_name) {
-    sources.push({ type: 'appointment_letter', name: (letterRows as any)[0].candidate_name });
+  if (letterRows.length > 0 && letterRows[0].candidate_name) {
+    sources.push({ type: 'appointment_letter', name: String(letterRows[0].candidate_name) });
   }
 
   // Delete existing detail rows, then recalculate fresh
@@ -151,10 +153,10 @@ router.post("/:candidateId/recalculate", h(async (req: AuthenticatedRequest, res
 }));
 
 // GET / — list all candidates with name mismatches
-router.get(
+  router.get(
   "/",
   requireRole("admin", "hr", "recruiter"),
-  h(async (_req: any, res: any) => {
+  h(async (_req: AuthenticatedRequest, res: Response) => {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT cnms.*, ac.full_name, ac.candidate_code
        FROM candidate_name_match_summary cnms
@@ -168,7 +170,7 @@ router.get(
 );
 
 // GET /:candidateId — get name match summary and detail for a candidate
-router.get("/:candidateId", h(async (req: AuthenticatedRequest, res: any) => {
+router.get("/:candidateId", h(async (req: AuthenticatedRequest, res: Response) => {
   const [summary] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM candidate_name_match_summary WHERE candidate_id = ? LIMIT 1`,
     [req.params.candidateId]
@@ -181,10 +183,10 @@ router.get("/:candidateId", h(async (req: AuthenticatedRequest, res: any) => {
 }));
 
 // POST /:candidateId/override-request — HR logs a name mismatch override request
-router.post(
+  router.post(
   "/:candidateId/override-request",
   requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: any) => {
+  h(async (req: AuthenticatedRequest, res: Response) => {
     const { reason } = req.body as { reason?: string };
     if (!reason?.trim()) {
       return res.status(400).json({ success: false, message: "reason is required" });
@@ -218,7 +220,7 @@ router.post(
 router.post(
   "/:candidateId/override-approve",
   requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: any) => {
+  h(async (req: AuthenticatedRequest, res: Response) => {
     const { reason } = req.body as { reason?: string };
     if (!reason?.trim()) {
       return res.status(400).json({ success: false, message: "reason is required" });
@@ -252,7 +254,7 @@ router.post(
 router.post(
   "/:candidateId/override-reject",
   requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: any) => {
+  h(async (req: AuthenticatedRequest, res: Response) => {
     const { rejection_reason } = req.body as { rejection_reason?: string };
     if (!rejection_reason?.trim()) {
       return res.status(400).json({ success: false, message: "rejection_reason is required" });

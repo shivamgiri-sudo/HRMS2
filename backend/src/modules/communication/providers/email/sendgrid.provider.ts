@@ -2,6 +2,10 @@ import axios from 'axios';
 import type { CommunicationProvider, Attachment } from '../provider.interface.js';
 import type { ProviderResponse, DeliveryStatus } from '../../communication.types.js';
 
+interface SendGridErrorResponse {
+  errors?: Array<{ message?: string }>;
+}
+
 export class SendGridProvider implements CommunicationProvider {
   constructor(
     private readonly apiKey: string,
@@ -29,7 +33,8 @@ export class SendGridProvider implements CommunicationProvider {
         validateStatus: s => s < 500,
       });
       if (res.status >= 400) {
-        const msg = (res.data as any)?.errors?.[0]?.message ?? `HTTP ${res.status}`;
+        const payload = res.data as SendGridErrorResponse;
+        const msg = payload.errors?.[0]?.message ?? `HTTP ${res.status}`;
         return { success: false, error: msg };
       }
       const msgId = res.headers['x-message-id'] as string | undefined;

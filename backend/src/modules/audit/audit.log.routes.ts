@@ -10,9 +10,9 @@
  * Also extends /api/access/audit-log with new query parameters.
  */
 
-import { Router } from "express";
+import { Router, type NextFunction, type Response } from "express";
 import type { RowDataPacket } from "mysql2";
-import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -20,8 +20,28 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 export const auditLogRouter = Router();
 auditLogRouter.use(requireAuth);
 
-const h = (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
+
+interface AuditLogCountRow extends RowDataPacket {
+  total: number;
+}
+
+interface AuditLogRow extends RowDataPacket {
+  acted_at: string;
+  actor_user_id: string;
+  actor_role: string;
+  module_key: string;
+  action_type: string;
+  entity_type: string;
+  entity_id: string;
+  employee_id: string | null;
+  reason: string | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  old_value_json: unknown;
+  new_value_json: unknown;
+}
 
 function clampLimit(value: unknown, fallback: number, max: number): number {
   const parsed = parseInt(String(value ?? fallback), 10);
@@ -66,7 +86,7 @@ async function resolveActorRole(userId: string): Promise<string> {
  * - manager: own team's dispute audit if allowed (restricted, not yet implemented)
  * - employee: cannot access
  */
-export async function getAuditLogExtended(req: any, res: any): Promise<void> {
+export async function getAuditLogExtended(req: AuthenticatedRequest, res: Response): Promise<void> {
   // Access control: determine what this user can view
   const isAdmin = await hasAnyRole(req.authUser.id, "admin", "super_admin");
   const isPayrollHead = await hasAnyRole(req.authUser.id, "payroll_head");
@@ -152,14 +172,14 @@ export async function getAuditLogExtended(req: any, res: any): Promise<void> {
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "WHERE 1=1";
 
   // Get total count for pagination
-  const [countRows] = await db.execute<RowDataPacket[]>(
+  const [countRows] = await db.execute<AuditLogCountRow[]>(
     `SELECT COUNT(*) as total FROM sensitive_action_log sal ${where}`,
     params,
   );
-  const total = (countRows[0] as any)?.total ?? 0;
+  const total = countRows[0]?.total ?? 0;
 
   // Fetch rows
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<AuditLogRow[]>(
     `SELECT sal.id, sal.actor_user_id, sal.action_type, sal.module_key,
             sal.entity_type, sal.entity_id, sal.employee_id,
             sal.ip_address, sal.user_agent,
@@ -213,7 +233,7 @@ auditLogRouter.get("/log", h(getAuditLogExtended));
  * Access: admin, super_admin, payroll_head can export (with module restrictions)
  * Every export is itself audited as AUDIT_LOG_EXPORTED.
  */
-auditLogRouter.post("/export", h(async (req: any, res: any) => {
+auditLogRouter.post("/export", h(async (req, res) => {
   // Access control: same as list
   const isAdmin = await hasAnyRole(req.authUser.id, "admin", "super_admin");
   const isPayrollHead = await hasAnyRole(req.authUser.id, "payroll_head");
@@ -281,7 +301,7 @@ auditLogRouter.post("/export", h(async (req: any, res: any) => {
   ].join(",");
 
   // Build CSV rows (escape quotes, handle nulls)
-  const csvRows = (rows as any[]).map((row) => [
+  const csvRows = rows.map((row) => [
     escapeCSV(row.acted_at ?? ""),
     escapeCSV(row.actor_user_id ?? ""),
     escapeCSV(row.actor_role ?? ""),

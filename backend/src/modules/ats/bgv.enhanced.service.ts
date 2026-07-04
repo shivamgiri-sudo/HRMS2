@@ -111,7 +111,7 @@ export async function getPendingBGVRequests(): Promise<BGVStatus[]> {
  * Get BGV details for a candidate
  */
 export async function getBGVDetails(candidateId: string): Promise<{
-  candidate: any;
+  candidate: RowDataPacket;
   verifications: VerificationDetail[];
 }> {
   // Get candidate details
@@ -244,7 +244,7 @@ export async function initiateBGVVerification(input: BGVRequest): Promise<{
       message: 'BGV verification initiated successfully',
       verification_id: detailRes.insertId.toString(),
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     await conn.rollback();
     throw error;
   } finally {
@@ -352,7 +352,7 @@ export async function updateVerificationStatus(
       success: true,
       message: 'Verification status updated successfully',
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     await conn.rollback();
     throw error;
   } finally {

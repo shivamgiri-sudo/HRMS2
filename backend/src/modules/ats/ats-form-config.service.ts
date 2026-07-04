@@ -32,46 +32,81 @@ const DEFAULT_OPTIONS: Record<string, string[]> = {
   genderOptions:          ['Male','Female','Other'],
 };
 
+interface ConfigRow extends RowDataPacket {
+  config_key: string;
+  config_value: unknown;
+}
+
+interface BranchRow extends RowDataPacket {
+  branch_name: string;
+}
+
+interface BranchAliasRow extends RowDataPacket {
+  canonical_key: string;
+  display_name: string;
+  alias_text: string | null;
+}
+
+interface RecruiterRow extends RowDataPacket {
+  name: string;
+  email?: string | null;
+  mobile?: string | null;
+  employee_id?: string | null;
+}
+
+interface FieldSchemaItem {
+  k?: string;
+  t?: string;
+  visible?: boolean;
+  required?: boolean;
+  [key: string]: unknown;
+}
+
 export const atsFormConfigService = {
   async getBootstrap() {
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<ConfigRow[]>(
       'SELECT config_key, config_value FROM ats_form_config WHERE 1=1'
     );
-    const configMap: Record<string, any> = {};
-    for (const row of rows as RowDataPacket[]) {
+    const configMap: Record<string, unknown> = {};
+    for (const row of rows) {
       configMap[row.config_key as string] = row.config_value;
     }
 
-    const [branchRows] = await db.execute<RowDataPacket[]>(
+    const [branchRows] = await db.execute<BranchRow[]>(
       'SELECT DISTINCT branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name ASC'
     );
-    const branchOptions = (branchRows as RowDataPacket[]).map((r: any) => r.branch_name as string);
+    const branchOptions = branchRows.map((r) => r.branch_name);
 
     // Get branch aliases (display names like Trapezoid, Okaya, etc.)
-    const [aliasRows] = await db.execute<RowDataPacket[]>(
+    const [aliasRows] = await db.execute<BranchAliasRow[]>(
       `SELECT canonical_key, MAX(display_name) AS display_name, MIN(alias_text) AS alias_text
        FROM ats_branch_alias_master
        WHERE active_status = 1
        GROUP BY canonical_key
        ORDER BY display_name ASC`
     );
-    const branchAliases = (aliasRows as RowDataPacket[]).map((r: any) => ({
+    const branchAliases = aliasRows.map((r) => ({
       canonical: r.canonical_key,
       display: r.display_name,
       alias: r.alias_text
     }));
 
-    const [recruiterRows] = await db.execute<RowDataPacket[]>(
+    const [recruiterRows] = await db.execute<RecruiterRow[]>(
       'SELECT name FROM ats_recruiter WHERE active_status = 1 ORDER BY sort_order ASC, name ASC'
     );
-    let recruiterOptions = (recruiterRows as RowDataPacket[]).map((r: any) => r.name as string);
+    let recruiterOptions = recruiterRows.map((r) => r.name);
 
     // Try to fetch contact details from ats_recruiter_roster (if available)
-    const [rosterRows] = await db.execute<RowDataPacket[]>(
-      'SELECT name, email, mobile FROM ats_recruiter_roster WHERE active_status = 1'
-    ).catch(() => [[]]);
+    let rosterRows: RecruiterRow[] = [];
+    try {
+      [rosterRows] = await db.execute<RecruiterRow[]>(
+        'SELECT name, email, mobile FROM ats_recruiter_roster WHERE active_status = 1'
+      );
+    } catch {
+      rosterRows = [];
+    }
     const recruiterDetails = recruiterOptions.map(name => {
-      const roster = (rosterRows as RowDataPacket[]).find((r: any) => r.name === name);
+      const roster = rosterRows.find((r) => r.name === name);
       return {
         name,
         email: roster?.email || null,
@@ -94,9 +129,9 @@ export const atsFormConfigService = {
            AND e.active_status = 1
          ORDER BY name`
       );
-      const roleRows = roleRecruiters as RowDataPacket[];
+      const roleRows = roleRecruiters as RecruiterRow[];
       if (roleRows.length > 0) {
-        recruiterOptions = roleRows.map((r: any) => String(r.name));
+        recruiterOptions = roleRows.map((r) => String(r.name));
         recruiterDetails.length = 0;
         for (const r of roleRows) {
           recruiterDetails.push({ name: String(r.name), email: r.email || null, mobile: r.mobile || null });
@@ -118,8 +153,8 @@ export const atsFormConfigService = {
              )
            ORDER BY name`
         );
-        const empRows = employeeRecruiters as RowDataPacket[];
-        recruiterOptions = empRows.map((r: any) => String(r.name));
+        const empRows = employeeRecruiters as RecruiterRow[];
+        recruiterOptions = empRows.map((r) => String(r.name));
         recruiterDetails.length = 0;
         for (const r of empRows) {
           recruiterDetails.push({ name: String(r.name), email: r.email || null, mobile: r.mobile || null });
@@ -161,8 +196,8 @@ export const atsFormConfigService = {
     );
   },
 
-  async updateFieldSchema(fields: any[], updatedBy: string) {
-    const safe = fields.map((f: any) => {
+  async updateFieldSchema(fields: FieldSchemaItem[], updatedBy: string) {
+    const safe = fields.map((f) => {
       if (f.k === 'name' || f.k === 'mobile') return { ...f, visible: true };
       if (f.t === 'file' || f.t === 'camera') return { ...f, required: false };
       return f;
@@ -177,28 +212,28 @@ export const atsFormConfigService = {
 
   async getRecruitersByBranch(branchDisplayName: string) {
     // Resolve the canonical branch key from the display name
-    const [aliasRows] = await db.execute<RowDataPacket[]>(
+    const [aliasRows] = await db.execute<BranchAliasRow[]>(
       `SELECT canonical_key FROM ats_branch_alias_master WHERE display_name = ? AND active_status = 1 LIMIT 1`,
       [branchDisplayName]
     );
-    const canonicalKey: string = (aliasRows as RowDataPacket[])[0]?.canonical_key ?? branchDisplayName;
+    const canonicalKey: string = aliasRows[0]?.canonical_key ?? branchDisplayName;
 
     // Look up the branch_name in branch_master matching this canonical key
-    const [branchRows] = await db.execute<RowDataPacket[]>(
+    const [branchRows] = await db.execute<BranchRow[]>(
       `SELECT branch_name FROM branch_master WHERE active_status = 1 AND (branch_name = ? OR branch_code = ?) LIMIT 1`,
       [canonicalKey, canonicalKey]
     );
-    const branchName: string = (branchRows as RowDataPacket[])[0]?.branch_name ?? canonicalKey;
+    const branchName: string = branchRows[0]?.branch_name ?? canonicalKey;
 
     // 1. Try ats_recruiter_roster filtered by branch (active only)
-    const [rosterRows] = await db.execute<RowDataPacket[]>(
+    const [rosterRows] = await db.execute<RecruiterRow[]>(
       `SELECT r.id, r.name, r.email, r.mobile, r.employee_id FROM ats_recruiter_roster r
        WHERE r.active_status = 1 AND (r.branch = ? OR r.branch = ?)
        ORDER BY r.name ASC`,
       [branchName, canonicalKey]
     );
-    if ((rosterRows as RowDataPacket[]).length > 0) {
-      return (rosterRows as RowDataPacket[]).map((r: any) => ({
+    if (rosterRows.length > 0) {
+      return rosterRows.map((r) => ({
         name: String(r.name),
         email: r.email || null,
         mobile: r.mobile || null,
@@ -207,7 +242,7 @@ export const atsFormConfigService = {
     }
 
     // 2. Fallback: employees with hr/recruiter/branch_head roles at this branch (via user_roles)
-    const [roleRows] = await db.execute<RowDataPacket[]>(
+    const [roleRows] = await db.execute<RecruiterRow[]>(
       `SELECT DISTINCT
          e.id AS employee_id,
          TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
@@ -224,8 +259,8 @@ export const atsFormConfigService = {
        ORDER BY name ASC`,
       [branchName]
     );
-    if ((roleRows as RowDataPacket[]).length > 0) {
-      return (roleRows as RowDataPacket[]).map((r: any) => ({
+    if (roleRows.length > 0) {
+      return roleRows.map((r) => ({
         name: String(r.name),
         email: r.email || null,
         mobile: r.mobile || null,
@@ -234,7 +269,7 @@ export const atsFormConfigService = {
     }
 
     // 3. Last resort: employees with HR/Recruiter designation names at this branch
-    const [empRows] = await db.execute<RowDataPacket[]>(
+    const [empRows] = await db.execute<RecruiterRow[]>(
       `SELECT DISTINCT
          e.id AS employee_id,
          TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
@@ -252,7 +287,7 @@ export const atsFormConfigService = {
        ORDER BY name ASC`,
       [branchName]
     );
-    return (empRows as RowDataPacket[]).map((r: any) => ({
+    return empRows.map((r) => ({
       name: String(r.name),
       email: r.email || null,
       mobile: r.mobile || null,

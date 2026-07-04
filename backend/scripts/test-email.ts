@@ -36,19 +36,20 @@ async function testEmail() {
       },
     });
 
-    console.log(`✅ Result: sent=${result.sent}, failed=${result.failed}`);
+    console.log(`Result: sent=${result.sent}, failed=${result.failed}`);
 
     if (result.sent > 0) {
-      console.log("\n✅ SUCCESS! Check your email inbox.");
+      console.log("\nSUCCESS! Check your email inbox.");
       console.log("   (If using Gmail, check spam folder too)");
     } else {
-      console.log("\n❌ FAILED! Check:");
+      console.log("\nFAILED! Check:");
       console.log("   1. SMTP config in database (smtp_config table)");
       console.log("   2. Backend logs for error details");
       console.log("   3. notification_log table for error_message");
     }
-  } catch (error: any) {
-    console.error("\n❌ ERROR:", error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("\nERROR:", message);
     console.error("\nTroubleshooting:");
     console.error("1. Ensure migration 132 has been run");
     console.error("2. Insert SMTP config into smtp_config table");

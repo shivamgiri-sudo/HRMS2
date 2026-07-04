@@ -4,6 +4,39 @@
  */
 
 import { createConnection } from 'mysql2/promise';
+import type { RowDataPacket } from 'mysql2';
+
+type TableRow = RowDataPacket & Record<string, string>;
+type CountRow = RowDataPacket & { total: number };
+type AttendanceRow = RowDataPacket & {
+  id: string;
+  employee_id: string;
+  employee_code: string;
+  employee_name: string;
+  designation_name: string;
+  dept_name: string;
+  attendance_date: string;
+  attendance_source: string;
+  dialler_minutes: number;
+  biometric_minutes: number;
+  raw_minutes: number;
+  attendance_status: string;
+  created_at: string;
+};
+type SourceStatsRow = RowDataPacket & {
+  attendance_source: string;
+  total_records: number;
+  unique_employees: number;
+};
+type SalaryDetailsRow = RowDataPacket & {
+  employees_with_salary: number;
+  min_ctc: number;
+  max_ctc: number;
+  avg_ctc: number;
+};
+type BillRow = RowDataPacket & { total: number };
+type BillStructureRow = RowDataPacket & Record<string, unknown>;
+type SourceCountRow = RowDataPacket & { total: number };
 
 function requiredEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -27,14 +60,14 @@ async function main() {
   console.log('═══════════════════════════════════════');
   console.log('1. ATTENDANCE TABLES IN mas_hrms');
   console.log('═══════════════════════════════════════');
-  const [tables] = await masConn.execute<any[]>("SHOW TABLES LIKE '%attendance%'");
+  const [tables] = await masConn.execute<TableRow[]>("SHOW TABLES LIKE '%attendance%'");
   tables.forEach(t => console.log(' -', Object.values(t)[0]));
 
   // ===== 2. ATTENDANCE RECORDS COUNT =====
   console.log('\n═══════════════════════════════════════');
   console.log('2. ATTENDANCE RECORDS COUNT');
   console.log('═══════════════════════════════════════');
-  const [countResult] = await masConn.execute<any[]>(
+  const [countResult] = await masConn.execute<CountRow[]>(
     'SELECT COUNT(*) as total FROM wfm_attendance_record'
   );
   console.log('Total attendance records:', countResult[0].total);
@@ -43,7 +76,7 @@ async function main() {
   console.log('\n═══════════════════════════════════════');
   console.log('3. ANALYST ATTENDANCE (Last 10)');
   console.log('═══════════════════════════════════════');
-  const [analystAttendance] = await masConn.execute<any[]>(`
+  const [analystAttendance] = await masConn.execute<AttendanceRow[]>(`
     SELECT
       ar.id,
       ar.employee_id,
@@ -78,7 +111,7 @@ async function main() {
   console.log('\n═══════════════════════════════════════');
   console.log('4. ATTENDANCE RECORDS BY SOURCE');
   console.log('═══════════════════════════════════════');
-  const [sourceStats] = await masConn.execute<any[]>(`
+  const [sourceStats] = await masConn.execute<SourceStatsRow[]>(`
     SELECT
       attendance_source,
       COUNT(*) as total_records,
@@ -93,12 +126,12 @@ async function main() {
   console.log('5. EMPLOYEE SALARY DATA');
   console.log('═══════════════════════════════════════');
 
-  const [salaryCount] = await masConn.execute<any[]>(
+  const [salaryCount] = await masConn.execute<CountRow[]>(
     'SELECT COUNT(*) as total FROM employee_salary_assignment WHERE active_status = 1'
   );
   console.log('Active salary assignments:', salaryCount[0].total);
 
-  const [salaryDetails] = await masConn.execute<any[]>(`
+  const [salaryDetails] = await masConn.execute<SalaryDetailsRow[]>(`
     SELECT
       COUNT(DISTINCT esa.employee_id) as employees_with_salary,
       MIN(esa.ctc_annual) as min_ctc,
@@ -120,23 +153,23 @@ async function main() {
       database: 'db_billl'
     });
 
-    const [tableExists] = await billConn.execute<any[]>(
+    const [tableExists] = await billConn.execute<TableRow[]>(
       "SHOW TABLES LIKE 'masjclrentry'"
     );
 
     if (tableExists.length > 0) {
-      const [billCount] = await billConn.execute<any[]>(
+      const [billCount] = await billConn.execute<BillRow[]>(
         'SELECT COUNT(*) as total FROM masjclrentry'
       );
       console.log('Total records in db_billl.masjclrentry:', billCount[0].total);
 
-      const [billStructure] = await billConn.execute<any[]>(
+      const [billStructure] = await billConn.execute<BillStructureRow[]>(
         'DESCRIBE masjclrentry'
       );
       console.log('\nTable structure:');
       console.table(billStructure);
 
-      const [billSample] = await billConn.execute<any[]>(
+      const [billSample] = await billConn.execute<BillStructureRow[]>(
         'SELECT * FROM masjclrentry LIMIT 5'
       );
       console.log('\nSample data (first 5 rows):');
@@ -155,7 +188,7 @@ async function main() {
   console.log('7. ATTENDANCE DATA SOURCES');
   console.log('═══════════════════════════════════════');
 
-  const [dialerSource] = await masConn.execute<any[]>(`
+  const [dialerSource] = await masConn.execute<SourceCountRow[]>(`
     SELECT COUNT(*) as total
     FROM wfm_attendance_record
     WHERE attendance_source = 'dialler'
@@ -163,7 +196,7 @@ async function main() {
   `);
   console.log('Dialler records (last 7 days):', dialerSource[0].total);
 
-  const [biometricSource] = await masConn.execute<any[]>(`
+  const [biometricSource] = await masConn.execute<SourceCountRow[]>(`
     SELECT COUNT(*) as total
     FROM wfm_attendance_record
     WHERE attendance_source = 'biometric'

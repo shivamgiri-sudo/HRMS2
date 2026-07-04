@@ -103,7 +103,7 @@ function normalizeDateInput(value: unknown): string | null {
  * Returns null if no recruiter row is linked to this user.
  */
 export async function resolveRecruiterForActor(userId: string): Promise<RecruiterProfile | null> {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<RecruiterRosterRow[]>(
     `SELECT r.id, r.name, r.recruiter_code, r.email, r.branch, r.employee_id
        FROM ats_recruiter_roster r
        JOIN employees e ON e.id = r.employee_id
@@ -111,7 +111,7 @@ export async function resolveRecruiterForActor(userId: string): Promise<Recruite
       LIMIT 1`,
     [userId]
   );
-  const rec = (rows as any[])[0];
+  const rec = rows[0];
   if (!rec) return null;
   return {
     id: rec.id,
@@ -137,12 +137,12 @@ export interface RecruiterProfile {
 export async function verifyRecruiter(recruiterCode: string, pin: string): Promise<RecruiterProfile> {
   if (!recruiterCode || !pin) err("Recruiter Code and PIN are required", 400);
 
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<RecruiterRosterRow[]>(
     `SELECT id, name, recruiter_code, pin_hash, email, branch, employee_id, active_status
      FROM ats_recruiter_roster WHERE recruiter_code = ? LIMIT 1`,
     [recruiterCode.trim()]
   );
-  const rec = (rows as any[])[0];
+  const rec = rows[0];
   if (!rec) err("Invalid recruiter credentials", 401);
   if (!rec.active_status) err("Recruiter account is inactive", 403);
 
@@ -156,7 +156,7 @@ export async function verifyRecruiter(recruiterCode: string, pin: string): Promi
        WHERE employee_id = ? AND punch_date = CURDATE() AND first_punch_in IS NOT NULL LIMIT 1`,
       [rec.employee_id]
     );
-    if (!(bioRows as any[]).length) {
+    if (!bioRows.length) {
       err("Recruiter is not marked available today (no biometric punch-in found)", 403);
     }
   } else {
@@ -194,7 +194,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
   const params: unknown[] = [];
   const recruiterClause = recruiterName ? "AND recruiter_assigned_name = ?" : "";
   if (recruiterName) params.push(recruiterName);
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<PendingCandidateRow[]>(
     `SELECT
        id,
        candidate_code,
@@ -215,7 +215,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
      ORDER BY pending_minutes DESC`,
     params
   );
-  return (rows as any[]).map((r) => ({
+  return rows.map((r) => ({
     candidateId: r.id,
     candidateCode: r.candidate_code,
     fullName: r.full_name,
@@ -233,7 +233,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
 export async function getSubmissionHistory(recruiterCode?: string | null, _rosterId?: string | null, _userId?: string | null) {
   if (!recruiterCode) return [];
   const params = [recruiterCode];
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<SubmissionHistoryRow[]>(
     `SELECT s.*, c.full_name, c.candidate_code, c.mobile, c.email,
             ob.status AS onboarding_status,
             ob.onboarding_token_expires_at,
@@ -246,11 +246,11 @@ export async function getSubmissionHistory(recruiterCode?: string | null, _roste
      LIMIT 200`,
     params
   );
-  return rows as any[];
+  return rows;
 }
 
 export async function getRecruiterDailyStats(recruiterName: string): Promise<Record<string, unknown>> {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<DailyStatsRow[]>(
     `SELECT
        COUNT(*) AS total_submissions,
        SUM(CASE WHEN final_decision = 'Selected' THEN 1 ELSE 0 END) AS selected_count,
@@ -259,7 +259,7 @@ export async function getRecruiterDailyStats(recruiterName: string): Promise<Rec
      WHERE recruiter_name = ? AND DATE(submitted_at) = CURDATE()`,
     [recruiterName],
   );
-  return (rows as any[])[0] ?? { total_submissions: 0, selected_count: 0, rejected_count: 0 };
+  return rows[0] ?? { total_submissions: 0, selected_count: 0, rejected_count: 0 };
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
@@ -313,6 +313,92 @@ interface SubmissionInput {
   performanceIncentives?: string;
 }
 
+interface RecruiterRosterRow extends RowDataPacket {
+  id: string;
+  name: string;
+  recruiter_code?: string | null;
+  pin_hash?: string | null;
+  email?: string | null;
+  branch?: string | null;
+  employee_id?: string | null;
+  active_status?: number | boolean;
+  available_today?: string | null;
+}
+
+interface PendingCandidateRow extends RowDataPacket {
+  id: string;
+  candidate_code: string | null;
+  full_name: string | null;
+  mobile: string | null;
+  q_token: string | null;
+  applied_for_process: string | null;
+  applied_for_branch: string | null;
+  status: string | null;
+  pending_minutes: number | null;
+}
+
+interface SubmissionHistoryRow extends RowDataPacket {
+  id: string;
+  full_name?: string | null;
+  candidate_code?: string | null;
+  mobile?: string | null;
+  email?: string | null;
+  onboarding_status?: string | null;
+  onboarding_token_expires_at?: string | null;
+  onboarding_joining_date?: string | null;
+}
+
+interface DailyStatsRow extends RowDataPacket {
+  total_submissions: number | null;
+  selected_count: number | null;
+  rejected_count: number | null;
+}
+
+interface InterviewCandidateRow extends RowDataPacket {
+  id: string;
+  candidate_code?: string | null;
+  full_name?: string | null;
+  email?: string | null;
+  recruiter_id?: string | null;
+  recruiter_assigned_id?: string | null;
+  assigned_recruiter_id?: string | null;
+  recruiter_assigned_name?: string | null;
+  applied_for_branch?: string | null;
+  branch_display_name?: string | null;
+  sourcing_channel?: string | null;
+  latest_calling_activity_id?: string | null;
+  calling_source_snapshot?: string | null;
+  calling_last_remarks?: string | null;
+  calling_lineup_date?: string | null;
+  calling_turnup_status?: string | null;
+  referee_employee_code?: string | null;
+  referee_name?: string | null;
+  q_token?: string | null;
+  current_stage?: string | null;
+  status?: string | null;
+  created_date?: string | null;
+  created_time?: string | null;
+  branch_name?: string | null;
+}
+
+interface InterviewerRow extends RowDataPacket {
+  id: string;
+  interviewer_name?: string | null;
+  branch_name?: string | null;
+  designation_name?: string | null;
+}
+
+interface ExistingSubmissionRow extends RowDataPacket {
+  id: string;
+  submitted_at?: string | null;
+  walkin_end_stage?: string | null;
+  final_decision?: string | null;
+}
+
+interface SubmissionResultRow extends RowDataPacket {
+  id: string;
+}
+
 function validateSubmission(input: SubmissionInput) {
   // Mandatory fields
   const process = requireField(input.interviewedForProcess, "Interviewed for Process");
@@ -324,7 +410,7 @@ function validateSubmission(input: SubmissionInput) {
   validateEnum(process, "Process", VALID_PROCESSES);
   validateEnum(finalDecision, "Final Decision", VALID_DECISIONS);
 
-  if (!VALID_STAGES.includes(walkinEndStage as any))
+  if (!VALID_STAGES.includes(walkinEndStage as (typeof VALID_STAGES)[number]))
     err(`Invalid Walk-in End Stage: "${walkinEndStage}". Allowed: ${VALID_STAGES.join(", ")}`, 400);
 
   const rank = STAGE_RANK[walkinEndStage] ?? -1;
@@ -410,7 +496,7 @@ function validateSubmission(input: SubmissionInput) {
 // ── Submit interview update ───────────────────────────────────────────────────
 
 export async function submitInterviewUpdate(
-  raw: Record<string, any>,
+  raw: Record<string, unknown>,
   actorUserId: string | undefined,
   recruiterProfile: RecruiterProfile
 ) {
@@ -468,7 +554,7 @@ export async function submitInterviewUpdate(
   // Validate all fields — throws on any violation
   const { process, finalDecision, walkinEndStage, r1, r2, r3 } = validateSubmission(input);
 
-  const conn = await (db as any).getConnection();
+  const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
 
@@ -480,7 +566,7 @@ export async function submitInterviewUpdate(
       ? [input.candidateId, input.candidateId]
       : [input.qToken];
 
-    const [candRows] = await conn.execute(
+    const [candRows] = await conn.execute<InterviewCandidateRow[]>(
       `SELECT c.id, c.candidate_code, c.full_name, c.email,
               c.recruiter_id, c.recruiter_assigned_id, c.assigned_recruiter_id, c.recruiter_assigned_name,
               c.applied_for_branch, c.branch_display_name, c.sourcing_channel, c.latest_calling_activity_id,
@@ -493,7 +579,7 @@ export async function submitInterviewUpdate(
        FOR UPDATE`,
       whereParams
     );
-    const candidate = (candRows as any[])[0];
+    const candidate = candRows[0];
     if (!candidate) err("Candidate not found", 404);
 
     // Ownership check
@@ -525,7 +611,7 @@ export async function submitInterviewUpdate(
       designation: string | null;
     } | null = null;
     if (nvl(input.secondRoundInterviewerId)) {
-      const [interviewerRows] = await conn.execute(
+      const [interviewerRows] = await conn.execute<InterviewerRow[]>(
         `SELECT e.id,
                 COALESCE(NULLIF(TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))), ''), e.full_name, e.employee_name, e.employee_code) AS interviewer_name,
                 COALESCE(b.branch_name, e.branch_name, e.branch_id) AS branch_name,
@@ -537,7 +623,7 @@ export async function submitInterviewUpdate(
           LIMIT 1`,
         [input.secondRoundInterviewerId]
       );
-      const interviewer = (interviewerRows as any[])[0];
+      const interviewer = interviewerRows[0];
       if (!interviewer) err("Second round interviewer not found", 404);
       const interviewerBranch = nvl(interviewer.branch_name);
       const normalizedCandidateBranch = candidateBranch?.trim().toLowerCase().replace(/\s+/g, " ");
@@ -553,7 +639,7 @@ export async function submitInterviewUpdate(
       };
     }
 
-    const [existingRows] = await conn.execute(
+    const [existingRows] = await conn.execute<ExistingSubmissionRow[]>(
       effectiveQToken
         ? `SELECT id, submitted_at, walkin_end_stage, final_decision
            FROM ats_interview_submission
@@ -565,7 +651,7 @@ export async function submitInterviewUpdate(
            LIMIT 1 FOR UPDATE`,
       effectiveQToken ? [candidate.id, effectiveQToken] : [candidate.id]
     );
-    const existing = (existingRows as any[])[0] ?? null;
+    const existing = existingRows[0] ?? null;
 
     const submissionId = existing?.id ?? randomUUID();
     const isUpdate = !!existing;
@@ -929,7 +1015,7 @@ export async function submitInterviewUpdate(
       `SELECT * FROM ats_interview_submission WHERE id = ? LIMIT 1`,
       [submissionId]
     );
-    return { submission: (subRows as any[])[0], action: isUpdate ? "updated" : "created" };
+    return { submission: subRows[0] ?? null, action: isUpdate ? "updated" : "created" };
   } catch (e) {
     await conn.rollback();
     throw e;

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Response } from "express";
+import type { NextFunction, Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -8,8 +8,11 @@ import type { RowDataPacket } from "mysql2";
 import { assignRole, getUserRoles, listRoleCatalog, revokeRole } from "../access/access.service.js";
 
 const router = Router();
-const h = (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) => fn(req, res).catch(next);
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
 
 router.use(requireAuth);
 router.use(requireRole("admin"));

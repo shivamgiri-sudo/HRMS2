@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Response } from "express";
+import type { NextFunction, Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -29,8 +29,44 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
 const router = Router();
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
+
+type UserListRow = {
+  id: string;
+  email: string;
+  full_name: string | null;
+  employee_code: string | null;
+  roles: string | null;
+};
+
+type RoleSummaryRow = {
+  module_name: string | null;
+  page_count: number | string | null;
+  min_level: number | string | null;
+};
+
+type PermissionRow = {
+  page_code: string;
+  page_name: string | null;
+  module: string | null;
+  can_view: number | boolean;
+  can_create: number | boolean;
+  can_edit: number | boolean;
+  can_delete: number | boolean;
+  can_export: number | boolean;
+};
+
+type ActivityRow = {
+  id: string;
+  action_type: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  acted_at: string;
+};
 
 router.use(requireAuth);
 
@@ -116,7 +152,7 @@ router.get("/users", requireRole("admin", "hr"), h(async (req: AuthenticatedRequ
 
   res.json({
     success: true,
-    data: rows.map((row: any) => ({
+    data: (rows as UserListRow[]).map((row) => ({
       id: row.id,
       email: row.email,
       full_name: row.full_name,
@@ -182,7 +218,7 @@ router.get("/roles/:roleKey/summary", requireRole("admin", "hr"), h(async (req: 
       role_description: role.description,
       user_count: Number(counts?.user_count ?? 0),
       page_count: Number(counts?.page_count ?? 0),
-      modules: modules.map((module: any) => ({
+      modules: (modules as RoleSummaryRow[]).map((module) => ({
         module_name: module.module_name,
         page_count: Number(module.page_count ?? 0),
         access_level: levelName(Number(module.min_level ?? 1)),
@@ -195,7 +231,7 @@ router.get("/roles/:roleKey/permissions", requireRole("admin"), h(async (req: Au
   const rows = await listRolePageAccessByRole(req.params.roleKey);
   res.json({
     success: true,
-    data: rows.map((row: any) => ({
+    data: (rows as PermissionRow[]).map((row) => ({
       page_code: row.page_code,
       page_name: row.page_name,
       module: row.module,
@@ -255,7 +291,7 @@ router.get("/activity", requireRole("admin"), h(async (req: AuthenticatedRequest
   const logs = await querySensitiveActionLog({ module_key: "ACCESS_CONTROL", limit });
   res.json({
     success: true,
-    data: logs.map((log: any) => ({
+    data: (logs as ActivityRow[]).map((log) => ({
       id: log.id,
       action: log.action_type,
       user_email: null,

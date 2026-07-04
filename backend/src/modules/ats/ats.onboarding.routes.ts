@@ -1,4 +1,4 @@
-import { Router, Request, Response, NextFunction } from 'express';
+import { Router, type Request, type Response, type NextFunction, type RequestHandler } from 'express';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
@@ -15,10 +15,12 @@ import { atsService } from './ats.service.js';
 
 const router = Router();
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: Response) => Promise<void>) =>
-  (req: Request, res: Response, next: NextFunction) =>
-    (fn as (req: Request, res: Response) => Promise<void>)(req, res).catch(next);
+type AsyncHandler = (req: Request, res: Response) => Promise<void>;
+
+const h = (fn: AsyncHandler): RequestHandler =>
+  (req: Request, res: Response, next: NextFunction) => {
+    void fn(req, res).catch(next);
+  };
 
 // ── Public ────────────────────────────────────────────────────────────────────
 
@@ -138,7 +140,7 @@ router.post(
       res.status(404).json({ success: false, message: 'Candidate not found' });
       return;
     }
-    const currentStatus = (rows[0] as any).status;
+    const currentStatus = (rows[0] as RowDataPacket & { status?: string | null }).status;
     if (currentStatus !== 'selected') {
       res.status(400).json({
         success: false,

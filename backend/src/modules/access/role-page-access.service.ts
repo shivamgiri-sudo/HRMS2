@@ -42,6 +42,17 @@ export interface AccessRequestRow {
 // ─── Role → Page access management ───────────────────────────────────────────
 
 export async function listRolePageAccessByRole(roleKey: string): Promise<RolePageRow[]> {
+  type DbRow = RowDataPacket & {
+    role_key: string;
+    page_code: string;
+    page_name: string | null;
+    module: string | null;
+    can_view: number | boolean;
+    can_create: number | boolean;
+    can_edit: number | boolean;
+    can_delete: number | boolean;
+    can_export: number | boolean;
+  };
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT rpa.role_key, rpa.page_code,
             pc.page_name, pc.module,
@@ -52,7 +63,7 @@ export async function listRolePageAccessByRole(roleKey: string): Promise<RolePag
      ORDER BY pc.module, rpa.page_code`,
     [roleKey]
   );
-  return (rows as RowDataPacket[]).map((r: any) => ({
+  return (rows as DbRow[]).map((r) => ({
     role_key:   r.role_key,
     page_code:  r.page_code,
     page_name:  r.page_name,
@@ -183,7 +194,7 @@ export async function createAccessRequest(
     [userId, pageCode]
   );
   if ((existing as RowDataPacket[]).length > 0) {
-    return (existing as any[])[0].id;
+    return (existing as Array<RowDataPacket & { id: string }>)[0].id;
   }
 
   const [result] = await db.execute<ResultSetHeader>(
@@ -198,13 +209,13 @@ export async function createAccessRequest(
      ORDER BY created_at DESC LIMIT 1`,
     [userId, pageCode]
   );
-  return (newRow as any[])[0]?.id ?? "";
+  return (newRow as Array<RowDataPacket & { id: string }>)[0]?.id ?? "";
 }
 
 export async function listAccessRequests(
   status?: "pending" | "approved" | "denied"
 ): Promise<AccessRequestRow[]> {
-  const params: any[] = [];
+  const params: unknown[] = [];
   let where = "WHERE 1=1";
   if (status) {
     where += " AND ar.status = ?";
@@ -236,7 +247,7 @@ export async function approveAccessRequest(requestId: string, actorId: string): 
   if (!(reqRows as RowDataPacket[]).length) {
     throw new Error("Access request not found or already reviewed");
   }
-  const { user_id, page_code } = (reqRows as any[])[0];
+  const { user_id, page_code } = (reqRows as Array<RowDataPacket & { user_id: string; page_code: string }>)[0];
 
   await db.execute(
     `UPDATE access_requests SET status='approved', reviewed_by=?, reviewed_at=NOW()

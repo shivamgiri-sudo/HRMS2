@@ -53,11 +53,11 @@ export const atsService = {
     if (filters.toDate)   { conds.push("walk_in_date <= ?"); params.push(filters.toDate); }
 
     // Apply scope filter from middleware
-    if ((filters as any).scopeFilter) {
-      const scopeFilter = (filters as any).scopeFilter;
+    const scopedFilters = filters as CandidateListFilters & { scopeFilter?: { sql?: string; params?: unknown[] } };
+    if (scopedFilters.scopeFilter) {
       // scopeFilter is {sql: string, params: unknown[]} from buildScopeWhereClause
-      if (typeof scopeFilter === 'object' && scopeFilter.sql) {
-        const { sql, params: scopeParams } = scopeFilter;
+      if (typeof scopedFilters.scopeFilter === 'object' && scopedFilters.scopeFilter.sql) {
+        const { sql, params: scopeParams } = scopedFilters.scopeFilter;
         if (sql === "1=0") {
           // User has no access - return empty result immediately
           return { data: [], total: 0, page: filters.page, limit: filters.limit };
@@ -289,9 +289,9 @@ export const atsService = {
     };
   },
 
-  async listOnboardingBridges(scopeFilter?: { sql?: string; params?: unknown[]; branchId?: string; processId?: string }): Promise<any[]> {
+  async listOnboardingBridges(scopeFilter?: { sql?: string; params?: unknown[]; branchId?: string; processId?: string }): Promise<RowDataPacket[]> {
     let where = "1=1";
-    const params: any[] = [];
+    const params: unknown[] = [];
     if (scopeFilter?.sql) {
       where += ` AND (${scopeFilter.sql})`;
       params.push(...(scopeFilter.params ?? []));

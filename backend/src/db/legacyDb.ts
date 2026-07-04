@@ -38,7 +38,8 @@ export async function testLegacyConnection(): Promise<{ ok: boolean; error?: str
     const p = await getLegacyPool();
     await p.execute('SELECT 1 AS ok');
     return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e.message };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: message };
   }
 }

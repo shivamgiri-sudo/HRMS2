@@ -43,7 +43,7 @@ export interface SalaryValidationInput {
   gross_salary?: number;
   requested_gross_salary?: number;
   salary_exception_reason?: string;
-  salary_components?: any; // Optional - can be auto-calculated
+  salary_components?: unknown; // Optional - can be auto-calculated
   joining_date: string; // YYYY-MM-DD format
   salary_start_date?: string; // YYYY-MM-DD format (optional, defaults to joining_date)
   shift_id?: string;

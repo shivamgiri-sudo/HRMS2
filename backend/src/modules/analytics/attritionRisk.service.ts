@@ -142,7 +142,7 @@ export async function getPerformanceDegradation(req: Request, res: Response) {
     res.json({
       success: true,
       analysis_type: 'PERFORMANCE_DEGRADATION',
-      count: (rows as any[]).length,
+      count: rows.length,
       data: rows,
       timestamp: new Date().toISOString()
     });
@@ -225,7 +225,7 @@ export async function getAbsenteeismCorrelation(req: Request, res: Response) {
     res.json({
       success: true,
       analysis_type: 'ABSENTEEISM_CORRELATION',
-      count: (rows as any[]).length,
+      count: rows.length,
       data: rows,
       timestamp: new Date().toISOString()
     });
@@ -353,7 +353,7 @@ export async function getCompoundRiskProfile(req: Request, res: Response) {
     res.json({
       success: true,
       analysis_type: 'COMPOUND_RISK_PROFILE',
-      count: (rows as any[]).length,
+      count: rows.length,
       data: rows,
       timestamp: new Date().toISOString()
     });
@@ -450,7 +450,7 @@ export async function getQualityVelocity(req: Request, res: Response) {
     res.json({
       success: true,
       analysis_type: 'QUALITY_VELOCITY',
-      count: (rows as any[]).length,
+      count: rows.length,
       data: rows,
       timestamp: new Date().toISOString()
     });
@@ -558,7 +558,7 @@ export async function getEarlyWarningIndicators(req: Request, res: Response) {
     res.json({
       success: true,
       analysis_type: 'EARLY_WARNING',
-      count: (rows as any[]).length,
+      count: rows.length,
       data: rows,
       timestamp: new Date().toISOString()
     });
@@ -640,7 +640,7 @@ export async function getConsolidatedRiskReport(req: Request, res: Response) {
     res.json({
       success: true,
       analysis_type: 'CONSOLIDATED_RISK_REPORT',
-      count: (rows as any[]).length,
+      count: rows.length,
       data: rows,
       timestamp: new Date().toISOString()
     });

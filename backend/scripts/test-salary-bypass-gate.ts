@@ -32,9 +32,16 @@ interface TestResult {
   detail?: string;
 }
 
+interface ApiResponse {
+  code?: string;
+  message?: string;
+  error?: string;
+  data?: { id?: string };
+}
+
 const results: TestResult[] = [];
 
-async function post(path: string, body: object): Promise<{ status: number; json: any }> {
+async function post(path: string, body: object): Promise<{ status: number; json: ApiResponse }> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
     headers: {
@@ -43,7 +50,7 @@ async function post(path: string, body: object): Promise<{ status: number; json:
     },
     body: JSON.stringify(body),
   });
-  const json = await res.json().catch(() => ({}));
+  const json = (await res.json().catch(() => ({}))) as ApiResponse;
   return { status: res.status, json };
 }
 

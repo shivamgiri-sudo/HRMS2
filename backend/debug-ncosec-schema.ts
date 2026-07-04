@@ -1,11 +1,14 @@
 import { getNcosecPool } from './src/db/ncosecDb.js';
 
+type TableRow = { TABLE_NAME: string };
+type ColumnRow = { COLUMN_NAME: string; DATA_TYPE: string; IS_NULLABLE: string };
+type CountRow = { cnt: number };
+
 async function main() {
   try {
     const pool = await getNcosecPool();
-    console.log('✓ Connected to NCOSEC\n');
+    console.log('Connected to NCOSEC\n');
 
-    // Get all tables
     const tables = await pool.request().query(`
       SELECT TABLE_NAME
       FROM INFORMATION_SCHEMA.TABLES
@@ -14,13 +17,12 @@ async function main() {
     `);
 
     console.log('=== ALL NCOSEC TABLES ===\n');
-    const allTables = tables.recordset.map((r: any) => r.TABLE_NAME);
-    allTables.forEach(t => console.log(`  ${t}`));
+    const allTables = (tables.recordset as TableRow[]).map(row => row.TABLE_NAME);
+    allTables.forEach(tableName => console.log(`  ${tableName}`));
 
-    // Filter to attendance-related
     const keywords = ['atd', 'attend', 'punch', 'summary', 'bio'];
-    const relevant = allTables.filter(t => 
-      keywords.some(kw => t.toLowerCase().includes(kw))
+    const relevant = allTables.filter(tableName =>
+      keywords.some(keyword => tableName.toLowerCase().includes(keyword))
     );
 
     console.log(`\n\n=== ${relevant.length} ATTENDANCE-RELATED TABLES ===\n`);
@@ -38,19 +40,18 @@ async function main() {
 
       console.log(`${'Column'.padEnd(30)} ${'Type'.padEnd(25)} ${'Null'}`);
       console.log('-'.repeat(70));
-      cols.recordset.forEach((c: any) => {
-        console.log(`${c.COLUMN_NAME.padEnd(30)} ${c.DATA_TYPE.padEnd(25)} ${c.IS_NULLABLE}`);
+      (cols.recordset as ColumnRow[]).forEach(column => {
+        console.log(`${column.COLUMN_NAME.padEnd(30)} ${column.DATA_TYPE.padEnd(25)} ${column.IS_NULLABLE}`);
       });
 
-      const count = await pool.request().query(
-        `SELECT COUNT(*) as cnt FROM [${tableName}]`
-      );
-      console.log(`\nRow count: ${count.recordset[0].cnt.toLocaleString()}`);
+      const count = await pool.request().query(`SELECT COUNT(*) as cnt FROM [${tableName}]`);
+      console.log(`\nRow count: ${(count.recordset[0] as CountRow).cnt.toLocaleString()}`);
     }
 
     process.exit(0);
-  } catch (err) {
-    console.error('Error:', err instanceof Error ? err.message : err);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('Error:', message);
     process.exit(1);
   }
 }

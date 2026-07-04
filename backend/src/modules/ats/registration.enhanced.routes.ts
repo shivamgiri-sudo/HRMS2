@@ -18,13 +18,71 @@ import {
 
 export const registrationEnhancedRouter = Router();
 
+interface RecruiterRow {
+  id: string;
+  employee_id: string | null;
+  employee_code: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  mobile: string | null;
+  email: string | null;
+  present_today?: unknown;
+}
+
+interface RecruiterEmployeeRow extends RowDataPacket {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  mobile: string | null;
+  email: string | null;
+  branch_name: string | null;
+}
+
+interface RecruiterIdRow extends RowDataPacket {
+  id: string;
+}
+
+interface RecruiterContactRow extends RowDataPacket {
+  name: string | null;
+  mobile: string | null;
+  email: string | null;
+  employee_code: string | null;
+}
+
+interface CandidateCodeRow extends RowDataPacket {
+  candidate_code: string | null;
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Unexpected error";
+}
+
+function getErrorStatus(error: unknown): number {
+  if (typeof error === "object" && error !== null && "statusCode" in error) {
+    const statusCode = (error as { statusCode?: unknown }).statusCode;
+    if (typeof statusCode === "number" && Number.isFinite(statusCode)) {
+      return statusCode;
+    }
+  }
+
+  if (error instanceof z.ZodError) {
+    return 400;
+  }
+
+  return 500;
+}
+
 // ── 1. Get branch aliases (display names) ─────────────────────────────────────
 registrationEnhancedRouter.get("/branch-aliases", async (_req, res) => {
   try {
     const aliases = await getBranchAliases();
     return res.json({ success: true, data: aliases });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -40,7 +98,7 @@ registrationEnhancedRouter.get("/recruiters/:branchName", async (req, res) => {
 
     return res.json({
       success: true,
-      data: recruiters.map((r: any) => ({
+      data: recruiters.map((r: RecruiterRow) => ({
         id: r.id,                      // roster id (FK-safe for ats_candidate.recruiter_id)
         employee_id: r.employee_id,    // actual employee UUID — frontend sends this as preferredRecruiterId
         employee_code: r.employee_code,
@@ -50,8 +108,8 @@ registrationEnhancedRouter.get("/recruiters/:branchName", async (req, res) => {
         present_today: Boolean(r.present_today),
       })),
     });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -122,7 +180,7 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
 
     if (input.preferredRecruiterId) {
       // Resolve employee UUID → roster UUID (idempotent upsert)
-      const [empRows] = await db.execute<RowDataPacket[]>(
+      const [empRows] = await db.execute<RecruiterEmployeeRow[]>(
         `SELECT e.id, e.first_name, e.last_name, e.mobile,
                 COALESCE(e.office_email, e.official_email, e.email) AS email,
                 b.branch_name
@@ -132,8 +190,8 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
          LIMIT 1`,
         [input.preferredRecruiterId]
       );
-      if ((empRows as RowDataPacket[]).length > 0) {
-        const emp = (empRows as RowDataPacket[])[0] as any;
+      if (empRows.length > 0) {
+        const emp = empRows[0];
         resolvedRecruiterId = await ensureRecruiterInRoster({
           id: emp.id,
           first_name: emp.first_name,
@@ -147,18 +205,18 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
 
     if (!resolvedRecruiterId && input.recruiterName) {
       // Fallback: look up by name — try roster first, then employees
-      const [rosterRows] = await db.execute<RowDataPacket[]>(
+      const [rosterRows] = await db.execute<RecruiterIdRow[]>(
         `SELECT r.id FROM ats_recruiter_roster r
          WHERE r.active_status = 1 AND UPPER(r.name) = UPPER(?)
            AND (r.branch = ? OR r.branch = ?)
          LIMIT 1`,
         [input.recruiterName.trim(), branchName, branchData.canonical_key]
       );
-      if ((rosterRows as RowDataPacket[]).length > 0) {
-        resolvedRecruiterId = (rosterRows as RowDataPacket[])[0].id as string;
+      if (rosterRows.length > 0) {
+        resolvedRecruiterId = rosterRows[0].id;
       } else {
         const nameParts = input.recruiterName.trim().split(' ');
-        const [empRows] = await db.execute<RowDataPacket[]>(
+        const [empRows] = await db.execute<RecruiterEmployeeRow[]>(
           `SELECT e.id, e.first_name, e.last_name, e.mobile,
                   COALESCE(e.office_email, e.official_email, e.email) AS email,
                   b.branch_name
@@ -169,8 +227,8 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
            LIMIT 1`,
           [nameParts[0]]
         );
-        if ((empRows as RowDataPacket[]).length > 0) {
-          const emp = (empRows as RowDataPacket[])[0] as any;
+        if (empRows.length > 0) {
+          const emp = empRows[0];
           resolvedRecruiterId = await ensureRecruiterInRoster({
             id: emp.id,
             first_name: emp.first_name,
@@ -213,7 +271,7 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
     // 6. Get recruiter details — assignedRecruiterId is a roster id, join to employees for contact info
     let recruiterDetails = null;
     if (assignmentResult.assignedRecruiterId) {
-      const [recRows] = await db.execute<RowDataPacket[]>(
+      const [recRows] = await db.execute<RecruiterContactRow[]>(
         `SELECT r.name, r.mobile, r.email, e.employee_code
          FROM ats_recruiter_roster r
          LEFT JOIN employees e ON e.id = r.employee_id
@@ -266,11 +324,11 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
     }
 
     // 8. Fetch candidate_code for the success response
-    const [codeRows] = await db.execute<RowDataPacket[]>(
+    const [codeRows] = await db.execute<CandidateCodeRow[]>(
       'SELECT candidate_code FROM ats_candidate WHERE id = ? LIMIT 1',
       [candidateId]
     );
-    const candidate_code = (codeRows as RowDataPacket[])[0]?.candidate_code ?? null;
+    const candidate_code = codeRows[0]?.candidate_code ?? null;
 
     return res.status(201).json({
       success: true,
@@ -283,12 +341,12 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       recruiter: recruiterDetails,
       assignmentReason: assignmentResult.assignmentReason,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Enhanced registration error:", error);
-    const status = error?.statusCode ?? (error?.name === "ZodError" ? 400 : 500);
+    const status = getErrorStatus(error);
     return res.status(status).json({
       success: false,
-      message: error.message || "Registration failed",
+      message: getErrorMessage(error) || "Registration failed",
     });
   }
 });
@@ -347,8 +405,8 @@ registrationEnhancedRouter.post("/parse-resume", async (req, res) => {
     };
 
     return res.json({ success: true, data: parsed });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
 });
 

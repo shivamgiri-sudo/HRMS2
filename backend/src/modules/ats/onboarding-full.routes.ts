@@ -51,10 +51,23 @@ import {
 } from "./onboarding-full.service.js";
 
 const router = Router();
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
+type AsyncHandler = (req: Request, res: Response) => Promise<unknown>;
+const h = (fn: AsyncHandler) => (req: Request, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
 const meta = (req: Request) => ({ ip: req.ip, userAgent: req.get("user-agent") ?? undefined });
 const ONBOARDING_SCOPE_ROLES = ["hr", "manager", "process_manager", "payroll_hr", "payroll", "recruiter"] as const;
+
+interface CountRow extends RowDataPacket {
+  cnt: number;
+}
+
+interface OnboardingOtpRow extends RowDataPacket {
+  id: string;
+  attempts: number;
+  max_attempts: number;
+  otp_hash: string;
+}
 
 async function assertOnboardingCandidateScope(req: AuthenticatedRequest, candidateId: string, scopedRoles: readonly string[] = ONBOARDING_SCOPE_ROLES) {
   const candidate = await getOnboardingCandidateScope(candidateId);
@@ -300,7 +313,8 @@ router.post("/otp/send", h(async (req, res) => {
       WHERE candidate_id = ? AND created_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)`,
     [tokenData.candidate_id]
   );
-  if ((recent[0] as any)?.cnt >= 3) {
+  const recentRow = recent[0] as CountRow | undefined;
+  if ((recentRow?.cnt ?? 0) >= 3) {
     return res.status(429).json({ success: false, message: "Too many OTP requests. Please wait 10 minutes." });
   }
 
@@ -341,7 +355,7 @@ router.post("/otp/verify", h(async (req, res) => {
     [tokenData.candidate_id]
   );
 
-  const record = rows[0] as any;
+  const record = rows[0] as OnboardingOtpRow | undefined;
   if (!record) return res.status(400).json({ success: false, message: "OTP expired or not found. Please request a new one." });
 
   await db.execute(`UPDATE candidate_onboarding_otp SET attempts = attempts + 1 WHERE id = ?`, [record.id]);

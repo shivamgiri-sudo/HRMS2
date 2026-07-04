@@ -15,6 +15,72 @@ const OLD_DB_CONFIG = {
   interviewsTable: 'interviews', // TODO: Update table name
 };
 
+interface CountRow extends RowDataPacket {
+  count: number;
+  earliest: string | null;
+  latest: string | null;
+}
+
+interface TrendRow extends RowDataPacket {
+  month_year: string;
+  year: number;
+  month: number;
+  registrations: number;
+  interviews: number;
+  selections: number;
+}
+
+interface SourceRow extends RowDataPacket {
+  source_channel: string;
+  total_candidates: number;
+  total_hired: number;
+  conversion_rate: number;
+  avg_time_to_hire_days: number | null;
+}
+
+interface RecruiterTrendRow extends RowDataPacket {
+  month: string;
+  interviews_conducted: number;
+  selections_made: number;
+  selection_rate: number;
+  avg_rating: number;
+}
+
+interface MonthlyHireRow extends RowDataPacket {
+  month: string;
+  hires: number;
+}
+
+interface StageRow extends RowDataPacket {
+  current_stage: string;
+  stuck_count: number;
+  avg_days_stuck: number;
+}
+
+interface AvgRow extends RowDataPacket {
+  avg_days: number | null;
+}
+
+interface RoleDayRow extends RowDataPacket {
+  role: string;
+  avg_days: number | null;
+}
+
+interface SourceDayRow extends RowDataPacket {
+  source: string;
+  avg_days: number | null;
+}
+
+interface BranchDayRow extends RowDataPacket {
+  branch: string;
+  avg_days: number | null;
+}
+
+interface MinMaxRow extends RowDataPacket {
+  fastest: number | null;
+  slowest: number | null;
+}
+
 // ── Historical Data Integration ────────────────────────────────────────────────
 
 /**
@@ -27,16 +93,21 @@ export async function getUnifiedCandidateCount(): Promise<{
   date_range: { earliest: string; latest: string };
 }> {
   // Current system count
-  const [newCount] = await db.execute<RowDataPacket[]>(
+  const [newCount] = await db.execute<CountRow[]>(
     'SELECT COUNT(*) as count, MIN(created_at) as earliest, MAX(created_at) as latest FROM ats_candidate WHERE active_status = 1'
   );
 
   // Old system count (adjust query based on actual schema)
-  const [oldCount] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as count, MIN(created_at) as earliest, MAX(created_at) as latest
-     FROM ${OLD_DB_CONFIG.database}.${OLD_DB_CONFIG.candidatesTable}
-     WHERE status != 'deleted'`
-  ).catch(() => [{ count: 0, earliest: null, latest: null }] as any);
+  let oldCount: CountRow[] = [];
+  try {
+    [oldCount] = await db.execute<CountRow[]>(
+      `SELECT COUNT(*) as count, MIN(created_at) as earliest, MAX(created_at) as latest
+       FROM ${OLD_DB_CONFIG.database}.${OLD_DB_CONFIG.candidatesTable}
+       WHERE status != 'deleted'`
+    );
+  } catch {
+    oldCount = [{ count: 0, earliest: null, latest: null }];
+  }
 
   return {
     total: (newCount[0]?.count || 0) + (oldCount[0]?.count || 0),
@@ -65,7 +136,7 @@ export async function getHiringTrends(months: number = 12): Promise<{
   const startDateStr = startDate.toISOString().split('T')[0];
 
   // New system data
-  const [newData] = await db.execute<RowDataPacket[]>(
+  const [newData] = await db.execute<TrendRow[]>(
     `SELECT
       DATE_FORMAT(created_at, '%Y-%m') as month_year,
       YEAR(created_at) as year,
@@ -83,7 +154,7 @@ export async function getHiringTrends(months: number = 12): Promise<{
   // TODO: Add old system data query when schema is known
   // const [oldData] = await db.execute(...);
 
-  return (newData as any[]).map(row => ({
+  return newData.map(row => ({
     month: row.month_year,
     year: row.year,
     registrations: row.registrations,
@@ -105,7 +176,7 @@ export async function getSourceChannelROI(): Promise<{
   cost_per_hire?: number; // TODO: Add when cost data available
 }[]> {
   // New system data
-  const [newData] = await db.execute<RowDataPacket[]>(
+  const [newData] = await db.execute<SourceRow[]>(
     `SELECT
       COALESCE(sourcing_channel, 'Walk-in') as source_channel,
       COUNT(*) as total_candidates,
@@ -120,7 +191,7 @@ export async function getSourceChannelROI(): Promise<{
 
   // TODO: Merge with old system data
 
-  return newData as any[];
+  return newData;
 }
 
 /**
@@ -133,7 +204,7 @@ export async function getRecruiterTrends(recruiterId?: string): Promise<{
   selection_rate: number;
   avg_rating: number;
 }[]> {
-  const [results] = await db.execute<RowDataPacket[]>(
+  const [results] = await db.execute<RecruiterTrendRow[]>(
     `SELECT
       DATE_FORMAT(interviewed_at, '%Y-%m') as month,
       COUNT(*) as interviews_conducted,
@@ -148,7 +219,7 @@ export async function getRecruiterTrends(recruiterId?: string): Promise<{
     recruiterId ? [recruiterId] : []
   );
 
-  return results as any[];
+  return results;
 }
 
 /**
@@ -162,7 +233,7 @@ export async function getPredictiveAnalytics(): Promise<{
   avg_candidate_journey_days: number;
 }> {
   // Historical pattern analysis
-  const [monthlyHires] = await db.execute<RowDataPacket[]>(
+  const [monthlyHires] = await db.execute<MonthlyHireRow[]>(
     `SELECT
       DATE_FORMAT(created_at, '%Y-%m') as month,
       COUNT(*) as hires
@@ -175,11 +246,11 @@ export async function getPredictiveAnalytics(): Promise<{
 
   // Calculate average
   const avgHires = monthlyHires.length > 0
-    ? monthlyHires.reduce((sum: number, row: any) => sum + row.hires, 0) / monthlyHires.length
+    ? monthlyHires.reduce((sum, row) => sum + Number(row.hires || 0), 0) / monthlyHires.length
     : 0;
 
   // Find bottleneck
-  const [bottleneck] = await db.execute<RowDataPacket[]>(
+  const [bottleneck] = await db.execute<StageRow[]>(
     `SELECT
       current_stage,
       COUNT(*) as stuck_count,
@@ -193,7 +264,7 @@ export async function getPredictiveAnalytics(): Promise<{
   );
 
   // Average journey time
-  const [journeyTime] = await db.execute<RowDataPacket[]>(
+  const [journeyTime] = await db.execute<AvgRow[]>(
     `SELECT AVG(DATEDIFF(updated_at, created_at)) as avg_days
     FROM ats_candidate
     WHERE current_stage = 'joined'`
@@ -220,14 +291,14 @@ export async function getTimeToHireMetrics(): Promise<{
   slowest_hire_days: number;
 }> {
   // Overall average
-  const [overall] = await db.execute<RowDataPacket[]>(
+  const [overall] = await db.execute<AvgRow[]>(
     `SELECT AVG(DATEDIFF(updated_at, created_at)) as avg_days
     FROM ats_candidate
     WHERE current_stage = 'joined'`
   );
 
   // By role
-  const [byRole] = await db.execute<RowDataPacket[]>(
+  const [byRole] = await db.execute<RoleDayRow[]>(
     `SELECT
       applied_for_role as role,
       ROUND(AVG(DATEDIFF(updated_at, created_at))) as avg_days
@@ -238,7 +309,7 @@ export async function getTimeToHireMetrics(): Promise<{
   );
 
   // By source
-  const [bySource] = await db.execute<RowDataPacket[]>(
+  const [bySource] = await db.execute<SourceDayRow[]>(
     `SELECT
       COALESCE(sourcing_channel, 'Walk-in') as source,
       ROUND(AVG(DATEDIFF(updated_at, created_at))) as avg_days
@@ -249,7 +320,7 @@ export async function getTimeToHireMetrics(): Promise<{
   );
 
   // By branch
-  const [byBranch] = await db.execute<RowDataPacket[]>(
+  const [byBranch] = await db.execute<BranchDayRow[]>(
     `SELECT
       branch_display_name as branch,
       ROUND(AVG(DATEDIFF(updated_at, created_at))) as avg_days
@@ -260,7 +331,7 @@ export async function getTimeToHireMetrics(): Promise<{
   );
 
   // Min/Max
-  const [minMax] = await db.execute<RowDataPacket[]>(
+  const [minMax] = await db.execute<MinMaxRow[]>(
     `SELECT
       MIN(DATEDIFF(updated_at, created_at)) as fastest,
       MAX(DATEDIFF(updated_at, created_at)) as slowest
@@ -270,9 +341,9 @@ export async function getTimeToHireMetrics(): Promise<{
 
   return {
     overall_avg_days: Math.round(overall[0]?.avg_days || 0),
-    by_role: byRole as any[],
-    by_source: bySource as any[],
-    by_branch: byBranch as any[],
+    by_role: byRole.map((row) => ({ role: row.role, avg_days: Math.round(Number(row.avg_days || 0)) })),
+    by_source: bySource.map((row) => ({ source: row.source, avg_days: Math.round(Number(row.avg_days || 0)) })),
+    by_branch: byBranch.map((row) => ({ branch: row.branch, avg_days: Math.round(Number(row.avg_days || 0)) })),
     fastest_hire_days: minMax[0]?.fastest || 0,
     slowest_hire_days: minMax[0]?.slowest || 0,
   };
@@ -286,8 +357,8 @@ export async function getCustomReport(params: {
   groupBy: string;
   dateFrom?: string;
   dateTo?: string;
-  filters?: Record<string, any>;
-}): Promise<any[]> {
+  filters?: Record<string, unknown>;
+}): Promise<Record<string, unknown>[]> {
   // Build dynamic query based on params
   const { metrics, groupBy, dateFrom, dateTo, filters } = params;
 
@@ -320,7 +391,7 @@ export async function getCustomReport(params: {
   // Add custom filters
   if (filters) {
     Object.entries(filters).forEach(([key, value]) => {
-      query += ` AND ${key} = '${value}'`;
+      query += ` AND ${key} = '${String(value)}'`;
     });
   }
 
@@ -328,5 +399,5 @@ export async function getCustomReport(params: {
   query += ` GROUP BY ${groupBy}`;
 
   const [results] = await db.execute<RowDataPacket[]>(query);
-  return results as any[];
+  return results as Record<string, unknown>[];
 }

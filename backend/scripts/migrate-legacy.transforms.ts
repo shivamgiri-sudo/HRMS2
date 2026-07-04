@@ -229,7 +229,7 @@ export function parseUAN(uan: string | number | null | undefined): string | null
   const str = String(uan).trim();
   if (str === '' || str.toLowerCase() === 'null') return null;
   // Scientific notation detection (e.g. "1.00143E+11")
-  if (/[eE][+\-]/.test(str)) {
+  if (/[eE][+-]/.test(str)) {
     return String(Math.round(parseFloat(str)));
   }
   return str;

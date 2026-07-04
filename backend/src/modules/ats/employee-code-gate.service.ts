@@ -1,6 +1,16 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 
+interface BoolRow extends RowDataPacket {
+  is_submitted?: number | string | null;
+  verification_status?: string | null;
+  overall_match_status?: string | null;
+  validation_status?: string | null;
+  status?: string | null;
+  employee_code?: string | null;
+  id?: string | null;
+}
+
 export interface GateCheckResult {
   canGenerate: boolean;
   blockers: string[];
@@ -15,8 +25,8 @@ export async function checkEmployeeCodeGate(candidateId: string): Promise<GateCh
   const [cop] = await db.execute<RowDataPacket[]>(
     'SELECT is_submitted FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1',
     [candidateId]
-  ).catch(() => [[]] as any);
-  const onboardingOk = Array.isArray(cop) && cop.length > 0 && (cop[0] as any).is_submitted == 1;
+  ).catch(() => [[]] as BoolRow[]);
+  const onboardingOk = Array.isArray(cop) && cop.length > 0 && Number((cop[0] as BoolRow).is_submitted ?? 0) === 1;
   checklist['onboarding_submitted'] = onboardingOk;
   if (!onboardingOk) blockers.push('Candidate onboarding not submitted');
 
@@ -25,7 +35,7 @@ export async function checkEmployeeCodeGate(candidateId: string): Promise<GateCh
     `SELECT verification_status FROM ats_bgv_verification
      WHERE candidate_id = ? AND verification_status IN ('completed','approved','cleared') LIMIT 1`,
     [candidateId]
-  ).catch(() => [[]] as any);
+  ).catch(() => [[]] as BoolRow[]);
   const bgvOk = Array.isArray(bgv) && bgv.length > 0;
   checklist['bgv_complete'] = bgvOk;
   if (!bgvOk) blockers.push('BGV not completed or approved');
@@ -35,7 +45,7 @@ export async function checkEmployeeCodeGate(candidateId: string): Promise<GateCh
     `SELECT overall_match_status FROM candidate_name_match_summary
      WHERE candidate_id = ? AND overall_match_status IN ('matched','approved') LIMIT 1`,
     [candidateId]
-  ).catch(() => [[]] as any);
+  ).catch(() => [[]] as BoolRow[]);
   const nameOk = Array.isArray(nm) && nm.length > 0;
   checklist['name_consistency'] = nameOk;
   if (!nameOk) blockers.push('Name consistency check not passed or not approved');
@@ -45,7 +55,7 @@ export async function checkEmployeeCodeGate(candidateId: string): Promise<GateCh
     `SELECT validation_status FROM ats_payroll_hr_validation
      WHERE candidate_id = ? AND validation_status = 'validated' LIMIT 1`,
     [candidateId]
-  ).catch(() => [[]] as any);
+  ).catch(() => [[]] as BoolRow[]);
   const phrOk = Array.isArray(phr) && phr.length > 0;
   checklist['payroll_hr_validated'] = phrOk;
   if (!phrOk) blockers.push('Payroll HR validation not complete');
@@ -54,7 +64,7 @@ export async function checkEmployeeCodeGate(candidateId: string): Promise<GateCh
   const [jclr] = await db.execute<RowDataPacket[]>(
     `SELECT status FROM jclr_entries WHERE candidate_id = ? AND status = 'approved' LIMIT 1`,
     [candidateId]
-  ).catch(() => [[]] as any);
+  ).catch(() => [[]] as BoolRow[]);
   const jclrOk = Array.isArray(jclr) && jclr.length > 0;
   checklist['jclr_approved'] = jclrOk;
   if (!jclrOk) blockers.push('JCLR not approved by BM/Branch Head');
@@ -64,7 +74,7 @@ export async function checkEmployeeCodeGate(candidateId: string): Promise<GateCh
     `SELECT id FROM salary_component_assignments
      WHERE candidate_id = ? AND status = 'active' LIMIT 1`,
     [candidateId]
-  ).catch(() => [[]] as any);
+  ).catch(() => [[]] as BoolRow[]);
   const scOk = Array.isArray(sc) && sc.length > 0;
   checklist['salary_components'] = scOk;
   if (!scOk) blockers.push('Salary components not assigned');
@@ -73,11 +83,11 @@ export async function checkEmployeeCodeGate(candidateId: string): Promise<GateCh
   const [dup] = await db.execute<RowDataPacket[]>(
     `SELECT employee_code FROM ats_candidate WHERE id = ? AND employee_code IS NOT NULL LIMIT 1`,
     [candidateId]
-  ).catch(() => [[]] as any);
-  if (Array.isArray(dup) && dup.length > 0 && (dup[0] as any).employee_code) {
+  ).catch(() => [[]] as BoolRow[]);
+  if (Array.isArray(dup) && dup.length > 0 && (dup[0] as BoolRow).employee_code) {
     return {
       canGenerate: false,
-      blockers: ['Employee code already generated: ' + (dup[0] as any).employee_code],
+      blockers: ['Employee code already generated: ' + (dup[0] as BoolRow).employee_code],
       checklist,
     };
   }

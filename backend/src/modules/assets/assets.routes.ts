@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Response } from "express";
+import type { NextFunction, Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -9,14 +9,17 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 
 const router = Router();
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
 
 router.use(requireAuth);
 
 // Full asset master list: admin/hr only
 router.get("/", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
-  res.json({ data: await assetsService.list(req.query as any) });
+  res.json({ data: await assetsService.list(req.query as Record<string, unknown>) });
 }));
 
 router.post("/", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {

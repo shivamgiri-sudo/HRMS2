@@ -1,15 +1,23 @@
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { db } from '../../db/mysql.js';
-import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { requireWriteAccess } from '../../middleware/authMiddleware.js';
 import type { RowDataPacket } from 'mysql2';
 
 const router = Router();
-const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
+
+interface SlabRow extends RowDataPacket {
+  id: string;
+  slab_code?: string | null;
+}
 
 // GET /api/ats/salary-components/:candidateId
-router.get('/:candidateId', requireAuth, requireRole('payroll_hr', 'payroll_head', 'admin', 'hr', 'ho_hr'), h(async (req: any, res: any) => {
+router.get('/:candidateId', requireAuth, requireRole('payroll_hr', 'payroll_head', 'admin', 'hr', 'ho_hr'), h(async (req, res) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     'SELECT * FROM salary_component_assignments WHERE candidate_id = ? ORDER BY assigned_at DESC LIMIT 1',
     [req.params.candidateId]
@@ -18,9 +26,9 @@ router.get('/:candidateId', requireAuth, requireRole('payroll_hr', 'payroll_head
 }));
 
 // POST /api/ats/salary-components/:candidateId
-router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payroll_hr', 'payroll_head', 'admin'), h(async (req: any, res: any) => {
+router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payroll_hr', 'payroll_head', 'admin'), h(async (req, res) => {
   const { candidateId } = req.params;
-  const f = req.body as Record<string, any>;
+  const f = req.body as Record<string, unknown>;
   if (!f.effective_date) {
     return res.status(400).json({ success: false, message: 'effective_date required' });
   }
@@ -41,12 +49,17 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
 
   // If salary_slab provided, verify it exists in payroll masters (non-blocking if table not yet created)
   if (hasSlab) {
-    const [slabRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM salary_grade_master WHERE grade_code = ? AND active_status = 1 LIMIT 1
-       UNION
-       SELECT id FROM payroll_salary_slabs WHERE slab_code = ? AND active_status = 1 LIMIT 1`,
-      [f.salary_slab, f.salary_slab]
-    ).catch(() => [[]] as any);
+    let slabRows: SlabRow[] = [];
+    try {
+      [slabRows] = await db.execute<SlabRow[]>(
+        `SELECT id FROM salary_grade_master WHERE grade_code = ? AND active_status = 1 LIMIT 1
+         UNION
+         SELECT id FROM payroll_salary_slabs WHERE slab_code = ? AND active_status = 1 LIMIT 1`,
+        [f.salary_slab, f.salary_slab]
+      );
+    } catch {
+      slabRows = [];
+    }
     if (!Array.isArray(slabRows) || !slabRows.length) {
       return res.status(400).json({
         success: false,

@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type NextFunction, type Response } from "express";
 import { randomUUID } from "crypto";
 import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
@@ -8,7 +8,12 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
 const router = Router();
-const h = (fn: any) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
+
+interface UploadBatchRow extends RowDataPacket {
+  id: string;
+}
 router.use(requireAuth);
 
 router.get("/templates", requireRole("admin", "hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
@@ -17,10 +22,14 @@ router.get("/templates", requireRole("admin", "hr"), h(async (_req: Authenticate
       "SELECT * FROM upload_template_master WHERE active_status = 1 ORDER BY upload_type_code ASC"
     );
     res.json({ success: true, data: rows });
-  } catch (err: any) {
+  } catch (err: unknown) {
     // Table may not exist yet — return empty array gracefully
-    if (err.code === "ER_NO_SUCH_TABLE" || String(err.message).includes("doesn't exist")) {
-      return res.json({ success: true, data: [] });
+    if (typeof err === "object" && err !== null) {
+      const code = String((err as { code?: unknown }).code ?? "");
+      const message = String((err as { message?: unknown }).message ?? "");
+      if (code === "ER_NO_SUCH_TABLE" || message.includes("doesn't exist")) {
+        return res.json({ success: true, data: [] });
+      }
     }
     throw err;
   }
@@ -45,7 +54,7 @@ router.post("/batches", requireRole("admin", "hr"), h(async (req: AuthenticatedR
   const body = req.body as {
     upload_batch_no?: string; upload_type_code: string; original_file_name?: string;
     file_path?: string; file_size_bytes?: number; total_rows: number; valid_rows: number;
-    error_rows: number; batch_status?: string; error_summary?: string; metadata?: any;
+    error_rows: number; batch_status?: string; error_summary?: string; metadata?: Record<string, unknown>;
   };
   if (!body.upload_type_code) {
     return res.status(400).json({ error: "upload_type_code is required" });
@@ -68,13 +77,17 @@ router.post("/batches", requireRole("admin", "hr"), h(async (req: AuthenticatedR
      body.valid_rows > 0 ? req.authUser!.id : null,
      body.valid_rows > 0 ? new Date().toISOString() : null]
   );
-  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM upload_batch WHERE id = ? LIMIT 1", [id]);
-  res.status(201).json({ success: true, data: (rows as RowDataPacket[])[0] });
+  const [rows] = await db.execute<UploadBatchRow[]>("SELECT * FROM upload_batch WHERE id = ? LIMIT 1", [id]);
+  res.status(201).json({ success: true, data: rows[0] ?? null });
 }));
 
 router.post("/batches/:id/rows", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const rows = req.body as Array<{
-    row_no: number; raw_data?: any; normalized_data?: any; row_status?: string; error_messages?: any;
+    row_no: number;
+    raw_data?: Record<string, unknown> | unknown[] | string | null;
+    normalized_data?: Record<string, unknown> | unknown[] | string | null;
+    row_status?: string;
+    error_messages?: string[] | string | null;
   }>;
   if (!Array.isArray(rows) || rows.length === 0) {
     return res.status(400).json({ error: "rows array required" });

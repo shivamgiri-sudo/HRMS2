@@ -25,9 +25,9 @@ export class TwilioWhatsAppProvider implements CommunicationProvider {
   }
 
   async getDeliveryStatus(messageId: string): Promise<DeliveryStatus> {
-    try {
+      try {
       const msg = await this.client.messages(messageId).fetch();
-      const map: Record<string, any> = { queued:'queued', sent:'sent', delivered:'delivered', read:'opened', failed:'failed', undelivered:'failed' };
+      const map: Record<string, DeliveryStatus['status']> = { queued:'queued', sent:'sent', delivered:'delivered', read:'opened', failed:'failed', undelivered:'failed' };
       return { status: map[msg.status] ?? 'failed', delivered_at: msg.dateUpdated?.toISOString(), error: msg.errorMessage ?? undefined };
     } catch (e) {
       return { status: 'failed', error: e instanceof Error ? e.message : String(e) };

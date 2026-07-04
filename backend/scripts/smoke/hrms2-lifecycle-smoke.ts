@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import net from "net";
 import bcrypt from "bcryptjs";
 import mysql from "mysql2/promise";
+import type { RowDataPacket } from "mysql2";
 import { authService } from "../../src/modules/auth/auth.service.js";
 import { db } from "../../src/db/mysql.js";
 
@@ -26,6 +27,10 @@ type Evidence = {
   errors: string[];
   cleanupSql: string[];
 };
+
+interface CountRow extends RowDataPacket {
+  c: number;
+}
 
 const evidence: Evidence = {
   dbTarget: {
@@ -92,7 +97,7 @@ function assertSafeSmokeTarget() {
 }
 
 async function hasTable(conn: mysql.Connection, table: string) {
-  const [rows] = await conn.query<any[]>(
+  const [rows] = await conn.query<CountRow[]>(
     "SELECT COUNT(*) AS c FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?",
     [table],
   );
@@ -161,7 +166,7 @@ async function main() {
 
   try {
     for (const file of ["265_ats_lifecycle_alignment.sql", "266_hrms2_security_lifecycle_stabilization.sql", "267_lifecycle_completion_surfaces.sql"]) {
-      const [rows] = await conn.query<any[]>("SELECT filename FROM schema_migrations WHERE filename = ? LIMIT 1", [file]);
+      const [rows] = await conn.query<RowDataPacket[]>("SELECT filename FROM schema_migrations WHERE filename = ? LIMIT 1", [file]);
       evidence.migrations[file] = rows.length ? "applied" : "missing";
     }
 
@@ -531,12 +536,12 @@ async function main() {
     ];
 
     for (const [label, sql, params] of assertions) {
-      const [rows] = await conn.query<any[]>(sql, params);
+      const [rows] = await conn.query<RowDataPacket[]>(sql, params);
       if (rows.length) pass(label);
       else fail(label, "expected TEST DEMO row not found");
     }
 
-    const [nonAssigned] = await conn.query<any[]>(
+    const [nonAssigned] = await conn.query<RowDataPacket[]>(
       "SELECT id FROM ats_interview_result WHERE candidate_id=? AND recruiter_id=?",
       [ids.candidate, userIds.hr],
     );

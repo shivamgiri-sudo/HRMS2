@@ -23,6 +23,10 @@ const fakeRule = {
   created_by: 'demo-admin-id', created_at: new Date().toISOString(),
 };
 
+interface RuleRow {
+  entity_type: string;
+}
+
 // Integration tests for Customization API
 describe('Customization API', () => {
   const adminToken = 'mock-token-admin';
@@ -172,7 +176,7 @@ describe('Customization API', () => {
         .set('Authorization', `Bearer ${adminToken}`);
 
       expect(response.status).toBe(200);
-      expect(response.body.data.every((r: any) => r.entity_type === 'leave_type')).toBe(true);
+       expect(response.body.data.every((r: RuleRow) => r.entity_type === 'leave_type')).toBe(true);
     });
 
     it('should paginate results', async () => {

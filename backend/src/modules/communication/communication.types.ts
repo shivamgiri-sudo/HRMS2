@@ -44,13 +44,13 @@ export interface TemplateFilters {
 }
 export interface SendMessageDTO {
   template_id?: string; template_name?: string;
-  recipient_employee_ids: string[]; data: Record<string, any>;
+  recipient_employee_ids: string[]; data: Record<string, unknown>;
   channel?: Channel; channels?: Channel[]; is_critical?: boolean;
   portal?: PortalNotificationInput | false;
 }
 export interface BulkSendDTO {
   template_id?: string; template_name?: string;
-  recipient_filter: RecipientFilter; data: Record<string, any>; channel?: Channel; channels?: Channel[];
+  recipient_filter: RecipientFilter; data: Record<string, unknown>; channel?: Channel; channels?: Channel[];
   portal?: PortalNotificationInput | false;
 }
 export interface PortalNotificationInput {
@@ -69,7 +69,7 @@ export interface UpdatePreferencesDTO {
   category: NotificationCategory; preferred_channel: Channel; enabled: boolean;
 }
 export interface RenderTemplateDTO {
-  template_id?: string; template_name?: string; data: Record<string, any>; channel?: Channel;
+  template_id?: string; template_name?: string; data: Record<string, unknown>; channel?: Channel;
 }
 
 // ========== Provider types ==========

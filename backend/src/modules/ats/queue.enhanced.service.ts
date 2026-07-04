@@ -45,6 +45,11 @@ export interface QueueMetrics {
   active_recruiters: number;
 }
 
+interface AvgDurationRow extends RowDataPacket {
+  branch_name?: string | null;
+  avg_duration?: number | null;
+}
+
 const ROLE_EXPR = "COALESCE(NULLIF(c.role_applied, ''), NULLIF(pm.process_name, ''), NULLIF(c.applied_for_process, ''))";
 const BRANCH_EXPR = "COALESCE(NULLIF(qt.branch_name, ''), NULLIF(c.branch_display_name, ''), NULLIF(bm.branch_name, ''), NULLIF(c.applied_for_branch, ''))";
 
@@ -53,7 +58,7 @@ const BRANCH_EXPR = "COALESCE(NULLIF(qt.branch_name, ''), NULLIF(c.branch_displa
  */
 export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEntry[]> {
   const conditions: string[] = ['1=1'];
-  const params: any[] = [];
+  const params: unknown[] = [];
 
   // Date filter (default to today)
   const targetDate = filters.date || new Date().toISOString().split('T')[0];
@@ -150,7 +155,7 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
 export async function getQueueMetrics(branch?: string, date?: string): Promise<QueueMetrics> {
   const targetDate = date || new Date().toISOString().split('T')[0];
   const branchCondition = branch ? 'AND qt.branch_name = ?' : '';
-  const params: any[] = branch ? [targetDate, branch] : [targetDate];
+  const params: unknown[] = branch ? [targetDate, branch] : [targetDate];
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -269,7 +274,7 @@ export async function updateQueueStatus(
  */
 async function updateEstimatedWaitTimes(): Promise<void> {
   // Calculate average interview duration from last 10 completed interviews
-  const [avgRows] = await db.execute<RowDataPacket[]>(
+  const [avgRows] = await db.execute<AvgDurationRow[]>(
     `SELECT
       branch_name,
       ROUND(AVG(TIMESTAMPDIFF(MINUTE, interview_started_at, interview_completed_at))) as avg_duration
@@ -281,9 +286,9 @@ async function updateEstimatedWaitTimes(): Promise<void> {
   );
 
   const avgDurations: Record<string, number> = {};
-  avgRows.forEach((row: any) => {
-    avgDurations[row.branch_name] = row.avg_duration || 15; // Default 15 min
-  });
+  for (const row of avgRows) {
+    avgDurations[String(row.branch_name ?? '')] = Number(row.avg_duration ?? 15); // Default 15 min
+  }
 
   // Update estimated wait time for waiting candidates
   // Must use JOIN-based UPDATE to avoid MySQL's restriction on

@@ -9,6 +9,20 @@
 import 'dotenv/config';
 import sql from 'mssql';
 
+type TableNameRow = { TABLE_NAME: string };
+type StatRow = {
+  total_events?: number;
+  unique_users?: number;
+  earliest_event?: string | Date | null;
+  latest_event?: string | Date | null;
+};
+type SampleRow = {
+  UserID?: string;
+  punch_date?: Date | string | null;
+  punch_time?: string | null;
+  AccessLocationID?: string | number | null;
+};
+
 function requiredEnv(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} is required; configure it in backend/.env or the Integration Hub`);
@@ -66,13 +80,13 @@ async function testConnection() {
 
     if (tablesResult.recordset.length === 2) {
       console.log('✓ Required tables found:');
-      tablesResult.recordset.forEach((row: any) => {
+      tablesResult.recordset.forEach((row: TableNameRow) => {
         console.log(`  - ${row.TABLE_NAME}`);
       });
       console.log();
     } else {
       console.log('⚠ Warning: Some tables missing');
-      console.log(`  Found: ${tablesResult.recordset.map((r: any) => r.TABLE_NAME).join(', ')}\n`);
+      console.log(`  Found: ${tablesResult.recordset.map((r: TableNameRow) => r.TABLE_NAME).join(', ')}\n`);
     }
 
     // Test 3: Count recent records
@@ -87,7 +101,7 @@ async function testConnection() {
       WHERE EDateTime >= DATEADD(DAY, -7, GETDATE())
     `);
 
-    const stats = countResult.recordset[0];
+    const stats = countResult.recordset[0] as StatRow;
     console.log('✓ Recent data (last 7 days):');
     console.log(`  Total Events:   ${stats.total_events?.toLocaleString() || 0}`);
     console.log(`  Unique Users:   ${stats.unique_users?.toLocaleString() || 0}`);
@@ -112,7 +126,7 @@ async function testConnection() {
       console.log('┌────────────┬─────────────┬────────────┬──────────┐');
       console.log('│ UserID     │ Date        │ Time       │ Location │');
       console.log('├────────────┼─────────────┼────────────┼──────────┤');
-      sampleResult.recordset.forEach((row: any) => {
+      sampleResult.recordset.forEach((row: SampleRow) => {
         console.log(`│ ${(row.UserID || '').padEnd(10)} │ ${row.punch_date?.toISOString().slice(0, 10) || 'N/A'.padEnd(10)} │ ${row.punch_time || 'N/A'.padEnd(8)} │ ${(row.AccessLocationID || '').toString().padEnd(8)} │`);
       });
       console.log('└────────────┴─────────────┴────────────┴──────────┘\n');

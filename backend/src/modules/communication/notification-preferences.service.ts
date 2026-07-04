@@ -8,6 +8,20 @@ import type {
   UpdatePreferencesDTO,
 } from './communication.types.js';
 
+interface PreferenceRow extends RowDataPacket {
+  id: string;
+  employee_id: string;
+  category: NotificationCategory;
+  preferred_channel: Channel;
+  enabled: number;
+  updated_at: string;
+}
+
+interface ChannelRow extends RowDataPacket {
+  preferred_channel: Channel | null;
+  enabled: number | null;
+}
+
 const CATEGORIES: NotificationCategory[] = [
   'onboarding','payroll','attendance','leave','performance','alerts','announcements'
 ];
@@ -24,13 +38,13 @@ class NotificationPreferencesService {
   }
 
   async getPreferences(employeeId: string): Promise<NotificationPreferences[]> {
-    let [rows] = await db.execute<RowDataPacket[]>(
+    let [rows] = await db.execute<PreferenceRow[]>(
       'SELECT * FROM notification_preferences WHERE employee_id = ? ORDER BY category',
       [employeeId]
     );
     if (rows.length === 0) {
       await this.initializeDefaults(employeeId);
-      [rows] = await db.execute<RowDataPacket[]>(
+      [rows] = await db.execute<PreferenceRow[]>(
         'SELECT * FROM notification_preferences WHERE employee_id = ? ORDER BY category',
         [employeeId]
       );
@@ -45,7 +59,7 @@ class NotificationPreferencesService {
        ON DUPLICATE KEY UPDATE preferred_channel = VALUES(preferred_channel), enabled = VALUES(enabled)`,
       [randomUUID(), employeeId, dto.category, dto.preferred_channel, dto.enabled ? 1 : 0]
     );
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<PreferenceRow[]>(
       'SELECT * FROM notification_preferences WHERE employee_id = ? AND category = ?',
       [employeeId, dto.category]
     );
@@ -57,14 +71,14 @@ class NotificationPreferencesService {
   }
 
   async getDeliveryPreference(employeeId: string, category: string): Promise<{ channel: Channel; enabled: boolean }> {
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<ChannelRow[]>(
       'SELECT preferred_channel, enabled FROM notification_preferences WHERE employee_id = ? AND category = ?',
       [employeeId, category]
     );
     if (!rows[0]) return { channel: 'email', enabled: true };
     return {
-      channel: ((rows[0] as any).preferred_channel as Channel) ?? 'email',
-      enabled: Boolean((rows[0] as any).enabled),
+      channel: rows[0].preferred_channel ?? 'email',
+      enabled: Boolean(rows[0].enabled),
     };
   }
 
@@ -79,7 +93,7 @@ class NotificationPreferencesService {
   }
 
   async getUserPreferences(userId: string): Promise<NotificationPreferences[]> {
-    let [rows] = await db.execute<RowDataPacket[]>(
+    let [rows] = await db.execute<PreferenceRow[]>(
       `SELECT id, user_id AS employee_id, category, preferred_channel, enabled, updated_at
        FROM user_notification_preferences
        WHERE user_id = ?
@@ -88,7 +102,7 @@ class NotificationPreferencesService {
     );
     if (rows.length === 0) {
       await this.initializeUserDefaults(userId);
-      [rows] = await db.execute<RowDataPacket[]>(
+      [rows] = await db.execute<PreferenceRow[]>(
         `SELECT id, user_id AS employee_id, category, preferred_channel, enabled, updated_at
          FROM user_notification_preferences
          WHERE user_id = ?
@@ -106,7 +120,7 @@ class NotificationPreferencesService {
        ON DUPLICATE KEY UPDATE preferred_channel = VALUES(preferred_channel), enabled = VALUES(enabled)`,
       [randomUUID(), userId, dto.category, dto.preferred_channel, dto.enabled ? 1 : 0]
     );
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<PreferenceRow[]>(
       `SELECT id, user_id AS employee_id, category, preferred_channel, enabled, updated_at
        FROM user_notification_preferences
        WHERE user_id = ? AND category = ?`,

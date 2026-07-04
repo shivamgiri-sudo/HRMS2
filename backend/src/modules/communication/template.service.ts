@@ -26,8 +26,8 @@ Handlebars.registerHelper('currency', (amount: number) => {
   return `₹${Number(amount ?? 0).toLocaleString('en-IN')}`;
 });
 
-let _schemas: Record<string, any> | null = null;
-async function getVariableSchemas(): Promise<Record<string, any>> {
+let _schemas: Record<string, unknown> | null = null;
+async function getVariableSchemas(): Promise<Record<string, unknown>> {
   if (_schemas) return _schemas;
   try {
     const raw = await fs.readFile(path.join(TMPL_DIR, 'variable-schemas.json'), 'utf-8');
@@ -95,7 +95,7 @@ class TemplateService {
         [name]
       );
       if (rows[0]) {
-        const r = rows[0] as any;
+        const r = rows[0] as { body_html: string; body_text: string | null; subject: string | null; category: string };
         return { html: r.body_html, text: r.body_text ?? undefined, subject: r.subject ?? undefined, category: r.category };
       }
       const builtIn = builtInTemplates[name];

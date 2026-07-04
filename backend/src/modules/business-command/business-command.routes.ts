@@ -13,6 +13,10 @@ businessCommandRouter.use(requireAuth);
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
 
+interface LatestDateRow extends RowDataPacket {
+  latest_date: string | null;
+}
+
 businessCommandRouter.get("/overview", h(async (_req, res) => {
   res.json({ success: true, data: await businessCommandService.overview() });
 }));
@@ -62,11 +66,11 @@ businessCommandRouter.post("/revenue-risk/generate-daily", h(async (req, res) =>
   // Default to latest date that has attendance data (COSEC may lag 1-2 days behind today)
   let date = String(req.body?.date ?? "");
   if (!date || date === "today") {
-    const [latestRows] = await db.execute<RowDataPacket[]>(
-      "SELECT DATE_FORMAT(MAX(record_date), '%Y-%m-%d') AS latest_date FROM attendance_daily_record"
-    );
-    date = (latestRows[0] as any)?.latest_date ?? new Date().toISOString().slice(0, 10);
-  }
+      const [latestRows] = await db.execute<LatestDateRow[]>(
+        "SELECT DATE_FORMAT(MAX(record_date), '%Y-%m-%d') AS latest_date FROM attendance_daily_record"
+      );
+      date = latestRows[0]?.latest_date ?? new Date().toISOString().slice(0, 10);
+    }
   res.json({ success: true, data: await revenueRiskService.calculate(date, true) });
 }));
 

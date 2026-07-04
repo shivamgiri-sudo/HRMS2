@@ -12,6 +12,13 @@ import { notificationPreferencesService } from '../notification-preferences.serv
 import type { RowDataPacket } from 'mysql2';
 import { randomUUID } from 'crypto';
 
+interface DispatchLogRow extends RowDataPacket {
+  template_id: string | null;
+  recipient_employee_id: string | null;
+  channel: string;
+  status: string;
+}
+
 describe.skipIf(SKIP_LIVE_DB)('Communication Module Integration Tests', () => {
   let testTemplateId: string;
   let testEmployeeId: string;
@@ -162,13 +169,13 @@ describe.skipIf(SKIP_LIVE_DB)('Communication Module Integration Tests', () => {
     });
 
     it('should log dispatch in dispatch_log table', async () => {
-      const [rows] = await db.execute<RowDataPacket[]>(
+      const [rows] = await db.execute<DispatchLogRow[]>(
         'SELECT * FROM dispatch_log WHERE recipient_employee_id = ? ORDER BY created_at DESC LIMIT 1',
         [testEmployeeId]
       );
 
       expect(rows.length).toBeGreaterThan(0);
-      const log = rows[0] as any;
+      const log = rows[0];
       expect(log.template_id).toBe(testTemplateId);
       expect(log.recipient_employee_id).toBe(testEmployeeId);
       expect(log.channel).toBe('email');

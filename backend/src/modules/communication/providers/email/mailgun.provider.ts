@@ -2,6 +2,20 @@ import axios from 'axios';
 import type { CommunicationProvider, Attachment } from '../provider.interface.js';
 import type { ProviderResponse, DeliveryStatus } from '../../communication.types.js';
 
+interface MailgunErrorResponse {
+  message?: string;
+  id?: string;
+}
+
+interface MailgunEvent {
+  event: string;
+  timestamp?: number;
+}
+
+interface MailgunEventsResponse {
+  items?: MailgunEvent[];
+}
+
 export class MailgunProvider implements CommunicationProvider {
   private readonly baseUrl: string;
 
@@ -36,9 +50,11 @@ export class MailgunProvider implements CommunicationProvider {
         validateStatus: s => s < 500,
       });
       if (res.status >= 400) {
-        return { success: false, error: (res.data as any)?.message ?? `HTTP ${res.status}` };
+        const payload = res.data as MailgunErrorResponse;
+        return { success: false, error: payload.message ?? `HTTP ${res.status}` };
       }
-      return { success: true, message_id: (res.data as any)?.id };
+      const payload = res.data as MailgunErrorResponse;
+      return { success: true, message_id: payload.id };
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) };
     }
@@ -49,12 +65,13 @@ export class MailgunProvider implements CommunicationProvider {
       const res = await axios.get(`${this.baseUrl}/events?message-id=${encodeURIComponent(messageId)}`, {
         auth: { username: 'api', password: this.apiKey },
       });
-      const events: any[] = (res.data as any)?.items ?? [];
+      const payload = res.data as MailgunEventsResponse;
+      const events = payload.items ?? [];
       const latest = events[0];
       if (!latest) return { status: 'sent' };
-      const map: Record<string, string> = { delivered: 'delivered', failed: 'failed', bounced: 'bounced', opened: 'opened', clicked: 'clicked' };
+      const map: Record<string, DeliveryStatus['status']> = { delivered: 'delivered', failed: 'failed', bounced: 'bounced', opened: 'opened', clicked: 'clicked' };
       return {
-        status: (map[latest.event] ?? 'sent') as any,
+        status: map[latest.event] ?? 'sent',
         delivered_at: latest.timestamp ? new Date(latest.timestamp * 1000).toISOString() : undefined,
       };
     } catch (e) {

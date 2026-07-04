@@ -6,7 +6,7 @@
 
 import { logger } from '../logger.js';
 
-export type CacheValue = Record<string, any> | Array<any>;
+export type CacheValue = Record<string, unknown> | unknown[];
 
 /**
  * In-memory fallback cache for testing and environments without Redis

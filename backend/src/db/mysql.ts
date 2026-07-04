@@ -19,15 +19,14 @@ const _pool: Pool = mysql.createPool({
  * Typed db facade that accepts unknown[] params (mysql2 requires ExecuteValues,
  * but services build dynamic param arrays typed as unknown[]).
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyParams = any;
+type ExecuteParams = Parameters<Pool["execute"]>[1];
 
 export const db = {
   execute<T extends QueryResult = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, FieldPacket[]]> {
-    return _pool.execute<T>(sql, params as AnyParams);
+    return _pool.execute<T>(sql, params as ExecuteParams);
   },
   executeRun(sql: string, params?: unknown[]): Promise<[QueryResult, FieldPacket[]]> {
-    return _pool.execute(sql, params as AnyParams);
+    return _pool.execute(sql, params as ExecuteParams);
   },
   getConnection: _pool.getConnection.bind(_pool),
   query: _pool.query.bind(_pool),
@@ -35,7 +34,12 @@ export const db = {
 };
 
 // Catch pool-level errors to avoid unhandled rejections
-((_pool as any).pool ?? _pool).on?.("error", (err: Error) => {
+const poolEvents = _pool as unknown as {
+  pool?: { on?: (event: string, listener: (err: Error) => void) => void };
+  on?: { (event: string, listener: (err: Error) => void): void };
+};
+
+(poolEvents.pool ?? poolEvents).on?.("error", (err: Error) => {
   console.error("[mysql pool] unexpected error:", err.message);
 });
 

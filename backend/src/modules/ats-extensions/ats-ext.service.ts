@@ -55,6 +55,25 @@ function normalizeDate(value: unknown) {
   return String(value).slice(0, 10);
 }
 
+type RequisitionRow = RowDataPacket & Record<string, unknown> & { id: string; status: string };
+type BgvRow = RowDataPacket & Record<string, unknown>;
+type OfferRow = RowDataPacket & Record<string, unknown> & { id: string; status: string; candidate_id: string; email?: string | null };
+type DuplicateRow = RowDataPacket & {
+  id: string;
+  match_score: number | string | null;
+  detected_at: string;
+  resolved: number | boolean;
+  candidate_id: string;
+  candidate_name: string;
+  candidate_email: string | null;
+  candidate_mobile_masked: string;
+  matched_with_id: string;
+  matched_name: string;
+  matched_email: string | null;
+  matched_mobile_masked: string;
+};
+type FunnelRow = RowDataPacket & { stage: string; count: number | string | null };
+
 // ── Manpower Requisition ──────────────────────────────────────────────────────
 export const requisitionService = {
   async list(filters: { status?: string; process_id?: string; branch_id?: string }) {
@@ -75,7 +94,7 @@ export const requisitionService = {
         LIMIT 200`,
       params,
     );
-    return rows.map((row: any) => ({ ...row, status: reqUiStatus(String(row.status)) }));
+    return (rows as RequisitionRow[]).map((row) => ({ ...row, status: reqUiStatus(String(row.status)) }));
   },
 
   async create(data: Record<string, unknown>, raisedBy: string, req?: Request) {
@@ -89,7 +108,7 @@ export const requisitionService = {
     );
     await logSensitiveAction({ actor_user_id: raisedBy, action_type: "REQUISITION_CREATED", module_key: "ATS", entity_type: "manpower_requisition", entity_id: id, req });
     const list = await this.list({});
-    return list.find((row: any) => row.id === id) ?? { id };
+    return list.find((row: RequisitionRow) => row.id === id) ?? { id };
   },
 
   async approve(id: string, approvedBy: string, req?: Request, action: "approved" | "rejected" = "approved", remarks?: string) {
@@ -113,7 +132,7 @@ export const bgvService = {
         LIMIT 1`,
       [candidateId],
     );
-    const row = rows[0] as any;
+    const row = rows[0] as BgvRow | undefined;
     if (!row) return null;
     const mapped = bgvUiStatus(row.overall_status);
     return {
@@ -182,7 +201,7 @@ export const offerService = {
         LIMIT 100`,
       params,
     );
-    return rows.map((row: any) => ({
+    return (rows as OfferRow[]).map((row) => ({
       ...row,
       candidate_name: row.candidate_name,
       ctc_annual: rowNumber(row.offered_ctc),
@@ -212,7 +231,7 @@ export const offerService = {
     await db.execute("UPDATE ats_candidate SET offer_status = 'draft' WHERE id = ?", [data.candidate_id]);
     await logSensitiveAction({ actor_user_id: preparedBy, action_type: "OFFER_CREATED", module_key: "ATS", entity_type: "candidate", entity_id: data.candidate_id as string, req });
     const rows = await this.list(data.candidate_id as string);
-    return rows.find((row: any) => row.id === id) ?? { id };
+    return rows.find((row: OfferRow) => row.id === id) ?? { id };
   },
 
   async respondToOffer(offerId: string, action: "accepted" | "declined", token: string, candidateName: string, remarks?: string): Promise<void> {
@@ -223,7 +242,7 @@ export const offerService = {
         WHERE o.id = ? LIMIT 1`,
       [offerId],
     );
-    const offer = rows[0] as any;
+    const offer = rows[0] as OfferRow | undefined;
     if (!offer) throw new Error("Offer not found");
     if (!["draft", "sent"].includes(String(offer.status))) throw new Error("Offer is no longer pending response");
     const expectedToken = offerService.generateToken(offerId, offer.email ?? "");
@@ -271,7 +290,7 @@ export const duplicateService = {
         ORDER BY dl.detected_at DESC
         LIMIT 100`,
     );
-    return rows.map((row: any) => ({
+    return (rows as DuplicateRow[]).map((row) => ({
       id: row.id,
       match_score: row.match_score != null ? Number(row.match_score) / 100 : undefined,
       created_at: row.detected_at,
@@ -310,12 +329,12 @@ export const sourcingAnalyticsService = {
         ORDER BY count DESC`,
       params,
     );
-    return rows.map((row: any) => ({ stage: row.stage, count: Number(row.count ?? 0) }));
+    return (rows as FunnelRow[]).map((row) => ({ stage: row.stage, count: Number(row.count ?? 0) }));
   },
 
   async getStageWise(filters: { from_date?: string; to_date?: string; start_date?: string; end_date?: string; process_id?: string }) {
-    const funnel = await this.getFunnel(filters as any);
-    const ordered = funnel.map((row: any) => ({ stage: row.stage, count: row.count }));
+    const funnel = await this.getFunnel(filters as Record<string, string | undefined>);
+    const ordered = funnel.map((row) => ({ stage: row.stage, count: row.count }));
     const result: Array<{ from_stage: string; to_stage: string; conversion_rate: number; count_in: number; count_out: number }> = [];
     for (let i = 0; i < ordered.length - 1; i++) {
       const from = ordered[i];

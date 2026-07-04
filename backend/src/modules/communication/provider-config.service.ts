@@ -34,6 +34,22 @@ function decrypt(blob: string): string {
   return decipher.update(enc).toString('utf8') + decipher.final('utf8');
 }
 
+interface ProviderConfigRow extends RowDataPacket {
+  id: string;
+  channel: Channel;
+  provider_type: AnyProviderType;
+  config_json: unknown;
+  is_enabled: number;
+  test_ok: number | null;
+  test_error: string | null;
+  test_at: string | null;
+  secret_enc?: string | null;
+}
+
+interface UpdateResultRow extends RowDataPacket {
+  affectedRows: number;
+}
+
 function rowToConfig(r: RowDataPacket): ProviderConfig {
   return {
     id: r.id as string,
@@ -49,18 +65,18 @@ function rowToConfig(r: RowDataPacket): ProviderConfig {
 
 export const providerConfigService = {
   async listAll(): Promise<ProviderConfig[]> {
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<ProviderConfigRow[]>(
       'SELECT id, channel, provider_type, config_json, is_enabled, test_ok, test_error, test_at FROM communication_provider_config ORDER BY channel',
     );
-    return (rows as RowDataPacket[]).map(rowToConfig);
+    return rows.map(rowToConfig);
   },
 
   async getWithSecrets(channel: Channel): Promise<{ config: ProviderConfig; secrets: Record<string, string> }> {
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<ProviderConfigRow[]>(
       'SELECT * FROM communication_provider_config WHERE channel = ? LIMIT 1',
       [channel],
     );
-    const row = (rows as RowDataPacket[])[0];
+    const row = rows[0];
     if (!row) throw new Error(`No config for channel: ${channel}`);
     const secrets: Record<string, string> = {};
     if (row.secret_enc) {
@@ -85,11 +101,11 @@ export const providerConfigService = {
   },
 
   async setEnabled(channel: Channel, enabled: boolean, userId: string): Promise<void> {
-    const [result] = await db.execute(
+    const [result] = await db.execute<UpdateResultRow>(
       'UPDATE communication_provider_config SET is_enabled = ?, updated_by = ? WHERE channel = ?',
       [enabled ? 1 : 0, userId, channel],
     );
-    if ((result as any).affectedRows === 0) {
+    if (result.affectedRows === 0) {
       throw Object.assign(new Error(`No configuration found for channel: ${channel}. Run database migrations first.`), { statusCode: 404 });
     }
   },
@@ -102,11 +118,11 @@ export const providerConfigService = {
   },
 
   async loadActiveConfig(channel: Channel): Promise<{ provider_type: AnyProviderType; config: Record<string, unknown>; secrets: Record<string, string> } | null> {
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<ProviderConfigRow[]>(
       'SELECT provider_type, config_json, secret_enc FROM communication_provider_config WHERE channel = ? AND is_enabled = 1 LIMIT 1',
       [channel],
     );
-    const row = (rows as RowDataPacket[])[0];
+    const row = rows[0];
     if (!row) return null;
     const config = typeof row.config_json === 'string' ? JSON.parse(row.config_json) : (row.config_json ?? {});
     const secrets: Record<string, string> = {};

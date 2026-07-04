@@ -1,7 +1,8 @@
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { db } from '../../db/mysql.js';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import {
   getLiveQueue,
   getQueueMetrics,
@@ -16,6 +17,16 @@ import {
 
 export const queueRouter = Router();
 export const queuePublicRouter = Router();
+
+type AsyncHandler = (req: Request, res: Response) => Promise<unknown>;
+
+const h = (fn: AsyncHandler) => (req: Request, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unexpected error';
+}
 
 type PublicQueueEntry = {
   token_number: string;
@@ -54,7 +65,10 @@ async function loadPublicDisplay(branch?: string, date?: string) {
 }
 
 async function loadBranchNames(): Promise<string[]> {
-  const [rows] = await db.execute<any[]>(
+  interface BranchNameRow {
+    branch_name?: string | null;
+  }
+  const [rows] = await db.execute<BranchNameRow[]>(
     `SELECT DISTINCT branch_name
        FROM (
          SELECT COALESCE(
@@ -95,27 +109,27 @@ async function loadBranchNames(): Promise<string[]> {
   return Array.from(branches).sort((a, b) => a.localeCompare(b));
 }
 
-queuePublicRouter.get('/branches', async (_req, res) => {
+queuePublicRouter.get('/branches', h(async (_req: Request, res: Response) => {
   try {
     const data = await loadBranchNames();
     return res.json({ success: true, data });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
-queuePublicRouter.get('/public-display', async (req, res) => {
+queuePublicRouter.get('/public-display', h(async (req: Request, res: Response) => {
   try {
     const branch = req.query.branch as string | undefined;
     const date = req.query.date as string | undefined;
     const data = await loadPublicDisplay(branch, date);
     return res.json({ success: true, data });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
-queuePublicRouter.get('/display-stream', async (req, res) => {
+queuePublicRouter.get('/display-stream', async (req: Request, res: Response) => {
   const branch = req.query.branch as string | undefined;
   const date = req.query.date as string | undefined;
 
@@ -132,8 +146,8 @@ queuePublicRouter.get('/display-stream', async (req, res) => {
     try {
       const data = await loadPublicDisplay(branch, date);
       res.write(`data: ${JSON.stringify({ success: true, data, ts: Date.now() })}\n\n`);
-    } catch (error: any) {
-      res.write(`event: error\ndata: ${JSON.stringify({ success: false, message: error.message })}\n\n`);
+    } catch (error: unknown) {
+      res.write(`event: error\ndata: ${JSON.stringify({ success: false, message: getErrorMessage(error) })}\n\n`);
     }
   };
 
@@ -159,7 +173,7 @@ queueRouter.use(requireAuth);
 queueRouter.use(requireRole('admin', 'hr', 'recruiter', 'manager'));
 
 // ── 1. Get live queue with filters ────────────────────────────────────────────
-queueRouter.get('/live', async (req, res) => {
+queueRouter.get('/live', h(async (req: Request, res: Response) => {
   try {
     const filters: QueueFilters = {
       branch: req.query.branch as string,
@@ -171,28 +185,28 @@ queueRouter.get('/live', async (req, res) => {
 
     const queue = await getLiveQueue(filters);
     return res.json({ success: true, data: queue });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 2. Get queue metrics ───────────────────────────────────────────────────────
-queueRouter.get('/metrics', async (req, res) => {
+queueRouter.get('/metrics', h(async (req: Request, res: Response) => {
   try {
     const branch = req.query.branch as string | undefined;
     const date = req.query.date as string | undefined;
 
     const metrics = await getQueueMetrics(branch, date);
     return res.json({ success: true, data: metrics });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 3. Get next candidate for recruiter ───────────────────────────────────────
-queueRouter.get('/next-candidate', async (req: any, res) => {
+queueRouter.get('/next-candidate', h(async (req: Request, res: Response) => {
   try {
-    const recruiterId = req.authUser.id;
+    const recruiterId = (req as AuthenticatedRequest).authUser!.id;
     const branch = req.query.branch as string;
 
     if (!branch) {
@@ -213,13 +227,13 @@ queueRouter.get('/next-candidate', async (req: any, res) => {
     }
 
     return res.json({ success: true, data: nextCandidate });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 4. Update queue status ─────────────────────────────────────────────────────
-queueRouter.post('/update-status', async (req, res) => {
+queueRouter.post('/update-status', h(async (req: Request, res: Response) => {
   try {
     const { queue_id, status } = req.body;
 
@@ -244,24 +258,24 @@ queueRouter.post('/update-status', async (req, res) => {
       success: true,
       message: `Queue status updated to ${status}`,
     });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 5. Get recruiter's queue ───────────────────────────────────────────────────
-queueRouter.get('/my-queue', async (req: any, res) => {
+queueRouter.get('/my-queue', h(async (req: Request, res: Response) => {
   try {
-    const recruiterId = req.authUser.id;
+    const recruiterId = (req as AuthenticatedRequest).authUser!.id;
     const queue = await getRecruiterQueue(recruiterId);
     return res.json({ success: true, data: queue });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 6. Call next candidate ─────────────────────────────────────────────────────
-queueRouter.post('/call-next', async (req, res) => {
+queueRouter.post('/call-next', h(async (req: Request, res: Response) => {
   try {
     const { queue_id } = req.body;
 
@@ -278,13 +292,13 @@ queueRouter.post('/call-next', async (req, res) => {
       success: true,
       message: 'Candidate called successfully',
     });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 7. Mark as no-show ─────────────────────────────────────────────────────────
-queueRouter.post('/mark-no-show', async (req, res) => {
+queueRouter.post('/mark-no-show', h(async (req: Request, res: Response) => {
   try {
     const { queue_id } = req.body;
 
@@ -301,13 +315,13 @@ queueRouter.post('/mark-no-show', async (req, res) => {
       success: true,
       message: 'Candidate marked as no-show',
     });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 8. Get queue position for candidate ───────────────────────────────────────
-queueRouter.get('/position/:candidateId', async (req, res) => {
+queueRouter.get('/position/:candidateId', h(async (req: Request, res: Response) => {
   try {
     const { candidateId } = req.params;
     const position = await getQueuePosition(candidateId);
@@ -316,7 +330,7 @@ queueRouter.get('/position/:candidateId', async (req, res) => {
       success: true,
       data: { position },
     });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));

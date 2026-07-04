@@ -19,7 +19,7 @@ async function executeSalesFunnelReport(): Promise<void> {
 
   try {
     // Create connection to db_external (using same credentials as main DB)
-    const connection = await mysql.createConnection({
+    connection = await mysql.createConnection({
       host: process.env.DB_HOST || "localhost",
       port: parseInt(process.env.DB_PORT || "3306"),
       user: process.env.DB_USER || "root",
@@ -184,8 +184,6 @@ async function executeSalesFunnelReport(): Promise<void> {
     console.log("=" + "=".repeat(99));
     console.log("Report completed successfully!");
     console.log("=" + "=".repeat(99));
-
-    await connection.end();
   } catch (error) {
     if (error instanceof Error) {
       console.error("Error executing sales funnel report:");
@@ -197,6 +195,8 @@ async function executeSalesFunnelReport(): Promise<void> {
       console.error("Unknown error:", error);
     }
     process.exit(1);
+  } finally {
+    await connection?.end();
   }
 }
 

@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import type { RowDataPacket } from "mysql2";
 import { authService } from '../modules/auth/auth.service.js';
 import { getUserRoleContext } from '../shared/roleResolver.js';
 
@@ -11,6 +12,8 @@ export interface AuthenticatedRequest extends Request {
     isReadOnly?: boolean;
   };
 }
+
+type ReadOnlyRow = RowDataPacket & { is_read_only?: unknown };
 
 // Demo user map: mock-token-{role} → user id, email, and role (matches demoCreds.ts in frontend)
 const DEMO_TOKEN_MAP: Record<string, { id: string; email: string; role: string }> = {
@@ -100,7 +103,7 @@ export async function requireAuth(
           'SELECT is_read_only FROM auth_user WHERE id = ? LIMIT 1',
           [mysqlUser.id]
         );
-        isReadOnly = Array.isArray(rows) && rows.length > 0 ? !!(rows[0] as any).is_read_only : false;
+        isReadOnly = Array.isArray(rows) && rows.length > 0 ? !!(rows[0] as ReadOnlyRow).is_read_only : false;
       } catch { /* keep false */ }
       req.authUser = {
         id: mysqlUser.id,

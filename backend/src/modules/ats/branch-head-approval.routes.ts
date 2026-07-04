@@ -1,5 +1,5 @@
-import { Router } from 'express';
-import { requireAuth } from '../../middleware/authMiddleware.js';
+import { Router, type Request, type Response, type NextFunction } from 'express';
+import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import {
   getPendingApprovals,
@@ -11,12 +11,22 @@ import {
 
 export const branchHeadApprovalRouter = Router();
 
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unexpected error';
+}
+
 // All routes require authentication and branch head role
 branchHeadApprovalRouter.use(requireAuth);
 branchHeadApprovalRouter.use(requireRole('admin', 'manager', 'branch_head'));
 
 // ── 1. Get pending approvals ──────────────────────────────────────────────────
-branchHeadApprovalRouter.get('/pending', async (req: any, res) => {
+branchHeadApprovalRouter.get('/pending', h(async (req, res) => {
   try {
     const branchHeadId = req.authUser.id;
     const approvals = await getPendingApprovals(branchHeadId);
@@ -25,16 +35,16 @@ branchHeadApprovalRouter.get('/pending', async (req: any, res) => {
       success: true,
       data: approvals,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: getErrorMessage(error),
     });
   }
-});
+}));
 
 // ── 2. Process approval (approve/reject) ──────────────────────────────────────
-branchHeadApprovalRouter.post('/process', async (req: any, res) => {
+branchHeadApprovalRouter.post('/process', h(async (req, res) => {
   try {
     const input: ApprovalInput = {
       approval_id: req.body.approval_id,
@@ -60,16 +70,16 @@ branchHeadApprovalRouter.post('/process', async (req: any, res) => {
     const result = await processBranchHeadApproval(input);
 
     return res.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: getErrorMessage(error),
     });
   }
-});
+}));
 
 // ── 3. Get approval history for a candidate ───────────────────────────────────
-branchHeadApprovalRouter.get('/history/:candidateId', async (req, res) => {
+branchHeadApprovalRouter.get('/history/:candidateId', h(async (req: Request, res: Response) => {
   try {
     const { candidateId } = req.params;
     const history = await getApprovalHistory(candidateId);
@@ -78,16 +88,16 @@ branchHeadApprovalRouter.get('/history/:candidateId', async (req, res) => {
       success: true,
       data: history,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: getErrorMessage(error),
     });
   }
-});
+}));
 
 // ── 4. Get branch head statistics ─────────────────────────────────────────────
-branchHeadApprovalRouter.get('/stats', async (req: any, res) => {
+branchHeadApprovalRouter.get('/stats', h(async (req, res) => {
   try {
     const branchHeadId = req.authUser.id;
     const stats = await getBranchHeadStats(branchHeadId);
@@ -96,10 +106,10 @@ branchHeadApprovalRouter.get('/stats', async (req: any, res) => {
       success: true,
       data: stats,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: getErrorMessage(error),
     });
   }
-});
+}));

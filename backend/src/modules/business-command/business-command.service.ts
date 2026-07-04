@@ -14,9 +14,15 @@ export const businessCommandService = {
       tableExists("client_contract_master"),
     ]);
 
+    interface ActionSummaryRow {
+      open_count?: number;
+      critical_open?: number;
+      overdue?: number;
+    }
+
     // Run all independent sections in parallel
     const [actions, revenueRisk, activeEmployees, attendanceData, supportData, peopleRiskData, grievanceData, payrollData] = await Promise.all([
-      businessActionsService.summary() as Promise<any>,
+      businessActionsService.summary() as Promise<ActionSummaryRow>,
       revenueRiskService.snapshot(),
       scalar("SELECT COUNT(*) FROM employees WHERE active_status = 1 AND LOWER(COALESCE(employment_status, 'active')) = 'active'"),
       hasAttendance

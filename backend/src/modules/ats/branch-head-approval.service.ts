@@ -45,12 +45,26 @@ export interface EmployeeCodeGeneration {
   is_offrole: boolean;
 }
 
+interface BranchRow extends RowDataPacket {
+  branch_name: string;
+}
+
+interface ApprovalHistoryRow extends RowDataPacket {
+  id: string;
+  approval_status: 'pending' | 'approved' | 'rejected';
+  employee_code_generated?: number | null;
+  remarks?: string | null;
+  approved_at?: string | null;
+  branch_head_name?: string | null;
+  branch_head_code?: string | null;
+}
+
 /**
  * Get pending approvals for branch head
  */
 export async function getPendingApprovals(branchHeadId: string): Promise<PendingApproval[]> {
   // Get branch head's assigned branches
-  const [branches] = await db.execute<RowDataPacket[]>(
+  const [branches] = await db.execute<BranchRow[]>(
     `SELECT DISTINCT branch_name
      FROM branch_head_assignments
      WHERE branch_head_id = ? AND is_active = TRUE`,
@@ -61,7 +75,7 @@ export async function getPendingApprovals(branchHeadId: string): Promise<Pending
     return [];
   }
 
-  const branchNames = branches.map((b: any) => b.branch_name);
+  const branchNames = branches.map((b) => b.branch_name);
   const placeholders = branchNames.map(() => '?').join(',');
 
   // Get pending approvals for these branches
@@ -271,8 +285,8 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
 /**
  * Get approval history for a candidate
  */
-export async function getApprovalHistory(candidateId: string): Promise<any[]> {
-  const [history] = await db.execute<RowDataPacket[]>(
+export async function getApprovalHistory(candidateId: string): Promise<ApprovalHistoryRow[]> {
+  const [history] = await db.execute<ApprovalHistoryRow[]>(
     `SELECT
       bha.id,
       bha.approval_status,

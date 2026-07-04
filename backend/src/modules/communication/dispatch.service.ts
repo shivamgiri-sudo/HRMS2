@@ -17,6 +17,47 @@ import type {
   Channel,
 } from './communication.types.js';
 
+interface EmployeeRecipientRow extends RowDataPacket {
+  id: string;
+  user_id: string | null;
+  full_name: string;
+  email: string | null;
+  phone: string | null;
+}
+
+interface SubjectRow extends RowDataPacket {
+  subject: string | null;
+}
+
+interface EmployeeIdRow extends RowDataPacket {
+  id: string;
+}
+
+interface DispatchLogTotalRow extends RowDataPacket {
+  total: number;
+}
+
+interface DispatchCountRow extends RowDataPacket {
+  c: number;
+}
+
+interface DeliveryWindowRow extends RowDataPacket {
+  t: number;
+  d?: number | null;
+  o?: number | null;
+}
+
+interface ChannelCountRow extends RowDataPacket {
+  channel: Channel;
+  c: number;
+}
+
+interface RetryLogRow extends RowDataPacket {
+  channel: Channel;
+  recipient_contact: string;
+  body_preview: string | null;
+}
+
 class DispatchService {
   private humanizeTemplateName(name: string): string {
     return name
@@ -37,7 +78,7 @@ class DispatchService {
 
   async send(dto: SendMessageDTO): Promise<DispatchResult> {
     const placeholders = dto.recipient_employee_ids.map(() => '?').join(',');
-    const [employees] = await db.execute<RowDataPacket[]>(
+    const [employees] = await db.execute<EmployeeRecipientRow[]>(
       `SELECT id, user_id, full_name, email, mobile AS phone FROM employees WHERE id IN (${placeholders})`,
       dto.recipient_employee_ids
     );
@@ -46,7 +87,7 @@ class DispatchService {
     const failed: string[] = [];
     let portalCreated = 0;
 
-    for (const emp of employees as any[]) {
+    for (const emp of employees) {
       try {
         // Get template category and name for preference routing
         let category = 'announcements';
@@ -150,10 +191,10 @@ class DispatchService {
       return;
     }
 
-    const [logRows] = await db.execute<RowDataPacket[]>(
+    const [logRows] = await db.execute<SubjectRow[]>(
       'SELECT subject FROM dispatch_log WHERE id = ?', [dispatchId]
     );
-    const subject = (logRows[0] as any)?.subject ?? '';
+    const subject = logRows[0]?.subject ?? '';
 
     const body = channel === 'email' ? rendered.html : (rendered.text ?? rendered.html);
     const result = await provider.send(contact, subject, body);
@@ -171,11 +212,11 @@ class DispatchService {
     if (dto.recipient_filter.process_id)  { q += ' AND process_id = ?';  p.push(dto.recipient_filter.process_id); }
     if (dto.recipient_filter.designation) { q += ' AND designation = ?'; p.push(dto.recipient_filter.designation); }
     if (dto.recipient_filter.status)      { q += ' AND status = ?';      p.push(dto.recipient_filter.status); }
-    const [rows] = await db.execute<RowDataPacket[]>(q, p);
+    const [rows] = await db.execute<EmployeeIdRow[]>(q, p);
     return this.send({
       template_id:            dto.template_id,
       template_name:          dto.template_name,
-      recipient_employee_ids: (rows as any[]).map(r => r.id),
+      recipient_employee_ids: rows.map(r => r.id),
       data:                   dto.data,
       channel:                dto.channel,
       channels:               dto.channels,
@@ -184,12 +225,12 @@ class DispatchService {
   }
 
   async retry(dispatchId: string): Promise<void> {
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<RetryLogRow[]>(
       'SELECT channel, recipient_contact, body_preview FROM dispatch_log WHERE id = ?',
       [dispatchId]
     );
     if (!rows[0]) throw new Error('Dispatch not found');
-    const log = rows[0] as any;
+    const log = rows[0];
     await db.execute(
       "UPDATE dispatch_log SET status = 'queued', retry_count = retry_count + 1 WHERE id = ?",
       [dispatchId]
@@ -212,38 +253,34 @@ class DispatchService {
     if (filters.date_to)     { q += ' AND sent_at <= ?';              p.push(filters.date_to); }
 
     const countQ = q.replace('SELECT *', 'SELECT COUNT(*) AS total');
-    const [countRows] = await db.execute<RowDataPacket[]>(countQ, p);
+    const [countRows] = await db.execute<DispatchLogTotalRow[]>(countQ, p);
 
     q += ` ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
     const [rows] = await db.execute<RowDataPacket[]>(q, p);
 
     return {
       logs:  rows as DispatchLog[],
-      total: (countRows[0] as any).total,
+      total: countRows[0]?.total ?? 0,
       page,
       limit,
     };
   }
 
   async getStats(): Promise<DispatchStats> {
-    const [[today]]   = await db.execute<RowDataPacket[]>("SELECT COUNT(*) c FROM dispatch_log WHERE DATE(sent_at) = CURDATE()");
-    const [[deliv]]   = await db.execute<RowDataPacket[]>("SELECT COUNT(*) t, SUM(status = 'sent') d FROM dispatch_log WHERE sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
-    const [[opened]]  = await db.execute<RowDataPacket[]>("SELECT COUNT(*) t, SUM(status = 'opened') o FROM dispatch_log WHERE channel = 'email' AND sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
-    const [[failed]]  = await db.execute<RowDataPacket[]>("SELECT COUNT(*) c FROM dispatch_log WHERE status = 'failed' AND retry_count < 3");
-    const [chRows]    = await db.execute<RowDataPacket[]>("SELECT channel, COUNT(*) c FROM dispatch_log WHERE DATE(sent_at) = CURDATE() GROUP BY channel");
+    const [todayRows]  = await db.execute<DispatchCountRow[]>("SELECT COUNT(*) c FROM dispatch_log WHERE DATE(sent_at) = CURDATE()");
+    const [delivRows]  = await db.execute<DeliveryWindowRow[]>("SELECT COUNT(*) t, SUM(status = 'sent') d FROM dispatch_log WHERE sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+    const [openedRows] = await db.execute<DeliveryWindowRow[]>("SELECT COUNT(*) t, SUM(status = 'opened') o FROM dispatch_log WHERE channel = 'email' AND sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+    const [failedRows] = await db.execute<DispatchCountRow[]>("SELECT COUNT(*) c FROM dispatch_log WHERE status = 'failed' AND retry_count < 3");
+    const [chRows]     = await db.execute<ChannelCountRow[]>("SELECT channel, COUNT(*) c FROM dispatch_log WHERE DATE(sent_at) = CURDATE() GROUP BY channel");
     const by_channel = { email: 0, sms: 0, whatsapp: 0 };
-    for (const r of chRows as any[]) {
+    for (const r of chRows) {
       by_channel[r.channel as keyof typeof by_channel] = Number(r.c);
     }
-    const t = today as any;
-    const d = deliv as any;
-    const op = opened as any;
-    const f = failed as any;
     return {
-      total_sent_today: Number(t.c),
-      delivery_rate: d.t > 0 ? (Number(d.d) / Number(d.t)) * 100 : 0,
-      open_rate:     op.t > 0 ? (Number(op.o) / Number(op.t)) * 100 : 0,
-      failed_count:  Number(f.c),
+      total_sent_today: Number(todayRows[0]?.c ?? 0),
+      delivery_rate: Number(delivRows[0]?.t ?? 0) > 0 ? (Number(delivRows[0]?.d ?? 0) / Number(delivRows[0]?.t ?? 0)) * 100 : 0,
+      open_rate: Number(openedRows[0]?.t ?? 0) > 0 ? (Number(openedRows[0]?.o ?? 0) / Number(openedRows[0]?.t ?? 0)) * 100 : 0,
+      failed_count: Number(failedRows[0]?.c ?? 0),
       by_channel,
     };
   }

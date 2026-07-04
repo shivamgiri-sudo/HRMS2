@@ -1,16 +1,19 @@
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { db } from '../../db/mysql.js';
-import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { requireWriteAccess } from '../../middleware/authMiddleware.js';
 import type { RowDataPacket } from 'mysql2';
 import { randomUUID } from 'crypto';
 
 const router = Router();
-const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
 
 // GET /api/ats/jclr/:candidateId
-router.get('/:candidateId', requireAuth, requireRole('payroll_hr', 'payroll_head', 'admin', 'branch_head', 'bm', 'hr', 'ho_hr'), h(async (req: any, res: any) => {
+router.get('/:candidateId', requireAuth, requireRole('payroll_hr', 'payroll_head', 'admin', 'branch_head', 'bm', 'hr', 'ho_hr'), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     'SELECT * FROM jclr_entries WHERE candidate_id = ? LIMIT 1',
     [req.params.candidateId]
@@ -19,9 +22,9 @@ router.get('/:candidateId', requireAuth, requireRole('payroll_hr', 'payroll_head
 }));
 
 // POST /api/ats/jclr/:candidateId — upsert JCLR entry
-router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payroll_hr', 'payroll_head', 'admin'), h(async (req: any, res: any) => {
+router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payroll_hr', 'payroll_head', 'admin'), h(async (req: AuthenticatedRequest, res: Response) => {
   const { candidateId } = req.params;
-  const f = req.body as Record<string, any>;
+  const f = req.body as Record<string, unknown>;
   await db.execute(
     `INSERT INTO jclr_entries (
        id, candidate_id, employee_location, kpi_applicable, billable_status,
@@ -82,7 +85,7 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
 }));
 
 // POST /api/ats/jclr/:candidateId/approve — BM approves
-router.post('/:candidateId/approve', requireAuth, requireWriteAccess, requireRole('branch_head', 'bm', 'admin'), h(async (req: any, res: any) => {
+router.post('/:candidateId/approve', requireAuth, requireWriteAccess, requireRole('branch_head', 'bm', 'admin'), h(async (req: AuthenticatedRequest, res: Response) => {
   const { candidateId } = req.params;
   const { remarks } = req.body as { remarks?: string };
   if (!remarks || remarks.trim().length < 3) {

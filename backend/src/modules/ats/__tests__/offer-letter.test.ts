@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { db } from '../../../db/mysql.js';
 import {
   generateOfferLetter,
@@ -11,19 +12,33 @@ import {
 // Legacy destructive database suite. Run only after its fixtures are migrated to
 // the current UUID-based ATS schema and an isolated integration database.
 describe.skip('Offer Letter Service', () => {
+  interface OfferRow extends RowDataPacket {
+    position: string;
+    status: string;
+    salary_ctc: number;
+    sent_at: string | null;
+    accepted_at: string | null;
+    candidate_id: string;
+    id: string;
+  }
+
+  interface CandidateStageRow extends RowDataPacket {
+    current_stage: string;
+  }
+
   let testCandidateId: string;
   let testOfferId: string;
 
   beforeEach(async () => {
     // Create test candidate
-    const [result] = await db.execute(
+    const [result] = await db.execute<ResultSetHeader>(
       `INSERT INTO ats_candidate (
         candidate_id, full_name, mobile, email, applied_for_role,
         applied_for_branch, branch_display_name, current_stage, active_status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ['TEST001', 'Test Candidate', '9999999999', 'test@example.com', 'Software Engineer', 'MUM', 'Mumbai', 'payroll_validated', 1]
     );
-    testCandidateId = (result as any).insertId;
+    testCandidateId = String(result.insertId);
 
     // Create payroll validation record
     await db.execute(
@@ -68,13 +83,13 @@ describe.skip('Offer Letter Service', () => {
       testOfferId = result.offer_letter_id!;
 
       // Verify database record
-      const [offers] = await db.execute(
+      const [offers] = await db.execute<OfferRow[]>(
         'SELECT * FROM ats_offer_letters WHERE id = ?',
         [testOfferId]
       );
-      expect((offers as any[]).length).toBe(1);
-      expect((offers as any[])[0].position).toBe('Software Engineer');
-      expect((offers as any[])[0].status).toBe('draft');
+      expect(offers.length).toBe(1);
+      expect(offers[0].position).toBe('Software Engineer');
+      expect(offers[0].status).toBe('draft');
     });
 
     it('should calculate CTC correctly', async () => {
@@ -95,7 +110,7 @@ describe.skip('Offer Letter Service', () => {
 
       testOfferId = result.offer_letter_id!;
 
-      const [offers] = await db.execute(
+      const [offers] = await db.execute<OfferRow[]>(
         'SELECT salary_ctc FROM ats_offer_letters WHERE id = ?',
         [testOfferId]
       );
@@ -103,7 +118,7 @@ describe.skip('Offer Letter Service', () => {
       // CTC = gross + PF employer + ESIC employer
       // 50000 + 1800 + 750 = 52550 per month = 630600 per annum
       const expectedCTC = (50000 + 1800 + 750);
-      expect((offers as any[])[0].salary_ctc).toBe(expectedCTC);
+      expect(offers[0].salary_ctc).toBe(expectedCTC);
     });
 
     it('should update candidate stage to offer_pending', async () => {
@@ -122,23 +137,23 @@ describe.skip('Offer Letter Service', () => {
         salary_other_allowances: 12500,
       });
 
-      const [candidates] = await db.execute(
+      const [candidates] = await db.execute<CandidateStageRow[]>(
         'SELECT current_stage FROM ats_candidate WHERE id = ?',
         [testCandidateId]
       );
-      expect((candidates as any[])[0].current_stage).toBe('offer_pending');
+      expect(candidates[0].current_stage).toBe('offer_pending');
     });
 
     it('should fail if salary not validated', async () => {
       // Create candidate without salary validation
-      const [result] = await db.execute(
+      const [result] = await db.execute<ResultSetHeader>(
         `INSERT INTO ats_candidate (
           candidate_id, full_name, mobile, applied_for_role,
           applied_for_branch, current_stage, active_status
         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         ['TEST002', 'Test Candidate 2', '9999999998', 'Analyst', 'DEL', 'bgv_verified', 1]
       );
-      const candidateId2 = (result as any).insertId;
+      const candidateId2 = String(result.insertId);
 
       await expect(
         generateOfferLetter({
@@ -186,12 +201,12 @@ describe.skip('Offer Letter Service', () => {
 
       expect(result.success).toBe(true);
 
-      const [offers] = await db.execute(
+      const [offers] = await db.execute<OfferRow[]>(
         'SELECT status, sent_at FROM ats_offer_letters WHERE id = ?',
         [testOfferId]
       );
-      expect((offers as any[])[0].status).toBe('sent');
-      expect((offers as any[])[0].sent_at).not.toBeNull();
+      expect(offers[0].status).toBe('sent');
+      expect(offers[0].sent_at).not.toBeNull();
     });
   });
 
@@ -220,22 +235,22 @@ describe.skip('Offer Letter Service', () => {
 
       expect(result.success).toBe(true);
 
-      const [offers] = await db.execute(
+      const [offers] = await db.execute<OfferRow[]>(
         'SELECT status, accepted_at FROM ats_offer_letters WHERE id = ?',
         [testOfferId]
       );
-      expect((offers as any[])[0].status).toBe('accepted');
-      expect((offers as any[])[0].accepted_at).not.toBeNull();
+      expect(offers[0].status).toBe('accepted');
+      expect(offers[0].accepted_at).not.toBeNull();
     });
 
     it('should update candidate stage to offer_accepted', async () => {
       await acceptOfferLetter(testOfferId);
 
-      const [candidates] = await db.execute(
+      const [candidates] = await db.execute<CandidateStageRow[]>(
         'SELECT current_stage FROM ats_candidate WHERE id = ?',
         [testCandidateId]
       );
-      expect((candidates as any[])[0].current_stage).toBe('offer_accepted');
+      expect(candidates[0].current_stage).toBe('offer_accepted');
     });
   });
 

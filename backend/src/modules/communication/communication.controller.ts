@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { templateService } from './template.service.js';
 import { dispatchService } from './dispatch.service.js';
 import { notificationPreferencesService } from './notification-preferences.service.js';
@@ -14,7 +15,7 @@ import {
 } from './communication.validation.js';
 
 function userId(req: Request): string {
-  return (req as any).authUser?.id ?? 'system';
+  return (req as AuthenticatedRequest).authUser?.id ?? 'system';
 }
 
 export const communicationController = {
@@ -100,7 +101,7 @@ export const communicationController = {
   // Preferences
   async getPreferences(req: Request, res: Response) {
     try {
-      const userId = (req as any).authUser?.id;
+      const userId = (req as AuthenticatedRequest).authUser?.id;
       if (!userId) return res.status(401).json({ error: 'Unauthorized' });
       const { getEmployeeForUser } = await import('../../shared/accessGuard.js');
       const emp = await getEmployeeForUser(userId);
@@ -113,7 +114,7 @@ export const communicationController = {
 
   async updatePreference(req: Request, res: Response) {
     try {
-      const userId = (req as any).authUser?.id;
+      const userId = (req as AuthenticatedRequest).authUser?.id;
       if (!userId) return res.status(401).json({ error: 'Unauthorized' });
       const { getEmployeeForUser } = await import('../../shared/accessGuard.js');
       const emp = await getEmployeeForUser(userId);

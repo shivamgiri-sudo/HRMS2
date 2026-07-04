@@ -14,11 +14,15 @@ const maskLast4 = (value: unknown, prefix = "XXXXXX") => {
 };
 
 async function logEvent(candidateId: string, eventType: string, payload?: unknown, checkId?: string | null, meta?: { actorType?: "candidate" | "hr" | "system" | "provider"; actorId?: string | null; ip?: string; userAgent?: string }) {
+  const eventStatus =
+    payload && typeof payload === "object" && "status" in payload
+      ? String((payload as { status?: unknown }).status ?? null)
+      : null;
   await db.execute(
     `INSERT INTO candidate_bgv_verification_event
        (id, candidate_id, check_id, event_type, event_status, event_payload, actor_type, actor_id, ip_address, user_agent)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [randomUUID(), candidateId, checkId ?? null, eventType, (payload as any)?.status ?? null, payload ? JSON.stringify(payload) : null, meta?.actorType ?? "system", meta?.actorId ?? null, meta?.ip ?? null, meta?.userAgent ?? null]
+    [randomUUID(), candidateId, checkId ?? null, eventType, eventStatus, payload ? JSON.stringify(payload) : null, meta?.actorType ?? "system", meta?.actorId ?? null, meta?.ip ?? null, meta?.userAgent ?? null]
   );
 }
 
@@ -48,8 +52,9 @@ async function createOrUpdateCheck(candidateId: string, checkType: string, statu
     `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
     [candidateId, checkType]
   );
-  if ((existing as any[]).length > 0) {
-    const existingId = (existing[0] as any).id;
+  const existingRows = existing as Array<RowDataPacket & { id: string }>;
+  if (existingRows.length > 0) {
+    const existingId = existingRows[0].id;
     await db.execute(
       `UPDATE candidate_bgv_check
          SET status = ?, source_document_id = ?, provider_key = ?, provider_request_id = ?,
@@ -218,12 +223,12 @@ export async function verifyBankByToken(token: string, input: { accountNo?: stri
 export async function verifyBankForCandidate(candidateId: string, input: { accountNo?: string; ifscCode?: string; accountHolderName?: string }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
   await ensureConsent(candidateId);
   const candidate = await getCandidateIdentity(candidateId);
-  let accountNo = String(input.accountNo ?? "").trim();
+  const accountNo = String(input.accountNo ?? "").trim();
   let ifscCode = String(input.ifscCode ?? "").trim().toUpperCase();
   let accountHolderName = input.accountHolderName;
   if (!accountNo || !ifscCode) {
     const [bankRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-    const bank = bankRows[0];
+    const bank = bankRows[0] as RowDataPacket & { ifsc_code?: string | null; account_holder_name?: string | null } | undefined;
     if (!bank) throw Object.assign(new Error("Bank details are required before verification"), { statusCode: 400 });
     ifscCode = ifscCode || String(bank.ifsc_code ?? "");
     accountHolderName = accountHolderName || String(bank.account_holder_name ?? "");

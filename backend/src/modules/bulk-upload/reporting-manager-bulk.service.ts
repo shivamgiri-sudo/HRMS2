@@ -2,11 +2,27 @@ import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 
+interface BatchRow extends RowDataPacket {
+  id: string;
+  row_no: number;
+  normalized_data: unknown;
+}
+
+interface EmployeeRow extends RowDataPacket {
+  id: string;
+  reporting_manager_id: string | null;
+}
+
+interface ManagerRow extends RowDataPacket {
+  id: string;
+  mgr_name: string | null;
+}
+
 export async function importReportingManagerBatch(
   batchId: string,
   importedByUserId: string,
 ): Promise<{ importedRows: number; errorRows: number; errors: string[] }> {
-  const [batchRows] = await db.execute<RowDataPacket[]>(
+  const [batchRows] = await db.execute<BatchRow[]>(
     `SELECT id, row_no, normalized_data FROM upload_batch_row
      WHERE upload_batch_id = ? AND row_status IN ('valid','pending')
      ORDER BY row_no`,
@@ -17,9 +33,9 @@ export async function importReportingManagerBatch(
   let errorRows = 0;
   const errors: string[] = [];
 
-  for (const row of batchRows as any[]) {
-    const rowId: string = row.id;
-    const rowNo: number = row.row_no;
+  for (const row of batchRows) {
+    const rowId = row.id;
+    const rowNo = row.row_no;
     const data = typeof row.normalized_data === 'string'
       ? JSON.parse(row.normalized_data)
       : (row.normalized_data ?? {});
@@ -42,11 +58,11 @@ export async function importReportingManagerBatch(
     }
 
     // Lookup employee
-    const [empRows] = await db.execute<RowDataPacket[]>(
+    const [empRows] = await db.execute<EmployeeRow[]>(
       `SELECT id, reporting_manager_id FROM employees WHERE employee_code = ? AND active_status = 1 LIMIT 1`,
       [employeeCode],
     );
-    const emp = (empRows as any[])[0];
+    const emp = empRows[0];
     if (!emp) {
       const msg = `Employee "${employeeCode}" not found or inactive`;
       await db.execute(
@@ -71,12 +87,12 @@ export async function importReportingManagerBatch(
     }
 
     // Lookup manager
-    const [mgrRows] = await db.execute<RowDataPacket[]>(
+    const [mgrRows] = await db.execute<ManagerRow[]>(
       `SELECT id, CONCAT(first_name, ' ', COALESCE(last_name,'')) AS mgr_name
        FROM employees WHERE employee_code = ? AND active_status = 1 LIMIT 1`,
       [managerCode],
     );
-    const mgr = (mgrRows as any[])[0];
+    const mgr = mgrRows[0];
     if (!mgr) {
       const msg = `Manager "${managerCode}" not found or inactive`;
       await db.execute(

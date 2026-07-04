@@ -1,13 +1,19 @@
 // backend/src/modules/apr/apr.routes.ts
 import { Router } from 'express';
+import type { NextFunction, Response } from 'express';
 import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { db } from '../../db/mysql.js';
 import { getAprData } from './apr.service.js';
 import type { RowDataPacket } from 'mysql2';
 
 const router = Router();
-const h = (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) => fn(req, res).catch(next);
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+
+const h = (fn: AsyncHandler) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => void fn(req, res).catch(next);
+
+type RoleRow = RowDataPacket & { role_key?: string | null };
+type EmployeeRow = RowDataPacket & { employee_code?: string | null };
 
 router.use(requireAuth);
 
@@ -20,7 +26,7 @@ router.get('/data', h(async (req: AuthenticatedRequest, res) => {
     `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
     [userId]
   );
-  const roles = (roleRows as RowDataPacket[]).map((r: any) => r.role_key as string);
+  const roles = (roleRows as RoleRow[]).map(r => String(r.role_key ?? ''));
   const isManager = roles.some(r =>
     ['admin', 'manager', 'process_manager', 'hr', 'team_leader', 'tl'].includes(r)
   );
@@ -31,7 +37,7 @@ router.get('/data', h(async (req: AuthenticatedRequest, res) => {
       `SELECT employee_code FROM employees WHERE user_id = ? LIMIT 1`,
       [userId]
     );
-    employeeCode = (empRows as any[])[0]?.employee_code as string | undefined;
+    employeeCode = (empRows as EmployeeRow[])[0]?.employee_code ?? undefined;
     if (!employeeCode) {
       return res.json({ success: true, data: { configured: true, rows: [], reason: 'no_employee_code' } });
     }

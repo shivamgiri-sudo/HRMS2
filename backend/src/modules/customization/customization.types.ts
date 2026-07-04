@@ -28,7 +28,7 @@ export interface CustomizationRule {
 
   // Config
   config_type: 'override' | 'merge' | 'extend' | 'disable';
-  config_data: Record<string, any>;
+  config_data: Record<string, unknown>;
 
   // Metadata
   priority: number;
@@ -63,7 +63,7 @@ export interface CustomizationApplicationLog {
   designation_id?: string;
   role_id?: string;
 
-  applied_config: Record<string, any>;
+  applied_config: Record<string, unknown>;
   application_source?: string;
   applied_at: Date;
 }
@@ -74,18 +74,17 @@ export interface CustomizationCache {
   employee_id: string;
   entity_type: string;
   entity_id?: string;
-  effective_config: Record<string, any>;
+  effective_config: Record<string, unknown>;
   cached_at: Date;
   expires_at: Date;
   hit_count: number;
 }
 
 export interface EffectiveConfigResult {
-  config: Record<string, any>;
+  config: Record<string, unknown>;
   appliedRules: string[];
   cached: boolean;
 }
-
 
 export interface PaginatedResult<T> {
   data: T[];

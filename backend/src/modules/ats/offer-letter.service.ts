@@ -58,6 +58,38 @@ export interface OfferLetter {
   expires_at?: string;
 }
 
+interface CandidateRow extends RowDataPacket {
+  id: string;
+  candidate_id?: string;
+}
+
+interface SalaryRow extends RowDataPacket {
+  pf_employee?: number | null;
+  esic_employee?: number | null;
+  gross_salary: number;
+  basic_salary: number;
+  hra: number;
+  other_allowances?: number | null;
+}
+
+interface OfferRow extends RowDataPacket {
+  candidate_id: string;
+  full_name: string;
+  position: string;
+  department: string;
+  joining_date: string;
+  salary_gross: number;
+  email: string;
+}
+
+interface PendingOfferRow extends RowDataPacket {
+  id: string;
+  candidate_name: string;
+  candidate_code: string;
+  mobile: string;
+  email: string;
+}
+
 /**
  * Get offer letter templates
  */
@@ -83,7 +115,7 @@ export async function generateOfferLetter(data: OfferLetterData, templateId?: st
     await conn.beginTransaction();
 
     // Get candidate details
-    const [candidateRes] = await conn.execute<RowDataPacket[]>(
+    const [candidateRes] = await conn.execute<CandidateRow[]>(
       'SELECT * FROM ats_candidate WHERE id = ?',
       [data.candidate_id]
     );
@@ -95,7 +127,7 @@ export async function generateOfferLetter(data: OfferLetterData, templateId?: st
     const candidate = candidateRes[0];
 
     // Get salary details from payroll validation
-    const [salaryRes] = await conn.execute<RowDataPacket[]>(
+    const [salaryRes] = await conn.execute<SalaryRow[]>(
       `SELECT * FROM ats_payroll_hr_validation
        WHERE candidate_id = ? AND validation_status = 'approved'
        ORDER BY created_at DESC LIMIT 1`,
@@ -172,7 +204,7 @@ export async function generateOfferLetter(data: OfferLetterData, templateId?: st
       offer_letter_id: offerId,
       pdf_url: pdfPath,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     await conn.rollback();
     throw error;
   } finally {
@@ -308,7 +340,7 @@ export async function sendOfferLetter(offerId: string): Promise<{
   success: boolean;
   message: string;
 }> {
-  const [offerRes] = await db.execute<RowDataPacket[]>(
+    const [offerRes] = await db.execute<OfferRow[]>(
     `SELECT ol.*, c.full_name, c.email, c.mobile
      FROM ats_offer_letters ol
      JOIN ats_candidate c ON c.id = ol.candidate_id
@@ -377,7 +409,7 @@ export async function acceptOfferLetter(offerId: string): Promise<{
   try {
     await conn.beginTransaction();
 
-    const [offerRes] = await conn.execute<RowDataPacket[]>(
+    const [offerRes] = await conn.execute<OfferRow[]>(
       'SELECT * FROM ats_offer_letters WHERE id = ?',
       [offerId]
     );
@@ -406,7 +438,7 @@ export async function acceptOfferLetter(offerId: string): Promise<{
       success: true,
       message: 'Offer letter accepted successfully',
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     await conn.rollback();
     throw error;
   } finally {
@@ -429,8 +461,8 @@ export async function getCandidateOfferLetters(candidateId: string): Promise<Off
 /**
  * Get all pending offers
  */
-export async function getPendingOffers(): Promise<any[]> {
-  const [results] = await db.execute<RowDataPacket[]>(
+export async function getPendingOffers(): Promise<PendingOfferRow[]> {
+  const [results] = await db.execute<PendingOfferRow[]>(
     `SELECT
       ol.*,
       c.full_name as candidate_name,
@@ -444,5 +476,5 @@ export async function getPendingOffers(): Promise<any[]> {
     ORDER BY ol.created_at DESC`
   );
 
-  return results as any[];
+  return results;
 }

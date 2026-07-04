@@ -2,6 +2,20 @@ import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'crypto';
 
+type RecruiterRow = RowDataPacket & {
+  employee_id: string;
+  employee_code: string;
+  first_name: string;
+  last_name: string | null;
+  mobile: string | null;
+  email: string | null;
+  branch_name: string;
+  id?: string;
+};
+type RosterRow = RowDataPacket & { id: string; employee_id: string };
+type QueueCountRow = RowDataPacket & { count: number | string | null };
+type RecruiterNameRow = RowDataPacket & { full_name: string | null };
+
 // ── Branch Alias Resolution ───────────────────────────────────────────────────
 export async function getBranchAliases() {
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -99,8 +113,8 @@ export async function getAvailableRecruiters(branchName: string) {
 
   // Ensure every employee has a valid ats_recruiter_roster row (FK target for recruiter_id)
   // and return the roster id as `id` so callers can write it directly into ats_candidate.recruiter_id
-  const result: any[] = [];
-  for (const row of rows as any[]) {
+  const result: RecruiterRow[] = [];
+  for (const row of rows as RecruiterRow[]) {
     const rosterId = await ensureRecruiterInRoster({
       id: row.employee_id,
       first_name: row.first_name,
@@ -120,8 +134,8 @@ export async function isRecruiterAvailableToday(recruiterId: string): Promise<bo
     `SELECT employee_id FROM ats_recruiter_roster WHERE id = ? AND active_status = 1 LIMIT 1`,
     [recruiterId]
   );
-  const employeeId = (rosterRows as RowDataPacket[]).length > 0
-    ? (rosterRows as RowDataPacket[])[0].employee_id as string
+  const employeeId = (rosterRows as RosterRow[]).length > 0
+    ? (rosterRows as RosterRow[])[0].employee_id
     : recruiterId;
 
   const [empRows] = await db.execute<RowDataPacket[]>(
@@ -154,7 +168,7 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
       if (availableRecruiters.length > 0) {
         // Fair assignment: lowest active queue count
         const recruiterLoads = await Promise.all(
-          availableRecruiters.map(async (rec: any) => {
+          availableRecruiters.map(async (rec: RecruiterRow) => {
             const [queueRows] = await db.execute<RowDataPacket[]>(
               `SELECT COUNT(*) as count FROM ats_queue_token
                WHERE recruiter_id = ? AND queue_status IN ('waiting','called','in_interview')`,
@@ -186,7 +200,7 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
 
     if (availableRecruiters.length > 0) {
       const recruiterLoads = await Promise.all(
-        availableRecruiters.map(async (rec: any) => {
+        availableRecruiters.map(async (rec: RecruiterRow) => {
           const [queueRows] = await db.execute<RowDataPacket[]>(
             `SELECT COUNT(*) as count FROM ats_queue_token
              WHERE recruiter_id = ? AND queue_status IN ('waiting','called','in_interview')`,
@@ -215,7 +229,7 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
        WHERE r.id = ? LIMIT 1`,
       [assignedRecruiterId]
     );
-    const resolvedName = (recNameRows as any[])[0]?.full_name?.trim() ?? null;
+    const resolvedName = (recNameRows as RecruiterNameRow[])[0]?.full_name?.trim() ?? null;
 
     await db.execute(
       `UPDATE ats_candidate

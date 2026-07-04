@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { RowDataPacket } from 'mysql2';
 import { db } from '../../../db/mysql.js';
 
 /**
@@ -9,10 +10,15 @@ import { db } from '../../../db/mysql.js';
 // This suite queries a live mas_hrms schema. Keep it out of the unit test run;
 // deployment smoke tests cover these endpoints against the configured database.
 describe.skip('ATS Integration Tests', () => {
+  interface CountRow extends RowDataPacket {
+    test?: number;
+    count?: number;
+  }
+
   describe('Database Connectivity', () => {
     it('should connect to database successfully', async () => {
-      const [result] = await db.execute('SELECT 1 as test');
-      expect((result as any[])[0].test).toBe(1);
+      const [result] = await db.execute<CountRow[]>('SELECT 1 as test');
+      expect(result[0].test).toBe(1);
     });
 
     it('should have all required ATS tables', async () => {
@@ -30,12 +36,12 @@ describe.skip('ATS Integration Tests', () => {
       ];
 
       for (const table of requiredTables) {
-        const [result] = await db.execute(
+        const [result] = await db.execute<CountRow[]>(
           `SELECT COUNT(*) as count FROM information_schema.tables
            WHERE table_schema = 'mas_hrms' AND table_name = ?`,
           [table]
         );
-        expect((result as any[])[0].count).toBe(1);
+        expect(result[0].count).toBe(1);
       }
     });
   });

@@ -126,6 +126,65 @@ export type HiringFilters = {
   limit?: number;
 };
 
+interface BranchNameRow extends RowDataPacket {
+  branch_name: string | null;
+}
+
+interface CountRow extends RowDataPacket {
+  total: number;
+}
+
+interface HiringActivityRow extends RowDataPacket, HiringSheetRow {
+  id: string;
+  created_by: string | null;
+}
+
+interface DashboardSummaryRow extends RowDataPacket {
+  total_records: number;
+  total_contacted: number;
+  not_contacted: number;
+  shortlisted: number;
+  recruiter_rejected: number;
+  hr_selected: number;
+  hr_rejected: number;
+  ai_selected: number;
+  ai_rejected: number;
+  ops_selected: number;
+  ops_rejected: number;
+  final_selected: number;
+  offer_letter_issued: number;
+  joined: number;
+  joining_pending: number;
+  walkins: number;
+  employee_referrals: number;
+  active_recruiters: number;
+  recruiter_inactive_count: number;
+}
+
+interface DashboardGroupRow extends RowDataPacket {
+  label: string;
+  total: number;
+  contacted: number;
+  selected: number;
+  joined: number;
+}
+
+interface InterviewerRow extends RowDataPacket {
+  id: string;
+  employee_code: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  mobile: string | null;
+  email: string | null;
+  branch_name: string | null;
+  dept_name: string | null;
+  designation_name: string | null;
+}
+
+interface ImportBatchRow extends RowDataPacket {
+  [key: string]: unknown;
+}
+
 const TRUE_VALUES = new Set(["yes", "y", "true", "1", "selected", "joined", "walkin", "contacted"]);
 const FALSE_VALUES = new Set(["", "no", "n", "false", "0", "null", "undefined"]);
 
@@ -410,7 +469,7 @@ export function parseRecruiterSheet(buffer: Buffer, fileName: string): HiringShe
 }
 
 async function getCurrentUserBranch(userId: string): Promise<string | null> {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<BranchNameRow[]>(
     `SELECT COALESCE(b.branch_name, e.branch_name, e.branch_id) AS branch_name
        FROM employees e
        LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -418,7 +477,7 @@ async function getCurrentUserBranch(userId: string): Promise<string | null> {
       LIMIT 1`,
     [userId]
   );
-  return text((rows as any[])[0]?.branch_name);
+  return text(rows[0]?.branch_name);
 }
 
 function buildFilterSql(filters: HiringFilters, scopedOnly: boolean) {
@@ -494,7 +553,7 @@ export async function listHiringActivity(userId: string, role: string | undefine
       LIMIT ? OFFSET ?`,
     [...params, limit, offset]
   );
-  const [count] = await db.execute<RowDataPacket[]>(
+  const [count] = await db.execute<CountRow[]>(
     `SELECT COUNT(*) AS total
        FROM ats_recruiter_hiring_activity
       WHERE ${sql}`,
@@ -503,7 +562,7 @@ export async function listHiringActivity(userId: string, role: string | undefine
 
   return {
     data: rows,
-    total: Number((count as any[])[0]?.total ?? 0),
+    total: Number(count[0]?.total ?? 0),
     page,
     limit,
   };
@@ -531,7 +590,7 @@ async function findDuplicate(normalized: NormalizedHiringActivity): Promise<{ id
       normalized.process_name,
     ]
   );
-  return (rows as any[])[0] ?? null;
+  return rows[0] ?? null;
 }
 
 async function persistActivity(
@@ -550,7 +609,7 @@ async function persistActivity(
   if (duplicate && duplicateMode === "update_existing") {
     const keys = Object.keys(normalized).filter((key) => key !== "raw_sheet_payload");
     const sets = keys.map((key) => `${key} = ?`);
-    const params = keys.map((key) => (normalized as any)[key]);
+    const params = keys.map((key) => normalized[key as keyof NormalizedHiringActivity]);
     params.push(actorUserId, duplicate.id);
     await db.execute(
       `UPDATE ats_recruiter_hiring_activity SET ${sets.join(", ")}, updated_by = ?, updated_at = NOW() WHERE id = ?`,
@@ -659,11 +718,11 @@ export async function upsertHiringActivity(
 
   const persisted = await persistActivity(normalized, actorUserId, duplicateMode);
   const rowId = persisted.id;
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<HiringActivityRow[]>(
     `SELECT * FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
     [rowId]
   );
-  return { ...persisted, row: (rows as any[])[0] ?? null };
+  return { ...persisted, row: rows[0] ?? null };
 }
 
 export async function updateHiringActivityById(
@@ -671,15 +730,15 @@ export async function updateHiringActivityById(
   payload: Record<string, unknown>,
   actorUserId: string
 ) {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<HiringActivityRow[]>(
     `SELECT * FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
     [activityId]
   );
-  if (!(rows as any[]).length) {
+  if (!rows.length) {
     throw Object.assign(new Error("Hiring activity not found"), { statusCode: 404 });
   }
 
-  const { normalized, errors } = mapSheetRow({ ...(rows as any[])[0], ...payload });
+  const { normalized, errors } = mapSheetRow({ ...rows[0], ...payload });
   if (!normalized || errors.length) {
     throw Object.assign(new Error(errors.join("; ") || "Invalid hiring activity row"), { statusCode: 400, validationErrors: errors });
   }
@@ -689,18 +748,18 @@ export async function updateHiringActivityById(
     .map((key) => `${key} = ?`);
   const params = Object.keys(normalized)
     .filter((key) => key !== "raw_sheet_payload")
-    .map((key) => (normalized as any)[key]);
+    .map((key) => normalized[key as keyof NormalizedHiringActivity]);
   params.push(actorUserId, activityId);
   await db.execute(
     `UPDATE ats_recruiter_hiring_activity SET ${sets.join(", ")}, updated_by = ?, updated_at = NOW() WHERE id = ?`,
     params
   );
 
-  const [updated] = await db.execute<RowDataPacket[]>(
+  const [updated] = await db.execute<HiringActivityRow[]>(
     `SELECT * FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
     [activityId]
   );
-  return { id: activityId, row: (updated as any[])[0] ?? null };
+  return { id: activityId, row: updated[0] ?? null };
 }
 
 export async function importHiringActivityRows(
@@ -747,9 +806,9 @@ export async function importHiringActivityRows(
       if (persisted.action === "inserted") insertedRows += 1;
       if (persisted.action === "updated") updatedRows += 1;
       if (persisted.duplicateOf) duplicateRows += 1;
-    } catch (err: any) {
+    } catch (err: unknown) {
       failedRows += 1;
-      const message = err?.message || "Row import failed";
+      const message = err instanceof Error ? err.message : "Row import failed";
       errors.push({ row_number: rowNumber, column_name: null, error_message: message });
       await db.execute(
         `INSERT INTO ats_recruiter_hiring_import_error
@@ -811,7 +870,7 @@ async function resolveCandidateByActivity(activity: NormalizedHiringActivity) {
   for (const [sql, params] of queries) {
     if (params[0] === null || params[0] === undefined || params[0] === "") continue;
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-    const candidate = (rows as any[])[0];
+    const candidate = rows[0];
     if (candidate) return candidate;
   }
   return null;
@@ -829,11 +888,11 @@ async function syncActivityCandidateLink(activityId: string, candidateId: string
 }
 
 export async function createCandidateFromActivity(activityId: string, actorUserId: string) {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<HiringActivityRow[]>(
     `SELECT * FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
     [activityId]
   );
-  const activity = (rows as any[])[0];
+  const activity = rows[0];
   if (!activity) throw Object.assign(new Error("Hiring activity not found"), { statusCode: 404 });
 
   const normalized = mapSheetRow(activity).normalized;
@@ -850,7 +909,7 @@ export async function createCandidateFromActivity(activityId: string, actorUserI
       fullName: normalized.candidate_name,
       mobile: normalized.mobile,
       email: normalized.candidate_email,
-      gender: (normalized.gender as any) ?? null,
+      gender: normalized.gender ?? null,
       education: normalized.education_qualification ?? "Not Provided",
       experience: normalized.experience_level ?? "Not Provided",
       appliedForProcess: normalized.process_name,
@@ -877,23 +936,23 @@ function tokenNumberFor(branchName: string, date: string, count: number) {
 }
 
 async function ensureHumanTokenNumber(candidateId: string, branchName: string, arrivalDate: string) {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<CountRow[]>(
     `SELECT COUNT(*) AS total
        FROM ats_queue_token
       WHERE branch_name = ?
         AND DATE(created_at) = ?`,
     [branchName, arrivalDate]
   );
-  const next = Number((rows as any[])[0]?.total ?? 0) + 1;
+  const next = Number(rows[0]?.total ?? 0) + 1;
   return tokenNumberFor(branchName, arrivalDate, next);
 }
 
 export async function createTokenFromActivity(activityId: string, actorUserId: string) {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<HiringActivityRow[]>(
     `SELECT * FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
     [activityId]
   );
-  const activity = (rows as any[])[0];
+  const activity = rows[0];
   if (!activity) throw Object.assign(new Error("Hiring activity not found"), { statusCode: 404 });
 
   const normalized = mapSheetRow(activity).normalized;
@@ -924,11 +983,11 @@ export async function createTokenFromActivity(activityId: string, actorUserId: s
 }
 
 export async function sendOnboardingFromActivity(activityId: string, actorUserId: string) {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<HiringActivityRow[]>(
     `SELECT * FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
     [activityId]
   );
-  const activity = (rows as any[])[0];
+  const activity = rows[0];
   if (!activity) throw Object.assign(new Error("Hiring activity not found"), { statusCode: 404 });
 
   const normalized = mapSheetRow(activity).normalized;
@@ -958,7 +1017,7 @@ async function applyActivityFilters(filters: HiringFilters, scopedOnly: boolean,
 
 async function aggregateBy(column: string, filters: HiringFilters, scopedOnly: boolean, userId?: string) {
   const { sql, params } = await applyActivityFilters(filters, scopedOnly, userId);
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<DashboardGroupRow[]>(
     `SELECT COALESCE(${column}, 'Unmapped') AS label,
             COUNT(*) AS total,
             SUM(CASE WHEN contacted_flag = 1 THEN 1 ELSE 0 END) AS contacted,
@@ -971,13 +1030,13 @@ async function aggregateBy(column: string, filters: HiringFilters, scopedOnly: b
       LIMIT 10`,
     params
   );
-  return rows as any[];
+  return rows;
 }
 
 export async function getHiringDashboard(userId: string, role: string | undefined, filters: HiringFilters): Promise<HiringDashboard> {
   const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
   const { sql, params } = await applyActivityFilters(filters, scopedOnly, userId);
-  const [summary] = await db.execute<RowDataPacket[]>(
+  const [summary] = await db.execute<DashboardSummaryRow[]>(
     `SELECT
         COUNT(*) AS total_records,
         SUM(CASE WHEN contacted_flag = 1 THEN 1 ELSE 0 END) AS total_contacted,
@@ -1004,26 +1063,26 @@ export async function getHiringDashboard(userId: string, role: string | undefine
   );
 
   const metrics = {
-    total_records: Number((summary as any[])[0]?.total_records ?? 0),
-    total_contacted: Number((summary as any[])[0]?.total_contacted ?? 0),
+    total_records: Number(summary[0]?.total_records ?? 0),
+    total_contacted: Number(summary[0]?.total_contacted ?? 0),
     contacted_pct: 0,
-    not_contacted: Number((summary as any[])[0]?.not_contacted ?? 0),
-    shortlisted: Number((summary as any[])[0]?.shortlisted ?? 0),
-    recruiter_rejected: Number((summary as any[])[0]?.recruiter_rejected ?? 0),
-    hr_selected: Number((summary as any[])[0]?.hr_selected ?? 0),
-    hr_rejected: Number((summary as any[])[0]?.hr_rejected ?? 0),
-    ai_selected: Number((summary as any[])[0]?.ai_selected ?? 0),
-    ai_rejected: Number((summary as any[])[0]?.ai_rejected ?? 0),
-    ops_selected: Number((summary as any[])[0]?.ops_selected ?? 0),
-    ops_rejected: Number((summary as any[])[0]?.ops_rejected ?? 0),
-    final_selected: Number((summary as any[])[0]?.final_selected ?? 0),
-    offer_letter_issued: Number((summary as any[])[0]?.offer_letter_issued ?? 0),
-    joined: Number((summary as any[])[0]?.joined ?? 0),
-    joining_pending: Number((summary as any[])[0]?.joining_pending ?? 0),
-    walkins: Number((summary as any[])[0]?.walkins ?? 0),
-    employee_referrals: Number((summary as any[])[0]?.employee_referrals ?? 0),
-    active_recruiters: Number((summary as any[])[0]?.active_recruiters ?? 0),
-    recruiter_inactive_count: Number((summary as any[])[0]?.recruiter_inactive_count ?? 0),
+    not_contacted: Number(summary[0]?.not_contacted ?? 0),
+    shortlisted: Number(summary[0]?.shortlisted ?? 0),
+    recruiter_rejected: Number(summary[0]?.recruiter_rejected ?? 0),
+    hr_selected: Number(summary[0]?.hr_selected ?? 0),
+    hr_rejected: Number(summary[0]?.hr_rejected ?? 0),
+    ai_selected: Number(summary[0]?.ai_selected ?? 0),
+    ai_rejected: Number(summary[0]?.ai_rejected ?? 0),
+    ops_selected: Number(summary[0]?.ops_selected ?? 0),
+    ops_rejected: Number(summary[0]?.ops_rejected ?? 0),
+    final_selected: Number(summary[0]?.final_selected ?? 0),
+    offer_letter_issued: Number(summary[0]?.offer_letter_issued ?? 0),
+    joined: Number(summary[0]?.joined ?? 0),
+    joining_pending: Number(summary[0]?.joining_pending ?? 0),
+    walkins: Number(summary[0]?.walkins ?? 0),
+    employee_referrals: Number(summary[0]?.employee_referrals ?? 0),
+    active_recruiters: Number(summary[0]?.active_recruiters ?? 0),
+    recruiter_inactive_count: Number(summary[0]?.recruiter_inactive_count ?? 0),
   };
   metrics.contacted_pct = metrics.total_records ? Math.round((metrics.total_contacted / metrics.total_records) * 1000) / 10 : 0;
 
@@ -1061,7 +1120,7 @@ export async function searchInterviewers(branchName: string | null, query: strin
   const branch = branchName || (userId ? await getCurrentUserBranch(userId) : null);
   const q = `%${query ?? ""}%`;
   const round = roundType || "ops_round";
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<InterviewerRow[]>(
     `SELECT
         e.id,
         e.employee_code,
@@ -1086,7 +1145,7 @@ export async function searchInterviewers(branchName: string | null, query: strin
     [branch, branch, branch, q, limit]
   );
 
-  return (rows as any[]).map((row) => ({
+  return rows.map((row) => ({
     id: row.id,
     employee_code: row.employee_code,
     name: [row.first_name, row.last_name].filter(Boolean).join(" ").trim(),
@@ -1100,16 +1159,16 @@ export async function searchInterviewers(branchName: string | null, query: strin
 }
 
 export async function readImportBatch(batchId: string) {
-  const [batchRows] = await db.execute<RowDataPacket[]>(
+  const [batchRows] = await db.execute<ImportBatchRow[]>(
     `SELECT * FROM ats_recruiter_hiring_import_batch WHERE id = ? LIMIT 1`,
     [batchId]
   );
-  const [errorRows] = await db.execute<RowDataPacket[]>(
+  const [errorRows] = await db.execute<ImportBatchRow[]>(
     `SELECT * FROM ats_recruiter_hiring_import_error WHERE import_batch_id = ? ORDER BY \`row_number\` ASC`,
     [batchId]
   );
   return {
-    batch: (batchRows as any[])[0] ?? null,
+    batch: batchRows[0] ?? null,
     errors: errorRows,
   };
 }

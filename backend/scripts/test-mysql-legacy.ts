@@ -23,13 +23,11 @@ async function testConnection() {
       connectTimeout: 10000,
     });
 
-    console.log('✅ Connected successfully!\n');
+    console.log('Connected successfully!\n');
 
-    // Test query
     const [rows] = await connection.execute('SELECT DATABASE() as db, VERSION() as version, NOW() as now');
     console.log('Database info:', rows);
 
-    // List tables
     const [tables] = await connection.execute(`
       SELECT TABLE_NAME, TABLE_ROWS, CREATE_TIME, UPDATE_TIME
       FROM INFORMATION_SCHEMA.TABLES
@@ -41,9 +39,10 @@ async function testConnection() {
     console.table(tables);
 
     await connection.end();
-    console.log('\n✅ Connection test complete!');
-  } catch (error: any) {
-    console.error('\n❌ Connection failed:', error.message);
+    console.log('\nConnection test complete!');
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('\nConnection failed:', message);
     process.exit(1);
   }
 }

@@ -62,6 +62,10 @@ interface Top10PercentAnalysis {
   top_10_max_quality: number;
 }
 
+type SummaryRow = RowDataPacket & Top10PercentAnalysis;
+type TraitRow = RowDataPacket & TraitExcellence;
+type PerformerRow = RowDataPacket & TopPerformerProfile;
+
 async function getQualityPool(): Promise<Pool> {
   const credentials = await getCredentialsForKey('shivamgiri_quality');
   if (!credentials) throw new Error('Quality database connector is not configured');
@@ -117,7 +121,7 @@ export async function getTop10PercentSummary(): Promise<Top10PercentAnalysis | n
       return null;
     }
 
-    return results[0] as Top10PercentAnalysis;
+    return results[0] as SummaryRow;
   } catch (error) {
     console.error('Error fetching top 10% summary:', error);
     return null;
@@ -220,7 +224,7 @@ export async function getTraitMasteryComparison(): Promise<TraitExcellence[]> {
       ORDER BY excellence_delta DESC`
     );
 
-    return (results || []).map((row: any) => ({
+    return (results as TraitRow[] || []).map((row) => ({
       trait_name: row.trait_name,
       trait_label: row.trait_label,
       top_10_pass_rate: row.top_10_pass_rate,
@@ -356,7 +360,7 @@ export async function getTopPerformerProfiles(limit: number = 50): Promise<TopPe
       [limit]
     );
 
-    return (results || []).map((row: any) => ({
+    return (results as PerformerRow[] || []).map((row) => ({
       employee_code: row.employee_code,
       agent_name: row.agent_name,
       overall_quality_score: row.overall_quality_score,

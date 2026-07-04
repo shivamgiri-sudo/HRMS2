@@ -796,6 +796,7 @@ export interface BgvDbConfig {
 
 export function buildAdapterFromDbConfig(cfg: BgvDbConfig): BgvProviderAdapter {
   const provider = cfg.bgv_provider ?? "mock";
+  const mutableEnv = env as typeof env & Record<string, string | undefined>;
   if (provider === "infinity_ai") {
     if (!cfg.infinity_ai_api_key) throw new Error("Infinity AI API Key not configured in BGV settings.");
     // Override env temporarily for this adapter instance
@@ -803,15 +804,15 @@ export function buildAdapterFromDbConfig(cfg: BgvDbConfig): BgvProviderAdapter {
     const savedUrl = env.INFINITY_AI_API_URL;
     const savedClientId = env.INFINITY_AI_CLIENT_ID;
     const savedPortalUrl = env.INFINITY_AI_PORTAL_URL;
-    (env as any).INFINITY_AI_API_KEY = cfg.infinity_ai_api_key;
-    (env as any).INFINITY_AI_API_URL = cfg.infinity_ai_api_url ?? env.INFINITY_AI_API_URL;
-    (env as any).INFINITY_AI_CLIENT_ID = cfg.infinity_ai_client_id ?? env.INFINITY_AI_CLIENT_ID;
-    (env as any).INFINITY_AI_PORTAL_URL = cfg.infinity_ai_portal_url ?? env.INFINITY_AI_PORTAL_URL;
+    mutableEnv.INFINITY_AI_API_KEY = cfg.infinity_ai_api_key;
+    mutableEnv.INFINITY_AI_API_URL = cfg.infinity_ai_api_url ?? env.INFINITY_AI_API_URL;
+    mutableEnv.INFINITY_AI_CLIENT_ID = cfg.infinity_ai_client_id ?? env.INFINITY_AI_CLIENT_ID;
+    mutableEnv.INFINITY_AI_PORTAL_URL = cfg.infinity_ai_portal_url ?? env.INFINITY_AI_PORTAL_URL;
     const adapter = new InfinityAiBgvAdapter();
-    (env as any).INFINITY_AI_API_KEY = savedKey;
-    (env as any).INFINITY_AI_API_URL = savedUrl;
-    (env as any).INFINITY_AI_CLIENT_ID = savedClientId;
-    (env as any).INFINITY_AI_PORTAL_URL = savedPortalUrl;
+    mutableEnv.INFINITY_AI_API_KEY = savedKey;
+    mutableEnv.INFINITY_AI_API_URL = savedUrl;
+    mutableEnv.INFINITY_AI_CLIENT_ID = savedClientId;
+    mutableEnv.INFINITY_AI_PORTAL_URL = savedPortalUrl;
     return adapter;
   }
   if (provider === "digio") {
@@ -819,13 +820,13 @@ export function buildAdapterFromDbConfig(cfg: BgvDbConfig): BgvProviderAdapter {
     const savedId = env.DIGIO_CLIENT_ID;
     const savedSecret = env.DIGIO_CLIENT_SECRET;
     const savedUrl = env.DIGIO_API_URL;
-    (env as any).DIGIO_CLIENT_ID = cfg.digio_client_id;
-    (env as any).DIGIO_CLIENT_SECRET = cfg.digio_client_secret;
-    (env as any).DIGIO_API_URL = cfg.digio_api_url ?? env.DIGIO_API_URL;
+    mutableEnv.DIGIO_CLIENT_ID = cfg.digio_client_id;
+    mutableEnv.DIGIO_CLIENT_SECRET = cfg.digio_client_secret;
+    mutableEnv.DIGIO_API_URL = cfg.digio_api_url ?? env.DIGIO_API_URL;
     const adapter = new DigioBgvAdapter();
-    (env as any).DIGIO_CLIENT_ID = savedId;
-    (env as any).DIGIO_CLIENT_SECRET = savedSecret;
-    (env as any).DIGIO_API_URL = savedUrl;
+    mutableEnv.DIGIO_CLIENT_ID = savedId;
+    mutableEnv.DIGIO_CLIENT_SECRET = savedSecret;
+    mutableEnv.DIGIO_API_URL = savedUrl;
     return adapter;
   }
   if (provider === "befisc_luckpay") {

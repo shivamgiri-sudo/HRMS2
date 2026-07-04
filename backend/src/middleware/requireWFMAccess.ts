@@ -3,6 +3,8 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
 import type { AuthenticatedRequest } from "./authMiddleware.js";
 
+type PayrollLineRow = RowDataPacket & { branch_id?: string | number | null; employee_code?: string | null };
+
 /**
  * Middleware to check if user has WFM access for the branch of the employee in the payroll line
  * WFM team members can only update overtime for employees in their assigned branch
@@ -30,7 +32,7 @@ export async function requireWFMAccess(req: Request, res: Response, next: NextFu
       [lineId]
     );
 
-    const line = lineRows[0] as any;
+    const line = lineRows[0] as PayrollLineRow | undefined;
     if (!line) {
       return res.status(404).json({ success: false, message: "Payroll line not found" });
     }

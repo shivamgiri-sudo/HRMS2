@@ -110,9 +110,13 @@ async function insertBatch(docs: DocRow[]): Promise<{ inserted: number; skipped:
          doc.created_at, doc.doc_category, doc.legacy_source, doc.legacy_ref_id]
       );
       if (result.affectedRows > 0) inserted++; else skipped++;
-    } catch (e: any) {
-      if (e.code === 'ER_DUP_ENTRY') skipped++;
-      else throw e;
+    } catch (error: unknown) {
+      const code =
+        error && typeof error === 'object' && 'code' in error
+          ? String((error as { code?: unknown }).code)
+          : '';
+      if (code === 'ER_DUP_ENTRY') skipped++;
+      else throw error;
     }
   }
   return { inserted, skipped };

@@ -23,7 +23,14 @@ async function getAprConfig(): Promise<{
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT config_json, encrypted_credentials FROM integration_config WHERE integration_key = 'apr_productivity'`
   );
-  const row = (rows as any[])[0];
+  const row = (rows as Array<RowDataPacket & {
+    config_json?: {
+      tables?: string[];
+      date_column?: string;
+      employee_code_column?: string;
+    } | null;
+    encrypted_credentials?: unknown;
+  }>)[0];
   if (!row || !row.encrypted_credentials) {
     return { tables: DEFAULT_TABLES, date_column: 'event_time', employee_code_column: 'agent_user', configured: false };
   }
@@ -40,7 +47,7 @@ export async function getAprData(params: {
   date: string;
   employeeCode?: string;
   isManager: boolean;
-}): Promise<{ configured: boolean; rows: any[] }> {
+}): Promise<{ configured: boolean; rows: RowDataPacket[] }> {
   const config = await getAprConfig();
   if (!config.configured) return { configured: false, rows: [] };
 
@@ -79,6 +86,6 @@ export async function getAprData(params: {
     ORDER BY \`${config.employee_code_column}\`
   `;
 
-  const [rows] = await pool.execute(finalSql, queryParams as any);
-  return { configured: true, rows: rows as any[] };
+  const [rows] = await pool.execute<RowDataPacket[]>(finalSql, queryParams as Parameters<typeof pool.execute>[1]);
+  return { configured: true, rows };
 }

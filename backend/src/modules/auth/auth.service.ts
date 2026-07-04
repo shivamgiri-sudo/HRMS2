@@ -11,6 +11,55 @@ const PRE_AUTH_EXPIRES_IN = '10m'; // short-lived — only for 2FA challenge exc
 const REFRESH_EXPIRES_DAYS = 7;
 const RESET_EXPIRES_HOURS = 24;
 
+interface RoleRow extends RowDataPacket {
+  role_key: string;
+}
+
+interface AuthUserRow extends RowDataPacket {
+  id: string;
+  email: string;
+  password_hash: string;
+  is_blocked: number | null;
+  must_change_password: number | null;
+  active_status: number | null;
+}
+
+interface AuthUserIdRow extends RowDataPacket {
+  id: string;
+  is_blocked: number | null;
+}
+
+interface RefreshRow extends RowDataPacket {
+  user_id: string;
+  email: string;
+}
+
+interface OnboardingTokenRow extends RowDataPacket {
+  candidate_id: string;
+  onboarding_token_expires_at: string;
+  candidate_email: string | null;
+}
+
+interface ResetTokenRow extends RowDataPacket {
+  user_id: string;
+}
+
+interface OtpUserIdRow extends RowDataPacket {
+  id: string;
+}
+
+interface OtpEmployeeRow extends RowDataPacket {
+  user_id: string | null;
+}
+
+interface OtpCountRow extends RowDataPacket {
+  cnt: number;
+}
+
+interface OtpMatchRow extends RowDataPacket {
+  id: string;
+}
+
 export interface AuthTokens {
   accessToken: string;
   refreshToken: string;
@@ -35,7 +84,7 @@ function normalizeEmail(value: string): string {
 
 async function ensureEmployeeRole(userId: string): Promise<void> {
   try {
-    const [roleRows] = await db.execute<RowDataPacket[]>(
+    const [roleRows] = await db.execute<RoleRow[]>(
       'SELECT role_key FROM workforce_role_catalog WHERE role_key = ? AND active_status = 1 LIMIT 1',
       ['employee']
     );
@@ -53,7 +102,7 @@ async function createOrRepairEmployeeAuthUser(employee: RowDataPacket, email: st
   const existingUserId = employee.user_id ? String(employee.user_id) : '';
 
   if (existingUserId) {
-    const [byId] = await db.execute<RowDataPacket[]>(
+    const [byId] = await db.execute<AuthUserIdRow[]>(
       'SELECT id, is_blocked FROM auth_user WHERE id = ? LIMIT 1',
       [existingUserId]
     );
@@ -65,7 +114,7 @@ async function createOrRepairEmployeeAuthUser(employee: RowDataPacket, email: st
     }
   }
 
-  const [byEmail] = await db.execute<RowDataPacket[]>(
+  const [byEmail] = await db.execute<AuthUserIdRow[]>(
     'SELECT id, is_blocked FROM auth_user WHERE email = ? LIMIT 1',
     [email]
   );
@@ -93,7 +142,7 @@ export const authService = {
   async login(identifier: string, password: string): Promise<AuthTokens> {
     // identifier can be email OR employee_code — try both
     const trimmed = identifier.trim();
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<AuthUserRow[]>(
       `SELECT au.id, au.email, au.password_hash, au.is_blocked,
               COALESCE(au.must_change_password, 0) AS must_change_password,
               e.active_status
@@ -142,10 +191,10 @@ export const authService = {
     const mustChangePassword = Number(user.must_change_password ?? 0) === 1;
 
     // Check global 2FA toggle in org_settings
-    const [tfaSettingRows] = await db.execute<RowDataPacket[]>(
+    const [tfaSettingRows] = await db.execute<{ setting_value: string | null }[]>(
       "SELECT setting_value FROM org_settings WHERE setting_key = 'two_factor_enabled' LIMIT 1"
     );
-    const tfaEnabled = (tfaSettingRows as RowDataPacket[])[0]?.setting_value !== 'false';
+    const tfaEnabled = tfaSettingRows[0]?.setting_value !== 'false';
     const twoFactorRequired = tfaEnabled && !mustChangePassword;
 
     if (twoFactorRequired) {
@@ -189,7 +238,7 @@ export const authService = {
 
   async refreshAccess(rawRefreshToken: string): Promise<{ accessToken: string }> {
     const tokenHash = crypto.createHash('sha256').update(rawRefreshToken).digest('hex');
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<RefreshRow[]>(
       `SELECT rt.user_id, au.email FROM auth_refresh_token rt
          JOIN auth_user au ON au.id = rt.user_id
         WHERE rt.token_hash = ? AND rt.revoked = 0 AND rt.expires_at > NOW() LIMIT 1`,
@@ -222,7 +271,7 @@ export const authService = {
       throw Object.assign(new Error('Token is not a pre-auth token'), { statusCode: 400 });
     }
     // Confirm 2FA challenge is in verified state for this user
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<OnboardingTokenRow[]>(
       `SELECT id FROM auth_two_factor_challenge
         WHERE user_id = ? AND status = 'verified'
           AND verified_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
@@ -275,7 +324,7 @@ export const authService = {
     if (!tokenRows.length) {
       throw Object.assign(new Error('Invalid onboarding token'), { status: 400 });
     }
-    const tokenRow = (tokenRows as RowDataPacket[])[0];
+    const tokenRow = tokenRows[0];
     if (new Date(tokenRow.onboarding_token_expires_at) < new Date()) {
       throw Object.assign(new Error('Onboarding token expired'), { status: 410 });
     }
@@ -307,7 +356,7 @@ export const authService = {
 
   async forgotPassword(email: string): Promise<{ token: string; deliverTo: string } | null> {
     const normalizedEmail = normalizeEmail(email);
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<ResetTokenRow[]>(
       'SELECT id, email FROM auth_user WHERE LOWER(email) = LOWER(?) AND is_blocked = 0 LIMIT 1',
       [normalizedEmail]
     );
@@ -342,7 +391,7 @@ export const authService = {
 
   async resetPassword(rawToken: string, newPassword: string): Promise<void> {
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<AuthUserRow[]>(
       'SELECT user_id FROM auth_password_reset WHERE token_hash = ? AND used = 0 AND expires_at > UTC_TIMESTAMP() LIMIT 1',
       [tokenHash]
     );
@@ -372,19 +421,19 @@ export const authService = {
     let userId: string | null = null;
     try {
       // Try auth_user by email
-      const [byEmail] = await db.execute<RowDataPacket[]>(
+      const [byEmail] = await db.execute<OtpUserIdRow[]>(
         'SELECT id FROM auth_user WHERE email = ? LIMIT 1',
         [phoneOrEmail.toLowerCase().trim()]
       );
-      if (Array.isArray(byEmail) && byEmail.length) userId = (byEmail[0] as any).id;
+      if (byEmail.length) userId = byEmail[0].id;
 
       // Try employees by mobile if not found
       if (!userId) {
-        const [byPhone] = await db.execute<RowDataPacket[]>(
+        const [byPhone] = await db.execute<OtpEmployeeRow[]>(
           'SELECT user_id FROM employees WHERE mobile = ? AND user_id IS NOT NULL LIMIT 1',
           [phoneOrEmail.trim()]
         );
-        if (Array.isArray(byPhone) && byPhone.length) userId = (byPhone[0] as any).user_id;
+        if (byPhone.length) userId = byPhone[0].user_id;
       }
     } catch { /* intentional: don't leak existence */ }
 
@@ -395,11 +444,11 @@ export const authService = {
 
     // Rate-limit: max 3 attempts in last 10 minutes
     try {
-      const [recent] = await db.execute<RowDataPacket[]>(
+      const [recent] = await db.execute<OtpCountRow[]>(
         'SELECT COUNT(*) as cnt FROM auth_otp_reset WHERE user_id = ? AND created_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)',
         [userId]
       );
-      if ((recent as any[])[0]?.cnt >= 3) {
+      if ((recent[0]?.cnt ?? 0) >= 3) {
         return { success: true, message: 'If an account exists, an OTP has been sent.' };
       }
     } catch {
@@ -434,17 +483,17 @@ export const authService = {
     // Find user
     let userId: string | null = null;
     try {
-      const [byEmail] = await db.execute<RowDataPacket[]>(
+      const [byEmail] = await db.execute<OtpUserIdRow[]>(
         'SELECT id FROM auth_user WHERE email = ? LIMIT 1',
         [phoneOrEmail.toLowerCase().trim()]
       );
-      if (Array.isArray(byEmail) && byEmail.length) userId = (byEmail[0] as any).id;
+      if (byEmail.length) userId = byEmail[0].id;
       if (!userId) {
-        const [byPhone] = await db.execute<RowDataPacket[]>(
+        const [byPhone] = await db.execute<OtpEmployeeRow[]>(
           'SELECT user_id FROM employees WHERE mobile = ? AND user_id IS NOT NULL LIMIT 1',
           [phoneOrEmail.trim()]
         );
-        if (Array.isArray(byPhone) && byPhone.length) userId = (byPhone[0] as any).user_id;
+        if (byPhone.length) userId = byPhone[0].user_id;
       }
     } catch { /* pass */ }
 
@@ -457,7 +506,7 @@ export const authService = {
     );
 
     // Check max attempts (5)
-    const [tooMany] = await db.execute<RowDataPacket[]>(
+      const [tooMany] = await db.execute<OtpUserIdRow[]>(
       'SELECT id FROM auth_otp_reset WHERE user_id = ? AND used = 0 AND expires_at > NOW() AND attempts > 5 LIMIT 1',
       [userId]
     );
@@ -469,7 +518,7 @@ export const authService = {
     const salt = userId + phoneOrEmail;
     const otpHash = crypto.createHash('sha256').update(otp + salt).digest('hex');
 
-    const [matching] = await db.execute<RowDataPacket[]>(
+    const [matching] = await db.execute<OtpMatchRow[]>(
       'SELECT id FROM auth_otp_reset WHERE user_id = ? AND otp_hash = ? AND used = 0 AND expires_at > NOW() LIMIT 1',
       [userId, otpHash]
     );
@@ -478,7 +527,7 @@ export const authService = {
     }
 
     // Mark OTP used
-    await db.execute('UPDATE auth_otp_reset SET used = 1 WHERE id = ?', [(matching[0] as any).id]);
+    await db.execute('UPDATE auth_otp_reset SET used = 1 WHERE id = ?', [matching[0].id]);
 
     // Hash new password and update
     const newHash = await bcrypt.hash(newPassword, 12);

@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
@@ -10,6 +10,7 @@ import { emailService } from "../communication/email.service.js";
 import { env } from "../../config/env.js";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { sendTwoFactorChallenge, verifyTwoFactorChallenge, type TwoFactorChannel } from "./twoFactor.service.js";
 
 const authLimiter = rateLimit({
@@ -29,8 +30,56 @@ const twoFactorLimiter = rateLimit({
 });
 
 const router = Router();
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: any) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+type AnyRequest = Request & { authUser: NonNullable<AuthenticatedRequest["authUser"]> };
+
+const h = (fn: (req: AnyRequest, res: Response) => Promise<unknown>) =>
+  (req: AnyRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
+
+interface ReportingRow extends RowDataPacket {
+  reporting_manager_id: string | null;
+}
+
+interface IdRow extends RowDataPacket {
+  id: string;
+}
+
+interface RoleRow extends RowDataPacket {
+  role_key: string;
+}
+
+interface RequesterRow extends RowDataPacket {
+  employee_id: string;
+  designation: string | null;
+}
+
+interface EmployeeLookupRow extends RowDataPacket {
+  employee_id: string;
+  user_id: string | null;
+  designation: string | null;
+  emp_email: string | null;
+  auth_email: string | null;
+}
+
+interface UserLookupRow extends RowDataPacket {
+  user_id: string;
+  email: string;
+  employee_id: string | null;
+  designation: string | null;
+}
+
+interface OnboardingTokenRow extends RowDataPacket {
+  candidate_id: string;
+  onboarding_token_expires_at: string;
+  candidate_email: string | null;
+}
+
+interface OtpRateRow extends RowDataPacket {
+  cnt: number;
+}
+
+interface OtpIdRow extends RowDataPacket {
+  id: string;
+}
 
 function resetLink(token: string): string {
   return `${env.FRONTEND_URL.replace(/\/$/, "")}/reset-password?token=${encodeURIComponent(token)}`;
@@ -72,14 +121,14 @@ async function isReportingDownline(requesterEmployeeId: string, targetEmployeeId
 
   while (currentEmployeeId && !visited.has(currentEmployeeId)) {
     visited.add(currentEmployeeId);
-    const result = await db.execute<RowDataPacket[]>(
+    const result = await db.execute<ReportingRow[]>(
       `SELECT reporting_manager_id
          FROM employees
         WHERE id = ? AND active_status = 1
         LIMIT 1`,
       [currentEmployeeId]
     );
-    const rows: RowDataPacket[] = result[0];
+    const rows = result[0];
     const managerId: string | null = rows[0]?.reporting_manager_id
       ? String(rows[0].reporting_manager_id)
       : null;
@@ -92,7 +141,7 @@ async function isReportingDownline(requesterEmployeeId: string, targetEmployeeId
 
 // POST /api/auth/login — public (rate limited)
 // Accepts: { identifier: "email or employee code", password } OR legacy { email, password }
-router.post("/login", authLimiter, h(async (req: any, res: any) => {
+router.post("/login", authLimiter, h(async (req, res) => {
   const identifier = req.body.identifier || req.body.email;
   const { password } = req.body;
   if (!identifier || !password) return res.status(400).json({ error: "identifier (email or employee code) and password required" });
@@ -100,13 +149,13 @@ router.post("/login", authLimiter, h(async (req: any, res: any) => {
   try {
     const tokens = await authService.login(identifier, password);
     return res.json({ data: tokens });
-  } catch (error: any) {
-    return res.status(401).json({ error: error.message || "Authentication failed" });
+  } catch (error: unknown) {
+    return res.status(401).json({ error: error instanceof Error ? error.message : "Authentication failed" });
   }
 }));
 
 // POST /api/auth/register — public
-router.post("/register", h(async (req: any, res: any) => {
+router.post("/register", h(async (req, res) => {
   const { email, password, onboardingToken } = req.body;
   if (!email || !password || password.length < 8) {
     return res.status(400).json({ error: "email and password (min 8 chars) required" });
@@ -120,15 +169,18 @@ router.post("/register", h(async (req: any, res: any) => {
       userId = await authService.register(email, password);
     }
     return res.status(201).json({ ok: true, userId });
-  } catch (error: any) {
-    if (error.message?.includes("Duplicate entry")) return res.status(409).json({ error: "Email already registered" });
-    const status = error.status || 400;
-    return res.status(status).json({ error: error.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Registration failed";
+    if (message.includes("Duplicate entry")) return res.status(409).json({ error: "Email already registered" });
+    const status = typeof error === "object" && error !== null && "status" in error && typeof (error as { status?: unknown }).status === "number"
+      ? (error as { status: number }).status
+      : 400;
+    return res.status(status).json({ error: message });
   }
 }));
 
 // POST /api/auth/invite-user — protected invite/reset-token flow, no raw password exposure
-router.post("/invite-user", requireAuth, requireRole("admin", "hr", "super_admin"), h(async (req: any, res: any) => {
+router.post("/invite-user", requireAuth, requireRole("admin", "hr", "super_admin"), h(async (req, res) => {
   const email = String(req.body.email ?? "").trim().toLowerCase();
   const employeeId = String(req.body.employeeId ?? "").trim();
   if (!email) return res.status(400).json({ success: false, error: "email required" });
@@ -188,7 +240,7 @@ router.post("/invite-user", requireAuth, requireRole("admin", "hr", "super_admin
 }));
 
 // POST /api/auth/refresh — public
-router.post("/refresh", h(async (req: any, res: any) => {
+router.post("/refresh", h(async (req, res) => {
   const { refreshToken } = req.body;
   if (!refreshToken) return res.status(400).json({ error: "refreshToken required" });
 
@@ -201,14 +253,14 @@ router.post("/refresh", h(async (req: any, res: any) => {
 }));
 
 // POST /api/auth/logout — requires auth
-router.post("/logout", requireAuth, h(async (req: any, res: any) => {
+router.post("/logout", requireAuth, h(async (req, res) => {
   const { refreshToken } = req.body;
   if (refreshToken) await authService.logout(refreshToken);
   return res.json({ success: true });
 }));
 
 // POST /api/auth/forgot-password — public (rate limited)
-router.post("/forgot-password", authLimiter, h(async (req: any, res: any) => {
+router.post("/forgot-password", authLimiter, h(async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: "email required" });
 
@@ -242,7 +294,7 @@ router.post("/forgot-password", authLimiter, h(async (req: any, res: any) => {
 }));
 
 // POST /api/auth/forgot-password-demo — DEV ONLY: return token via response (SMTP offline)
-router.post("/forgot-password-demo", h(async (req: any, res: any) => {
+router.post("/forgot-password-demo", h(async (req, res) => {
   if (env.NODE_ENV === 'production') {
     return res.status(403).json({ error: 'Not available in production' });
   }
@@ -255,21 +307,21 @@ router.post("/forgot-password-demo", h(async (req: any, res: any) => {
       return res.json({ success: false, message: 'Email not found or employee inactive' });
     }
     return res.json({ success: true, token: result.token, deliverTo: result.deliverTo, message: 'Use this token with /api/auth/reset-password' });
-  } catch (error: any) {
-    return res.status(500).json({ error: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unknown error" });
   }
 }));
 
 // POST /api/auth/forgot-password-otp — public (rate limited) — SMS/WhatsApp OTP
-router.post("/forgot-password-otp", authLimiter, h(async (req: any, res: any) => {
+router.post("/forgot-password-otp", authLimiter, h(async (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ error: "Phone number required" });
 
   try {
     const result = await authService.forgotPasswordOtp(phone);
     return res.json(result);
-  } catch (error: any) {
-    console.error("[HRMS] OTP send failed:", error.message);
+  } catch (error: unknown) {
+    console.error("[HRMS] OTP send failed:", error instanceof Error ? error.message : "unknown");
     return res.json({ success: true, message: "If this phone number is registered, you will receive an OTP." });
   }
 }));
@@ -278,7 +330,7 @@ router.post("/forgot-password-otp", authLimiter, h(async (req: any, res: any) =>
 const verifyOtpAndReset = async (phone: string, otp: string, newPassword: string) =>
   authService.verifyOtpAndResetPassword(phone, otp, newPassword);
 
-router.post("/verify-otp-reset", authLimiter, h(async (req: any, res: any) => {
+router.post("/verify-otp-reset", authLimiter, h(async (req, res) => {
   const { phone, otp, newPassword } = req.body;
   if (!phone || !otp || !newPassword) {
     return res.status(400).json({ error: "Phone, OTP, and new password required" });
@@ -290,13 +342,13 @@ router.post("/verify-otp-reset", authLimiter, h(async (req: any, res: any) => {
   try {
     await verifyOtpAndReset(phone, otp, newPassword);
     return res.json({ success: true, message: "Password reset successful" });
-  } catch (error: any) {
-    return res.status(400).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    return res.status(400).json({ success: false, error: error instanceof Error ? error.message : "Unknown error" });
   }
 }));
 
 // POST /api/auth/reset-password — public
-router.post("/reset-password", h(async (req: any, res: any) => {
+router.post("/reset-password", h(async (req, res) => {
   const { token, password } = req.body;
   if (!token || !password) return res.status(400).json({ error: "token and password required" });
   if (password.length < 8) return res.status(400).json({ error: "password must be at least 8 characters" });
@@ -304,12 +356,12 @@ router.post("/reset-password", h(async (req: any, res: any) => {
   try {
     await authService.resetPassword(token, password);
     return res.json({ success: true });
-  } catch (error: any) {
-    return res.status(400).json({ error: error.message });
+  } catch (error: unknown) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : "Unknown error" });
   }
 }));
 
-router.post("/change-password", requireAuth, h(async (req: any, res: any) => {
+router.post("/change-password", requireAuth, h(async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   if (!currentPassword || !newPassword) {
     return res.status(400).json({ error: "currentPassword and newPassword are required" });
@@ -321,7 +373,7 @@ router.post("/change-password", requireAuth, h(async (req: any, res: any) => {
   return res.json({ success: true });
 }));
 
-router.post("/2fa/send", requireAuth, twoFactorLimiter, h(async (req: any, res: any) => {
+router.post("/2fa/send", requireAuth, twoFactorLimiter, h(async (req, res) => {
   const channel = String(req.body.channel ?? "email").toLowerCase() as TwoFactorChannel;
   if (!["email", "sms"].includes(channel)) {
     return res.status(400).json({ success: false, error: "channel must be email or sms" });
@@ -330,7 +382,7 @@ router.post("/2fa/send", requireAuth, twoFactorLimiter, h(async (req: any, res: 
   return res.json({ success: true, message: "Verification code sent" });
 }));
 
-router.post("/2fa/verify", requireAuth, twoFactorLimiter, h(async (req: any, res: any) => {
+router.post("/2fa/verify", requireAuth, twoFactorLimiter, h(async (req, res) => {
   const otp = String(req.body.otp ?? "").trim();
   if (!/^\d{6}$/.test(otp)) {
     return res.status(400).json({ success: false, error: "A valid 6 digit code is required" });
@@ -354,20 +406,22 @@ router.post("/2fa/verify", requireAuth, twoFactorLimiter, h(async (req: any, res
 
 // POST /api/auth/2fa/exchange — exchange a verified pre_auth token for a full access token
 // Separated out so clients can call this independently if /2fa/verify didn't return the token.
-router.post("/2fa/exchange", requireAuth, h(async (req: any, res: any) => {
+router.post("/2fa/exchange", requireAuth, h(async (req, res) => {
   const preAuthToken = (req.headers.authorization ?? '').replace('Bearer ', '').trim();
   try {
     const { accessToken } = await authService.exchangePreAuthToken(preAuthToken);
     return res.json({ success: true, accessToken });
-  } catch (error: any) {
-    const status = error?.statusCode ?? 401;
-    return res.status(status).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    const status = typeof error === "object" && error !== null && "statusCode" in error && typeof (error as { statusCode?: unknown }).statusCode === "number"
+      ? (error as { statusCode: number }).statusCode
+      : 401;
+    return res.status(status).json({ success: false, error: error instanceof Error ? error.message : "Unknown error" });
   }
 }));
 
 // POST /api/auth/admin-reset-password — Admin password reset for employees
 // Super Admin can reset any other user; Admin and WFM are limited to reporting downlines.
-router.post("/admin-reset-password", requireAuth, h(async (req: any, res: any) => {
+router.post("/admin-reset-password", requireAuth, h(async (req, res) => {
   const { userId, employeeId, temporaryPassword } = req.body;
 
   if (!userId && !employeeId) {
@@ -387,7 +441,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req: any, res: any) =
     return res.status(400).json({ success: false, error: passwordError });
   }
 
-  const [roleRows] = await db.execute<RowDataPacket[]>(
+  const [roleRows] = await db.execute<RoleRow[]>(
     `SELECT role_key
        FROM user_roles
       WHERE user_id = ? AND active_status = 1`,
@@ -409,7 +463,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req: any, res: any) =
     });
   }
 
-  const [requesterRows] = await db.execute<RowDataPacket[]>(
+  const [requesterRows] = await db.execute<RequesterRow[]>(
     `SELECT e.id AS employee_id,
             COALESCE(d.designation_name, e.emp_type, e.profile_type) AS designation
        FROM employees e
@@ -432,7 +486,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req: any, res: any) =
   let targetUserEmail: string | null = null;
 
   if (employeeId) {
-    const [empRows] = await db.execute<RowDataPacket[]>(
+    const [empRows] = await db.execute<EmployeeLookupRow[]>(
       `SELECT e.id AS employee_id, e.user_id,
               COALESCE(d.designation_name, e.emp_type, e.profile_type) AS designation,
               COALESCE(NULLIF(TRIM(e.official_email),''), NULLIF(TRIM(e.email),'')) AS emp_email,
@@ -463,7 +517,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req: any, res: any) =
         });
       }
       // Check if an auth_user with this email already exists (orphaned)
-      const [existingAuth] = await db.execute<RowDataPacket[]>(
+      const [existingAuth] = await db.execute<IdRow[]>(
         `SELECT id FROM auth_user WHERE email = ? LIMIT 1`, [empEmail]
       );
       let newUserId: string;
@@ -493,7 +547,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req: any, res: any) =
       targetUserEmail = empEmail;
     }
   } else {
-    const [userRows] = await db.execute<RowDataPacket[]>(
+    const [userRows] = await db.execute<UserLookupRow[]>(
       `SELECT au.id AS user_id, au.email, e.id AS employee_id,
               COALESCE(d.designation_name, e.emp_type, e.profile_type) AS designation
        FROM auth_user au

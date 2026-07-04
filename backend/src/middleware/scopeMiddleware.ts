@@ -57,9 +57,9 @@ function getQueryString(value: unknown): string | null {
 }
 
 function handleAccessError(err: unknown, res: Response, next: NextFunction) {
-  const anyErr = err as any;
-  if (anyErr?.statusCode) {
-    return res.status(anyErr.statusCode).json({ success: false, message: anyErr.message });
+  const accessErr = err as { statusCode?: number; message?: string } | null;
+  if (accessErr?.statusCode) {
+    return res.status(accessErr.statusCode).json({ success: false, message: accessErr.message });
   }
   return next(err);
 }

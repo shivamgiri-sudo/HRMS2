@@ -9,10 +9,10 @@
  * Routes mounted at /api/attendance by app.ts.
  */
 
-import { Router } from "express";
+import { Router, type NextFunction, type Response } from "express";
 import { randomUUID } from "crypto";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
-import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -20,8 +20,69 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 export const attendanceManualOverrideRouter = Router();
 attendanceManualOverrideRouter.use(requireAuth);
 
-const h = (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
+
+interface AttendanceStateRow extends RowDataPacket {
+  id: string;
+  attendance_status: string | null;
+  lwp_value: number | null;
+  shift_id: string | null;
+  is_locked: number | null;
+}
+
+interface EmployeeRow extends RowDataPacket {
+  id: string;
+  employee_code: string | null;
+  employee_name: string | null;
+}
+
+interface OverrideRow extends RowDataPacket {
+  id: string;
+  employee_id: string;
+  attendance_date: string;
+  old_status: string | null;
+  old_payable_days: number | null;
+  old_lwp: number | null;
+  old_shift_id: string | null;
+  new_status: string;
+  new_payable_days: number | null;
+  new_lwp: number | null;
+  new_shift_id: string | null;
+  reason: string;
+  supporting_doc_id: string | null;
+  payroll_month: string | null;
+  payroll_run_id: string | null;
+  payroll_impact_amount: number | null;
+  is_payroll_month_locked: number;
+  higher_approval_required: number;
+  approval_status: string;
+  created_by: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  applied_to_record_id: string | null;
+  applied_at: string | null;
+  applied_by: string | null;
+  rejected_by: string | null;
+  rejected_at: string | null;
+  rejection_reason: string | null;
+  employee_name?: string | null;
+  employee_code?: string | null;
+  branch_name?: string | null;
+  process_name?: string | null;
+}
+
+interface AuditRow extends RowDataPacket {
+  id: string;
+  actor_user_id: string;
+  action_type: string;
+  actor_role: string;
+  reason: string | null;
+  old_value_json: unknown;
+  new_value_json: unknown;
+  ip_address: string | null;
+  acted_at: string;
+}
 
 // ─── Role constants ───────────────────────────────────────────────────────────
 const PAYROLL_WRITE_ROLES = ["payroll_head", "payroll_admin", "admin", "super_admin"] as const;
@@ -40,20 +101,20 @@ async function assertPayrollAccess(userId: string): Promise<{ actorRole: string 
 // ─── Data helpers ─────────────────────────────────────────────────────────────
 
 /** Fetch the attendance_daily_record current state for a given employee+date. */
-async function getCurrentAttendance(employeeId: string, date: string): Promise<any | null> {
-  const [rows] = await db.execute<RowDataPacket[]>(
+async function getCurrentAttendance(employeeId: string, date: string): Promise<AttendanceStateRow | null> {
+  const [rows] = await db.execute<AttendanceStateRow[]>(
     `SELECT id, attendance_status, lwp_value, shift_id, is_locked
        FROM attendance_daily_record
       WHERE employee_id = ? AND record_date = ?
       LIMIT 1`,
     [employeeId, date],
   );
-  return (rows as RowDataPacket[])[0] ?? null;
+  return rows[0] ?? null;
 }
 
 /** Verify employee exists and return basic info. */
-async function getEmployee(employeeId: string): Promise<any | null> {
-  const [rows] = await db.execute<RowDataPacket[]>(
+async function getEmployee(employeeId: string): Promise<EmployeeRow | null> {
+  const [rows] = await db.execute<EmployeeRow[]>(
     `SELECT id, employee_code,
             COALESCE(NULLIF(TRIM(full_name),''), TRIM(CONCAT(first_name,' ',COALESCE(last_name,'')))) AS employee_name
        FROM employees
@@ -61,12 +122,12 @@ async function getEmployee(employeeId: string): Promise<any | null> {
       LIMIT 1`,
     [employeeId],
   );
-  return (rows as RowDataPacket[])[0] ?? null;
+  return rows[0] ?? null;
 }
 
 /** Fetch a single manual override with full detail. */
-async function getOverrideWithDetail(id: string): Promise<any | null> {
-  const [rows] = await db.execute<RowDataPacket[]>(
+async function getOverrideWithDetail(id: string): Promise<OverrideRow | null> {
+  const [rows] = await db.execute<OverrideRow[]>(
     `SELECT amo.*,
             COALESCE(NULLIF(TRIM(e.full_name),''), TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name,
             e.employee_code,
@@ -84,7 +145,7 @@ async function getOverrideWithDetail(id: string): Promise<any | null> {
       LIMIT 1`,
     [id],
   );
-  return (rows as RowDataPacket[])[0] ?? null;
+  return rows[0] ?? null;
 }
 
 /**
@@ -113,7 +174,7 @@ async function isPayrollMonthLocked(payrollMonth: string | null | undefined): Pr
  * - Blocks duplicate pending override for same employee+date
  * - If payroll month is locked → is_payroll_month_locked=1, higher_approval_required=1
  */
-attendanceManualOverrideRouter.post("/manual-overrides", h(async (req: any, res: any) => {
+attendanceManualOverrideRouter.post("/manual-overrides", h(async (req, res) => {
   const access = await assertPayrollAccess(req.authUser.id);
   if (!access) {
     return res.status(403).json({ success: false, error: "Forbidden: Payroll Head or Payroll Admin role required" });
@@ -157,7 +218,7 @@ attendanceManualOverrideRouter.post("/manual-overrides", h(async (req: any, res:
       LIMIT 1`,
     [employee_id, attendance_date],
   );
-  if ((dupRows as RowDataPacket[]).length > 0) {
+  if (dupRows.length > 0) {
     return res.status(409).json({
       success: false,
       error: "A pending manual override already exists for this employee on this date. Approve or reject it first.",
@@ -243,7 +304,7 @@ attendanceManualOverrideRouter.post("/manual-overrides", h(async (req: any, res:
  * List override requests with optional filters.
  * Access: payroll_head / payroll_admin / admin / super_admin only.
  */
-attendanceManualOverrideRouter.get("/manual-overrides", h(async (req: any, res: any) => {
+attendanceManualOverrideRouter.get("/manual-overrides", h(async (req, res) => {
   if (!(await assertPayrollAccess(req.authUser.id))) {
     return res.status(403).json({ success: false, error: "Forbidden: Payroll access required" });
   }
@@ -294,7 +355,7 @@ attendanceManualOverrideRouter.get("/manual-overrides", h(async (req: any, res: 
 /**
  * Return one override with full detail + audit timeline.
  */
-attendanceManualOverrideRouter.get("/manual-overrides/:id", h(async (req: any, res: any) => {
+attendanceManualOverrideRouter.get("/manual-overrides/:id", h(async (req, res) => {
   if (!(await assertPayrollAccess(req.authUser.id))) {
     return res.status(403).json({ success: false, error: "Forbidden: Payroll access required" });
   }
@@ -303,7 +364,7 @@ attendanceManualOverrideRouter.get("/manual-overrides/:id", h(async (req: any, r
   if (!override) return res.status(404).json({ success: false, error: "Manual override not found" });
 
   // Audit timeline for this override
-  const [auditRows] = await db.execute<RowDataPacket[]>(
+  const [auditRows] = await db.execute<AuditRow[]>(
     `SELECT id, actor_user_id, action_type, actor_role, reason,
             old_value_json, new_value_json, ip_address, acted_at
        FROM sensitive_action_log
@@ -329,7 +390,7 @@ attendanceManualOverrideRouter.get("/manual-overrides/:id", h(async (req: any, r
  * - Writes both MANUAL_ATTENDANCE_OVERRIDE_APPROVED and
  *   ATTENDANCE_RECORD_MANUALLY_OVERRIDDEN audit events.
  */
-attendanceManualOverrideRouter.post("/manual-overrides/:id/approve", h(async (req: any, res: any) => {
+attendanceManualOverrideRouter.post("/manual-overrides/:id/approve", h(async (req, res) => {
   const access = await assertPayrollAccess(req.authUser.id);
   if (!access) {
     return res.status(403).json({ success: false, error: "Forbidden: Payroll Head or Admin role required" });
@@ -464,7 +525,7 @@ attendanceManualOverrideRouter.post("/manual-overrides/:id/approve", h(async (re
  * Does NOT update attendance_daily_record.
  * Reason mandatory.
  */
-attendanceManualOverrideRouter.post("/manual-overrides/:id/reject", h(async (req: any, res: any) => {
+attendanceManualOverrideRouter.post("/manual-overrides/:id/reject", h(async (req, res) => {
   const access = await assertPayrollAccess(req.authUser.id);
   if (!access) {
     return res.status(403).json({ success: false, error: "Forbidden: Payroll Head or Admin role required" });

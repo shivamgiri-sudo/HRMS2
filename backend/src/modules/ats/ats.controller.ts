@@ -14,7 +14,10 @@ import {
 export const atsController = {
   async listCandidates(req: AuthenticatedRequest, res: Response) {
     const filters = candidateFiltersSchema.parse(req.query);
-    const filtersWithScope = { ...filters, scopeFilter: (req as any).scopeFilter };
+    const filtersWithScope = {
+      ...filters,
+      scopeFilter: (req as AuthenticatedRequest & { scopeFilter?: unknown }).scopeFilter,
+    };
     const result  = await atsService.listCandidates(filtersWithScope);
     return res.json({ success: true, ...result });
   },
@@ -81,7 +84,8 @@ export const atsController = {
       { allowAdminBypass: true }
     );
     // listOnboardingBridges not yet on atsService — safe runtime fallback
-    const data = await (atsService as any).listOnboardingBridges?.(scopeFilter) ?? [];
+    const onboardingBridgeService = atsService as { listOnboardingBridges?: (scope: unknown) => Promise<unknown[]> };
+    const data = await onboardingBridgeService.listOnboardingBridges?.(scopeFilter) ?? [];
     return res.json({ success: true, data });
   },
 

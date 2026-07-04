@@ -8,6 +8,7 @@ import {
   __test__,
   createCandidateFromActivity,
   createTokenFromActivity,
+  type DuplicateMode,
   getCallingDashboard,
   getHiringDashboard,
   importHiringActivityRows,
@@ -34,10 +35,25 @@ function parseQueryBool(value: unknown): string | undefined {
   return String(value);
 }
 
-function duplicateModeFrom(value: unknown) {
+function duplicateModeFrom(value: unknown): DuplicateMode {
   const mode = String(value ?? "").trim();
   if (mode === "update_existing" || mode === "skip_duplicates") return mode;
   return "insert_duplicates_with_warning";
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unexpected error";
+}
+
+function getErrorStatus(error: unknown, fallback = 500): number {
+  if (typeof error === "object" && error !== null && "statusCode" in error) {
+    const statusCode = (error as { statusCode?: unknown }).statusCode;
+    if (typeof statusCode === "number" && Number.isFinite(statusCode)) {
+      return statusCode;
+    }
+  }
+
+  return fallback;
 }
 
 function getRequester(req: AuthenticatedRequest) {
@@ -54,7 +70,7 @@ async function ensureRowAccess(req: AuthenticatedRequest, id: string) {
     `SELECT id, created_by FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
     [id]
   );
-  const row = (rows as any[])[0];
+  const row = rows[0];
   if (!row) return { allowed: false, row: null };
   if (privileged || row.created_by === userId) return { allowed: true, row };
   return { allowed: false, row };
@@ -68,8 +84,8 @@ recruiterHiringRouter.get("/interviewers", async (req: AuthenticatedRequest, res
     const limit = Math.min(Number(req.query.limit ?? 20) || 20, 50);
     const data = await searchInterviewers(branchName, q, roundType, limit, req.authUser?.id);
     return res.json({ success: true, data });
-  } catch (error: any) {
-    return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -107,8 +123,8 @@ recruiterHiringRouter.get("/recruiter/hiring-activity", async (req: Authenticate
       limit: req.query.limit ? Number(req.query.limit) : 50,
     });
     return res.json({ success: true, ...data });
-  } catch (error: any) {
-    return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -116,10 +132,17 @@ recruiterHiringRouter.post("/recruiter/hiring-activity", async (req: Authenticat
   try {
     const duplicateMode = duplicateModeFrom(req.body?.duplicateMode);
     const payload = req.body?.row && typeof req.body.row === "object" ? req.body.row : req.body;
-    const result = await upsertHiringActivity(payload, req.authUser!.id, duplicateMode as any);
+    const result = await upsertHiringActivity(payload, req.authUser!.id, duplicateMode);
     return res.status(201).json({ success: true, data: result });
-  } catch (error: any) {
-    return res.status(error.statusCode || 500).json({ success: false, message: error.message, errors: error.validationErrors ?? undefined });
+  } catch (error: unknown) {
+    const validationErrors = typeof error === "object" && error !== null && "validationErrors" in error
+      ? (error as { validationErrors?: unknown }).validationErrors
+      : undefined;
+    return res.status(getErrorStatus(error)).json({
+      success: false,
+      message: getErrorMessage(error),
+      errors: validationErrors ?? undefined,
+    });
   }
 });
 
@@ -133,9 +156,9 @@ recruiterHiringRouter.get("/recruiter/hiring-activity/:id", async (req: Authenti
       `SELECT * FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
       [req.params.id]
     );
-    return res.json({ success: true, data: (rows as any[])[0] ?? null });
-  } catch (error: any) {
-    return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+    return res.json({ success: true, data: rows[0] ?? null });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -149,8 +172,15 @@ recruiterHiringRouter.put("/recruiter/hiring-activity/:id", async (req: Authenti
     const payload = req.body?.row && typeof req.body.row === "object" ? req.body.row : req.body;
     const result = await updateHiringActivityById(req.params.id, payload, req.authUser!.id);
     return res.json({ success: true, data: result });
-  } catch (error: any) {
-    return res.status(error.statusCode || 500).json({ success: false, message: error.message, errors: error.validationErrors ?? undefined });
+  } catch (error: unknown) {
+    const validationErrors = typeof error === "object" && error !== null && "validationErrors" in error
+      ? (error as { validationErrors?: unknown }).validationErrors
+      : undefined;
+    return res.status(getErrorStatus(error)).json({
+      success: false,
+      message: getErrorMessage(error),
+      errors: validationErrors ?? undefined,
+    });
   }
 });
 
@@ -162,8 +192,8 @@ recruiterHiringRouter.delete("/recruiter/hiring-activity/:id", async (req: Authe
     }
     await db.execute(`DELETE FROM ats_recruiter_hiring_activity WHERE id = ?`, [req.params.id]);
     return res.json({ success: true, message: "Hiring activity deleted" });
-  } catch (error: any) {
-    return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -171,7 +201,7 @@ recruiterHiringRouter.post("/recruiter/hiring-activity/import", upload.single("f
   try {
     const duplicateMode = duplicateModeFrom(req.body?.duplicateMode);
     let rows: Record<string, unknown>[] = [];
-    let fileName = String(req.body?.fileName ?? req.file?.originalname ?? "recruiter_hiring_import.xlsx");
+    const fileName = String(req.body?.fileName ?? req.file?.originalname ?? "recruiter_hiring_import.xlsx");
 
     if (req.file?.buffer) {
       rows = parseRecruiterSheet(req.file.buffer, fileName);
@@ -182,10 +212,17 @@ recruiterHiringRouter.post("/recruiter/hiring-activity/import", upload.single("f
       throw new Error("Upload a file or provide rows");
     }
 
-    const result = await importHiringActivityRows(rows, req.authUser!.id, fileName, duplicateMode as any);
+    const result = await importHiringActivityRows(rows, req.authUser!.id, fileName, duplicateMode);
     return res.status(201).json({ success: true, data: result });
-  } catch (error: any) {
-    return res.status(error.statusCode || 400).json({ success: false, message: error.message, errors: error.validationErrors ?? undefined });
+  } catch (error: unknown) {
+    const validationErrors = typeof error === "object" && error !== null && "validationErrors" in error
+      ? (error as { validationErrors?: unknown }).validationErrors
+      : undefined;
+    return res.status(getErrorStatus(error, 400)).json({
+      success: false,
+      message: getErrorMessage(error),
+      errors: validationErrors ?? undefined,
+    });
   }
 });
 
@@ -193,8 +230,8 @@ recruiterHiringRouter.get("/recruiter/hiring-activity/import/:batchId", async (r
   try {
     const data = await readImportBatch(req.params.batchId);
     return res.json({ success: true, data });
-  } catch (error: any) {
-    return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -202,8 +239,8 @@ recruiterHiringRouter.get("/recruiter/hiring-activity/import/:batchId/errors", a
   try {
     const data = await readImportBatch(req.params.batchId);
     return res.json({ success: true, data: data.errors });
-  } catch (error: any) {
-    return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -238,8 +275,8 @@ recruiterHiringRouter.get("/recruiter/hiring-dashboard", async (req: Authenticat
       search: parseQueryBool(req.query.search),
     });
     return res.json({ success: true, data });
-  } catch (error: any) {
-    return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -274,8 +311,8 @@ recruiterHiringRouter.get("/recruiter/calling-dashboard", async (req: Authentica
       search: parseQueryBool(req.query.search),
     });
     return res.json({ success: true, data });
-  } catch (error: any) {
-    return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -283,8 +320,8 @@ recruiterHiringRouter.post("/recruiter/hiring-activity/:id/create-candidate", as
   try {
     const data = await createCandidateFromActivity(req.params.id, req.authUser!.id);
     return res.status(201).json({ success: true, data });
-  } catch (error: any) {
-    return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -292,8 +329,8 @@ recruiterHiringRouter.post("/recruiter/hiring-activity/:id/generate-token", asyn
   try {
     const data = await createTokenFromActivity(req.params.id, req.authUser!.id);
     return res.status(201).json({ success: true, data });
-  } catch (error: any) {
-    return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -301,8 +338,8 @@ recruiterHiringRouter.post("/recruiter/hiring-activity/:id/send-onboarding", asy
   try {
     const data = await sendOnboardingFromActivity(req.params.id, req.authUser!.id);
     return res.status(201).json({ success: true, data });
-  } catch (error: any) {
-    return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
 });
 

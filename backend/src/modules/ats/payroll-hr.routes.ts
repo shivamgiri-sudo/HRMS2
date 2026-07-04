@@ -1,6 +1,6 @@
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { requireAuth, requireWriteAccess } from '../../middleware/authMiddleware.js';
+import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import {
   getPendingCandidates,
@@ -16,30 +16,40 @@ import type { RowDataPacket } from 'mysql2/promise';
 
 export const payrollHRRouter = Router();
 
+type AsyncHandler = (req: AuthenticatedRequest | Request, res: Response) => Promise<unknown>;
+
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest | Request, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unexpected error';
+}
+
 // All routes require authentication and Payroll HR/HR/Admin role
 payrollHRRouter.use(requireAuth);
 payrollHRRouter.use(requireRole('admin', 'hr', 'payroll_hr'));
 
 // ── 1. Get pending candidates (BGV verified, onboarding submitted) ────────────
-payrollHRRouter.get('/pending-candidates', async (_req, res) => {
+payrollHRRouter.get('/pending-candidates', h(async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const candidates = await getPendingCandidates();
     return res.json({ success: true, data: candidates });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
-payrollHRRouter.get('/validated-candidates', async (_req, res) => {
+payrollHRRouter.get('/validated-candidates', h(async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const candidates = await getPendingCandidates();
     return res.json({ success: true, data: candidates });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
-payrollHRRouter.get('/salary-slabs', async (_req, res) => {
+payrollHRRouter.get('/salary-slabs', h(async (_req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, slab_code, label, range_from, range_to, active_status
        FROM salary_slab_master
@@ -47,18 +57,18 @@ payrollHRRouter.get('/salary-slabs', async (_req, res) => {
       ORDER BY seq_order ASC, range_from ASC`,
   );
   return res.json({ success: true, data: rows });
-});
+}));
 
 // ── 2. Get candidate details for validation ───────────────────────────────────
-payrollHRRouter.get('/candidate/:candidateId', async (req, res) => {
+payrollHRRouter.get('/candidate/:candidateId', h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { candidateId } = req.params;
     const candidate = await getCandidateForValidation(candidateId);
     return res.json({ success: true, data: candidate });
-  } catch (error: any) {
-    return res.status(404).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(404).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 3. Validate and assign salary (with joining_date and salary_start_date) ───
 const salaryValidationSchema = z.object({
@@ -81,7 +91,7 @@ const salaryValidationSchema = z.object({
   remarks: z.string().optional(),
 });
 
-payrollHRRouter.post('/validate', requireWriteAccess, async (req: any, res) => {
+payrollHRRouter.post('/validate', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const input = salaryValidationSchema.parse(req.body) as SalaryValidationInput;
 
@@ -91,19 +101,19 @@ payrollHRRouter.post('/validate', requireWriteAccess, async (req: any, res) => {
     });
 
     return res.json(result);
-  } catch (error: any) {
-    if (error.name === 'ZodError') {
+  } catch (error: unknown) {
+    if (error instanceof z.ZodError) {
       return res.status(400).json({
         success: false,
         message: 'Validation failed',
         errors: error.errors,
       });
     }
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
-payrollHRRouter.post('/validate-slab', async (req, res) => {
+payrollHRRouter.post('/validate-slab', h(async (req: Request, res: Response) => {
   const { salary_slab_id, employment_type = 'onroll' } = req.body;
   const employmentType = employment_type === 'offrole' ? 'offrole' : 'onroll';
   if (!salary_slab_id) return res.status(400).json({ success: false, message: 'salary_slab_id required' });
@@ -116,9 +126,9 @@ payrollHRRouter.post('/validate-slab', async (req, res) => {
   const slab = rows[0];
   if (!slab) return res.status(404).json({ success: false, message: 'salary slab not found' });
   return res.json({ success: true, data: { slab, breakdown: calculateSalaryBreakdown(Number(slab.range_to), employmentType) } });
-});
+}));
 
-payrollHRRouter.post('/salary-proposal', async (req: any, res) => {
+payrollHRRouter.post('/salary-proposal', h(async (req: AuthenticatedRequest, res: Response) => {
   const { candidate_id, salary_slab_id, proposed_gross_salary, proposal_reason } = req.body;
   if (!candidate_id || !salary_slab_id || !proposed_gross_salary || !String(proposal_reason ?? '').trim()) {
     return res.status(400).json({ success: false, message: 'candidate_id, salary_slab_id, proposed_gross_salary, and proposal_reason are required' });
@@ -137,21 +147,21 @@ payrollHRRouter.post('/salary-proposal', async (req: any, res) => {
     [candidate_id, salary_slab_id, proposed_gross_salary, proposal_reason, req.authUser.id],
   );
   return res.status(201).json({ success: true });
-});
+}));
 
-payrollHRRouter.post('/submit-offer', async (req: any, res) => {
+payrollHRRouter.post('/submit-offer', h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const input = salaryValidationSchema.parse(req.body) as SalaryValidationInput;
     const result = await validateAndAssignSalary({ ...input, payroll_hr_id: req.authUser.id });
     return res.json(result);
-  } catch (error: any) {
-    if (error.name === 'ZodError') return res.status(400).json({ success: false, message: 'Validation failed', errors: error.errors });
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    if (error instanceof z.ZodError) return res.status(400).json({ success: false, message: 'Validation failed', errors: error.errors });
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 4. Get validation record for a candidate ──────────────────────────────────
-payrollHRRouter.get('/validation/:candidateId', async (req, res) => {
+payrollHRRouter.get('/validation/:candidateId', h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { candidateId } = req.params;
     const record = await getValidationRecord(candidateId);
@@ -164,10 +174,10 @@ payrollHRRouter.get('/validation/:candidateId', async (req, res) => {
     }
 
     return res.json({ success: true, data: record });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 5. Notify branch head for approval ────────────────────────────────────────
 const notifyBranchHeadSchema = z.object({
@@ -175,24 +185,24 @@ const notifyBranchHeadSchema = z.object({
   branch_head_id: z.string().uuid(),
 });
 
-payrollHRRouter.post('/notify-branch-head', async (req, res) => {
+payrollHRRouter.post('/notify-branch-head', h(async (req: Request, res: Response) => {
   try {
     const { candidate_id, branch_head_id } = notifyBranchHeadSchema.parse(req.body);
 
     const result = await notifyBranchHeadForApproval(candidate_id, branch_head_id);
 
     return res.json(result);
-  } catch (error: any) {
-    if (error.name === 'ZodError') {
+  } catch (error: unknown) {
+    if (error instanceof z.ZodError) {
       return res.status(400).json({
         success: false,
         message: 'Validation failed',
         errors: error.errors,
       });
     }
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 6. Calculate salary breakdown (helper) ────────────────────────────────────
 const salaryBreakdownSchema = z.object({
@@ -200,21 +210,21 @@ const salaryBreakdownSchema = z.object({
   employment_type: z.enum(['onroll', 'offrole']),
 });
 
-payrollHRRouter.post('/calculate-breakdown', async (req, res) => {
+payrollHRRouter.post('/calculate-breakdown', h(async (req: Request, res: Response) => {
   try {
     const { gross_salary, employment_type } = salaryBreakdownSchema.parse(req.body);
 
     const breakdown = calculateSalaryBreakdown(gross_salary, employment_type);
 
     return res.json({ success: true, data: breakdown });
-  } catch (error: any) {
-    if (error.name === 'ZodError') {
+  } catch (error: unknown) {
+    if (error instanceof z.ZodError) {
       return res.status(400).json({
         success: false,
         message: 'Validation failed',
         errors: error.errors,
       });
     }
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));

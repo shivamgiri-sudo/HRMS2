@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "crypto";
 import fs from "fs";
 import path from "path";
-import type { RowDataPacket } from "mysql2";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
@@ -25,6 +25,18 @@ export type OnboardingDocumentAccessParams = {
   document: Record<string, unknown>;
   action: "preview" | "download";
 };
+
+interface BgvCheckRow extends RowDataPacket {
+  check_type: string;
+  status: string;
+}
+
+interface OnboardingProfileBlockerRow extends RowDataPacket {
+  otp_verified: number | null;
+  statutory_declaration_accepted: number | null;
+  dpdp_consent: number | null;
+  bgv_consent: number | null;
+}
 
 const PAYROLL_DOCUMENT_KEYWORDS = [
   "bank",
@@ -692,8 +704,8 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       panHash,
       aadhaarMasked,
       aadhaarHash,
-      input.passportNo ?? (input as any).passportNumber ?? (input as any).passport_number ?? null,
-      input.drivingLicenseNo ?? (input as any).dlNumber ?? (input as any).dl_number ?? null,
+      input.passportNo ?? input["passportNumber"] ?? input["passport_number"] ?? null,
+      input.drivingLicenseNo ?? input["dlNumber"] ?? input["dl_number"] ?? null,
       input.uanNumber ?? null,
       input.epfNumber ?? null,
       input.esicNumber ?? null,
@@ -765,8 +777,8 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
        updated_at = NOW()
      WHERE id = ?`,
     [
-      input.passportNo ?? (input as any).passportNumber ?? (input as any).passport_number ?? null,
-      input.drivingLicenseNo ?? (input as any).dlNumber ?? (input as any).dl_number ?? null,
+      input.passportNo ?? input["passportNumber"] ?? input["passport_number"] ?? null,
+      input.drivingLicenseNo ?? input["dlNumber"] ?? input["dl_number"] ?? null,
       input.uanNumber ?? null,
       input.epfNumber ?? null,
       input.esicNumber ?? null,
@@ -840,11 +852,11 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
     const namesMatch = nameOnCheque.toLowerCase() === accountHolderName.toLowerCase();
 
     // Fetch the bank_detail row we just upserted
-    const [bdRows] = await db.execute(
+    const [bdRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM candidate_onboarding_bank_detail WHERE candidate_id = ? ORDER BY updated_at DESC LIMIT 1`,
       [candidateId]
     );
-    const bankDetailId = (bdRows as any[])[0]?.id ?? null;
+    const bankDetailId = bdRows[0]?.id ?? null;
 
     if (namesMatch) {
       await db.execute(
@@ -1234,10 +1246,10 @@ export async function payrollReviewFullOnboarding(
 }
 
 export async function checkBgvReadiness(candidateId: string): Promise<{ ready: boolean; missing: string[]; score: number }> {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await db.execute<BgvCheckRow[]>(
     `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ?`, [candidateId]
   );
-  const checks = rows as RowDataPacket[];
+  const checks = rows;
   const mandatoryChecks = ["pan", "aadhaar_offline", "bank", "address_doc", "education_doc", "employment", "criminal"];
   const missing: string[] = [];
 
@@ -1245,7 +1257,7 @@ export async function checkBgvReadiness(candidateId: string): Promise<{ ready: b
   let verifiedCount = 0;
 
   for (const required of mandatoryChecks) {
-    const match = checks.find((c: any) => c.check_type === required);
+    const match = checks.find((c) => c.check_type === required);
     if (!match || match.status === "not_started" || match.status === "failed") {
       missing.push(required);
     } else if (match.status === "verified" || match.status === "waived") {
@@ -1472,7 +1484,7 @@ export async function saveLanguages(
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
-    const [del] = await conn.execute(`DELETE FROM candidate_onboarding_language WHERE candidate_id = ?`, [candidate_id]);
+    const [del] = await conn.execute<ResultSetHeader>(`DELETE FROM candidate_onboarding_language WHERE candidate_id = ?`, [candidate_id]);
     for (const lang of languages) {
       if (!lang.language_name?.trim()) continue;
       await conn.execute(
@@ -1482,7 +1494,7 @@ export async function saveLanguages(
       );
     }
     await conn.commit();
-    return { candidateId: candidate_id, deleted: (del as any).affectedRows ?? 0, inserted: languages.length };
+    return { candidateId: candidate_id, deleted: del.affectedRows ?? 0, inserted: languages.length };
   } catch (e) {
     await conn.rollback();
     throw e;
@@ -1641,12 +1653,17 @@ export async function getOnboardingBlockers(
 ): Promise<Array<{ code: string; message: string; severity: "hard" | "soft" }>> {
   const blockers: Array<{ code: string; message: string; severity: "hard" | "soft" }> = [];
 
-  const [profileRows] = await db.execute<RowDataPacket[]>(
+  const [profileRows] = await db.execute<OnboardingProfileBlockerRow[]>(
     `SELECT otp_verified, statutory_declaration_accepted, dpdp_consent, bgv_consent
        FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
     [candidateId]
   );
-  const profile = profileRows[0] as any ?? {};
+  const profile = profileRows[0] ?? {
+    otp_verified: null,
+    statutory_declaration_accepted: null,
+    dpdp_consent: null,
+    bgv_consent: null,
+  };
 
   if (!profile.otp_verified) {
     blockers.push({ code: "OTP_NOT_VERIFIED", message: "Mobile OTP verification is required before submission.", severity: "hard" });

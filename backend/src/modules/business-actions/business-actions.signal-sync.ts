@@ -4,6 +4,51 @@ import { db } from "../../db/mysql.js";
 import { revenueRiskService } from "../revenue-risk/revenue-risk.service.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 
+interface PeopleRiskRow extends RowDataPacket {
+  employee_id: string;
+  engagement_score: number | null;
+  risk_label: string | null;
+  top_risk_drivers_json: unknown;
+  employee_code: string | null;
+  full_name: string | null;
+  reporting_manager_user_id: string | null;
+  manager_name: string | null;
+}
+
+interface SupportSlaRow extends RowDataPacket {
+  id: string;
+  ticket_code: string | null;
+  category: string | null;
+  priority: string | null;
+  subject: string | null;
+  assigned_to: string | null;
+  employee_id: string | null;
+  employee_code: string | null;
+  full_name: string | null;
+}
+
+interface GrievanceRow extends RowDataPacket {
+  id: string;
+  grievance_code: string | null;
+  category: string | null;
+  severity: string | null;
+  status: string | null;
+  assigned_to: string | null;
+  is_anonymous: number | null;
+}
+
+interface RevenueRiskRow {
+  risk_level?: string | null;
+  revenue_at_risk?: number | string | null;
+  shortage_hc?: number | string | null;
+  revenue_date?: string | null;
+  process_id?: string | null;
+  process_name?: string | null;
+  client_name?: string | null;
+  data_confidence_score?: number | string | null;
+  reason_json?: unknown[] | null;
+}
+
 function dueDate(days: number) {
   const date = new Date();
   date.setDate(date.getDate() + days);
@@ -73,7 +118,7 @@ export const businessActionSignalSync = {
 
   async syncPeopleExperience(actorUserId: string) {
     if (!(await tableExists("people_experience_health_snapshot"))) return { scanned: 0, created: 0, skipped: 0, reason: "people_experience_health_snapshot missing" };
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<PeopleRiskRow[]>(
       `SELECT px.employee_id,
               px.engagement_score,
               px.risk_label,
@@ -96,7 +141,7 @@ export const businessActionSignalSync = {
     );
 
     let created = 0;
-    for (const row of rows as any[]) {
+    for (const row of rows) {
       const result = await ensureAction({
         source_module: "people_experience",
         source_id: String(row.employee_id),
@@ -115,7 +160,7 @@ export const businessActionSignalSync = {
 
   async syncSupportSla(actorUserId: string) {
     if (!(await tableExists("helpdesk_ticket"))) return { scanned: 0, created: 0, skipped: 0, reason: "helpdesk_ticket missing" };
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<SupportSlaRow[]>(
       `SELECT t.id,
               t.ticket_code,
               t.category,
@@ -142,7 +187,7 @@ export const businessActionSignalSync = {
     );
 
     let created = 0;
-    for (const row of rows as any[]) {
+    for (const row of rows) {
       const result = await ensureAction({
         source_module: "support",
         source_id: String(row.id),
@@ -161,7 +206,7 @@ export const businessActionSignalSync = {
 
   async syncGrievances(actorUserId: string) {
     if (!(await tableExists("grievance"))) return { scanned: 0, created: 0, skipped: 0, reason: "grievance missing" };
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<GrievanceRow[]>(
       `SELECT g.id,
               g.grievance_code,
               g.category,
@@ -177,7 +222,7 @@ export const businessActionSignalSync = {
     );
 
     let created = 0;
-    for (const row of rows as any[]) {
+    for (const row of rows) {
       const critical = row.severity === "critical" || ["harassment", "safety", "security", "discrimination"].includes(String(row.category));
       const result = await ensureAction({
         source_module: "grievance",
@@ -197,10 +242,10 @@ export const businessActionSignalSync = {
 
   async syncRevenueRisk(actorUserId: string) {
     const snapshot = await revenueRiskService.snapshot();
-    const rows = Array.isArray(snapshot.rows) ? snapshot.rows : [];
-    const riskRows = rows.filter((row: any) => ["critical", "high"].includes(String(row.risk_level)) || Number(row.revenue_at_risk ?? 0) > 0 || Number(row.shortage_hc ?? 0) > 0).slice(0, 100);
+    const rows = Array.isArray(snapshot.rows) ? snapshot.rows as RevenueRiskRow[] : [];
+    const riskRows = rows.filter((row) => ["critical", "high"].includes(String(row.risk_level)) || Number(row.revenue_at_risk ?? 0) > 0 || Number(row.shortage_hc ?? 0) > 0).slice(0, 100);
     let created = 0;
-    for (const row of riskRows as any[]) {
+    for (const row of riskRows) {
       const severity = row.risk_level === "critical" ? "critical" : row.risk_level === "high" ? "high" : "medium";
       const result = await ensureAction({
         source_module: "revenue",

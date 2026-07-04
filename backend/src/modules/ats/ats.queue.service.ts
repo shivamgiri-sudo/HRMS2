@@ -25,9 +25,7 @@ export const atsQueueService = {
     // Verify candidate exists and is active
     const candidate = await atsService.getCandidate(candidateId);
     if (!candidate.active_status) {
-      const err = new Error("Candidate not found");
-      (err as any).statusCode = 404;
-      throw err;
+      throw Object.assign(new Error("Candidate not found"), { statusCode: 404 as const });
     }
 
     // Prevent duplicate active token for same candidate
@@ -36,10 +34,10 @@ export const atsQueueService = {
       [candidateId]
     );
     if ((existing as RowDataPacket[]).length > 0) {
-      const err = new Error("Candidate already has an active queue token");
-      (err as any).statusCode = 409;
-      (err as any).code = 'DUPLICATE_QUEUE_TOKEN';
-      throw err;
+      throw Object.assign(new Error("Candidate already has an active queue token"), {
+        statusCode: 409 as const,
+        code: 'DUPLICATE_QUEUE_TOKEN' as const,
+      });
     }
 
     const id = randomUUID();

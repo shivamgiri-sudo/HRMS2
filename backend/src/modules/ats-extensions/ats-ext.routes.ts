@@ -1,12 +1,15 @@
 import { Router } from "express";
-import type { Request, Response } from "express";
+import type { NextFunction, Request, Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requisitionService, bgvService, offerService, duplicateService, sourcingAnalyticsService } from "./ats-ext.service.js";
 
 const router = Router();
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+type AsyncHandler = (req: AuthenticatedRequest | Request, res: Response) => Promise<unknown>;
+const h = (fn: AsyncHandler) => (req: Request, res: Response, next: NextFunction) => {
+  void fn(req as AuthenticatedRequest | Request, res).catch(next);
+};
 
 // ── PUBLIC: Offer Digital Acceptance ─────────────────────────────────────────
 router.post("/offers/:id/respond", h(async (req: Request, res: Response) => {
@@ -22,7 +25,7 @@ router.use(requireAuth);
 
 // ── Manpower Requisitions ─────────────────────────────────────────────────────
 router.get("/requisitions", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
-  res.json({ success: true, data: await requisitionService.list(req.query as any) });
+  res.json({ success: true, data: await requisitionService.list(req.query as Record<string, string | undefined>) });
 }));
 
 router.post("/requisitions", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
@@ -85,11 +88,11 @@ router.post("/duplicates/:id/resolve", requireRole("admin", "hr"), h(async (req:
 
 // ── Sourcing Analytics ────────────────────────────────────────────────────────
 router.get("/analytics/funnel", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
-  res.json({ success: true, data: await sourcingAnalyticsService.getFunnel(req.query as any) });
+  res.json({ success: true, data: await sourcingAnalyticsService.getFunnel(req.query as Record<string, string | undefined>) });
 }));
 
 router.get("/analytics/stages", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
-  res.json({ success: true, data: await sourcingAnalyticsService.getStageWise(req.query as any) });
+  res.json({ success: true, data: await sourcingAnalyticsService.getStageWise(req.query as Record<string, string | undefined>) });
 }));
 
 export { router as atsExtRouter };

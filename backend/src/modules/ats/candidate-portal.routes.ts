@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import {
   candidateLogin,
   getCandidateProfile,
@@ -12,10 +12,19 @@ import {
 
 export const candidatePortalRouter = Router();
 
+interface CandidateAuthRequest extends Request {
+  candidateId: string;
+  candidateCode: string;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unexpected error';
+}
+
 /**
  * Candidate authentication middleware
  */
-function candidateAuth(req: any, res: any, next: any) {
+function candidateAuth(req: CandidateAuthRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -41,7 +50,7 @@ function candidateAuth(req: any, res: any, next: any) {
 }
 
 // ── 1. Candidate Login ─────────────────────────────────────────────────────────
-candidatePortalRouter.post('/login', async (req, res) => {
+candidatePortalRouter.post('/login', async (req: Request, res: Response) => {
   try {
     const input: CandidateLoginInput = {
       candidate_id: req.body.candidate_id,
@@ -62,16 +71,16 @@ candidatePortalRouter.post('/login', async (req, res) => {
     }
 
     return res.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: getErrorMessage(error),
     });
   }
 });
 
 // ── 2. Get Candidate Profile ───────────────────────────────────────────────────
-candidatePortalRouter.get('/profile', candidateAuth, async (req: any, res) => {
+candidatePortalRouter.get('/profile', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
   try {
     const profile = await getCandidateProfile(req.candidateId);
 
@@ -86,16 +95,16 @@ candidatePortalRouter.get('/profile', candidateAuth, async (req: any, res) => {
       success: true,
       data: profile,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: getErrorMessage(error),
     });
   }
 });
 
 // ── 3. Get Onboarding Tasks ────────────────────────────────────────────────────
-candidatePortalRouter.get('/tasks', candidateAuth, async (req: any, res) => {
+candidatePortalRouter.get('/tasks', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
   try {
     const tasks = await getCandidateTasks(req.candidateId);
 
@@ -103,16 +112,16 @@ candidatePortalRouter.get('/tasks', candidateAuth, async (req: any, res) => {
       success: true,
       data: tasks,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: getErrorMessage(error),
     });
   }
 });
 
 // ── 4. Get Uploaded Documents ──────────────────────────────────────────────────
-candidatePortalRouter.get('/documents', candidateAuth, async (req: any, res) => {
+candidatePortalRouter.get('/documents', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
   try {
     const documents = await getCandidateDocuments(req.candidateId);
 
@@ -120,16 +129,16 @@ candidatePortalRouter.get('/documents', candidateAuth, async (req: any, res) => 
       success: true,
       data: documents,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: getErrorMessage(error),
     });
   }
 });
 
 // ── 5. Upload Document ─────────────────────────────────────────────────────────
-candidatePortalRouter.post('/upload-document', candidateAuth, async (req: any, res) => {
+candidatePortalRouter.post('/upload-document', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
   try {
     const { document_type, file_name, file_url } = req.body;
 
@@ -152,16 +161,16 @@ candidatePortalRouter.post('/upload-document', candidateAuth, async (req: any, r
       message: 'Document uploaded successfully',
       data: result,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: getErrorMessage(error),
     });
   }
 });
 
 // ── 6. Mark Task as Completed ──────────────────────────────────────────────────
-candidatePortalRouter.post('/complete-task', candidateAuth, async (req: any, res) => {
+candidatePortalRouter.post('/complete-task', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
   try {
     const { task_id } = req.body;
 
@@ -178,10 +187,10 @@ candidatePortalRouter.post('/complete-task', candidateAuth, async (req: any, res
       success: true,
       message: 'Task marked as completed',
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: getErrorMessage(error),
     });
   }
 });

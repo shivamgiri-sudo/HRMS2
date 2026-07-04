@@ -4,6 +4,11 @@ import type { ProviderResponse, DeliveryStatus } from '../../communication.types
 
 const META_API_VERSION = 'v19.0';
 
+interface MetaSendResponse {
+  error?: { message?: string };
+  messages?: Array<{ id?: string }>;
+}
+
 export class MetaWhatsAppProvider implements CommunicationProvider {
   constructor(
     private readonly accessToken: string,
@@ -32,10 +37,12 @@ export class MetaWhatsAppProvider implements CommunicationProvider {
         },
       );
       if (res.status >= 400) {
-        const err = (res.data as any)?.error?.message ?? `HTTP ${res.status}`;
+        const payload = res.data as MetaSendResponse;
+        const err = payload.error?.message ?? `HTTP ${res.status}`;
         return { success: false, error: err };
       }
-      const msgId = (res.data as any)?.messages?.[0]?.id;
+      const payload = res.data as MetaSendResponse;
+      const msgId = payload.messages?.[0]?.id;
       return { success: true, message_id: msgId };
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) };

@@ -34,6 +34,33 @@ export interface Module {
   total_users: number;
 }
 
+interface ModuleCountRow extends RowDataPacket {
+  module_name: string;
+  total_users: number;
+}
+
+interface EmployeeAccessRow extends RowDataPacket {
+  employee_code: string;
+  employee_name: string;
+  designation: string;
+  branch: string;
+  modules: string | null;
+  total_access: number;
+}
+
+interface EmployeeModuleRow extends RowDataPacket {
+  module_name: string;
+}
+
+interface SearchEmployeeRow extends RowDataPacket {
+  employee_code: string;
+  employee_name: string;
+  designation: string;
+  branch: string;
+  mobile: string | null;
+  email: string | null;
+}
+
 /**
  * Get all available modules
  */
@@ -109,7 +136,7 @@ export async function getAvailableModules(): Promise<Module[]> {
      GROUP BY module_name`
   );
 
-  const countMap = new Map(counts.map((c: any) => [c.module_name, c.total_users]));
+  const countMap = new Map((counts as ModuleCountRow[]).map((c) => [c.module_name, c.total_users]));
 
   return modules.map((m) => ({
     ...m,
@@ -136,7 +163,7 @@ export async function getModuleAccessList(moduleName?: string): Promise<ModuleAc
     LEFT JOIN employees e ON e.employee_code = mac.employee_code
   `;
 
-  const params: any[] = [];
+  const params: Array<string | null> = [];
 
   if (moduleName) {
     query += ' WHERE mac.module_name = ?';
@@ -171,7 +198,7 @@ export async function getEmployeesWithAccess(): Promise<EmployeeWithAccess[]> {
     ORDER BY total_access DESC, employee_name ASC`
   );
 
-  return employees.map((e: any) => ({
+  return (employees as EmployeeAccessRow[]).map((e) => ({
     employee_code: e.employee_code,
     employee_name: e.employee_name,
     designation: e.designation,
@@ -294,13 +321,13 @@ export async function getEmployeeModules(employeeCode: string): Promise<string[]
     [employeeCode]
   );
 
-  return modules.map((m: any) => m.module_name);
+  return (modules as EmployeeModuleRow[]).map((m) => m.module_name);
 }
 
 /**
  * Search employees by name or code
  */
-export async function searchEmployees(query: string): Promise<any[]> {
+export async function searchEmployees(query: string): Promise<SearchEmployeeRow[]> {
   const [employees] = await db.execute<RowDataPacket[]>(
     `SELECT
       employee_code,
@@ -322,5 +349,5 @@ export async function searchEmployees(query: string): Promise<any[]> {
     [`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`]
   );
 
-  return employees;
+  return employees as SearchEmployeeRow[];
 }

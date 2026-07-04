@@ -1,16 +1,83 @@
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
-import type { CustomizationRule, CustomizationContext, EffectiveConfigResult } from './customization.types.js';
+import type { CustomizationContext, CustomizationRule, EffectiveConfigResult } from './customization.types.js';
 
 // =============================================================================
 // Customization Engine: Rule Evaluation & Application
 // =============================================================================
 
+interface CustomizationRuleRow extends RowDataPacket {
+  id: string;
+  rule_name: string;
+  entity_type: string;
+  entity_id: string | null;
+  branch_ids: unknown;
+  process_ids: unknown;
+  department_ids: unknown;
+  designation_ids: unknown;
+  role_ids: unknown;
+  employee_ids: unknown;
+  config_type: CustomizationRule['config_type'];
+  config_data: unknown;
+  priority: number;
+  is_active: number;
+  effective_from: string | null;
+  effective_to: string | null;
+  created_by: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+interface EmployeeContextRow extends RowDataPacket {
+  branch_id: string | null;
+  process_id: string | null;
+  designation_id: string | null;
+  department_id: string | null;
+}
+
+interface RoleRow extends RowDataPacket {
+  role_key: string | null;
+}
+
+interface CacheRow extends RowDataPacket {
+  effective_config: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value) && !Buffer.isBuffer(value);
+}
+
+function parseJsonField(field: unknown): unknown {
+  if (field == null) {
+    return undefined;
+  }
+  if (typeof field === 'object' && !Buffer.isBuffer(field)) {
+    return field;
+  }
+
+  const raw = Buffer.isBuffer(field) ? field.toString('utf8') : String(field);
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    console.warn('JSON parse error:', error, 'Field:', raw);
+    return undefined;
+  }
+}
+
+function parseStringArrayField(field: unknown): string[] | undefined {
+  const parsed = parseJsonField(field);
+  return Array.isArray(parsed) ? parsed.map((item) => String(item)) : undefined;
+}
+
+function parseObjectField(field: unknown): Record<string, unknown> {
+  const parsed = parseJsonField(field);
+  return isRecord(parsed) ? parsed : {};
+}
+
 /**
  * Check if rule matches given context
  */
 export function matchesContext(rule: CustomizationRule, context: CustomizationContext): boolean {
-  // Rule matches if ALL specified dimensions match context
   if (rule.branch_ids?.length && !rule.branch_ids.includes(context.branchId || '')) return false;
   if (rule.process_ids?.length && !rule.process_ids.includes(context.processId || '')) return false;
   if (rule.department_ids?.length && !rule.department_ids.includes(context.departmentId || '')) return false;
@@ -18,7 +85,6 @@ export function matchesContext(rule: CustomizationRule, context: CustomizationCo
   if (rule.role_ids?.length && !rule.role_ids.includes(context.roleId || '')) return false;
   if (rule.employee_ids?.length && !rule.employee_ids.includes(context.employeeId)) return false;
 
-  // Check date range
   const now = new Date();
   if (rule.effective_from && new Date(rule.effective_from) > now) return false;
   if (rule.effective_to && new Date(rule.effective_to) < now) return false;
@@ -29,13 +95,14 @@ export function matchesContext(rule: CustomizationRule, context: CustomizationCo
 /**
  * Deep merge objects (for 'merge' config type)
  */
-function deepMerge(target: any, source: any): any {
-  const result = { ...target };
-  for (const key in source) {
-    if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
-      result[key] = deepMerge(result[key] || {}, source[key]);
+function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...target };
+  for (const [key, sourceValue] of Object.entries(source)) {
+    if (isRecord(sourceValue)) {
+      const currentValue = isRecord(result[key]) ? result[key] : {};
+      result[key] = deepMerge(currentValue, sourceValue);
     } else {
-      result[key] = source[key];
+      result[key] = sourceValue;
     }
   }
   return result;
@@ -44,18 +111,44 @@ function deepMerge(target: any, source: any): any {
 /**
  * Extend config (for 'extend' config type)
  */
-function extendConfig(base: any, extension: any): any {
-  const result = { ...base };
-  for (const key in extension) {
-    if (Array.isArray(extension[key])) {
-      result[key] = [...(result[key] || []), ...extension[key]];
-    } else if (typeof extension[key] === 'object') {
-      result[key] = deepMerge(result[key] || {}, extension[key]);
+function extendConfig(base: Record<string, unknown>, extension: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...base };
+  for (const [key, extensionValue] of Object.entries(extension)) {
+    if (Array.isArray(extensionValue)) {
+      const existing = Array.isArray(result[key]) ? result[key] as unknown[] : [];
+      result[key] = [...existing, ...extensionValue];
+    } else if (isRecord(extensionValue)) {
+      const currentValue = isRecord(result[key]) ? result[key] : {};
+      result[key] = deepMerge(currentValue, extensionValue);
     } else {
-      result[key] = extension[key];
+      result[key] = extensionValue;
     }
   }
   return result;
+}
+
+function parseRuleRow(row: CustomizationRuleRow): CustomizationRule {
+  return {
+    id: row.id,
+    rule_name: row.rule_name,
+    entity_type: row.entity_type,
+    entity_id: row.entity_id ?? undefined,
+    branch_ids: parseStringArrayField(row.branch_ids),
+    process_ids: parseStringArrayField(row.process_ids),
+    department_ids: parseStringArrayField(row.department_ids),
+    designation_ids: parseStringArrayField(row.designation_ids),
+    role_ids: parseStringArrayField(row.role_ids),
+    employee_ids: parseStringArrayField(row.employee_ids),
+    config_type: row.config_type,
+    config_data: parseObjectField(row.config_data),
+    priority: row.priority,
+    is_active: row.is_active,
+    effective_from: row.effective_from ?? undefined,
+    effective_to: row.effective_to ?? undefined,
+    created_by: row.created_by ?? undefined,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
 }
 
 /**
@@ -64,20 +157,14 @@ function extendConfig(base: any, extension: any): any {
 export async function applyCustomizations(
   entityType: string,
   entityId: string | null,
-  baseConfig: any,
+  baseConfig: Record<string, unknown>,
   context: CustomizationContext
 ): Promise<EffectiveConfigResult> {
-  // 1. Fetch all active rules for entity type
   const rules = await getRulesForEntity(entityType, entityId);
-
-  // 2. Filter rules matching context
-  const matchingRules = rules.filter(rule => matchesContext(rule, context));
-
-  // 3. Sort by priority (lower priority = applied first)
+  const matchingRules = rules.filter((rule) => matchesContext(rule, context));
   matchingRules.sort((a, b) => a.priority - b.priority);
 
-  // 4. Apply rules sequentially
-  let effectiveConfig = { ...baseConfig };
+  let effectiveConfig: Record<string, unknown> = { ...baseConfig };
   const appliedRuleIds: string[] = [];
 
   for (const rule of matchingRules) {
@@ -97,8 +184,6 @@ export async function applyCustomizations(
     }
 
     appliedRuleIds.push(rule.id);
-
-    // 5. Log application
     await logApplication(rule.id, context, entityType, entityId, effectiveConfig);
   }
 
@@ -120,7 +205,7 @@ async function getRulesForEntity(entityType: string, entityId: string | null): P
       AND (effective_from IS NULL OR effective_from <= CURDATE())
       AND (effective_to IS NULL OR effective_to >= CURDATE())
   `;
-  const params: any[] = [entityType];
+  const params: unknown[] = [entityType];
 
   if (entityId) {
     sql += ' AND (entity_id IS NULL OR entity_id = ?)';
@@ -131,18 +216,8 @@ async function getRulesForEntity(entityType: string, entityId: string | null): P
 
   sql += ' ORDER BY priority ASC';
 
-  const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-
-  return (rows as any[]).map(row => ({
-    ...row,
-    branch_ids: row.branch_ids ? JSON.parse(row.branch_ids) : null,
-    process_ids: row.process_ids ? JSON.parse(row.process_ids) : null,
-    department_ids: row.department_ids ? JSON.parse(row.department_ids) : null,
-    designation_ids: row.designation_ids ? JSON.parse(row.designation_ids) : null,
-    role_ids: row.role_ids ? JSON.parse(row.role_ids) : null,
-    employee_ids: row.employee_ids ? JSON.parse(row.employee_ids) : null,
-    config_data: JSON.parse(row.config_data),
-  }));
+  const [rows] = await db.execute<CustomizationRuleRow[]>(sql, params);
+  return rows.map(parseRuleRow);
 }
 
 /**
@@ -153,7 +228,7 @@ async function logApplication(
   context: CustomizationContext,
   entityType: string,
   entityId: string | null,
-  appliedConfig: any
+  appliedConfig: Record<string, unknown>
 ): Promise<void> {
   await db.execute(
     `INSERT INTO customization_application_log
@@ -181,9 +256,8 @@ export async function getEffectiveConfig(
   employeeId: string,
   entityType: string,
   entityId: string | null,
-  baseConfig: any
+  baseConfig: Record<string, unknown>
 ): Promise<EffectiveConfigResult> {
-  // 1. Check cache
   const cacheKey = `${employeeId}:${entityType}:${entityId || 'null'}`;
   const cached = await getFromCache(cacheKey);
   if (cached) {
@@ -195,13 +269,8 @@ export async function getEffectiveConfig(
     };
   }
 
-  // 2. Get employee context
   const context = await getEmployeeContext(employeeId);
-
-  // 3. Apply customizations
   const result = await applyCustomizations(entityType, entityId, baseConfig, context);
-
-  // 4. Cache result (TTL: 1 hour)
   await setCache(cacheKey, employeeId, entityType, entityId, result.config);
 
   return result;
@@ -211,47 +280,50 @@ export async function getEffectiveConfig(
  * Get employee context for customization
  */
 async function getEmployeeContext(employeeId: string): Promise<CustomizationContext> {
-  // Get employee data
-  const [empRows] = await db.execute<RowDataPacket[]>(
+  const [empRows] = await db.execute<EmployeeContextRow[]>(
     `SELECT branch_id, process_id, designation_id, department_id
      FROM employees
      WHERE id = ? LIMIT 1`,
     [employeeId]
   );
 
-  const emp = (empRows as any[])[0];
+  const emp = empRows[0];
   if (!emp) throw new Error('Employee not found');
 
-  // Get role from user_roles (many-to-many, take first active role)
-  const [roleRows] = await db.execute<RowDataPacket[]>(
+  const [roleRows] = await db.execute<RoleRow[]>(
     `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1 LIMIT 1`,
     [employeeId]
   );
-  const role = (roleRows as any[])[0];
+  const role = roleRows[0];
 
   return {
     employeeId,
-    branchId: emp.branch_id,
-    processId: emp.process_id,
-    departmentId: emp.department_id,
-    designationId: emp.designation_id,
-    roleId: role?.role_key, // May be undefined if no role
+    branchId: emp.branch_id ?? undefined,
+    processId: emp.process_id ?? undefined,
+    departmentId: emp.department_id ?? undefined,
+    designationId: emp.designation_id ?? undefined,
+    roleId: role?.role_key ?? undefined,
   };
 }
 
 /**
  * Cache management
  */
-async function getFromCache(cacheKey: string): Promise<any | null> {
-  const [rows] = await db.execute<RowDataPacket[]>(
+async function getFromCache(cacheKey: string): Promise<{ effective_config: Record<string, unknown> } | null> {
+  const [rows] = await db.execute<CacheRow[]>(
     `SELECT effective_config FROM customization_cache
      WHERE cache_key = ? AND expires_at > NOW()
      LIMIT 1`,
     [cacheKey]
   );
 
-  const cache = (rows as any[])[0];
-  return cache ? { effective_config: JSON.parse(cache.effective_config) } : null;
+  const cache = rows[0];
+  if (!cache) return null;
+
+  const parsed = parseJsonField(cache.effective_config);
+  return {
+    effective_config: isRecord(parsed) ? parsed : {},
+  };
 }
 
 async function setCache(
@@ -259,7 +331,7 @@ async function setCache(
   employeeId: string,
   entityType: string,
   entityId: string | null,
-  config: any
+  config: Record<string, unknown>
 ): Promise<void> {
   await db.execute(
     `INSERT INTO customization_cache

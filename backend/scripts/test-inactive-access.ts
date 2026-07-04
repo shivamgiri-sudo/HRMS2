@@ -4,6 +4,41 @@
  */
 
 import mysql from 'mysql2/promise';
+import type { RowDataPacket } from 'mysql2';
+
+type EmployeeRow = RowDataPacket & {
+  id: string;
+  employee_code: string;
+  full_name: string;
+  email: string | null;
+  phone_primary: string | null;
+  active_status: number;
+  access_end_date: string | null;
+  user_email: string | null;
+};
+type CountRow = RowDataPacket & { count: number };
+type InactiveEmployeeRow = RowDataPacket & {
+  employee_code: string;
+  full_name: string;
+  active_status: number;
+  access_end_date: string | null;
+  grace_status: string;
+};
+type LogRow = RowDataPacket & {
+  employee_code: string;
+  full_name: string;
+  login_at: string;
+  access_granted: number;
+  denial_reason: string | null;
+};
+type OtpRow = RowDataPacket & {
+  phone: string;
+  otp_code: string;
+  expires_at: string;
+  verified: number;
+  created_at: string;
+  status: string;
+};
 
 function requiredEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -48,12 +83,14 @@ async function runTests() {
       LIMIT 1
     `);
 
-    if ((employees as any[]).length === 0) {
+    const employeeRows = employees as EmployeeRow[];
+
+    if (employeeRows.length === 0) {
       console.log('❌ No suitable test employee found (need employee with user_id and phone)');
       return;
     }
 
-    const testEmployee = (employees as any[])[0];
+    const testEmployee = employeeRows[0];
     console.log(`✅ Found test employee: ${testEmployee.employee_code} - ${testEmployee.full_name}`);
     console.log(`   Email: ${testEmployee.user_email || 'N/A'}`);
     console.log(`   Phone: ${testEmployee.phone_primary}`);
@@ -63,15 +100,15 @@ async function runTests() {
     // Test 2: Check if tables exist
     console.log('📋 Test 2: Verifying database schema...');
 
-    const [logCount] = await connection.query(
+    const [logCount] = await connection.query<CountRow[]>(
       'SELECT COUNT(*) as count FROM auth_inactive_access_log'
     );
-    console.log(`✅ auth_inactive_access_log table exists (${(logCount as any[])[0].count} records)`);
+    console.log(`✅ auth_inactive_access_log table exists (${logCount[0].count} records)`);
 
-    const [otpCount] = await connection.query(
+    const [otpCount] = await connection.query<CountRow[]>(
       'SELECT COUNT(*) as count FROM auth_password_reset_otp'
     );
-    console.log(`✅ auth_password_reset_otp table exists (${(otpCount as any[])[0].count} records)\n`);
+    console.log(`✅ auth_password_reset_otp table exists (${otpCount[0].count} records)\n`);
 
     // Test 3: Simulate making employee inactive
     console.log('📋 Test 3: Simulating inactive employee scenario...');
@@ -81,7 +118,7 @@ async function runTests() {
 
     // Test 4: Check existing inactive employees
     console.log('📋 Test 4: Checking existing inactive employees...');
-    const [inactiveEmployees] = await connection.query(`
+    const [inactiveEmployees] = await connection.query<InactiveEmployeeRow[]>(`
       SELECT
         employee_code,
         full_name,
@@ -97,9 +134,9 @@ async function runTests() {
       LIMIT 10
     `);
 
-    if ((inactiveEmployees as any[]).length > 0) {
-      console.log(`✅ Found ${(inactiveEmployees as any[]).length} inactive employees:`);
-      (inactiveEmployees as any[]).forEach((emp: any, idx: number) => {
+    if (inactiveEmployees.length > 0) {
+      console.log(`✅ Found ${inactiveEmployees.length} inactive employees:`);
+      inactiveEmployees.forEach((emp, idx) => {
         console.log(`   ${idx + 1}. ${emp.employee_code} - ${emp.full_name}`);
         console.log(`      Grace Period: ${emp.grace_status}`);
       });
@@ -110,7 +147,7 @@ async function runTests() {
 
     // Test 5: Check recent access logs
     console.log('📋 Test 5: Checking recent access logs...');
-    const [recentLogs] = await connection.query(`
+    const [recentLogs] = await connection.query<LogRow[]>(`
       SELECT
         e.employee_code,
         e.full_name,
@@ -123,9 +160,9 @@ async function runTests() {
       LIMIT 5
     `);
 
-    if ((recentLogs as any[]).length > 0) {
+    if (recentLogs.length > 0) {
       console.log(`✅ Recent access attempts:`);
-      (recentLogs as any[]).forEach((log: any, idx: number) => {
+      recentLogs.forEach((log, idx) => {
         console.log(`   ${idx + 1}. ${log.employee_code} at ${log.login_at}`);
         console.log(`      Status: ${log.access_granted ? '✅ GRANTED' : '❌ DENIED'}`);
         if (log.denial_reason) {
@@ -139,7 +176,7 @@ async function runTests() {
 
     // Test 6: Check OTP records
     console.log('📋 Test 6: Checking OTP records...');
-    const [recentOTPs] = await connection.query(`
+    const [recentOTPs] = await connection.query<OtpRow[]>(`
       SELECT
         phone,
         otp_code,
@@ -156,9 +193,9 @@ async function runTests() {
       LIMIT 5
     `);
 
-    if ((recentOTPs as any[]).length > 0) {
+    if (recentOTPs.length > 0) {
       console.log(`✅ Recent OTPs:`);
-      (recentOTPs as any[]).forEach((otp: any, idx: number) => {
+      recentOTPs.forEach((otp, idx) => {
         console.log(`   ${idx + 1}. Phone: ${otp.phone.substring(0, 3)}***${otp.phone.slice(-2)}`);
         console.log(`      Status: ${otp.status}`);
         console.log(`      Created: ${otp.created_at}`);
@@ -182,8 +219,9 @@ async function runTests() {
     console.log('   4. Try the SMS/OTP password reset flow');
     console.log('   5. See TESTING_INACTIVE_ACCESS_OTP.md for detailed test cases\n');
 
-  } catch (error: any) {
-    console.error('\n❌ Test failed:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('\n❌ Test failed:', message);
   } finally {
     if (connection) {
       await connection.end();

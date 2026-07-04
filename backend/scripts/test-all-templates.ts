@@ -8,7 +8,7 @@ import { notificationService } from "../src/services/notification.service.js";
 
 const testEmail = process.env.TEST_EMAIL || "your-email@example.com";
 
-async function testTemplate(templateCode: string, context: any) {
+async function testTemplate(templateCode: string, context: Record<string, unknown>) {
   console.log(`\n📧 Testing ${templateCode}...`);
 
   try {
@@ -26,8 +26,9 @@ async function testTemplate(templateCode: string, context: any) {
     }
 
     return result.sent > 0;
-  } catch (error: any) {
-    console.log(`   ❌ Error: ${error.message}`);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(`   ❌ Error: ${message}`);
     return false;
   }
 }

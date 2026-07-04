@@ -283,7 +283,21 @@ export async function bulkAssignUserPageAccess(
 /**
  * Get audit log for page access assignments
  */
-export async function getUserPageAccessAuditLog(userId?: string, pageCode?: string, limit = 100): Promise<any[]> {
+export async function getUserPageAccessAuditLog(userId?: string, pageCode?: string, limit = 100): Promise<RowDataPacket[]> {
+  type AuditRow = RowDataPacket & {
+    id: string;
+    user_id: string;
+    user_email: string | null;
+    page_code: string;
+    page_name: string | null;
+    action: string;
+    actor_user_id: string | null;
+    actor_email: string | null;
+    old_permissions: unknown;
+    new_permissions: unknown;
+    notes: string | null;
+    created_at: string;
+  };
   let query = `
     SELECT
       upa.id, upa.user_id, u.email AS user_email,
@@ -296,7 +310,7 @@ export async function getUserPageAccessAuditLog(userId?: string, pageCode?: stri
     LEFT JOIN page_catalog pc ON pc.page_code = upa.page_code
     WHERE 1=1
   `;
-  const params: any[] = [];
+  const params: unknown[] = [];
 
   if (userId) {
     query += ` AND upa.user_id = ?`;
@@ -311,14 +325,14 @@ export async function getUserPageAccessAuditLog(userId?: string, pageCode?: stri
   query += ` ORDER BY upa.created_at DESC LIMIT ?`;
   params.push(limit);
 
-  const [rows] = await db.execute<RowDataPacket[]>(query, params);
+  const [rows] = await db.execute<AuditRow[]>(query, params);
   return rows;
 }
 
 /**
  * Get all user page access assignments (for admin UI)
  */
-export async function listAllUserPageAccess(): Promise<any[]> {
+export async function listAllUserPageAccess(): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
       upa.user_id, u.email AS user_email,
@@ -351,7 +365,7 @@ export async function setPageCatalogActiveStatus(
     [pageCode]
   );
 
-  const existing = (rows as RowDataPacket[])[0] as any;
+  const existing = (rows as Array<RowDataPacket & { page_code: string; page_name: string | null; active_status: number }>)[0];
   if (!existing) {
     throw Object.assign(new Error("Page not found in catalog"), { statusCode: 404 });
   }

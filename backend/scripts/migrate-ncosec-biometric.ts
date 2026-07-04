@@ -24,6 +24,7 @@ import sql from 'mssql';
 import { randomUUID } from 'crypto';
 import { getNcosecPool, closeNcosecPool, testNcosecConnection } from '../src/db/ncosecDb.js';
 import { db } from '../src/db/mysql.js';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
 interface NcosecRow {
   UserID:          string;   // nvarchar — employee name/code in Cosec
@@ -36,6 +37,12 @@ interface NcosecRow {
 interface EmployeeMap {
   [cosecUserId: string]: { employeeId: string; employeeCode: string };
 }
+
+type EnrolledRow = RowDataPacket & { cosec_user_id: string; employee_id: string; cosec_user_name: string };
+type EmployeeRow = RowDataPacket & { id: string; employee_code: string };
+type BiometricLogRow = RowDataPacket & { id?: string };
+type EmployeeInfoRow = RowDataPacket & { branch_id?: string | number | null; process_id?: string | number | null };
+type AttendanceRow = RowDataPacket & { id?: string };
 
 interface Summary {
   total_ncosec_rows:     number;
@@ -91,7 +98,7 @@ function dateRange(startDate: Date): string[] {
 async function buildEmployeeMap(): Promise<EmployeeMap> {
   console.log('[HRMS] Building UserID → employee_id map...');
   // Check existing enrollments first
-  const [enrolled] = await db.execute<any[]>(
+  const [enrolled] = await db.execute<EnrolledRow[]>(
     `SELECT cosec_user_id, employee_id, cosec_user_name FROM employee_biometric_enrollment WHERE is_active = 1`
   );
   const map: EmployeeMap = {};
@@ -100,7 +107,7 @@ async function buildEmployeeMap(): Promise<EmployeeMap> {
     console.log(`[HRMS] Loaded ${enrolled.length} existing enrollment mappings`);
   }
   // Fill in remaining via employee_code match (UserID often == employee_code in Cosec)
-  const [employees] = await db.execute<any[]>(
+  const [employees] = await db.execute<EmployeeRow[]>(
     `SELECT id, employee_code FROM employees WHERE active_status = 1`
   );
   for (const emp of employees) {
@@ -136,7 +143,7 @@ async function upsertBiometricLog(
       migrated_at    = NOW()
   `, [employeeId, cosecUserId, punchDate, punchIn, punchOut, rawMinutes]);
 
-  const [rows] = await db.execute<any[]>(
+  const [rows] = await db.execute<BiometricLogRow[]>(
     `SELECT id FROM biometric_attendance_log WHERE employee_id = ? AND punch_date = ? LIMIT 1`,
     [employeeId, punchDate]
   );
@@ -150,12 +157,12 @@ async function upsertAttendanceDailyRecord(
 ): Promise<'inserted' | 'updated'> {
   const status = rawMinutes >= 360 ? 'present' : rawMinutes >= 180 ? 'half_day' : 'half_day';
 
-  const [empInfo] = await db.execute<any[]>(
+  const [empInfo] = await db.execute<EmployeeInfoRow[]>(
     `SELECT branch_id, process_id FROM employees WHERE id = ? LIMIT 1`, [employeeId]
   );
   const emp = empInfo[0] ?? {};
 
-  const [res] = await db.execute<any>(`
+  const [res] = await db.execute<ResultSetHeader>(`
     INSERT INTO attendance_daily_record
       (id, employee_id, record_date, clock_in_time, clock_out_time, raw_minutes,
        attendance_status, attendance_source, branch_id, process_id, created_by)
@@ -174,7 +181,7 @@ async function upsertAttendanceDailyRecord(
 
   // Link biometric log → attendance record
   if (bioLogId) {
-    const [adrRow] = await db.execute<any[]>(
+    const [adrRow] = await db.execute<AttendanceRow[]>(
       `SELECT id FROM attendance_daily_record WHERE employee_id = ? AND record_date = ? LIMIT 1`,
       [employeeId, punchDate]
     );
@@ -228,8 +235,9 @@ export async function runNcosecBiometricSync(): Promise<Summary> {
       let dayRows: NcosecRow[];
       try {
         dayRows = await fetchNcosecPunchesForDay(ncPool, dateStr);
-      } catch (err: any) {
-        console.error(`  [WARN] Failed to fetch ${dateStr}: ${err.message}`);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`  [WARN] Failed to fetch ${dateStr}: ${message}`);
         skippedDays++;
         continue;
       }
@@ -267,11 +275,11 @@ export async function runNcosecBiometricSync(): Promise<Summary> {
 
         processed++;
 
-      } catch (err: any) {
+      } catch (error: unknown) {
         summary.errors.push({
           userId: String(row.UserID),
           date:   String(row.punch_date).slice(0, 10),
-          error:  err.message,
+          error:  error instanceof Error ? error.message : String(error),
         });
       }
       } // end inner for (row of dayRows)

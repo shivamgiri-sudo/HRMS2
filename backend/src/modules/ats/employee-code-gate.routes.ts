@@ -1,22 +1,30 @@
-import { Router } from 'express';
+import { Router, type NextFunction, type Response } from 'express';
 import { db } from '../../db/mysql.js';
-import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { requireWriteAccess } from '../../middleware/authMiddleware.js';
 import { checkEmployeeCodeGate } from './employee-code-gate.service.js';
 import type { RowDataPacket } from 'mysql2';
 
 const router = Router();
-const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
+
+interface CountRow extends RowDataPacket {
+  cnt: number | string;
+}
 
 // GET /api/ats/employee-code/:candidateId/gate-check
-router.get('/:candidateId/gate-check', requireAuth, requireRole('payroll_hr', 'payroll_head', 'admin', 'hr', 'ho_hr', 'branch_hr'), h(async (req: any, res: any) => {
+router.get('/:candidateId/gate-check', requireAuth, requireRole('payroll_hr', 'payroll_head', 'admin', 'hr', 'ho_hr', 'branch_hr'), h(async (req, res) => {
   const result = await checkEmployeeCodeGate(req.params.candidateId);
   return res.json({ success: true, ...result });
 }));
 
 // POST /api/ats/employee-code/:candidateId/generate
-router.post('/:candidateId/generate', requireAuth, requireWriteAccess, requireRole('admin', 'hr', 'ho_hr', 'branch_hr', 'payroll_hr'), h(async (req: any, res: any) => {
+router.post('/:candidateId/generate', requireAuth, requireWriteAccess, requireRole('admin', 'hr', 'ho_hr', 'branch_hr', 'payroll_hr'), h(async (req, res) => {
   const { candidateId } = req.params;
 
   const gate = await checkEmployeeCodeGate(candidateId);
@@ -32,10 +40,15 @@ router.post('/:candidateId/generate', requireAuth, requireWriteAccess, requireRo
   // Generate code: MASCYYMM-NNNNN (sequential)
   const now = new Date();
   const yymm = String(now.getFullYear()).slice(2) + String(now.getMonth() + 1).padStart(2, '0');
-  const [countRow] = await db.execute<RowDataPacket[]>(
-    'SELECT COUNT(*) as cnt FROM employees WHERE created_at >= DATE_FORMAT(NOW(),\'%Y-%m-01\')'
-  ).catch(() => [[{ cnt: 0 }]] as any);
-  const seq = String(((countRow as any[])[0]?.cnt ?? 0) + 1).padStart(4, '0');
+  let countRows: CountRow[] = [];
+  try {
+    [countRows] = await db.execute<CountRow[]>(
+      'SELECT COUNT(*) as cnt FROM employees WHERE created_at >= DATE_FORMAT(NOW(),\'%Y-%m-01\')'
+    );
+  } catch {
+    countRows = [{ cnt: 0 }];
+  }
+  const seq = String((Number(countRows[0]?.cnt ?? 0) + 1)).padStart(4, '0');
   const empCode = `MAS${yymm}${seq}`;
 
   // Write employee_code back to ats_candidate and move to employee_code_generated stage

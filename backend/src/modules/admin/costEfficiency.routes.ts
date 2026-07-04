@@ -281,7 +281,7 @@ router.get(
 // Helper: Convert Array of Objects to CSV
 // ──────────────────────────────────────────────────────────────────────────
 
-function convertToCSV(data: any[]): string {
+function convertToCSV(data: Record<string, unknown>[]): string {
   if (!data || data.length === 0) return '';
 
   const headers = Object.keys(data[0]);

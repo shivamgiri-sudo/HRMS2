@@ -1,5 +1,5 @@
 import { db } from '../../db/mysql.js';
-import { RowDataPacket } from 'mysql2/promise';
+import { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { env } from '../../config/env.js';
@@ -216,8 +216,8 @@ export async function uploadCandidateDocument(
     [candidateId, documentType, fileName, fileUrl]
   );
 
-  const insertResult = result as any;
-  return { id: insertResult.insertId };
+  const insertResult = result as ResultSetHeader;
+  return { id: String(insertResult.insertId) };
 }
 
 /**

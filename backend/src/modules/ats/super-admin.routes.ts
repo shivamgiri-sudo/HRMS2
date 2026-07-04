@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import {
@@ -16,43 +16,60 @@ import {
 
 export const superAdminRouter = Router();
 
+interface SuperAdminRequest extends Request {
+  authUser?: {
+    id: string;
+    employee_code?: string;
+  };
+}
+
+type AsyncHandler = (req: SuperAdminRequest, res: Response) => Promise<unknown>;
+
+const h = (fn: AsyncHandler) => (req: SuperAdminRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unexpected error';
+}
+
 // All routes require authentication and admin role
 superAdminRouter.use(requireAuth);
 superAdminRouter.use(requireRole('admin'));
 
 // ── 1. Get available modules ──────────────────────────────────────────────────
-superAdminRouter.get('/modules', async (_req, res) => {
+superAdminRouter.get('/modules', h(async (_req, res) => {
   try {
     const modules = await getAvailableModules();
     return res.json({ success: true, data: modules });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 2. Get module access list ─────────────────────────────────────────────────
-superAdminRouter.get('/module-access', async (req, res) => {
+superAdminRouter.get('/module-access', h(async (req, res) => {
   try {
     const moduleName = req.query.module_name as string | undefined;
     const accessList = await getModuleAccessList(moduleName);
     return res.json({ success: true, data: accessList });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 3. Get employees with access ──────────────────────────────────────────────
-superAdminRouter.get('/employees-with-access', async (_req, res) => {
+superAdminRouter.get('/employees-with-access', h(async (_req, res) => {
   try {
     const employees = await getEmployeesWithAccess();
     return res.json({ success: true, data: employees });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 4. Grant module access ────────────────────────────────────────────────────
-superAdminRouter.post('/grant-access', async (req: any, res) => {
+superAdminRouter.post('/grant-access', h(async (req, res) => {
   try {
     const { module_name, employee_code, remarks } = req.body;
 
@@ -71,13 +88,13 @@ superAdminRouter.post('/grant-access', async (req: any, res) => {
       success: true,
       message: 'Access granted successfully',
     });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 5. Revoke module access ───────────────────────────────────────────────────
-superAdminRouter.post('/revoke-access', async (req, res) => {
+superAdminRouter.post('/revoke-access', h(async (req, res) => {
   try {
     const { module_name, employee_code } = req.body;
 
@@ -94,13 +111,13 @@ superAdminRouter.post('/revoke-access', async (req, res) => {
       success: true,
       message: 'Access revoked successfully',
     });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 6. Bulk grant access ──────────────────────────────────────────────────────
-superAdminRouter.post('/bulk-grant', async (req: any, res) => {
+superAdminRouter.post('/bulk-grant', h(async (req, res) => {
   try {
     const { module_name, employee_codes, remarks } = req.body;
 
@@ -120,13 +137,13 @@ superAdminRouter.post('/bulk-grant', async (req: any, res) => {
       message: `Access granted to ${result.granted} employees`,
       data: result,
     });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 7. Bulk revoke access ─────────────────────────────────────────────────────
-superAdminRouter.post('/bulk-revoke', async (req, res) => {
+superAdminRouter.post('/bulk-revoke', h(async (req, res) => {
   try {
     const { module_name, employee_codes } = req.body;
 
@@ -144,13 +161,13 @@ superAdminRouter.post('/bulk-revoke', async (req, res) => {
       message: `Access revoked from ${result.revoked} employees`,
       data: result,
     });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 8. Check module access ────────────────────────────────────────────────────
-superAdminRouter.get('/check-access', async (req, res) => {
+superAdminRouter.get('/check-access', h(async (req, res) => {
   try {
     const { employee_code, module_name } = req.query;
 
@@ -170,13 +187,13 @@ superAdminRouter.get('/check-access', async (req, res) => {
       success: true,
       has_access: hasAccess,
     });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 9. Get employee modules ───────────────────────────────────────────────────
-superAdminRouter.get('/employee-modules/:employeeCode', async (req, res) => {
+superAdminRouter.get('/employee-modules/:employeeCode', h(async (req, res) => {
   try {
     const { employeeCode } = req.params;
     const modules = await getEmployeeModules(employeeCode);
@@ -185,13 +202,13 @@ superAdminRouter.get('/employee-modules/:employeeCode', async (req, res) => {
       success: true,
       data: modules,
     });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));
 
 // ── 10. Search employees ──────────────────────────────────────────────────────
-superAdminRouter.get('/search-employees', async (req, res) => {
+superAdminRouter.get('/search-employees', h(async (req, res) => {
   try {
     const query = req.query.q as string;
 
@@ -208,7 +225,7 @@ superAdminRouter.get('/search-employees', async (req, res) => {
       success: true,
       data: employees,
     });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
-});
+}));

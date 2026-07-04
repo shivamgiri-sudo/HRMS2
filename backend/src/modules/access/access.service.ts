@@ -167,19 +167,38 @@ export interface AccessMeResponse {
 }
 
 export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
+  type RoleRow = RowDataPacket & { role_key?: string | null };
+  type EmployeeRow = RowDataPacket & {
+    id: string;
+    employee_code: string;
+    first_name: string;
+    last_name: string | null;
+    full_name: string | null;
+  };
+  type ScopeRow = RowDataPacket & { role_key: string | null };
+  type DisabledPageRow = RowDataPacket & { page_code: string };
+  type PageRow = RowDataPacket & {
+    page_code: string;
+    can_view: number | boolean;
+    can_create: number | boolean;
+    can_edit: number | boolean;
+    can_delete: number | boolean;
+    can_export: number | boolean;
+  };
+
   // 1. Roles from MySQL user_roles
   const [roleRows] = await db.execute<RowDataPacket[]>(
     "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
     [userId]
   );
-  const roles = (roleRows as RowDataPacket[]).map((r: any) => r.role_key as string);
+  const roles = (roleRows as RoleRow[]).map((r) => String(r.role_key ?? ""));
 
   // 2. Employee record linked to this user
   const [empRows] = await db.execute<RowDataPacket[]>(
     "SELECT id, employee_code, first_name, last_name, full_name FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
     [userId]
   );
-  const emp = (empRows as RowDataPacket[])[0] as any ?? null;
+  const emp = (empRows as EmployeeRow[])[0] ?? null;
 
   // 3. Assignment scopes
   const [scopeRows] = await db.execute<RowDataPacket[]>(
@@ -187,17 +206,17 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
      FROM user_assignment_scope WHERE user_id = ? AND active_status = 1`,
     [userId]
   );
-  const scopes = scopeRows as any[];
+  const scopes = scopeRows as ScopeRow[];
 
   const [disabledRows] = await db.execute<RowDataPacket[]>(
     "SELECT page_code FROM page_catalog WHERE active_status = 0"
   );
-  const disabledPageCodes = (disabledRows as RowDataPacket[]).map((row: any) => String(row.page_code));
+  const disabledPageCodes = (disabledRows as DisabledPageRow[]).map((row) => String(row.page_code));
 
   // 4. Page permissions - union of all role grants (most permissive wins).
   // page_catalog.active_status is the global compliance kill-switch:
   // disabled pages are hidden even if a role or direct user assignment grants access.
-  const allRoleKeys = [...new Set([...roles, ...scopes.map((s: any) => s.role_key)])];
+  const allRoleKeys = [...new Set([...roles, ...scopes.map((s) => s.role_key ?? "")])].filter(Boolean);
   let pages: AccessMeResponse["pages"] = [];
   if (allRoleKeys.length > 0) {
     const placeholders = allRoleKeys.map(() => "?").join(",");
@@ -216,7 +235,7 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
        GROUP BY rpa.page_code`,
       allRoleKeys
     );
-    pages = (pageRows as RowDataPacket[]).map((r: any) => ({
+    pages = (pageRows as PageRow[]).map((r) => ({
       page_code:  r.page_code as string,
       can_view:   Boolean(r.can_view),
       can_create: Boolean(r.can_create),
@@ -239,7 +258,7 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
 
   // Merge: user overrides replace role-based for matching page_code
   const pageMap = new Map(pages.map(p => [p.page_code, p]));
-  for (const userPage of userPageRows as any[]) {
+  for (const userPage of userPageRows as PageRow[]) {
     pageMap.set(userPage.page_code, {
       page_code: userPage.page_code,
       can_view: Boolean(userPage.can_view),

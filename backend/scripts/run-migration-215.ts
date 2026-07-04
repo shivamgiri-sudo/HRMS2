@@ -65,15 +65,17 @@ async function runMigration() {
       try {
         await connection.query(statement.replace(/\$\$/g, ''));
         console.log(`   ✅ Success`);
-      } catch (err: any) {
-        if (err.code === 'ER_DUP_FIELDNAME' || err.message.includes('Duplicate column')) {
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code) : '';
+        if (code === 'ER_DUP_FIELDNAME' || message.includes('Duplicate column')) {
           console.log(`   ⚠️  Column already exists, skipping`);
-        } else if (err.code === 'ER_TABLE_EXISTS_ERROR' || err.message.includes('already exists')) {
+        } else if (code === 'ER_TABLE_EXISTS_ERROR' || message.includes('already exists')) {
           console.log(`   ⚠️  Table already exists, skipping`);
-        } else if (err.message.includes('Trigger already exists')) {
+        } else if (message.includes('Trigger already exists')) {
           console.log(`   ⚠️  Trigger already exists, skipping`);
         } else {
-          throw err;
+          throw error;
         }
       }
     }
@@ -87,31 +89,31 @@ async function runMigration() {
     const [columns] = await connection.query(
       "SHOW COLUMNS FROM employees LIKE 'access_end_date'"
     );
-    console.log(`   ${(columns as any[]).length > 0 ? '✅' : '❌'} employees.access_end_date column`);
+    console.log(`   ${(columns as Array<Record<string, unknown>>).length > 0 ? '✅' : '❌'} employees.access_end_date column`);
 
     // Check auth_inactive_access_log table
     const [logTable] = await connection.query(
       "SHOW TABLES LIKE 'auth_inactive_access_log'"
     );
-    console.log(`   ${(logTable as any[]).length > 0 ? '✅' : '❌'} auth_inactive_access_log table`);
+    console.log(`   ${(logTable as Array<Record<string, unknown>>).length > 0 ? '✅' : '❌'} auth_inactive_access_log table`);
 
     // Check auth_password_reset_otp table
     const [otpTable] = await connection.query(
       "SHOW TABLES LIKE 'auth_password_reset_otp'"
     );
-    console.log(`   ${(otpTable as any[]).length > 0 ? '✅' : '❌'} auth_password_reset_otp table`);
+    console.log(`   ${(otpTable as Array<Record<string, unknown>>).length > 0 ? '✅' : '❌'} auth_password_reset_otp table`);
 
     // Check trigger (optional - not required for this version)
     const [triggers] = await connection.query(
       "SHOW TRIGGERS WHERE `Trigger` = 'set_access_end_date_on_inactive'"
     );
-    console.log(`   ${(triggers as any[]).length > 0 ? '✅' : 'ℹ️ '} set_access_end_date_on_inactive trigger ${(triggers as any[]).length === 0 ? '(skipped - not required)' : ''}`);
+    console.log(`   ${(triggers as Array<Record<string, unknown>>).length > 0 ? '✅' : 'ℹ️ '} set_access_end_date_on_inactive trigger ${(triggers as Array<Record<string, unknown>>).length === 0 ? '(skipped - not required)' : ''}`);
 
     // Check index
     const [indexes] = await connection.query(
       "SHOW INDEX FROM employees WHERE Key_name = 'idx_employees_status_access'"
     );
-    console.log(`   ${(indexes as any[]).length > 0 ? '✅' : '❌'} idx_employees_status_access index`);
+    console.log(`   ${(indexes as Array<Record<string, unknown>>).length > 0 ? '✅' : '❌'} idx_employees_status_access index`);
 
     console.log('\n🎉 Migration verification complete!\n');
     console.log('📝 Next steps:');
@@ -119,11 +121,13 @@ async function runMigration() {
     console.log('   2. Test SMS/OTP password reset');
     console.log('   3. See TESTING_INACTIVE_ACCESS_OTP.md for detailed tests\n');
 
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('\n❌ Migration failed!\n');
-    console.error('Error:', error.message);
-    if (error.sql) {
-      console.error('SQL:', error.sql.substring(0, 200) + '...');
+    console.error('Error:', message);
+    if (error && typeof error === 'object' && 'sql' in error) {
+      const sqlText = String((error as { sql?: unknown }).sql ?? '');
+      console.error('SQL:', sqlText.substring(0, 200) + '...');
     }
     process.exit(1);
   } finally {

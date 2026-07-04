@@ -45,8 +45,9 @@ async function testSMS() {
       console.log("   3. From number is valid Twilio number");
       console.log("   4. Recipient number is whitelisted (if trial account)");
     }
-  } catch (error: any) {
-    console.error("\n❌ ERROR:", error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("\n❌ ERROR:", message);
     console.error("\nTroubleshooting:");
     console.error("1. Ensure migration 132 has been run");
     console.error("2. Insert Twilio config into sms_config table");

@@ -535,7 +535,14 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
        WHERE c.id = ? LIMIT 1`,
       [candidateId]
     );
-    const candRow = candidateData[0][0] as any;
+    const candRow = candidateData[0][0] as RowDataPacket & {
+      personal_email?: string | null;
+      personal_phone?: string | null;
+      alternate_mobile?: string | null;
+      gender?: string | null;
+      date_of_birth?: string | null;
+      current_address?: string | null;
+    };
     passwordRecipientEmail = String(candRow?.personal_email ?? '').trim();
 
     await conn.execute(
@@ -598,7 +605,16 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
        FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
       [candidateId]
     );
-    const nomRow = nomineeData[0] as any;
+    const nomRow = nomineeData[0] as RowDataPacket & {
+      nominee_name?: string | null;
+      nominee_relation?: string | null;
+      nominee_date_of_birth?: string | null;
+      nominee1_share_pct?: number | string | null;
+      nominee2_name?: string | null;
+      nominee2_relation?: string | null;
+      nominee2_dob?: string | null;
+      nominee2_share_pct?: number | string | null;
+    };
     if (nomRow?.nominee_name) {
       await conn.execute(
         `INSERT INTO employee_nominee

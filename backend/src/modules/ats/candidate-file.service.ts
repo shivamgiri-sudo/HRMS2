@@ -95,7 +95,7 @@ export async function persistCandidateFile(input: {
     `SELECT * FROM ats_candidate_file WHERE id = ? LIMIT 1`,
     [fileId]
   );
-  return (rows as any[])[0] as CandidateFileRecord;
+  return (rows as CandidateFileRecord[])[0];
 }
 
 export async function findCandidateFileById(fileId: string): Promise<CandidateFileRecord | null> {
@@ -103,7 +103,7 @@ export async function findCandidateFileById(fileId: string): Promise<CandidateFi
     `SELECT * FROM ats_candidate_file WHERE id = ? LIMIT 1`,
     [fileId]
   );
-  return ((rows as any[])[0] ?? null) as CandidateFileRecord | null;
+  return (rows as CandidateFileRecord[])[0] ?? null;
 }
 
 export async function auditCandidateFileAccess(input: {

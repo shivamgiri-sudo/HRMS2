@@ -14,6 +14,31 @@ import type {
 } from './maternity.types.js';
 import type { MaternityListFilters } from './maternity.validation.js';
 
+interface MaternityRow extends RowDataPacket {
+  id: string;
+  employee_id: string;
+  status: string;
+  record_type: string;
+  child_birth_order: number | null;
+  entitled_weeks: number;
+  expected_delivery_date: string | null;
+  leave_start_date: string;
+  leave_end_date: string;
+  paid_weeks: number | null;
+  complications: number | null;
+  notes: string | null;
+  employee_name?: string | null;
+  employee_code?: string | null;
+}
+
+interface LeaveTypeRow extends RowDataPacket {
+  id: string;
+}
+
+interface EmployeeIdRow extends RowDataPacket {
+  employee_id: string;
+}
+
 const SELECT_BASE = `
   SELECT m.*,
          e.full_name  AS employee_name,
@@ -31,7 +56,7 @@ export const maternityService = {
     if (filters.record_type) { conds.push('m.record_type = ?');              params.push(filters.record_type); }
     if (filters.year)        { conds.push('YEAR(m.leave_start_date) = ?');   params.push(filters.year); }
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<MaternityRow[]>(
       `${SELECT_BASE} ${where} ORDER BY m.leave_start_date DESC`,
       params
     );
@@ -39,10 +64,10 @@ export const maternityService = {
   },
 
   async getById(id: string): Promise<MaternityRecord | null> {
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<MaternityRow[]>(
       `${SELECT_BASE} WHERE m.id = ? LIMIT 1`, [id]
     );
-    return (rows[0] as MaternityRecord) ?? null;
+    return rows[0] ?? null;
   },
 
   async create(dto: CreateMaternityDTO): Promise<MaternityRecord> {
@@ -52,7 +77,7 @@ export const maternityService = {
         WHERE employee_id = ? AND status IN ('applied','approved','active') LIMIT 1`,
       [dto.employee_id]
     );
-    if ((existing as RowDataPacket[]).length > 0) {
+    if (existing.length > 0) {
       throw new Error('Employee already has an active or pending maternity record');
     }
 
@@ -93,11 +118,11 @@ export const maternityService = {
     if (record.status !== 'applied') throw new Error(`Cannot approve record in status: ${record.status}`);
 
     // Find ML leave_type_id
-    const [ltRows] = await db.execute<RowDataPacket[]>(
+    const [ltRows] = await db.execute<LeaveTypeRow[]>(
       "SELECT id FROM leave_type_master WHERE leave_code = 'ML' AND active_status = 1 LIMIT 1"
     );
-    if (!(ltRows as RowDataPacket[]).length) throw new Error('ML leave type not found in leave_type_master');
-    const leaveTypeId = (ltRows[0] as any).id as string;
+    if (!ltRows.length) throw new Error('ML leave type not found in leave_type_master');
+    const leaveTypeId = ltRows[0].id;
 
     // Auto-create leave_request for the maternity period
     const leaveReqId = randomUUID();
@@ -201,7 +226,7 @@ export const maternityService = {
     const lastDay = new Date(y, m, 0).getDate();
     const monthEnd = `${runMonth}-${String(lastDay).padStart(2, '0')}`;
 
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<EmployeeIdRow[]>(
       `SELECT DISTINCT employee_id
          FROM maternity_benefit_record
         WHERE status IN ('approved', 'active')
@@ -209,6 +234,6 @@ export const maternityService = {
           AND (leave_end_date IS NULL OR leave_end_date >= ?)`,
       [monthEnd, monthStart]
     );
-    return new Set((rows as RowDataPacket[]).map((r: any) => r.employee_id as string));
+    return new Set(rows.map((r) => r.employee_id));
   },
 };

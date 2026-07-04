@@ -2,6 +2,16 @@ import axios from 'axios';
 import type { CommunicationProvider } from '../provider.interface.js';
 import type { ProviderResponse, DeliveryStatus } from '../../communication.types.js';
 
+interface Msg91SendResponse {
+  type?: string;
+  message?: string;
+  request_id?: string;
+}
+
+interface Msg91ReportResponse {
+  data?: Array<{ status?: string }>;
+}
+
 export class MSG91Provider implements CommunicationProvider {
   constructor(
     private readonly authKey: string,
@@ -31,10 +41,11 @@ export class MSG91Provider implements CommunicationProvider {
           validateStatus: s => s < 500,
         },
       );
-      if ((res.data as any)?.type === 'error') {
-        return { success: false, error: (res.data as any).message ?? 'MSG91 error' };
+      const payload = res.data as Msg91SendResponse;
+      if (payload.type === 'error') {
+        return { success: false, error: payload.message ?? 'MSG91 error' };
       }
-      return { success: true, message_id: (res.data as any)?.request_id };
+      return { success: true, message_id: payload.request_id };
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) };
     }
@@ -45,7 +56,8 @@ export class MSG91Provider implements CommunicationProvider {
       const res = await axios.get(`https://api.msg91.com/api/v5/report/?request_id=${messageId}`, {
         headers: { authkey: this.authKey },
       });
-      const status: string = (res.data as any)?.data?.[0]?.status ?? 'sent';
+      const payload = res.data as Msg91ReportResponse;
+      const status: string = payload.data?.[0]?.status ?? 'sent';
       return { status: status === 'Delivered' ? 'delivered' : status === 'Failed' ? 'failed' : 'sent' };
     } catch (e) {
       return { status: 'failed', error: e instanceof Error ? e.message : String(e) };

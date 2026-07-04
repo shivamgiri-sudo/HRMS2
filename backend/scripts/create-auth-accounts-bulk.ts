@@ -68,8 +68,9 @@ async function createAuthAccount(employee: Employee): Promise<boolean> {
     console.log(`✅ Created account for ${employee.first_name} ${employee.last_name || ''} (${employee.employee_code}) - ${employee.email}`);
     return true;
 
-  } catch (error: any) {
-    console.error(`❌ Failed to create account for ${employee.email}:`, error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Failed to create account for ${employee.email}:`, message);
     return false;
   }
 }
@@ -134,8 +135,9 @@ async function main() {
 
     console.log('\n✅ Bulk account creation complete!\n');
 
-  } catch (error: any) {
-    console.error('\n❌ Script failed:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('\n❌ Script failed:', message);
     process.exit(1);
   } finally {
     await db.end();

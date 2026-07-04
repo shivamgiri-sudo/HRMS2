@@ -5,9 +5,56 @@ import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 
-type CandidateRow = Record<string, any>;
+type CandidateRow = Record<string, unknown>;
 
 type Period = "FTD" | "WTD" | "MTD" | "ALL";
+
+interface ConfigSettingRow extends RowDataPacket {
+  setting: string;
+  value_text: string | null;
+}
+
+interface EmailTemplateRow extends RowDataPacket {
+  subject: string;
+  body: string;
+}
+
+interface CandidateLookupRow extends RowDataPacket {
+  id: string;
+  candidate_code?: string | null;
+  full_name?: string | null;
+  email?: string | null;
+  address?: string | null;
+  education?: string | null;
+  experience?: string | null;
+  gender?: string | null;
+}
+
+interface RecruiterRosterRow extends RowDataPacket {
+  id: string;
+  name: string;
+  recruiter_code?: string | null;
+  email?: string | null;
+  branch?: string | null;
+  employee_id?: string | null;
+  assigned_today?: number;
+  last_assigned_at?: string | null;
+  daily_capacity?: number;
+  role_coverage?: string | null;
+}
+
+interface RecruiterContactRow extends RowDataPacket {
+  reporting_manager?: string | null;
+  branch_head_email?: string | null;
+}
+
+interface CountRow extends RowDataPacket {
+  cnt: number;
+}
+
+interface CandidateIdRow extends RowDataPacket {
+  id: string;
+}
 
 const STATUS_WAITING = "Waiting";
 const OPEN_STATUSES = new Set(["Waiting", "In Progress", "Hold", "Selected"]);
@@ -268,7 +315,7 @@ function summarizeRows(rows: CandidateRow[]) {
   };
 }
 
-function groupBy<T extends Record<string, any>>(rows: T[], key: string): Record<string, T[]> {
+function groupBy<T extends Record<string, unknown>>(rows: T[], key: string): Record<string, T[]> {
   return rows.reduce((acc, row) => {
     const k = normalizeText(row[key]) || "Unspecified";
     (acc[k] ||= []).push(row);
@@ -351,8 +398,8 @@ async function audit(action: string, candidateId?: string | null, details?: stri
 }
 
 async function getConfigMap(): Promise<Record<string, string>> {
-  const [rows] = await db.execute<RowDataPacket[]>(`SELECT setting, value_text FROM ats_command_config`);
-  return Object.fromEntries((rows as any[]).map((r) => [r.setting, String(r.value_text ?? "")]));
+  const [rows] = await db.execute<ConfigSettingRow[]>(`SELECT setting, value_text FROM ats_command_config`);
+  return Object.fromEntries(rows.map((r) => [r.setting, String(r.value_text ?? "")]));
 }
 
 function template(text: string, replacements: Record<string, unknown>): string {
@@ -369,8 +416,8 @@ async function logEmail(candidateId: string | null, emailType: string, to: strin
 }
 
 async function sendTemplateEmail(code: string, candidateId: string | null, to: string, cc: string, replacements: Record<string, unknown>) {
-  const [rows] = await db.execute<RowDataPacket[]>(`SELECT * FROM ats_email_template WHERE template_code = ? AND active_status = 1 LIMIT 1`, [code]);
-  const tpl = rows[0] as any;
+  const [rows] = await db.execute<EmailTemplateRow[]>(`SELECT * FROM ats_email_template WHERE template_code = ? AND active_status = 1 LIMIT 1`, [code]);
+  const tpl = rows[0];
   if (!tpl) {
     await logEmail(candidateId, code, to, cc, code, "skipped", "Missing template");
     return { ok: true, skipped: true };
@@ -389,9 +436,10 @@ async function sendTemplateEmail(code: string, candidateId: string | null, to: s
     await transporter.sendMail({ from: `"MAS Callnet" <${env.SMTP_FROM || env.SMTP_USER}>`, to, cc: cc || undefined, subject, html });
     await logEmail(candidateId, code, to, cc, subject, "sent");
     return { ok: true };
-  } catch (err: any) {
-    await logEmail(candidateId, code, to, cc, subject, "failed", err?.message || String(err));
-    return { ok: false, error: err?.message || String(err) };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    await logEmail(candidateId, code, to, cc, subject, "failed", message);
+    return { ok: false, error: message };
   }
 }
 
@@ -404,7 +452,7 @@ async function candidateSelect(where = "1=1", params: unknown[] = []): Promise<C
       ORDER BY COALESCE(c.created_date, DATE(c.created_at)) DESC, c.created_at DESC`,
     params
   );
-  return (rows as any[]).map(enrichCandidate);
+  return rows.map(enrichCandidate);
 }
 
 export const atsFullParityService = {
@@ -499,10 +547,10 @@ export const atsFullParityService = {
     return { candidate, stageLogs, confirmations, emails, notifications };
   },
 
-  async createIntake(input: Record<string, any>, actor = "PUBLIC") {
+  async createIntake(input: Record<string, unknown>, actor = "PUBLIC") {
     const mobile = normalizeText(input.mobile || input.Mobile || input["Mobile Number"]);
     if (!mobile) throw Object.assign(new Error("Mobile number required"), { statusCode: 400 });
-    const [existing] = await db.execute<RowDataPacket[]>(
+    const [existing] = await db.execute<CandidateLookupRow[]>(
       `SELECT * FROM ats_candidate WHERE mobile = ? AND active_status = 1 ORDER BY created_at DESC LIMIT 1`,
       [mobile]
     );
@@ -512,8 +560,8 @@ export const atsFullParityService = {
     const role = normalizeText(input.roleApplied || input.RoleApplied || input["Role Applied"] || input.appliedForProcess);
     const recruiter = await this.pickRecruiter(branch, role, normalizeText(input.recruiterName || input.RecruiterSelected || input["Recruiter Name"]));
     const qToken = await this.nextQueueToken(branch);
-    if ((existing as any[]).length) {
-      const rec = (existing as any[])[0];
+    if (existing.length) {
+      const rec = existing[0];
       await db.execute(
         `UPDATE ats_candidate SET full_name=?, email=?, address=?, education=?, experience=?, gender=?, role_applied=?, branch_text=?, applied_for_branch=?, applied_for_process=?, recruiter_selected=?, recruiter_id=?, recruiter_assigned_name=?, recruiter_email=?, recruiter_mobile=?, q_token=COALESCE(q_token, ?), status=COALESCE(status, 'Waiting'), updated_at=NOW() WHERE id=?`,
         [fullName || rec.full_name, input.email || input.Email || rec.email, input.address || input.Address || rec.address, input.education || input.Education || rec.education, input.experience || input.Experience || rec.experience, input.gender || input.Gender || rec.gender, role, branch, branch, role, input.recruiterSelected || input.RecruiterSelected || null, recruiter?.id ?? null, recruiter?.name ?? null, recruiter?.email ?? null, recruiter?.mobile ?? null, qToken, rec.id]
@@ -531,7 +579,7 @@ export const atsFullParityService = {
     );
     if (recruiter?.id) {
       // Optimistic locking: only increment if under capacity
-      const [result] = await db.execute(
+      const [result] = await db.execute<RowDataPacket>(
         `UPDATE ats_recruiter_roster
          SET assigned_today = assigned_today + 1,
              last_assigned_at = NOW(),
@@ -541,7 +589,7 @@ export const atsFullParityService = {
       );
 
       // If 0 rows affected, capacity was exceeded (race condition)
-      if ((result as any).affectedRows === 0) {
+      if (Number((result as RowDataPacket & { affectedRows?: number }).affectedRows ?? 0) === 0) {
         console.warn(`[Capacity] Recruiter ${recruiter.id} exceeded capacity during concurrent assignment`);
         // Log to audit for monitoring
         await audit("CAPACITY_EXCEEDED", code, `Recruiter ${recruiter.name} (${recruiter.id}) capacity exceeded - candidate ${code} assigned but counter not incremented`);
@@ -555,12 +603,12 @@ export const atsFullParityService = {
     const params: unknown[] = [branch];
     let pref = "";
     if (preferred) { pref = " AND (name = ? OR recruiter_code = ? OR email = ?)"; params.push(preferred, preferred, preferred); }
-    const [prefRows] = await db.execute<RowDataPacket[]>(
+    const [prefRows] = await db.execute<RecruiterRosterRow[]>(
       `SELECT * FROM ats_recruiter_roster WHERE active_status = 1 AND available_today = 'Y' AND branch = ? ${pref} ORDER BY assigned_today ASC, last_assigned_at ASC LIMIT 1`, params
     );
-    if (prefRows[0]) return prefRows[0] as any;
+    if (prefRows[0]) return prefRows[0];
     const like = `%${role}%`;
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<RecruiterRosterRow[]>(
       `SELECT * FROM ats_recruiter_roster
         WHERE active_status = 1 AND available_today = 'Y' AND branch = ?
           AND assigned_today < daily_capacity
@@ -568,7 +616,7 @@ export const atsFullParityService = {
         ORDER BY assigned_today ASC, COALESCE(last_assigned_at, '1970-01-01') ASC LIMIT 1`,
       [branch, like]
     );
-    return (rows[0] as any) || null;
+    return rows[0] || null;
   },
 
   async nextQueueToken(branch: string) {
@@ -577,7 +625,7 @@ export const atsFullParityService = {
     return `${prefix}-${String(Number(rows[0]?.cnt ?? 0) + 1).padStart(3, "0")}`;
   },
 
-  async submitRecruiterUpdate(input: Record<string, any>, actorUserId?: string) {
+  async submitRecruiterUpdate(input: Record<string, unknown>, actorUserId?: string) {
     const candidateId = normalizeText(input.candidateId || input.CandidateID || input["Candidate ID"]);
     const qToken = normalizeText(input.qToken || input.QToken || input["Q Token"]);
     if (!candidateId && !qToken) throw Object.assign(new Error("CandidateID or QToken required"), { statusCode: 400 });
@@ -591,7 +639,7 @@ export const atsFullParityService = {
       `UPDATE ats_candidate SET
         walkin_end_stage=?, round1_result=?, round1_voc=?, round1_remarks=?, skilltest_typing=?, skilltest_ai=?, skilltest_result=?, skilltest_voc=?, skilltest_remarks=?, round2_result=?, round2_voc=?, round2_remarks=?, round3_result=?, round3_voc=?, round3_remarks=?, final_decision=?, offer_salary=?, offer_doj=?, reporting_shift=?, process_text=?, status=?, current_stage=?, hr_form_submission_time=NOW(), updated_at=NOW()
        WHERE id=?`,
-      [endStage || null, input.round1Result || input.Round1_Result || input["Round1 Result"] || null, input.round1Voc || input.Round1_VOC || input["Round1 VOC"] || null, input.round1Remarks || input["Round1 Remarks"] || null, input.skillTestTyping || input["SkillTest Typing Score (WPM/Accuracy%)"] || null, input.skillTestAI || input["SkillTest AI Score"] || null, input.skillTestResult || input["SkillTest Result"] || null, input.skillTestVoc || input["SkillTest VOC"] || null, input.skillTestRemarks || input["SkillTest Remarks"] || null, input.round2Result || input["Round2 Result"] || null, input.round2Voc || input["Round2 VOC"] || null, input.round2Remarks || input["Round2 Remarks"] || null, input.round3Result || input["Round3 Result"] || null, input.round3Voc || input["Round3 VOC"] || null, input.round3Remarks || input["Round3 Remarks"] || null, finalDecision || null, toNumber(input.offerSalary || input["Offer Salary"], null as any), input.offerDoj || input["Date of Joining"] || null, input.reportingTiming || input["Reporting Timing"] || null, input.interviewedForProcess || input["Interviewed for Process"] || null, newStatus || null, newStatus || c.current_stage, c.id]
+      [endStage || null, input.round1Result || input.Round1_Result || input["Round1 Result"] || null, input.round1Voc || input.Round1_VOC || input["Round1 VOC"] || null, input.round1Remarks || input["Round1 Remarks"] || null, input.skillTestTyping || input["SkillTest Typing Score (WPM/Accuracy%)"] || null, input.skillTestAI || input["SkillTest AI Score"] || null, input.skillTestResult || input["SkillTest Result"] || null, input.skillTestVoc || input["SkillTest VOC"] || null, input.skillTestRemarks || input["SkillTest Remarks"] || null, input.round2Result || input["Round2 Result"] || null, input.round2Voc || input["Round2 VOC"] || null, input.round2Remarks || input["Round2 Remarks"] || null, input.round3Result || input["Round3 Result"] || null, input.round3Voc || input["Round3 VOC"] || null, input.round3Remarks || input["Round3 Remarks"] || null, finalDecision || null, toNumber(input.offerSalary || input["Offer Salary"], 0), input.offerDoj || input["Date of Joining"] || null, input.reportingTiming || input["Reporting Timing"] || null, input.interviewedForProcess || input["Interviewed for Process"] || null, newStatus || null, newStatus || c.current_stage, c.id]
     );
     await db.execute(`INSERT INTO ats_candidate_stage_log (id, candidate_id, from_stage, to_stage, remarks, updated_by) VALUES (?, ?, ?, ?, ?, ?)`, [randomUUID(), c.id, c.current_stage || c.status, newStatus, input.remarks || input.Final_Remarks || null, actorUserId ?? null]);
     await this.recomputeDerivedFields(c.id);
@@ -599,7 +647,7 @@ export const atsFullParityService = {
     return (await candidateSelect("c.id = ?", [c.id]))[0];
   },
 
-  async submitConfirmation(input: Record<string, any>) {
+  async submitConfirmation(input: Record<string, unknown>) {
     const candidateId = normalizeText(input.candidateId || input.CandidateID || input["Candidate ID"]);
     await db.execute(
       `INSERT INTO ats_candidate_confirmation (id, candidate_id, will_join, hr_query, candidate_name, recruiter_name, recruiter_email, process_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -610,7 +658,7 @@ export const atsFullParityService = {
     return { success: true };
   },
 
-  async submitBgv(input: Record<string, any>) {
+  async submitBgv(input: Record<string, unknown>) {
     const candidateId = normalizeText(input.candidateId || input.CandidateID || input["CandidateID"]);
     await db.execute(
       `INSERT INTO ats_bgv_response (id, candidate_id, email_address, batch_no, process_name, full_name, contact_no, emergency_contact_no, dob, aadhaar_number, father_name, husband_name, permanent_same_as_current, permanent_address, permanent_city, permanent_state, permanent_pincode, permanent_landmark, current_address, current_city, current_state, current_pincode, current_landmark, raw_payload)
@@ -622,7 +670,7 @@ export const atsFullParityService = {
     return { success: true };
   },
 
-  async submitDocUpload(input: Record<string, any>) {
+  async submitDocUpload(input: Record<string, unknown>) {
     const candidateId = normalizeText(input.candidateId || input.CandidateID || input["CandidateID"]);
     const link = normalizeText(input.uploadedDocumentsLink || input["Uploaded documents link"]);
     await db.execute(`INSERT INTO ats_doc_upload_response (id, candidate_id, uploaded_documents_link, raw_payload) VALUES (?, ?, ?, CAST(? AS JSON))`, [randomUUID(), candidateId, link || null, JSON.stringify(input)]);
@@ -631,7 +679,7 @@ export const atsFullParityService = {
     return { success: true };
   },
 
-  async registerDevice(input: Record<string, any>) {
+  async registerDevice(input: Record<string, unknown>) {
     await db.execute(
       `INSERT INTO ats_recruiter_device (id, recruiter_code, device_token, platform, device_name, is_active)
        VALUES (?, ?, ?, ?, ?, 1)
@@ -705,8 +753,8 @@ export const atsFullParityService = {
 
   async resolveSlaCc(row: CandidateRow) {
     const emails: string[] = [];
-    const [recRows] = await db.execute<RowDataPacket[]>(`SELECT reporting_manager, branch_head_email FROM ats_recruiter_roster WHERE (email = ? OR name = ? OR recruiter_code = ?) LIMIT 1`, [row.recruiter_email || "", row.recruiter_assigned_name || "", row.recruiter_assigned_id || ""]);
-    const rec = recRows[0] as any;
+    const [recRows] = await db.execute<RecruiterContactRow[]>(`SELECT reporting_manager, branch_head_email FROM ats_recruiter_roster WHERE (email = ? OR name = ? OR recruiter_code = ?) LIMIT 1`, [row.recruiter_email || "", row.recruiter_assigned_name || "", row.recruiter_assigned_id || ""]);
+    const rec = recRows[0];
     if (rec?.reporting_manager && String(rec.reporting_manager).includes("@")) emails.push(String(rec.reporting_manager));
     if (rec?.branch_head_email) emails.push(String(rec.branch_head_email));
     const cfg = await getConfigMap();
@@ -732,9 +780,9 @@ export const atsFullParityService = {
     const web = await this.webData({ period: "FTD", actorId });
     const cfg = await getConfigMap();
     const branches = dimensionTable(web.candidateRows, "_branch");
-    const out: any[] = [];
+    const out: Array<Record<string, unknown>> = [];
     for (const b of branches) {
-      const rows = web.candidateRows.filter((r: any) => r._branch === b.Name);
+      const rows = web.candidateRows.filter((r) => r._branch === b.Name);
       const snapshot = {
         reportDate: new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }),
         branch: b.Name,
@@ -786,17 +834,17 @@ export const atsFullParityService = {
   },
 
   async branchRecruiterEmails(branch: string) {
-    const [rows] = await db.execute<RowDataPacket[]>(`SELECT email FROM ats_recruiter_roster WHERE branch = ? AND active_status = 1 AND email IS NOT NULL`, [branch]);
-    return Array.from(new Set((rows as any[]).map((r) => String(r.email).trim()).filter(Boolean))).join(",");
+    const [rows] = await db.execute<RecruiterContactRow[]>(`SELECT email FROM ats_recruiter_roster WHERE branch = ? AND active_status = 1 AND email IS NOT NULL`, [branch]);
+    return Array.from(new Set(rows.map((r) => String(r.email ?? "").trim()).filter(Boolean))).join(",");
   },
 
   async branchHeadEmails(branch: string) {
-    const [rows] = await db.execute<RowDataPacket[]>(`SELECT branch_head_email FROM ats_recruiter_roster WHERE branch = ? AND active_status = 1 AND branch_head_email IS NOT NULL`, [branch]);
-    return Array.from(new Set((rows as any[]).map((r) => String(r.branch_head_email).trim()).filter(Boolean))).join(",");
+    const [rows] = await db.execute<RecruiterContactRow[]>(`SELECT branch_head_email FROM ats_recruiter_roster WHERE branch = ? AND active_status = 1 AND branch_head_email IS NOT NULL`, [branch]);
+    return Array.from(new Set(rows.map((r) => String(r.branch_head_email ?? "").trim()).filter(Boolean))).join(",");
   },
 
   async healthCheck() {
-    const checks: any[] = [];
+    const checks: Array<{ type: string; name: string; ok: boolean; count?: number }> = [];
     const tableNames = ["ats_candidate", "ats_recruiter_roster", "ats_command_config", "ats_email_template", "ats_command_email_log", "ats_command_audit_log", "ats_voc_lookup", "ats_forms_catalog", "ats_form_field_mapping", "ats_candidate_confirmation", "ats_bgv_response", "ats_doc_upload_response", "ats_recruiter_device", "ats_notification_log"];
     for (const table of tableNames) {
       const [rows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS cnt FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`, [table]);
@@ -815,9 +863,9 @@ export const atsFullParityService = {
   },
 
   async repairBatch(limit = 200) {
-    const [rows] = await db.execute<RowDataPacket[]>(`SELECT id FROM ats_candidate WHERE active_status = 1 ORDER BY updated_at DESC LIMIT ?`, [limit]);
+    const [rows] = await db.execute<CandidateIdRow[]>(`SELECT id FROM ats_candidate WHERE active_status = 1 ORDER BY updated_at DESC LIMIT ?`, [limit]);
     let repaired = 0;
-    for (const r of rows as any[]) {
+    for (const r of rows) {
       await this.recomputeDerivedFields(r.id);
       repaired++;
     }

@@ -3,11 +3,21 @@ import type { RowDataPacket } from "mysql2";
 
 const VALID_TYPES = new Set(["frozen", "weekly", "daily", "rotating"]);
 
+interface BatchRow extends RowDataPacket {
+  id: string;
+  row_no: number;
+  normalized_data: unknown;
+}
+
+interface UpdateResultRow extends RowDataPacket {
+  affectedRows: number;
+}
+
 export async function importShiftRotationTypeBatch(
   batchId: string,
   userId: string
 ): Promise<{ imported: number; skipped: number; errors: string[] }> {
-  const [batchRows] = await db.execute<RowDataPacket[]>(
+  const [batchRows] = await db.execute<BatchRow[]>(
     "SELECT * FROM upload_batch_row WHERE upload_batch_id = ? AND row_status IN ('valid','pending') ORDER BY row_no ASC",
     [batchId]
   );
@@ -16,7 +26,7 @@ export async function importShiftRotationTypeBatch(
   let skipped = 0;
   const errors: string[] = [];
 
-  for (const batchRow of batchRows as RowDataPacket[]) {
+  for (const batchRow of batchRows) {
     const raw = (typeof batchRow.normalized_data === "string"
       ? JSON.parse(batchRow.normalized_data)
       : batchRow.normalized_data) as Record<string, string>;
@@ -45,11 +55,11 @@ export async function importShiftRotationTypeBatch(
       continue;
     }
 
-    const [result] = await db.execute<RowDataPacket[]>(
+    const [result] = await db.execute<UpdateResultRow[]>(
       "UPDATE employees SET shift_rotation_type = ?, updated_by = ? WHERE employee_code = ? AND employment_status = 'active'",
       [shift_rotation_type.toLowerCase(), userId, employee_code]
     );
-    const affected = (result as any).affectedRows ?? 0;
+    const affected = result[0]?.affectedRows ?? 0;
     if (affected === 0) {
       const msg = `Row ${batchRow.row_no}: employee_code '${employee_code}' not found or inactive`;
       errors.push(msg);
