@@ -54,7 +54,7 @@ async function send(
   type: EmailType,
 ): Promise<SendResult> {
   if (!env.SMTP_USER || !env.SMTP_PASS) {
-    console.warn(`[ATS-EMAIL] SMTP not configured — skipping ${type} to ${to} (candidate ${candidateId})`);
+    console.warn(`[ATS-EMAIL] SMTP not configured - skipping ${type} to ${to} (candidate ${candidateId})`);
     await logEmail(candidateId, type, to, 'skipped', 'SMTP not configured');
     return { ok: true };
   }
@@ -129,7 +129,7 @@ export async function sendRegistrationEmail(params: {
 }): Promise<SendResult> {
   return send(
     params.to,
-    'Registration Successful — MAS Callnet',
+    'Registration Successful - MAS Callnet',
     `<p>Dear ${params.candidateName},</p>
      <p>Your registration at MAS Callnet (${params.branch}) was successful.</p>
      <p><strong>Your Candidate ID: ${params.candidateCode}</strong></p>
@@ -146,7 +146,7 @@ export async function sendSelectedEmail(params: {
 }): Promise<SendResult> {
   return send(
     params.to,
-    'Congratulations! You have been selected — MAS Callnet',
+    'Congratulations! You have been selected - MAS Callnet',
     `<p>Dear ${params.candidateName},</p>
      <p>Congratulations! You have been selected at MAS Callnet, ${params.branchName}.</p>
      <p>Your HR contact: ${params.hrName} | ${params.hrPhone}</p>
@@ -175,7 +175,7 @@ export async function sendOnboardingTokenEmail(params: {
 }): Promise<SendResult> {
   return send(
     params.to,
-    'Complete Your Joining Formalities — MAS Callnet',
+    'Complete Your Joining Formalities - MAS Callnet',
     `<p>Dear ${params.candidateName},</p>
      <p>Please complete your joining formalities by clicking the link below.</p>
      <p><a href="${params.onboardingLink}">Complete Profile (valid for 7 days)</a></p>
@@ -190,7 +190,7 @@ export async function sendOfferReviewEmail(params: {
 }): Promise<SendResult> {
   return send(
     params.to,
-    'New Employment Offer Awaiting Your Approval — MAS Callnet',
+    'New Employment Offer Awaiting Your Approval - MAS Callnet',
     `<p>A new employment offer requires your approval.</p>
      <p><strong>Candidate:</strong> ${params.candidateName}</p>
      <p>${params.offerSummary}</p>
@@ -206,7 +206,7 @@ export async function sendWelcomeEmail(params: {
 }): Promise<SendResult> {
   return send(
     params.to,
-    `Welcome to MAS Callnet — Your Employee ID is ${params.employeeCode}`,
+    `Welcome to MAS Callnet - Your Employee ID is ${params.employeeCode}`,
     `<p>Dear ${params.candidateName},</p>
      <p>Welcome to MAS Callnet! Your employee account has been activated.</p>
      <p><strong>Employee ID:</strong> ${params.employeeCode}</p>
@@ -243,7 +243,7 @@ export async function sendCandidateSuccessEmail(params: {
 
   return send(
     params.to,
-    '🎉 Registration Successful - MAS Callnet',
+    'Registration Successful - MAS Callnet',
     html,
     params.candidateId,
     'registration',
@@ -271,7 +271,7 @@ export async function sendRecruiterNotificationEmail(params: {
 
   return send(
     params.to,
-    '👤 New Candidate Assigned - MAS Callnet',
+    'New Candidate Assigned - MAS Callnet',
     html,
     params.candidateId,
     'recruiter_notification',
@@ -298,7 +298,7 @@ export async function sendSelectionCongratulationsEmail(params: {
 
   return send(
     params.to,
-    '🎉 Congratulations! You\'re Selected - MAS Callnet',
+    'Congratulations! You are Selected - MAS Callnet',
     html,
     params.candidateId,
     'selection_congratulations',
@@ -323,7 +323,7 @@ export async function sendBGVCompletionEmail(params: {
   const statusText = params.bgvStatus === 'verified' ? 'Completed' : 'Action Required';
   return send(
     params.to,
-    `🔍 BGV ${statusText} - MAS Callnet`,
+    `BGV ${statusText} - MAS Callnet`,
     html,
     params.candidateId,
     'bgv_completion',
@@ -348,7 +348,7 @@ export async function sendPayrollHRNotificationEmail(params: {
 
   return send(
     params.to,
-    '📋 New Candidate for Validation - MAS Callnet',
+    'New Candidate for Validation - MAS Callnet',
     html,
     params.candidateId,
     'payroll_hr_notification',
@@ -377,7 +377,7 @@ export async function sendBranchHeadApprovalEmail(params: {
 
   return send(
     params.to,
-    '✅ Approval Request - MAS Callnet',
+    'Approval Request - MAS Callnet',
     html,
     params.candidateId,
     'branch_head_approval',
@@ -421,7 +421,7 @@ export async function sendRejectedEmailProfessional(params: {
   });
   return send(
     params.to,
-    'Update on Your Application — MAS Callnet India',
+    'Update on Your Application - MAS Callnet India',
     html,
     params.candidateId,
     'rejected_professional',

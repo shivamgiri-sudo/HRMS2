@@ -45,8 +45,8 @@ interface BranchRow extends RowDataPacket {
 
 interface BranchAliasRow extends RowDataPacket {
   canonical_key: string;
-  display_name: string;
-  alias_text: string | null;
+  display_name?: string | null;
+  alias_text?: string | null;
 }
 
 interface RecruiterRow extends RowDataPacket {
@@ -216,18 +216,31 @@ export const atsFormConfigService = {
   async getRecruitersByBranch(branchDisplayName: string) {
     // Resolve the canonical branch key from the display name
     const [aliasRows] = await db.execute<BranchAliasRow[]>(
-      `SELECT canonical_key FROM ats_branch_alias_master WHERE display_name = ? AND active_status = 1 LIMIT 1`,
-      [branchDisplayName]
+      `SELECT canonical_key, display_name, alias_text
+       FROM ats_branch_alias_master
+       WHERE active_status = 1
+         AND (display_name = ? OR alias_text = ? OR canonical_key = ?)
+       LIMIT 1`,
+      [branchDisplayName, branchDisplayName, branchDisplayName]
     );
-    const canonicalKey: string = aliasRows[0]?.canonical_key ?? branchDisplayName;
+    const alias = aliasRows[0] ?? null;
+    const canonicalKey: string = alias?.canonical_key ?? branchDisplayName;
+    const branchLookupValues = [
+      canonicalKey,
+      branchDisplayName,
+      alias?.display_name ?? "",
+      alias?.alias_text ?? "",
+    ].filter((value, index, all) => value && all.indexOf(value) === index);
 
     // Look up the branch_name in branch_master matching this canonical key
+    const branchPlaceholders = branchLookupValues.map(() => "?").join(",");
     const [branchRows] = await db.execute<BranchRow[]>(
       `SELECT id, branch_name, branch_code
        FROM branch_master
-       WHERE active_status = 1 AND (branch_name = ? OR branch_code = ?)
+       WHERE active_status = 1
+         AND (branch_name IN (${branchPlaceholders}) OR branch_code IN (${branchPlaceholders}))
        LIMIT 1`,
-      [canonicalKey, canonicalKey]
+      [...branchLookupValues, ...branchLookupValues]
     );
     const branchRow = branchRows[0] ?? null;
     const branchName: string = branchRow?.branch_name ?? canonicalKey;
@@ -294,7 +307,41 @@ export const atsFormConfigService = {
       }));
     }
 
-    // 3. Last resort: employees with HR/Recruiter designation names at this branch.
+    // 3. Roster fallback: branch aliases in legacy roster rows may not match branch_master exactly.
+    const rosterLookupValues = [
+      ...branchLookupValues,
+      branchRow?.branch_name ?? "",
+      branchRow?.branch_code ?? "",
+      branchName,
+    ].filter((value, index, all) => value && all.indexOf(value) === index);
+    const rosterPlaceholders = rosterLookupValues.map(() => "?").join(",");
+    if (rosterLookupValues.length > 0) {
+      const [rosterRows] = await db.execute<RecruiterRow[]>(
+        `SELECT DISTINCT
+           e.id AS employee_id,
+           e.employee_code,
+           TRIM(COALESCE(r.name, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS name,
+           COALESCE(r.email, e.office_email, e.official_email, e.email) AS email,
+           COALESCE(r.mobile, e.mobile) AS mobile
+         FROM ats_recruiter_roster r
+         JOIN employees e ON e.id = r.employee_id AND e.active_status = 1
+         WHERE r.active_status = 1
+           AND r.branch IN (${rosterPlaceholders})
+         ORDER BY name ASC`,
+        rosterLookupValues
+      );
+      if (rosterRows.length > 0) {
+        return rosterRows.map((r) => ({
+          name: String(r.name),
+          employee_code: r.employee_code || null,
+          email: r.email || null,
+          mobile: r.mobile || null,
+          employee_id: r.employee_id || null,
+        }));
+      }
+    }
+
+    // 4. Last resort: employees with HR/Recruiter designation names at this branch.
     const [empRows] = await db.execute<RecruiterRow[]>(
       `SELECT DISTINCT
          e.id AS employee_id,

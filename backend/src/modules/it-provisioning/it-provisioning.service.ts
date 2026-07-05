@@ -3,8 +3,9 @@ import type { RowDataPacket } from 'mysql2';
 import { inboxService } from '../inbox/inbox.service.js';
 import { emailService } from '../communication/email.service.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
+import { env } from '../../config/env.js';
 
-const OFFICIAL_EMAIL_REGEX = /^[a-zA-Z0-9._%+\-]+@(teammas\.in|teammas\.co\.in)$/;
+const OFFICIAL_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/;
 export { OFFICIAL_EMAIL_REGEX };
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -17,8 +18,40 @@ interface ResolvedUser {
 interface ProvisioningTask {
   taskCode: string;
   assignedRole: string;
+  actionUrl: string;
   titleFn: (name: string, code: string, lwd?: string | null) => string;
   descFn: (name: string, code: string, lwd?: string | null) => string;
+}
+
+function frontendUrl(path: string) {
+  const base = String(env.FRONTEND_URL || process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '');
+  const suffix = path.startsWith('/') ? path : `/${path}`;
+  return `${base}${suffix}`;
+}
+
+function provisioningEmailHtml(title: string, description: string, actionUrl: string) {
+  return `
+  <div style="margin:0;padding:24px;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+    <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #dbe4f0;border-radius:18px;overflow:hidden">
+      <div style="background:linear-gradient(135deg,#0f766e,#0ea5e9);padding:24px 28px;color:#ffffff">
+        <div style="font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;opacity:.88">MAS Callnet HRMS</div>
+        <h1 style="margin:8px 0 0;font-size:22px;line-height:1.25">${title}</h1>
+      </div>
+      <div style="padding:26px 28px">
+        <p style="margin:0 0 18px;font-size:15px;line-height:1.65;color:#334155">${description}</p>
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin:18px 0">
+          <p style="margin:0;font-size:13px;line-height:1.55;color:#475569">Please complete this task in HRMS so onboarding status stays accurate for HR, Payroll, WFM, IT and Admin teams.</p>
+        </div>
+        <p style="margin:24px 0 8px">
+          <a href="${actionUrl}" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;padding:13px 20px;border-radius:12px;font-weight:800">Open Task in HRMS</a>
+        </p>
+        <p style="margin:16px 0 0;font-size:12px;line-height:1.5;color:#64748b">If the button does not work, copy this link: <br><span style="word-break:break-all">${actionUrl}</span></p>
+      </div>
+      <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:16px 28px;color:#64748b;font-size:12px">
+        Automated onboarding task notification. Please do not reply to this email.
+      </div>
+    </div>
+  </div>`;
 }
 
 // ── User lookup helpers ────────────────────────────────────────────────────────
@@ -85,11 +118,12 @@ async function dispatchNotifications(
     }).catch((err: unknown) => console.error('[it-provisioning] inbox create failed:', err));
 
     if (user.email) {
+      const fullActionUrl = frontendUrl(actionUrl);
       await emailService.send({
         to: user.email,
         subject: title,
-        html: `<p>${description}</p><p><a href="${process.env.APP_URL ?? ''}/it-provisioning">View in HRMS Portal</a></p>`,
-        text: `${description}\n\nView: ${process.env.APP_URL ?? ''}/it-provisioning`,
+        html: provisioningEmailHtml(title, description, fullActionUrl),
+        text: `${title}\n\n${description}\n\nOpen task in HRMS: ${fullActionUrl}`,
       }).catch((err: unknown) => console.error('[it-provisioning] email send failed:', err));
     }
   }
@@ -155,6 +189,7 @@ const JOIN_TASKS: ProvisioningTask[] = [
   {
     taskCode: 'WFM_PROCESS_ALIGNMENT',
     assignedRole: 'wfm',
+    actionUrl: '/provisioning/wfm-alignment',
     titleFn: (name, code) => `WFM Action: Align process roster for ${name} [${code}]`,
     descFn: (name, code) =>
       `New employee ${name} (${code}) has an employee code. Please align process, roster eligibility, shift rules, and attendance planning in WFM.`,
@@ -162,6 +197,7 @@ const JOIN_TASKS: ProvisioningTask[] = [
   {
     taskCode: 'IT_EMAIL_DOMAIN_ASSET',
     assignedRole: 'it',
+    actionUrl: '/provisioning/it',
     titleFn: (name, code) => `IT Action: Create domain account + official email for ${name} [${code}]`,
     descFn: (name, code) =>
       `New employee ${name} (${code}) has an employee code. Please create their domain account, official email ID (@teammas.in / @teammas.co.in), and asset assignment in the HRMS portal.`,
@@ -169,6 +205,7 @@ const JOIN_TASKS: ProvisioningTask[] = [
   {
     taskCode: 'ADMIN_BIOMETRIC_ID_CARD',
     assignedRole: 'admin',
+    actionUrl: '/provisioning/admin',
     titleFn: (name, code) => `Admin Action: Biometric and ID card for ${name} [${code}]`,
     descFn: (name, code) =>
       `New employee ${name} (${code}) has an employee code. Please enroll biometric attendance and issue the employee ID card.`,
@@ -176,6 +213,7 @@ const JOIN_TASKS: ProvisioningTask[] = [
   {
     taskCode: 'APPOINTMENT_LETTER_ESIGN',
     assignedRole: 'hr',
+    actionUrl: '/provisioning/appointment-letter',
     titleFn: (name, code) => `HR Action: Appointment letter e-sign for ${name} [${code}]`,
     descFn: (name, code) =>
       `New employee ${name} (${code}) has an employee code. Please generate the appointment letter and complete e-sign tracking.`,
@@ -207,7 +245,7 @@ export async function dispatchJoinProvisioningTasks(params: {
       actorUserId,
     });
 
-    await dispatchNotifications(users, 'it_provisioning', title, desc, requestId, '/it-provisioning');
+    await dispatchNotifications(users, 'it_provisioning', title, desc, requestId, task.actionUrl);
   }
 }
 
@@ -217,6 +255,7 @@ const EXIT_TASKS: ProvisioningTask[] = [
   {
     taskCode: 'domain_delete',
     assignedRole: 'it',
+    actionUrl: '/provisioning/it',
     titleFn: (name, code, lwd) => `IT Action: Delete domain account for ${name} [${code}]${lwd ? ` (LWD: ${lwd})` : ''}`,
     descFn: (name, code, lwd) =>
       `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ''}. Please delete their domain account immediately.`,
@@ -224,6 +263,7 @@ const EXIT_TASKS: ProvisioningTask[] = [
   {
     taskCode: 'email_delete',
     assignedRole: 'it',
+    actionUrl: '/provisioning/it',
     titleFn: (name, code, lwd) => `IT Action: Delete official email for ${name} [${code}]${lwd ? ` (LWD: ${lwd})` : ''}`,
     descFn: (name, code, lwd) =>
       `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ''}. Please delete their official email ID and revoke all email access.`,
@@ -231,6 +271,7 @@ const EXIT_TASKS: ProvisioningTask[] = [
   {
     taskCode: 'biometric_delete',
     assignedRole: 'admin',
+    actionUrl: '/provisioning/admin',
     titleFn: (name, code, lwd) => `Biometric: Remove ${name} [${code}] from biometric system${lwd ? ` (LWD: ${lwd})` : ''}`,
     descFn: (name, code, lwd) =>
       `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ''}. Please remove them from the biometric attendance system.`,
@@ -238,6 +279,7 @@ const EXIT_TASKS: ProvisioningTask[] = [
   {
     taskCode: 'dialler_delete',
     assignedRole: 'wfm',
+    actionUrl: '/provisioning/wfm-alignment',
     titleFn: (name, code, lwd) => `WFM Action: Remove ${name} [${code}] from Dialler + all external IDs${lwd ? ` (LWD: ${lwd})` : ''}`,
     descFn: (name, code, lwd) =>
       `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ''}. Please remove them from the Dialler system, Client portal, and all external IDs assigned to them.`,
@@ -270,7 +312,7 @@ export async function dispatchExitProvisioningTasks(params: {
       actorUserId,
     });
 
-    await dispatchNotifications(users, 'it_provisioning', title, desc, requestId, '/it-provisioning');
+    await dispatchNotifications(users, 'it_provisioning', title, desc, requestId, task.actionUrl);
   }
 }
 

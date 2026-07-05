@@ -238,6 +238,8 @@ const MIGRATION_MANIFEST: string[] = [
   "352_ats_email_log_extended_types.sql",
   "353_luckpay_production_provider_config.sql",
   "354_two_level_wfm_approvals.sql",
+  "355_epf_acroform_phase1.sql",
+  "356_joining_document_status_safety_columns.sql",
   ];
 
 export type MigrationHealth = {

@@ -111,7 +111,30 @@ export async function resolveRecruiterForActor(userId: string): Promise<Recruite
       LIMIT 1`,
     [userId]
   );
-  const rec = rows[0];
+  let rec = rows[0];
+  if (!rec) {
+    const [fallbackRows] = await db.execute<RecruiterRosterRow[]>(
+      `SELECT r.id, r.name, r.recruiter_code, r.email, r.branch, r.employee_id
+         FROM auth_user u
+         LEFT JOIN employees e ON e.user_id = u.id
+         JOIN ats_recruiter_roster r
+           ON r.active_status = 1
+          AND (
+            LOWER(r.email) = LOWER(u.email)
+            OR r.employee_id = e.id
+            OR r.recruiter_code = e.employee_code
+          )
+        WHERE u.id = ?
+        ORDER BY CASE
+          WHEN r.employee_id = e.id THEN 0
+          WHEN LOWER(r.email) = LOWER(u.email) THEN 1
+          ELSE 2
+        END
+        LIMIT 1`,
+      [userId]
+    );
+    rec = fallbackRows[0];
+  }
   if (!rec) return null;
   return {
     id: rec.id,

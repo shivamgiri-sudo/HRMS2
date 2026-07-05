@@ -286,6 +286,7 @@ atsRouter.post("/recruiter/verify", h(async (req: AuthenticatedRequest, res: Res
 atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
   const userRoles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
   const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
+  const isRecruiterUser = userRoles.includes("recruiter");
   const overrideName = String(req.query.recruiterName ?? "").trim();
 
   let recruiterName: string | undefined;
@@ -294,8 +295,8 @@ atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "super_admi
   if (isPrivileged && overrideName) {
     // Admin/HR may explicitly request any recruiter's queue by name
     recruiterName = overrideName;
-  } else if (!isPrivileged) {
-    // Derive name from the JWT-linked recruiter row
+  } else if (isRecruiterUser) {
+    // Mixed HR+recruiter accounts should still default to their own recruiter queue.
     profile = await resolveRecruiterForActor(req.authUser!.id);
     if (!profile) {
       return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
@@ -312,6 +313,7 @@ atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "super_admi
 atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
   const userRoles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
   const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
+  const isRecruiterUser = userRoles.includes("recruiter");
   const overrideCode = String(req.query.recruiterCode ?? "").trim();
 
   let recruiterCode: string | null = null;
@@ -320,7 +322,7 @@ atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super
 
   if (isPrivileged && overrideCode) {
     recruiterCode = overrideCode;
-  } else if (!isPrivileged) {
+  } else if (isRecruiterUser) {
     profile = await resolveRecruiterForActor(req.authUser!.id);
     if (!profile) {
       return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
@@ -338,15 +340,18 @@ atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super
 atsRouter.get("/recruiter/daily-stats", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
   const userRoles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
   const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
+  const isRecruiterUser = userRoles.includes("recruiter");
   let recruiterName: string | undefined;
   let recruiterCode: string | null = null;
   if (isPrivileged && req.query.recruiterName) {
     recruiterName = String(req.query.recruiterName).trim();
-  } else {
+  } else if (isRecruiterUser) {
     const profile = await resolveRecruiterForActor(req.authUser!.id);
     if (!profile) return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
     recruiterName = profile.name;
     recruiterCode = profile.recruiterCode ?? null;
+  } else {
+    return res.status(400).json({ success: false, message: "recruiterName is required for privileged non-recruiter users" });
   }
   const stats = await getRecruiterDailyStats(recruiterName!, recruiterCode);
   return res.json({ success: true, data: stats });
