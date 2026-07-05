@@ -240,6 +240,7 @@ const MIGRATION_MANIFEST: string[] = [
   "354_two_level_wfm_approvals.sql",
   "355_epf_acroform_phase1.sql",
   "356_joining_document_status_safety_columns.sql",
+  "357_ats_candidate_followup_columns.sql",
   ];
 
 export type MigrationHealth = {
