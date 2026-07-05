@@ -241,6 +241,7 @@ const MIGRATION_MANIFEST: string[] = [
   "355_epf_acroform_phase1.sql",
   "356_joining_document_status_safety_columns.sql",
   "357_ats_candidate_followup_columns.sql",
+  "358_payroll_hr_validation_service_columns.sql",
   ];
 
 export type MigrationHealth = {
