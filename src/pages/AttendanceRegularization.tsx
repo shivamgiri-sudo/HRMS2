@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { AlertTriangle, CalendarCheck, CheckCircle2, Loader2, RefreshCw, Send, XCircle } from "lucide-react";
+import { AlertTriangle, CalendarCheck, CheckCircle2, Loader2, RefreshCw, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -702,22 +702,33 @@ export default function AttendanceRegularization() {
             <div>
               <h2 className="text-base font-semibold text-slate-950">Regularization Requests</h2>
               <p className="mt-1 text-sm text-slate-500">
-                Review request status, approval stages, and audit trail.
+                Review request status, approval stages, audit trail, and WFM validation evidence.
               </p>
             </div>
 
-            <Select value={filterStatus} onValueChange={setFilterStatus}>
-              <SelectTrigger className="w-full md:w-52 bg-white !text-slate-900 [&>span]:!text-slate-900">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-white !text-slate-900">
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="pending_manager">Pending Manager</SelectItem>
-                <SelectItem value="pending_admin">Pending Admin / WFM</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
-                <SelectItem value="rejected">Rejected</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={safeBulkIds.length === 0 || bulkApproveMutation.isPending}
+                onClick={() => bulkApproveMutation.mutate(safeBulkIds)}
+              >
+                {bulkApproveMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                Bulk approve safe ({safeBulkIds.length})
+              </Button>
+              <Select value={filterStatus} onValueChange={setFilterStatus}>
+                <SelectTrigger className="w-full md:w-52 bg-white !text-slate-900 [&>span]:!text-slate-900">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-white !text-slate-900">
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="pending_manager">Pending Manager</SelectItem>
+                  <SelectItem value="pending_admin">Pending WFM</SelectItem>
+                  <SelectItem value="approved">Approved</SelectItem>
+                  <SelectItem value="rejected">Rejected</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
@@ -735,9 +746,11 @@ export default function AttendanceRegularization() {
                 <table className="min-w-full divide-y divide-slate-200 text-sm">
                   <thead className="bg-slate-50">
                     <tr>
+                      <Th>Select</Th>
                       <Th>Request No</Th>
                       <Th>Date</Th>
                       <Th>Status</Th>
+                      <Th>WFM Risk</Th>
                       <Th>Stage</Th>
                       <Th>Requested Time</Th>
                       <Th>Payroll</Th>
@@ -747,10 +760,28 @@ export default function AttendanceRegularization() {
                   <tbody className="divide-y divide-slate-100 bg-white">
                     {filteredRequests.map((request) => {
                       const detail = getDetail(request);
+                      const isSelected = selectedIds.includes(request.id);
                       return (
                         <tr key={request.id} className="hover:bg-slate-50">
                           <Td>
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-slate-300"
+                              checked={isSelected}
+                              onChange={(event) => {
+                                setSelectedIds((current) =>
+                                  event.target.checked
+                                    ? Array.from(new Set([...current, request.id]))
+                                    : current.filter((id) => id !== request.id)
+                                );
+                              }}
+                            />
+                          </Td>
+                          <Td>
                             <div className="font-semibold text-slate-950">{request.request_no}</div>
+                            {request.submitted_by && (
+                              <div className="text-xs text-slate-500">{request.submitted_by}</div>
+                            )}
                             <div className="mt-0.5 text-xs text-slate-400">
                               {formatDateTime(request.created_at)}
                             </div>
@@ -758,6 +789,9 @@ export default function AttendanceRegularization() {
                           <Td>{detail?.attendance_date || "—"}</Td>
                           <Td>
                             <StatusBadge status={request.current_status} />
+                          </Td>
+                          <Td>
+                            <RiskBadge support={request.decision_support} />
                           </Td>
                           <Td>
                             <div className="text-slate-900">{request.current_stage_name || "—"}</div>
@@ -778,7 +812,22 @@ export default function AttendanceRegularization() {
                               >
                                 View
                               </button>
-
+                              {["pending_manager", "pending_admin"].includes(request.current_status) && (
+                                <>
+                                  <button
+                                    onClick={() => reviewMutation.mutate({ id: request.id, status: "approved" })}
+                                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                                  >
+                                    Approve
+                                  </button>
+                                  <button
+                                    onClick={() => reviewMutation.mutate({ id: request.id, status: "rejected" })}
+                                    className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                                  >
+                                    Reject
+                                  </button>
+                                </>
+                              )}
                             </div>
                           </Td>
                         </tr>
@@ -857,6 +906,29 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function RiskBadge({ support }: { support?: RegularizationDecisionSupport }) {
+  if (!support) return <span className="text-xs text-slate-400">No evidence</span>;
+  const tone = support.riskLevel === "high"
+    ? "border-rose-200 bg-rose-50 text-rose-700"
+    : support.riskLevel === "medium"
+      ? "border-amber-200 bg-amber-50 text-amber-700"
+      : "border-emerald-200 bg-emerald-50 text-emerald-700";
+  return (
+    <div className="space-y-1">
+      <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-bold uppercase", tone)}>
+        {support.riskLevel !== "low" ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
+        {support.riskLevel} · {support.riskScore}
+      </span>
+      {support.flags.length > 0 && (
+        <div className="max-w-[220px] text-xs text-slate-500">
+          {support.flags.slice(0, 2).join(", ")}
+          {support.flags.length > 2 ? ` +${support.flags.length - 2}` : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DetailDialog({
   request,
   onClose,
@@ -871,6 +943,7 @@ function DetailDialog({
   const logs = [...(request.request_action_log || [])].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   );
+  const support = request.decision_support;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
@@ -941,6 +1014,47 @@ function DetailDialog({
             </div>
           </div>
         </div>
+
+        {support && (
+          <div className="mt-4 rounded-2xl border border-slate-200 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-950">WFM Validation Evidence</h4>
+                <p className="mt-1 text-xs text-slate-500">
+                  Use this before final approval. Manager approval is only the first checkpoint.
+                </p>
+              </div>
+              <RiskBadge support={support} />
+            </div>
+            {support.flags.length > 0 ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {support.flags.map((flag) => (
+                  <span key={flag} className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">
+                    <AlertTriangle className="h-3 w-3" />
+                    {flag}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                <CheckCircle2 className="h-3 w-3" />
+                No major risk detected
+              </div>
+            )}
+            <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
+              <InfoRow label="Current Attendance" value={support.evidence.currentAttendanceStatus} />
+              <InfoRow label="Current LWP" value={String(support.evidence.currentLwp ?? "")} />
+              <InfoRow label="First Punch" value={support.evidence.firstPunch} />
+              <InfoRow label="Last Punch" value={support.evidence.lastPunch} />
+              <InfoRow label="Total Punches" value={String(support.evidence.totalPunches)} />
+              <InfoRow label="Biometric Minutes" value={String(support.evidence.biometricMinutes ?? "")} />
+              <InfoRow label="Roster Status" value={support.evidence.rosterStatus} />
+              <InfoRow label="Roster Shift" value={`${support.evidence.rosterShiftStart ?? "?"} - ${support.evidence.rosterShiftEnd ?? "?"}`} />
+              <InfoRow label="Duplicate Requests" value={String(support.evidence.duplicateRequests)} />
+              <InfoRow label="Recent Requests" value={String(support.evidence.recentRequests)} />
+            </div>
+          </div>
+        )}
 
         <div className="mt-4 rounded-2xl border border-slate-200 p-4">
           <h4 className="text-sm font-semibold text-slate-950">Audit Log</h4>
