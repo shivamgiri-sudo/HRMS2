@@ -2,8 +2,19 @@ import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { Employee, PaginatedResult } from "./employee.types.js";
 import type { CreateEmployeeInput, EmployeeFilters, UpdateEmployeeInput } from "./employee.validation.js";
+
+const SENSITIVE_FIELDS: Array<{ inputKey: keyof UpdateEmployeeInput; dbCol: string; label: string }> = [
+  { inputKey: "branchId",           dbCol: "branch_id",           label: "Branch" },
+  { inputKey: "departmentId",       dbCol: "department_id",       label: "Department" },
+  { inputKey: "processId",          dbCol: "process_id",          label: "Process" },
+  { inputKey: "designationId",      dbCol: "designation_id",      label: "Designation" },
+  { inputKey: "reportingManagerId", dbCol: "reporting_manager_id",label: "Reporting Manager" },
+  { inputKey: "employmentStatus",   dbCol: "employment_status",   label: "Employment Status" },
+  { inputKey: "employmentType",     dbCol: "employment_type",     label: "Employment Type" },
+];
 
 const assignSalary = async (employeeId: string, structureId: string, ctcAnnual: number, effectiveFrom: string) => {
   await db.execute(
@@ -189,8 +200,16 @@ export const employeeService = {
     return { data: rows as Employee[], total: (countRows as any)[0]?.total ?? 0, page, limit };
   },
 
-  async updateEmployee(id: string, input: UpdateEmployeeInput, _userId: string): Promise<Employee> {
-    await this.getEmployee(id);
+  async updateEmployee(id: string, input: UpdateEmployeeInput, actorUserId: string): Promise<Employee> {
+    // Snapshot current sensitive field values before update for audit trail
+    const [snapRows] = await db.execute<RowDataPacket[]>(
+      `SELECT branch_id, department_id, process_id, designation_id,
+              reporting_manager_id, employment_status, employment_type
+       FROM employees WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    const snap = snapRows[0] ?? {};
+
     const sets: string[] = [];
     const params: unknown[] = [];
 
@@ -217,6 +236,30 @@ export const employeeService = {
     if (sets.length > 0) {
       params.push(id);
       await db.execute(`UPDATE employees SET ${sets.join(", ")} WHERE id = ?`, params);
+
+      // Audit any sensitive field changes
+      const changedSensitive = SENSITIVE_FIELDS.filter(
+        (f) => input[f.inputKey] !== undefined && String(input[f.inputKey] ?? "") !== String(snap[f.dbCol] ?? "")
+      );
+      if (changedSensitive.length > 0) {
+        const oldVals: Record<string, unknown> = {};
+        const newVals: Record<string, unknown> = {};
+        for (const f of changedSensitive) {
+          oldVals[f.label] = snap[f.dbCol] ?? null;
+          newVals[f.label] = input[f.inputKey] ?? null;
+        }
+        void logSensitiveAction({
+          actor_user_id: actorUserId,
+          action_type: "EMPLOYEE_PROFILE_UPDATED",
+          module_key: "employees",
+          entity_type: "employee",
+          entity_id: id,
+          employee_id: id,
+          change_summary: { fields: changedSensitive.map((f) => f.label) },
+          old_value_json: oldVals,
+          new_value_json: newVals,
+        });
+      }
     }
 
     // Sync auth_user.email = official_email when official_email updated

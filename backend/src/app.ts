@@ -160,6 +160,7 @@ import { interviewRouter } from "./modules/ats/interview.routes.js";
 import { bgvEnhancedRouter } from "./modules/ats/bgv.enhanced.routes.js";
 import { candidatePortalRouter } from "./modules/ats/candidate-portal.routes.js";
 import { superAdminRouter } from "./modules/ats/super-admin.routes.js";
+import onboardingFullRouter from "./modules/ats/onboarding-full.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
 import { onboardingDataRouter } from "./modules/onboarding/onboarding-data.routes.js";
@@ -168,6 +169,7 @@ import { nameValidationRouter } from "./modules/onboarding/name-validation.route
 import { digiLockerRouter } from "./modules/onboarding/digilocker.routes.js";
 import { employeeReactivationRouter } from "./modules/employees/employee-reactivation.routes.js";
 import { employeeVerifyRouter } from "./modules/employees/employee.verify.routes.js";
+import { salaryIncrementRouter } from "./modules/salary-increment/salaryIncrement.routes.js";
 
 export const app = express();
 
@@ -324,6 +326,7 @@ app.use("/api/inbox", inboxRouter);
 app.use("/api/it-provisioning", itProvisioningRouter);
 app.use("/api/onboarding-provisioning", itProvisioningRouter);
 app.use("/api/mobility", mobilityRouter);
+app.use("/api/salary-increment", salaryIncrementRouter);
 app.use("/api/goals", goalsRouter);
 app.use("/api/jobs", jobsRouter);
 app.use("/api/compliance", complianceRouter);
@@ -387,6 +390,7 @@ app.use("/api/ats/interview", interviewRouter);
 app.use("/api/ats/bgv-enhanced", bgvEnhancedRouter);
 app.use("/api/ats/candidate-portal", candidatePortalRouter);
 app.use("/api/ats/super-admin", superAdminRouter);
+app.use("/api/ats/onboarding", onboardingFullRouter);
 
 // ── AI Insights (Gemini-powered, role-aware, sanitized) ────────────────────
 import { aiInsightsRouter } from "./modules/ai/ai-insights.routes.js";

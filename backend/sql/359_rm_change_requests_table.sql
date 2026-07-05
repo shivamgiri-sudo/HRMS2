@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS rm_change_requests (
+  id            CHAR(36)     NOT NULL DEFAULT (UUID()),
+  employee_id   CHAR(36)     NOT NULL,
+  branch_id     CHAR(36)     DEFAULT NULL,
+  current_manager_id   CHAR(36) DEFAULT NULL,
+  requested_manager_id CHAR(36) NOT NULL,
+  reason        TEXT         DEFAULT NULL,
+  status        ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+  actioned_by   CHAR(36)     DEFAULT NULL,
+  actioned_at   DATETIME     DEFAULT NULL,
+  remarks       TEXT         DEFAULT NULL,
+  created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_rm_change_employee (employee_id, status),
+  KEY idx_rm_change_pending  (status, created_at),
+  CONSTRAINT fk_rm_change_employee  FOREIGN KEY (employee_id)          REFERENCES employees (id) ON DELETE CASCADE,
+  CONSTRAINT fk_rm_change_cur_mgr   FOREIGN KEY (current_manager_id)   REFERENCES employees (id) ON DELETE SET NULL,
+  CONSTRAINT fk_rm_change_req_mgr   FOREIGN KEY (requested_manager_id) REFERENCES employees (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

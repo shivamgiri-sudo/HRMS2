@@ -168,6 +168,7 @@ const NativeVendorPaymentTracking   = lazy(() => import("./pages/NativeVendorPay
 const NativeGoalsAppraisal          = lazy(() => import("./pages/NativeGoalsAppraisal"));
 const NativeWorkInbox               = lazy(() => import("./pages/NativeWorkInbox"));
 const NativeMobilityManagement      = lazy(() => import("./pages/NativeMobilityManagement"));
+const NativeSalaryIncrement         = lazy(() => import("./pages/NativeSalaryIncrement"));
 const NativeJobsPortal              = lazy(() => import("./pages/NativeJobsPortal"));
 const NativeAdvancedReports         = lazy(() => import("./pages/NativeAdvancedReports"));
 const NativeEnterpriseReports       = lazy(() => import("./pages/NativeEnterpriseReports"));
@@ -328,7 +329,7 @@ const App = () => (
               <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
               <Route path="/modules" element={<ProtectedRoute><ModuleLauncher /></ProtectedRoute>} />
               <Route path="/ats/dashboard" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSDashboardReplica /></Gate></ProtectedRoute>} />
-              <Route path="/ats/candidate-registration" element={<ProtectedRoute><NativeATSCandidateRegistration /></ProtectedRoute>} />
+              <Route path="/ats/candidate-registration" element={<NativeATSCandidateRegistration />} />
               <Route path="/ats/registration-enhanced" element={<ProtectedRoute><NativeATSRegistrationEnhanced /></ProtectedRoute>} />
               <Route path="/ats/recruiter/my-candidates" element={<ProtectedRoute><Gate pageCode="ATS_RECRUITER_QUEUE"><NativeATSRecruiterWorkspace /></Gate></ProtectedRoute>} />
               <Route path="/ats/recruiter/hiring-entry" element={<ProtectedRoute><Gate pageCode="ATS_RECRUITER_QUEUE"><NativeATSHiringEntry /></Gate></ProtectedRoute>} />
@@ -451,6 +452,7 @@ const App = () => (
               <Route path="/goals" element={<Navigate to="/dashboard" replace />} />
               <Route path="/work-inbox" element={<ProtectedRoute><Gate pageCode="WORK_INBOX"><NativeWorkInbox /></Gate></ProtectedRoute>} />
               <Route path="/mobility" element={<ProtectedRoute><Gate pageCode="MOBILITY"><NativeMobilityManagement /></Gate></ProtectedRoute>} />
+              <Route path="/salary-increment" element={<ProtectedRoute><Gate pageCode="SALARY_INCREMENT"><NativeSalaryIncrement /></Gate></ProtectedRoute>} />
               <Route path="/jobs" element={<Navigate to="/dashboard" replace />} />
               <Route path="/advanced-reports" element={<Navigate to="/reports" replace />} />
               <Route path="/compliance/statutory" element={<ProtectedRoute><Gate pageCode="STATUTORY_COMPLIANCE"><NativeStatutoryCompliance /></Gate></ProtectedRoute>} />

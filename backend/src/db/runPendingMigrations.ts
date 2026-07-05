@@ -242,6 +242,8 @@ const MIGRATION_MANIFEST: string[] = [
   "356_joining_document_status_safety_columns.sql",
   "357_ats_candidate_followup_columns.sql",
   "358_payroll_hr_validation_service_columns.sql",
+  "359_rm_change_requests_table.sql",
+  "360_salary_increment_governance_routes.sql",
   ];
 
 export type MigrationHealth = {
