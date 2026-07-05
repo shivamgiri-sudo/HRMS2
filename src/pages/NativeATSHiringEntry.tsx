@@ -596,79 +596,63 @@ export default function NativeATSHiringEntry() {
 
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <Field label="Process Name" help="Configurable from ATS form config" required>
-                  <>
-                    <input
-                      ref={assignFieldRef("process_name") as any}
-                      list="hiring-process-options"
-                      value={form.process_name}
-                      onChange={(event) => updateForm("process_name", event.target.value)}
-                      onKeyDown={handleKeyAdvance("process_name")}
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"
-                      placeholder="Type or select process"
-                    />
-                    <datalist id="hiring-process-options">
-                      {processOptions.map((option) => (
-                        <option key={option} value={option} />
-                      ))}
-                    </datalist>
-                  </>
+                  <select
+                    ref={assignFieldRef("process_name") as any}
+                    value={form.process_name}
+                    onChange={(event) => updateForm("process_name", event.target.value)}
+                    onKeyDown={handleKeyAdvance("process_name")}
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
+                  >
+                    <option value="">Select process</option>
+                    {processOptions.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
                 </Field>
 
                 <Field label="Hiring Source" required>
-                  <>
-                    <input
-                      ref={assignFieldRef("hiring_source") as any}
-                      list="hiring-source-options"
-                      value={form.hiring_source}
-                      onChange={(event) => updateForm("hiring_source", event.target.value)}
-                      onKeyDown={handleKeyAdvance("hiring_source")}
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"
-                      placeholder="Walk-in, portal, reference"
-                    />
-                    <datalist id="hiring-source-options">
-                      {sourceOptions.map((option) => (
-                        <option key={option} value={option} />
-                      ))}
-                    </datalist>
-                  </>
+                  <select
+                    ref={assignFieldRef("hiring_source") as any}
+                    value={form.hiring_source}
+                    onChange={(event) => updateForm("hiring_source", event.target.value)}
+                    onKeyDown={handleKeyAdvance("hiring_source")}
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
+                  >
+                    <option value="">Walk-in, portal, reference</option>
+                    {sourceOptions.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
                 </Field>
 
                 <Field label="Position" required>
-                  <>
-                    <input
-                      ref={assignFieldRef("position_name") as any}
-                      list="hiring-position-options"
-                      value={form.position_name}
-                      onChange={(event) => updateForm("position_name", event.target.value)}
-                      onKeyDown={handleKeyAdvance("position_name")}
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"
-                      placeholder="Candidate role"
-                    />
-                    <datalist id="hiring-position-options">
-                      {positionOptions.map((option) => (
-                        <option key={option} value={option} />
-                      ))}
-                    </datalist>
-                  </>
+                  <select
+                    ref={assignFieldRef("position_name") as any}
+                    value={form.position_name}
+                    onChange={(event) => updateForm("position_name", event.target.value)}
+                    onKeyDown={handleKeyAdvance("position_name")}
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
+                  >
+                    <option value="">Select position</option>
+                    {positionOptions.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
                 </Field>
 
                 <Field label="WP Group" required>
-                  <>
-                    <input
-                      ref={assignFieldRef("wp_group") as any}
-                      list="hiring-wp-group-options"
-                      value={form.wp_group}
-                      onChange={(event) => updateForm("wp_group", event.target.value)}
-                      onKeyDown={handleKeyAdvance("wp_group")}
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"
-                      placeholder="Team or work pool"
-                    />
-                    <datalist id="hiring-wp-group-options">
-                      {wpGroupOptions.map((option) => (
-                        <option key={option} value={option} />
-                      ))}
-                    </datalist>
-                  </>
+                  <select
+                    ref={assignFieldRef("wp_group") as any}
+                    value={form.wp_group}
+                    onChange={(event) => updateForm("wp_group", event.target.value)}
+                    onKeyDown={handleKeyAdvance("wp_group")}
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
+                  >
+                    <option value="">Select WP group</option>
+                    {wpGroupOptions.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
                 </Field>
 
                 <Field label="Candidate Name" required>
@@ -709,60 +693,48 @@ export default function NativeATSHiringEntry() {
                 </Field>
 
                 <Field label="Gender">
-                  <>
-                    <input
-                      ref={assignFieldRef("gender") as any}
-                      list="hiring-gender-options"
-                      value={form.gender}
-                      onChange={(event) => updateForm("gender", event.target.value)}
-                      onKeyDown={handleKeyAdvance("gender")}
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"
-                      placeholder="Optional"
-                    />
-                    <datalist id="hiring-gender-options">
-                      {genderOptions.map((option) => (
-                        <option key={option} value={option} />
-                      ))}
-                    </datalist>
-                  </>
+                  <select
+                    ref={assignFieldRef("gender") as any}
+                    value={form.gender}
+                    onChange={(event) => updateForm("gender", event.target.value)}
+                    onKeyDown={handleKeyAdvance("gender")}
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
+                  >
+                    <option value="">Optional</option>
+                    {genderOptions.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
                 </Field>
 
                 <Field label="Education">
-                  <>
-                    <input
-                      ref={assignFieldRef("education_qualification") as any}
-                      list="hiring-education-options"
-                      value={form.education_qualification}
-                      onChange={(event) => updateForm("education_qualification", event.target.value)}
-                      onKeyDown={handleKeyAdvance("education_qualification")}
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"
-                      placeholder="Optional"
-                    />
-                    <datalist id="hiring-education-options">
-                      {educationOptions.map((option) => (
-                        <option key={option} value={option} />
-                      ))}
-                    </datalist>
-                  </>
+                  <select
+                    ref={assignFieldRef("education_qualification") as any}
+                    value={form.education_qualification}
+                    onChange={(event) => updateForm("education_qualification", event.target.value)}
+                    onKeyDown={handleKeyAdvance("education_qualification")}
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
+                  >
+                    <option value="">Optional</option>
+                    {educationOptions.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
                 </Field>
 
                 <Field label="Experience">
-                  <>
-                    <input
-                      ref={assignFieldRef("experience_level") as any}
-                      list="hiring-experience-options"
-                      value={form.experience_level}
-                      onChange={(event) => updateForm("experience_level", event.target.value)}
-                      onKeyDown={handleKeyAdvance("experience_level")}
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"
-                      placeholder="Optional"
-                    />
-                    <datalist id="hiring-experience-options">
-                      {experienceOptions.map((option) => (
-                        <option key={option} value={option} />
-                      ))}
-                    </datalist>
-                  </>
+                  <select
+                    ref={assignFieldRef("experience_level") as any}
+                    value={form.experience_level}
+                    onChange={(event) => updateForm("experience_level", event.target.value)}
+                    onKeyDown={handleKeyAdvance("experience_level")}
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
+                  >
+                    <option value="">Optional</option>
+                    {experienceOptions.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
                 </Field>
 
                 <Field label="Candidate Location">
@@ -776,23 +748,19 @@ export default function NativeATSHiringEntry() {
                   />
                 </Field>
 
-                <Field label="Calling Outcome" help="Press Enter to jump to reason box" required>
-                  <>
-                    <input
-                      ref={assignFieldRef("recruiter_remarks") as any}
-                      list="hiring-outcome-options"
-                      value={form.recruiter_remarks}
-                      onChange={(event) => updateForm("recruiter_remarks", event.target.value)}
-                      onKeyDown={handleKeyAdvance("recruiter_remarks")}
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"
-                      placeholder="Shortlisted, rejected, callback, not contacted"
-                    />
-                    <datalist id="hiring-outcome-options">
-                      {outcomeOptions.map((option) => (
-                        <option key={option} value={option} />
-                      ))}
-                    </datalist>
-                  </>
+                <Field label="Calling Outcome" help="Required — select one" required>
+                  <select
+                    ref={assignFieldRef("recruiter_remarks") as any}
+                    value={form.recruiter_remarks}
+                    onChange={(event) => updateForm("recruiter_remarks", event.target.value)}
+                    onKeyDown={handleKeyAdvance("recruiter_remarks")}
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
+                  >
+                    <option value="">Shortlisted, rejected, callback…</option>
+                    {outcomeOptions.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
                 </Field>
 
                 <Field
