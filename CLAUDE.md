@@ -217,10 +217,10 @@ Never read 5+ files to answer a question that a graph query can answer in one ca
 ### 3. UI/UX Pro Max — Required for All UI Work
 Every UI task (new page, new component, refactor, review) MUST begin with:
 ```bash
-python C:/Users/ADMIN/.claude/skills/ui-ux-pro-max/scripts/search.py "<description>" --design-system --stack shadcn -p "MAS PeopleOS"
+"C:/Users/ADMIN/AppData/Local/Programs/Python/Python312/python.exe" "C:/Users/ADMIN/.claude/skills/ui-ux-pro-max/scripts/search.py" "<description>" --design-system --stack shadcn -p "MAS PeopleOS"
 ```
 Then run domain searches for specific components:
 ```bash
-python C:/Users/ADMIN/.claude/skills/ui-ux-pro-max/scripts/search.py "<component>" --domain ux --stack shadcn
+"C:/Users/ADMIN/AppData/Local/Programs/Python/Python312/python.exe" "C:/Users/ADMIN/.claude/skills/ui-ux-pro-max/scripts/search.py" "<component>" --domain ux --stack shadcn
 ```
 Never implement UI without consulting the design system. Use `/ux` slash command to trigger this workflow.
