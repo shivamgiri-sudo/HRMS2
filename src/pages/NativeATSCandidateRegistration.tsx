@@ -574,7 +574,7 @@ export default function NativeATSCandidateRegistration() {
       if (!parts[1].includes('.')) return '✉️ Domain must have extension (e.g., .com)';
       const domainParts = parts[1].split('.');
       if (domainParts[domainParts.length - 1].length < 2) return '✉️ Invalid domain extension';
-      if (!/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(value)) return '✉️ Invalid characters in email';
+      if (!/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(value)) return '✉️ Invalid characters in email';
       return ''; // Valid!
     }
 
@@ -1309,16 +1309,16 @@ export default function NativeATSCandidateRegistration() {
       const extracted: Partial<CandidateFormData> = {};
       const mobileMatch = text.match(/\b[6-9]\d{9}\b/);
       if (mobileMatch) extracted.mobile = mobileMatch[0];
-      const emailMatch = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+      const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
       if (emailMatch) extracted.email = emailMatch[0];
-      const nameLabel = text.match(/(?:Name|Full Name)\s*[:\-]\s*(.+)/i);
+      const nameLabel = text.match(/(?:Name|Full Name)\s*[:-]\s*(.+)/i);
       if (nameLabel) {
         extracted.name = nameLabel[1].trim().split('\n')[0].trim();
       } else if (lines.length > 0) {
         const firstLine = lines[0].replace(/[^a-zA-Z\s]/g, '').trim();
         if (firstLine.length >= 3 && firstLine.length <= 60) extracted.name = firstLine;
       }
-      const addressMatch = text.match(/(?:Address|Addr)\s*[:\-]\s*([\s\S]{5,100}?)(?=\n\n|\b(?:Mobile|Phone|Email|Education|Experience)\b|$)/i);
+      const addressMatch = text.match(/(?:Address|Addr)\s*[:-]\s*([\s\S]{5,100}?)(?=\n\n|\b(?:Mobile|Phone|Email|Education|Experience)\b|$)/i);
       if (addressMatch) extracted.address = addressMatch[1].replace(/\n/g, ', ').trim();
       const eduOptions = bootstrap.educationOptions;
       const textLower = text.toLowerCase();

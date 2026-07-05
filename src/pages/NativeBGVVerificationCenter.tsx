@@ -89,9 +89,6 @@ export default function NativeBGVVerificationCenter() {
   const { user } = useAuth();
   const role = (user as any)?.role ?? "";
   const ALLOWED = ["admin", "super_admin", "hr", "recruiter"];
-  if (user && !ALLOWED.includes(role)) {
-    return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
-  }
   const [queue, setQueue] = useState<QueueRow[]>([]);
   const [selected, setSelected] = useState<BgvStatus | null>(null);
   const [selectedId, setSelectedId] = useState("");
@@ -209,6 +206,10 @@ export default function NativeBGVVerificationCenter() {
   };
 
   useEffect(() => { void loadQueue(); }, []);
+
+  if (user && !ALLOWED.includes(role)) {
+    return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
+  }
 
   return (
     <DashboardLayout>

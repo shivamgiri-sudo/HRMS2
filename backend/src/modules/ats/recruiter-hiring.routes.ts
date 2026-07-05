@@ -178,7 +178,6 @@ recruiterHiringRouter.put("/recruiter/hiring-activity/:id", async (req: Authenti
     if (!access.allowed) {
       return res.status(404).json({ success: false, message: "Hiring activity not found" });
     }
-    const duplicateMode = duplicateModeFrom(req.body?.duplicateMode);
     const payload = req.body?.row && typeof req.body.row === "object" ? req.body.row : req.body;
     const result = await updateHiringActivityById(req.params.id, payload, req.authUser!.id);
     return res.json({ success: true, data: result });

@@ -39,3 +39,8 @@ backups/
 .env
 .claude/settings.json
 backend/.env.backup
+
+# Playwright test output — never commit
+playwright-report/
+playwright-results.json
+test-results/

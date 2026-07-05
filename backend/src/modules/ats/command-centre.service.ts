@@ -94,10 +94,10 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
      WHERE DATE(interviewed_at) = CURDATE()`
   );
 
-  // Pending approvals
+  // Pending approvals — rows not yet approved or rejected
   const [pendingRes] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) as pending FROM ats_payroll_hr_validation
-     WHERE validation_status = 'approved'
+     WHERE validation_status NOT IN ('approved', 'rejected')
      AND candidate_id IN (
        SELECT id FROM ats_candidate WHERE current_stage = 'payroll_validated'
      )`
@@ -207,9 +207,10 @@ export async function getRecruiterPerformance(
 }
 
 /**
- * Get timeline data (last 30 days)
+ * Get timeline data (max 30 days — UNION date-series is hard-coded to 30 rows)
  */
 export async function getTimelineData(days: number = 30): Promise<TimelineData[]> {
+  const safeDays = Math.min(days, 30); // UNION only generates 30 rows; cap to avoid silent truncation
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
       DATE(date_series.date) as date,
@@ -227,7 +228,7 @@ export async function getTimelineData(days: number = 30): Promise<TimelineData[]
         SELECT 20 UNION ALL SELECT 21 UNION ALL SELECT 22 UNION ALL SELECT 23 UNION ALL SELECT 24 UNION ALL
         SELECT 25 UNION ALL SELECT 26 UNION ALL SELECT 27 UNION ALL SELECT 28 UNION ALL SELECT 29
       ) seq
-      WHERE seq.seq < ?
+      WHERE seq.seq < ?   -- uses safeDays, capped at 30
     ) date_series
     LEFT JOIN (
       SELECT DATE(created_at) as date, COUNT(*) as registrations
@@ -252,7 +253,7 @@ export async function getTimelineData(days: number = 30): Promise<TimelineData[]
       GROUP BY DATE(interviewed_at)
     ) rej ON date_series.date = rej.date
     ORDER BY date_series.date ASC`,
-    [days]
+    [safeDays]
   );
 
   return results as TimelineData[];

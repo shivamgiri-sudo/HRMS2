@@ -62,9 +62,6 @@ export default function NativePayrollHRValidation() {
   const { user } = useAuth();
   const role = (user as any)?.role ?? "";
   const ALLOWED = ["admin", "super_admin", "hr", "payroll_head"];
-  if (user && !ALLOWED.includes(role)) {
-    return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
-  }
   const [view, setView] = useState<'list' | 'validate'>('list');
   const [candidates, setCandidates] = useState<PendingCandidate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<PendingCandidate | null>(null);
@@ -327,6 +324,10 @@ export default function NativePayrollHRValidation() {
         </div>
       </DashboardLayout>
     );
+  }
+
+  if (user && !ALLOWED.includes(role)) {
+    return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
   }
 
   // ── View: Validate ─────────────────────────────────────────────────────────

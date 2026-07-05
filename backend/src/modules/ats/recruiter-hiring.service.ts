@@ -506,7 +506,14 @@ async function getOptionList(configKey: string, fallback: string[]) {
 }
 
 async function buildActivityActorContext(actorUserId: string): Promise<ActivityActorContext> {
-  const recruiterProfile = await resolveRecruiterForActor(actorUserId).catch(() => null);
+  const recruiterProfile = await resolveRecruiterForActor(actorUserId).catch((err: unknown) => {
+    // Re-throw hard DB/connection errors; swallow only "not found" misses
+    if (err && typeof err === "object" && ("fatal" in err || "code" in err)) {
+      const e = err as { fatal?: boolean; code?: string };
+      if (e.fatal || (e.code && e.code !== "ER_NO_ROWS_FOUND")) throw err;
+    }
+    return null;
+  });
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
         e.id AS employee_id,

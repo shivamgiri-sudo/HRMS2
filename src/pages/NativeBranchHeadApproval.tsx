@@ -38,9 +38,6 @@ export default function NativeBranchHeadApproval() {
   const { user } = useAuth();
   const role = (user as any)?.role ?? "";
   const ALLOWED = ["admin", "super_admin", "hr", "branch_head"];
-  if (user && !ALLOWED.includes(role)) {
-    return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
-  }
   const [offers, setOffers] = useState<PendingOffer[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
@@ -79,6 +76,10 @@ export default function NativeBranchHeadApproval() {
       setActing(null);
     }
   };
+
+  if (user && !ALLOWED.includes(role)) {
+    return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
+  }
 
   return (
     <DashboardLayout>

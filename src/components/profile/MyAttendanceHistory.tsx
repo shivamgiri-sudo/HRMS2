@@ -121,7 +121,7 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
     if (!timestamp) return "-";
     // If timestamp has no timezone info (MySQL datetime stored as UTC), append Z so JS parses as UTC
     // then display in IST (UTC+5:30)
-    const ts = /[Zz+\-]\d*$/.test(timestamp) ? timestamp : timestamp.replace(" ", "T") + "Z";
+    const ts = /[Zz+-]\d*$/.test(timestamp) ? timestamp : timestamp.replace(" ", "T") + "Z";
     const d = new Date(ts);
     if (isNaN(d.getTime())) return "-";
     const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);

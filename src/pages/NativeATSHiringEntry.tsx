@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 import {
+  AlertCircle,
   BadgeCheck,
   CalendarDays,
+  ChevronDown,
   Clock3,
   PhoneCall,
   RefreshCw,
@@ -13,6 +16,8 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { EmptyState } from "@/components/ui/empty-state";
+import { SkeletonCard } from "@/components/ui/skeletons";
 
 type HiringActivityRow = Record<string, any>;
 
@@ -162,21 +167,27 @@ function MetricCard({
   value,
   hint,
   icon,
+  unavailable,
 }: {
   label: string;
   value: string | number;
   hint: string;
   icon: ReactNode;
+  unavailable?: boolean;
 }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">{label}</div>
-          <div className="mt-2 text-3xl font-black tracking-tight text-slate-950">{value}</div>
-          <div className="mt-2 text-sm text-slate-600">{hint}</div>
+          <div className={`mt-2 text-3xl font-black tracking-tight ${unavailable ? "text-slate-400" : "text-slate-950"}`}>
+            {value}
+          </div>
+          <div className="mt-2 text-sm text-slate-600">{unavailable ? "Data unavailable" : hint}</div>
         </div>
-        <div className="rounded-2xl bg-slate-100 p-3 text-slate-700">{icon}</div>
+        <div className={`rounded-2xl p-3 ${unavailable ? "bg-slate-50 text-slate-400" : "bg-slate-100 text-slate-700"}`}>
+          {icon}
+        </div>
       </div>
     </div>
   );
@@ -206,17 +217,24 @@ function Field({
 }
 
 export default function NativeATSHiringEntry() {
+  const location = useLocation();
+  const isCalling = location.pathname.includes("/calling-entry");
+
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [rows, setRows] = useState<HiringActivityRow[]>([]);
+  const [rowsTotal, setRowsTotal] = useState(0);
+  const [rowsPage, setRowsPage] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [dashboard, setDashboard] = useState<HiringDashboard | null>(null);
+  const [dashboardFailed, setDashboardFailed] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const fieldRefs = useRef<Partial<Record<keyof FormState, HTMLElement | null>>>({});
-
-  const isCalling = useMemo(() => window.location.pathname.includes("/calling-entry"), []);
 
   const assignFieldRef = (key: keyof FormState) => (node: HTMLElement | null) => {
     fieldRefs.current[key] = node;
@@ -265,26 +283,43 @@ export default function NativeATSHiringEntry() {
   const resetAll = () => {
     setForm(EMPTY_FORM);
     setValidationErrors([]);
-    setMessage("");
+    setSuccessMsg("");
+    setErrorMsg("");
     window.setTimeout(() => focusField("process_name"), 0);
   };
 
   const loadPageData = async () => {
     setLoading(true);
-    setMessage("");
+    setLoadError("");
+    setRowsPage(1);
     try {
-      const [bootstrapRes, rowsRes, dashboardRes] = await Promise.all([
+      const [bootstrapRes, rowsRes] = await Promise.all([
         hrmsApi.get<BootstrapApiResponse>("/api/ats/recruiter/hiring-activity/bootstrap"),
         hrmsApi.get<HiringListResponse>("/api/ats/recruiter/hiring-activity?limit=12&page=1"),
-        hrmsApi.get<HiringDashboardResponse>("/api/ats/recruiter/hiring-dashboard"),
       ]);
       setBootstrap(bootstrapRes.data);
       setRows(rowsRes.data ?? []);
-      setDashboard(dashboardRes.data ?? null);
-    } catch (error: any) {
-      setMessage(error?.message || "Unable to load hiring entry");
+      setRowsTotal(rowsRes.total ?? 0);
+    } catch (error: unknown) {
+      setLoadError((error as { message?: string })?.message || "Unable to load hiring entry. Please refresh.");
     } finally {
       setLoading(false);
+    }
+    // Load dashboard separately so a metrics failure doesn't block the form
+    hrmsApi.get<HiringDashboardResponse>("/api/ats/recruiter/hiring-dashboard")
+      .then((res) => { setDashboard(res.data ?? null); setDashboardFailed(false); })
+      .catch(() => { setDashboardFailed(true); });
+  };
+
+  const loadMoreRows = async () => {
+    setLoadingMore(true);
+    try {
+      const nextPage = rowsPage + 1;
+      const res = await hrmsApi.get<HiringListResponse>(`/api/ats/recruiter/hiring-activity?limit=12&page=${nextPage}`);
+      setRows((prev) => [...prev, ...(res.data ?? [])]);
+      setRowsPage(nextPage);
+    } catch (_e) { /* ignore pagination failure */ } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -341,7 +376,8 @@ export default function NativeATSHiringEntry() {
   const saveEntry = async () => {
     const errors = validate();
     setValidationErrors(errors);
-    setMessage("");
+    setSuccessMsg("");
+    setErrorMsg("");
     if (errors.length) return;
 
     setSaving(true);
@@ -371,15 +407,42 @@ export default function NativeATSHiringEntry() {
       );
 
       const action = res.data?.action ?? "saved";
-      setMessage(action === "updated" ? "Existing entry updated for this candidate." : "Calling entry saved.");
+      setSuccessMsg(action === "updated" ? "Existing entry updated for this candidate." : "Calling entry saved successfully.");
       clearCandidateFields();
       await loadPageData();
-    } catch (error: any) {
-      setMessage(error?.message || "Unable to save entry");
+    } catch (error: unknown) {
+      setErrorMsg((error as { message?: string })?.message || "Unable to save entry. Please try again.");
     } finally {
       setSaving(false);
     }
   };
+
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="space-y-6">
+          <div className="h-16 animate-pulse rounded-2xl bg-slate-100" />
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+            {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
+          </div>
+          <div className="h-64 animate-pulse rounded-3xl bg-slate-100" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <DashboardLayout>
+        <EmptyState
+          icon={AlertCircle}
+          title="Could not load hiring entry"
+          description={loadError}
+          action={{ label: "Retry", onClick: () => void loadPageData() }}
+        />
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -415,9 +478,14 @@ export default function NativeATSHiringEntry() {
           </div>
         </div>
 
-        {message ? (
-          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-sm">
-            {message}
+        {successMsg ? (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+            {successMsg}
+          </div>
+        ) : null}
+        {errorMsg ? (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
+            {errorMsg}
           </div>
         ) : null}
 
@@ -432,13 +500,55 @@ export default function NativeATSHiringEntry() {
           </div>
         ) : null}
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-          <MetricCard label="Calls Logged" value={formatMetric(dashboard?.metrics.total_records ?? 0)} hint="Total recruiter calling entries recorded." icon={<PhoneCall className="h-5 w-5" />} />
-          <MetricCard label="Contacted" value={`${formatMetric(dashboard?.metrics.total_contacted ?? 0)} (${dashboard?.metrics.contacted_pct ?? 0}%)`} hint="Candidates the recruiter actually reached." icon={<BadgeCheck className="h-5 w-5" />} />
-          <MetricCard label="Shortlisted" value={formatMetric(dashboard?.metrics.shortlisted ?? 0)} hint="Candidates kept warm for next action." icon={<Target className="h-5 w-5" />} />
-          <MetricCard label="Turned Up" value={`${formatMetric(dashboard?.metrics.walkins ?? 0)} (${turnoutRate}%)`} hint="Auto-linked from candidate registration." icon={<Users className="h-5 w-5" />} />
-          <MetricCard label="Selected" value={`${formatMetric(dashboard?.metrics.final_selected ?? 0)} (${selectedRate}%)`} hint="Final selections mapped from later ATS flow." icon={<UserRound className="h-5 w-5" />} />
-          <MetricCard label="Joined" value={formatMetric(dashboard?.metrics.joined ?? 0)} hint="Joined candidates coming through this funnel." icon={<Clock3 className="h-5 w-5" />} />
+        {dashboardFailed ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+            Metrics unavailable — dashboard data could not be loaded. The form is still fully functional.
+          </div>
+        ) : null}
+
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+          <MetricCard
+            label="Calls Logged"
+            value={dashboardFailed ? "—" : formatMetric(dashboard?.metrics.total_records ?? 0)}
+            hint="Total recruiter calling entries recorded."
+            icon={<PhoneCall className="h-5 w-5" />}
+            unavailable={dashboardFailed}
+          />
+          <MetricCard
+            label="Contacted"
+            value={dashboardFailed ? "—" : `${formatMetric(dashboard?.metrics.total_contacted ?? 0)} (${dashboard?.metrics.contacted_pct ?? 0}%)`}
+            hint="Candidates the recruiter actually reached."
+            icon={<BadgeCheck className="h-5 w-5" />}
+            unavailable={dashboardFailed}
+          />
+          <MetricCard
+            label="Shortlisted"
+            value={dashboardFailed ? "—" : formatMetric(dashboard?.metrics.shortlisted ?? 0)}
+            hint="Candidates kept warm for next action."
+            icon={<Target className="h-5 w-5" />}
+            unavailable={dashboardFailed}
+          />
+          <MetricCard
+            label="Turned Up"
+            value={dashboardFailed ? "—" : `${formatMetric(dashboard?.metrics.walkins ?? 0)} (${turnoutRate}%)`}
+            hint="Auto-linked from candidate registration."
+            icon={<Users className="h-5 w-5" />}
+            unavailable={dashboardFailed}
+          />
+          <MetricCard
+            label="Selected"
+            value={dashboardFailed ? "—" : `${formatMetric(dashboard?.metrics.final_selected ?? 0)} (${selectedRate}%)`}
+            hint="Final selections mapped from later ATS flow."
+            icon={<UserRound className="h-5 w-5" />}
+            unavailable={dashboardFailed}
+          />
+          <MetricCard
+            label="Joined"
+            value={dashboardFailed ? "—" : formatMetric(dashboard?.metrics.joined ?? 0)}
+            hint="Joined candidates coming through this funnel."
+            icon={<Clock3 className="h-5 w-5" />}
+            unavailable={dashboardFailed}
+          />
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
@@ -730,9 +840,7 @@ export default function NativeATSHiringEntry() {
                 This list is recruiter-scoped, so each logged-in recruiter sees only their own calling entries and the latest downstream ATS status of those candidates.
               </div>
 
-              {loading ? (
-                <div className="py-10 text-center text-sm text-slate-500">Loading recent entries...</div>
-              ) : rows.length === 0 ? (
+              {rows.length === 0 ? (
                 <div className="py-10 text-center text-sm text-slate-500">No recruiter calling entries yet.</div>
               ) : (
                 <div className="space-y-3">
@@ -804,6 +912,18 @@ export default function NativeATSHiringEntry() {
                     );
                   })}
                 </div>
+              )}
+
+              {rows.length > 0 && rows.length < rowsTotal && (
+                <button
+                  type="button"
+                  onClick={() => void loadMoreRows()}
+                  disabled={loadingMore}
+                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {loadingMore ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ChevronDown className="h-4 w-4" />}
+                  {loadingMore ? "Loading…" : `Load more (${rowsTotal - rows.length} remaining)`}
+                </button>
               )}
             </section>
           </div>

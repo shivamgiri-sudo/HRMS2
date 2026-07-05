@@ -41,9 +41,6 @@ export default function PayrollConfigFlags() {
   const [success, setSuccess] = useState<string | null>(null);
 
   const role = user?.role ?? "";
-  if (!ALLOWED_ROLES.includes(role)) {
-    return <div className="p-8 text-red-600">Access denied.</div>;
-  }
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -91,6 +88,10 @@ export default function PayrollConfigFlags() {
       setSaving(false);
     }
   };
+
+  if (!ALLOWED_ROLES.includes(role)) {
+    return <div className="p-8 text-red-600">Access denied.</div>;
+  }
 
   return (
     <div className="p-6 max-w-5xl mx-auto">

@@ -412,7 +412,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
       return;
     }
     // Validate official email format if provided
-    if (formData.official_email && !/^[a-zA-Z0-9._%+\-]+@(teammas\.in|teammas\.co\.in)$/.test(formData.official_email)) {
+    if (formData.official_email && !/^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/.test(formData.official_email)) {
       toast.error("Official email must be @teammas.in or @teammas.co.in");
       return;
     }

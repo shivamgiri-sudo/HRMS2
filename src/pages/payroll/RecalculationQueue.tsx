@@ -33,9 +33,6 @@ export default function RecalculationQueue() {
   const [error, setError] = useState<string | null>(null);
 
   const role = user?.role ?? "";
-  if (!ALLOWED_ROLES.includes(role)) {
-    return <div className="p-8 text-red-600">Access denied.</div>;
-  }
 
   const fetchQueue = () => {
     setLoading(true);
@@ -52,6 +49,10 @@ export default function RecalculationQueue() {
   };
 
   useEffect(() => { fetchQueue(); }, [statusFilter, monthFilter]);
+
+  if (!ALLOWED_ROLES.includes(role)) {
+    return <div className="p-8 text-red-600">Access denied.</div>;
+  }
 
   return (
     <div className="p-6 max-w-6xl mx-auto">

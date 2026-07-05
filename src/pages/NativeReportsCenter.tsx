@@ -391,7 +391,7 @@ export default function NativeReportsCenter() {
   function toggleFav(code: string) {
     setFavCodes(prev => {
       const next = new Set(prev);
-      next.has(code) ? next.delete(code) : next.add(code);
+      if (next.has(code)) { next.delete(code); } else { next.add(code); }
       saveList(LS_FAVS, Array.from(next));
       return next;
     });

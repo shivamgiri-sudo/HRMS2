@@ -100,7 +100,7 @@ async function request<T>(method: string, path: string, body?: unknown, timeoutM
 
   if (!res.ok) {
     const errorPayload = payload as { error?: unknown; message?: unknown } | null;
-    let raw = errorPayload?.error ?? errorPayload?.message ?? (typeof payload === "string" ? payload : null);
+    const raw = errorPayload?.error ?? errorPayload?.message ?? (typeof payload === "string" ? payload : null);
     let message: string;
     if (typeof raw === "string") {
       message = raw;

@@ -633,6 +633,7 @@ export const atsFullParityService = {
     return `${prefix}-${String(Number(rows[0]?.cnt ?? 0) + 1).padStart(3, "0")}`;
   },
 
+  /** @deprecated Not wired to any route. Use recruiterInterview.service.ts submitInterviewUpdate instead. */
   async submitRecruiterUpdate(input: Record<string, unknown>, actorUserId?: string) {
     const candidateId = normalizeText(input.candidateId || input.CandidateID || input["Candidate ID"]);
     const qToken = normalizeText(input.qToken || input.QToken || input["Q Token"]);

@@ -107,14 +107,14 @@ export default function KpiMasterConfig() {
     try {
       const res = await hrmsApi.get<{ success: boolean; data: KpiMetric[] }>("/api/kpi/metrics");
       setMetrics(res.data ?? []);
-    } catch {}
+    } catch (_e) { /* ignore */ }
   }
 
   async function loadOrgUnits(type: OrgUnitType) {
     try {
       const res = await hrmsApi.get<{ success: boolean; data: OrgUnit[] }>(`/api/kpi-master/org-units/${type}`);
       setOrgUnits(res.data ?? []);
-    } catch {}
+    } catch (_e) { /* ignore */ }
   }
 
   useEffect(() => {
