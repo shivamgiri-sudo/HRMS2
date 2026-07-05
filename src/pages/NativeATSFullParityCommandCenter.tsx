@@ -574,7 +574,7 @@ export default function NativeATSFullParityCommandCenter() {
                 />
                 <button
                   onClick={() => void runJourney()}
-                  disabled={journeyLoading}
+                  disabled={journeyLoading || !journeyQuery.trim()}
                   className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white disabled:opacity-60"
                 >
                   {journeyLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
@@ -590,7 +590,7 @@ export default function NativeATSFullParityCommandCenter() {
             {journey && (
               <>
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                  <Kpi label="Candidate" value={String(journey.candidate && (journey.candidate as AnyRow).FullName || "-")} foot={String((journey.candidate as AnyRow)?.CandidateID ?? (journey.candidate as AnyRow)?.candidate_code ?? "")} />
+                  <Kpi label="Candidate" value={String((journey.candidate as AnyRow)?.FullName ?? "-")} foot={String((journey.candidate as AnyRow)?.CandidateID ?? (journey.candidate as AnyRow)?.candidate_code ?? "")} />
                   <Kpi label="Stage" value={String((journey.candidate as AnyRow)?.CurrentStage ?? (journey.candidate as AnyRow)?.current_stage ?? "-")} foot={String((journey.candidate as AnyRow)?.Status ?? (journey.candidate as AnyRow)?.status ?? "")} />
                   <Kpi label="Quality" value={String((journey.candidate as AnyRow)?._candidateQualityScore ?? 0)} foot={String((journey.candidate as AnyRow)?._candidateQualityLabel ?? "")} />
                   <Kpi label="Handling" value={String((journey.candidate as AnyRow)?._handlingQualityScore ?? 0)} foot={String((journey.candidate as AnyRow)?._handlingQualityLabel ?? "")} />

@@ -218,7 +218,9 @@ export default function NativeATSHiringDashboard() {
 
   const applyFilters = () => {
     setSheetOpen(false);
-    void load();
+    // Pass current filters explicitly — load's closure may hold a stale snapshot
+    // because setFilters is async and the useCallback memoizes at render time.
+    void load({ ...filters });
   };
 
   const clearFilters = () => {

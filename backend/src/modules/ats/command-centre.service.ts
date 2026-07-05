@@ -103,12 +103,13 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
      )`
   );
 
-  // Employees joined this month
+  // Employees joined this month — use stage_log transition date, not candidate created_at
   const [joinedRes] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as joined FROM ats_candidate
-     WHERE current_stage = 'joined'
-     AND MONTH(created_at) = MONTH(CURRENT_DATE())
-     AND YEAR(created_at) = YEAR(CURRENT_DATE())`
+    `SELECT COUNT(DISTINCT sl.candidate_id) as joined
+     FROM ats_candidate_stage_log sl
+     WHERE sl.to_stage = 'joined'
+       AND MONTH(sl.stage_date) = MONTH(CURRENT_DATE())
+       AND YEAR(sl.stage_date) = YEAR(CURRENT_DATE())`
   );
 
   // Calculate conversion rate
@@ -174,12 +175,17 @@ export async function getBranchMetrics(): Promise<BranchMetrics[]> {
 /**
  * Get recruiter performance
  */
+function getIstDateString(offsetDays = 0): string {
+  const d = new Date(Date.now() + (5.5 * 60 - offsetDays * 24 * 60) * 60 * 1000);
+  return d.toISOString().slice(0, 10);
+}
+
 export async function getRecruiterPerformance(
   fromDate?: string,
   toDate?: string
 ): Promise<RecruiterPerformance[]> {
-  const from = fromDate || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  const to = toDate || new Date().toISOString().split('T')[0];
+  const from = fromDate || getIstDateString(30);
+  const to = toDate || getIstDateString(0);
 
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT

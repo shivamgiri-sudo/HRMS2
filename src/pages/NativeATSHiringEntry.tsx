@@ -313,6 +313,19 @@ export default function NativeATSHiringEntry() {
       .catch(() => { setDashboardFailed(true); });
   };
 
+  // Lightweight reload used after saves — skips the bootstrap call since actor context is static
+  const reloadRowsAfterSave = async () => {
+    setRowsPage(1);
+    try {
+      const rowsRes = await hrmsApi.get<HiringListResponse>("/api/ats/recruiter/hiring-activity?limit=12&page=1");
+      setRows(rowsRes.data ?? []);
+      setRowsTotal(rowsRes.total ?? 0);
+    } catch (_e) { /* non-critical — entries list still shows stale data */ }
+    hrmsApi.get<HiringDashboardResponse>("/api/ats/recruiter/hiring-dashboard")
+      .then((res) => { setDashboard(res.data ?? null); setDashboardFailed(false); })
+      .catch(() => { setDashboardFailed(true); });
+  };
+
   const loadMoreRows = async () => {
     setLoadingMore(true);
     try {
@@ -420,7 +433,7 @@ export default function NativeATSHiringEntry() {
       const action = res.data?.action ?? "saved";
       setSuccessMsg(action === "updated" ? "Existing entry updated for this candidate." : "Calling entry saved successfully.");
       clearCandidateFields();
-      await loadPageData();
+      await reloadRowsAfterSave();
     } catch (error: unknown) {
       setErrorMsg((error as { message?: string })?.message || "Unable to save entry. Please try again.");
     } finally {

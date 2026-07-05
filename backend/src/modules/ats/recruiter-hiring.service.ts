@@ -1389,7 +1389,7 @@ async function aggregateBy(column: string, filters: HiringFilters, scopedOnly: b
       WHERE ${sql}
       GROUP BY COALESCE(${column}, 'Unmapped')
       ORDER BY total DESC
-      LIMIT 10`,
+      LIMIT 50`,
     params
   );
   return rows;
@@ -1403,8 +1403,8 @@ export async function getHiringDashboard(userId: string, role: string | undefine
         COUNT(*) AS total_records,
         SUM(CASE WHEN contacted_flag = 1 THEN 1 ELSE 0 END) AS total_contacted,
         SUM(CASE WHEN contacted_flag = 0 THEN 1 ELSE 0 END) AS not_contacted,
-        SUM(CASE WHEN recruiter_remarks = 'Shortlisted' THEN 1 ELSE 0 END) AS shortlisted,
-        SUM(CASE WHEN recruiter_remarks = 'Rejected' THEN 1 ELSE 0 END) AS recruiter_rejected,
+        SUM(CASE WHEN LOWER(recruiter_remarks) = 'shortlisted' THEN 1 ELSE 0 END) AS shortlisted,
+        SUM(CASE WHEN LOWER(recruiter_remarks) = 'rejected' THEN 1 ELSE 0 END) AS recruiter_rejected,
         SUM(CASE WHEN hr_interview_status = 'Selected' THEN 1 ELSE 0 END) AS hr_selected,
         SUM(CASE WHEN hr_interview_status = 'Rejected' THEN 1 ELSE 0 END) AS hr_rejected,
         SUM(CASE WHEN ai_interview_result IN ('Selected','Pass') THEN 1 ELSE 0 END) AS ai_selected,
@@ -1418,7 +1418,7 @@ export async function getHiringDashboard(userId: string, role: string | undefine
         SUM(CASE WHEN walkin_flag = 1 THEN 1 ELSE 0 END) AS walkins,
         SUM(CASE WHEN hiring_source = 'Employee Referral' THEN 1 ELSE 0 END) AS employee_referrals,
         COUNT(DISTINCT recruiter_name_snapshot) AS active_recruiters,
-        GREATEST(COUNT(DISTINCT recruiter_name_snapshot) - COUNT(DISTINCT CASE WHEN updated_at < DATE_SUB(NOW(), INTERVAL 2 DAY) THEN recruiter_name_snapshot END), 0) AS recruiter_inactive_count
+        COUNT(DISTINCT CASE WHEN updated_at < DATE_SUB(NOW(), INTERVAL 2 DAY) THEN recruiter_name_snapshot END) AS recruiter_inactive_count
       FROM ats_recruiter_hiring_activity
       WHERE ${sql}`,
     params
