@@ -33,6 +33,7 @@ import { getConfiguredBgvProviderAdapter, resetBgvProviderAdapterCache } from ".
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { atsService } from "./ats.service.js";
+import { resolveRecruiterForActor } from "../ats-full-parity/recruiterInterview.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -49,7 +50,18 @@ const bgvSensitiveLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, standardHea
 async function requireBgvCandidateScope(req: AuthenticatedRequest, candidateId: string): Promise<void> {
   const candidate = await atsService.getCandidate(candidateId);
   const allowed = await hasScopedAccess(req.authUser!.id, ["admin", "hr", "recruiter"], { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined }, { allowAdminBypass: true });
-  if (!allowed) throw Object.assign(new Error("Access denied"), { statusCode: 403 });
+  const recruiterProfile = await resolveRecruiterForActor(req.authUser!.id);
+  const candidateRecord = candidate as unknown as Record<string, unknown>;
+  const assignedRecruiterIds = [
+    candidateRecord.recruiter_id,
+    candidateRecord.recruiter_assigned_id,
+    candidateRecord.assigned_recruiter_id,
+  ].filter(Boolean).map(String);
+  const isAssignedRecruiter = recruiterProfile
+    ? assignedRecruiterIds.includes(String(recruiterProfile.id))
+      || String(candidateRecord.recruiter_assigned_name ?? candidateRecord.recruiter_name ?? "").trim() === recruiterProfile.name
+    : false;
+  if (!allowed && !isAssignedRecruiter) throw Object.assign(new Error("Access denied"), { statusCode: 403 });
 }
 
 // Public token-driven candidate BGV routes. Mount before global requireAuth.
