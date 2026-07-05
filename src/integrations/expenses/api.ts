@@ -11,20 +11,16 @@ import type {
   ExpenseStatus,
   ExpenseReportQuery
 } from './types';
-
-function apiBaseUrl(): string {
-  const configured = import.meta.env.VITE_HRMS_API_URL;
-  if (configured !== undefined) return String(configured).replace(/\/$/, '');
-  return import.meta.env.DEV ? 'http://localhost:5055' : '';
-}
+import { apiBaseUrl } from '@/lib/apiBase';
 
 const API_BASE = apiBaseUrl();
+const DEMO_LOGIN_ENABLED = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_LOGIN === 'true';
 
 function getAuthHeaders(): Record<string, string> {
   const mysqlToken = localStorage.getItem('hrms_access_token');
   if (mysqlToken) return { 'Content-Type': 'application/json', Authorization: `Bearer ${mysqlToken}` };
 
-  const demoRaw = localStorage.getItem('hrms_demo_session');
+  const demoRaw = DEMO_LOGIN_ENABLED ? localStorage.getItem('hrms_demo_session') : null;
   if (demoRaw) {
     try {
       const demo = JSON.parse(demoRaw);

@@ -170,6 +170,19 @@ export const navGroups: NavGroup[] = [
     title: "Operations",
     items: [
       {
+        label: "Call Master",  href: "/call-master", icon: ic(Activity), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager","qa","quality_analyst"], description: "Call analytics & quality",
+        children: [
+          { label: "Call Master",       href: "/call-master",          icon: ic(Activity),    roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager","qa","quality_analyst"], description: "KPIs, quality, agents" },
+          { label: "Inbound Dashboard", href: "/call-master/inbound",  icon: ic(TrendingUp),  roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager","qa","quality_analyst"], description: "All-project inbound" },
+        ],
+      },
+      {
+        label: "Brand Sales",  href: "/sales/brand-analytics", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager"], description: "Bellavita & GNC analytics",
+        children: [
+          { label: "Brand Analytics",   href: "/sales/brand-analytics", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager"], description: "Sales dashboards & upload" },
+        ],
+      },
+      {
         label: "Quality",      href: "/quality/dashboard", icon: ic(ShieldCheck), pageCode: "QUALITY_DASHBOARD", description: "Quality management",
         children: [
           { label: "Quality Dashboard",  href: "/quality/dashboard",     icon: ic(BarChart3),  pageCode: "QUALITY_DASHBOARD",   description: "Quality dashboard" },
@@ -209,6 +222,8 @@ export const navGroups: NavGroup[] = [
           { label: "Holiday Work Requests",  href: "/payroll/holiday-work-requests",icon: ic(ClipboardList), roles: ["admin","super_admin","wfm","payroll_head","payroll_branch"], description: "Raise holiday work requests" },
           { label: "Holiday Work Approvals", href: "/payroll/holiday-work-approvals",icon: ic(ShieldCheck), roles: ["admin","super_admin","payroll_head","payroll_branch","wfm"], description: "Approve holiday work" },
           { label: "Running Payroll",        href: "/payroll/running-breakdown",    icon: ic(TrendingUp), roles: ["admin","super_admin","payroll_head","payroll_branch","wfm"], description: "Mid-month earned salary" },
+          { label: "Payroll Validation",     href: "/payroll/validation",           icon: ic(ShieldCheck),roles: ["super_admin","payroll_head"],                           description: "Validate run before salary transfer" },
+          { label: "NOC Management",         href: "/payroll/noc",                  icon: ic(FileCheck),  roles: ["super_admin","payroll_head","payroll_branch","payroll","admin"], description: "Upload & validate No-Objection Certificates" },
           { label: "Recalculation Queue",    href: "/payroll/recalculation-queue",  icon: ic(Settings2),  roles: ["admin","super_admin","payroll_head","payroll_branch"],  description: "Payroll recalc queue" },
           { label: "Config Flags",           href: "/payroll/config-flags",         icon: ic(Settings),   roles: ["admin","super_admin","payroll_head","payroll_branch"],  description: "Payroll configuration flags" },
           { label: "Payroll Masters",        href: "/payroll/masters",              icon: ic(Settings2),  roles: ["admin","super_admin","payroll","finance"],              description: "Salary slabs, bands, min wages" },

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { apiUrl } from "@/lib/apiBase";
 import { CompanyLogo } from "@/components/CompanyLogo";
 
 type BranchAlias = {
@@ -8,10 +9,31 @@ type BranchAlias = {
   alias: string;
 };
 
+const WALKIN_OPTION_ID = "special:walkin";
+const REFERENCE_OPTION_ID = "special:reference";
+
+const normalizeRecruiterLookupValue = (value: string) =>
+  value.trim().toLowerCase().replace(/\s+/g, " ");
+
 type RecruiterDetail = {
   name: string;
   email: string | null;
   mobile: string | null;
+};
+
+type RecruiterChoice = {
+  id: string;
+  name?: string;
+  label: string;
+  employee_code: string | null;
+  employee_id: string | null;
+  email: string | null;
+  mobile: string | null;
+};
+
+type RecruiterPickerChoice = RecruiterChoice & {
+  special?: "walkin" | "reference";
+  subLabel?: string;
 };
 
 type Bootstrap = {
@@ -25,6 +47,7 @@ type Bootstrap = {
   branchOptions: string[];
   branchAliases?: BranchAlias[];
   recruiterDetails?: RecruiterDetail[];
+  sourceOptions: string[];
   yesNoOptions: string[];
   preferredShiftOptions: string[];
   nightShiftComfortOptions: string[];
@@ -39,7 +62,10 @@ type CandidateFormData = {
   experience: string;
   gender: string;
   roleApplied: string;
+  sourceType: string;
   recruiterName: string;
+  recruiterId: string;
+  referredBy: string;
   branch: string;
   rotationalShift: string;
   preferredShift: string;
@@ -93,7 +119,10 @@ const EMPTY_FORM: CandidateFormData = {
   experience: "",
   gender: "",
   roleApplied: "",
+  sourceType: "Walk-In",
   recruiterName: "",
+  recruiterId: "",
+  referredBy: "",
   branch: "",
   rotationalShift: "",
   preferredShift: "",
@@ -115,6 +144,7 @@ const DEFAULT_BOOTSTRAP: Bootstrap = {
   recruiterOptions: [],
   branchOptions: [],
   branchAliases: [],
+  sourceOptions: ["Walk-In", "Reference", "Other"],
   yesNoOptions: ["Yes", "No"],
   preferredShiftOptions: [],
   nightShiftComfortOptions: [],
@@ -229,6 +259,14 @@ const css = `
   .native-ats-sw { position:relative; }
   .native-ats-sw::after { content:'▾'; position:absolute; right:12px; top:50%; transform:translateY(-50%); color:#94a3b8; pointer-events:none; font-size:13px; }
   .native-ats-si { cursor:pointer; padding-right:34px; }
+  .native-ats-recruiter-menu { position:absolute; z-index:50; top:calc(100% + 8px); left:0; right:0; max-height:260px; overflow-y:auto; background:#fff; border:1.5px solid #c7d2fe; border-radius:14px; box-shadow:0 18px 42px rgba(15,23,42,.18); padding:8px; }
+  .native-ats-recruiter-opt { width:100%; border:0; background:#fff; border-radius:11px; padding:10px 12px; text-align:left; cursor:pointer; display:flex; flex-direction:column; gap:2px; transition:background .15s, transform .15s; }
+  .native-ats-recruiter-opt:hover,.native-ats-recruiter-opt.selected { background:#eef2ff; }
+  .native-ats-recruiter-opt:active { transform:scale(.99); }
+  .native-ats-recruiter-opt.special { background:linear-gradient(135deg,#f8fafc,#eef2ff); border:1px solid #dbe4ff; margin-bottom:6px; }
+  .native-ats-recruiter-main { font-size:14px; font-weight:900; color:#172554; }
+  .native-ats-recruiter-sub { font-size:11px; font-weight:700; color:#64748b; }
+  .native-ats-recruiter-empty { padding:14px 12px; font-size:13px; font-weight:700; color:#64748b; text-align:center; }
   .native-ats-fe { font-size:12px; color:var(--ats-red); margin-top:4px; font-weight:700; display:none; }
   .native-ats-fe.show { display:block; }
 
@@ -344,8 +382,9 @@ export default function NativeATSCandidateRegistration() {
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [selfiePreview, setSelfiePreview] = useState<string>("");
   const [consentGiven, setConsentGiven] = useState(false);
-  const [branchRecruiters, setBranchRecruiters] = useState<string[]>([]);
-  const [branchRecruitersData, setBranchRecruitersData] = useState<{ name: string; employee_id?: string | null; email?: string | null; mobile?: string | null }[]>([]);
+  const [branchRecruiters, setBranchRecruiters] = useState<RecruiterChoice[]>([]);
+  const [recruiterSearch, setRecruiterSearch] = useState("");
+  const [recruiterDropdownOpen, setRecruiterDropdownOpen] = useState(false);
 
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -371,7 +410,10 @@ export default function NativeATSCandidateRegistration() {
       experience: form.experience,
       gender: form.gender,
       roleApplied: form.roleApplied,
+      sourceType: form.sourceType,
       recruiterName: form.recruiterName,
+      recruiterId: form.recruiterId,
+      referredBy: form.referredBy,
       branch: form.branch,
       rotationalShift: form.rotationalShift,
       preferredShift: form.preferredShift,
@@ -384,6 +426,85 @@ export default function NativeATSCandidateRegistration() {
     [form]
   );
 
+  const selectedRecruiterChoice = useMemo(
+    () => branchRecruiters.find((item) => item.id === form.recruiterId) ?? null,
+    [branchRecruiters, form.recruiterId]
+  );
+
+  const recruiterPickerOptions = useMemo<RecruiterPickerChoice[]>(() => {
+    if (!form.branch) return [];
+    const normalizedSearch = normalizeRecruiterLookupValue(recruiterSearch);
+    const specialOptions: RecruiterPickerChoice[] = [
+      {
+        id: WALKIN_OPTION_ID,
+        label: "Walk-in",
+        name: "Walk-in",
+        employee_code: null,
+        employee_id: null,
+        email: null,
+        mobile: null,
+        special: "walkin",
+        subLabel: "Auto-assign a recruiter from this branch",
+      },
+      {
+        id: REFERENCE_OPTION_ID,
+        label: "Employee Referral",
+        name: "Employee Referral",
+        employee_code: null,
+        employee_id: null,
+        email: null,
+        mobile: null,
+        special: "reference",
+        subLabel: "Capture the referring employee name",
+      },
+    ];
+    const recruiters = branchRecruiters.map((item) => ({
+      ...item,
+      subLabel: item.employee_code ? `Employee code: ${item.employee_code}` : "Branch recruiter",
+    }));
+    const combined = [...specialOptions, ...recruiters];
+    if (!normalizedSearch) return combined;
+    return combined.filter((item) => {
+      const haystack = [item.label, item.name, item.employee_code, item.subLabel]
+        .map((value) => normalizeRecruiterLookupValue(String(value ?? "")))
+        .join(" ");
+      return haystack.includes(normalizedSearch);
+    });
+  }, [branchRecruiters, form.branch, recruiterSearch]);
+
+  const findRecruiterChoice = (rawValue: string) => {
+    const normalized = normalizeRecruiterLookupValue(rawValue);
+    if (!normalized) return null;
+
+    return branchRecruiters.find((item) => {
+      const code = normalizeRecruiterLookupValue(String(item.employee_code ?? ""));
+      const label = normalizeRecruiterLookupValue(item.label);
+      const name = normalizeRecruiterLookupValue(String(item.name ?? ""));
+      return label === normalized || name === normalized || (!!code && code === normalized);
+    }) ?? null;
+  };
+
+  const chooseRecruiter = (choice: RecruiterPickerChoice) => {
+    if (choice.id === WALKIN_OPTION_ID) {
+      setForm((prev) => ({ ...prev, recruiterId: WALKIN_OPTION_ID, recruiterName: "Walk-in", sourceType: "Walk-In", referredBy: "" }));
+      setRecruiterSearch("Walk-in");
+    } else if (choice.id === REFERENCE_OPTION_ID) {
+      setForm((prev) => ({ ...prev, recruiterId: REFERENCE_OPTION_ID, recruiterName: "Employee Referral", sourceType: "Reference" }));
+      setRecruiterSearch("Employee Referral");
+    } else {
+      setForm((prev) => ({
+        ...prev,
+        recruiterId: choice.id,
+        recruiterName: choice.name ?? choice.label,
+        sourceType: "Recruiter",
+        referredBy: "",
+      }));
+      setRecruiterSearch(choice.label);
+    }
+    setErrors((prev) => ({ ...prev, recruiterName: "", referredBy: "" }));
+    setRecruiterDropdownOpen(false);
+  };
+
   useEffect(() => {
     loadBootstrap();
     return () => stopCam();
@@ -393,18 +514,52 @@ export default function NativeATSCandidateRegistration() {
   // When branch changes, load recruiters for that branch
   useEffect(() => {
     const branch = form.branch;
-    if (!branch) { setBranchRecruiters([]); setBranchRecruitersData([]); return; }
+    if (!branch) { setBranchRecruiters([]); setRecruiterSearch(""); return; }
     hrmsApi.get(`/api/ats/form-config/recruiters-by-branch?branch=${encodeURIComponent(branch)}`)
       .then((res: any) => {
-        const list: { name: string; employee_id?: string | null; email?: string | null; mobile?: string | null }[] = res?.data ?? [];
-        setBranchRecruiters(list.map(r => r.name));
-        setBranchRecruitersData(list);
+        const list: RecruiterChoice[] = (res?.data ?? []).map((r: any) => ({
+          id: String(r.id ?? r.employee_id ?? ""),
+          label: `${String(r.name ?? "").trim()}${r.employee_code ? ` · ${r.employee_code}` : ""}`,
+          employee_code: r.employee_code ?? null,
+          employee_id: r.employee_id ?? null,
+          email: r.email ?? null,
+          mobile: r.mobile ?? null,
+        })).filter((r: RecruiterChoice) => !!r.id);
+        const normalizedList = list.map((item) => {
+          const baseName = String(item.label || "")
+            .replace(/\s*[Â·].*$/, "")
+            .replace(/\s*\(.*\)$/, "")
+            .trim();
+          const label = item.employee_code ? `${baseName} (${item.employee_code})` : baseName;
+          return { ...item, name: baseName, label };
+        });
+        setBranchRecruiters(normalizedList);
         // Auto-clear recruiter if no longer valid for this branch
-        setForm(prev => list.find(r => r.name === prev.recruiterName) ? prev : { ...prev, recruiterName: "" });
+        setForm(prev => {
+          const keepsSpecial = prev.recruiterId === WALKIN_OPTION_ID || prev.recruiterId === REFERENCE_OPTION_ID;
+          if (keepsSpecial || normalizedList.find(r => r.id === prev.recruiterId)) return prev;
+          return { ...prev, recruiterId: "", recruiterName: "", sourceType: "", referredBy: "" };
+        });
       })
-      .catch(() => { setBranchRecruiters([]); setBranchRecruitersData([]); });
+      .catch(() => { setBranchRecruiters([]); setRecruiterSearch(""); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.branch]);
+
+  useEffect(() => {
+    if (form.recruiterId === WALKIN_OPTION_ID) {
+      setRecruiterSearch("Walk-In");
+      return;
+    }
+    if (form.recruiterId === REFERENCE_OPTION_ID) {
+      setRecruiterSearch("Reference");
+      return;
+    }
+    if (selectedRecruiterChoice) {
+      setRecruiterSearch(selectedRecruiterChoice.label);
+      return;
+    }
+    if (!form.recruiterId) setRecruiterSearch("");
+  }, [form.recruiterId, selectedRecruiterChoice]);
 
   useEffect(() => {
     if (cameraStream && videoRef.current) {
@@ -435,6 +590,7 @@ export default function NativeATSCandidateRegistration() {
         recruiterDetails:        data.recruiterDetails    ?? [],
         branchOptions,
         branchAliases:           data.branchAliases       ?? [],
+        sourceOptions:           data.sourceOptions       ?? ["Walk-In", "Reference", "Other"],
         yesNoOptions:            ["Yes","No"],
         preferredShiftOptions:   data.preferredShiftOptions   ?? ["Morning","Afternoon","Night","Rotational"],
         nightShiftComfortOptions:data.nightShiftComfortOptions ?? ["Comfortable","Not Comfortable","On Request"],
@@ -449,6 +605,7 @@ export default function NativeATSCandidateRegistration() {
         recruiterOptions:         ["Admin","HR Team","Sourcer"],
         branchOptions:            ["Mumbai","Delhi","Bangalore","Hyderabad","Chennai","Pune"],
         branchAliases:            [],
+        sourceOptions:            ["Walk-In", "Reference", "Other"],
         yesNoOptions:             ["Yes","No"],
         preferredShiftOptions:    ["Morning","Afternoon","Night","Rotational"],
         nightShiftComfortOptions: ["Comfortable","Not Comfortable","On Request"],
@@ -493,7 +650,7 @@ export default function NativeATSCandidateRegistration() {
       if (!parts[1].includes('.')) return '✉️ Domain must have extension (e.g., .com)';
       const domainParts = parts[1].split('.');
       if (domainParts[domainParts.length - 1].length < 2) return '✉️ Invalid domain extension';
-      if (!/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(value)) return '✉️ Invalid characters in email';
+      if (!/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(value)) return '✉️ Invalid characters in email';
       return ''; // Valid!
     }
 
@@ -605,6 +762,22 @@ export default function NativeATSCandidateRegistration() {
         errors.push(`${field.label} is required`);
       }
     });
+
+    if (form.sourceType === "Reference" && !String(form.referredBy || "").trim()) {
+      nextErrors.referredBy = "Referrer employee name is required";
+      errors.push("Referrer employee name is required");
+    }
+
+    if (!form.recruiterId) {
+      nextErrors.recruiterName = "Select a recruiter, Walk-in, or Employee Referral from the list";
+      errors.push("Select a recruiter, Walk-in, or Employee Referral from the list");
+    } else if (
+      ![WALKIN_OPTION_ID, REFERENCE_OPTION_ID].includes(form.recruiterId)
+      && !branchRecruiters.some((recruiter) => recruiter.id === form.recruiterId)
+    ) {
+      nextErrors.recruiterName = "Selected recruiter is not mapped to this branch";
+      errors.push("Selected recruiter is not mapped to this branch");
+    }
 
     setErrors(nextErrors);
 
@@ -733,8 +906,7 @@ export default function NativeATSCandidateRegistration() {
     // Backend requires mobile to verify upload ownership
     formData.append("mobile", String(form.mobile || "").replace(/\D/g, ""));
 
-    const apiBase = import.meta.env.VITE_HRMS_API_URL || (import.meta.env.DEV ? "http://localhost:5055" : "");
-    const res = await fetch(`${apiBase}/api/ats/candidates/${candidateId}/upload`, {
+    const res = await fetch(apiUrl(`/api/ats/candidates/${candidateId}/upload`), {
       method: "POST",
       body: formData,
     });
@@ -766,15 +938,10 @@ export default function NativeATSCandidateRegistration() {
     const step3 = window.setTimeout(() => setLoadingStep(3), 1400);
 
     try {
-      // Convert display name back to canonical branch name
-      const selectedBranchAlias = bootstrap.branchAliases?.find(a => a.display === coreData.branch);
-      const canonicalBranch = selectedBranchAlias?.canonical || coreData.branch;
-
-      // Resolve recruiter UUID from the branch-filtered recruiter list
-      const branchRecruiterFull = (branchRecruitersData || []).find(
-        (r: any) => r.name === coreData.recruiterName
-      );
-      const preferredRecruiterId = branchRecruiterFull?.employee_id || null;
+      const preferredRecruiterId =
+        coreData.sourceType === "Recruiter" && coreData.recruiterId && !coreData.recruiterId.startsWith("special:")
+          ? coreData.recruiterId
+          : null;
 
       const payload = {
         name:                     coreData.name,
@@ -783,7 +950,7 @@ export default function NativeATSCandidateRegistration() {
         gender:                   coreData.gender || null,
         roleApplied:              coreData.roleApplied || null,
         branchDisplayName:        coreData.branch,
-        sourcingChannel:          'Walk-In',
+        sourcingChannel:          coreData.sourceType || 'Walk-In',
         address:                  coreData.address || null,
         education:                coreData.education || null,
         experience:               coreData.experience || null,
@@ -794,7 +961,8 @@ export default function NativeATSCandidateRegistration() {
         ownsTwoWheeler:           yesNoToInt(coreData.ownTwoWheeler),
         idProofAvailable:         yesNoToInt(coreData.idProofAvailable),
         educationProofAvailable:  yesNoToInt(coreData.educationProofAvailable),
-        recruiterName:            coreData.recruiterName || null,
+        recruiterName:            coreData.sourceType === "Recruiter" ? (coreData.recruiterName || null) : null,
+        referredBy:               coreData.sourceType === "Reference" ? (coreData.referredBy || null) : null,
         ...(preferredRecruiterId ? { preferredRecruiterId } : {}),
       };
       const apiRes = await hrmsApi.post<{ success: boolean; candidateId?: string; candidate_code?: string; branchName?: string; recruiter?: any; message?: string; data?: any }>(
@@ -964,10 +1132,9 @@ export default function NativeATSCandidateRegistration() {
 
     if (f.t === "select") {
       // Recruiter dropdown: ONLY show branch-scoped recruiters (must select branch first)
-      const options: string[] = f.k === "recruiterName"
-        ? (form.branch ? branchRecruiters : [])
-        : (f.ok ? (bootstrap[f.ok] as string[]) || [] : []);
-      const hasValue = String(value || "").length > 0;
+      const hasValue = f.k === "recruiterName"
+        ? String(form.recruiterId || "").length > 0
+        : String(value || "").length > 0;
       const isValid = hasValue;
       const selectClass = `native-ats-si ${error ? 'error' : ''} ${isValid ? 'valid' : ''}`;
 
@@ -976,16 +1143,139 @@ export default function NativeATSCandidateRegistration() {
           <label className="native-ats-fl">{f.lb}</label>
           <div className="native-ats-iw native-ats-sw">
             <span className="native-ats-ii">{f.ic}</span>
-            <select className={selectClass} value={String(value || "")} onChange={(e) => update(f.k, e.target.value)} disabled={f.k === "recruiterName" && !form.branch}>
-              <option value="">{f.k === "recruiterName" && !form.branch ? "-- Select Branch First --" : `-- Select ${f.lb} --`}</option>
-              {options.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
+            {f.k === "recruiterName" ? (
+              <>
+                <input
+                  className={`native-ats-ti ${error ? 'error' : ''} ${isValid ? 'valid' : ''}`}
+                  value={recruiterSearch}
+                  placeholder={!form.branch ? "Select branch first" : "Search recruiter, Walk-in, or Employee Referral"}
+                  onFocus={() => {
+                    if (form.branch) setRecruiterDropdownOpen(true);
+                  }}
+                  onChange={(e) => {
+                    const nextValue = e.target.value;
+                    setRecruiterSearch(nextValue);
+                    setRecruiterDropdownOpen(true);
+
+                    const normalized = normalizeRecruiterLookupValue(nextValue);
+                    if (!normalized) {
+                      setForm((prev) => ({ ...prev, recruiterId: "", recruiterName: "", sourceType: "", referredBy: "" }));
+                      setErrors((prev) => ({ ...prev, recruiterName: "", referredBy: "" }));
+                      return;
+                    }
+
+                    if (normalized === "walk-in" || normalized === "walk in" || normalized === "walkin") {
+                      chooseRecruiter({
+                        id: WALKIN_OPTION_ID,
+                        label: "Walk-in",
+                        name: "Walk-in",
+                        employee_code: null,
+                        employee_id: null,
+                        email: null,
+                        mobile: null,
+                      });
+                      return;
+                    }
+
+                    if (normalized === "reference" || normalized === "employee referral" || normalized === "employee reference") {
+                      chooseRecruiter({
+                        id: REFERENCE_OPTION_ID,
+                        label: "Employee Referral",
+                        name: "Employee Referral",
+                        employee_code: null,
+                        employee_id: null,
+                        email: null,
+                        mobile: null,
+                      });
+                      return;
+                    }
+
+                    const selectedRecruiter = findRecruiterChoice(nextValue);
+
+                    if (selectedRecruiter) {
+                      setForm((prev) => ({
+                        ...prev,
+                        recruiterId: selectedRecruiter.id,
+                        recruiterName: selectedRecruiter.name ?? selectedRecruiter.label,
+                        sourceType: "Recruiter",
+                        referredBy: "",
+                      }));
+                      setErrors((prev) => ({ ...prev, recruiterName: "", referredBy: "" }));
+                      return;
+                    }
+
+                    setForm((prev) => ({ ...prev, recruiterId: "", recruiterName: "", sourceType: "", referredBy: "" }));
+                  }}
+                  onBlur={() => {
+                    window.setTimeout(() => {
+                      setRecruiterDropdownOpen(false);
+                      if (!recruiterSearch.trim()) return;
+                      if (form.recruiterId || !form.branch) return;
+                      setErrors((prev) => ({
+                        ...prev,
+                        recruiterName: "Select a recruiter from this branch, or choose Walk-in / Employee Referral",
+                      }));
+                    }, 120);
+                  }}
+                  disabled={!form.branch}
+                />
+                {recruiterDropdownOpen && form.branch && (
+                  <div className="native-ats-recruiter-menu">
+                    {recruiterPickerOptions.length === 0 ? (
+                      <div className="native-ats-recruiter-empty">No matching recruiter found for this branch</div>
+                    ) : (
+                      recruiterPickerOptions.map((opt) => (
+                        <button
+                          type="button"
+                          key={opt.id}
+                          className={`native-ats-recruiter-opt ${opt.special ? "special" : ""} ${form.recruiterId === opt.id ? "selected" : ""}`}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            chooseRecruiter(opt);
+                          }}
+                        >
+                          <span className="native-ats-recruiter-main">{opt.label}</span>
+                          <span className="native-ats-recruiter-sub">{opt.subLabel}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </>
+            ) : (
+              <select className={selectClass} value={String(value || "")} onChange={(e) => update(f.k, e.target.value)}>
+                <option value="">{`-- Select ${f.lb} --`}</option>
+                {(((f.ok ? (bootstrap[f.ok] as string[]) || [] : []) as string[])).map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+            )}
             {isValid && <span style={{ position: 'absolute', right: 36, fontSize: 16, color: '#10b981', pointerEvents: 'none' }}>✓</span>}
           </div>
+          {f.k === "recruiterName" && form.sourceType === "Reference" && (
+            <div style={{ marginTop: 10 }}>
+              <label className="native-ats-fl">Employee Reference Name</label>
+              <div className="native-ats-iw">
+                <span className="native-ats-ii">Ref</span>
+                <input
+                  className={`native-ats-ti ${errors.referredBy ? 'error' : ''} ${form.referredBy ? 'valid' : ''}`}
+                  type="text"
+                  value={form.referredBy}
+                  placeholder="Enter referring employee name"
+                  onChange={(e) => update("referredBy", e.target.value.trimStart())}
+                  maxLength={255}
+                />
+              </div>
+              <div className={`native-ats-fe ${errors.referredBy ? "show" : ""}`}>{errors.referredBy}</div>
+            </div>
+          )}
+          {f.k === "recruiterName" && form.branch && (
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>
+              Search recruiter name or employee code. Options are limited to selected-branch recruiters, plus Walk-in and Employee Referral.
+            </div>
+          )}
           <div className={`native-ats-fe ${error ? "show" : ""}`}>{error}</div>
         </div>
       );
@@ -1141,16 +1431,16 @@ export default function NativeATSCandidateRegistration() {
       const extracted: Partial<CandidateFormData> = {};
       const mobileMatch = text.match(/\b[6-9]\d{9}\b/);
       if (mobileMatch) extracted.mobile = mobileMatch[0];
-      const emailMatch = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+      const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
       if (emailMatch) extracted.email = emailMatch[0];
-      const nameLabel = text.match(/(?:Name|Full Name)\s*[:\-]\s*(.+)/i);
+      const nameLabel = text.match(/(?:Name|Full Name)\s*[:-]\s*(.+)/i);
       if (nameLabel) {
         extracted.name = nameLabel[1].trim().split('\n')[0].trim();
       } else if (lines.length > 0) {
         const firstLine = lines[0].replace(/[^a-zA-Z\s]/g, '').trim();
         if (firstLine.length >= 3 && firstLine.length <= 60) extracted.name = firstLine;
       }
-      const addressMatch = text.match(/(?:Address|Addr)\s*[:\-]\s*([\s\S]{5,100}?)(?=\n\n|\b(?:Mobile|Phone|Email|Education|Experience)\b|$)/i);
+      const addressMatch = text.match(/(?:Address|Addr)\s*[:-]\s*([\s\S]{5,100}?)(?=\n\n|\b(?:Mobile|Phone|Email|Education|Experience)\b|$)/i);
       if (addressMatch) extracted.address = addressMatch[1].replace(/\n/g, ', ').trim();
       const eduOptions = bootstrap.educationOptions;
       const textLower = text.toLowerCase();
@@ -1218,7 +1508,6 @@ export default function NativeATSCandidateRegistration() {
     setScanMode('scanning');
     setScanStatus('Analysing resume with AI…');
     try {
-      const apiBase = import.meta.env.VITE_HRMS_API_URL || (import.meta.env.DEV ? 'http://localhost:5055' : '');
       const fd = new FormData();
       if (scanFile) {
         fd.append('file', scanFile);
@@ -1237,7 +1526,7 @@ export default function NativeATSCandidateRegistration() {
         nightShiftComfortOptions: bootstrap.nightShiftComfortOptions ?? [],
       }));
 
-      const resp = await fetch(`${apiBase}/api/ats/registration/parse-resume`, {
+      const resp = await fetch(apiUrl('/api/ats/registration/parse-resume'), {
         method: 'POST',
         body: fd,
       });
@@ -1358,6 +1647,7 @@ export default function NativeATSCandidateRegistration() {
   const renderForm = () => {
     // Calculate completion percentage
     const requiredFields = ['name', 'mobile', 'email', 'address', 'education', 'experience', 'gender', 'roleApplied', 'recruiterName', 'branch', 'rotationalShift', 'preferredShift', 'nightShiftComfort', 'leavesRequired', 'ownTwoWheeler', 'idProofAvailable', 'educationProofAvailable'];
+    if (form.sourceType === "Reference") requiredFields.push('referredBy');
     const filledFields = requiredFields.filter(k => {
       const val = form[k as keyof CandidateFormData];
       return val && String(val).trim().length > 0 && !errors[k];

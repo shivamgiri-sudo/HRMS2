@@ -34,11 +34,16 @@ async function logEmail(
   status: 'sent' | 'failed' | 'skipped',
   error?: string,
 ) {
-  await db.execute(
-    `INSERT INTO ats_email_log (id, candidate_id, email_type, sent_to, status, error_message)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [randomUUID(), candidateId, type, sentTo, status, error ?? null],
-  );
+  try {
+    await db.execute(
+      `INSERT INTO ats_email_log (id, candidate_id, email_type, sent_to, status, error_message)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [randomUUID(), candidateId, type, sentTo, status, error ?? null],
+    );
+  } catch (logError: unknown) {
+    const message = logError instanceof Error ? logError.message : String(logError);
+    console.warn(`[ATS-EMAIL] failed to log ${type} email for ${candidateId}: ${message}`);
+  }
 }
 
 async function send(
@@ -49,13 +54,20 @@ async function send(
   type: EmailType,
 ): Promise<SendResult> {
   if (!env.SMTP_USER || !env.SMTP_PASS) {
-    console.warn(`[ATS-EMAIL] SMTP not configured — skipping ${type} to ${to} (candidate ${candidateId})`);
+    console.warn(`[ATS-EMAIL] SMTP not configured - skipping ${type} to ${to} (candidate ${candidateId})`);
     await logEmail(candidateId, type, to, 'skipped', 'SMTP not configured');
     return { ok: true };
   }
   const fromAddr = env.SMTP_FROM || env.SMTP_USER;
+  const finalHtml = /<html[\s>]/i.test(html)
+    ? html
+    : atsFrame({
+        eyebrow: "MAS Callnet HRMS",
+        title: subject.replace(/[^\x20-\x7E]/g, "-"),
+        body: html,
+      });
   try {
-    await transporter.sendMail({ from: `"MAS Callnet" <${fromAddr}>`, to, subject, html });
+    await transporter.sendMail({ from: `"MAS Callnet" <${fromAddr}>`, to, subject: subject.replace(/[^\x20-\x7E]/g, "-"), html: finalHtml });
     await logEmail(candidateId, type, to, 'sent');
     return { ok: true };
   } catch (err: unknown) {
@@ -65,13 +77,59 @@ async function send(
   }
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function atsFrame(input: {
+  eyebrow: string;
+  title: string;
+  body: string;
+  actionLabel?: string;
+  actionUrl?: string;
+  note?: string;
+}): string {
+  const action = input.actionLabel && input.actionUrl
+    ? `<p style="margin:26px 0 10px"><a href="${escapeHtml(input.actionUrl)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;padding:13px 22px;border-radius:999px;font-weight:800">${escapeHtml(input.actionLabel)}</a></p>`
+    : "";
+  const note = input.note
+    ? `<div style="margin-top:22px;border-left:4px solid #f59e0b;background:#fffbeb;border-radius:12px;padding:14px 16px;color:#92400e;font-size:14px;line-height:1.6">${input.note}</div>`
+    : "";
+
+  return `<!doctype html>
+<html>
+<body style="margin:0;background:#eef2f7;font-family:Arial,Helvetica,sans-serif;color:#111827">
+  <div style="max-width:660px;margin:0 auto;padding:28px 16px">
+    <div style="overflow:hidden;border-radius:24px;background:#ffffff;box-shadow:0 18px 50px rgba(15,23,42,.12)">
+      <div style="background:linear-gradient(135deg,#083344,#0f766e 58%,#f59e0b);padding:30px;color:#ffffff">
+        <div style="font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#ccfbf1">${escapeHtml(input.eyebrow)}</div>
+        <h1 style="margin:10px 0 0;font-size:28px;line-height:1.22">${escapeHtml(input.title)}</h1>
+      </div>
+      <div style="padding:30px;font-size:15px;line-height:1.75">
+        ${input.body}
+        ${action}
+        ${note}
+        <p style="margin:30px 0 0;color:#64748b">Regards,<br><strong>MAS Callnet Talent Team</strong></p>
+      </div>
+    </div>
+    <p style="margin:14px 0 0;text-align:center;font-size:11px;color:#94a3b8">This is an automated HRMS notification. Please keep candidate and employee information confidential.</p>
+  </div>
+</body>
+</html>`;
+}
+
 export async function sendRegistrationEmail(params: {
   candidateId: string; to: string; candidateName: string;
   candidateCode: string; branch: string; recruiterName: string; recruiterMobile: string;
 }): Promise<SendResult> {
   return send(
     params.to,
-    'Registration Successful — MAS Callnet',
+    'Registration Successful - MAS Callnet',
     `<p>Dear ${params.candidateName},</p>
      <p>Your registration at MAS Callnet (${params.branch}) was successful.</p>
      <p><strong>Your Candidate ID: ${params.candidateCode}</strong></p>
@@ -88,7 +146,7 @@ export async function sendSelectedEmail(params: {
 }): Promise<SendResult> {
   return send(
     params.to,
-    'Congratulations! You have been selected — MAS Callnet',
+    'Congratulations! You have been selected - MAS Callnet',
     `<p>Dear ${params.candidateName},</p>
      <p>Congratulations! You have been selected at MAS Callnet, ${params.branchName}.</p>
      <p>Your HR contact: ${params.hrName} | ${params.hrPhone}</p>
@@ -117,11 +175,20 @@ export async function sendOnboardingTokenEmail(params: {
 }): Promise<SendResult> {
   return send(
     params.to,
-    'Complete Your Joining Formalities — MAS Callnet',
-    `<p>Dear ${params.candidateName},</p>
-     <p>Please complete your joining formalities by clicking the link below.</p>
-     <p><a href="${params.onboardingLink}">Complete Profile (valid for 7 days)</a></p>
-     <p>If the link expires, contact your HR representative.</p>`,
+    'Complete Your Joining Formalities - MAS Callnet',
+    atsFrame({
+      eyebrow: "Candidate Onboarding",
+      title: "Complete Your 10-Step Joining Form",
+      body: `<p>Dear <strong>${escapeHtml(params.candidateName)}</strong>,</p>
+        <p>Your profile has been selected. Please complete your secure 10-step onboarding form using the button below.</p>
+        <div style="margin:18px 0;border:1px solid #dbeafe;background:#eff6ff;border-radius:16px;padding:16px;color:#1e3a8a">
+          <strong>Before you start:</strong> Keep Aadhaar, PAN, bank details, education proof, and experience documents ready.
+        </div>
+        <p style="margin-top:18px;color:#64748b;font-size:13px;line-height:1.6">If the button does not open, copy this link into your browser:<br><span style="word-break:break-all">${escapeHtml(params.onboardingLink)}</span></p>`,
+      actionLabel: "Open Onboarding Form",
+      actionUrl: params.onboardingLink,
+      note: "This secure link is valid for 7 days. If it expires, ask your recruiter or HR to resend it.",
+    }),
     params.candidateId,
     'token_sent',
   );
@@ -132,7 +199,7 @@ export async function sendOfferReviewEmail(params: {
 }): Promise<SendResult> {
   return send(
     params.to,
-    'New Employment Offer Awaiting Your Approval — MAS Callnet',
+    'New Employment Offer Awaiting Your Approval - MAS Callnet',
     `<p>A new employment offer requires your approval.</p>
      <p><strong>Candidate:</strong> ${params.candidateName}</p>
      <p>${params.offerSummary}</p>
@@ -148,14 +215,22 @@ export async function sendWelcomeEmail(params: {
 }): Promise<SendResult> {
   return send(
     params.to,
-    `Welcome to MAS Callnet — Your Employee ID is ${params.employeeCode}`,
-    `<p>Dear ${params.candidateName},</p>
-     <p>Welcome to MAS Callnet! Your employee account has been activated.</p>
-     <p><strong>Employee ID:</strong> ${params.employeeCode}</p>
-     <p><strong>Login Email:</strong> ${params.loginEmail}</p>
-     <p><strong>Temporary Password:</strong> ${params.tempPassword}</p>
-     <p><a href="${params.loginUrl}">Login to HRMS</a></p>
-     <p>You will be prompted to change your password on first login.</p>`,
+    `Welcome to MAS Callnet - Your Employee ID is ${params.employeeCode}`,
+    atsFrame({
+      eyebrow: "Employee Account Activated",
+      title: `Welcome to MAS Callnet, ${params.employeeCode}`,
+      body: `<p>Dear <strong>${escapeHtml(params.candidateName)}</strong>,</p>
+        <p>Your employee account is active. Use the details below to login and complete your first-day HRMS tasks.</p>
+        <div style="margin:18px 0;border:1px solid #d1fae5;background:#ecfdf5;border-radius:16px;padding:16px">
+          <p style="margin:0 0 8px"><strong>Employee ID:</strong> ${escapeHtml(params.employeeCode)}</p>
+          <p style="margin:0 0 8px"><strong>Login Email:</strong> ${escapeHtml(params.loginEmail)}</p>
+          <p style="margin:0"><strong>Temporary Password:</strong> ${escapeHtml(params.tempPassword)}</p>
+        </div>
+        <p style="color:#64748b;font-size:13px;line-height:1.6">If the button does not open, copy this link into your browser:<br><span style="word-break:break-all">${escapeHtml(params.loginUrl)}</span></p>`,
+      actionLabel: "Login to HRMS",
+      actionUrl: params.loginUrl,
+      note: "You will be asked to change your temporary password on first login. Do not share this password with anyone.",
+    }),
     params.candidateId,
     'welcome',
   );
@@ -185,7 +260,7 @@ export async function sendCandidateSuccessEmail(params: {
 
   return send(
     params.to,
-    '🎉 Registration Successful - MAS Callnet',
+    'Registration Successful - MAS Callnet',
     html,
     params.candidateId,
     'registration',
@@ -213,7 +288,7 @@ export async function sendRecruiterNotificationEmail(params: {
 
   return send(
     params.to,
-    '👤 New Candidate Assigned - MAS Callnet',
+    'New Candidate Assigned - MAS Callnet',
     html,
     params.candidateId,
     'recruiter_notification',
@@ -240,7 +315,7 @@ export async function sendSelectionCongratulationsEmail(params: {
 
   return send(
     params.to,
-    '🎉 Congratulations! You\'re Selected - MAS Callnet',
+    'Congratulations! You are Selected - MAS Callnet',
     html,
     params.candidateId,
     'selection_congratulations',
@@ -265,7 +340,7 @@ export async function sendBGVCompletionEmail(params: {
   const statusText = params.bgvStatus === 'verified' ? 'Completed' : 'Action Required';
   return send(
     params.to,
-    `🔍 BGV ${statusText} - MAS Callnet`,
+    `BGV ${statusText} - MAS Callnet`,
     html,
     params.candidateId,
     'bgv_completion',
@@ -290,7 +365,7 @@ export async function sendPayrollHRNotificationEmail(params: {
 
   return send(
     params.to,
-    '📋 New Candidate for Validation - MAS Callnet',
+    'New Candidate for Validation - MAS Callnet',
     html,
     params.candidateId,
     'payroll_hr_notification',
@@ -319,7 +394,7 @@ export async function sendBranchHeadApprovalEmail(params: {
 
   return send(
     params.to,
-    '✅ Approval Request - MAS Callnet',
+    'Approval Request - MAS Callnet',
     html,
     params.candidateId,
     'branch_head_approval',
@@ -363,7 +438,7 @@ export async function sendRejectedEmailProfessional(params: {
   });
   return send(
     params.to,
-    'Update on Your Application — MAS Callnet India',
+    'Update on Your Application - MAS Callnet India',
     html,
     params.candidateId,
     'rejected_professional',

@@ -40,10 +40,6 @@ export default function RunningPayrollBreakdown() {
   const role = user?.role ?? "";
   const isSelfOnly = role === "employee";
 
-  if (!ALLOWED_ROLES.includes(role)) {
-    return <div className="p-8 text-red-600">Access denied.</div>;
-  }
-
   const today = new Date();
   const defaultMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 
@@ -86,6 +82,10 @@ export default function RunningPayrollBreakdown() {
     setSearch(`${emp.name} (${emp.employee_code})`);
     setSuggestions([]);
   };
+
+  if (!ALLOWED_ROLES.includes(role)) {
+    return <div className="p-8 text-red-600">Access denied.</div>;
+  }
 
   return (
     <div className="p-6 max-w-4xl mx-auto">

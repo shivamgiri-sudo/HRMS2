@@ -1329,11 +1329,51 @@ export async function deleteJoiningDocumentFile(params: {
 
 export async function listJoiningDocumentTemplates() {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, document_code, document_name, document_category, template_version, requires_candidate_esign, requires_hr_upload, requires_hr_verification, is_mandatory, active_status, created_at, updated_at
-       FROM employee_joining_document_template
-      ORDER BY active_status DESC, document_name ASC`,
+    `SELECT
+        t.id,
+        t.document_code,
+        t.document_name,
+        t.document_category,
+        t.template_version,
+        t.template_storage_path,
+        t.template_mime_type,
+        t.fill_mode,
+        CASE WHEN t.template_storage_path IS NOT NULL AND t.template_storage_path <> '' THEN 1 ELSE 0 END AS template_uploaded,
+        COUNT(m.id) AS field_map_count,
+        t.requires_candidate_esign,
+        t.requires_hr_upload,
+        t.requires_hr_verification,
+        t.is_mandatory,
+        t.active_status,
+        t.created_at,
+        t.updated_at
+       FROM employee_joining_document_template t
+       LEFT JOIN document_template_field_map m
+         ON m.document_code = t.document_code
+        AND (m.template_id = t.id OR m.template_id IS NULL)
+      GROUP BY
+        t.id,
+        t.document_code,
+        t.document_name,
+        t.document_category,
+        t.template_version,
+        t.template_storage_path,
+        t.template_mime_type,
+        t.fill_mode,
+        t.requires_candidate_esign,
+        t.requires_hr_upload,
+        t.requires_hr_verification,
+        t.is_mandatory,
+        t.active_status,
+        t.created_at,
+        t.updated_at
+      ORDER BY t.active_status DESC, t.document_name ASC`,
   );
-  return rows;
+  return rows.map((row) => ({
+    ...row,
+    template_storage_path: row.template_storage_path ? "configured" : null,
+    template_ready: Number(row.template_uploaded ?? 0) === 1 && Number(row.field_map_count ?? 0) > 0,
+  }));
 }
 
 export async function upsertJoiningDocumentTemplate(params: {

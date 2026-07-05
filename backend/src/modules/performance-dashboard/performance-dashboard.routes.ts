@@ -7,6 +7,7 @@ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js'
 import type { RowDataPacket } from 'mysql2'
 import mysql from 'mysql2/promise'
 import { env } from '../../config/env.js'
+import { getUserRoleContext } from '../../shared/roleResolver.js'
 
 const performanceDashboardRouter = Router()
 performanceDashboardRouter.use(requireAuth)
@@ -38,6 +39,37 @@ function pdDates(q: Record<string, unknown>): { from: string; to: string } {
 }
 
 const PERF_ROLES = ['admin', 'hr', 'super_admin', 'manager', 'process_manager', 'ceo', 'qa', 'wfm'] as const
+
+// Roles that see ALL agents (org-wide) — others get scope-filtered to their branch/process
+const WIDE_SCOPE_ROLES = new Set(['super_admin', 'admin', 'ceo', 'management', 'ho_operations', 'ho_wfm'])
+
+/**
+ * Returns allowed employee_codes for the calling user.
+ * Wide-scope roles return null (no restriction).
+ * Other roles return codes filtered to their query-param branch/process.
+ */
+async function getScopeFilter(req: AuthenticatedRequest): Promise<{ codes: string[] | null; branchId?: string; processId?: string }> {
+  const userId = req.authUser!.id
+  const ctx = await getUserRoleContext(userId)
+  if (ctx.isSuperAdmin || ctx.isHO || ctx.roleKeys.some(r => WIDE_SCOPE_ROLES.has(r))) {
+    return { codes: null }
+  }
+  // Read optional scope from query params (UI can pass branchId / processId)
+  const branchId = req.query.branchId ? String(req.query.branchId) : undefined
+  const processId = req.query.processId ? String(req.query.processId) : undefined
+
+  const whereParts: string[] = ['e.active_status = 1']
+  const params: unknown[] = []
+  if (branchId) { whereParts.push('e.branch_id = ?'); params.push(branchId) }
+  if (processId) { whereParts.push('e.process_id = ?'); params.push(processId) }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code FROM employees e WHERE ${whereParts.join(' AND ')} LIMIT 500`,
+    params
+  )
+  const codes = (rows as any[]).map((r: any) => String(r.employee_code)).filter(Boolean)
+  return { codes, branchId, processId }
+}
 
 /**
  * GET /api/performance-dashboard/goals
@@ -246,6 +278,14 @@ performanceDashboardRouter.get('/agent-matrix', requireRole(...PERF_ROLES),
     try {
       const { from, to } = pdDates(req.query)
       const pool = getCiPool()
+      const scope = await getScopeFilter(req)
+      let scopeSql = ''
+      const extraParams: string[] = []
+      if (scope.codes !== null) {
+        if (scope.codes.length === 0) return res.json({ success: true, matrix: [] })
+        scopeSql = ` AND apr.UserID IN (${scope.codes.map(() => '?').join(',')})`
+        extraParams.push(...scope.codes)
+      }
       const [rows] = await pool.execute<RowDataPacket[]>(
         `SELECT
            apr.UserID AS agent_code,
@@ -262,11 +302,11 @@ performanceDashboardRouter.get('/agent-matrix', requireRole(...PERF_ROLES),
            COUNT(*) AS days_present
          FROM Shivamgiri.apr apr
          LEFT JOIN mas_hrms.employees e ON e.employee_code = apr.UserID
-         WHERE apr.ReportDate BETWEEN ? AND ?
+         WHERE apr.ReportDate BETWEEN ? AND ?${scopeSql}
          GROUP BY apr.UserID
          ORDER BY total_calls DESC
          LIMIT 200`,
-        [from, to]
+        [from, to, ...extraParams]
       )
       return res.json({ success: true, matrix: rows })
     } catch (err) {
@@ -347,6 +387,14 @@ performanceDashboardRouter.get('/utilization', requireRole(...PERF_ROLES),
     try {
       const { from, to } = pdDates(req.query)
       const pool = getCiPool()
+      const scope = await getScopeFilter(req)
+      let scopeSql = ''
+      const extraParams: string[] = []
+      if (scope.codes !== null) {
+        if (scope.codes.length === 0) return res.json({ success: true, utilization: [] })
+        scopeSql = ` AND apr.UserID IN (${scope.codes.map(() => '?').join(',')})`
+        extraParams.push(...scope.codes)
+      }
       const [rows] = await pool.execute<RowDataPacket[]>(
         `SELECT
            apr.UserID AS agent_code,
@@ -365,11 +413,11 @@ performanceDashboardRouter.get('/utilization', requireRole(...PERF_ROLES),
            ROUND(AVG(TIME_TO_SEC(IFNULL(apr.TRAINING,'00:00:00'))) / 60, 1) AS training_mins
          FROM Shivamgiri.apr apr
          LEFT JOIN mas_hrms.employees e ON e.employee_code = apr.UserID
-         WHERE apr.ReportDate BETWEEN ? AND ?
+         WHERE apr.ReportDate BETWEEN ? AND ?${scopeSql}
          GROUP BY apr.UserID
          ORDER BY utilization_pct DESC
          LIMIT 200`,
-        [from, to]
+        [from, to, ...extraParams]
       )
       return res.json({ success: true, utilization: rows })
     } catch (err) {

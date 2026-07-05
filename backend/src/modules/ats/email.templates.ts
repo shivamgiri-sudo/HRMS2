@@ -28,6 +28,12 @@ const BASE_STYLES = `
   }
 `;
 
+function frontendUrl(path: string) {
+  const base = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/+$/, "");
+  const suffix = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${suffix}`;
+}
+
 interface CandidateSuccessEmailData {
   candidateName: string;
   candidateId: string;
@@ -56,7 +62,7 @@ export function candidateSuccessEmail(data: CandidateSuccessEmailData): string {
     </div>
 
     <div class="content">
-      <h2 class="title">🎉 Registration Successful!</h2>
+      <h2 class="title">Registration Successful</h2>
 
       <p class="text">Dear <strong>${data.candidateName}</strong>,</p>
 
@@ -97,7 +103,7 @@ export function candidateSuccessEmail(data: CandidateSuccessEmailData): string {
 
     <div class="footer">
       <p class="footer-text">Best regards,<br><strong>Team MAS Callnet</strong></p>
-      <p class="footer-text">© 2026 Mas Callnet India Pvt. Ltd. All rights reserved.</p>
+      <p class="footer-text">(c) 2026 Mas Callnet India Pvt. Ltd. All rights reserved.</p>
     </div>
   </div>
 </body>
@@ -132,7 +138,7 @@ export function recruiterNotificationEmail(data: RecruiterNotificationEmailData)
     </div>
 
     <div class="content">
-      <h2 class="title">👤 New Candidate Assigned</h2>
+      <h2 class="title">New Candidate Assigned</h2>
 
       <p class="text">Hi <strong>${data.recruiterName}</strong>,</p>
 
@@ -157,7 +163,7 @@ export function recruiterNotificationEmail(data: RecruiterNotificationEmailData)
         </p>
       </div>
 
-      <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/recruiter-portal" class="button">Open Recruiter Portal</a>
+      <a href="${frontendUrl('/ats/recruiter/my-candidates')}" class="button">Open My Candidates</a>
 
       <p class="text" style="margin-top: 24px; font-size: 14px; color: #6b7280;">This is an automated notification from the ATS system.</p>
     </div>
@@ -198,13 +204,13 @@ export function selectionCongratulationsEmail(data: SelectionEmailData): string 
     </div>
 
     <div class="content">
-      <h2 class="title">🎉 Congratulations! You're Selected!</h2>
+      <h2 class="title">Congratulations! You're Selected</h2>
 
       <p class="text">Dear <strong>${data.candidateName}</strong>,</p>
 
       <p class="text">We are thrilled to inform you that you have been <strong>selected</strong> for the position of <strong>${data.roleOffered}</strong> at <strong>${data.branchDisplayName}</strong>!</p>
 
-      <div class="success-badge">✓ Selection Confirmed</div>
+      <div class="success-badge">Selection Confirmed</div>
 
       <div class="divider"></div>
 
@@ -249,7 +255,7 @@ export function selectionCongratulationsEmail(data: SelectionEmailData): string 
 
     <div class="footer">
       <p class="footer-text">Best regards,<br><strong>Team MAS Callnet</strong></p>
-      <p class="footer-text">© 2026 Mas Callnet India Pvt. Ltd. All rights reserved.</p>
+      <p class="footer-text">(c) 2026 Mas Callnet India Pvt. Ltd. All rights reserved.</p>
     </div>
   </div>
 </body>
@@ -267,7 +273,7 @@ interface BGVCompletionEmailData {
 export function bgvCompletionEmail(data: BGVCompletionEmailData): string {
   const statusColor = data.bgvStatus === 'verified' ? '#065f46' : '#b91c1c';
   const statusBg = data.bgvStatus === 'verified' ? '#ecfdf5' : '#fef2f2';
-  const statusText = data.bgvStatus === 'verified' ? 'Verified ✓' : data.bgvStatus === 'negative' ? 'Issues Found' : 'Insufficient Documents';
+  const statusText = data.bgvStatus === 'verified' ? 'Verified' : data.bgvStatus === 'negative' ? 'Issues Found' : 'Insufficient Documents';
 
   return `
 <!DOCTYPE html>
@@ -286,7 +292,7 @@ export function bgvCompletionEmail(data: BGVCompletionEmailData): string {
     </div>
 
     <div class="content">
-      <h2 class="title">🔍 Background Verification Completed</h2>
+      <h2 class="title">Background Verification Completed</h2>
 
       <p class="text">Dear <strong>${data.candidateName}</strong>,</p>
 
@@ -350,7 +356,7 @@ export function payrollHRNotificationEmail(data: PayrollHRNotificationEmailData)
     </div>
 
     <div class="content">
-      <h2 class="title">📋 New Candidate for Salary Validation</h2>
+      <h2 class="title">New Candidate for Salary Validation</h2>
 
       <p class="text">Hi <strong>${data.hrName}</strong>,</p>
 
@@ -376,7 +382,7 @@ export function payrollHRNotificationEmail(data: PayrollHRNotificationEmailData)
         </p>
       </div>
 
-      <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/payroll-hr-validation" class="button">Open Validation Portal</a>
+      <a href="${frontendUrl('/ats/payroll-hr-validation')}" class="button">Open Payroll HR Validation</a>
 
       <p class="text" style="margin-top: 24px; font-size: 14px; color: #6b7280;">This is an automated notification from the ATS system.</p>
     </div>
@@ -418,7 +424,7 @@ export function branchHeadApprovalEmail(data: BranchHeadApprovalEmailData): stri
     </div>
 
     <div class="content">
-      <h2 class="title">✅ New Candidate Pending Your Approval</h2>
+      <h2 class="title">New Candidate Pending Your Approval</h2>
 
       <p class="text">Dear <strong>${data.branchHeadName}</strong>,</p>
 
@@ -450,7 +456,7 @@ export function branchHeadApprovalEmail(data: BranchHeadApprovalEmailData): stri
         </p>
       </div>
 
-      <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/branch-head-approval" class="button">Review & Approve</a>
+      <a href="${frontendUrl('/ats/branch-head-approval')}" class="button">Review & Approve</a>
 
       <p class="text" style="margin-top: 24px; font-size: 14px; color: #6b7280;">Once approved, an employee code will be generated automatically.</p>
     </div>
@@ -483,7 +489,7 @@ export function rejectedEmail(data: RejectionEmailData): string {
 <!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Application Update — ${company}</title>
+<title>Application Update - ${company}</title>
 <style>${BASE_STYLES}
   .rej-header { background: linear-gradient(135deg, #374151 0%, #4b5563 100%); padding: 32px 24px; text-align: center; }
   .rej-badge { display: inline-block; background: #fef2f2; color: #991b1b; padding: 8px 18px; border-radius: 20px; font-size: 13px; font-weight: 700; margin: 8px 0; border: 1px solid #fecaca; }
@@ -499,7 +505,7 @@ export function rejectedEmail(data: RejectionEmailData): string {
     </div>
     <div class="content">
       <p class="text">Dear <strong>${data.candidateName}</strong>,</p>
-      <p class="text">Thank you for your interest in joining <strong>${company}</strong> and for taking the time to attend our recruitment process at our <strong>${data.branchDisplayName}</strong> location${data.processName ? ` — <strong>${data.processName}</strong>` : ''}.</p>
+      <p class="text">Thank you for your interest in joining <strong>${company}</strong> and for taking the time to attend our recruitment process at our <strong>${data.branchDisplayName}</strong> location${data.processName ? ` - <strong>${data.processName}</strong>` : ''}.</p>
       <p class="text">After careful evaluation of all candidates, we regret to inform you that we are unable to proceed with your application at this time.</p>
       <span class="rej-badge">Application Not Progressed</span>
       ${ref}

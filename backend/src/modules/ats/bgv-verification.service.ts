@@ -189,7 +189,12 @@ export async function verifyPanForCandidate(candidateId: string, input: { panNum
   if (!pan) throw Object.assign(new Error("PAN number is required"), { statusCode: 400 });
   const adapter = await getConfiguredBgvProviderAdapter();
   const started = Date.now();
-  const result = await adapter.verifyPan({ candidateName: candidate.employee_name ?? candidate.full_name, dateOfBirth: candidate.date_of_birth, panNumber: pan });
+  const result = await adapter.verifyPan({
+    candidateName: candidate.employee_name ?? candidate.full_name,
+    dateOfBirth: candidate.date_of_birth,
+    mobileNumber: candidate.mobile,
+    panNumber: pan,
+  });
   const checkId = await createOrUpdateCheck(candidateId, "pan", result.status, {
     providerKey: result.providerKey,
     providerRequestId: result.providerRequestId,

@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { db } from '../../db/mysql.js';
 import { env } from '../../config/env.js';
-import type { RowDataPacket } from 'mysql2';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import type {
   Channel, ProviderConfig, SaveProviderConfigDTO, AnyProviderType,
 } from './communication.types.js';
@@ -44,10 +44,6 @@ interface ProviderConfigRow extends RowDataPacket {
   test_error: string | null;
   test_at: string | null;
   secret_enc?: string | null;
-}
-
-interface UpdateResultRow extends RowDataPacket {
-  affectedRows: number;
 }
 
 function rowToConfig(r: RowDataPacket): ProviderConfig {
@@ -101,7 +97,7 @@ export const providerConfigService = {
   },
 
   async setEnabled(channel: Channel, enabled: boolean, userId: string): Promise<void> {
-    const [result] = await db.execute<UpdateResultRow>(
+    const [result] = await db.execute<ResultSetHeader>(
       'UPDATE communication_provider_config SET is_enabled = ?, updated_by = ? WHERE channel = ?',
       [enabled ? 1 : 0, userId, channel],
     );

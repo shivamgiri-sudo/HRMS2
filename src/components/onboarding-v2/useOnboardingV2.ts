@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { apiUrl } from '@/lib/apiBase';
 
-const BASE = `${import.meta.env.VITE_HRMS_API_URL ?? 'http://localhost:5055'}/api/ats`;
+const BASE = apiUrl('/api/ats');
 const API = `${BASE}/onboarding-full`;
 const BGV_API = `${BASE}/bgv`;
 

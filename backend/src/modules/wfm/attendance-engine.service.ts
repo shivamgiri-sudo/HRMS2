@@ -197,17 +197,23 @@ export const attendanceEngineService = {
     return null;
   },
 
-  // APR Net_Login minutes for Operations+Executive employees (direct from mas_hrms.apr)
+  // APR Net_Login minutes for Operations+Executive employees (direct from mas_hrms.apr).
+  // Sums across ALL campaigns for the employee on that date — an agent can span multiple
+  // campaigns in a day and each row carries per-campaign login time.
   async getAprNetMinutes(employeeCode: string, date: string): Promise<number> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT Net_Login FROM apr WHERE UserID = ? AND ReportDate = ? LIMIT 1`,
+      `SELECT Net_Login FROM apr WHERE UserID = ? AND ReportDate = ?`,
       [employeeCode, date]
     );
-    if (!rows[0]) return 0;
-    const netLogin = (rows[0] as any).Net_Login as string; // 'HH:MM:SS'
-    if (!netLogin) return 0;
-    const [h, m, s] = String(netLogin).split(':').map(Number);
-    return (h * 60) + (m || 0) + Math.round((s || 0) / 60);
+    if (!rows.length) return 0;
+    let totalMinutes = 0;
+    for (const row of rows as any[]) {
+      const netLogin = row.Net_Login as string; // 'HH:MM:SS'
+      if (!netLogin) continue;
+      const parts = String(netLogin).split(':').map(Number);
+      totalMinutes += (parts[0] * 60) + (parts[1] || 0) + Math.round((parts[2] || 0) / 60);
+    }
+    return totalMinutes;
   },
 
   // Sum dialler login minutes — fallback join on employee_code if employee_id is null

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { apiUrl } from "@/lib/apiBase";
 
 const SESSION_KEY = "lms_token";
 const LMS_API_URL = (import.meta.env.VITE_LMS_API_URL as string | undefined) ?? "";
@@ -12,13 +13,6 @@ export type LMSSessionState = {
 };
 
 function getHrmsToken(): string | null {
-  try {
-    const demo = localStorage.getItem("hrms_demo_session");
-    if (demo) {
-      const parsed = JSON.parse(demo);
-      if (parsed?.access_token) return parsed.access_token as string;
-    }
-  } catch {}
   return localStorage.getItem("hrms_access_token");
 }
 
@@ -62,8 +56,7 @@ export const useLMSSession = (): LMSSessionState => {
         }
 
         // Fetch employee_code + email from HRMS — LMS bridge needs these for lookup
-        const hrmsBase = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
-        const empRes = await fetch(`${hrmsBase}/api/employees/me`, {
+        const empRes = await fetch(apiUrl("/api/employees/me"), {
           headers: { Authorization: `Bearer ${hrmsToken}` },
         });
         const empJson = empRes.ok ? await empRes.json() : null;

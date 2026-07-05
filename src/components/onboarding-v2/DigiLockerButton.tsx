@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { ExternalLink, Loader2 } from 'lucide-react';
+import { apiUrl } from '@/lib/apiBase';
 
-const ONBOARDING_API = `${import.meta.env.VITE_HRMS_API_URL ?? 'http://localhost:5055'}/api/ats/onboarding-full`;
+const ONBOARDING_API = apiUrl('/api/ats/onboarding-full');
 
 interface DigiLockerButtonProps {
   token: string;

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { hrmsApi } from "@/lib/hrmsApi";
 import {
   AlertCircle,
   CalendarDays,
@@ -260,9 +261,9 @@ function OnboardingStatusCard({
 function QuickLinks() {
   const links = [
     { label: "Apply Leave", to: "/leaves/apply", icon: CalendarDays },
-    { label: "View Payslip", to: "/payroll/my-payslips", icon: FileText },
+    { label: "View Payslip", to: "/payroll/payslips", icon: FileText },
     { label: "Raise Helpdesk", to: "/helpdesk/new", icon: HelpCircle },
-    { label: "View Documents", to: "/my-documents", icon: FolderOpen },
+    { label: "View Documents", to: "/documents/my", icon: FolderOpen },
   ];
 
   return (
@@ -303,21 +304,19 @@ export default function EmployeeSelfDashboard() {
   const [onboarding, setOnboarding] = useState<OnboardingStatus | null>(null);
   const [onboardingLoading, setOnboardingLoading] = useState(true);
 
+  const [lmsProgress, setLmsProgress] = useState<any | null>(null);
+
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
 
     // Attendance
     setAttendanceLoading(true);
-    fetch("/api/wfm/my-attendance")
-      .then((res) => {
-        if (!res.ok) throw new Error(`Attendance fetch failed: ${res.status}`);
-        return res.json();
-      })
-      .then((json) => {
+    hrmsApi.get("/api/wfm/my-attendance")
+      .then((json: any) => {
         if (!cancelled) setAttendance(json?.data ?? json);
       })
-      .catch((err) => {
+      .catch((err: any) => {
         if (!cancelled) setAttendanceError(err.message ?? "Failed to load attendance.");
       })
       .finally(() => {
@@ -326,12 +325,8 @@ export default function EmployeeSelfDashboard() {
 
     // Leave balances
     setLeaveLoading(true);
-    fetch("/api/leaves/my-balance")
-      .then((res) => {
-        if (!res.ok) throw new Error(`Leave balance fetch failed: ${res.status}`);
-        return res.json();
-      })
-      .then((json) => {
+    hrmsApi.get("/api/leaves/my-balance")
+      .then((json: any) => {
         if (!cancelled) {
           const list: LeaveBalance[] = Array.isArray(json)
             ? json
@@ -339,7 +334,7 @@ export default function EmployeeSelfDashboard() {
           setLeaveBalances(list);
         }
       })
-      .catch((err) => {
+      .catch((err: any) => {
         if (!cancelled) setLeaveError(err.message ?? "Failed to load leave balance.");
       })
       .finally(() => {
@@ -348,9 +343,8 @@ export default function EmployeeSelfDashboard() {
 
     // Onboarding status (non-critical)
     setOnboardingLoading(true);
-    fetch("/api/ats/my-onboarding-status")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((json) => {
+    hrmsApi.get("/api/ats/my-onboarding-status")
+      .then((json: any) => {
         if (!cancelled) setOnboarding(json?.data ?? json ?? null);
       })
       .catch(() => {
@@ -360,10 +354,18 @@ export default function EmployeeSelfDashboard() {
         if (!cancelled) setOnboardingLoading(false);
       });
 
+    // LMS progress — load after employee ID is available
+    const empId = roleData?.employeeId;
+    if (empId) {
+      hrmsApi.get(`/api/lms/learner-progress/${empId}`)
+        .then((json: any) => { if (!cancelled) setLmsProgress(json?.data ?? null); })
+        .catch(() => {});
+    }
+
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [user, roleData?.employeeId]);
 
   const employeeName = roleData?.employeeName ?? user?.email ?? "Employee";
   const loading = roleLoading;
@@ -382,6 +384,51 @@ export default function EmployeeSelfDashboard() {
           loading={attendanceLoading}
           error={attendanceError}
         />
+
+        {/* My Training Status */}
+        {lmsProgress && (
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="font-semibold text-slate-800 text-sm">My Training Status</h3>
+              {lmsProgress.certification_status && (
+                <span className={`text-xs font-bold rounded-full px-2 py-0.5 ${
+                  lmsProgress.certification_status === "Certified"
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-amber-100 text-amber-700"
+                }`}>
+                  {lmsProgress.certification_status}
+                </span>
+              )}
+            </div>
+            <div className="p-4 grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {lmsProgress.completion_pct != null && (
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Completion</p>
+                  <p className="text-xl font-bold text-blue-700">{lmsProgress.completion_pct}%</p>
+                  <div className="mt-1 h-1.5 w-full rounded-full bg-slate-100">
+                    <div className="h-1.5 rounded-full bg-blue-500" style={{ width: `${lmsProgress.completion_pct}%` }} />
+                  </div>
+                </div>
+              )}
+              {lmsProgress.mcq_best_score != null && (
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">MCQ Best Score</p>
+                  <p className={`text-xl font-bold ${lmsProgress.mcq_best_score >= 70 ? "text-emerald-700" : "text-amber-600"}`}>
+                    {lmsProgress.mcq_best_score}%
+                  </p>
+                </div>
+              )}
+              {lmsProgress.readiness_score != null && (
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Readiness Score</p>
+                  <p className={`text-xl font-bold ${lmsProgress.readiness_score >= 70 ? "text-emerald-700" : "text-red-600"}`}>
+                    {lmsProgress.readiness_score}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* AI Self Dashboard Brief */}
         <AIInsightPanel

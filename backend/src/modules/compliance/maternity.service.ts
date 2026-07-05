@@ -67,7 +67,7 @@ export const maternityService = {
     const [rows] = await db.execute<MaternityRow[]>(
       `${SELECT_BASE} WHERE m.id = ? LIMIT 1`, [id]
     );
-    return rows[0] ?? null;
+    return (rows[0] as unknown as MaternityRecord | undefined) ?? null;
   },
 
   async create(dto: CreateMaternityDTO): Promise<MaternityRecord> {

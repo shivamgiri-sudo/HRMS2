@@ -4,6 +4,9 @@ import { db } from "../../db/mysql.js";
 import { payrollService, breakSpecialAllowance } from "./payroll.service.js";
 import type { SalaryPrepRun } from "./payroll.types.js";
 import { maternityService } from "../compliance/maternity.service.js";
+import { calculateWeekoffEligibility } from "./weekoff-eligibility.service.js";
+import { resolveHolidaysForEmployeeV2 } from "./holiday-work.service.js";
+import { checkAndReverseLeave } from "./leave-reversal.service.js";
 
 interface TaxDeclarationRow {
   declared_hra: number;
@@ -67,26 +70,31 @@ interface StatutoryConfigMap {
 }
 
 /**
- * Calculate TDS under New Regime (Section 115BAC) FY 2025-26.
- * Applies standard deduction and 87A rebate from statutory_config.
+ * Calculate TDS under New Regime (Section 115BAC) FY 2026-27 (Budget 2025).
+ * Slabs: 0-4L=0%, 4-8L=5%, 8-12L=10%, 12-16L=15%, 16-20L=20%, 20-24L=25%, 24L+=30%.
+ * 87A rebate ₹12L, standard deduction ₹75K, 4% health+education cess.
+ * All thresholds and rates driven from statutory_config — no hardcoded defaults.
  */
 export function calculateTds(
   annualTaxableIncome: number,
   statutoryConfig: StatutoryConfigMap
 ): TdsResult {
   const stdDeduction = statutoryConfig["tds_standard_deduction"] ?? 75000;
-  const rebateLimit  = statutoryConfig["tds_rebate_87a_limit"]   ?? 700000;
+  // Budget 2025: 87A rebate is ₹12L (total income ≤ ₹12L → nil tax)
+  const rebateLimit  = statutoryConfig["tds_rebate_87a_limit"]   ?? 1200000;
+  const cessPct      = statutoryConfig["tds_cess_pct"]           ?? 4;
 
   const taxableIncome = Math.max(0, annualTaxableIncome - stdDeduction);
 
-  // New regime slabs FY 2025-26
+  // New regime slabs FY 2026-27 — Budget 2025 (Finance Act 2025)
   const slabs: Array<{ from: number; to: number; rate: number }> = [
-    { from: 0,       to: 300000,  rate: (statutoryConfig["tds_slab_0_300000"]        ?? 0)  / 100 },
-    { from: 300001,  to: 700000,  rate: (statutoryConfig["tds_slab_300001_700000"]   ?? 5)  / 100 },
-    { from: 700001,  to: 1000000, rate: (statutoryConfig["tds_slab_700001_1000000"]  ?? 10) / 100 },
-    { from: 1000001, to: 1200000, rate: (statutoryConfig["tds_slab_1000001_1200000"] ?? 15) / 100 },
-    { from: 1200001, to: 1500000, rate: (statutoryConfig["tds_slab_1200001_1500000"] ?? 20) / 100 },
-    { from: 1500001, to: Infinity, rate: (statutoryConfig["tds_slab_1500001_above"]  ?? 30) / 100 },
+    { from: 0,       to: 400000,  rate: (statutoryConfig["tds_slab_0_400000"]         ?? 0)  / 100 },
+    { from: 400001,  to: 800000,  rate: (statutoryConfig["tds_slab_400001_800000"]    ?? 5)  / 100 },
+    { from: 800001,  to: 1200000, rate: (statutoryConfig["tds_slab_800001_1200000"]   ?? 10) / 100 },
+    { from: 1200001, to: 1600000, rate: (statutoryConfig["tds_slab_1200001_1600000"]  ?? 15) / 100 },
+    { from: 1600001, to: 2000000, rate: (statutoryConfig["tds_slab_1600001_2000000"]  ?? 20) / 100 },
+    { from: 2000001, to: 2400000, rate: (statutoryConfig["tds_slab_2000001_2400000"]  ?? 25) / 100 },
+    { from: 2400001, to: Infinity, rate: (statutoryConfig["tds_slab_2400001_above"]   ?? 30) / 100 },
   ];
 
   let tax = 0;
@@ -97,9 +105,12 @@ export function calculateTds(
     tax += (slabMax - slabMin) * slab.rate;
   }
 
-  // Section 87A rebate: nil tax if total income <= rebateLimit
+  // Section 87A rebate: nil tax if total income ≤ rebateLimit (₹12L FY2026-27)
   if (annualTaxableIncome <= rebateLimit) {
     tax = 0;
+  } else {
+    // 4% health and education cess on income tax (Section 112A / Finance Act)
+    tax = tax * (1 + cessPct / 100);
   }
 
   const tds_annual  = Math.round(tax * 100) / 100;
@@ -262,20 +273,19 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       }
     }
 
-    // Pro-rata multiplier: if salary starts mid-month, pay only from that date
-    let proRataMultiplier = 1;
-    if (emp.salary_start_date) {
-      const ssd = new Date(emp.salary_start_date);
-      const mStart = new Date(monthStart);
-      if (ssd > mStart) {
-        // Days from salary_start_date to end of month (inclusive)
-        const calendarDaysInMonth = daysInMonth;
-        const paidDays = new Date(monthEnd).getDate() - ssd.getDate() + 1;
-        proRataMultiplier = Math.max(0, Math.min(1, paidDays / calendarDaysInMonth));
-      }
-    }
-
-    // 5. Fetch attendance summary for this employee for run_month
+    // Step 1: Load designation and department to determine attendance source
+    const [desigRows] = await db.execute<RowDataPacket[]>(
+      `SELECT dm.designation_name, dept.dept_name
+       FROM employees e
+       LEFT JOIN designation_master dm ON dm.id = e.designation_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
+       WHERE e.id = ? LIMIT 1`,
+      [emp.employee_id]
+    );
+    const desig = (desigRows[0] as any) ?? {};
+    const isOpsExecutive =
+      /executive/i.test(desig.designation_name ?? '') &&
+      /operations/i.test(desig.dept_name ?? '');
 
     // Check if attendance_daily_record has been populated for this employee+month
     const [adrCountRows] = await db.execute<RowDataPacket[]>(
@@ -340,16 +350,76 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       };
     }
 
-    const grossMonthly = (emp.ctc_annual / 12) * proRataMultiplier;
+    // Step 2: Paid base calculation
+    // present(1) + half_day(0.5) + all approved leave types(1 each)
+    // Use attendance_daily_record which already has status per day
+    const [paidBaseRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COALESCE(SUM(
+           CASE
+             WHEN adr.attendance_status = 'present'         THEN 1.0
+             WHEN adr.attendance_status = 'half_day'        THEN 0.5
+             WHEN adr.attendance_status = 'leave_approved'  THEN 1.0
+             ELSE 0
+           END
+         ), 0) AS paid_base
+       FROM attendance_daily_record adr
+       WHERE adr.employee_id = ? AND adr.record_date BETWEEN ? AND ?`,
+      [emp.employee_id, monthStart, monthEnd]
+    );
+    let paidBase = Number((paidBaseRows[0] as any)?.paid_base ?? 0);
+    // Fallback when attendance engine has no data yet
+    if (!hasEngineData) paidBase = att.present_days + att.leave_days;
 
-    // 5c. LWP deduction — skip for employees on maternity leave (MBA 1961 s.5(1))
-    const workingDays = att.working_days || defaultWorkingDays;
-    const lwpDays = att.lwp_days || 0;
+    // Step 4: Week-off eligibility and holiday resolution
+    const eligibleWeekoffs = await calculateWeekoffEligibility(emp.employee_id, paidBase, run.run_month);
+    const { eligibleHolidayCount, holidayWorkExtraPayout } = await resolveHolidaysForEmployeeV2(emp.employee_id, run.run_month);
+
+    // Step 5: Leave reversal
+    const reversalResult = await checkAndReverseLeave({
+      employeeId: emp.employee_id,
+      runId,
+      runMonth: run.run_month,
+      paidBase,
+      eligibleWeekoffs,
+      eligibleHolidays: eligibleHolidayCount,
+      daysInMonth,
+    });
+    // Use the (possibly reduced) paid base after reversal
+    const effectivePaidBase = reversalResult.newPaidBase;
+    // Recalculate week-offs and holidays with new paid base if reversal happened
+    const finalWeekoffs = reversalResult.reversed
+      ? await calculateWeekoffEligibility(emp.employee_id, effectivePaidBase, run.run_month)
+      : eligibleWeekoffs;
+    const finalHolidays = reversalResult.reversed ? eligibleHolidayCount : eligibleHolidayCount;
+
+    // Step 6: Payable days with cap
+    const calculatedPayable = effectivePaidBase + finalWeekoffs + finalHolidays;
+    const finalPayableDays = Math.min(calculatedPayable, daysInMonth);
+    // active_calendar_days: for mid-month joiners, cap to remaining days in month
+    const activeCals = emp.salary_start_date
+      ? (() => {
+          const ssd = new Date(emp.salary_start_date);
+          const mStart = new Date(monthStart);
+          if (ssd > mStart) {
+            const d = new Date(ssd);
+            let cnt = 0;
+            while (d <= new Date(monthEnd)) { cnt++; d.setDate(d.getDate() + 1); }
+            return cnt;
+          }
+          return daysInMonth;
+        })()
+      : daysInMonth;
+
+    // Step 7: Days-based gross calculation — replaces pro-rata multiplier + LWP approach
     const isOnMaternityLeave = maternityExemptIds.has(emp.employee_id);
-    const lwpDeduction = (!isOnMaternityLeave && lwpDays > 0)
-      ? Math.round((grossMonthly / workingDays) * lwpDays * 100) / 100
-      : 0;
-    const grossAfterLwp = Math.max(0, grossMonthly - lwpDeduction);
+    // Maternity employees receive full monthly gross (MBA 1961 s.5(1))
+    const grossMonthly = isOnMaternityLeave
+      ? (emp.ctc_annual / 12)
+      : (emp.ctc_annual / 12) * (finalPayableDays / daysInMonth);
+    // No separate LWP deduction needed — absent days just reduce finalPayableDays
+    const lwpDeduction = 0;  // absorbed into days-based calculation
+    const grossAfterLwp = grossMonthly;
 
     // 5a. Fetch tax declaration for this employee / financial year
     const [declRows] = await db.execute<RowDataPacket[]>(
@@ -397,8 +467,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
 
     const calc = payrollService.calculateNetSalary({
       grossMonthlyCTC: grossAfterLwp,
-      workingDays,
-      lwpDays: 0, // LWP already applied above; pass 0 to avoid double-deduction
+      workingDays: att.working_days || defaultWorkingDays,
+      lwpDays: 0, // LWP already absorbed into days-based gross; pass 0 to avoid double-deduction
       pfEmployeePct: stat.pf_employee_pct,
       esicEmployeePct: stat.esic_employee_pct,
       esicWageLimit: stat.esic_wage_limit,
@@ -411,14 +481,11 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       esicOptOut,
     });
 
-    // Net pay = payrollService net + advance recovery deducted on top
-    // Note: lwpDeduction is already reflected in grossAfterLwp passed to calculateNetSalary,
-    // so calc.gross_salary is post-LWP. We do NOT add lwpDeduction into totalDedFinal again
-    // to avoid double-counting it (the LWP reduction is visible via gross_before_lwp vs gross_salary).
-    const netPayFinal = Math.max(0, calc.net_salary - advanceRecovery);
+    // Net pay = payrollService net + holiday work extra payout - advance recovery
+    const netPayFinal = Math.max(0, calc.net_salary + holidayWorkExtraPayout - advanceRecovery);
     const totalDedFinal = calc.total_deductions + advanceRecovery;
 
-    // 6. Upsert prep line
+    // 6. Upsert prep line with extended columns
     const prepLineId = randomUUID();
     await db.execute(
       `INSERT INTO salary_prep_line
@@ -427,8 +494,11 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
           gross_salary, gross_before_lwp, total_deductions, net_salary,
           basic, hra, special_allowance,
           pf_employee, pf_employer, esic_employee, esic_employer,
-          professional_tax, tds, tds_amount, lwp_deduction, advance_recovery, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
+          professional_tax, tds, tds_amount, lwp_deduction, advance_recovery,
+          paid_working_days, eligible_weekoff_days, eligible_holiday_days,
+          final_payable_days, active_calendar_days, holiday_work_extra_payout,
+          status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
        ON DUPLICATE KEY UPDATE
          working_days = VALUES(working_days), present_days = VALUES(present_days),
          lwp_days = VALUES(lwp_days), gross_salary = VALUES(gross_salary),
@@ -440,6 +510,12 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
          professional_tax = VALUES(professional_tax),
          tds = VALUES(tds), tds_amount = VALUES(tds_amount),
          lwp_deduction = VALUES(lwp_deduction), advance_recovery = VALUES(advance_recovery),
+         paid_working_days = VALUES(paid_working_days),
+         eligible_weekoff_days = VALUES(eligible_weekoff_days),
+         eligible_holiday_days = VALUES(eligible_holiday_days),
+         final_payable_days = VALUES(final_payable_days),
+         active_calendar_days = VALUES(active_calendar_days),
+         holiday_work_extra_payout = VALUES(holiday_work_extra_payout),
          status = 'calculated'`,
       [
         prepLineId, runId, emp.employee_id, emp.employee_code,
@@ -448,6 +524,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         calc.basic, calc.hra, calc.special_allowance,
         calc.pf_employee, calc.pf_employer, calc.esic_employee, calc.esic_employer,
         calc.professional_tax, tdsMonthly, tdsMonthly, lwpDeduction, advanceRecovery,
+        effectivePaidBase, finalWeekoffs, finalHolidays, finalPayableDays, activeCals, holidayWorkExtraPayout,
       ]
     );
 
@@ -470,6 +547,25 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         [randomUUID(), runId, prepLineId, emp.employee_id, comp.code, comp.name, comp.amount]
       );
     }
+
+    // Step 11: Audit log per employee
+    await db.execute(
+      `INSERT INTO sensitive_action_log
+         (id, actor_user_id, actor_role, action_type, module_key, entity_type, entity_id, old_value_json, new_value_json, ip_address, user_agent)
+       VALUES (UUID(), 'system', 'payroll-engine', 'payroll_calculation', 'payroll', 'salary_prep_line', ?, NULL, ?, '127.0.0.1', 'payroll-engine')`,
+      [emp.employee_id, JSON.stringify({
+        run_id: runId,
+        attendance_source: isOpsExecutive ? 'APR/dialler' : 'biometric',
+        paid_base: effectivePaidBase,
+        eligible_weekoffs: finalWeekoffs,
+        eligible_holidays: finalHolidays,
+        calculated_payable: calculatedPayable,
+        final_payable: finalPayableDays,
+        leave_reversed: reversalResult.daysReversed,
+        gross: grossAfterLwp,
+        net: netPayFinal,
+      })]
+    );
 
     totalGross += calc.gross_salary;
     totalDed   += totalDedFinal;

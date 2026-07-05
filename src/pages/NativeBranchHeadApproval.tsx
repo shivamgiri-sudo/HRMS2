@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { useAuth } from "@/contexts/AuthContext";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -36,11 +37,9 @@ function offersFrom(payload: unknown): PendingOffer[] {
 
 export default function NativeBranchHeadApproval() {
   const { user } = useAuth();
+  const { roleKeys } = useWorkforceAccess();
   const role = (user as any)?.role ?? "";
   const ALLOWED = ["admin", "super_admin", "hr", "branch_head"];
-  if (user && !ALLOWED.includes(role)) {
-    return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
-  }
   const [offers, setOffers] = useState<PendingOffer[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
@@ -79,6 +78,10 @@ export default function NativeBranchHeadApproval() {
       setActing(null);
     }
   };
+
+  if (user && !roleKeys.some(k => ALLOWED.includes(k))) {
+    return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
+  }
 
   return (
     <DashboardLayout>

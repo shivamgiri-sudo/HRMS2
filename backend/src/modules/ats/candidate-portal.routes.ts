@@ -1,4 +1,4 @@
-import { Router, type NextFunction, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
 import {
   candidateLogin,
   getCandidateProfile,
@@ -13,8 +13,8 @@ import {
 export const candidatePortalRouter = Router();
 
 interface CandidateAuthRequest extends Request {
-  candidateId: string;
-  candidateCode: string;
+  candidateId?: string;
+  candidateCode?: string;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -24,7 +24,7 @@ function getErrorMessage(error: unknown): string {
 /**
  * Candidate authentication middleware
  */
-function candidateAuth(req: Request, res: Response, next: NextFunction) {
+const candidateAuth: RequestHandler = (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -47,7 +47,7 @@ function candidateAuth(req: Request, res: Response, next: NextFunction) {
   (req as CandidateAuthRequest).candidateId = decoded.candidate_id;
   (req as CandidateAuthRequest).candidateCode = decoded.candidate_code;
   next();
-}
+};
 
 // ── 1. Candidate Login ─────────────────────────────────────────────────────────
 candidatePortalRouter.post('/login', async (req: Request, res: Response) => {
@@ -80,9 +80,9 @@ candidatePortalRouter.post('/login', async (req: Request, res: Response) => {
 });
 
 // ── 2. Get Candidate Profile ───────────────────────────────────────────────────
-candidatePortalRouter.get('/profile', candidateAuth, async (req: Request, res: Response) => {
+candidatePortalRouter.get('/profile', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
   try {
-    const profile = await getCandidateProfile((req as CandidateAuthRequest).candidateId);
+    const profile = await getCandidateProfile(req.candidateId!);
 
     if (!profile) {
       return res.status(404).json({
@@ -104,9 +104,9 @@ candidatePortalRouter.get('/profile', candidateAuth, async (req: Request, res: R
 });
 
 // ── 3. Get Onboarding Tasks ────────────────────────────────────────────────────
-candidatePortalRouter.get('/tasks', candidateAuth, async (req: Request, res: Response) => {
+candidatePortalRouter.get('/tasks', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
   try {
-    const tasks = await getCandidateTasks((req as CandidateAuthRequest).candidateId);
+    const tasks = await getCandidateTasks(req.candidateId!);
 
     return res.json({
       success: true,
@@ -121,9 +121,9 @@ candidatePortalRouter.get('/tasks', candidateAuth, async (req: Request, res: Res
 });
 
 // ── 4. Get Uploaded Documents ──────────────────────────────────────────────────
-candidatePortalRouter.get('/documents', candidateAuth, async (req: Request, res: Response) => {
+candidatePortalRouter.get('/documents', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
   try {
-    const documents = await getCandidateDocuments((req as CandidateAuthRequest).candidateId);
+    const documents = await getCandidateDocuments(req.candidateId!);
 
     return res.json({
       success: true,
@@ -138,7 +138,7 @@ candidatePortalRouter.get('/documents', candidateAuth, async (req: Request, res:
 });
 
 // ── 5. Upload Document ─────────────────────────────────────────────────────────
-candidatePortalRouter.post('/upload-document', candidateAuth, async (req: Request, res: Response) => {
+candidatePortalRouter.post('/upload-document', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
   try {
     const { document_type, file_name, file_url } = req.body;
 
@@ -150,7 +150,7 @@ candidatePortalRouter.post('/upload-document', candidateAuth, async (req: Reques
     }
 
     const result = await uploadCandidateDocument(
-      (req as CandidateAuthRequest).candidateId,
+      req.candidateId!,
       document_type,
       file_name,
       file_url
@@ -170,7 +170,7 @@ candidatePortalRouter.post('/upload-document', candidateAuth, async (req: Reques
 });
 
 // ── 6. Mark Task as Completed ──────────────────────────────────────────────────
-candidatePortalRouter.post('/complete-task', candidateAuth, async (req: Request, res: Response) => {
+candidatePortalRouter.post('/complete-task', candidateAuth, async (req: CandidateAuthRequest, res: Response) => {
   try {
     const { task_id } = req.body;
 
@@ -181,7 +181,7 @@ candidatePortalRouter.post('/complete-task', candidateAuth, async (req: Request,
       });
     }
 
-    await markTaskCompleted((req as CandidateAuthRequest).candidateId, task_id);
+    await markTaskCompleted(req.candidateId!, task_id);
 
     return res.json({
       success: true,

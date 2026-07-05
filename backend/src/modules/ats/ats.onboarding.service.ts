@@ -41,6 +41,33 @@ function maskBankAccount(value: unknown): string | null {
   return s.length >= 4 ? `XXXXXX${s.slice(-4)}` : 'XXXXXXXXXX';
 }
 
+async function withDeliveryTimeout<T>(
+  task: Promise<T>,
+  label: string,
+  timeoutMs = 8000,
+): Promise<T | null> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => {
+          console.error(`[onboarding] ${label} timed out after ${timeoutMs}ms`);
+          resolve(null);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function normalizeOfferRoleType(value: unknown): 'Analyst' | 'SupportStaff' {
+  const normalized = String(value ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+  if (normalized === 'supportstaff' || normalized === 'support') return 'SupportStaff';
+  return 'Analyst';
+}
+
 // ── Token Generation ──────────────────────────────────────────────────────────
 
 export async function sendOnboardingToken(
@@ -96,12 +123,19 @@ export async function sendOnboardingToken(
   const onboardingLink = `${baseUrl}/onboard-full?token=${rawToken}`;
 
   if (cand.email) {
-    await sendOnboardingTokenEmail({
-      candidateId,
-      to: cand.email,
-      candidateName: cand.full_name,
-      onboardingLink,
-    });
+    try {
+      await withDeliveryTimeout(
+        sendOnboardingTokenEmail({
+          candidateId,
+          to: cand.email,
+          candidateName: cand.full_name,
+          onboardingLink,
+        }),
+        `email delivery for ${candidateId}`,
+      );
+    } catch (emailErr) {
+      console.error('[onboarding] email delivery failed for', candidateId, emailErr instanceof Error ? emailErr.message : String(emailErr));
+    }
   }
 
   // SMS/WhatsApp fallback for candidates without email (walk-ins)
@@ -110,7 +144,10 @@ export async function sendOnboardingToken(
       `Hi ${cand.full_name}, you have been selected! Complete your onboarding at: ${onboardingLink} (valid 7 days)`;
     try {
       const smsProvider = providerFactory.getProvider('sms');
-      await smsProvider.send(cand.mobile, 'Onboarding Link', smsBody);
+      await withDeliveryTimeout(
+        smsProvider.send(cand.mobile, 'Onboarding Link', smsBody),
+        `SMS delivery for ${candidateId}`,
+      );
     } catch (smsErr) {
       // SMS failure must not block token generation — log and continue
       console.error('[onboarding] SMS delivery failed for', candidateId, smsErr instanceof Error ? smsErr.message : String(smsErr));
@@ -118,7 +155,10 @@ export async function sendOnboardingToken(
     // WhatsApp delivery attempt (best-effort)
     try {
       const waProvider = providerFactory.getProvider('whatsapp');
-      await waProvider.send(cand.mobile, 'Onboarding Link', smsBody);
+      await withDeliveryTimeout(
+        waProvider.send(cand.mobile, 'Onboarding Link', smsBody),
+        `WhatsApp delivery for ${candidateId}`,
+      );
     } catch (waErr) {
       console.error('[onboarding] WhatsApp delivery failed for', candidateId, waErr instanceof Error ? waErr.message : String(waErr));
     }
@@ -260,7 +300,8 @@ export async function saveOffer(
     const [bhRows] = await db.execute<RowDataPacket[]>(
       `SELECT u.email FROM auth_user u
        JOIN user_roles ur ON ur.user_id = u.id
-       WHERE ur.role_key IN ('branch_head', 'admin') AND u.branch_id = ?
+       LEFT JOIN employees e ON e.user_id = u.id AND e.active_status = 1
+       WHERE ur.role_key IN ('branch_head', 'admin') AND e.branch_id = ?
        LIMIT 1`,
       [req.branch_id],
     );
@@ -270,7 +311,7 @@ export async function saveOffer(
   const [bandRows] = await db.execute<RowDataPacket[]>(
     `SELECT basic_pct, hra_pct FROM salary_band_master WHERE band_code = ?`,
     [offerData.salary_band ?? 'D'],
-  );
+  ).catch(() => [[] as RowDataPacket[]]);
   const band = (bandRows as RowDataPacket[])[0] ?? { basic_pct: 40, hra_pct: 40 };
   const components: SalaryComponents = calculateSalary(
     Number(offerData.offered_ctc),
@@ -301,7 +342,7 @@ export async function saveOffer(
       [
         offerData.emp_type ?? 'OnRoll', offerData.date_of_joining, offerData.date_of_salary ?? null,
         offerData.profile ?? null, offerData.department_id ?? null, offerData.designation_id ?? null,
-        offerData.cost_centre ?? null, offerData.reporting_manager_id ?? null, offerData.role_type ?? null,
+        offerData.cost_centre ?? null, offerData.reporting_manager_id ?? null, normalizeOfferRoleType(offerData.role_type),
         offerData.salary_band ?? null,
         components.offered_ctc, components.basic, components.hra, components.conveyance,
         components.da, components.special_allowance, components.other_allowance, components.bonus, components.gross,
@@ -326,7 +367,7 @@ export async function saveOffer(
         offerId, requestId, req.candidate_id,
         offerData.emp_type ?? 'OnRoll', offerData.date_of_joining, offerData.date_of_salary ?? null,
         offerData.profile ?? null, offerData.department_id ?? null, offerData.designation_id ?? null,
-        offerData.cost_centre ?? null, offerData.reporting_manager_id ?? null, offerData.role_type ?? null,
+        offerData.cost_centre ?? null, offerData.reporting_manager_id ?? null, normalizeOfferRoleType(offerData.role_type),
         offerData.salary_band ?? null,
         components.offered_ctc, components.basic, components.hra, components.conveyance,
         components.da, components.special_allowance, components.other_allowance, components.bonus, components.gross,
@@ -524,11 +565,11 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
               COALESCE(p.date_of_birth, c.date_of_birth) AS date_of_birth,
               COALESCE(p.personal_email_id, c.email) AS personal_email,
               c.mobile AS personal_phone,
-              p.alternate_mobile,
+              p.alt_mobile_number AS alternate_mobile,
               NULL AS pan_number,
               NULL AS aadhar_number,
               NULL AS uan_number,
-              p.current_address,
+              p.present_address AS current_address,
               p.personal_email_id
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
@@ -620,7 +661,7 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
         `INSERT INTO employee_nominee
            (id, employee_id, nominee_name, relationship, date_of_birth, share_percentage, nominee_for, mobile, address)
          VALUES (UUID(), ?, ?, ?, ?, ?, 'gratuity', NULL, NULL)`,
-        [employeeId, nomRow.nominee_name, nomRow.nominee_relation, nomRow.nominee_date_of_birth, nomRow.nominee1_share_pct ?? 100]
+        [employeeId, nomRow.nominee_name, nomRow.nominee_relation ?? null, nomRow.nominee_date_of_birth ?? null, nomRow.nominee1_share_pct ?? 100]
       );
     }
     if (nomRow?.nominee2_name) {
@@ -628,7 +669,7 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
         `INSERT INTO employee_nominee
            (id, employee_id, nominee_name, relationship, date_of_birth, share_percentage, nominee_for, mobile, address)
          VALUES (UUID(), ?, ?, ?, ?, ?, 'gratuity', NULL, NULL)`,
-        [employeeId, nomRow.nominee2_name, nomRow.nominee2_relation, nomRow.nominee2_dob, nomRow.nominee2_share_pct ?? 0]
+        [employeeId, nomRow.nominee2_name, nomRow.nominee2_relation ?? null, nomRow.nominee2_dob ?? null, nomRow.nominee2_share_pct ?? 0]
       );
     }
 

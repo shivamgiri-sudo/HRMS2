@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Loader2, Trash2 } from 'lucide-react';
+import { apiUrl } from '@/lib/apiBase';
 
-const QUAL_API = `${import.meta.env.VITE_HRMS_API_URL ?? 'http://localhost:5055'}/api/ats/onboarding-full`;
+const QUAL_API = apiUrl('/api/ats/onboarding-full');
 import { VerificationBadge } from '../VerificationBadge';
 import { InlineDocUpload } from '../InlineDocUpload';
 import type { BgvCheck } from '../useOnboardingV2';

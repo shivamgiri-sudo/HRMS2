@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { useAuth } from '@/contexts/AuthContext';
+import { useWorkforceAccess } from '@/hooks/useUserRole';
 import { Button } from '@/components/ui/button';
 import {
   AlertTriangle,
@@ -145,8 +146,9 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 
 export default function NativeHROnboardingRequests() {
   const { user } = useAuth();
+  const { roleKeys } = useWorkforceAccess();
   const role = String((user as any)?.role ?? '').toLowerCase();
-  const allowed = ['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll'].includes(role);
+  const allowed = roleKeys.some(k => ['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll'].includes(k));
 
   const [rows, setRows] = useState<OnboardingRequest[]>([]);
   const [loading, setLoading] = useState(true);

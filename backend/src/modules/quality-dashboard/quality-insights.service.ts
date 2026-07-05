@@ -30,14 +30,15 @@ export async function getQualityHeatmap(from: string, to: string) {
   const [rows] = await pool.execute<RowDataPacket[]>(`
     SELECT
       DAYNAME(CallDate) as day_name,
+      DAYOFWEEK(CallDate) as dow,
       HOUR(CallDate) as hour,
       COUNT(*) as call_count,
       ROUND(AVG(quality_percentage), 1) as avg_score,
       COUNT(CASE WHEN quality_percentage < 50 THEN 1 END) as critical_calls
     FROM db_audit.call_quality_assessment
     WHERE CallDate BETWEEN ? AND ?
-    GROUP BY DAYNAME(CallDate), HOUR(CallDate)
-    ORDER BY FIELD(DAYNAME(CallDate), 'Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'), hour
+    GROUP BY DAYOFWEEK(CallDate), HOUR(CallDate)
+    ORDER BY dow, hour
   `, [from, to]);
 
   // Transform to heatmap structure
@@ -234,7 +235,7 @@ export async function generateInsights(from: string, to: string) {
     insights.push({
       type: 'warning',
       title: 'Weakest Hour Identified',
-      message: `Quality drops to ${peakHours[0].avg_score.toFixed(1)}% at ${peakHours[0].hour}:00 hrs`,
+      message: `Quality drops to ${parseFloat(peakHours[0].avg_score).toFixed(1)}% at ${peakHours[0].hour}:00 hrs`,
       metric: peakHours[0].call_volume,
       action: 'Consider additional staffing or breaks during this hour'
     });
@@ -258,7 +259,7 @@ export async function calculateQualityROI(from: string, to: string) {
       SUM(CASE WHEN cd.SaleDone IN ('Yes', '1') THEN 1 ELSE 0 END) as sales_count
     FROM db_audit.call_quality_assessment qc
     LEFT JOIN db_external.CallDetails cd ON cd.CallDate = qc.CallDate
-      AND cd.AgentName = qc.User
+      AND cd.AgentName = qc.User COLLATE utf8mb4_unicode_ci
     WHERE qc.CallDate BETWEEN ? AND ?
   `, [from, to]);
 

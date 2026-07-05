@@ -216,7 +216,7 @@ export async function uploadCandidateDocument(
     [candidateId, documentType, fileName, fileUrl]
   );
 
-  const insertResult = result as ResultSetHeader;
+  const insertResult = result as unknown as ResultSetHeader;
   return { id: String(insertResult.insertId) };
 }
 

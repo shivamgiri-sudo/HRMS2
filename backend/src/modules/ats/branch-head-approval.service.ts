@@ -36,6 +36,7 @@ export interface PendingApproval {
 export interface ApprovalInput {
   approval_id: string;
   branch_head_id: string;
+  branch_head_user_id?: string;
   approval_status: 'approved' | 'rejected';
   remarks?: string;
 }
@@ -77,6 +78,7 @@ export async function getPendingApprovals(branchHeadId: string): Promise<Pending
 
   const branchNames = branches.map((b) => b.branch_name);
   const placeholders = branchNames.map(() => '?').join(',');
+  const branchMatchParams = [...branchNames, ...branchNames, ...branchNames, ...branchNames];
 
   // Get pending approvals for these branches
   const [approvals] = await db.execute<RowDataPacket[]>(
@@ -107,12 +109,21 @@ export async function getPendingApprovals(branchHeadId: string): Promise<Pending
     INNER JOIN ats_candidate c ON c.id = phv.candidate_id
     INNER JOIN ats_branch_head_approval bha ON bha.payroll_validation_id = phv.id
     LEFT JOIN employees e ON e.id = phv.payroll_hr_id
+    LEFT JOIN branch_master cb
+      ON cb.id = c.applied_for_branch
+      OR cb.branch_name = c.applied_for_branch
+      OR cb.branch_code = c.applied_for_branch
     WHERE phv.validation_status = 'validated'
       AND bha.approval_status = 'pending'
-      AND c.applied_for_branch IN (${placeholders})
+      AND (
+        c.applied_for_branch IN (${placeholders})
+        OR c.branch_display_name IN (${placeholders})
+        OR cb.branch_name IN (${placeholders})
+        OR cb.branch_code IN (${placeholders})
+      )
       AND c.current_stage = 'payroll_validated'
     ORDER BY phv.validated_at DESC`,
-    [...branchNames]
+    branchMatchParams
   );
 
   return approvals as PendingApproval[];
@@ -127,6 +138,7 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
   employee_code?: string;
 }> {
   const { approval_id, branch_head_id, approval_status, remarks } = input;
+  const actorUserId = input.branch_head_user_id ?? branch_head_id;
 
   // Get approval details
   const [approvals] = await db.execute<RowDataPacket[]>(
@@ -194,9 +206,9 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
 
       await connection.commit();
 
-      if (approval.offer_id) {
-        await approveOffer(String(approval.offer_id), branch_head_id, remarks);
-      }
+      const conversion = approval.offer_id
+        ? await approveOffer(String(approval.offer_id), actorUserId, remarks)
+        : null;
 
       // Fire-and-forget: send approval email after transaction commits
       if (!approval.offer_id && approval.email) {
@@ -215,6 +227,7 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
         message: approval.offer_id
           ? 'Approval successful. Employee conversion completed through canonical offer approval.'
           : 'Approval recorded. Submit an employment offer to complete canonical employee conversion.',
+        employee_code: conversion?.employeeCode,
       };
     } else {
       await connection.execute(
@@ -256,7 +269,7 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
       await connection.commit();
 
       if (approval.offer_id && remarks) {
-        await rejectOffer(String(approval.offer_id), branch_head_id, remarks);
+        await rejectOffer(String(approval.offer_id), actorUserId, remarks);
       }
 
       // Fire-and-forget: send rejection email after transaction commits
@@ -320,10 +333,17 @@ export async function getBranchHeadStats(branchHeadId: string): Promise<{
       COUNT(*) as total_pending
     FROM ats_payroll_hr_validation phv
     INNER JOIN ats_candidate c ON c.id = phv.candidate_id
-    INNER JOIN branch_head_assignments bha ON bha.branch_name = c.applied_for_branch
+    INNER JOIN ats_branch_head_approval approval ON approval.payroll_validation_id = phv.id
+    LEFT JOIN branch_master cb
+      ON cb.id = c.applied_for_branch
+      OR cb.branch_name = c.applied_for_branch
+      OR cb.branch_code = c.applied_for_branch
+    INNER JOIN branch_head_assignments bha
+      ON bha.branch_name IN (c.applied_for_branch, c.branch_display_name, cb.branch_name, cb.branch_code)
     WHERE bha.branch_head_id = ?
       AND bha.is_active = TRUE
-      AND phv.validation_status = 'approved'
+      AND phv.validation_status = 'validated'
+      AND approval.approval_status = 'pending'
       AND c.current_stage = 'payroll_validated'`,
     [branchHeadId]
   );

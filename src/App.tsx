@@ -106,6 +106,12 @@ const UnifiedAccessControl = lazy(() => import("./pages/UnifiedAccessControl"));
 const SuperAdminAccessControl = lazy(() => import("./pages/SuperAdminAccessControl"));
 const NativeManagementDashboard = lazy(() => import("./pages/NativeManagementDashboard"));
 const NativeCEOCommandCenter = lazy(() => import("./pages/NativeCEOCommandCenter"));
+const NativeCallMasterDashboard = lazy(() => import("./pages/NativeCallMasterDashboard"));
+const NativeInboundDashboard = lazy(() => import("./pages/NativeInboundDashboard"));
+const NativeSalesDashboard = lazy(() => import("./pages/NativeSalesDashboard"));
+const ExecutiveQualityDashboard = lazy(() => import("./pages/ExecutiveQualityDashboard"));
+const ManagerQualityDashboard = lazy(() => import("./pages/ManagerQualityDashboard"));
+const AgentQualityDashboard = lazy(() => import("./pages/AgentQualityDashboard"));
 const NativeSecurityCenter = lazy(() => import("./pages/NativeSecurityCenter"));
 
 const NativePerformanceFeedbackMyReports = lazy(() => import("./pages/NativePerformanceFeedbackMyReports"));
@@ -190,6 +196,8 @@ const RunningPayrollBreakdown       = lazy(() => import("./pages/payroll/Running
 const HolidayMaster                 = lazy(() => import("./pages/payroll/HolidayMaster"));
 const HolidayWorkRequest            = lazy(() => import("./pages/payroll/HolidayWorkRequest"));
 const HolidayWorkApprovals          = lazy(() => import("./pages/payroll/HolidayWorkApprovals"));
+const PayrollValidationScreen       = lazy(() => import("./pages/payroll/PayrollValidationScreen"));
+const NocManagement                 = lazy(() => import("./pages/payroll/NocManagement"));
 const WeekoffFairness               = lazy(() => import("./pages/wfm/WeekoffFairness"));
 
 // Communication
@@ -204,6 +212,7 @@ const NativeDocumentVerification = lazy(() => import("./pages/NativeDocumentVeri
 const NativeRosterPreference = lazy(() => import("./pages/NativeRosterPreference"));
 
 const NativeMigrationConsole = lazy(() => import("./pages/NativeMigrationConsole"));
+const NativeAuditLog = lazy(() => import("./pages/NativeAuditLog"));
 const NativeExitManagement = lazy(() => import("./pages/NativeExitManagement"));
 const NativeKPIConfiguration = lazy(() => import("./pages/NativeKPIConfiguration"));
 const NativeProcessConfig = lazy(() => import("./pages/NativeProcessConfig"));
@@ -383,7 +392,15 @@ const App = () => (
               <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />
               <Route path="/roster-preference" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeRosterPreference /></Gate></ProtectedRoute>} />
               <Route path="/quality/dashboard" element={<ProtectedRoute><Gate pageCode="QUALITY_DASHBOARD"><NativeQualityDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/quality/executive" element={<ProtectedRoute roles={['super_admin','admin','ceo']}><ExecutiveQualityDashboard /></ProtectedRoute>} />
+              <Route path="/quality/team" element={<ProtectedRoute roles={['super_admin','admin','manager','process_manager','branch_head','team_leader']}><ManagerQualityDashboard /></ProtectedRoute>} />
+              <Route path="/quality/my-dashboard" element={<ProtectedRoute><AgentQualityDashboard /></ProtectedRoute>} />
+              <Route path="/quality/audit" element={<ProtectedRoute><Gate pageCode="QUALITY_DASHBOARD"><NativeQualityDashboard /></Gate></ProtectedRoute>} />
               <Route path="/agent-performance" element={<ProtectedRoute><NativeAgentPerformanceDashboard /></ProtectedRoute>} />
+              <Route path="/call-master" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst']}><NativeCallMasterDashboard /></ProtectedRoute>} />
+              <Route path="/call-master/inbound" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst']}><NativeInboundDashboard /></ProtectedRoute>} />
+              <Route path="/call-master/inbound/:projectKey" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst']}><NativeInboundDashboard /></ProtectedRoute>} />
+              <Route path="/sales/brand-analytics" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager']}><NativeSalesDashboard /></ProtectedRoute>} />
               <Route path="/operations/dashboard" element={<ProtectedRoute><Gate pageCode="OPERATIONS_DASHBOARD"><NativeOperationsDashboard /></Gate></ProtectedRoute>} />
               <Route path="/performance/command-center" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><UnifiedPerformanceCommandCenter /></Gate></ProtectedRoute>} />
               <Route path="/settings/access-control" element={<ProtectedRoute><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />
@@ -463,6 +480,8 @@ const App = () => (
               <Route path="/payroll/holiday-master" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><HolidayMaster /></ProtectedRoute>} />
               <Route path="/payroll/holiday-work-requests" element={<ProtectedRoute roles={['super_admin','admin','wfm','payroll_head','payroll_branch']}><HolidayWorkRequest /></ProtectedRoute>} />
               <Route path="/payroll/holiday-work-approvals" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','wfm']}><HolidayWorkApprovals /></ProtectedRoute>} />
+              <Route path="/payroll/validation" element={<ProtectedRoute roles={['super_admin','payroll_head']}><PayrollValidationScreen /></ProtectedRoute>} />
+              <Route path="/payroll/noc" element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch','payroll','admin']}><NocManagement /></ProtectedRoute>} />
               <Route path="/wfm/weekoff-fairness" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><WeekoffFairness /></ProtectedRoute>} />
 
               {/* Communication */}
@@ -473,6 +492,7 @@ const App = () => (
               <Route path="/communication/preferences" element={<ProtectedRoute><NativeNotificationPreferences /></ProtectedRoute>} />
               <Route path="/settings/communication-config" element={<ProtectedRoute roles={['admin']}><Suspense fallback={<PageLoader />}><NativeCommunicationConfig /></Suspense></ProtectedRoute>} />
               <Route path="/migration-console" element={<ProtectedRoute roles={['admin']}><NativeMigrationConsole /></ProtectedRoute>} />
+              <Route path="/audit-log" element={<ProtectedRoute roles={['admin', 'super_admin', 'hr', 'payroll_head', 'wfm']}><NativeAuditLog /></ProtectedRoute>} />
               <Route path="/exit-management" element={<ProtectedRoute><Gate pageCode="EXIT_COMMAND_CENTER"><NativeExitManagement /></Gate></ProtectedRoute>} />
               <Route path="/exit/command-center" element={<ProtectedRoute><Gate pageCode="EXIT_COMMAND_CENTER"><NativeExitCommandCenter /></Gate></ProtectedRoute>} />
               <Route path="/kpi-config" element={<ProtectedRoute><Gate pageCode="KPI_CONFIG"><NativeKPIConfiguration /></Gate></ProtectedRoute>} />

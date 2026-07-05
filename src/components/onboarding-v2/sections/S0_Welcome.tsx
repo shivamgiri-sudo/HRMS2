@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { ShieldCheck, Loader2 } from 'lucide-react';
 import { DigiLockerButton } from '../DigiLockerButton';
+import { apiUrl } from '@/lib/apiBase';
 
-const BGV_API = `${import.meta.env.VITE_HRMS_API_URL ?? 'http://localhost:5055'}/api/ats/bgv`;
+const BGV_API = apiUrl('/api/ats/bgv');
 
 interface S0Props {
   token: string;

@@ -36,9 +36,6 @@ export default function HolidayWorkApprovals() {
   const [actionError, setActionError] = useState<string | null>(null);
 
   const role = user?.role ?? "";
-  if (!ALLOWED_ROLES.includes(role)) {
-    return <div className="p-8 text-red-600">Access denied.</div>;
-  }
 
   const fetchRequests = () => {
     setLoading(true);
@@ -84,6 +81,10 @@ export default function HolidayWorkApprovals() {
       setSubmitting(false);
     }
   };
+
+  if (!ALLOWED_ROLES.includes(role)) {
+    return <div className="p-8 text-red-600">Access denied.</div>;
+  }
 
   return (
     <div className="p-6 max-w-6xl mx-auto">

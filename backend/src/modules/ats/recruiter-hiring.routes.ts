@@ -1,5 +1,4 @@
 import { Router } from "express";
-import type { NextFunction, RequestHandler, Response } from "express";
 import multer from "multer";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -10,8 +9,8 @@ import {
   createCandidateFromActivity,
   createTokenFromActivity,
   type DuplicateMode,
+  getHiringActivityBootstrap,
   getCallingDashboard,
-  getHiringActivityContext,
   getHiringDashboard,
   importHiringActivityRows,
   listHiringActivity,
@@ -29,13 +28,8 @@ export const recruiterHiringRouter = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const authRoles = requireRole("admin", "hr", "super_admin", "recruiter", "manager");
 
-const route = (handler: (req: AuthenticatedRequest, res: Response) => Promise<unknown>): RequestHandler =>
-  ((req, res, next: NextFunction) => {
-    void Promise.resolve(handler(req as AuthenticatedRequest, res)).catch(next);
-  }) as RequestHandler;
-
-recruiterHiringRouter.use(requireAuth as unknown as RequestHandler);
-recruiterHiringRouter.use(authRoles as unknown as RequestHandler);
+recruiterHiringRouter.use(requireAuth);
+recruiterHiringRouter.use(authRoles);
 
 function parseQueryBool(value: unknown): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
@@ -83,7 +77,7 @@ async function ensureRowAccess(req: AuthenticatedRequest, id: string) {
   return { allowed: false, row };
 }
 
-recruiterHiringRouter.get("/interviewers", route(async (req: AuthenticatedRequest, res) => {
+recruiterHiringRouter.get("/interviewers", async (req: AuthenticatedRequest, res) => {
   try {
     const branchName = req.query.branchName ? String(req.query.branchName) : null;
     const q = req.query.q ? String(req.query.q) : null;
@@ -94,9 +88,18 @@ recruiterHiringRouter.get("/interviewers", route(async (req: AuthenticatedReques
   } catch (error: unknown) {
     return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
-}));
+});
 
-recruiterHiringRouter.get("/recruiter/hiring-activity", route(async (req: AuthenticatedRequest, res) => {
+recruiterHiringRouter.get("/recruiter/hiring-activity/bootstrap", async (req: AuthenticatedRequest, res) => {
+  try {
+    const data = await getHiringActivityBootstrap(req.authUser!.id);
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
+  }
+});
+
+recruiterHiringRouter.get("/recruiter/hiring-activity", async (req: AuthenticatedRequest, res) => {
   try {
     const { id, role } = getRequester(req);
     const data = await listHiringActivity(id, role, {
@@ -133,21 +136,9 @@ recruiterHiringRouter.get("/recruiter/hiring-activity", route(async (req: Authen
   } catch (error: unknown) {
     return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
-}));
+});
 
-recruiterHiringRouter.get("/recruiter/hiring-activity/context", route(async (req: AuthenticatedRequest, res) => {
-  try {
-    const mobile = String(req.query.mobile ?? "").trim();
-    const data = mobile
-      ? await getHiringActivityContext(req.authUser!.id, req.authUser?.role, mobile)
-      : null;
-    return res.json({ success: true, data });
-  } catch (error: unknown) {
-    return res.status(getErrorStatus(error, 400)).json({ success: false, message: getErrorMessage(error) });
-  }
-}));
-
-recruiterHiringRouter.post("/recruiter/hiring-activity", route(async (req: AuthenticatedRequest, res) => {
+recruiterHiringRouter.post("/recruiter/hiring-activity", async (req: AuthenticatedRequest, res) => {
   try {
     const duplicateMode = duplicateModeFrom(req.body?.duplicateMode);
     const payload = req.body?.row && typeof req.body.row === "object" ? req.body.row : req.body;
@@ -163,9 +154,9 @@ recruiterHiringRouter.post("/recruiter/hiring-activity", route(async (req: Authe
       errors: validationErrors ?? undefined,
     });
   }
-}));
+});
 
-recruiterHiringRouter.get("/recruiter/hiring-activity/:id", route(async (req: AuthenticatedRequest, res) => {
+recruiterHiringRouter.get("/recruiter/hiring-activity/:id", async (req: AuthenticatedRequest, res) => {
   try {
     const access = await ensureRowAccess(req, req.params.id);
     if (!access.allowed) {
@@ -179,15 +170,14 @@ recruiterHiringRouter.get("/recruiter/hiring-activity/:id", route(async (req: Au
   } catch (error: unknown) {
     return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
-}));
+});
 
-recruiterHiringRouter.put("/recruiter/hiring-activity/:id", route(async (req: AuthenticatedRequest, res) => {
+recruiterHiringRouter.put("/recruiter/hiring-activity/:id", async (req: AuthenticatedRequest, res) => {
   try {
     const access = await ensureRowAccess(req, req.params.id);
     if (!access.allowed) {
       return res.status(404).json({ success: false, message: "Hiring activity not found" });
     }
-    const duplicateMode = duplicateModeFrom(req.body?.duplicateMode);
     const payload = req.body?.row && typeof req.body.row === "object" ? req.body.row : req.body;
     const result = await updateHiringActivityById(req.params.id, payload, req.authUser!.id);
     return res.json({ success: true, data: result });
@@ -201,9 +191,9 @@ recruiterHiringRouter.put("/recruiter/hiring-activity/:id", route(async (req: Au
       errors: validationErrors ?? undefined,
     });
   }
-}));
+});
 
-recruiterHiringRouter.delete("/recruiter/hiring-activity/:id", route(async (req: AuthenticatedRequest, res) => {
+recruiterHiringRouter.delete("/recruiter/hiring-activity/:id", async (req: AuthenticatedRequest, res) => {
   try {
     const access = await ensureRowAccess(req, req.params.id);
     if (!access.allowed) {
@@ -214,9 +204,9 @@ recruiterHiringRouter.delete("/recruiter/hiring-activity/:id", route(async (req:
   } catch (error: unknown) {
     return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
-}));
+});
 
-recruiterHiringRouter.post("/recruiter/hiring-activity/import", upload.single("file"), route(async (req: AuthenticatedRequest, res) => {
+recruiterHiringRouter.post("/recruiter/hiring-activity/import", upload.single("file"), async (req: AuthenticatedRequest, res) => {
   try {
     const duplicateMode = duplicateModeFrom(req.body?.duplicateMode);
     let rows: Record<string, unknown>[] = [];
@@ -243,27 +233,27 @@ recruiterHiringRouter.post("/recruiter/hiring-activity/import", upload.single("f
       errors: validationErrors ?? undefined,
     });
   }
-}));
+});
 
-recruiterHiringRouter.get("/recruiter/hiring-activity/import/:batchId", route(async (req: AuthenticatedRequest, res) => {
+recruiterHiringRouter.get("/recruiter/hiring-activity/import/:batchId", async (req: AuthenticatedRequest, res) => {
   try {
     const data = await readImportBatch(req.params.batchId);
     return res.json({ success: true, data });
   } catch (error: unknown) {
     return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
-}));
+});
 
-recruiterHiringRouter.get("/recruiter/hiring-activity/import/:batchId/errors", route(async (req: AuthenticatedRequest, res) => {
+recruiterHiringRouter.get("/recruiter/hiring-activity/import/:batchId/errors", async (req: AuthenticatedRequest, res) => {
   try {
     const data = await readImportBatch(req.params.batchId);
     return res.json({ success: true, data: data.errors });
   } catch (error: unknown) {
     return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
-}));
+});
 
-recruiterHiringRouter.get("/recruiter/hiring-dashboard", route(async (req: AuthenticatedRequest, res) => {
+recruiterHiringRouter.get("/recruiter/hiring-dashboard", async (req: AuthenticatedRequest, res) => {
   try {
     const data = await getHiringDashboard(req.authUser!.id, req.authUser?.role, {
       fromDate: parseQueryBool(req.query.fromDate),
@@ -297,9 +287,9 @@ recruiterHiringRouter.get("/recruiter/hiring-dashboard", route(async (req: Authe
   } catch (error: unknown) {
     return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
-}));
+});
 
-recruiterHiringRouter.get("/recruiter/calling-dashboard", route(async (req: AuthenticatedRequest, res) => {
+recruiterHiringRouter.get("/recruiter/calling-dashboard", async (req: AuthenticatedRequest, res) => {
   try {
     const data = await getCallingDashboard(req.authUser!.id, req.authUser?.role, {
       fromDate: parseQueryBool(req.query.fromDate),
@@ -333,33 +323,33 @@ recruiterHiringRouter.get("/recruiter/calling-dashboard", route(async (req: Auth
   } catch (error: unknown) {
     return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
-}));
+});
 
-recruiterHiringRouter.post("/recruiter/hiring-activity/:id/create-candidate", route(async (req: AuthenticatedRequest, res) => {
+recruiterHiringRouter.post("/recruiter/hiring-activity/:id/create-candidate", async (req: AuthenticatedRequest, res) => {
   try {
     const data = await createCandidateFromActivity(req.params.id, req.authUser!.id);
     return res.status(201).json({ success: true, data });
   } catch (error: unknown) {
     return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
-}));
+});
 
-recruiterHiringRouter.post("/recruiter/hiring-activity/:id/generate-token", route(async (req: AuthenticatedRequest, res) => {
+recruiterHiringRouter.post("/recruiter/hiring-activity/:id/generate-token", async (req: AuthenticatedRequest, res) => {
   try {
     const data = await createTokenFromActivity(req.params.id, req.authUser!.id);
     return res.status(201).json({ success: true, data });
   } catch (error: unknown) {
     return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
-}));
+});
 
-recruiterHiringRouter.post("/recruiter/hiring-activity/:id/send-onboarding", route(async (req: AuthenticatedRequest, res) => {
+recruiterHiringRouter.post("/recruiter/hiring-activity/:id/send-onboarding", async (req: AuthenticatedRequest, res) => {
   try {
     const data = await sendOnboardingFromActivity(req.params.id, req.authUser!.id);
     return res.status(201).json({ success: true, data });
   } catch (error: unknown) {
     return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
-}));
+});
 
 export { __test__ };

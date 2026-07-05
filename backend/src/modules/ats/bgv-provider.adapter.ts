@@ -3,6 +3,7 @@ import axios from "axios";
 import { env } from "../../config/env.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { sanitizeProviderPayload } from "../integrations/luckpay/luckpay.client.js";
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -12,6 +13,7 @@ export interface PanVerificationInput {
   candidateName?: string | null;
   dateOfBirth?: string | null;
   panNumber: string;
+  mobileNumber?: string | null;
 }
 
 export interface BankVerificationInput {
@@ -881,6 +883,8 @@ export async function getConfiguredBgvProviderAdapter(): Promise<BgvProviderAdap
 
 class CompositeBgvProviderAdapter implements BgvProviderAdapter {
   readonly providerKey = "befisc_luckpay";
+  private luckpayAccessToken = "";
+  private luckpayAccessTokenExpiresAt = 0;
   constructor(private readonly cfg: BgvDbConfig) {}
 
   private async post(baseOrUrl: string | undefined, path: string, payload: Record<string, unknown>, auth: Record<string, string> = {}) {
@@ -892,30 +896,117 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     return res.data?.data ?? res.data ?? {};
   }
 
-  private luckpayHeaders() {
-    return {
-      ...(this.cfg.luckpay_basic_token ? { Authorization: `Basic ${this.cfg.luckpay_basic_token}` } : {}),
-      ...(this.cfg.luckpay_client_id ? { "x-client-id": this.cfg.luckpay_client_id } : {}),
-    };
-  }
-
   private apiKeyHeaders(key?: string): Record<string, string> {
     return key ? { "x-api-key": key } : {};
   }
 
+  private luckpayBaseUrl(): string {
+    const baseUrl = this.cfg.luckpay_api_url?.trim();
+    if (!baseUrl) throw new Error("Luckpay API Base URL is not configured in BGV settings");
+    return baseUrl.replace(/\/$/, "");
+  }
+
+  private async getLuckpayAccessToken(): Promise<string> {
+    if (!this.cfg.luckpay_basic_token || !this.cfg.luckpay_client_id) {
+      throw new Error("Luckpay Basic Token and Client ID are not configured in BGV settings.");
+    }
+    const now = Date.now();
+    if (this.luckpayAccessToken && this.luckpayAccessTokenExpiresAt > now + 2_000) {
+      return this.luckpayAccessToken;
+    }
+
+    const authUrl = `${this.luckpayBaseUrl()}/auth/token`;
+    let res;
+    try {
+      res = await axios.post(authUrl, undefined, {
+        headers: { Authorization: `Basic ${this.cfg.luckpay_basic_token}` },
+        timeout: env.LUCKPAY_TIMEOUT_MS,
+      });
+    } catch (error) {
+      throw this.toLuckpayError(error);
+    }
+    const payload = res.data?.data ?? res.data ?? {};
+    const token = String(payload.accessToken ?? payload.access_token ?? payload.token ?? "");
+    if (!token) throw new Error("Luckpay auth token response did not include an access token.");
+    const expiresIn = Number(payload.expiresIn ?? payload.expires_in ?? env.LUCKPAY_TOKEN_CACHE_TTL_SECONDS);
+    this.luckpayAccessToken = token;
+    this.luckpayAccessTokenExpiresAt = now + Math.max(1, expiresIn) * 1000;
+    return token;
+  }
+
+  private async postLuckpay(path: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const accessToken = await this.getLuckpayAccessToken();
+    let res;
+    try {
+      res = await axios.post(`${this.luckpayBaseUrl()}${path}`, payload, {
+        headers: {
+          Authorization: this.cfg.luckpay_client_id!,
+          "X-Access-Token": `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        timeout: env.LUCKPAY_TIMEOUT_MS,
+      });
+    } catch (error) {
+      throw this.toLuckpayError(error);
+    }
+    const data = res.data?.data ?? res.data ?? {};
+    return data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : { data };
+  }
+
+  private async getCandidateContact(candidateId: string): Promise<{ fullName: string; mobile: string }> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT full_name, mobile FROM ats_candidate WHERE id = ? LIMIT 1`,
+      [candidateId],
+    );
+    const row = rows[0];
+    const fullName = String(row?.full_name ?? "").trim();
+    const mobile = String(row?.mobile ?? "").replace(/\D/g, "");
+    if (!fullName || !mobile) {
+      throw new Error("Candidate name/mobile is required before starting Luckpay DigiLocker.");
+    }
+    return { fullName, mobile };
+  }
+
+  private sanitizedRaw(data: Record<string, unknown>): Record<string, unknown> {
+    return sanitizeProviderPayload(data) as Record<string, unknown>;
+  }
+
+  private providerString(value: unknown): string | null {
+    if (value === null || value === undefined) return null;
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    return null;
+  }
+
+  private toLuckpayError(error: unknown): Error {
+    const status = Number((error as { response?: { status?: number } })?.response?.status ?? 502);
+    const responseData = (error as { response?: { data?: unknown } })?.response?.data;
+    const sanitized = sanitizeProviderPayload(responseData) as Record<string, unknown> | null;
+    const providerMessage = sanitized && typeof sanitized === "object"
+      ? String(sanitized.message ?? sanitized.error ?? sanitized.status ?? "")
+      : "";
+    const message = providerMessage || "Luckpay provider request failed";
+    return Object.assign(new Error(`Luckpay provider request failed: ${message}`), {
+      statusCode: status >= 400 && status < 600 ? status : 502,
+      providerPayload: sanitized,
+    });
+  }
+
   async verifyPan(input: PanVerificationInput): Promise<VerificationResult> {
     const requestId = randomUUID();
-    const d = await this.post(this.cfg.luckpay_api_url, "/pan/verify", {
-      request_id: requestId,
-      pan: input.panNumber.trim().toUpperCase(),
-      name: input.candidateName ?? undefined,
-      dob: input.dateOfBirth ?? undefined,
-    }, this.luckpayHeaders());
+    const d = await this.postLuckpay("/verifyPan", {
+      clientTransactionId: requestId,
+      idNumber: input.panNumber.trim().toUpperCase(),
+      mobileNumber: String(input.mobileNumber ?? "").replace(/\D/g, "") || "9999999999",
+    });
     const apiStatus = String(d.status ?? d.result ?? "").toLowerCase();
     const status: VerificationStatus = ["valid", "verified", "success", "active"].includes(apiStatus)
       ? "verified"
       : apiStatus.includes("mismatch") ? "mismatch" : "failed";
-    const matchedName = d.pan_name ?? d.name ?? d.full_name ?? null;
+    const matchedName = this.providerString(d.pan_name ?? d.name ?? d.full_name);
+    const matchedDob = this.providerString(d.dob);
+    const message = this.providerString(d.message);
+    const failureReason = this.providerString(d.failure_reason);
     return {
       status,
       providerKey: this.providerKey,
@@ -923,24 +1014,27 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
       matchScore: roughNameMatchScore(input.candidateName, matchedName),
       matchedName,
-      matchedDob: d.dob ?? null,
-      resultSummary: d.message ?? `PAN check: ${status}`,
-      riskFlags: status === "verified" ? [] : [String(d.failure_reason ?? "PAN_CHECK_FAILED").toUpperCase()],
-      raw: d,
+      matchedDob,
+      resultSummary: message ?? `PAN check: ${status}`,
+      riskFlags: status === "verified" ? [] : [String(failureReason ?? "PAN_CHECK_FAILED").toUpperCase()],
+      raw: this.sanitizedRaw(d),
     };
   }
 
   async verifyBank(input: BankVerificationInput): Promise<VerificationResult> {
     const requestId = randomUUID();
-    const d = await this.post(this.cfg.luckpay_api_url, "/bank/pennyless-verify", {
-      request_id: requestId,
-      account_number: input.accountNo.replace(/\s/g, ""),
-      ifsc: input.ifscCode.trim().toUpperCase(),
-      name: input.accountHolderName ?? input.candidateName ?? undefined,
-    }, this.luckpayHeaders());
+    const d = await this.postLuckpay("/verifyPennyDrop", {
+      clientTransactionId: requestId,
+      customerAccountNumber: input.accountNo.replace(/\s/g, ""),
+      customerAccountName: input.accountHolderName ?? input.candidateName ?? "",
+      customerIfscCode: input.ifscCode.trim().toUpperCase(),
+      verificationMode: "PENNY_DROP",
+    });
     const apiStatus = String(d.status ?? d.result ?? "").toLowerCase();
-    const matchedName = d.registered_name ?? d.account_holder_name ?? d.name ?? null;
+    const matchedName = this.providerString(d.registered_name ?? d.account_holder_name ?? d.name);
     const score = roughNameMatchScore(input.accountHolderName ?? input.candidateName, matchedName);
+    const message = this.providerString(d.message);
+    const failureReason = this.providerString(d.failure_reason);
     const status: VerificationStatus = ["valid", "verified", "success", "active"].includes(apiStatus)
       ? "verified"
       : apiStatus.includes("mismatch") || score < 60 ? "mismatch" : "failed";
@@ -951,25 +1045,26 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       providerReferenceId: String(d.reference_id ?? d.utr ?? d.transaction_id ?? requestId),
       matchScore: score,
       matchedName,
-      resultSummary: d.message ?? `Bank check: ${status}`,
-      riskFlags: status === "verified" ? [] : [String(d.failure_reason ?? "BANK_CHECK_FAILED").toUpperCase()],
-      raw: d,
+      resultSummary: message ?? `Bank check: ${status}`,
+      riskFlags: status === "verified" ? [] : [String(failureReason ?? "BANK_CHECK_FAILED").toUpperCase()],
+      raw: this.sanitizedRaw(d),
     };
   }
 
   async verifyUan(input: { candidateName?: string | null; uanNumber: string }): Promise<VerificationResult & { employmentHistory?: unknown[] }> {
     const requestId = randomUUID();
-    const d = await this.post(this.cfg.luckpay_api_url, "/uan/verify", {
-      request_id: requestId,
-      uan: input.uanNumber.trim(),
-      name: input.candidateName ?? undefined,
-    }, this.luckpayHeaders());
+    const d = await this.postLuckpay("/verifyUanByUan", {
+      clientTransactionId: requestId,
+      identifier: input.uanNumber.trim(),
+    });
     const apiStatus = String(d.status ?? d.result ?? "").toLowerCase();
     const status: VerificationStatus = ["valid", "verified", "success", "active"].includes(apiStatus)
       ? "verified"
       : apiStatus.includes("mismatch") ? "mismatch" : "failed";
-    const matchedName = d.name ?? d.member_name ?? d.full_name ?? null;
+    const matchedName = this.providerString(d.name ?? d.member_name ?? d.full_name);
     const history = Array.isArray(d.employment_history) ? d.employment_history : Array.isArray(d.establishments) ? d.establishments : [];
+    const message = this.providerString(d.message);
+    const failureReason = this.providerString(d.failure_reason);
     return {
       status,
       providerKey: this.providerKey,
@@ -977,9 +1072,9 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
       matchScore: roughNameMatchScore(input.candidateName, matchedName),
       matchedName,
-      resultSummary: d.message ?? `UAN/employment check: ${status}`,
-      riskFlags: status === "verified" ? [] : [String(d.failure_reason ?? "UAN_CHECK_FAILED").toUpperCase()],
-      raw: d,
+      resultSummary: message ?? `UAN/employment check: ${status}`,
+      riskFlags: status === "verified" ? [] : [String(failureReason ?? "UAN_CHECK_FAILED").toUpperCase()],
+      raw: this.sanitizedRaw(d),
       employmentHistory: history,
     };
   }
@@ -1076,19 +1171,16 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
 
   async startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession> {
     const state = randomUUID();
-    const d = await this.post(this.cfg.digilocker_session_url, "", {
-      state,
-      candidate_id: candidateId,
-      documents: requestedDocuments,
-      redirect_uri: `${env.FRONTEND_URL}/candidate-onboarding-full?step=digilocker`,
-    }, {
-      ...this.apiKeyHeaders(this.cfg.digilocker_api_key),
-      ...(this.cfg.digilocker_client_id ? { "x-client-id": this.cfg.digilocker_client_id } : {}),
+    const candidate = await this.getCandidateContact(candidateId);
+    const d = await this.postLuckpay("/verifyDigilockerWithURL", {
+      clientTransactionId: state,
+      customerName: candidate.fullName,
+      mobileNumber: candidate.mobile,
     });
     return {
       state: String(d.state ?? state),
-      authUrl: String(d.auth_url ?? d.redirect_url ?? d.access_link ?? ""),
-      expiresAt: d.expires_at ? new Date(d.expires_at) : new Date(Date.now() + 30 * 60 * 1000),
+      authUrl: String(d.auth_url ?? d.redirect_url ?? d.access_link ?? d.redirectUrl ?? d.verificationUrl ?? d.verification_url ?? ""),
+      expiresAt: this.providerString(d.expires_at) ? new Date(this.providerString(d.expires_at)!) : new Date(Date.now() + 30 * 60 * 1000),
     };
   }
 

@@ -26,6 +26,7 @@ function dayNumber(value: unknown) {
 
 function apiStatus(dbStatus: string | null | undefined) {
   if (dbStatus === "approved") return "accepted";
+  if (dbStatus === "manager_approved") return "manager_approved";
   if (dbStatus === "rejected") return "rejected";
   return "submitted";
 }
@@ -33,8 +34,71 @@ function apiStatus(dbStatus: string | null | undefined) {
 function dbStatus(apiStatusValue: unknown) {
   const status = String(apiStatusValue ?? "accepted");
   if (status === "rejected") return "rejected";
+  if (status === "manager_approved") return "manager_approved";
   if (["accepted", "applied", "approved"].includes(status)) return "approved";
   return "pending";
+}
+
+async function loadWeekoffPreference(id: string) {
+  const [prefRows] = await db.execute<RowDataPacket[]>(
+    `SELECT p.*, e.process_id, e.branch_id, e.reporting_manager_id, e.manager_id
+       FROM employee_roster_preference p
+       LEFT JOIN employees e ON e.id = p.employee_id
+      WHERE p.id = ?
+      LIMIT 1`,
+    [id],
+  );
+  return prefRows[0];
+}
+
+async function weekoffReviewRole(userId: string, pref: RowDataPacket): Promise<"super_admin" | "manager" | "wfm" | null> {
+  if (await hasRole(userId, "super_admin")) return "super_admin";
+  const callerEmp = await getEmployeeForUser(userId);
+  if (callerEmp?.id && callerEmp.id === pref.employee_id) return null;
+  if (callerEmp?.id && (callerEmp.id === pref.reporting_manager_id || callerEmp.id === pref.manager_id)) {
+    return "manager";
+  }
+  const scopedWfm = await hasProcessScope(
+    userId,
+    String(pref.process_id ?? ""),
+    pref.branch_id as string | null,
+    "wfm",
+  );
+  return scopedWfm ? "wfm" : null;
+}
+
+function nextWeekoffStatus(role: "super_admin" | "manager" | "wfm", currentStatus: string, requestedStatus: string): string | null {
+  const desired = dbStatus(requestedStatus);
+  if (!["approved", "rejected", "manager_approved"].includes(desired)) return null;
+  if (role === "super_admin") return desired === "manager_approved" ? "approved" : desired;
+  if (role === "manager") {
+    if (currentStatus !== "pending") return null;
+    return desired === "rejected" ? "rejected" : "manager_approved";
+  }
+  if (currentStatus !== "manager_approved") return null;
+  return desired === "manager_approved" ? null : desired;
+}
+
+async function reviewWeekoffPreference(req: AuthenticatedRequest, res: any, preferenceId: string) {
+  const pref = await loadWeekoffPreference(preferenceId);
+  if (!pref) return res.status(404).json({ success: false, message: "Preference not found" });
+
+  const role = await weekoffReviewRole(req.authUser!.id, pref);
+  if (!role) return res.status(403).json({ success: false, message: "Forbidden" });
+
+  const status = nextWeekoffStatus(role, String(pref.status ?? "pending"), String(req.body?.status ?? ""));
+  if (!status) {
+    return res.status(400).json({ success: false, message: "Invalid approval step for current week-off preference status" });
+  }
+
+  await db.execute(
+    `UPDATE employee_roster_preference
+        SET status = ?, rejection_reason = ?, approved_by = ?, approved_at = NOW()
+      WHERE id = ?`,
+    [status, req.body?.remarks ?? null, req.authUser!.id, preferenceId],
+  );
+
+  return res.json({ success: true, message: "Week-off preference updated", data: { id: preferenceId, status } });
 }
 
 weekoffPreferenceRouter.post("/weekoff-preferences", h(async (req, res) => {
@@ -158,29 +222,29 @@ weekoffPreferenceRouter.get("/weekoff-preferences", h(async (req, res) => {
   return res.json({ success: true, data });
 }));
 
+weekoffPreferenceRouter.patch("/weekoff-preferences/bulk-review", h(async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ success: false, message: "ids array is required" });
+
+  const results: Array<{ id: string; success: boolean; message?: string }> = [];
+  for (const id of ids) {
+    const localRes = {
+      statusCode: 200,
+      payload: null as any,
+      status(code: number) { this.statusCode = code; return this; },
+      json(payload: any) { this.payload = payload; return this; },
+    };
+    await reviewWeekoffPreference(req, localRes, id);
+    results.push({
+      id,
+      success: localRes.statusCode >= 200 && localRes.statusCode < 300 && localRes.payload?.success !== false,
+      message: localRes.payload?.message,
+    });
+  }
+
+  return res.json({ success: true, data: results });
+}));
+
 weekoffPreferenceRouter.patch("/weekoff-preferences/:id", h(async (req, res) => {
-  const [prefRows] = await db.execute<RowDataPacket[]>(
-    `SELECT p.*, e.process_id, e.branch_id
-       FROM employee_roster_preference p
-       LEFT JOIN employees e ON e.id = p.employee_id
-      WHERE p.id = ?
-      LIMIT 1`,
-    [req.params.id],
-  );
-  const pref = prefRows[0];
-  if (!pref) return res.status(404).json({ success: false, message: "Preference not found" });
-
-  const broad = await hasRole(req.authUser!.id, "admin", "hr", "wfm");
-  const scoped = await hasProcessScope(req.authUser!.id, String(pref.process_id), pref.branch_id as string | null, "manager", "wfm", "assistant_manager", "tl");
-  if (!broad && !scoped) return res.status(403).json({ success: false, message: "Forbidden" });
-
-  const status = dbStatus(req.body?.status);
-  await db.execute(
-    `UPDATE employee_roster_preference
-        SET status = ?, rejection_reason = ?, approved_by = ?, approved_at = NOW()
-      WHERE id = ?`,
-    [status, req.body?.remarks ?? null, req.authUser!.id, req.params.id],
-  );
-
-  return res.json({ success: true, message: "Week-off preference updated" });
+  return reviewWeekoffPreference(req, res, req.params.id);
 }));

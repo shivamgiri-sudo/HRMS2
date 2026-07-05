@@ -339,7 +339,7 @@ router.post("/roles/revoke", requireRole("admin"), h(async (req: AuthenticatedRe
 router.get("/audit-log", requireAuth, h(async (req: AuthenticatedRequest, res: Response) => {
   // Delegate to extended audit log function with role-based filtering
   const { getAuditLogExtended: getAuditFn } = await import("../../modules/audit/audit.log.routes.js");
-  return getAuditFn(req, res);
+  return getAuditFn(req as AuthenticatedRequest & { authUser: NonNullable<AuthenticatedRequest["authUser"]> }, res);
 }));
 
 // GET /api/access/page-access — all role_page_access entries (admin only)

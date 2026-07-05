@@ -40,15 +40,16 @@ router.post('/:candidateId/generate', requireAuth, requireWriteAccess, requireRo
   // Generate code: MASCYYMM-NNNNN (sequential)
   const now = new Date();
   const yymm = String(now.getFullYear()).slice(2) + String(now.getMonth() + 1).padStart(2, '0');
-  let countRows: CountRow[] = [];
+  let existingEmployeeCount = 0;
   try {
-    [countRows] = await db.execute<CountRow[]>(
+    const [countRows] = await db.execute<CountRow[]>(
       'SELECT COUNT(*) as cnt FROM employees WHERE created_at >= DATE_FORMAT(NOW(),\'%Y-%m-01\')'
     );
+    existingEmployeeCount = Number(countRows[0]?.cnt ?? 0);
   } catch {
-    countRows = [{ cnt: 0 }];
+    existingEmployeeCount = 0;
   }
-  const seq = String((Number(countRows[0]?.cnt ?? 0) + 1)).padStart(4, '0');
+  const seq = String(existingEmployeeCount + 1).padStart(4, '0');
   const empCode = `MAS${yymm}${seq}`;
 
   // Write employee_code back to ats_candidate and move to employee_code_generated stage
@@ -85,7 +86,7 @@ router.post('/:candidateId/generate', requireAuth, requireWriteAccess, requireRo
       empCode,
       JSON.stringify(gate.checklist),
       JSON.stringify([]),
-      req.authUser.id,
+      req.authUser!.id,
     ]
   );
 
@@ -94,7 +95,7 @@ router.post('/:candidateId/generate', requireAuth, requireWriteAccess, requireRo
     `INSERT INTO sensitive_action_log
        (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, created_at)
      VALUES (UUID(), ?, 'EMPLOYEE_CODE_GENERATED', 'ats', 'ats_candidate', ?, ?, NOW())`,
-    [req.authUser.id, candidateId, JSON.stringify({ employee_code: empCode })]
+    [req.authUser!.id, candidateId, JSON.stringify({ employee_code: empCode })]
   ).catch(() => {});
 
   // Work item for employee master creation

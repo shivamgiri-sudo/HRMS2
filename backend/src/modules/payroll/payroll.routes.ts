@@ -8,8 +8,14 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { requireWFMAccess } from "../../middleware/requireWFMAccess.js";
-import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, hasAnyRole as hasAnyRoleAsync } from "../../shared/scopeAccess.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+
+// Synchronous role check against req.user.role (used for validate/reject guards)
+function hasAnyRole(req: any, roles: string[]): boolean {
+  const userRole: string = req?.authUser?.role ?? req?.user?.role ?? "";
+  return roles.includes(userRole);
+}
 import { payrollController as c } from "./payroll.controller.js";
 import { calculatePayrollRun } from "./payrollCalculate.service.js";
 import { payrollGovernanceService } from "./payroll-governance.service.js";
@@ -1103,6 +1109,9 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
   if (!["locked", "disbursed"].includes(run.status as string)) {
     return res.status(400).json({ error: "Run must be locked or disbursed to generate NEFT export" });
   }
+  if (run.validation_status && run.validation_status !== 'validated') {
+    return res.status(403).json({ success: false, message: "Payroll must be validated before generating NEFT export. Current status: " + run.validation_status });
+  }
 
   const [lines] = await db.execute<RowDataPacket[]>(
     `SELECT spl.employee_id, spl.net_salary, spl.gross_salary, spl.total_deductions,
@@ -1143,6 +1152,54 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.send(csv);
+}));
+
+// ─── Payroll Validation / Rejection (Head Payroll) ───────────────────────────
+
+// PATCH /api/payroll/runs/:id/validate — Head Payroll validates a run (unlocks NEFT export)
+router.patch("/runs/:id/validate", requireAuth, h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  if (!(await hasAnyRoleAsync(userId, "payroll_head", "super_admin"))) {
+    return res.status(403).json({ success: false, message: "Only Head Payroll can validate a payroll run" });
+  }
+  const { note } = req.body as { note?: string };
+  const [runRows] = await db.execute("SELECT id, status, validation_status FROM salary_prep_run WHERE id = ? LIMIT 1", [req.params.id]);
+  const run = (runRows as any[])[0];
+  if (!run) return res.status(404).json({ success: false, message: "Run not found" });
+  if (run.validation_status === "validated") return res.status(400).json({ success: false, message: "Already validated" });
+
+  await db.execute(
+    `UPDATE salary_prep_run SET validation_status = 'validated', validated_by = ?, validated_at = NOW() WHERE id = ?`,
+    [userId, req.params.id]
+  );
+  await db.execute(
+    `INSERT INTO payroll_validation_log (id, run_id, action, actor_id, actor_role, reason, created_at) VALUES (UUID(), ?, 'validated', ?, ?, ?, NOW())`,
+    [req.params.id, userId, req.authUser!.role, note ?? null]
+  );
+  return res.json({ success: true, message: "Payroll run validated. NEFT export is now unlocked." });
+}));
+
+// PATCH /api/payroll/runs/:id/reject-validation — Head Payroll rejects a run
+router.patch("/runs/:id/reject-validation", requireAuth, h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  if (!(await hasAnyRoleAsync(userId, "payroll_head", "super_admin"))) {
+    return res.status(403).json({ success: false, message: "Only Head Payroll can reject a payroll run" });
+  }
+  const { reason } = req.body as { reason?: string };
+  if (!reason?.trim()) return res.status(400).json({ success: false, message: "Rejection reason is required" });
+  const [runRows] = await db.execute("SELECT id, status, validation_status FROM salary_prep_run WHERE id = ? LIMIT 1", [req.params.id]);
+  const run = (runRows as any[])[0];
+  if (!run) return res.status(404).json({ success: false, message: "Run not found" });
+
+  await db.execute(
+    `UPDATE salary_prep_run SET validation_status = 'rejected', rejected_by = ?, rejected_at = NOW(), rejection_reason = ? WHERE id = ?`,
+    [userId, reason, req.params.id]
+  );
+  await db.execute(
+    `INSERT INTO payroll_validation_log (id, run_id, action, actor_id, actor_role, reason, created_at) VALUES (UUID(), ?, 'rejected', ?, ?, ?, NOW())`,
+    [req.params.id, userId, req.authUser!.role, reason]
+  );
+  return res.json({ success: true, message: "Payroll run rejected. Recalculation required before re-validation." });
 }));
 
 // ─── ECR / ESIC Challan ───────────────────────────────────────────────────────

@@ -57,7 +57,7 @@ export const wfmService = {
     if (employeeId) {
       for (const shift of shifts) {
         try {
-          const result = await getEffectiveConfig(employeeId, 'shift', shift.id, shift);
+          const result = await getEffectiveConfig(employeeId, 'shift', shift.id, shift as unknown as Record<string, unknown>);
           Object.assign(shift, result.config);
         } catch (err) {
           console.warn(`Customization error for shift ${shift.id}:`, err);

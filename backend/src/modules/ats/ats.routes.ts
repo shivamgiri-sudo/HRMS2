@@ -31,6 +31,9 @@ atsRouter.post("/candidates",                    h(c.createCandidate.bind(c)));
 // â”€â”€ PUBLIC â€” candidate onboarding with token (no auth required) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 atsRouter.use("/onboarding-full", onboardingFullRouter);
 atsRouter.use("/bgv", bgvVerificationRouter);
+// Keep onboarding mounted before recruiterHiringRouter; that router installs
+// root-level auth/role middleware and can otherwise intercept /onboarding/*.
+atsRouter.use("/onboarding", onboardingRouter);
 atsRouter.use(recruiterHiringRouter);
 
 // â”€â”€ PUBLIC â€” candidate file upload (1 hour window after registration) â”€â”€â”€â”€â”€â”€â”€â”€
@@ -121,18 +124,60 @@ atsRouter.post(
 atsRouter.use(requireAuth);
 
 // Candidates (HR/recruiter facing) - Scoped
-atsRouter.get("/candidates", requireRole("admin", "hr", "recruiter", "manager"), h(async (req, res) => {
-  // Apply scope filtering
-  const scoped = await buildScopeWhereClause(
-    req.authUser!.id,
-    ["hr", "recruiter"],
-    {
-      branchId: "c.branch_id",
-      processId: "c.process_id"
-    },
-    { allowCeoAllRead: true }
-  );
-  (req as AuthenticatedRequest & { scopeFilter?: unknown }).scopeFilter = scoped;
+// ats_candidate stores applied_for_branch as a text name (not a UUID), so we can't use
+// buildScopeWhereClause which compares against UUID branch_id from user_assignment_scope.
+// admin/hr/manager/super_admin see all; recruiter scope is resolved via branch_master name lookup.
+atsRouter.get("/candidates", requireRole("admin", "hr", "recruiter", "manager", "super_admin"), h(async (req, res) => {
+  const { getUserRoleKeys, getUserAssignmentScopes } = await import("../../shared/scopeAccess.js");
+  const userId = req.authUser!.id;
+  const roleKeys = await getUserRoleKeys(userId);
+
+  const isWideRole = roleKeys.some(r => ["super_admin", "admin", "hr", "manager", "ceo"].includes(r));
+  if (isWideRole) {
+    // Full access — no scope filter
+    (req as AuthenticatedRequest & { scopeFilter?: unknown }).scopeFilter = { sql: "1=1", params: [] };
+    return c.listCandidates.bind(c)(req, res);
+  }
+
+  // Recruiter: scope to branches they are assigned to (resolve UUID → name via branch_master)
+  const scopes = await getUserAssignmentScopes(userId, ["recruiter"]);
+  if (scopes.length === 0) {
+    (req as AuthenticatedRequest & { scopeFilter?: unknown }).scopeFilter = { sql: "1=0", params: [] };
+    return c.listCandidates.bind(c)(req, res);
+  }
+  const hasAll = scopes.some(s => s.scope_type === "all");
+  if (hasAll) {
+    (req as AuthenticatedRequest & { scopeFilter?: unknown }).scopeFilter = { sql: "1=1", params: [] };
+    return c.listCandidates.bind(c)(req, res);
+  }
+
+  // Build branch name list from branch UUIDs in scope
+  const branchIds = [...new Set(scopes.filter(s => s.branch_id).map(s => s.branch_id as string))];
+  const processNames: string[] = [...new Set(scopes.filter(s => s.process_id).map(s => s.process_id as string))];
+
+  const sqlParts: string[] = [];
+  const params: unknown[] = [];
+
+  if (branchIds.length > 0) {
+    const { db: dbConn } = await import("../../db/mysql.js");
+    const [bmRows] = await dbConn.execute<import("mysql2").RowDataPacket[]>(
+      `SELECT branch_name FROM branch_master WHERE id IN (${branchIds.map(() => "?").join(",")})`,
+      branchIds
+    );
+    const branchNames = (bmRows as { branch_name: string }[]).map(r => r.branch_name);
+    if (branchNames.length > 0) {
+      sqlParts.push(`applied_for_branch IN (${branchNames.map(() => "?").join(",")})`);
+      params.push(...branchNames);
+    }
+  }
+
+  if (processNames.length > 0) {
+    sqlParts.push(`applied_for_process IN (${processNames.map(() => "?").join(",")})`);
+    params.push(...processNames);
+  }
+
+  const sql = sqlParts.length > 0 ? sqlParts.join(" OR ") : "1=0";
+  (req as AuthenticatedRequest & { scopeFilter?: unknown }).scopeFilter = { sql, params };
   return c.listCandidates.bind(c)(req, res);
 }));
 atsRouter.get("/candidates/:id",                 requireRole("admin", "hr", "recruiter", "manager"), h(c.getCandidate.bind(c)));
@@ -281,8 +326,9 @@ atsRouter.post("/recruiter/verify", h(async (req: AuthenticatedRequest, res: Res
 // Admin/hr/super_admin may inspect all or filter by supplying ?recruiterName=.
 // Any other role sees only their own queue derived from the JWT â†’ employee â†’ roster chain.
 atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const userRoles = (req.userRoles ?? []) as string[];
+  const userRoles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
   const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
+  const isRecruiterUser = userRoles.includes("recruiter");
   const overrideName = String(req.query.recruiterName ?? "").trim();
 
   let recruiterName: string | undefined;
@@ -291,8 +337,8 @@ atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "super_admi
   if (isPrivileged && overrideName) {
     // Admin/HR may explicitly request any recruiter's queue by name
     recruiterName = overrideName;
-  } else if (!isPrivileged) {
-    // Derive name from the JWT-linked recruiter row
+  } else if (isRecruiterUser) {
+    // Mixed HR+recruiter accounts should still default to their own recruiter queue.
     profile = await resolveRecruiterForActor(req.authUser!.id);
     if (!profile) {
       return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
@@ -307,8 +353,9 @@ atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "super_admi
 // GET /api/ats/recruiter/submission-history â€” submission history for the authenticated recruiter.
 // Admin/hr/super_admin may inspect all or filter by supplying ?recruiterCode=.
 atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const userRoles = (req.userRoles ?? []) as string[];
+  const userRoles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
   const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
+  const isRecruiterUser = userRoles.includes("recruiter");
   const overrideCode = String(req.query.recruiterCode ?? "").trim();
 
   let recruiterCode: string | null = null;
@@ -317,7 +364,7 @@ atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super
 
   if (isPrivileged && overrideCode) {
     recruiterCode = overrideCode;
-  } else if (!isPrivileged) {
+  } else if (isRecruiterUser) {
     profile = await resolveRecruiterForActor(req.authUser!.id);
     if (!profile) {
       return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
@@ -333,22 +380,23 @@ atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super
 
 // GET /api/ats/recruiter/daily-stats â€” today's KPI summary for the authenticated recruiter.
 atsRouter.get("/recruiter/daily-stats", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const userRoles = (req.userRoles ?? []) as string[];
+  const userRoles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
   const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
+  const isRecruiterUser = userRoles.includes("recruiter");
   let recruiterName: string | undefined;
+  let recruiterCode: string | null = null;
   if (isPrivileged && req.query.recruiterName) {
     recruiterName = String(req.query.recruiterName).trim();
-  } else {
+  } else if (isRecruiterUser) {
     const profile = await resolveRecruiterForActor(req.authUser!.id);
     if (!profile) return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
     recruiterName = profile.name;
+    recruiterCode = profile.recruiterCode ?? null;
+  } else {
+    return res.status(400).json({ success: false, message: "recruiterName is required for privileged non-recruiter users" });
   }
-  const stats = await getRecruiterDailyStats(recruiterName!);
+  const stats = await getRecruiterDailyStats(recruiterName!, recruiterCode);
   return res.json({ success: true, data: stats });
 }));
 
-// Onboarding flow â€” token generation, profile submission, offer mgmt, approve/reject
-atsRouter.use("/onboarding", onboardingRouter);
-
-
-
+export default atsRouter;

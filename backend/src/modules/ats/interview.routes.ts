@@ -30,7 +30,7 @@ interviewRouter.use(requireRole('admin', 'hr', 'recruiter'));
 // ── 1. Get assigned candidates for logged-in recruiter ────────────────────────
 interviewRouter.get('/assigned-candidates', h(async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const recruiterId = req.authUser.id;
+    const recruiterId = req.authUser!.id;
     const candidates = await getAssignedCandidates(recruiterId);
     return res.json({ success: true, data: candidates });
   } catch (error: unknown) {
@@ -42,7 +42,7 @@ interviewRouter.get('/assigned-candidates', h(async (req: AuthenticatedRequest, 
 interviewRouter.get('/candidate/:candidateId', h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { candidateId } = req.params;
-    const recruiterId = req.authUser.id;
+    const recruiterId = req.authUser!.id;
     const candidate = await getCandidateForInterview(candidateId, recruiterId);
     return res.json({ success: true, data: candidate });
   } catch (error: unknown) {
@@ -75,7 +75,7 @@ interviewRouter.post('/submit-result', h(async (req: AuthenticatedRequest, res: 
 
     const result = await submitInterviewResult({
       ...input,
-      recruiter_id: req.authUser.id,
+      recruiter_id: req.authUser!.id,
     });
 
     return res.json(result);
@@ -105,7 +105,7 @@ interviewRouter.get('/history/:candidateId', h(async (req: Request, res: Respons
 // ── 5. Get recruiter performance metrics ───────────────────────────────────────
 interviewRouter.get('/performance', h(async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const recruiterId = req.authUser.id;
+    const recruiterId = req.authUser!.id;
     const { fromDate, toDate } = req.query as { fromDate?: string; toDate?: string };
 
     const performance = await getRecruiterPerformance(recruiterId, fromDate, toDate);

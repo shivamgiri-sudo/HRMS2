@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { InlineDocUpload } from '../InlineDocUpload';
 import { useAutoSave } from '../useAutoSave';
+import { apiUrl } from '@/lib/apiBase';
 
 interface S7Props {
   token: string;
@@ -28,7 +29,7 @@ export function S7_WorkExperience({ token, initialData, saveSection }: S7Props) 
   useEffect(() => {
     const fetchEmploymentTypes = async () => {
       try {
-        const url = `${import.meta.env.VITE_HRMS_API_URL ?? 'http://localhost:5055'}/api/onboarding/data/employment-types`;
+        const url = apiUrl('/api/onboarding/data/employment-types');
         const resp = await fetch(url);
         const data = await resp.json();
         setEmploymentTypes(Array.isArray(data) ? data : []);

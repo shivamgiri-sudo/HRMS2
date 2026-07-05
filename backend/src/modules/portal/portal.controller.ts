@@ -214,4 +214,13 @@ export const portalController = {
     );
     res.json({ data: rows });
   },
+
+  // ── Process Info (name + client + RAG) ────────────────────────────────────
+  async getProcessInfo(req: ClientAuthRequest, res: Response) {
+    assertProcessAccess(req);
+    const processes = await portalOverviewService.getOverview([req.params.id]);
+    const proc = processes[0];
+    if (!proc) return res.json({ data: { process_name: null, client_name: null, rag: null } });
+    res.json({ data: { process_name: proc.process_name, client_name: proc.client_name, rag: proc.rag } });
+  },
 };

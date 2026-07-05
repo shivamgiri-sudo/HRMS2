@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { toIST } from "../../shared/timezone.js";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
 
 export const biometricSummaryRouter = Router();
 biometricSummaryRouter.use(requireAuth);
@@ -42,7 +43,33 @@ function commonWhere(query: any, params: any[]) {
 
 const roleGuard = requireRole("admin", "hr", "wfm", "manager", "process_manager", "team_leader", "tl", "ceo", "finance", "payroll");
 
+// Roles that must have scope auto-injected if not explicitly passed
+const RESTRICTED_SCOPE_ROLES = new Set(["manager", "process_manager", "team_leader", "tl", "wfm"]);
+
+/**
+ * For non-admin callers who haven't passed explicit branchId/processId,
+ * auto-inject their own employee's branch/process from mas_hrms.
+ * Mutates req.query in-place so downstream commonWhere picks it up.
+ */
+async function injectScopeIfNeeded(req: any): Promise<void> {
+  const userId = req.authUser?.id;
+  if (!userId) return;
+  const ctx = await getUserRoleContext(userId);
+  if (ctx.isSuperAdmin || ctx.isHO || ctx.roleKeys.includes("ceo") || ctx.roleKeys.includes("finance") || ctx.roleKeys.includes("hr")) return;
+  if (!ctx.roleKeys.some(r => RESTRICTED_SCOPE_ROLES.has(r))) return;
+  // Only inject if caller didn't pass explicit scope params
+  if (req.query.branchId || req.query.processId) return;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT branch_id, process_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+    [userId]
+  );
+  const emp = (rows as any[])[0];
+  if (emp?.branch_id) req.query.branchId = String(emp.branch_id);
+  if (emp?.process_id) req.query.processId = String(emp.process_id);
+}
+
 biometricSummaryRouter.get("/adherence-summary", roleGuard, h(async (req: any, res: any) => {
+  await injectScopeIfNeeded(req);
   const params: any[] = [];
   const where = commonWhere(req.query, params);
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -63,6 +90,7 @@ biometricSummaryRouter.get("/adherence-summary", roleGuard, h(async (req: any, r
 }));
 
 biometricSummaryRouter.get("/agent-view", roleGuard, h(async (req: any, res: any) => {
+  await injectScopeIfNeeded(req);
   const params: any[] = [];
   const where = commonWhere(req.query, params);
   const limit = limitValue(req.query.limit, 500);
@@ -90,6 +118,7 @@ biometricSummaryRouter.get("/agent-view", roleGuard, h(async (req: any, res: any
 }));
 
 biometricSummaryRouter.get("/reconciliation", roleGuard, h(async (req: any, res: any) => {
+  await injectScopeIfNeeded(req);
   const params: any[] = [];
   const where = commonWhere(req.query, params);
   const limit = limitValue(req.query.limit, 500);

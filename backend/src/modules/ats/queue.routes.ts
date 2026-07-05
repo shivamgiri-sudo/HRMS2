@@ -2,6 +2,7 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import {
   getLiveQueue,
@@ -65,7 +66,7 @@ async function loadPublicDisplay(branch?: string, date?: string) {
 }
 
 async function loadBranchNames(): Promise<string[]> {
-  interface BranchNameRow {
+  interface BranchNameRow extends RowDataPacket {
     branch_name?: string | null;
   }
   const [rows] = await db.execute<BranchNameRow[]>(

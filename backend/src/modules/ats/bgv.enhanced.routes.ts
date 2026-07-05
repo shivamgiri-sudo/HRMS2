@@ -28,6 +28,16 @@ bgvEnhancedRouter.get('/pending', requireRole('admin', 'hr'), async (_req, res) 
 });
 
 // ── 2. Get BGV details for a candidate ────────────────────────────────────────
+bgvEnhancedRouter.get('/stats/overview', requireRole('admin', 'hr'), async (_req, res) => {
+  try {
+    const stats = await getBGVStatistics();
+    return res.json({ success: true, data: stats });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return res.status(500).json({ success: false, message });
+  }
+});
+
 bgvEnhancedRouter.get('/:candidateId', async (req, res) => {
   try {
     const { candidateId } = req.params;
@@ -99,12 +109,3 @@ bgvEnhancedRouter.post('/name-match/override', requireRole('admin', 'hr'), async
 });
 
 // ── 5. Get BGV statistics ─────────────────────────────────────────────────────
-bgvEnhancedRouter.get('/stats/overview', requireRole('admin', 'hr'), async (_req, res) => {
-  try {
-    const stats = await getBGVStatistics();
-    return res.json({ success: true, data: stats });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    return res.status(500).json({ success: false, message });
-  }
-});

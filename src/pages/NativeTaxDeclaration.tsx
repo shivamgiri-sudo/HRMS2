@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { apiBaseUrl, apiUrl } from "@/lib/apiBase";
 import { formatISTDate } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -396,9 +397,8 @@ export default function NativeTaxDeclaration() {
       formData.append("document_name", file.name);
 
       const token = localStorage.getItem("hrms_access_token");
-      const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
       const resp = await fetch(
-        `${HRMS_API}/api/payroll/tax-declaration/${empId}/${selectedFY}/document`,
+        apiUrl(`/api/payroll/tax-declaration/${empId}/${selectedFY}/document`),
         {
           method: "POST",
           headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -451,7 +451,7 @@ export default function NativeTaxDeclaration() {
       return;
     }
 
-    const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
+    const HRMS_API = apiBaseUrl();
     const url = fileUrl.startsWith("http") ? fileUrl
       : fileUrl.startsWith("/api/") ? `${HRMS_API}${fileUrl}`
       : `${HRMS_API}/api/files/tax-documents/${fileUrl}`;

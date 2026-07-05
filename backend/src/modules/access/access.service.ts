@@ -176,14 +176,14 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
     full_name: string | null;
   };
   type ScopeRow = RowDataPacket & {
-    id: string;
-    role_key: string | null;
-    scope_type: string;
-    branch_id: string | null;
-    process_id: string | null;
-    lob_id: string | null;
-    department_id: string | null;
-    manager_employee_id: string | null;
+    id?: string | null;
+    role_key?: string | null;
+    scope_type?: string | null;
+    branch_id?: string | null;
+    process_id?: string | null;
+    lob_id?: string | null;
+    department_id?: string | null;
+    manager_employee_id?: string | null;
   };
   type DisabledPageRow = RowDataPacket & { page_code: string };
   type PageRow = RowDataPacket & {
@@ -215,18 +215,7 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
      FROM user_assignment_scope WHERE user_id = ? AND active_status = 1`,
     [userId]
   );
-  const scopes = (scopeRows as ScopeRow[])
-    .filter((scope) => Boolean(scope.role_key))
-    .map((scope) => ({
-    id: scope.id,
-    role_key: scope.role_key ?? "",
-    scope_type: scope.scope_type,
-    branch_id: scope.branch_id,
-    process_id: scope.process_id,
-    lob_id: scope.lob_id,
-    department_id: scope.department_id,
-    manager_employee_id: scope.manager_employee_id,
-  }));
+  const scopes = scopeRows as ScopeRow[];
 
   const [disabledRows] = await db.execute<RowDataPacket[]>(
     "SELECT page_code FROM page_catalog WHERE active_status = 0"
@@ -304,7 +293,16 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
       full_name: emp.full_name ?? null,
     } : null,
     roles,
-    scopes,
+    scopes: scopes.map((scope) => ({
+      id: String(scope.id ?? ""),
+      role_key: String(scope.role_key ?? ""),
+      scope_type: String(scope.scope_type ?? ""),
+      branch_id: scope.branch_id ?? null,
+      process_id: scope.process_id ?? null,
+      lob_id: scope.lob_id ?? null,
+      department_id: scope.department_id ?? null,
+      manager_employee_id: scope.manager_employee_id ?? null,
+    })),
     pages,
     disabledPageCodes,
   };

@@ -235,7 +235,14 @@ const MIGRATION_MANIFEST: string[] = [
   "349_joining_document_actor_alignment.sql",
   "350_joining_document_public_token_hash_only.sql",
   "351_sanitize_internal_sign_links.sql",
-];
+  "352_ats_email_log_extended_types.sql",
+  "353_luckpay_production_provider_config.sql",
+  "354_two_level_wfm_approvals.sql",
+  "355_epf_acroform_phase1.sql",
+  "356_joining_document_status_safety_columns.sql",
+  "357_ats_candidate_followup_columns.sql",
+  "358_payroll_hr_validation_service_columns.sql",
+  ];
 
 export type MigrationHealth = {
   status: "not_started" | "running" | "ok" | "failed";

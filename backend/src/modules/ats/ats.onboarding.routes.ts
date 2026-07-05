@@ -12,6 +12,7 @@ import { buildScopeWhereClause, hasScopedAccess } from '../../shared/scopeAccess
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2';
 import { atsService } from './ats.service.js';
+import { resolveRecruiterForActor } from '../ats-full-parity/recruiterInterview.service.js';
 
 const router = Router();
 
@@ -60,7 +61,18 @@ router.post(
       { branchId: cand.applied_for_branch, processId: cand.applied_for_process },
       { allowAdminBypass: true },
     );
-    if (!allowed) {
+    const recruiterProfile = await resolveRecruiterForActor(userId);
+    const candidateRecord = cand as unknown as Record<string, unknown>;
+    const assignedRecruiterIds = [
+      candidateRecord.recruiter_id,
+      candidateRecord.recruiter_assigned_id,
+      candidateRecord.assigned_recruiter_id,
+    ].filter(Boolean).map(String);
+    const isAssignedRecruiter = recruiterProfile
+      ? assignedRecruiterIds.includes(String(recruiterProfile.id))
+        || String(candidateRecord.recruiter_assigned_name ?? candidateRecord.recruiter_name ?? '').trim() === recruiterProfile.name
+      : false;
+    if (!allowed && !isAssignedRecruiter) {
       res.status(403).json({ ok: false, error: 'Access denied' });
       return;
     }
@@ -95,7 +107,7 @@ router.post(
     if (!ctc || !bandCode) { res.status(400).json({ error: 'ctc and bandCode required' }); return; }
     const [bands] = await db.execute<RowDataPacket[]>(
       `SELECT basic_pct, hra_pct FROM salary_band_master WHERE band_code = ?`, [bandCode],
-    );
+    ).catch(() => [[] as RowDataPacket[]]);
     const band = (bands as RowDataPacket[])[0] ?? { basic_pct: 40, hra_pct: 40 };
     const components = calculateSalary(Number(ctc), Number(band.basic_pct), Number(band.hra_pct), Boolean(isMetro));
     res.json({ ok: true, components });

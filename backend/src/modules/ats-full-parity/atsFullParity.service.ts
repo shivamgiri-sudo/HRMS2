@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import nodemailer from "nodemailer";
-import type { RowDataPacket } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
@@ -69,6 +69,14 @@ const transporter = nodemailer.createTransport({
 
 function normalizeText(value: unknown): string {
   return String(value ?? "").trim();
+}
+
+function rowText(row: CandidateRow, key: string): string {
+  return normalizeText(row[key]);
+}
+
+function rowDate(value: unknown): Date | null {
+  return typeof value === "string" || typeof value === "number" || value instanceof Date ? parseDate(value) : null;
 }
 
 function normalizeLower(value: unknown): string {
@@ -276,7 +284,7 @@ function enrichCandidate(row: CandidateRow): CandidateRow {
 
 function inPeriod(row: CandidateRow, period: Period, now = new Date()): boolean {
   if (period === "ALL") return true;
-  const d = row._createdAt ? new Date(row._createdAt) : parseCandidateDate(row);
+  const d = rowDate(row._createdAt) ?? parseCandidateDate(row);
   if (!d) return false;
   if (period === "FTD") return formatDateKey(d) === formatDateKey(now);
   if (period === "WTD") return d >= startOfWeek(now) && d <= now;
@@ -579,7 +587,7 @@ export const atsFullParityService = {
     );
     if (recruiter?.id) {
       // Optimistic locking: only increment if under capacity
-      const [result] = await db.execute<RowDataPacket>(
+      const [result] = await db.execute<ResultSetHeader>(
         `UPDATE ats_recruiter_roster
          SET assigned_today = assigned_today + 1,
              last_assigned_at = NOW(),
@@ -589,7 +597,7 @@ export const atsFullParityService = {
       );
 
       // If 0 rows affected, capacity was exceeded (race condition)
-      if (Number((result as RowDataPacket & { affectedRows?: number }).affectedRows ?? 0) === 0) {
+      if (Number(result.affectedRows ?? 0) === 0) {
         console.warn(`[Capacity] Recruiter ${recruiter.id} exceeded capacity during concurrent assignment`);
         // Log to audit for monitoring
         await audit("CAPACITY_EXCEEDED", code, `Recruiter ${recruiter.name} (${recruiter.id}) capacity exceeded - candidate ${code} assigned but counter not incremented`);
@@ -625,6 +633,7 @@ export const atsFullParityService = {
     return `${prefix}-${String(Number(rows[0]?.cnt ?? 0) + 1).padStart(3, "0")}`;
   },
 
+  /** @deprecated Not wired to any route. Use recruiterInterview.service.ts submitInterviewUpdate instead. */
   async submitRecruiterUpdate(input: Record<string, unknown>, actorUserId?: string) {
     const candidateId = normalizeText(input.candidateId || input.CandidateID || input["Candidate ID"]);
     const qToken = normalizeText(input.qToken || input.QToken || input["Q Token"]);
@@ -642,8 +651,8 @@ export const atsFullParityService = {
       [endStage || null, input.round1Result || input.Round1_Result || input["Round1 Result"] || null, input.round1Voc || input.Round1_VOC || input["Round1 VOC"] || null, input.round1Remarks || input["Round1 Remarks"] || null, input.skillTestTyping || input["SkillTest Typing Score (WPM/Accuracy%)"] || null, input.skillTestAI || input["SkillTest AI Score"] || null, input.skillTestResult || input["SkillTest Result"] || null, input.skillTestVoc || input["SkillTest VOC"] || null, input.skillTestRemarks || input["SkillTest Remarks"] || null, input.round2Result || input["Round2 Result"] || null, input.round2Voc || input["Round2 VOC"] || null, input.round2Remarks || input["Round2 Remarks"] || null, input.round3Result || input["Round3 Result"] || null, input.round3Voc || input["Round3 VOC"] || null, input.round3Remarks || input["Round3 Remarks"] || null, finalDecision || null, toNumber(input.offerSalary || input["Offer Salary"], 0), input.offerDoj || input["Date of Joining"] || null, input.reportingTiming || input["Reporting Timing"] || null, input.interviewedForProcess || input["Interviewed for Process"] || null, newStatus || null, newStatus || c.current_stage, c.id]
     );
     await db.execute(`INSERT INTO ats_candidate_stage_log (id, candidate_id, from_stage, to_stage, remarks, updated_by) VALUES (?, ?, ?, ?, ?, ?)`, [randomUUID(), c.id, c.current_stage || c.status, newStatus, input.remarks || input.Final_Remarks || null, actorUserId ?? null]);
-    await this.recomputeDerivedFields(c.id);
-    await audit("RECRUITER_UPDATE", c.candidate_code || c.id, `Stage=${newStatus}`);
+    await this.recomputeDerivedFields(rowText(c, "id"));
+    await audit("RECRUITER_UPDATE", rowText(c, "candidate_code") || rowText(c, "id"), `Stage=${newStatus}`);
     return (await candidateSelect("c.id = ?", [c.id]))[0];
   },
 
@@ -693,8 +702,8 @@ export const atsFullParityService = {
     const rows = await candidateSelect("c.id = ? OR c.candidate_code = ?", [candidateId, candidateId]);
     const row = rows[0];
     if (!row) return null;
-    const start = row._createdAt ? new Date(row._createdAt) : parseCandidateDate(row);
-    const end = parseDate(row.hr_form_submission_time) || parseDate(row.updated_at) || new Date();
+    const start = rowDate(row._createdAt) ?? parseCandidateDate(row);
+    const end = rowDate(row.hr_form_submission_time) || rowDate(row.updated_at) || new Date();
     const min = minutesBetween(start, end);
     const cfg = await getConfigMap();
     const sla = Number(cfg.SLA_Minutes || cfg.slaMinutes || 120);
@@ -714,20 +723,21 @@ export const atsFullParityService = {
     const rows = await candidateSelect(`c.active_status = 1 AND COALESCE(c.status, c.current_stage, 'Waiting') = 'Waiting'`, []);
     let breached = 0;
     for (const row of rows) {
-      const start = row._createdAt ? new Date(row._createdAt) : parseCandidateDate(row);
+      const start = rowDate(row._createdAt) ?? parseCandidateDate(row);
       const diff = minutesBetween(start, new Date());
       if (!start || diff <= threshold) continue;
-      await db.execute(`UPDATE ats_candidate SET sla_breached = 1, updated_at = NOW() WHERE id = ?`, [row.id]);
+      await db.execute(`UPDATE ats_candidate SET sla_breached = 1, updated_at = NOW() WHERE id = ?`, [rowText(row, "id")]);
       await db.execute(
         `INSERT INTO ats_command_sla_event (id, candidate_id, q_token, breach_minutes, threshold_minutes, recruiter_email, cc_emails)
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE breach_minutes=VALUES(breach_minutes), recruiter_email=VALUES(recruiter_email), cc_emails=VALUES(cc_emails), event_status=IF(event_status='closed','closed',event_status)`,
-        [randomUUID(), row.candidate_code || row.id, row.q_token || null, diff, threshold, row.recruiter_email || null, await this.resolveSlaCc(row)]
+        [randomUUID(), rowText(row, "candidate_code") || rowText(row, "id"), rowText(row, "q_token") || null, diff, threshold, rowText(row, "recruiter_email") || null, await this.resolveSlaCc(row)]
       );
-      const already = await this.hasEmailBeenSent(row.candidate_code || row.id, "SLA_BREACH");
+      const candidateKey = rowText(row, "candidate_code") || rowText(row, "id");
+      const already = await this.hasEmailBeenSent(candidateKey, "SLA_BREACH");
       if (!already) {
         const cc = await this.resolveSlaCc(row);
-        await sendTemplateEmail("SLA_BREACH", row.candidate_code || row.id, row.recruiter_email || "", cc, {
+        await sendTemplateEmail("SLA_BREACH", candidateKey, rowText(row, "recruiter_email"), cc, {
           Org_Name: cfg.Org_Name || "ATS Command Center",
           CandidateName: row.full_name,
           CandidateID: row.candidate_code || row.id,

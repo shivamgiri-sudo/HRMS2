@@ -5,11 +5,13 @@ import { db } from "../../db/mysql.js";
 import { atsService } from "./ats.service.js";
 import { atsQueueService } from "./ats.queue.service.js";
 import { sendOnboardingToken } from "./ats.onboarding.service.js";
-import type { AtsCandidate } from "./ats.types.js";
+import { resolveRecruiterForActor } from "../ats-full-parity/recruiterInterview.service.js";
 
 export type DuplicateMode = "insert_duplicates_with_warning" | "update_existing" | "skip_duplicates";
 
 export type HiringSheetRow = Record<string, unknown>;
+
+type CandidateBridgeRecord = RowDataPacket & { id: string };
 
 export type NormalizedHiringActivity = {
   activity_date: string;
@@ -96,17 +98,25 @@ export type HiringDashboard = {
   byBranch: Array<{ label: string; total: number; contacted: number; selected: number; joined: number }>;
 };
 
-export type HiringActivityContext = {
-  mobile: string;
-  latestActivity: Record<string, unknown> | null;
-  candidate: Record<string, unknown> | null;
-  latestSubmission: Record<string, unknown> | null;
-  onboarding: Record<string, unknown> | null;
-  suggestions: {
-    alreadySelected: boolean;
-    alreadyOnboarded: boolean;
-    alreadyRostered: boolean;
-    suggestedStatus: string | null;
+export type HiringActivityBootstrap = {
+  actor: {
+    userId: string;
+    recruiterName: string;
+    recruiterEmployeeId: string | null;
+    recruiterCode: string | null;
+    branchName: string;
+    activityDate: string;
+    activityMonth: string;
+  };
+  options: {
+    processOptions: string[];
+    sourceOptions: string[];
+    positionOptions: string[];
+    wpGroupOptions: string[];
+    callingOutcomeOptions: string[];
+    genderOptions: string[];
+    educationOptions: string[];
+    experienceOptions: string[];
   };
 };
 
@@ -158,10 +168,6 @@ interface DashboardSummaryRow extends RowDataPacket {
   total_records: number;
   total_contacted: number;
   not_contacted: number;
-  callback_pending: number;
-  confirmed_for_interview: number;
-  turned_up: number;
-  interviewed: number;
   shortlisted: number;
   recruiter_rejected: number;
   hr_selected: number;
@@ -171,8 +177,6 @@ interface DashboardSummaryRow extends RowDataPacket {
   ops_selected: number;
   ops_rejected: number;
   final_selected: number;
-  onboarded: number;
-  rostered: number;
   offer_letter_issued: number;
   joined: number;
   joining_pending: number;
@@ -206,38 +210,38 @@ interface ImportBatchRow extends RowDataPacket {
   [key: string]: unknown;
 }
 
-interface CandidateLookupRow extends RowDataPacket {
-  id: string;
-  candidate_code: string | null;
-  full_name: string | null;
-  mobile: string | null;
-  email: string | null;
-  profile_status: string | null;
-  status: string | null;
-  current_stage: string | null;
-  applied_for_process: string | null;
-  applied_for_branch: string | null;
-  q_token: string | null;
-}
-
-interface SubmissionLookupRow extends RowDataPacket {
-  id: string;
-  submitted_at: string | null;
-  final_decision: string | null;
-  walkin_end_stage: string | null;
-  round2_result: string | null;
-  second_round_interviewer_name_snapshot: string | null;
-}
-
-interface OnboardingLookupRow extends RowDataPacket {
-  id: string;
-  status: string | null;
-  onboarding_token_expires_at: string | null;
-  joining_date: string | null;
-}
+type ActivityActorContext = {
+  userId: string;
+  activity_date: string;
+  activity_month: string;
+  recruiter_id: string;
+  recruiter_employee_id: string | null;
+  recruiter_code: string | null;
+  recruiter_name_snapshot: string;
+  branch_name: string;
+  location_name: string;
+};
 
 const TRUE_VALUES = new Set(["yes", "y", "true", "1", "selected", "joined", "walkin", "contacted"]);
 const FALSE_VALUES = new Set(["", "no", "n", "false", "0", "null", "undefined"]);
+
+const DEFAULT_HIRING_OPTION_LISTS = {
+  processOptions: [] as string[],
+  sourceOptions: ["Walk-In", "Reference", "Job Portal", "Consultancy", "Employee Referral"],
+  positionOptions: [] as string[],
+  wpGroupOptions: [] as string[],
+  callingOutcomeOptions: [
+    "Interested - Will Visit",
+    "Callback Requested",
+    "Not Contacted",
+    "No Response",
+    "Not Interested",
+    "Wrong Number / Invalid",
+  ],
+  genderOptions: ["Male", "Female", "Other"],
+  educationOptions: ["10th Pass", "12th Pass", "Graduate", "Post Graduate", "Diploma"],
+  experienceOptions: ["Fresher", "0-1 Year", "1-2 Years", "2-3 Years", "3+ Years"],
+};
 
 const HEADER_ALIASES: Record<string, string[]> = {
   activity_date: ["Date"],
@@ -325,17 +329,17 @@ export function normalizeMobile(value: unknown): string | null {
 }
 
 export function parseSheetDate(value: unknown): string | null {
+  const toIsoDate = (year: number, month: number, day: number) =>
+    `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
   if (value === null || value === undefined || value === "") return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
+    return toIsoDate(value.getFullYear(), value.getMonth() + 1, value.getDate());
   }
   if (typeof value === "number" && Number.isFinite(value)) {
     const parsed = XLSX.SSF.parse_date_code(value);
     if (parsed) {
-      const yyyy = String(parsed.y).padStart(4, "0");
-      const mm = String(parsed.m).padStart(2, "0");
-      const dd = String(parsed.d).padStart(2, "0");
-      return `${yyyy}-${mm}-${dd}`;
+      return toIsoDate(parsed.y, parsed.m, parsed.d);
     }
   }
   const raw = text(value);
@@ -344,19 +348,60 @@ export function parseSheetDate(value: unknown): string | null {
   if (excelMatch) {
     const parsed = XLSX.SSF.parse_date_code(Number(raw));
     if (parsed) {
-      const yyyy = String(parsed.y).padStart(4, "0");
-      const mm = String(parsed.m).padStart(2, "0");
-      const dd = String(parsed.d).padStart(2, "0");
-      return `${yyyy}-${mm}-${dd}`;
+      return toIsoDate(parsed.y, parsed.m, parsed.d);
     }
+  }
+  const dmyMatch = raw.match(/^(\d{1,2})[-/\s]([A-Za-z]{3,9}|\d{1,2})[-/\s](\d{2,4})$/);
+  if (dmyMatch) {
+    const [, dayRaw, monthRaw, yearRaw] = dmyMatch;
+    const day = Number(dayRaw);
+    const monthText = monthRaw.toLowerCase();
+    const monthByName: Record<string, number> = {
+      jan: 1,
+      january: 1,
+      feb: 2,
+      february: 2,
+      mar: 3,
+      march: 3,
+      apr: 4,
+      april: 4,
+      may: 5,
+      jun: 6,
+      june: 6,
+      jul: 7,
+      july: 7,
+      aug: 8,
+      august: 8,
+      sep: 9,
+      sept: 9,
+      september: 9,
+      oct: 10,
+      october: 10,
+      nov: 11,
+      november: 11,
+      dec: 12,
+      december: 12,
+    };
+    const month = monthByName[monthText] ?? Number(monthRaw);
+    const numericYear = Number(yearRaw);
+    const year = yearRaw.length === 2 ? 2000 + numericYear : numericYear;
+    if (Number.isInteger(day) && Number.isInteger(month) && Number.isInteger(year) && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return toIsoDate(year, month, day);
+    }
+  }
+  const isoMatch = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoMatch) {
+    return toIsoDate(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
   }
   const direct = new Date(raw);
   if (!Number.isNaN(direct.getTime())) {
-    return direct.toISOString().slice(0, 10);
+    return toIsoDate(direct.getFullYear(), direct.getMonth() + 1, direct.getDate());
   }
   const alt = raw.replace(/'/g, " ");
   const parsedAlt = new Date(alt);
-  if (!Number.isNaN(parsedAlt.getTime())) return parsedAlt.toISOString().slice(0, 10);
+  if (!Number.isNaN(parsedAlt.getTime())) {
+    return toIsoDate(parsedAlt.getFullYear(), parsedAlt.getMonth() + 1, parsedAlt.getDate());
+  }
   return null;
 }
 
@@ -373,6 +418,163 @@ export function normalizeMonth(value: unknown): string | null {
     return date.toLocaleDateString("en-IN", { month: "short", year: "2-digit" }).replace(/\s/g, "-");
   }
   return compact;
+}
+
+function getIstDateParts(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return {
+    yyyy: get("year"),
+    mm: get("month"),
+    dd: get("day"),
+  };
+}
+
+function getCurrentIstDate() {
+  const { yyyy, mm, dd } = getIstDateParts();
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function getCurrentIstMonthLabel() {
+  const date = new Date(`${getCurrentIstDate()}T00:00:00+05:30`);
+  return date
+    .toLocaleDateString("en-IN", { month: "short", year: "2-digit", timeZone: "Asia/Kolkata" })
+    .replace(/\s/g, "-");
+}
+
+function deriveContactedFlag(outcome: string | null) {
+  const lowered = String(outcome ?? "").trim().toLowerCase();
+  if (!lowered) return 0;
+  if (
+    lowered.includes("not contacted") ||
+    lowered.includes("no response") ||
+    lowered.includes("no answer") ||
+    lowered.includes("switched off") ||
+    lowered.includes("wrong number") ||
+    lowered.includes("invalid") ||
+    lowered.includes("busy")
+  ) {
+    return 0;
+  }
+  return 1;
+}
+
+function deriveCurrentStatus(outcome: string | null) {
+  const lowered = String(outcome ?? "").trim().toLowerCase();
+  if (!lowered) return null;
+  if (lowered.includes("callback")) return "Callback Pending";
+  if (
+    lowered.includes("not contacted") ||
+    lowered.includes("no response") ||
+    lowered.includes("no answer") ||
+    lowered.includes("wrong number") ||
+    lowered.includes("invalid") ||
+    lowered.includes("busy") ||
+    lowered.includes("switched off")
+  ) {
+    return "Not Contacted";
+  }
+  if (lowered.includes("interested") || lowered.includes("visit") || lowered.includes("walk-in") || lowered.includes("walkin")) {
+    return "Expected Walk-In";
+  }
+  if (lowered.includes("not interested")) return "Closed - Not Interested";
+  return outcome;
+}
+
+async function getOptionList(configKey: string, fallback: string[]) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT config_value FROM ats_form_config WHERE config_key = ? LIMIT 1`,
+    [configKey]
+  );
+  const raw = rows[0]?.config_value;
+  if (Array.isArray(raw)) return raw.map(String);
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map(String);
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+async function buildActivityActorContext(actorUserId: string): Promise<ActivityActorContext> {
+  const recruiterProfile = await resolveRecruiterForActor(actorUserId).catch((err: unknown) => {
+    // Re-throw hard DB/connection errors; swallow only "not found" misses
+    if (err && typeof err === "object" && ("fatal" in err || "code" in err)) {
+      const e = err as { fatal?: boolean; code?: string };
+      if (e.fatal || (e.code && e.code !== "ER_NO_ROWS_FOUND")) throw err;
+    }
+    return null;
+  });
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        e.id AS employee_id,
+        e.employee_code,
+        COALESCE(NULLIF(e.full_name, ''), TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')))) AS employee_name,
+        COALESCE(b.branch_name, b.branch_code, e.branch_id) AS branch_name
+       FROM employees e
+       LEFT JOIN branch_master b ON b.id = e.branch_id
+      WHERE e.user_id = ?
+      LIMIT 1`,
+    [actorUserId]
+  );
+  const employee = rows[0] ?? {};
+  const branchName = text(recruiterProfile?.branch) ?? text(employee.branch_name) ?? "Unmapped";
+  const recruiterName =
+    text(recruiterProfile?.name) ??
+    text(employee.employee_name) ??
+    text(employee.employee_code) ??
+    "Recruiter";
+
+  return {
+    userId: actorUserId,
+    activity_date: getCurrentIstDate(),
+    activity_month: getCurrentIstMonthLabel(),
+    recruiter_id: actorUserId,
+    recruiter_employee_id: text(recruiterProfile?.employeeId) ?? text(employee.employee_id),
+    recruiter_code: text(recruiterProfile?.recruiterCode) ?? text(employee.employee_code),
+    recruiter_name_snapshot: recruiterName,
+    branch_name: branchName,
+    location_name: branchName,
+  };
+}
+
+function buildManualActivityPayload(payload: Record<string, unknown>, actor: ActivityActorContext) {
+  const recruiterRemarks =
+    text(payload.recruiter_remarks) ??
+    text(payload.calling_outcome) ??
+    text(payload.recruiterRemarks) ??
+    null;
+
+  const contactedFlag =
+    payload.contacted_flag !== undefined ? parseBool(payload.contacted_flag) : deriveContactedFlag(recruiterRemarks);
+
+  return {
+    ...payload,
+    activity_date: actor.activity_date,
+    activity_month: actor.activity_month,
+    recruiter_id: actor.recruiter_id,
+    recruiter_employee_id: actor.recruiter_employee_id,
+    recruiter_code: actor.recruiter_code,
+    recruiter_name_snapshot: actor.recruiter_name_snapshot,
+    branch_name: actor.branch_name,
+    location_name: actor.location_name,
+    recruiter_remarks: recruiterRemarks,
+    current_status: text(payload.current_status) ?? deriveCurrentStatus(recruiterRemarks),
+    contacted_flag: contactedFlag,
+    walkin_flag: payload.walkin_flag !== undefined ? parseBool(payload.walkin_flag) : 0,
+    final_selection_flag: payload.final_selection_flag !== undefined ? parseBool(payload.final_selection_flag) : 0,
+    joined_flag: payload.joined_flag !== undefined ? parseBool(payload.joined_flag) : 0,
+    source_system: text(payload.source_system) ?? "HRMS",
+  };
 }
 
 function normalizeStatus(value: unknown): string | null {
@@ -521,7 +723,7 @@ export function parseRecruiterSheet(buffer: Buffer, fileName: string): HiringShe
 
 async function getCurrentUserBranch(userId: string): Promise<string | null> {
   const [rows] = await db.execute<BranchNameRow[]>(
-    `SELECT COALESCE(b.branch_name, e.branch_name, e.branch_id) AS branch_name
+    `SELECT COALESCE(b.branch_name, b.branch_code, e.branch_id) AS branch_name
        FROM employees e
        LEFT JOIN branch_master b ON b.id = e.branch_id
       WHERE e.user_id = ?
@@ -531,22 +733,49 @@ async function getCurrentUserBranch(userId: string): Promise<string | null> {
   return text(rows[0]?.branch_name);
 }
 
-function isPrivilegedRole(role: string | undefined) {
-  return ["admin", "hr", "super_admin"].includes(role ?? "");
-}
+export async function getHiringActivityBootstrap(userId: string): Promise<HiringActivityBootstrap> {
+  const actor = await buildActivityActorContext(userId);
+  const [
+    processOptions,
+    sourceOptions,
+    positionOptions,
+    wpGroupOptions,
+    callingOutcomeOptions,
+    genderOptions,
+    educationOptions,
+    experienceOptions,
+  ] = await Promise.all([
+    getOptionList("hiringProcessOptions", DEFAULT_HIRING_OPTION_LISTS.processOptions),
+    getOptionList("hiringSourceOptions", DEFAULT_HIRING_OPTION_LISTS.sourceOptions),
+    getOptionList("hiringPositionOptions", DEFAULT_HIRING_OPTION_LISTS.positionOptions),
+    getOptionList("hiringWpGroupOptions", DEFAULT_HIRING_OPTION_LISTS.wpGroupOptions),
+    getOptionList("hiringCallingOutcomeOptions", DEFAULT_HIRING_OPTION_LISTS.callingOutcomeOptions),
+    getOptionList("genderOptions", DEFAULT_HIRING_OPTION_LISTS.genderOptions),
+    getOptionList("educationOptions", DEFAULT_HIRING_OPTION_LISTS.educationOptions),
+    getOptionList("experienceOptions", DEFAULT_HIRING_OPTION_LISTS.experienceOptions),
+  ]);
 
-function scopedActivityClause(role: string | undefined) {
-  return isPrivilegedRole(role) ? "" : " AND (created_by = ? OR recruiter_id = ?)";
-}
-
-function suggestedStatusFromContext(activity: RowDataPacket | undefined, candidate: CandidateLookupRow | undefined, submission: SubmissionLookupRow | undefined, onboarding: OnboardingLookupRow | undefined) {
-  if (activity?.employee_id || activity?.joined_candidate_emp_code) return "Rostered";
-  if (onboarding?.status && ["submitted", "approved", "completed", "onboarding_complete"].includes(String(onboarding.status).toLowerCase())) {
-    return "Onboarded";
-  }
-  if (submission?.final_decision === "Selected") return "Selected";
-  if (activity?.walkin_flag === 1 || activity?.queue_token_id) return "Turned Up";
-  return text(activity?.current_status) ?? null;
+  return {
+    actor: {
+      userId,
+      recruiterName: actor.recruiter_name_snapshot,
+      recruiterEmployeeId: actor.recruiter_employee_id,
+      recruiterCode: actor.recruiter_code,
+      branchName: actor.branch_name,
+      activityDate: actor.activity_date,
+      activityMonth: actor.activity_month,
+    },
+    options: {
+      processOptions,
+      sourceOptions,
+      positionOptions,
+      wpGroupOptions,
+      callingOutcomeOptions,
+      genderOptions,
+      educationOptions,
+      experienceOptions,
+    },
+  };
 }
 
 function buildFilterSql(filters: HiringFilters, scopedOnly: boolean) {
@@ -604,14 +833,14 @@ function buildFilterSql(filters: HiringFilters, scopedOnly: boolean) {
 }
 
 export async function listHiringActivity(userId: string, role: string | undefined, filters: HiringFilters) {
-  const scopedOnly = !isPrivilegedRole(role);
+  const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
   const { sql, params } = buildFilterSql(filters, scopedOnly);
   if (scopedOnly) {
     params.push(userId, userId);
   }
 
-  const page = filters.page ?? 1;
-  const limit = filters.limit ?? 50;
+  const page = Math.max(1, Math.trunc(Number(filters.page) || 1));
+  const limit = Math.min(Math.max(1, Math.trunc(Number(filters.limit) || 50)), 100);
   const offset = (page - 1) * limit;
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -619,8 +848,8 @@ export async function listHiringActivity(userId: string, role: string | undefine
        FROM ats_recruiter_hiring_activity
       WHERE ${sql}
       ORDER BY activity_date DESC, created_at DESC
-      LIMIT ? OFFSET ?`,
-    [...params, limit, offset]
+      LIMIT ${limit} OFFSET ${offset}`,
+    params
   );
   const [count] = await db.execute<CountRow[]>(
     `SELECT COUNT(*) AS total
@@ -634,88 +863,6 @@ export async function listHiringActivity(userId: string, role: string | undefine
     total: Number(count[0]?.total ?? 0),
     page,
     limit,
-  };
-}
-
-export async function getHiringActivityContext(userId: string, role: string | undefined, mobileInput: string): Promise<HiringActivityContext | null> {
-  const mobile = normalizeMobile(mobileInput);
-  if (!mobile) {
-    throw Object.assign(new Error("Valid mobile number is required"), { statusCode: 400 });
-  }
-
-  const activityParams: unknown[] = [mobile];
-  if (!isPrivilegedRole(role)) {
-    activityParams.push(userId, userId);
-  }
-
-  const [activityRows] = await db.execute<RowDataPacket[]>(
-    `SELECT *
-       FROM ats_recruiter_hiring_activity
-      WHERE mobile = ?${scopedActivityClause(role)}
-      ORDER BY activity_date DESC, created_at DESC
-      LIMIT 1`,
-    activityParams
-  );
-
-  const activity = activityRows[0];
-  if (!activity) {
-    return null;
-  }
-
-  const candidateId = text(activity.linked_candidate_id);
-  let candidate: CandidateLookupRow | undefined;
-  let latestSubmission: SubmissionLookupRow | undefined;
-  let onboarding: OnboardingLookupRow | undefined;
-
-  if (candidateId) {
-    const [candidateRows] = await db.execute<CandidateLookupRow[]>(
-      `SELECT id, candidate_code, full_name, mobile, email, profile_status, status, current_stage,
-              applied_for_process, applied_for_branch, q_token
-         FROM ats_candidate
-        WHERE id = ?
-        LIMIT 1`,
-      [candidateId]
-    );
-    candidate = candidateRows[0];
-
-    const [submissionRows] = await db.execute<SubmissionLookupRow[]>(
-      `SELECT id, submitted_at, final_decision, walkin_end_stage, round2_result, second_round_interviewer_name_snapshot
-         FROM ats_interview_submission
-        WHERE candidate_id = ?
-        ORDER BY submitted_at DESC, id DESC
-        LIMIT 1`,
-      [candidateId]
-    );
-    latestSubmission = submissionRows[0];
-
-    const [onboardingRows] = await db.execute<OnboardingLookupRow[]>(
-      `SELECT id, status, onboarding_token_expires_at, joining_date
-         FROM ats_onboarding_bridge
-        WHERE candidate_id = ?
-        ORDER BY updated_at DESC, created_at DESC
-        LIMIT 1`,
-      [candidateId]
-    );
-    onboarding = onboardingRows[0];
-  }
-
-  const suggestedStatus = suggestedStatusFromContext(activity, candidate, latestSubmission, onboarding);
-  const alreadySelected = (latestSubmission?.final_decision ?? activity.final_selection_flag) === "Selected" || Number(activity.final_selection_flag ?? 0) === 1;
-  const alreadyOnboarded = !!onboarding?.status && ["submitted", "approved", "completed", "onboarding_complete"].includes(String(onboarding.status).toLowerCase());
-  const alreadyRostered = !!(activity.employee_id || activity.joined_candidate_emp_code);
-
-  return {
-    mobile,
-    latestActivity: activity ?? null,
-    candidate: candidate ?? null,
-    latestSubmission: latestSubmission ?? null,
-    onboarding: onboarding ?? null,
-    suggestions: {
-      alreadySelected,
-      alreadyOnboarded,
-      alreadyRostered,
-      suggestedStatus,
-    },
   };
 }
 
@@ -741,7 +888,7 @@ async function findDuplicate(normalized: NormalizedHiringActivity): Promise<{ id
       normalized.process_name,
     ]
   );
-  return rows[0] ? { id: String(rows[0].id) } : null;
+  return rows[0]?.id ? { id: String(rows[0].id) } : null;
 }
 
 async function persistActivity(
@@ -769,6 +916,73 @@ async function persistActivity(
     return { action: "updated" as const, id: duplicate.id, duplicateOf: duplicate.id };
   }
 
+  const insertValues = [
+    insertId,
+    normalized.activity_date,
+    normalized.activity_month,
+    normalized.recruiter_id,
+    normalized.recruiter_employee_id,
+    normalized.recruiter_code,
+    normalized.recruiter_name_snapshot,
+    normalized.hiring_source,
+    normalized.wp_group,
+    normalized.position_name,
+    normalized.location_name,
+    normalized.branch_name,
+    normalized.process_name,
+    normalized.candidate_name,
+    normalized.gender,
+    normalized.mobile,
+    normalized.candidate_email,
+    normalized.education_qualification,
+    normalized.experience_level,
+    normalized.candidate_location,
+    normalized.recruiter_remarks,
+    normalized.recruiter_rejection_reason,
+    normalized.pi_hr_interviewer_date,
+    normalized.pi_hr_interviewer_name,
+    normalized.hr_interview_status,
+    normalized.hr_rejection_reason,
+    normalized.ai_assessment_score,
+    normalized.ai_interview_result,
+    normalized.ops_interviewer_employee_id,
+    normalized.ops_interviewer_name,
+    normalized.ops_interviewer_branch_snapshot,
+    normalized.ops_interview_status,
+    normalized.ops_rejection_reason,
+    normalized.salary_package_inr,
+    normalized.offer_letter_status,
+    normalized.joining_status,
+    normalized.batch_no,
+    normalized.current_status,
+    normalized.joined_candidate_emp_code,
+    normalized.emp_referral_details,
+    normalized.referee_employee_id,
+    normalized.referee_employee_code,
+    normalized.referee_name,
+    normalized.referee_branch,
+    normalized.referee_process,
+    normalized.referral_relationship,
+    normalized.referral_remarks,
+    normalized.referral_validation_status,
+    normalized.walkin_flag,
+    normalized.final_selection_flag,
+    normalized.joined_flag,
+    normalized.contacted_flag,
+    normalized.linked_candidate_id,
+    normalized.queue_token_id,
+    normalized.onboarding_bridge_id,
+    normalized.employee_id,
+    duplicate ? 1 : normalized.duplicate_warning,
+    duplicate?.id ?? normalized.duplicate_of_activity_id,
+    normalized.duplicate_override_reason,
+    normalized.import_batch_id,
+    normalized.source_system,
+    JSON.stringify(normalized.raw_sheet_payload ?? {}),
+    actorUserId,
+    actorUserId,
+  ];
+
   await db.execute(
     `INSERT INTO ats_recruiter_hiring_activity
       (id, activity_date, activity_month, recruiter_id, recruiter_employee_id, recruiter_code, recruiter_name_snapshot,
@@ -782,73 +996,8 @@ async function persistActivity(
        referral_remarks, referral_validation_status, walkin_flag, final_selection_flag, joined_flag, contacted_flag,
        linked_candidate_id, queue_token_id, onboarding_bridge_id, employee_id, duplicate_warning, duplicate_of_activity_id,
        duplicate_override_reason, import_batch_id, source_system, raw_sheet_payload, created_by, updated_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      insertId,
-      normalized.activity_date,
-      normalized.activity_month,
-      normalized.recruiter_id,
-      normalized.recruiter_employee_id,
-      normalized.recruiter_code,
-      normalized.recruiter_name_snapshot,
-      normalized.hiring_source,
-      normalized.wp_group,
-      normalized.position_name,
-      normalized.location_name,
-      normalized.branch_name,
-      normalized.process_name,
-      normalized.candidate_name,
-      normalized.gender,
-      normalized.mobile,
-      normalized.candidate_email,
-      normalized.education_qualification,
-      normalized.experience_level,
-      normalized.candidate_location,
-      normalized.recruiter_remarks,
-      normalized.recruiter_rejection_reason,
-      normalized.pi_hr_interviewer_date,
-      normalized.pi_hr_interviewer_name,
-      normalized.hr_interview_status,
-      normalized.hr_rejection_reason,
-      normalized.ai_assessment_score,
-      normalized.ai_interview_result,
-      normalized.ops_interviewer_employee_id,
-      normalized.ops_interviewer_name,
-      normalized.ops_interviewer_branch_snapshot,
-      normalized.ops_interview_status,
-      normalized.ops_rejection_reason,
-      normalized.salary_package_inr,
-      normalized.offer_letter_status,
-      normalized.joining_status,
-      normalized.batch_no,
-      normalized.current_status,
-      normalized.joined_candidate_emp_code,
-      normalized.emp_referral_details,
-      normalized.referee_employee_id,
-      normalized.referee_employee_code,
-      normalized.referee_name,
-      normalized.referee_branch,
-      normalized.referee_process,
-      normalized.referral_relationship,
-      normalized.referral_remarks,
-      normalized.referral_validation_status,
-      normalized.walkin_flag,
-      normalized.final_selection_flag,
-      normalized.joined_flag,
-      normalized.contacted_flag,
-      normalized.linked_candidate_id,
-      normalized.queue_token_id,
-      normalized.onboarding_bridge_id,
-      normalized.employee_id,
-      duplicate ? 1 : normalized.duplicate_warning,
-      duplicate?.id ?? normalized.duplicate_of_activity_id,
-      normalized.duplicate_override_reason,
-      normalized.import_batch_id,
-      normalized.source_system,
-      JSON.stringify(normalized.raw_sheet_payload ?? {}),
-      actorUserId,
-      actorUserId,
-    ]
+     VALUES (${insertValues.map(() => "?").join(", ")})`,
+    insertValues
   );
 
   return { action: "inserted" as const, id: insertId, duplicateOf: duplicate?.id ?? null };
@@ -859,7 +1008,8 @@ export async function upsertHiringActivity(
   actorUserId: string,
   duplicateMode: DuplicateMode = "insert_duplicates_with_warning"
 ) {
-  const { normalized, errors } = mapSheetRow(payload);
+  const actor = await buildActivityActorContext(actorUserId);
+  const { normalized, errors } = mapSheetRow(buildManualActivityPayload(payload, actor));
   if (!normalized) {
     throw Object.assign(new Error(errors.join("; ")), { statusCode: 400, validationErrors: errors });
   }
@@ -889,7 +1039,8 @@ export async function updateHiringActivityById(
     throw Object.assign(new Error("Hiring activity not found"), { statusCode: 404 });
   }
 
-  const { normalized, errors } = mapSheetRow({ ...rows[0], ...payload });
+  const actor = await buildActivityActorContext(actorUserId);
+  const { normalized, errors } = mapSheetRow(buildManualActivityPayload({ ...rows[0], ...payload }, actor));
   if (!normalized || errors.length) {
     throw Object.assign(new Error(errors.join("; ") || "Invalid hiring activity row"), { statusCode: 400, validationErrors: errors });
   }
@@ -1004,7 +1155,7 @@ export async function importHiringActivityRows(
   };
 }
 
-async function resolveCandidateByActivity(activity: NormalizedHiringActivity): Promise<AtsCandidate | null> {
+async function resolveCandidateByActivity(activity: NormalizedHiringActivity): Promise<CandidateBridgeRecord | null> {
   const mobile = activity.mobile;
   const name = activity.candidate_name;
   const email = activity.candidate_email;
@@ -1021,8 +1172,8 @@ async function resolveCandidateByActivity(activity: NormalizedHiringActivity): P
   for (const [sql, params] of queries) {
     if (params[0] === null || params[0] === undefined || params[0] === "") continue;
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-    const candidate = rows[0] as AtsCandidate | undefined;
-    if (candidate) return candidate;
+    const candidate = rows[0];
+    if (candidate?.id) return candidate as CandidateBridgeRecord;
   }
   return null;
 }
@@ -1036,6 +1187,66 @@ async function syncActivityCandidateLink(activityId: string, candidateId: string
       WHERE id = ?`,
     [candidateId, queueTokenId, activityId]
   );
+}
+
+export async function syncHiringActivityFromCandidateRegistration(params: {
+  mobile: string;
+  candidateId: string;
+  queueTokenId?: string | null;
+  branchName?: string | null;
+  processName?: string | null;
+  activityDate?: string | null;
+}) {
+  const activityDate = params.activityDate ?? getCurrentIstDate();
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id
+       FROM ats_recruiter_hiring_activity
+      WHERE mobile = ?
+        AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        AND (linked_candidate_id IS NULL OR linked_candidate_id = ?)
+      ORDER BY
+        CASE WHEN activity_date = ? THEN 0 ELSE 1 END,
+        CASE WHEN ? IS NOT NULL AND branch_name = ? THEN 0 ELSE 1 END,
+        CASE WHEN ? IS NOT NULL AND process_name = ? THEN 0 ELSE 1 END,
+        created_at DESC
+      LIMIT 1`,
+    [
+      params.mobile,
+      params.candidateId,
+      activityDate,
+      params.branchName ?? null,
+      params.branchName ?? null,
+      params.processName ?? null,
+      params.processName ?? null,
+    ]
+  );
+
+  const activityId = text(rows[0]?.id);
+  if (!activityId) return null;
+
+  await db.execute(
+    `UPDATE ats_recruiter_hiring_activity
+        SET linked_candidate_id = ?,
+            queue_token_id = COALESCE(?, queue_token_id),
+            walkin_flag = 1,
+            contacted_flag = 1,
+            current_status = 'Arrived',
+            branch_name = COALESCE(NULLIF(branch_name, ''), ?),
+            location_name = COALESCE(NULLIF(location_name, ''), ?),
+            process_name = COALESCE(NULLIF(process_name, ''), ?),
+            updated_at = NOW()
+      WHERE id = ?`,
+    [
+      params.candidateId,
+      params.queueTokenId ?? null,
+      params.branchName ?? null,
+      params.branchName ?? null,
+      params.processName ?? null,
+      activityId,
+    ]
+  );
+
+  return activityId;
 }
 
 export async function createCandidateFromActivity(activityId: string, actorUserId: string) {
@@ -1109,7 +1320,7 @@ export async function createTokenFromActivity(activityId: string, actorUserId: s
   const normalized = mapSheetRow(activity).normalized;
   if (!normalized) throw Object.assign(new Error("Invalid hiring activity row"), { statusCode: 400 });
 
-  let candidate = await resolveCandidateByActivity(normalized);
+  let candidate: { id: string } | null = await resolveCandidateByActivity(normalized);
   if (!candidate) {
     const created = await createCandidateFromActivity(activityId, actorUserId);
     candidate = created.candidate;
@@ -1148,31 +1359,13 @@ export async function sendOnboardingFromActivity(activityId: string, actorUserId
     throw Object.assign(new Error("Candidate must be selected before onboarding"), { statusCode: 400 });
   }
 
-  let candidate = await resolveCandidateByActivity(normalized);
+  let candidate: { id: string } | null = await resolveCandidateByActivity(normalized);
   if (!candidate) {
     const created = await createCandidateFromActivity(activityId, actorUserId);
     candidate = created.candidate;
   }
 
   const result = await sendOnboardingToken(candidate.id, actorUserId);
-  const [bridgeRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id
-       FROM ats_onboarding_bridge
-      WHERE candidate_id = ?
-      ORDER BY updated_at DESC, created_at DESC
-      LIMIT 1`,
-    [candidate.id]
-  );
-  const bridgeId = text(bridgeRows[0]?.id);
-  if (bridgeId) {
-    await db.execute(
-      `UPDATE ats_recruiter_hiring_activity
-          SET onboarding_bridge_id = ?,
-              updated_at = NOW()
-        WHERE id = ?`,
-      [bridgeId, activityId]
-    );
-  }
   return { candidate, ...result };
 }
 
@@ -1196,47 +1389,36 @@ async function aggregateBy(column: string, filters: HiringFilters, scopedOnly: b
       WHERE ${sql}
       GROUP BY COALESCE(${column}, 'Unmapped')
       ORDER BY total DESC
-      LIMIT 10`,
+      LIMIT 50`,
     params
   );
   return rows;
 }
 
 export async function getHiringDashboard(userId: string, role: string | undefined, filters: HiringFilters): Promise<HiringDashboard> {
-  const scopedOnly = !isPrivilegedRole(role);
+  const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
   const { sql, params } = await applyActivityFilters(filters, scopedOnly, userId);
   const [summary] = await db.execute<DashboardSummaryRow[]>(
     `SELECT
         COUNT(*) AS total_records,
         SUM(CASE WHEN contacted_flag = 1 THEN 1 ELSE 0 END) AS total_contacted,
         SUM(CASE WHEN contacted_flag = 0 THEN 1 ELSE 0 END) AS not_contacted,
-        SUM(CASE WHEN current_status IN ('Callback Pending', 'Callback Requested', 'Call Back') THEN 1 ELSE 0 END) AS callback_pending,
-        SUM(CASE WHEN current_status IN ('Confirmed for Interview', 'Will Come', 'Lineup Confirmed') THEN 1 ELSE 0 END) AS confirmed_for_interview,
-        SUM(CASE WHEN walkin_flag = 1 OR queue_token_id IS NOT NULL THEN 1 ELSE 0 END) AS turned_up,
-        SUM(CASE WHEN hr_interview_status IS NOT NULL OR ops_interview_status IS NOT NULL OR ai_interview_result IS NOT NULL THEN 1 ELSE 0 END) AS interviewed,
-        SUM(CASE WHEN recruiter_remarks = 'Shortlisted' THEN 1 ELSE 0 END) AS shortlisted,
-        SUM(CASE WHEN recruiter_remarks = 'Rejected' THEN 1 ELSE 0 END) AS recruiter_rejected,
+        SUM(CASE WHEN LOWER(recruiter_remarks) = 'shortlisted' THEN 1 ELSE 0 END) AS shortlisted,
+        SUM(CASE WHEN LOWER(recruiter_remarks) = 'rejected' THEN 1 ELSE 0 END) AS recruiter_rejected,
         SUM(CASE WHEN hr_interview_status = 'Selected' THEN 1 ELSE 0 END) AS hr_selected,
         SUM(CASE WHEN hr_interview_status = 'Rejected' THEN 1 ELSE 0 END) AS hr_rejected,
         SUM(CASE WHEN ai_interview_result IN ('Selected','Pass') THEN 1 ELSE 0 END) AS ai_selected,
         SUM(CASE WHEN ai_interview_result IN ('Rejected','Fail') THEN 1 ELSE 0 END) AS ai_rejected,
         SUM(CASE WHEN ops_interview_status = 'Selected' THEN 1 ELSE 0 END) AS ops_selected,
         SUM(CASE WHEN ops_interview_status = 'Rejected' THEN 1 ELSE 0 END) AS ops_rejected,
-        SUM(CASE WHEN final_selection_flag = 1 OR current_status IN ('Selected', 'Offer Shared', 'Onboarding In Progress', 'Joined', 'Rostered') THEN 1 ELSE 0 END) AS final_selected,
-        SUM(CASE WHEN EXISTS (
-              SELECT 1
-                FROM ats_onboarding_bridge ob
-               WHERE ob.candidate_id = ats_recruiter_hiring_activity.linked_candidate_id
-                 AND ob.status IN ('submitted', 'approved', 'completed', 'onboarding_complete')
-             ) OR joining_status IN ('Onboarded', 'Onboarding Complete') THEN 1 ELSE 0 END) AS onboarded,
-        SUM(CASE WHEN employee_id IS NOT NULL OR joined_candidate_emp_code IS NOT NULL OR joined_flag = 1 OR current_status = 'Rostered' THEN 1 ELSE 0 END) AS rostered,
+        SUM(CASE WHEN final_selection_flag = 1 THEN 1 ELSE 0 END) AS final_selected,
         SUM(CASE WHEN offer_letter_status IN ('Issued','Sent','Offer Issued','Offer Sent') THEN 1 ELSE 0 END) AS offer_letter_issued,
         SUM(CASE WHEN joined_flag = 1 THEN 1 ELSE 0 END) AS joined,
         SUM(CASE WHEN joining_status IN ('Pending','Joining Pending','Offer Accepted') THEN 1 ELSE 0 END) AS joining_pending,
         SUM(CASE WHEN walkin_flag = 1 THEN 1 ELSE 0 END) AS walkins,
         SUM(CASE WHEN hiring_source = 'Employee Referral' THEN 1 ELSE 0 END) AS employee_referrals,
         COUNT(DISTINCT recruiter_name_snapshot) AS active_recruiters,
-        GREATEST(COUNT(DISTINCT recruiter_name_snapshot) - COUNT(DISTINCT CASE WHEN updated_at < DATE_SUB(NOW(), INTERVAL 2 DAY) THEN recruiter_name_snapshot END), 0) AS recruiter_inactive_count
+        COUNT(DISTINCT CASE WHEN updated_at < DATE_SUB(NOW(), INTERVAL 2 DAY) THEN recruiter_name_snapshot END) AS recruiter_inactive_count
       FROM ats_recruiter_hiring_activity
       WHERE ${sql}`,
     params
@@ -1247,10 +1429,6 @@ export async function getHiringDashboard(userId: string, role: string | undefine
     total_contacted: Number(summary[0]?.total_contacted ?? 0),
     contacted_pct: 0,
     not_contacted: Number(summary[0]?.not_contacted ?? 0),
-    callback_pending: Number(summary[0]?.callback_pending ?? 0),
-    confirmed_for_interview: Number(summary[0]?.confirmed_for_interview ?? 0),
-    turned_up: Number(summary[0]?.turned_up ?? 0),
-    interviewed: Number(summary[0]?.interviewed ?? 0),
     shortlisted: Number(summary[0]?.shortlisted ?? 0),
     recruiter_rejected: Number(summary[0]?.recruiter_rejected ?? 0),
     hr_selected: Number(summary[0]?.hr_selected ?? 0),
@@ -1260,8 +1438,6 @@ export async function getHiringDashboard(userId: string, role: string | undefine
     ops_selected: Number(summary[0]?.ops_selected ?? 0),
     ops_rejected: Number(summary[0]?.ops_rejected ?? 0),
     final_selected: Number(summary[0]?.final_selected ?? 0),
-    onboarded: Number(summary[0]?.onboarded ?? 0),
-    rostered: Number(summary[0]?.rostered ?? 0),
     offer_letter_issued: Number(summary[0]?.offer_letter_issued ?? 0),
     joined: Number(summary[0]?.joined ?? 0),
     joining_pending: Number(summary[0]?.joining_pending ?? 0),
@@ -1306,30 +1482,71 @@ export async function searchInterviewers(branchName: string | null, query: strin
   const branch = branchName || (userId ? await getCurrentUserBranch(userId) : null);
   const q = `%${query ?? ""}%`;
   const round = roundType || "ops_round";
-  const [rows] = await db.execute<InterviewerRow[]>(
-    `SELECT
-        e.id,
-        e.employee_code,
-        COALESCE(e.first_name, '') AS first_name,
-        COALESCE(e.last_name, '') AS last_name,
-        COALESCE(e.mobile, e.alternate_mobile) AS mobile,
-        COALESCE(e.official_email, e.office_email, e.email) AS email,
-        b.branch_name,
-        d.dept_name,
-        des.designation_name
-      FROM employees e
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN department_master d ON d.id = e.department_id
-      LEFT JOIN designation_master des ON des.id = e.designation_id
-      WHERE e.active_status = 1
-        AND (? IS NULL OR b.branch_name = ? OR b.branch_code = ?)
-        AND (
-          CONCAT_WS(' ', e.first_name, e.last_name, e.employee_code, COALESCE(e.official_email, e.office_email, e.email)) LIKE ?
-        )
-      ORDER BY e.first_name, e.last_name
-      LIMIT ?`,
-    [branch, branch, branch, q, limit]
-  );
+  let rows: InterviewerRow[] = [];
+
+  const runQuery = async (sql: string, params: unknown[]) => {
+    const [result] = await db.execute<InterviewerRow[]>(sql, params);
+    return result;
+  };
+
+  if (branch) {
+    rows = await runQuery(
+      `SELECT
+          e.id,
+          e.employee_code,
+          COALESCE(e.first_name, '') AS first_name,
+          COALESCE(e.last_name, '') AS last_name,
+          COALESCE(e.mobile, e.alternate_mobile) AS mobile,
+          COALESCE(e.official_email, e.office_email, e.email) AS email,
+          b.branch_name,
+          d.dept_name,
+          des.designation_name
+        FROM employees e
+        LEFT JOIN branch_master b ON b.id = e.branch_id
+        LEFT JOIN department_master d ON d.id = e.department_id
+        LEFT JOIN designation_master des ON des.id = e.designation_id
+        WHERE e.active_status = 1
+          AND (b.branch_name = ? OR b.branch_code = ? OR b.branch_name LIKE CONCAT('%', ?, '%'))
+          AND (
+            CONCAT_WS(' ', e.first_name, e.last_name, e.employee_code, COALESCE(e.official_email, e.office_email, e.email)) LIKE ?
+            OR e.employee_code LIKE ?
+          )
+        ORDER BY e.first_name, e.last_name
+        LIMIT ?`,
+      [branch, branch, branch, q, q, limit]
+    );
+  }
+
+  if (rows.length === 0) {
+    rows = await runQuery(
+      `SELECT
+          e.id,
+          e.employee_code,
+          COALESCE(e.first_name, '') AS first_name,
+          COALESCE(e.last_name, '') AS last_name,
+          COALESCE(e.mobile, e.alternate_mobile) AS mobile,
+          COALESCE(e.official_email, e.office_email, e.email) AS email,
+          b.branch_name,
+          d.dept_name,
+          des.designation_name
+        FROM employees e
+        LEFT JOIN branch_master b ON b.id = e.branch_id
+        LEFT JOIN department_master d ON d.id = e.department_id
+        LEFT JOIN designation_master des ON des.id = e.designation_id
+        WHERE e.active_status = 1
+          AND (
+            CONCAT_WS(' ', e.first_name, e.last_name, e.employee_code, COALESCE(e.official_email, e.office_email, e.email)) LIKE ?
+            OR e.employee_code LIKE ?
+            OR COALESCE(e.first_name, '') LIKE ?
+            OR COALESCE(e.last_name, '') LIKE ?
+          )
+        ORDER BY CASE WHEN ? IS NOT NULL AND (b.branch_name = ? OR b.branch_code = ?) THEN 0 ELSE 1 END,
+                 e.first_name,
+                 e.last_name
+        LIMIT ?`,
+      [q, q, q, q, branch, branch, branch, limit]
+    );
+  }
 
   return rows.map((row) => ({
     id: row.id,

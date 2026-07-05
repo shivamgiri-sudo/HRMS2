@@ -20,8 +20,10 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 export const auditLogRouter = Router();
 auditLogRouter.use(requireAuth);
 
-const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
+type RequiredAuthRequest = AuthenticatedRequest & { authUser: NonNullable<AuthenticatedRequest["authUser"]> };
+
+const h = (fn: (req: RequiredAuthRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req as RequiredAuthRequest, res).catch(next);
 
 interface AuditLogCountRow extends RowDataPacket {
   total: number;
@@ -86,7 +88,7 @@ async function resolveActorRole(userId: string): Promise<string> {
  * - manager: own team's dispute audit if allowed (restricted, not yet implemented)
  * - employee: cannot access
  */
-export async function getAuditLogExtended(req: AuthenticatedRequest, res: Response): Promise<void> {
+export async function getAuditLogExtended(req: RequiredAuthRequest, res: Response): Promise<unknown> {
   // Access control: determine what this user can view
   const isAdmin = await hasAnyRole(req.authUser.id, "admin", "super_admin");
   const isPayrollHead = await hasAnyRole(req.authUser.id, "payroll_head");

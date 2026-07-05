@@ -94,21 +94,22 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
      WHERE DATE(interviewed_at) = CURDATE()`
   );
 
-  // Pending approvals
+  // Pending approvals — rows not yet approved or rejected
   const [pendingRes] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) as pending FROM ats_payroll_hr_validation
-     WHERE validation_status = 'approved'
+     WHERE validation_status NOT IN ('approved', 'rejected')
      AND candidate_id IN (
        SELECT id FROM ats_candidate WHERE current_stage = 'payroll_validated'
      )`
   );
 
-  // Employees joined this month
+  // Employees joined this month — use stage_log transition date, not candidate created_at
   const [joinedRes] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as joined FROM ats_candidate
-     WHERE current_stage = 'joined'
-     AND MONTH(created_at) = MONTH(CURRENT_DATE())
-     AND YEAR(created_at) = YEAR(CURRENT_DATE())`
+    `SELECT COUNT(DISTINCT sl.candidate_id) as joined
+     FROM ats_candidate_stage_log sl
+     WHERE sl.to_stage = 'joined'
+       AND MONTH(sl.stage_date) = MONTH(CURRENT_DATE())
+       AND YEAR(sl.stage_date) = YEAR(CURRENT_DATE())`
   );
 
   // Calculate conversion rate
@@ -174,12 +175,17 @@ export async function getBranchMetrics(): Promise<BranchMetrics[]> {
 /**
  * Get recruiter performance
  */
+function getIstDateString(offsetDays = 0): string {
+  const d = new Date(Date.now() + (5.5 * 60 - offsetDays * 24 * 60) * 60 * 1000);
+  return d.toISOString().slice(0, 10);
+}
+
 export async function getRecruiterPerformance(
   fromDate?: string,
   toDate?: string
 ): Promise<RecruiterPerformance[]> {
-  const from = fromDate || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  const to = toDate || new Date().toISOString().split('T')[0];
+  const from = fromDate || getIstDateString(30);
+  const to = toDate || getIstDateString(0);
 
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -207,9 +213,10 @@ export async function getRecruiterPerformance(
 }
 
 /**
- * Get timeline data (last 30 days)
+ * Get timeline data (max 30 days — UNION date-series is hard-coded to 30 rows)
  */
 export async function getTimelineData(days: number = 30): Promise<TimelineData[]> {
+  const safeDays = Math.min(days, 30); // UNION only generates 30 rows; cap to avoid silent truncation
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
       DATE(date_series.date) as date,
@@ -227,7 +234,7 @@ export async function getTimelineData(days: number = 30): Promise<TimelineData[]
         SELECT 20 UNION ALL SELECT 21 UNION ALL SELECT 22 UNION ALL SELECT 23 UNION ALL SELECT 24 UNION ALL
         SELECT 25 UNION ALL SELECT 26 UNION ALL SELECT 27 UNION ALL SELECT 28 UNION ALL SELECT 29
       ) seq
-      WHERE seq.seq < ?
+      WHERE seq.seq < ?   -- uses safeDays, capped at 30
     ) date_series
     LEFT JOIN (
       SELECT DATE(created_at) as date, COUNT(*) as registrations
@@ -252,7 +259,7 @@ export async function getTimelineData(days: number = 30): Promise<TimelineData[]
       GROUP BY DATE(interviewed_at)
     ) rej ON date_series.date = rej.date
     ORDER BY date_series.date ASC`,
-    [days]
+    [safeDays]
   );
 
   return results as TimelineData[];

@@ -18,6 +18,8 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { AIInsightPanel } from "@/components/ai";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { InterventionPanel } from "@/components/dashboard/InterventionPanel";
+import type { InterventionFlag } from "@/components/dashboard/InterventionPanel";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -876,6 +878,7 @@ export default function NativeOperationsDashboard() {
   const [mgmt, setMgmt] = useState<ManagementDashboard | null>(null);
   const [mgmtLoading, setMgmtLoading] = useState(false);
   const [mgmtError, setMgmtError] = useState("");
+  const [opsFlags, setOpsFlags] = useState<InterventionFlag[]>([]);
 
   const loadMgmt = async () => {
     setMgmtLoading(true);
@@ -897,7 +900,12 @@ export default function NativeOperationsDashboard() {
     }
   };
 
-  useEffect(() => { void loadMgmt(); }, []);
+  useEffect(() => {
+    void loadMgmt();
+    hrmsApi.get<{ success: boolean; data: { intervention_flags?: InterventionFlag[] } }>("/api/bi/daily-operations-pulse")
+      .then((res) => setOpsFlags((res as any)?.data?.intervention_flags ?? []))
+      .catch(() => setOpsFlags([]));
+  }, []);
 
   return (
     <DashboardLayout>
@@ -969,6 +977,15 @@ export default function NativeOperationsDashboard() {
             }
           />
         </div>
+
+        {/* Operations Intervention Flags */}
+        {opsFlags.length > 0 && (
+          <InterventionPanel
+            flags={opsFlags}
+            title="Immediate Operations Actions"
+            collapsible
+          />
+        )}
 
         {/* AI Operations Brief */}
         <AIInsightPanel

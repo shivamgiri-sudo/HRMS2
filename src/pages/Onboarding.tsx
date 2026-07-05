@@ -31,6 +31,7 @@ import { useDepartments } from "@/hooks/useEmployees";
 import { useNextEmployeeCode, isValidEmployeeCode } from "@/hooks/useNextEmployeeCode";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
+import { apiBaseUrl, apiUrl } from "@/lib/apiBase";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import { useOnboardingRequests, OnboardingRequest } from "@/hooks/useOnboardingRequests";
 import { useAuth } from "@/contexts/AuthContext";
@@ -266,7 +267,7 @@ const Onboarding = () => {
   // Get file URL for document viewing/download
   const getDocumentUrl = (filePath: string) => {
     if (!filePath) return null;
-    const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
+    const HRMS_API = apiBaseUrl();
     // Legacy URLs or full URLs — use as-is
     const isLegacyUrl = filePath.startsWith("https://") || filePath.startsWith("http://");
     if (isLegacyUrl) return filePath;
@@ -305,14 +306,13 @@ const Onboarding = () => {
 
   // Upload a single document
   const uploadDocument = async (employeeId: string, docType: string, file: File) => {
-    const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
     const token = getAuthToken();
 
     // Step 1: upload file to local storage
     const formData = new FormData();
     formData.append("file", file);
     const uploadResponse = await fetch(
-      `${HRMS_API}/api/files/upload?category=employee-documents`,
+      apiUrl('/api/files/upload?category=employee-documents'),
       { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData }
     );
     if (!uploadResponse.ok) throw new Error("File upload failed");

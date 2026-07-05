@@ -4,6 +4,7 @@ import { useAutoSave } from '../useAutoSave';
 import { VerificationBadge } from '../VerificationBadge';
 import { InlineDocUpload } from '../InlineDocUpload';
 import type { BgvCheck } from '../useOnboardingV2';
+import { apiUrl } from '@/lib/apiBase';
 import { hrmsApi } from '@/lib/hrmsApi';
 
 interface Bank { code: string; name: string; }
@@ -109,7 +110,7 @@ export function S5_BankDetails({ token, initialData, saveSection, verifyBgv, ban
       // Trigger name validation cross-check (non-blocking)
       if (token) {
         fetch(
-          `${import.meta.env.VITE_HRMS_API_URL ?? 'http://localhost:5055'}/api/onboarding/name-validation/validate`,
+          apiUrl('/api/onboarding/name-validation/validate'),
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

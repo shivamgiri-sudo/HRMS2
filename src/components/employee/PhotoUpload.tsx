@@ -15,14 +15,11 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
+import { apiBaseUrl } from "@/lib/apiBase";
 
 const MAX_BYTES = 15 * 1024 * 1024; // 15 MB
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const API_BASE = (
-  import.meta.env.VITE_HRMS_API_URL ||
-  import.meta.env.VITE_API_URL ||
-  (import.meta.env.DEV ? "http://localhost:5055" : "")
-).replace(/\/$/, "");
+const API_BASE = apiBaseUrl();
 
 // normalizeMediaUrl is imported from @/lib/mediaUrl — kept local alias for internal use
 const normalizeFileUrl = normalizeMediaUrl;

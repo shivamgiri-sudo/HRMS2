@@ -38,17 +38,21 @@ interface ConfigRow extends RowDataPacket {
 }
 
 interface BranchRow extends RowDataPacket {
+  id?: string;
   branch_name: string;
+  branch_code?: string | null;
 }
 
 interface BranchAliasRow extends RowDataPacket {
   canonical_key: string;
-  display_name: string;
-  alias_text: string | null;
+  display_name?: string | null;
+  alias_text?: string | null;
 }
 
 interface RecruiterRow extends RowDataPacket {
+  id?: string | null;
   name: string;
+  employee_code?: string | null;
   email?: string | null;
   mobile?: string | null;
   employee_id?: string | null;
@@ -213,86 +217,167 @@ export const atsFormConfigService = {
   async getRecruitersByBranch(branchDisplayName: string) {
     // Resolve the canonical branch key from the display name
     const [aliasRows] = await db.execute<BranchAliasRow[]>(
-      `SELECT canonical_key FROM ats_branch_alias_master WHERE display_name = ? AND active_status = 1 LIMIT 1`,
-      [branchDisplayName]
+      `SELECT canonical_key, display_name, alias_text
+       FROM ats_branch_alias_master
+       WHERE active_status = 1
+         AND (display_name = ? OR alias_text = ? OR canonical_key = ?)
+       LIMIT 1`,
+      [branchDisplayName, branchDisplayName, branchDisplayName]
     );
-    const canonicalKey: string = aliasRows[0]?.canonical_key ?? branchDisplayName;
+    const alias = aliasRows[0] ?? null;
+    const canonicalKey: string = alias?.canonical_key ?? branchDisplayName;
+    const branchLookupValues = [
+      canonicalKey,
+      branchDisplayName,
+      alias?.display_name ?? "",
+      alias?.alias_text ?? "",
+    ].filter((value, index, all) => value && all.indexOf(value) === index);
 
     // Look up the branch_name in branch_master matching this canonical key
+    const branchPlaceholders = branchLookupValues.map(() => "?").join(",");
     const [branchRows] = await db.execute<BranchRow[]>(
-      `SELECT branch_name FROM branch_master WHERE active_status = 1 AND (branch_name = ? OR branch_code = ?) LIMIT 1`,
-      [canonicalKey, canonicalKey]
+      `SELECT id, branch_name, branch_code
+       FROM branch_master
+       WHERE active_status = 1
+         AND (branch_name IN (${branchPlaceholders}) OR branch_code IN (${branchPlaceholders}))
+       LIMIT 1`,
+      [...branchLookupValues, ...branchLookupValues]
     );
-    const branchName: string = branchRows[0]?.branch_name ?? canonicalKey;
+    const branchRow = branchRows[0] ?? null;
+    const branchName: string = branchRow?.branch_name ?? canonicalKey;
 
-    // 1. Try ats_recruiter_roster filtered by branch (active only)
-    const [rosterRows] = await db.execute<RecruiterRow[]>(
-      `SELECT r.id, r.name, r.email, r.mobile, r.employee_id FROM ats_recruiter_roster r
-       WHERE r.active_status = 1 AND (r.branch = ? OR r.branch = ?)
-       ORDER BY r.name ASC`,
-      [branchName, canonicalKey]
-    );
-    if (rosterRows.length > 0) {
-      return rosterRows.map((r) => ({
-        name: String(r.name),
-        email: r.email || null,
-        mobile: r.mobile || null,
-        employee_id: r.employee_id || null,
-      }));
+    // 1. Prefer active recruiter roster rows joined to active HR employees at the resolved branch.
+    // This prevents generic HR/admin/branch-head employees from leaking into candidate registration.
+    const recruiterDepartmentPredicate = `
+      (
+        LOWER(COALESCE(d.dept_name,'')) LIKE '%human resource%'
+        OR LOWER(COALESCE(d.dept_name,'')) LIKE '%admin/hr%'
+        OR LOWER(COALESCE(d.dept_name,'')) = 'hr'
+      )
+    `;
+    const recruiterDesignationPredicate = `
+      (
+        LOWER(COALESCE(des.designation_name,'')) LIKE '%recruiter%'
+        OR LOWER(COALESCE(des.designation_name,'')) LIKE '%executive%'
+        OR LOWER(COALESCE(des.designation_name,'')) LIKE '%hr manager%'
+      )
+    `;
+
+    const mapRecruiterRows = (rows: RecruiterRow[]) => rows.map((r) => ({
+      id: r.id || null,
+      name: String(r.name),
+      employee_code: r.employee_code || null,
+      email: r.email || null,
+      mobile: r.mobile || null,
+      employee_id: r.employee_id || null,
+    }));
+
+    // 1. Prefer active employees at the resolved branch so inactive roster rows do not leak through.
+    if (branchRow?.id) {
+      const [empRows] = await db.execute<RecruiterRow[]>(
+        `SELECT DISTINCT
+           r.id,
+           e.id AS employee_id,
+           e.employee_code,
+           TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
+           COALESCE(e.office_email, e.official_email, e.email) AS email,
+           e.mobile
+         FROM ats_recruiter_roster r
+         JOIN employees e ON e.id = r.employee_id
+         LEFT JOIN department_master d ON d.id = e.department_id
+         LEFT JOIN designation_master des ON des.id = e.designation_id
+         WHERE r.active_status = 1
+           AND e.active_status = 1
+           AND e.branch_id = ?
+           AND ${recruiterDepartmentPredicate}
+           AND ${recruiterDesignationPredicate}
+         ORDER BY name ASC`,
+        [branchRow.id]
+      );
+      if (empRows.length > 0) {
+        return mapRecruiterRows(empRows);
+      }
     }
 
-    // 2. Fallback: employees with hr/recruiter/branch_head roles at this branch (via user_roles)
+    // 2. Fallback: employees with recruiter role at this branch, still restricted to HR dept/designation.
     const [roleRows] = await db.execute<RecruiterRow[]>(
       `SELECT DISTINCT
          e.id AS employee_id,
+         e.employee_code,
          TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
          COALESCE(e.office_email, e.official_email, e.email) AS email,
          e.mobile
        FROM user_roles ur
        JOIN auth_user au ON au.id = ur.user_id
        JOIN employees e  ON e.user_id = au.id
-       JOIN branch_master b ON b.id = e.branch_id
+       LEFT JOIN department_master d ON d.id = e.department_id
+       LEFT JOIN designation_master des ON des.id = e.designation_id
        WHERE ur.active_status = 1
-         AND ur.role_key IN ('hr', 'recruitment_hr', 'recruiter', 'branch_head', 'admin', 'super_admin')
+         AND ur.role_key IN ('recruiter', 'recruitment_hr')
          AND e.active_status = 1
-         AND b.branch_name = ?
+         AND e.branch_id = ?
+         AND ${recruiterDepartmentPredicate}
+         AND ${recruiterDesignationPredicate}
        ORDER BY name ASC`,
-      [branchName]
+      [branchRow?.id ?? ""]
     );
     if (roleRows.length > 0) {
-      return roleRows.map((r) => ({
-        name: String(r.name),
-        email: r.email || null,
-        mobile: r.mobile || null,
-        employee_id: r.employee_id || null,
-      }));
+      return mapRecruiterRows(roleRows);
     }
 
-    // 3. Last resort: employees with HR/Recruiter designation names at this branch
+    // 3. Roster fallback: branch aliases in legacy roster rows may not match branch_master exactly.
+    // Still require linked active HR employee to avoid stale/non-recruiter rows.
+    const rosterLookupValues = [
+      ...branchLookupValues,
+      branchRow?.branch_name ?? "",
+      branchRow?.branch_code ?? "",
+      branchName,
+    ].filter((value, index, all) => value && all.indexOf(value) === index);
+    const rosterPlaceholders = rosterLookupValues.map(() => "?").join(",");
+    if (rosterLookupValues.length > 0) {
+      const [rosterRows] = await db.execute<RecruiterRow[]>(
+        `SELECT DISTINCT
+           r.id,
+           e.id AS employee_id,
+           e.employee_code,
+           TRIM(COALESCE(r.name, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS name,
+           COALESCE(r.email, e.office_email, e.official_email, e.email) AS email,
+           COALESCE(r.mobile, e.mobile) AS mobile
+         FROM ats_recruiter_roster r
+         JOIN employees e ON e.id = r.employee_id AND e.active_status = 1
+         LEFT JOIN department_master d ON d.id = e.department_id
+         LEFT JOIN designation_master des ON des.id = e.designation_id
+         WHERE r.active_status = 1
+           AND r.branch IN (${rosterPlaceholders})
+           AND ${recruiterDepartmentPredicate}
+           AND ${recruiterDesignationPredicate}
+         ORDER BY name ASC`,
+        rosterLookupValues
+      );
+      if (rosterRows.length > 0) {
+        return mapRecruiterRows(rosterRows);
+      }
+    }
+
+    // 4. Last resort: employees with HR department + recruiter/executive designation at this branch.
     const [empRows] = await db.execute<RecruiterRow[]>(
       `SELECT DISTINCT
          e.id AS employee_id,
+         e.employee_code,
          TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
          COALESCE(e.office_email, e.official_email, e.email) AS email,
          e.mobile
        FROM employees e
-       JOIN branch_master b ON b.id = e.branch_id
+       LEFT JOIN department_master d ON d.id = e.department_id
        LEFT JOIN designation_master des ON des.id = e.designation_id
        WHERE e.active_status = 1
-         AND b.branch_name = ?
-         AND (
-           LOWER(COALESCE(des.designation_name,'')) LIKE '%recruiter%'
-           OR LOWER(COALESCE(des.designation_name,'')) LIKE '%hr%'
-         )
+         AND e.branch_id = ?
+         AND ${recruiterDepartmentPredicate}
+         AND ${recruiterDesignationPredicate}
        ORDER BY name ASC`,
-      [branchName]
+      [branchRow?.id ?? ""]
     );
-    return empRows.map((r) => ({
-      name: String(r.name),
-      email: r.email || null,
-      mobile: r.mobile || null,
-      employee_id: r.employee_id || null,
-    }));
+    return mapRecruiterRows(empRows);
   },
 
   async listRecruiters() {

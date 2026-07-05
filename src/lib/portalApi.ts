@@ -1,6 +1,6 @@
-const HRMS_API_URL = (import.meta.env.VITE_HRMS_API_URL !== undefined && import.meta.env.VITE_HRMS_API_URL !== '')
-  ? String(import.meta.env.VITE_HRMS_API_URL).replace(/\/$/, '')
-  : (import.meta.env.DEV ? 'http://localhost:5055' : '');
+import { apiBaseUrl } from "@/lib/apiBase";
+
+const HRMS_API_URL = apiBaseUrl();
 
 function getPortalToken(): string | null {
   return localStorage.getItem("portal_token");
@@ -36,6 +36,8 @@ export const portalApi = {
     portalRequest<{ token: string }>("POST", "/api/portal/auth/verify-otp", { email, otp }),
   getOverview: () =>
     portalRequest<{ data: any[] }>("GET", "/api/portal/overview"),
+  getProcess: (processId: string) =>
+    portalRequest<{ data: { process_name?: string; client_name?: string; rag?: string } }>("GET", `/api/portal/processes/${processId}/info`),
   getKpis: (processId: string, period?: string) =>
     portalRequest<{ data: any[] }>("GET", `/api/portal/processes/${processId}/kpis${period ? `?period=${period}` : ""}`),
   getGlidePaths: (processId: string, period?: string) =>

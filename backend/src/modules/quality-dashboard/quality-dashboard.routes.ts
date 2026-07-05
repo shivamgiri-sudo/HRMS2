@@ -209,8 +209,8 @@ router.get("/trend", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedR
     if (clientId) params.push(clientId);
     const scopeCond = auditScopeCond(scope, params);
 
-    const groupExpr = granularity === "week" ? "YEARWEEK(CallDate)" : "DATE(CallDate)";
-    const labelExpr = granularity === "week" ? "MIN(DATE(CallDate))" : "DATE(CallDate)";
+    const groupExpr = granularity === "week" ? "YEARWEEK(CallDate)" : "DATE_FORMAT(CallDate,'%Y-%m-%d')";
+    const labelExpr = granularity === "week" ? "DATE_FORMAT(MIN(CallDate),'%Y-%m-%d')" : "DATE_FORMAT(CallDate,'%Y-%m-%d')";
 
     const [rows] = await pool.execute<RowDataPacket[]>(`
       SELECT
@@ -247,12 +247,12 @@ router.get("/agents", requireRole(...ALLOWED_ROLES), h(async (req: Authenticated
     const clientCond = clientId ? " AND ClientId = ?" : "";
     if (clientId) params.push(clientId);
     const scopeCond = auditScopeCond(scope, params);
-    params.push(limit);
+    params.push(String(limit));
 
     const [rows] = await pool.execute<RowDataPacket[]>(`
       SELECT
         cqa.User AS agent_code,
-        COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), cqa.User) AS agent_name,
+        ANY_VALUE(COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), cqa.User)) AS agent_name,
         COUNT(*) as total_calls,
         ROUND(AVG(cqa.quality_percentage), 2) as avg_score,
         COUNT(CASE WHEN cqa.quality_percentage >= 80 THEN 1 END) as calls_above_80,
@@ -265,9 +265,9 @@ router.get("/agents", requireRole(...ALLOWED_ROLES), h(async (req: Authenticated
           ELSE 'poor'
         END as band
       FROM db_audit.call_quality_assessment cqa
-      LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User
+      LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User COLLATE utf8mb4_unicode_ci
       WHERE cqa.CallDate BETWEEN ? AND ? AND cqa.User IS NOT NULL AND cqa.User != ''${clientCond}${scopeCond}
-      GROUP BY cqa.User, e.full_name, e.first_name, e.last_name
+      GROUP BY cqa.User
       HAVING COUNT(*) >= 3
       ORDER BY avg_score DESC
       LIMIT ?
@@ -385,9 +385,9 @@ router.get("/apr-summary", requireRole(...ALLOWED_ROLES), h(async (req: Authenti
         ROUND(AVG(TIME_TO_SEC(COALESCE(apr.QA,'00:00:00')))/60, 1) as avg_qa_mins,
         ROUND(AVG(TIME_TO_SEC(COALESCE(apr.TRAINING,'00:00:00')))/60, 1) as avg_training_mins
       FROM Shivamgiri.apr apr
-      LEFT JOIN mas_hrms.process_master pm ON pm.process_code = apr.campaign_id
+      LEFT JOIN mas_hrms.process_master pm ON pm.process_code = apr.campaign_id COLLATE utf8mb4_unicode_ci
       WHERE apr.ReportDate BETWEEN ? AND ?${scopeCond}
-      GROUP BY apr.campaign_id, pm.process_name
+      GROUP BY apr.campaign_id
       ORDER BY avg_calls DESC
       LIMIT 20
     `, params);
@@ -414,10 +414,10 @@ router.get("/sales-intelligence", requireRole(...ALLOWED_ROLES), h(async (req, r
     const [summaryRows] = await pool.execute<RowDataPacket[]>(`
       SELECT
         COUNT(*) as total_calls,
-        COUNT(CASE WHEN SaleDone = 'Yes' OR SaleDone = '1' THEN 1 END) as sales_done,
-        COUNT(CASE WHEN CompetitorName IS NOT NULL AND CompetitorName != '' AND CompetitorName != 'null' THEN 1 END) as competitor_mentions,
+        SUM(CASE WHEN SaleDone='1' OR SaleDone=1 OR LOWER(SaleDone)='yes' THEN 1 ELSE 0 END) as sales_done,
+        SUM(CASE WHEN CompetitorName IS NOT NULL AND CompetitorName NOT IN ('','null','None','none') THEN 1 ELSE 0 END) as competitor_mentions,
         COUNT(DISTINCT client_id) as unique_clients,
-        COUNT(CASE WHEN COALESCE(ObjectionHandling,'') NOT IN ('','null') THEN 1 END) as objection_calls
+        SUM(CASE WHEN ObjectionHandling='1' OR ObjectionHandling=1 THEN 1 ELSE 0 END) as objection_calls
       FROM db_external.CallDetails
       WHERE CallDate BETWEEN ? AND ?${clientCond}
     `, summaryParams);
@@ -426,7 +426,8 @@ router.get("/sales-intelligence", requireRole(...ALLOWED_ROLES), h(async (req, r
       SELECT CompetitorName, COUNT(*) as mentions
       FROM db_external.CallDetails
       WHERE CallDate BETWEEN ? AND ?
-        AND CompetitorName IS NOT NULL AND CompetitorName NOT IN ('','null')
+        AND CompetitorName IS NOT NULL
+        AND CompetitorName NOT IN ('','null','None','none')
       GROUP BY CompetitorName
       ORDER BY mentions DESC
       LIMIT 10
@@ -509,21 +510,21 @@ router.get("/sales-funnel", requireRole(...ALLOWED_ROLES), h(async (req, res) =>
     const [sales] = await pool.execute<RowDataPacket[]>(`
       SELECT
         COUNT(*) as total_calls,
-        COUNT(CASE WHEN COALESCE(Opening,'') NOT IN ('','null') THEN 1 END) as opening_done,
-        COUNT(CASE WHEN COALESCE(Offered,'') NOT IN ('','null') THEN 1 END) as offer_made,
-        COUNT(CASE WHEN COALESCE(ObjectionHandling,'') NOT IN ('','null') THEN 1 END) as objection_handled,
-        COUNT(CASE WHEN COALESCE(SaleDone,'') NOT IN ('','null','No','no','0') THEN 1 END) as sale_done
+        SUM(CASE WHEN Opening='1' OR Opening=1 THEN 1 ELSE 0 END) as opening_done,
+        SUM(CASE WHEN Offered='1' OR Offered=1 THEN 1 ELSE 0 END) as offer_made,
+        SUM(CASE WHEN ObjectionHandling='1' OR ObjectionHandling=1 THEN 1 ELSE 0 END) as objection_handled,
+        SUM(CASE WHEN SaleDone='1' OR SaleDone=1 OR LOWER(SaleDone)='yes' THEN 1 ELSE 0 END) as sale_done
       FROM db_external.CallDetails WHERE ${where}
     `, params);
 
     const [rejection] = await pool.execute<RowDataPacket[]>(`
       SELECT
         COUNT(*) as total_calls,
-        COUNT(CASE WHEN COALESCE(NotInterestedBucketReason,'') NOT IN ('','null') THEN 1 END) as not_interested,
-        COUNT(CASE WHEN COALESCE(CustomerObjectionCategory,'') NOT IN ('','null') THEN 1 END) as objection_raised,
-        COUNT(CASE WHEN COALESCE(AfterListeningOfferRejected,'') NOT IN ('','null','No','no','0') THEN 1 END) as rejected_after_offer,
-        COUNT(CASE WHEN COALESCE(OfferingRejected,'') NOT IN ('','null','No','no','0') THEN 1 END) as offering_rejected,
-        COUNT(CASE WHEN COALESCE(OpeningRejected,'') NOT IN ('','null','No','no','0') THEN 1 END) as opening_rejected
+        SUM(CASE WHEN NotInterestedBucketReason IS NOT NULL AND NotInterestedBucketReason NOT IN ('','null','None') THEN 1 ELSE 0 END) as not_interested,
+        SUM(CASE WHEN CustomerObjectionCategory IS NOT NULL AND CustomerObjectionCategory NOT IN ('','null','None') THEN 1 ELSE 0 END) as objection_raised,
+        SUM(CASE WHEN AfterListeningOfferRejected='1' OR AfterListeningOfferRejected=1 THEN 1 ELSE 0 END) as rejected_after_offer,
+        SUM(CASE WHEN OfferingRejected='1' OR OfferingRejected=1 THEN 1 ELSE 0 END) as offering_rejected,
+        SUM(CASE WHEN OpeningRejected='1' OR OpeningRejected=1 THEN 1 ELSE 0 END) as opening_rejected
       FROM db_external.CallDetails WHERE ${where}
     `, params);
 

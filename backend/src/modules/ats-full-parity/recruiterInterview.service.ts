@@ -111,12 +111,35 @@ export async function resolveRecruiterForActor(userId: string): Promise<Recruite
       LIMIT 1`,
     [userId]
   );
-  const rec = rows[0];
+  let rec = rows[0];
+  if (!rec) {
+    const [fallbackRows] = await db.execute<RecruiterRosterRow[]>(
+      `SELECT r.id, r.name, r.recruiter_code, r.email, r.branch, r.employee_id
+         FROM auth_user u
+         LEFT JOIN employees e ON e.user_id = u.id
+         JOIN ats_recruiter_roster r
+           ON r.active_status = 1
+          AND (
+            LOWER(r.email) = LOWER(u.email)
+            OR r.employee_id = e.id
+            OR r.recruiter_code = e.employee_code
+          )
+        WHERE u.id = ?
+        ORDER BY CASE
+          WHEN r.employee_id = e.id THEN 0
+          WHEN LOWER(r.email) = LOWER(u.email) THEN 1
+          ELSE 2
+        END
+        LIMIT 1`,
+      [userId]
+    );
+    rec = fallbackRows[0];
+  }
   if (!rec) return null;
   return {
     id: rec.id,
-    name: rec.name,
-    recruiterCode: rec.recruiter_code,
+    name: rec.name || "Recruiter",
+    recruiterCode: rec.recruiter_code ?? "",
     branch: rec.branch ?? "",
     email: rec.email ?? null,
     employeeId: rec.employee_id ?? null,
@@ -146,7 +169,7 @@ export async function verifyRecruiter(recruiterCode: string, pin: string): Promi
   if (!rec) err("Invalid recruiter credentials", 401);
   if (!rec.active_status) err("Recruiter account is inactive", 403);
 
-  const pinMatch = await bcrypt.compare(pin, rec.pin_hash);
+  const pinMatch = rec.pin_hash ? await bcrypt.compare(pin, rec.pin_hash) : false;
   if (!pinMatch) err("Invalid recruiter credentials", 401);
 
   // Biometric availability check
@@ -168,8 +191,8 @@ export async function verifyRecruiter(recruiterCode: string, pin: string): Promi
 
   return {
     id: rec.id,
-    name: rec.name,
-    recruiterCode: rec.recruiter_code,
+    name: rec.name || "Recruiter",
+    recruiterCode: rec.recruiter_code ?? "",
     branch: rec.branch ?? "",
     email: rec.email ?? null,
     employeeId: rec.employee_id ?? null,
@@ -217,14 +240,14 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
   );
   return rows.map((r) => ({
     candidateId: r.id,
-    candidateCode: r.candidate_code,
-    fullName: r.full_name,
-    mobile: r.mobile,
+    candidateCode: r.candidate_code ?? r.id,
+    fullName: r.full_name ?? "Candidate",
+    mobile: r.mobile ?? "",
     qToken: r.q_token ?? null,
     process: r.applied_for_process ?? null,
     branch: r.applied_for_branch ?? null,
     pendingMinutes: Number(r.pending_minutes ?? 0),
-    status: r.status,
+    status: r.status ?? "Waiting",
   }));
 }
 
@@ -249,15 +272,40 @@ export async function getSubmissionHistory(recruiterCode?: string | null, _roste
   return rows;
 }
 
-export async function getRecruiterDailyStats(recruiterName: string): Promise<Record<string, unknown>> {
+export async function getRecruiterDailyStats(
+  recruiterName: string,
+  recruiterCode?: string | null,
+): Promise<Record<string, unknown>> {
+  const filters: string[] = [];
+  const params: unknown[] = [];
+
+  if (recruiterCode) {
+    filters.push("s.recruiter_code = ?");
+    params.push(recruiterCode);
+  }
+
+  if (recruiterName) {
+    filters.push(`EXISTS (
+      SELECT 1
+      FROM ats_candidate c
+      WHERE c.id = s.candidate_id
+        AND COALESCE(c.recruiter_assigned_name, c.recruiter_name) = ?
+    )`);
+    params.push(recruiterName);
+  }
+
+  if (filters.length === 0) {
+    return { total_submissions: 0, selected_count: 0, rejected_count: 0 };
+  }
+
   const [rows] = await db.execute<DailyStatsRow[]>(
     `SELECT
        COUNT(*) AS total_submissions,
-       SUM(CASE WHEN final_decision = 'Selected' THEN 1 ELSE 0 END) AS selected_count,
-       SUM(CASE WHEN final_decision = 'Rejected' THEN 1 ELSE 0 END) AS rejected_count
-     FROM ats_interview_submission
-     WHERE recruiter_name = ? AND DATE(submitted_at) = CURDATE()`,
-    [recruiterName],
+       SUM(CASE WHEN s.final_decision = 'Selected' THEN 1 ELSE 0 END) AS selected_count,
+       SUM(CASE WHEN s.final_decision = 'Rejected' THEN 1 ELSE 0 END) AS rejected_count
+     FROM ats_interview_submission s
+     WHERE (${filters.join(" OR ")}) AND DATE(s.submitted_at) = CURDATE()`,
+    params,
   );
   return rows[0] ?? { total_submissions: 0, selected_count: 0, rejected_count: 0 };
 }
@@ -562,9 +610,9 @@ export async function submitInterviewUpdate(
     const whereClause = input.candidateId
       ? "(c.id = ? OR c.candidate_code = ?)"
       : "c.q_token = ?";
-    const whereParams = input.candidateId
+    const whereParams: unknown[] = input.candidateId
       ? [input.candidateId, input.candidateId]
-      : [input.qToken];
+      : [input.qToken ?? ""];
 
     const [candRows] = await conn.execute<InterviewCandidateRow[]>(
       `SELECT c.id, c.candidate_code, c.full_name, c.email,
@@ -577,7 +625,7 @@ export async function submitInterviewUpdate(
        WHERE ${whereClause}
        LIMIT 1
        FOR UPDATE`,
-      whereParams
+      whereParams as string[]
     );
     const candidate = candRows[0];
     if (!candidate) err("Candidate not found", 404);
@@ -621,7 +669,7 @@ export async function submitInterviewUpdate(
            LEFT JOIN designation_master des ON des.id = e.designation_id
           WHERE e.id = ?
           LIMIT 1`,
-        [input.secondRoundInterviewerId]
+        [String(input.secondRoundInterviewerId)]
       );
       const interviewer = interviewerRows[0];
       if (!interviewer) err("Second round interviewer not found", 404);
@@ -977,7 +1025,7 @@ export async function submitInterviewUpdate(
     await conn.execute(
       `INSERT INTO ats_candidate_stage_log (id, candidate_id, from_stage, to_stage, remarks, updated_by)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [randomUUID(), candidate.id, candidate.current_stage || candidate.status, walkinEndStage, nvl(raw.remarks), actorUserId ?? null]
+      [randomUUID(), candidate.id, candidate.current_stage || candidate.status || null, walkinEndStage, nvl(raw.remarks), actorUserId ?? null]
     );
 
     if ((raw.proxySubmission === true || raw.proxySubmission === "true") && actorUserId) {
@@ -1005,7 +1053,7 @@ export async function submitInterviewUpdate(
       sendRejectedEmail({
         candidateId: candidate.id,
         to: candidate.email,
-        candidateName: candidate.full_name,
+        candidateName: candidate.full_name ?? "Candidate",
         branchName: candidate.branch_display_name ?? candidate.applied_for_branch ?? "",
       }).catch((e: unknown) => console.error("[ats] rejection email failed:", e instanceof Error ? e.message : String(e)));
     }

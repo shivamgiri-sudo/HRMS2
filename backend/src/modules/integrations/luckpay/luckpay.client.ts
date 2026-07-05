@@ -44,6 +44,8 @@ const SECRET_KEYWORDS = [
   "otp",
   "file_path",
   "path",
+  "idnumber",
+  "identifier",
 ];
 
 const state: CachedToken = {
@@ -96,6 +98,20 @@ function getBaseUrl() {
   return (env.LUCKPAY_ENV === "production" ? env.LUCKPAY_PROD_BASE_URL : env.LUCKPAY_BASE_URL).replace(/\/$/, "");
 }
 
+function toSafeProviderError(error: unknown) {
+  const status = Number((error as { response?: { status?: number } })?.response?.status ?? 502);
+  const responseData = (error as { response?: { data?: unknown } })?.response?.data;
+  const sanitized = sanitizeProviderPayload(responseData) as Record<string, unknown> | null;
+  const providerMessage = sanitized && typeof sanitized === "object"
+    ? String(sanitized.message ?? sanitized.error ?? sanitized.status ?? "")
+    : "";
+  const message = providerMessage || String((error as Error)?.message ?? "Luckpay provider request failed");
+  return Object.assign(new Error(`Luckpay provider request failed: ${message}`), {
+    statusCode: status >= 400 && status < 600 ? status : 502,
+    providerPayload: sanitized,
+  });
+}
+
 async function requestWithRetry<T>(fn: () => Promise<T>): Promise<T> {
   let attempt = 0;
   let delayMs = 400;
@@ -106,9 +122,10 @@ async function requestWithRetry<T>(fn: () => Promise<T>): Promise<T> {
     } catch (error: unknown) {
       const status = Number((error as { response?: { status?: number } })?.response?.status ?? 0);
       if (attempt >= 3 || ![429, 500, 502, 503, 504].includes(status)) {
+        const safeError = toSafeProviderError(error);
         state.lastFailureAt = new Date().toISOString();
-        state.lastFailureMessage = String((error as Error)?.message ?? error);
-        throw error;
+        state.lastFailureMessage = safeError.message;
+        throw safeError;
       }
       await sleep(delayMs);
       delayMs *= 2;

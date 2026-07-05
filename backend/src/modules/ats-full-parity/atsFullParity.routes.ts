@@ -1,6 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { timingSafeEqual } from "crypto";
-import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { env } from "../../config/env.js";
@@ -8,8 +7,18 @@ import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { atsFullParityService as svc } from "./atsFullParity.service.js";
 import { submitInterviewUpdate, resolveRecruiterForActor } from "./recruiterInterview.service.js";
+import type { RowDataPacket } from "mysql2";
 
 export const atsFullParityRouter = Router();
+
+interface RecruiterLookupRow extends RowDataPacket {
+  id: string;
+  name: string;
+  recruiter_code: string;
+  email?: string | null;
+  branch?: string | null;
+  employee_id?: string | null;
+}
 
 type AsyncHandler = (req: AuthenticatedRequest | Request, res: Response) => Promise<unknown>;
 
@@ -104,14 +113,29 @@ atsFullParityRouter.get("/journey", requireRole("admin", "hr", "recruiter", "man
   const { primaryRole: role, isSuperAdmin } = await getUserRoleContext(req.authUser?.id ?? "");
   const isPrivileged = isSuperAdmin || role === "hr" || role === "ceo";
   if (!isPrivileged) {
-    const candidate = data.candidate as {
-      applied_for_branch?: string | null;
-      applied_for_process?: string | null;
-    };
+    const candidate = data.candidate as Record<string, unknown>;
+    const recruiterProfile = await resolveRecruiterForActor(req.authUser!.id);
+    const assignedRecruiterIds = [
+      candidate.recruiter_id,
+      candidate.recruiter_assigned_id,
+      candidate.assigned_recruiter_id,
+    ].filter(Boolean).map(String);
+    const assignedByRecruiterId = recruiterProfile
+      ? assignedRecruiterIds.includes(String(recruiterProfile.id))
+      : false;
+    const assignedByRecruiterName = recruiterProfile
+      ? String(candidate.recruiter_assigned_name ?? candidate.recruiter_name ?? "").trim() === recruiterProfile.name
+      : false;
+    if (assignedByRecruiterId || assignedByRecruiterName) {
+      return res.json({ success: true, data });
+    }
     const allowed = await hasScopedAccess(
       req.authUser!.id,
       ["recruiter", "manager", "branch_head", "process_manager"],
-      { branchId: candidate.applied_for_branch ?? null, processId: candidate.applied_for_process ?? null },
+      {
+        branchId: typeof candidate.applied_for_branch === "string" ? candidate.applied_for_branch : null,
+        processId: typeof candidate.applied_for_process === "string" ? candidate.applied_for_process : null,
+      },
       { allowAdminBypass: true },
     );
     if (!allowed) return res.status(403).json({ success: false, message: "Access denied: candidate outside your scope" });
@@ -129,26 +153,18 @@ atsFullParityRouter.post("/recruiter-submission", requireRole("admin", "hr", "re
   if (isPrivileged && bodyCode) {
     // Admin/HR may submit on behalf of any active recruiter
     const { db: _db } = await import("../../db/mysql.js");
-    const [recRows] = await _db.execute<RowDataPacket[]>(
+    const [recRows] = await _db.execute<RecruiterLookupRow[]>(
       `SELECT id, name, recruiter_code, email, branch, employee_id FROM ats_recruiter_roster WHERE recruiter_code = ? AND active_status = 1 LIMIT 1`,
       [bodyCode]
     );
-    const recruiterRow = recRows[0] as (RowDataPacket & {
-      id: string;
-      name: string;
-      recruiter_code: string;
-      email?: string | null;
-      branch?: string | null;
-      employee_id?: string | null;
-    }) | undefined;
-    if (!recruiterRow) return res.status(403).json({ success: false, message: "Recruiter not found or inactive" });
+    if (!recRows[0]) return res.status(403).json({ success: false, message: "Recruiter not found or inactive" });
     recruiterProfile = {
-      id: recruiterRow.id,
-      name: recruiterRow.name,
-      recruiterCode: recruiterRow.recruiter_code,
-      branch: recruiterRow.branch ?? "",
-      email: recruiterRow.email ?? null,
-      employeeId: recruiterRow.employee_id ?? null,
+      id: recRows[0].id,
+      name: recRows[0].name,
+      recruiterCode: recRows[0].recruiter_code,
+      branch: recRows[0].branch ?? "",
+      email: recRows[0].email ?? null,
+      employeeId: recRows[0].employee_id ?? null,
     };
   } else {
     // Derive recruiter identity from JWT — prevents impersonation

@@ -20,8 +20,10 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 export const attendanceManualOverrideRouter = Router();
 attendanceManualOverrideRouter.use(requireAuth);
 
-const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
+type RequiredAuthRequest = AuthenticatedRequest & { authUser: NonNullable<AuthenticatedRequest["authUser"]> };
+
+const h = (fn: (req: RequiredAuthRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req as RequiredAuthRequest, res).catch(next);
 
 interface AttendanceStateRow extends RowDataPacket {
   id: string;

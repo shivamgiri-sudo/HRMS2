@@ -7,10 +7,19 @@ import {
 } from "recharts";
 import {
   Activity, AlertTriangle, ArrowDown, ArrowUp, BarChart2,
-  Clock, DollarSign, Layers, RefreshCcw, Target, TrendingUp, Users,
+  Clock, DollarSign, Layers, RefreshCcw, ShieldX, Target, TrendingUp, Users,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useUserRole } from "@/hooks/useUserRole";
+
+const AGENT_PERF_ALLOWED_ROLES = new Set([
+  "super_admin", "admin", "ceo", "management",
+  "manager", "process_manager", "branch_head",
+  "qa", "qa_manager", "quality_analyst",
+  "wfm", "wfm_spoc", "ho_operations", "ho_wfm",
+  "operations_head", "operations_manager",
+]);
 
 // ─── Date Helpers ─────────────────────────────────────────────────────────────
 
@@ -168,16 +177,31 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function NativeAgentPerformanceDashboard() {
+  const { data: roleData, isLoading: roleLoading } = useUserRole();
   const [from, setFrom] = useState(firstOfMonth());
   const [to, setTo] = useState(today());
+  const [branchId, setBranchId] = useState("");
+  const [processId, setProcessId] = useState("");
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [refresh, setRefresh] = useState(0);
   const [sortField, setSortField] = useState<keyof AgentMatrixRow>("performance_score");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
+  const [attritionRisk, setAttritionRisk] = useState<Record<string, boolean>>({});
 
-  const qs = `from=${from}&to=${to}`;
-  const key = [from, to, refresh];
+  const scopeQs = [branchId && `branchId=${branchId}`, processId && `processId=${processId}`].filter(Boolean).join("&");
+  const qs = `from=${from}&to=${to}${scopeQs ? `&${scopeQs}` : ""}`;
+  const key = [from, to, branchId, processId, refresh];
+
+  useEffect(() => {
+    const params = [scopeQs].filter(Boolean).join("&");
+    hrmsApi.get<{ success: boolean; data: { at_risk_employee_codes?: string[] } }>(`/api/bi/attrition-risk-signal${params ? `?${params}` : ""}`)
+      .then((res) => {
+        const codes = (res as any)?.data?.at_risk_employee_codes ?? [];
+        setAttritionRisk(Object.fromEntries((codes as string[]).map((c: string) => [c, true])));
+      })
+      .catch(() => setAttritionRisk({}));
+  }, [branchId, processId]);
 
   const summaryQ = useQuery({
     queryKey: ["pd-summary", ...key],
@@ -251,15 +275,25 @@ export default function NativeAgentPerformanceDashboard() {
   const FilterBar = (
     <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur-sm">
       {([
-        { label: "From", value: from, setter: setFrom },
-        { label: "To",   value: to,   setter: setTo },
-      ] as const).map(({ label, value, setter }) => (
+        { label: "From", value: from, setter: setFrom, type: "date" as const },
+        { label: "To",   value: to,   setter: setTo,   type: "date" as const },
+      ]).map(({ label, value, setter, type }) => (
         <div key={label} className="flex flex-col gap-1">
           <label className="text-xs font-semibold text-slate-500">{label}</label>
-          <input type="date" value={value} onChange={e => setter(e.target.value)}
+          <input type={type} value={value} onChange={e => setter(e.target.value)}
             className="rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-300 cursor-pointer" />
         </div>
       ))}
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-semibold text-slate-500">Branch ID</label>
+        <input type="text" value={branchId} onChange={e => setBranchId(e.target.value)} placeholder="All branches"
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-300 cursor-pointer w-32" />
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-semibold text-slate-500">Process ID</label>
+        <input type="text" value={processId} onChange={e => setProcessId(e.target.value)} placeholder="All processes"
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-300 cursor-pointer w-32" />
+      </div>
       <button onClick={() => setRefresh(r => r + 1)}
         className="ml-auto inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50">
         <RefreshCcw className="h-4 w-4" /> Refresh
@@ -312,7 +346,14 @@ export default function NativeAgentPerformanceDashboard() {
   // ─── Tab: Agent Matrix ────────────────────────────────────────────────────
 
   const matrixColumns: { label: string; field: keyof AgentMatrixRow; render?: (row: AgentMatrixRow) => React.ReactNode }[] = [
-    { label: "Agent",      field: "agent_code",        render: r => <span className="font-semibold text-slate-800">{r.agent_code}</span> },
+    { label: "Agent",      field: "agent_code",        render: r => (
+      <div className="flex items-center gap-2">
+        <span className="font-semibold text-slate-800">{r.agent_code}</span>
+        {attritionRisk[r.agent_code] && (
+          <span className="inline-flex items-center rounded-full bg-red-100 border border-red-300 px-1.5 py-0.5 text-[10px] font-bold text-red-700">⚠ At Risk</span>
+        )}
+      </div>
+    )},
     { label: "Calls",      field: "total_calls",        render: r => r.total_calls },
     { label: "AHT (s)",    field: "avg_aht_seconds",    render: r => r.avg_aht_seconds },
     { label: "Shrinkage",  field: "shrinkage_pct",      render: r => <ScorePill score={100 - r.shrinkage_pct} /> },
@@ -595,6 +636,25 @@ export default function NativeAgentPerformanceDashboard() {
     utilization: UtilizationTab,
     correlation: CorrelationTab,
   };
+
+  // ─── RBAC gate ───────────────────────────────────────────────────────────
+  if (!roleLoading) {
+    const roleKeys = roleData?.roleKeys ?? [];
+    const allowed = roleKeys.some(r => AGENT_PERF_ALLOWED_ROLES.has(r));
+    if (!allowed) {
+      return (
+        <DashboardLayout>
+          <div className="flex min-h-[60vh] items-center justify-center">
+            <div className="max-w-sm rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+              <ShieldX className="mx-auto h-12 w-12 text-red-400 mb-4" />
+              <h2 className="text-lg font-semibold text-slate-900 mb-1">Access Restricted</h2>
+              <p className="text-sm text-slate-500">Agent Performance Dashboard is only available to managers, ops, QA and WFM roles.</p>
+            </div>
+          </div>
+        </DashboardLayout>
+      );
+    }
+  }
 
   // ─── Render ───────────────────────────────────────────────────────────────
 

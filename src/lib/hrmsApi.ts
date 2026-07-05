@@ -1,11 +1,8 @@
-function apiBaseUrl(): string {
-  const configured = import.meta.env.VITE_HRMS_API_URL;
-  if (configured !== undefined) return String(configured).replace(/\/$/, "");
-  return import.meta.env.DEV ? "http://localhost:5055" : "";
-}
+import { apiBaseUrl } from "@/lib/apiBase";
 
 // Production uses the same-origin /api proxy when VITE_HRMS_API_URL is not set.
 const HRMS_API_URL = apiBaseUrl();
+const DEMO_LOGIN_ENABLED = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_LOGIN === "true";
 
 const LEGACY_DOUBLE_DATA_PATHS = [
   "/api/clients",
@@ -19,7 +16,7 @@ function getAuthHeader(): Record<string, string> {
   const mysqlToken = localStorage.getItem("hrms_access_token");
   if (mysqlToken) return { Authorization: `Bearer ${mysqlToken}` };
 
-  const demoRaw = localStorage.getItem("hrms_demo_session");
+  const demoRaw = DEMO_LOGIN_ENABLED ? localStorage.getItem("hrms_demo_session") : null;
   if (demoRaw) {
     try {
       const demo = JSON.parse(demoRaw);
@@ -31,6 +28,12 @@ function getAuthHeader(): Record<string, string> {
   }
 
   return {};
+}
+
+function normalizeRequestPath(path: string): string {
+  return HRMS_API_URL.endsWith("/api") && path.startsWith("/api/")
+    ? path.replace(/^\/api/, "")
+    : path;
 }
 
 function addLegacyDataAlias(path: string, payload: unknown): void {
@@ -71,10 +74,7 @@ async function parseResponse(res: Response): Promise<unknown> {
 async function request<T>(method: string, path: string, body?: unknown, timeoutMs = 30000): Promise<T> {
   const headers = getAuthHeader();
 
-  const normalizedPath =
-    HRMS_API_URL === "/api" && path.startsWith("/api/")
-      ? path.replace(/^\/api/, "")
-      : path;
+  const normalizedPath = normalizeRequestPath(path);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -100,7 +100,7 @@ async function request<T>(method: string, path: string, body?: unknown, timeoutM
 
   if (!res.ok) {
     const errorPayload = payload as { error?: unknown; message?: unknown } | null;
-    let raw = errorPayload?.error ?? errorPayload?.message ?? (typeof payload === "string" ? payload : null);
+    const raw = errorPayload?.error ?? errorPayload?.message ?? (typeof payload === "string" ? payload : null);
     let message: string;
     if (typeof raw === "string") {
       message = raw;
@@ -126,10 +126,7 @@ async function request<T>(method: string, path: string, body?: unknown, timeoutM
 async function requestRaw(method: string, path: string): Promise<string> {
   const headers = getAuthHeader();
 
-  const normalizedPath =
-    HRMS_API_URL === "/api" && path.startsWith("/api/")
-      ? path.replace(/^\/api/, "")
-      : path;
+  const normalizedPath = normalizeRequestPath(path);
 
   const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
     method,
@@ -149,7 +146,7 @@ export function getAuthToken(): string | null {
   const mysqlToken = localStorage.getItem("hrms_access_token");
   if (mysqlToken) return mysqlToken;
 
-  const demoRaw = localStorage.getItem("hrms_demo_session");
+  const demoRaw = DEMO_LOGIN_ENABLED ? localStorage.getItem("hrms_demo_session") : null;
   if (demoRaw) {
     try {
       const demo = JSON.parse(demoRaw);
@@ -165,10 +162,7 @@ export function getAuthToken(): string | null {
 
 async function requestForm<T>(path: string, body: FormData): Promise<T> {
   const headers = getAuthHeader();
-  const normalizedPath =
-    HRMS_API_URL === "/api" && path.startsWith("/api/")
-      ? path.replace(/^\/api/, "")
-      : path;
+  const normalizedPath = normalizeRequestPath(path);
   const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
     method: "POST",
     headers, // No Content-Type — browser sets multipart boundary automatically
@@ -185,10 +179,7 @@ async function requestForm<T>(path: string, body: FormData): Promise<T> {
 
 async function requestBlob(path: string): Promise<Blob> {
   const headers = getAuthHeader();
-  const normalizedPath =
-    HRMS_API_URL === "/api" && path.startsWith("/api/")
-      ? path.replace(/^\/api/, "")
-      : path;
+  const normalizedPath = normalizeRequestPath(path);
   const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
     method: "GET",
     headers: { ...headers },

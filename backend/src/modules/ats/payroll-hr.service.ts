@@ -1,7 +1,7 @@
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'crypto';
-import { sendPayrollHRNotificationEmail } from './ats.email.service.js';
+import { sendBranchHeadApprovalEmail } from './ats.email.service.js';
 
 /**
  * Payroll HR Validation Service
@@ -188,6 +188,16 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
 
     // If salary_start_date is not provided, default to joining_date
     const salaryStartDate = input.salary_start_date || input.joining_date;
+    let branchHeadNotice: {
+      candidateId: string;
+      to: string;
+      branchHeadName: string;
+      candidateName: string;
+      branchDisplayName: string;
+      roleOffered: string;
+      proposedSalary: string;
+      joiningDate: string;
+    } | null = null;
 
     // Validate salary_start_date is not before joining_date
     if (new Date(salaryStartDate) < new Date(input.joining_date)) {
@@ -238,7 +248,10 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
     }
 
     const effectiveGross = isException ? requestedGross : slabGross;
-    const salaryComponents = input.salary_components || calculateSalaryBreakdown(effectiveGross, input.employment_type).components;
+    const salaryBreakdown = calculateSalaryBreakdown(effectiveGross, input.employment_type);
+    const salaryComponents = input.salary_components || salaryBreakdown.components;
+    const persistedSalaryComponents =
+      typeof salaryComponents === 'object' && salaryComponents !== null ? salaryComponents : {};
 
     // Check if validation already exists
     const [existingRaw] = await connection.execute(
@@ -290,11 +303,95 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
         input.reporting_manager_id,
         input.salary_slab_id,
         effectiveGross,
-        JSON.stringify({ ...salaryComponents, slabGross, requestedGross: isException ? requestedGross : null, exceptionReason: input.salary_exception_reason || null }),
+        JSON.stringify({ ...persistedSalaryComponents, slabGross, requestedGross: isException ? requestedGross : null, exceptionReason: input.salary_exception_reason || null }),
         input.joining_date,
         salaryStartDate, // This ensures salary_start_date is always set
         input.shift_id || null,
         input.remarks || null,
+      ]
+    );
+
+    await connection.execute(
+      `INSERT INTO ats_onboarding_request (id, candidate_id, branch_id, requested_by, status)
+       VALUES (UUID(), ?, ?, ?, 'offer_submitted')
+       ON DUPLICATE KEY UPDATE
+         branch_id = VALUES(branch_id),
+         requested_by = VALUES(requested_by),
+         status = IF(status = 'approved', status, 'offer_submitted'),
+         updated_at = NOW()`,
+      [input.candidate_id, branchId, input.payroll_hr_id]
+    );
+
+    const [requestRowsRaw] = await connection.execute(
+      `SELECT id FROM ats_onboarding_request WHERE candidate_id = ? LIMIT 1`,
+      [input.candidate_id]
+    );
+    const requestRows = requestRowsRaw as RowDataPacket[];
+    const onboardingRequestId = requestRows[0]?.id;
+    if (!onboardingRequestId) throw new Error('onboarding request could not be created');
+
+    const offerId = randomUUID();
+    const empType = input.employment_type === 'offrole' ? 'OffRoll' : 'OnRoll';
+    await connection.execute(
+      `INSERT INTO ats_employment_offer
+         (id, onboarding_request_id, candidate_id,
+          emp_type, date_of_joining, date_of_salary, profile,
+          department_id, designation_id, cost_centre, reporting_manager_id, role_type,
+          salary_band, offered_ctc, basic, hra, conveyance, da, special_allowance,
+          other_allowance, bonus, gross, pf_employee, pf_employer, esic_employee, esic_employer,
+          professional_tax, gratuity, admin_charges, net_in_hand,
+          status, created_by, submitted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Analyst', ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, ?, ?, ?, ?, 0, 0, 0, ?, 'submitted', ?, NOW())
+       ON DUPLICATE KEY UPDATE
+          emp_type = VALUES(emp_type),
+          date_of_joining = VALUES(date_of_joining),
+          date_of_salary = VALUES(date_of_salary),
+          profile = VALUES(profile),
+          department_id = VALUES(department_id),
+          designation_id = VALUES(designation_id),
+          cost_centre = VALUES(cost_centre),
+          reporting_manager_id = VALUES(reporting_manager_id),
+          salary_band = VALUES(salary_band),
+          offered_ctc = VALUES(offered_ctc),
+          basic = VALUES(basic),
+          hra = VALUES(hra),
+          conveyance = VALUES(conveyance),
+          special_allowance = VALUES(special_allowance),
+          gross = VALUES(gross),
+          pf_employee = VALUES(pf_employee),
+          pf_employer = VALUES(pf_employer),
+          esic_employee = VALUES(esic_employee),
+          esic_employer = VALUES(esic_employer),
+          net_in_hand = VALUES(net_in_hand),
+          status = 'submitted',
+          created_by = VALUES(created_by),
+          submitted_at = NOW(),
+          updated_at = NOW()`,
+      [
+        offerId,
+        onboardingRequestId,
+        input.candidate_id,
+        empType,
+        input.joining_date,
+        salaryStartDate,
+        input.employment_type,
+        input.department_id,
+        input.designation_id,
+        input.cost_centre_id,
+        input.reporting_manager_id,
+        input.salary_slab_id,
+        effectiveGross,
+        salaryBreakdown.components.basic,
+        salaryBreakdown.components.hra,
+        salaryBreakdown.components.conveyance,
+        salaryBreakdown.components.specialAllowance,
+        effectiveGross,
+        salaryBreakdown.deductions.pf,
+        salaryBreakdown.deductions.pf,
+        salaryBreakdown.deductions.esic,
+        salaryBreakdown.deductions.esic,
+        salaryBreakdown.net,
+        input.payroll_hr_id,
       ]
     );
 
@@ -332,7 +429,51 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
       ]
     );
 
+    const [branchHeadRowsRaw] = await connection.execute(
+      `SELECT
+          u.email,
+          COALESCE(e.full_name, u.email) AS branch_head_name,
+          c.full_name AS candidate_name,
+          COALESCE(b.branch_name, c.branch_display_name, c.applied_for_branch) AS branch_display_name,
+          COALESCE(pm.process_name, c.applied_for_process, c.role_applied, 'Candidate') AS role_offered
+       FROM ats_candidate c
+       JOIN branch_master b ON b.id = ?
+       JOIN branch_head_assignments bha ON bha.branch_name IN (b.branch_name, b.branch_code)
+       JOIN employees e ON e.id = bha.branch_head_id AND e.active_status = 1
+       JOIN auth_user u ON u.id = e.user_id
+       LEFT JOIN process_master pm
+         ON pm.id = c.applied_for_process
+         OR pm.process_name = c.applied_for_process
+         OR pm.process_code = c.applied_for_process
+       WHERE c.id = ?
+         AND bha.is_active = TRUE
+         AND u.email IS NOT NULL
+       ORDER BY bha.assigned_at DESC
+       LIMIT 1`,
+      [branchId, input.candidate_id]
+    );
+    const branchHeadRows = branchHeadRowsRaw as RowDataPacket[];
+    const branchHead = branchHeadRows[0];
+    if (branchHead?.email) {
+      branchHeadNotice = {
+        candidateId: input.candidate_id,
+        to: String(branchHead.email),
+        branchHeadName: String(branchHead.branch_head_name ?? 'Branch Head'),
+        candidateName: String(branchHead.candidate_name ?? 'Candidate'),
+        branchDisplayName: String(branchHead.branch_display_name ?? 'Branch'),
+        roleOffered: String(branchHead.role_offered ?? 'Candidate'),
+        proposedSalary: `${effectiveGross}`,
+        joiningDate: input.joining_date,
+      };
+    }
+
     await connection.commit();
+
+    if (branchHeadNotice) {
+      sendBranchHeadApprovalEmail(branchHeadNotice).catch((err: unknown) => {
+        console.error('[payroll-hr] branch head approval email failed:', err instanceof Error ? err.message : String(err));
+      });
+    }
 
     return {
       success: true,

@@ -82,8 +82,7 @@ export default function HrDashboard() {
     const allowed =
       roleKeys.includes("super_admin") ||
       roleKeys.includes("hr") ||
-      roleKeys.includes("admin") ||
-      roleKeys.includes("recruiter");
+      roleKeys.includes("admin");
     if (!allowed) {
       return (
         <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
@@ -91,7 +90,7 @@ export default function HrDashboard() {
             <ShieldX className="mx-auto h-12 w-12 text-red-400 mb-4" />
             <h2 className="text-lg font-semibold text-slate-900 mb-1">Access Restricted</h2>
             <p className="text-sm text-slate-500 mb-4">
-              This dashboard is only accessible to HR and Recruiter roles.
+              This dashboard is only accessible to HR and Admin roles.
             </p>
             <Button asChild variant="outline">
               <Link to="/dashboard">Go to Dashboard</Link>

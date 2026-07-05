@@ -197,3 +197,36 @@ For every phase:
 ## Package Reference
 This project implements the PeopleOS Master Execution Charter (docs/peopleos-build/PEOPLEOS_MASTER_EXECUTION_CHARTER.md).
 Packages A–L defined in charter §12. Current position tracked in CLAUDE_IMPLEMENTATION_TRACKER.md.
+
+## Mandatory Skill Usage (Session Rules)
+
+### 1. Graphify — Always-On Token Saver
+Before broad codebase exploration, ALWAYS check `graphify-out/` first.
+If it exists, use `/graphify query "<question>"` to answer architecture/relationship questions instead of reading many files.
+If it does not exist, run `/graphify` on the project root to build the knowledge graph once.
+Never read 5+ files to answer a question that a graph query can answer in one call.
+
+### 2. Superpowers Skills — Always Invoke Before Acting
+- Before ANY new feature or component: invoke `sp-brainstorming` (`/brainstorm`)
+- Before writing implementation code: invoke `sp-writing-plans` then `sp-executing-plans`
+- Before claiming anything is done/fixed/passing: invoke `sp-verification-before-completion` (`/verify`) — run real commands, show real output
+- When debugging: invoke `sp-systematic-debugging` (`/debug`)
+- When completing a branch: invoke `sp-finishing-a-development-branch`
+- For parallel independent tasks: invoke `sp-dispatching-parallel-agents`
+
+### 3. UI/UX Pro Max — Required for All UI Work
+Every UI task (new page, new component, refactor, review) MUST begin with:
+```bash
+"C:/Users/ADMIN/AppData/Local/Programs/Python/Python312/python.exe" "C:/Users/ADMIN/.claude/skills/ui-ux-pro-max/scripts/search.py" "<description>" --design-system --stack shadcn -p "MAS PeopleOS"
+```
+Then run domain searches for specific components:
+```bash
+"C:/Users/ADMIN/AppData/Local/Programs/Python/Python312/python.exe" "C:/Users/ADMIN/.claude/skills/ui-ux-pro-max/scripts/search.py" "<component>" --domain ux --stack shadcn
+```
+Never implement UI without consulting the design system. Use `/ux` slash command to trigger this workflow.
+
+### 4. Frontend Design — Distinctive Visual Decisions
+Invoke `/frontend-design` whenever making aesthetic or layout choices: new page layouts, component visual style, typography decisions, color usage, or any UI that risks looking generic/templated. Use it before finalizing any new screen design.
+
+### 5. Caveman Mode — Token Efficiency
+Invoke `/caveman` when responses are getting verbose or when the user asks for brevity. Use it for terse status updates, quick summaries, and any context where token efficiency matters over prose.

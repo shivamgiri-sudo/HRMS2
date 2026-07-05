@@ -82,7 +82,7 @@ export async function getPendingBGVRequests(): Promise<BGVStatus[]> {
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
       c.id,
-      c.candidate_id as candidate_code,
+      c.candidate_code,
       c.full_name as candidate_name,
       c.mobile,
       c.email,

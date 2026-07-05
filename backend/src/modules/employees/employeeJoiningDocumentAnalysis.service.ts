@@ -51,7 +51,7 @@ function recommendedAction(status: AnalysisCheckStatus): JoiningDocumentAnalysis
 }
 
 function hasLikelyDate(text: string) {
-  return /\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/.test(text) || /\b\d{4}-\d{2}-\d{2}\b/.test(text);
+  return /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/.test(text) || /\b\d{4}-\d{2}-\d{2}\b/.test(text);
 }
 
 export async function analyzeEmployeeJoiningDocument(input: AnalysisInput): Promise<JoiningDocumentAnalysisResult> {

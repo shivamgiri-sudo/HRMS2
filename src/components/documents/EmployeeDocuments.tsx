@@ -11,6 +11,7 @@ import { useEmployeeDocuments, useUploadDocument, useDeleteDocument } from "@/ho
 import { format } from "date-fns";
 import { DocumentViewerDialog } from "./DocumentViewerDialog";
 import { useIsReadOnly } from "@/contexts/AuthContext";
+import { apiBaseUrl } from "@/lib/apiBase";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -81,7 +82,7 @@ export function EmployeeDocuments({ employeeId, canUpload = false, canDelete = f
       console.error("Download error: file URL is missing");
       return;
     }
-    const HRMS_API = import.meta.env.VITE_HRMS_API_URL || "http://localhost:5055";
+    const HRMS_API = apiBaseUrl();
     // file_url already contains the correct path like /api/files/employee-documents/<filename>
     // Fall back to constructing the URL only if it's a bare filename (legacy records)
     const url = fileUrl.startsWith("http") ? fileUrl

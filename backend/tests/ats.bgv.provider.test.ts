@@ -10,6 +10,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { timingSafeEqual } from "crypto";
+import axios from "axios";
+import { db } from "../src/db/mysql.js";
 
 // ── Shared mocks (must come before any dynamic imports) ───────────────────────
 
@@ -31,7 +33,15 @@ import {
   roughNameMatchScore,
   getBgvProviderAdapter,
   resetBgvProviderAdapterCache,
+  buildAdapterFromDbConfig,
 } from "../src/modules/ats/bgv-provider.adapter.js";
+
+const luckpayCfg = {
+  bgv_provider: "befisc_luckpay",
+  luckpay_api_url: "https://api-banking.luckpay.in/apibanking/api/v1",
+  luckpay_basic_token: "test-basic-token",
+  luckpay_client_id: "TESTCLIENT",
+};
 
 // ── roughNameMatchScore ───────────────────────────────────────────────────────
 
@@ -158,6 +168,143 @@ describe("getBgvProviderAdapter factory", () => {
     resetBgvProviderAdapterCache();
     const b = getBgvProviderAdapter();
     expect(a).not.toBe(b);
+  });
+});
+
+describe("Composite Befisc/Luckpay adapter", () => {
+  beforeEach(() => {
+    vi.spyOn(axios, "post").mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("TC-PROV-24: PAN uses Luckpay auth token and verifyPan payload contract", async () => {
+    const post = vi.spyOn(axios, "post")
+      .mockResolvedValueOnce({ data: { data: { token: "access-token", expiresIn: 60 } } })
+      .mockResolvedValueOnce({ data: { status: "success", transaction_id: "pan-ref", pan_name: "Rahul Sharma", idNumber: "ABCDE1234F" } });
+
+    const adapter = buildAdapterFromDbConfig(luckpayCfg);
+    const result = await adapter.verifyPan({ panNumber: "ABCDE1234F", candidateName: "Rahul Sharma", mobileNumber: "98765 43210" });
+
+    expect(post).toHaveBeenNthCalledWith(
+      1,
+      "https://api-banking.luckpay.in/apibanking/api/v1/auth/token",
+      undefined,
+      expect.objectContaining({
+        headers: { Authorization: "Basic test-basic-token" },
+      }),
+    );
+    expect(post).toHaveBeenNthCalledWith(
+      2,
+      "https://api-banking.luckpay.in/apibanking/api/v1/verifyPan",
+      expect.objectContaining({
+        clientTransactionId: expect.any(String),
+        idNumber: "ABCDE1234F",
+        mobileNumber: "9876543210",
+      }),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "TESTCLIENT",
+          "X-Access-Token": "Bearer access-token",
+        }),
+      }),
+    );
+    expect(result.status).toBe("verified");
+    expect(JSON.stringify(result.raw)).not.toContain("ABCDE1234F");
+  });
+
+  it("TC-PROV-25: UAN uses verifyUanByUan with identifier payload", async () => {
+    const post = vi.spyOn(axios, "post")
+      .mockResolvedValueOnce({ data: { data: { token: "access-token" } } })
+      .mockResolvedValueOnce({ data: { status: "success", transaction_id: "uan-ref", member_name: "Rahul Sharma", identifier: "100200300400" } });
+
+    const adapter = buildAdapterFromDbConfig(luckpayCfg);
+    if (!adapter.verifyUan) throw new Error("verifyUan missing");
+    await adapter.verifyUan({ uanNumber: "100200300400", candidateName: "Rahul Sharma" });
+
+    expect(post).toHaveBeenNthCalledWith(
+      2,
+      "https://api-banking.luckpay.in/apibanking/api/v1/verifyUanByUan",
+      expect.objectContaining({
+        clientTransactionId: expect.any(String),
+        identifier: "100200300400",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("TC-PROV-26: bank verification uses Luckpay verifyPennyDrop contract", async () => {
+    const post = vi.spyOn(axios, "post")
+      .mockResolvedValueOnce({ data: { data: { token: "access-token" } } })
+      .mockResolvedValueOnce({ data: { status: "success", transaction_id: "bank-ref", registered_name: "Rahul Sharma", customerAccountNumber: "123456789012" } });
+
+    const adapter = buildAdapterFromDbConfig(luckpayCfg);
+    await adapter.verifyBank({
+      accountNo: "123456789012",
+      ifscCode: "HDFC0001234",
+      accountHolderName: "Rahul Sharma",
+    });
+
+    expect(post).toHaveBeenNthCalledWith(
+      2,
+      "https://api-banking.luckpay.in/apibanking/api/v1/verifyPennyDrop",
+      expect.objectContaining({
+        clientTransactionId: expect.any(String),
+        customerAccountNumber: "123456789012",
+        customerAccountName: "Rahul Sharma",
+        customerIfscCode: "HDFC0001234",
+        verificationMode: "PENNY_DROP",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("TC-PROV-27: DigiLocker uses Luckpay verifyDigilockerWithURL with candidate contact", async () => {
+    vi.mocked(db.execute).mockResolvedValueOnce([[{ full_name: "Rahul Sharma", mobile: "9876543210" }], []] as any);
+    const post = vi.spyOn(axios, "post")
+      .mockResolvedValueOnce({ data: { data: { token: "access-token" } } })
+      .mockResolvedValueOnce({ data: { redirectUrl: "https://luckpay.example/digilocker", mobileNumber: "9876543210" } });
+
+    const adapter = buildAdapterFromDbConfig(luckpayCfg);
+    const session = await adapter.startDigilocker("candidate-1", ["AADHAAR"]);
+
+    expect(post).toHaveBeenNthCalledWith(
+      2,
+      "https://api-banking.luckpay.in/apibanking/api/v1/verifyDigilockerWithURL",
+      expect.objectContaining({
+        clientTransactionId: expect.any(String),
+        customerName: "Rahul Sharma",
+        mobileNumber: "9876543210",
+      }),
+      expect.any(Object),
+    );
+    expect(session.authUrl).toBe("https://luckpay.example/digilocker");
+  });
+
+  it("TC-PROV-28: Luckpay auth failures throw sanitized errors", async () => {
+    expect.assertions(2);
+    vi.spyOn(axios, "post").mockRejectedValueOnce({
+      response: {
+        status: 403,
+        data: {
+          code: "AUTH_023",
+          message: "IP address 115.241.59.220 is not whitelisted",
+        },
+      },
+      config: {
+        headers: {
+          Authorization: "Basic test-basic-token",
+        },
+      },
+    });
+
+    const adapter = buildAdapterFromDbConfig(luckpayCfg);
+    await adapter.verifyPan({ panNumber: "ABCDE1234F" }).catch((error) => {
+      expect(String(error.message)).toContain("IP address 115.241.59.220 is not whitelisted");
+      expect(String(error.message)).not.toContain("test-basic-token");
+    });
   });
 });
 

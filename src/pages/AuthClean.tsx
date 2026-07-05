@@ -3,12 +3,10 @@ import { useNavigate } from "react-router-dom";
 import { ArrowRight, Eye, EyeOff, Loader2, LockKeyhole, Mail, ShieldCheck, Users, Clock, BarChart3, CheckCircle2, Phone } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LoginSmartGreeting } from "@/components/integrations/LoginSmartGreeting";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { DEMO_CREDENTIALS } from "@/lib/demoCreds";
 
 const companyLogo = "/mcn-logo.png?v=999";
 const currentYear = new Date().getFullYear();
@@ -343,64 +341,6 @@ export default function AuthClean() {
                         <>Sign In <ArrowRight className="h-4 w-4" /></>
                       )}
                     </button>
-
-                    {/* Demo Quick-Start (dev/local only) */}
-                    {(import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_LOGIN === 'true') && (
-                      <div className="mt-4 border-t border-slate-200 pt-4">
-                        <p className="mb-2 text-center text-xs font-semibold text-slate-500">🔧 Demo Quick-Start</p>
-                        <div className="grid grid-cols-2 gap-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              const demoAdmin = DEMO_CREDENTIALS.find((item) => item.role === 'admin');
-                              setIdentifier(demoAdmin?.email ?? 'admin@mascallnet.com');
-                              setPassword(demoAdmin?.password ?? '');
-                            }}
-                            className="text-xs"
-                          >
-                            Admin
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setIdentifier('hr@mascallnet.com');
-                              setPassword('Hr@123456');
-                            }}
-                            className="text-xs"
-                          >
-                            HR
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setIdentifier('recruiter@mascallnet.com');
-                              setPassword('Recruiter@1');
-                            }}
-                            className="text-xs"
-                          >
-                            Recruiter
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setIdentifier('manager@mascallnet.com');
-                              setPassword('Manager@1');
-                            }}
-                            className="text-xs"
-                          >
-                            Manager
-                          </Button>
-                        </div>
-                      </div>
-                    )}
                   </form>
                 </>
               ) : (

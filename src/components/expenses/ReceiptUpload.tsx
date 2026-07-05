@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { Button } from '../ui/button';
 import { Upload, CheckCircle } from 'lucide-react';
 import { useUploadReceipt } from '../../integrations/expenses/hooks';
+import { apiBaseUrl } from '@/lib/apiBase';
 
 interface ReceiptUploadProps {
   claimId: number;
@@ -13,7 +14,9 @@ interface ReceiptUploadProps {
 function getAuthToken(): string | null {
   const mysqlToken = localStorage.getItem('hrms_access_token');
   if (mysqlToken) return mysqlToken;
-  const demoRaw = localStorage.getItem('hrms_demo_session');
+  const demoRaw = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_LOGIN === 'true'
+    ? localStorage.getItem('hrms_demo_session')
+    : null;
   if (demoRaw) {
     try {
       const demo = JSON.parse(demoRaw);
@@ -25,11 +28,7 @@ function getAuthToken(): string | null {
   return null;
 }
 
-const API_BASE = (() => {
-  const configured = import.meta.env.VITE_HRMS_API_URL;
-  if (configured !== undefined) return String(configured).replace(/\/$/, '');
-  return import.meta.env.DEV ? 'http://localhost:5055' : '';
-})();
+const API_BASE = apiBaseUrl();
 
 export function ReceiptUpload({ claimId, itemId, existingPath, onUploaded }: ReceiptUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
