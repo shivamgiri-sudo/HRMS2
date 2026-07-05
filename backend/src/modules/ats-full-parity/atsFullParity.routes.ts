@@ -114,6 +114,21 @@ atsFullParityRouter.get("/journey", requireRole("admin", "hr", "recruiter", "man
   const isPrivileged = isSuperAdmin || role === "hr" || role === "ceo";
   if (!isPrivileged) {
     const candidate = data.candidate as Record<string, unknown>;
+    const recruiterProfile = await resolveRecruiterForActor(req.authUser!.id);
+    const assignedRecruiterIds = [
+      candidate.recruiter_id,
+      candidate.recruiter_assigned_id,
+      candidate.assigned_recruiter_id,
+    ].filter(Boolean).map(String);
+    const assignedByRecruiterId = recruiterProfile
+      ? assignedRecruiterIds.includes(String(recruiterProfile.id))
+      : false;
+    const assignedByRecruiterName = recruiterProfile
+      ? String(candidate.recruiter_assigned_name ?? candidate.recruiter_name ?? "").trim() === recruiterProfile.name
+      : false;
+    if (assignedByRecruiterId || assignedByRecruiterName) {
+      return res.json({ success: true, data });
+    }
     const allowed = await hasScopedAccess(
       req.authUser!.id,
       ["recruiter", "manager", "branch_head", "process_manager"],
