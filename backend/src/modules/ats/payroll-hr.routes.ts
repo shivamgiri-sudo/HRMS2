@@ -26,6 +26,33 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unexpected error';
 }
 
+async function resolveEmployeeIdForAuthUser(authUserId: string): Promise<string> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+    [authUserId],
+  );
+  return rows[0]?.id ? String(rows[0].id) : authUserId;
+}
+
+const optionalUuid = z.preprocess(
+  (value) => (value === '' || value === null ? undefined : value),
+  z.string().uuid().optional(),
+);
+
+const optionalDate = z.preprocess(
+  (value) => (value === '' || value === null ? undefined : value),
+  z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'salary_start_date must be YYYY-MM-DD').optional(),
+);
+
+const optionalPositiveNumber = z.preprocess(
+  (value) => {
+    if (value === '' || value === null || value === undefined) return undefined;
+    const n = Number(value);
+    return n > 0 ? n : undefined;
+  },
+  z.number().positive().optional(),
+);
+
 // All routes require authentication and Payroll HR/HR/Admin role
 payrollHRRouter.use(requireAuth);
 payrollHRRouter.use(requireRole('admin', 'hr', 'payroll_hr'));
@@ -81,23 +108,24 @@ const salaryValidationSchema = z.object({
   cost_centre_id: z.string().uuid(),
   reporting_manager_id: z.string().uuid(),
   salary_slab_id: z.string().uuid(),
-  gross_salary: z.number().positive().optional(),
-  requested_gross_salary: z.number().positive().optional(),
+  gross_salary: optionalPositiveNumber,
+  requested_gross_salary: optionalPositiveNumber,
   salary_exception_reason: z.string().optional(),
   salary_components: z.any().optional(),
   joining_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'joining_date must be YYYY-MM-DD'),
-  salary_start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'salary_start_date must be YYYY-MM-DD').optional(),
-  shift_id: z.string().uuid().optional(),
+  salary_start_date: optionalDate,
+  shift_id: optionalUuid,
   remarks: z.string().optional(),
 });
 
 payrollHRRouter.post('/validate', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const input = salaryValidationSchema.parse(req.body) as SalaryValidationInput;
+    const payrollHrId = await resolveEmployeeIdForAuthUser(req.authUser!.id);
 
     const result = await validateAndAssignSalary({
       ...input,
-      payroll_hr_id: req.authUser!.id,
+      payroll_hr_id: payrollHrId,
     });
 
     return res.json(result);
@@ -152,7 +180,8 @@ payrollHRRouter.post('/salary-proposal', h(async (req: AuthenticatedRequest, res
 payrollHRRouter.post('/submit-offer', h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const input = salaryValidationSchema.parse(req.body) as SalaryValidationInput;
-    const result = await validateAndAssignSalary({ ...input, payroll_hr_id: req.authUser!.id });
+    const payrollHrId = await resolveEmployeeIdForAuthUser(req.authUser!.id);
+    const result = await validateAndAssignSalary({ ...input, payroll_hr_id: payrollHrId });
     return res.json(result);
   } catch (error: unknown) {
     if (error instanceof z.ZodError) return res.status(400).json({ success: false, message: 'Validation failed', errors: error.errors });

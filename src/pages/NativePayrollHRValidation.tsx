@@ -3,6 +3,7 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { formatISTDate } from '@/lib/utils';
 import { useAuth } from "@/contexts/AuthContext";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { ChevronRight, Calendar, DollarSign, User, Building, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -60,8 +61,8 @@ interface SalaryBreakdown {
 
 export default function NativePayrollHRValidation() {
   const { user } = useAuth();
-  const role = (user as any)?.role ?? "";
-  const ALLOWED = ["admin", "super_admin", "hr", "payroll_head"];
+  const { roleKeys } = useWorkforceAccess();
+  const ALLOWED = ["admin", "super_admin", "hr", "payroll_hr", "payroll", "finance", "payroll_head"];
   const [view, setView] = useState<'list' | 'validate'>('list');
   const [candidates, setCandidates] = useState<PendingCandidate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<PendingCandidate | null>(null);
@@ -206,10 +207,17 @@ export default function NativePayrollHRValidation() {
     setSuccess('');
 
     try {
-      await hrmsApi.post('/api/ats/payroll-hr/validate', {
+      const payload = {
         candidate_id: selectedCandidate.candidate_id,
         ...formData,
-      });
+        requested_gross_salary:
+          formData.requested_gross_salary > 0 ? formData.requested_gross_salary : undefined,
+        salary_exception_reason: formData.salary_exception_reason.trim() || undefined,
+        salary_start_date: formData.salary_start_date || undefined,
+        shift_id: formData.shift_id || undefined,
+        remarks: formData.remarks.trim() || undefined,
+      };
+      await hrmsApi.post('/api/ats/payroll-hr/validate', payload);
 
       setSuccess('Salary validation completed successfully!');
       setTimeout(() => {
@@ -326,7 +334,7 @@ export default function NativePayrollHRValidation() {
     );
   }
 
-  if (user && !ALLOWED.includes(role)) {
+  if (user && !roleKeys.some(k => ALLOWED.includes(k))) {
     return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
   }
 
