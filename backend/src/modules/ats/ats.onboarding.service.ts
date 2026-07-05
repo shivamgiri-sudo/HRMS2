@@ -41,6 +41,27 @@ function maskBankAccount(value: unknown): string | null {
   return s.length >= 4 ? `XXXXXX${s.slice(-4)}` : 'XXXXXXXXXX';
 }
 
+async function withDeliveryTimeout<T>(
+  task: Promise<T>,
+  label: string,
+  timeoutMs = 8000,
+): Promise<T | null> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => {
+          console.error(`[onboarding] ${label} timed out after ${timeoutMs}ms`);
+          resolve(null);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function normalizeOfferRoleType(value: unknown): 'Analyst' | 'SupportStaff' {
   const normalized = String(value ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '');
   if (normalized === 'supportstaff' || normalized === 'support') return 'SupportStaff';
@@ -102,12 +123,19 @@ export async function sendOnboardingToken(
   const onboardingLink = `${baseUrl}/onboard-full?token=${rawToken}`;
 
   if (cand.email) {
-    await sendOnboardingTokenEmail({
-      candidateId,
-      to: cand.email,
-      candidateName: cand.full_name,
-      onboardingLink,
-    });
+    try {
+      await withDeliveryTimeout(
+        sendOnboardingTokenEmail({
+          candidateId,
+          to: cand.email,
+          candidateName: cand.full_name,
+          onboardingLink,
+        }),
+        `email delivery for ${candidateId}`,
+      );
+    } catch (emailErr) {
+      console.error('[onboarding] email delivery failed for', candidateId, emailErr instanceof Error ? emailErr.message : String(emailErr));
+    }
   }
 
   // SMS/WhatsApp fallback for candidates without email (walk-ins)
@@ -116,7 +144,10 @@ export async function sendOnboardingToken(
       `Hi ${cand.full_name}, you have been selected! Complete your onboarding at: ${onboardingLink} (valid 7 days)`;
     try {
       const smsProvider = providerFactory.getProvider('sms');
-      await smsProvider.send(cand.mobile, 'Onboarding Link', smsBody);
+      await withDeliveryTimeout(
+        smsProvider.send(cand.mobile, 'Onboarding Link', smsBody),
+        `SMS delivery for ${candidateId}`,
+      );
     } catch (smsErr) {
       // SMS failure must not block token generation — log and continue
       console.error('[onboarding] SMS delivery failed for', candidateId, smsErr instanceof Error ? smsErr.message : String(smsErr));
@@ -124,7 +155,10 @@ export async function sendOnboardingToken(
     // WhatsApp delivery attempt (best-effort)
     try {
       const waProvider = providerFactory.getProvider('whatsapp');
-      await waProvider.send(cand.mobile, 'Onboarding Link', smsBody);
+      await withDeliveryTimeout(
+        waProvider.send(cand.mobile, 'Onboarding Link', smsBody),
+        `WhatsApp delivery for ${candidateId}`,
+      );
     } catch (waErr) {
       console.error('[onboarding] WhatsApp delivery failed for', candidateId, waErr instanceof Error ? waErr.message : String(waErr));
     }
