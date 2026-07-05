@@ -255,11 +255,21 @@ export const atsFormConfigService = {
            COALESCE(e.office_email, e.official_email, e.email) AS email,
            e.mobile
          FROM employees e
+         LEFT JOIN department_master d ON d.id = e.department_id
          LEFT JOIN designation_master des ON des.id = e.designation_id
          LEFT JOIN user_roles ur ON ur.user_id = e.user_id AND ur.active_status = 1
          WHERE e.active_status = 1
            AND e.branch_id = ?
            AND (
+             (
+               (LOWER(COALESCE(d.dept_name,'')) LIKE '%human resource%' OR LOWER(COALESCE(d.dept_name,'')) LIKE '%admin/hr%')
+               AND (
+                 LOWER(COALESCE(des.designation_name,'')) LIKE '%executive%'
+                 OR LOWER(COALESCE(des.designation_name,'')) LIKE '%recruiter%'
+                 OR LOWER(COALESCE(des.designation_name,'')) LIKE '%hr manager%'
+               )
+             )
+             OR
              LOWER(COALESCE(des.designation_name,'')) LIKE '%recruiter%'
              OR LOWER(COALESCE(des.designation_name,'')) LIKE '%hr%'
              OR ur.role_key IN ('hr', 'recruitment_hr', 'recruiter', 'branch_head', 'admin', 'super_admin')
@@ -350,11 +360,20 @@ export const atsFormConfigService = {
          COALESCE(e.office_email, e.official_email, e.email) AS email,
          e.mobile
        FROM employees e
+       LEFT JOIN department_master d ON d.id = e.department_id
        LEFT JOIN designation_master des ON des.id = e.designation_id
        WHERE e.active_status = 1
          AND e.branch_id = ?
          AND (
-           LOWER(COALESCE(des.designation_name,'')) LIKE '%recruiter%'
+           (
+             (LOWER(COALESCE(d.dept_name,'')) LIKE '%human resource%' OR LOWER(COALESCE(d.dept_name,'')) LIKE '%admin/hr%')
+             AND (
+               LOWER(COALESCE(des.designation_name,'')) LIKE '%executive%'
+               OR LOWER(COALESCE(des.designation_name,'')) LIKE '%recruiter%'
+               OR LOWER(COALESCE(des.designation_name,'')) LIKE '%hr manager%'
+             )
+           )
+           OR LOWER(COALESCE(des.designation_name,'')) LIKE '%recruiter%'
            OR LOWER(COALESCE(des.designation_name,'')) LIKE '%hr%'
          )
        ORDER BY name ASC`,
