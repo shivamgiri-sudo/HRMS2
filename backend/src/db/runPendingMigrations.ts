@@ -237,7 +237,8 @@ const MIGRATION_MANIFEST: string[] = [
   "351_sanitize_internal_sign_links.sql",
   "352_ats_email_log_extended_types.sql",
   "353_luckpay_production_provider_config.sql",
-];
+  "354_two_level_wfm_approvals.sql",
+  ];
 
 export type MigrationHealth = {
   status: "not_started" | "running" | "ok" | "failed";

@@ -3,19 +3,18 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
-import { buildScopeWhereClause, hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, hasAnyRole } from "../../shared/scopeAccess.js";
 import { leaveService } from "./leave.service.js";
 
 export const leaveSecureRouter = Router();
 leaveSecureRouter.use(requireAuth);
 
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
-const LEAVE_SCOPE_ROLES = ["manager", "assistant_manager", "tl", "branch_head", "process_manager", "hr"];
-const REVIEW_SCOPE_ROLES = ["manager", "assistant_manager", "tl", "branch_head", "process_manager", "hr"];
+const LEAVE_VIEW_SCOPE_ROLES = ["manager", "assistant_manager", "tl", "branch_head", "process_manager", "hr", "payroll_hr", "payroll_branch", "wfm"];
 
 async function leaveListScope(userId: string): Promise<{ sql: string; params: unknown[] }> {
-  if (await hasAnyRole(userId, "admin", "ceo")) return { sql: "1=1", params: [] };
-  const scoped = await buildScopeWhereClause(userId, LEAVE_SCOPE_ROLES, { branchId: "e.branch_id", processId: "e.process_id", departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id", employeeId: "e.id" }, { allowAdminBypass: true, allowCeoAllRead: true });
+  if (await hasAnyRole(userId, "super_admin")) return { sql: "1=1", params: [] };
+  const scoped = await buildScopeWhereClause(userId, LEAVE_VIEW_SCOPE_ROLES, { branchId: "e.branch_id", processId: "e.process_id", departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id", employeeId: "e.id" }, { allowAdminBypass: false, allowCeoAllRead: false });
   if (scoped.sql !== "1=0") return scoped;
   const callerEmp = await getEmployeeForUser(userId);
   if (callerEmp?.id) return { sql: "e.id = ?", params: [callerEmp.id] };
@@ -23,13 +22,13 @@ async function leaveListScope(userId: string): Promise<{ sql: string; params: un
 }
 
 async function canReviewLeave(userId: string, requestId: string): Promise<boolean> {
-  if (await hasAnyRole(userId, "admin", "hr", "ceo")) return true;
+  if (await hasAnyRole(userId, "super_admin")) return true;
   const [rows] = await db.execute<RowDataPacket[]>(`SELECT lr.employee_id, e.branch_id, e.process_id, e.lob_id, e.department_id, e.reporting_manager_id, e.manager_id FROM leave_request lr JOIN employees e ON e.id = lr.employee_id WHERE lr.id = ? LIMIT 1`, [requestId]);
   const target = rows[0] as any;
   if (!target) return false;
   const callerEmp = await getEmployeeForUser(userId);
   if (callerEmp?.id && callerEmp.id === target.employee_id) return false;
-  return hasScopedAccess(userId, REVIEW_SCOPE_ROLES, { branchId: target.branch_id, processId: target.process_id, lobId: target.lob_id, departmentId: target.department_id, managerEmployeeId: target.reporting_manager_id ?? target.manager_id, employeeId: target.employee_id }, { allowAdminBypass: true, requireScopeForNonAdmin: true });
+  return Boolean(callerEmp?.id && (callerEmp.id === target.reporting_manager_id || callerEmp.id === target.manager_id));
 }
 
 leaveSecureRouter.get("/requests", h(async (req: any, res: any) => {
