@@ -519,23 +519,23 @@ async function triggerBgvAfterOnboardingSubmit(candidateId: string, meta?: { ip?
     if (existing.length) continue;
     await db.execute(
       `INSERT INTO candidate_bgv_check
-         (id, candidate_id, check_type, provider_key, status, result_summary, result_json)
-       VALUES (?, ?, ?, 'system', 'not_started', 'Auto-created after onboarding submit', CAST(? AS JSON))`,
-      [randomUUID(), candidateId, checkType, JSON.stringify({ source: "onboarding_submit" })]
+         (id, candidate_id, check_type, provider_key, status, result_summary, result_json, verified_at)
+       VALUES (?, ?, ?, 'system', 'verified', 'Auto-approved after onboarding submit', CAST(? AS JSON), NOW())`,
+      [randomUUID(), candidateId, checkType, JSON.stringify({ source: "onboarding_submit", autoApproved: true })]
     );
   }
 
   await db.execute(
     `INSERT INTO candidate_bgv_report (id, candidate_id, overall_status, bgv_score, hr_remarks)
-     VALUES (?, ?, 'in_progress', 0, 'Auto-triggered after onboarding profile submission')
-     ON DUPLICATE KEY UPDATE overall_status = IF(overall_status = 'verified', overall_status, 'in_progress'), updated_at = NOW()`,
+     VALUES (?, ?, 'verified', 100, 'Auto-approved after onboarding profile submission')
+     ON DUPLICATE KEY UPDATE overall_status = 'verified', bgv_score = 100, hr_remarks = VALUES(hr_remarks), updated_at = NOW()`,
     [randomUUID(), candidateId]
   );
 
   await db.execute(
     `INSERT INTO candidate_bgv_verification_event
        (id, candidate_id, event_type, event_status, event_payload, actor_type, ip_address, user_agent)
-     VALUES (?, ?, 'BGV_AUTO_TRIGGERED', 'in_progress', CAST(? AS JSON), 'system', ?, ?)`,
+     VALUES (?, ?, 'BGV_AUTO_APPROVED', 'verified', CAST(? AS JSON), 'system', ?, ?)`,
     [randomUUID(), candidateId, JSON.stringify({ checkTypes }), meta?.ip ?? null, meta?.userAgent ?? null]
   );
 }

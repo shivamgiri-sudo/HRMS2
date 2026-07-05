@@ -176,10 +176,19 @@ export async function sendOnboardingTokenEmail(params: {
   return send(
     params.to,
     'Complete Your Joining Formalities - MAS Callnet',
-    `<p>Dear ${params.candidateName},</p>
-     <p>Please complete your joining formalities by clicking the link below.</p>
-     <p><a href="${params.onboardingLink}">Complete Profile (valid for 7 days)</a></p>
-     <p>If the link expires, contact your HR representative.</p>`,
+    atsFrame({
+      eyebrow: "Candidate Onboarding",
+      title: "Complete Your 10-Step Joining Form",
+      body: `<p>Dear <strong>${escapeHtml(params.candidateName)}</strong>,</p>
+        <p>Your profile has been selected. Please complete your secure 10-step onboarding form using the button below.</p>
+        <div style="margin:18px 0;border:1px solid #dbeafe;background:#eff6ff;border-radius:16px;padding:16px;color:#1e3a8a">
+          <strong>Before you start:</strong> Keep Aadhaar, PAN, bank details, education proof, and experience documents ready.
+        </div>
+        <p style="margin-top:18px;color:#64748b;font-size:13px;line-height:1.6">If the button does not open, copy this link into your browser:<br><span style="word-break:break-all">${escapeHtml(params.onboardingLink)}</span></p>`,
+      actionLabel: "Open Onboarding Form",
+      actionUrl: params.onboardingLink,
+      note: "This secure link is valid for 7 days. If it expires, ask your recruiter or HR to resend it.",
+    }),
     params.candidateId,
     'token_sent',
   );
@@ -207,13 +216,21 @@ export async function sendWelcomeEmail(params: {
   return send(
     params.to,
     `Welcome to MAS Callnet - Your Employee ID is ${params.employeeCode}`,
-    `<p>Dear ${params.candidateName},</p>
-     <p>Welcome to MAS Callnet! Your employee account has been activated.</p>
-     <p><strong>Employee ID:</strong> ${params.employeeCode}</p>
-     <p><strong>Login Email:</strong> ${params.loginEmail}</p>
-     <p><strong>Temporary Password:</strong> ${params.tempPassword}</p>
-     <p><a href="${params.loginUrl}">Login to HRMS</a></p>
-     <p>You will be prompted to change your password on first login.</p>`,
+    atsFrame({
+      eyebrow: "Employee Account Activated",
+      title: `Welcome to MAS Callnet, ${params.employeeCode}`,
+      body: `<p>Dear <strong>${escapeHtml(params.candidateName)}</strong>,</p>
+        <p>Your employee account is active. Use the details below to login and complete your first-day HRMS tasks.</p>
+        <div style="margin:18px 0;border:1px solid #d1fae5;background:#ecfdf5;border-radius:16px;padding:16px">
+          <p style="margin:0 0 8px"><strong>Employee ID:</strong> ${escapeHtml(params.employeeCode)}</p>
+          <p style="margin:0 0 8px"><strong>Login Email:</strong> ${escapeHtml(params.loginEmail)}</p>
+          <p style="margin:0"><strong>Temporary Password:</strong> ${escapeHtml(params.tempPassword)}</p>
+        </div>
+        <p style="color:#64748b;font-size:13px;line-height:1.6">If the button does not open, copy this link into your browser:<br><span style="word-break:break-all">${escapeHtml(params.loginUrl)}</span></p>`,
+      actionLabel: "Login to HRMS",
+      actionUrl: params.loginUrl,
+      note: "You will be asked to change your temporary password on first login. Do not share this password with anyone.",
+    }),
     params.candidateId,
     'welcome',
   );

@@ -768,6 +768,17 @@ export default function NativeATSCandidateRegistration() {
       errors.push("Referrer employee name is required");
     }
 
+    if (!form.recruiterId) {
+      nextErrors.recruiterName = "Select a recruiter, Walk-in, or Employee Referral from the list";
+      errors.push("Select a recruiter, Walk-in, or Employee Referral from the list");
+    } else if (
+      ![WALKIN_OPTION_ID, REFERENCE_OPTION_ID].includes(form.recruiterId)
+      && !branchRecruiters.some((recruiter) => recruiter.id === form.recruiterId)
+    ) {
+      nextErrors.recruiterName = "Selected recruiter is not mapped to this branch";
+      errors.push("Selected recruiter is not mapped to this branch");
+    }
+
     setErrors(nextErrors);
 
     if (errors.length > 0) {

@@ -36,6 +36,7 @@ export interface PendingApproval {
 export interface ApprovalInput {
   approval_id: string;
   branch_head_id: string;
+  branch_head_user_id?: string;
   approval_status: 'approved' | 'rejected';
   remarks?: string;
 }
@@ -137,6 +138,7 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
   employee_code?: string;
 }> {
   const { approval_id, branch_head_id, approval_status, remarks } = input;
+  const actorUserId = input.branch_head_user_id ?? branch_head_id;
 
   // Get approval details
   const [approvals] = await db.execute<RowDataPacket[]>(
@@ -204,9 +206,9 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
 
       await connection.commit();
 
-      if (approval.offer_id) {
-        await approveOffer(String(approval.offer_id), branch_head_id, remarks);
-      }
+      const conversion = approval.offer_id
+        ? await approveOffer(String(approval.offer_id), actorUserId, remarks)
+        : null;
 
       // Fire-and-forget: send approval email after transaction commits
       if (!approval.offer_id && approval.email) {
@@ -225,6 +227,7 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
         message: approval.offer_id
           ? 'Approval successful. Employee conversion completed through canonical offer approval.'
           : 'Approval recorded. Submit an employment offer to complete canonical employee conversion.',
+        employee_code: conversion?.employeeCode,
       };
     } else {
       await connection.execute(
@@ -266,7 +269,7 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
       await connection.commit();
 
       if (approval.offer_id && remarks) {
-        await rejectOffer(String(approval.offer_id), branch_head_id, remarks);
+        await rejectOffer(String(approval.offer_id), actorUserId, remarks);
       }
 
       // Fire-and-forget: send rejection email after transaction commits

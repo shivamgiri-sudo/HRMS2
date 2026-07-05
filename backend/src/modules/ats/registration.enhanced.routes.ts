@@ -297,6 +297,22 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
     }
 
     if (!resolvedRecruiterId && input.preferredRecruiterId && !autoAssign) {
+      const [preferredRosterRows] = await db.execute<RecruiterIdRow[]>(
+        `SELECT r.id
+         FROM ats_recruiter_roster r
+         LEFT JOIN branch_master b ON b.branch_name = r.branch OR b.branch_code = r.branch
+         WHERE r.id = ?
+           AND r.active_status = 1
+           AND (r.branch = ? OR r.branch = ? OR b.branch_name = ? OR b.branch_code = ?)
+         LIMIT 1`,
+        [input.preferredRecruiterId, branchName, input.branchDisplayName, branchName, input.branchDisplayName]
+      );
+      if (preferredRosterRows.length > 0) {
+        resolvedRecruiterId = preferredRosterRows[0].id;
+      }
+    }
+
+    if (!resolvedRecruiterId && input.preferredRecruiterId && !autoAssign) {
       // Resolve employee UUID → roster UUID (idempotent upsert)
       const [empRows] = await db.execute<RecruiterEmployeeRow[]>(
         `SELECT e.id, e.first_name, e.last_name, e.mobile,

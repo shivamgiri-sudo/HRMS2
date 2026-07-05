@@ -8,6 +8,8 @@ import {
   getBranchHeadStats,
   type ApprovalInput,
 } from './branch-head-approval.service.js';
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2/promise';
 
 export const branchHeadApprovalRouter = Router();
 
@@ -21,6 +23,14 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unexpected error';
 }
 
+async function resolveEmployeeIdForAuthUser(authUserId: string): Promise<string> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+    [authUserId],
+  );
+  return rows[0]?.id ? String(rows[0].id) : authUserId;
+}
+
 // All routes require authentication and branch head role
 branchHeadApprovalRouter.use(requireAuth);
 branchHeadApprovalRouter.use(requireRole('admin', 'manager', 'branch_head'));
@@ -28,7 +38,7 @@ branchHeadApprovalRouter.use(requireRole('admin', 'manager', 'branch_head'));
 // ── 1. Get pending approvals ──────────────────────────────────────────────────
 branchHeadApprovalRouter.get('/pending', h(async (req, res) => {
   try {
-    const branchHeadId = req.authUser!.id;
+    const branchHeadId = await resolveEmployeeIdForAuthUser(req.authUser!.id);
     const approvals = await getPendingApprovals(branchHeadId);
 
     return res.json({
@@ -46,9 +56,11 @@ branchHeadApprovalRouter.get('/pending', h(async (req, res) => {
 // ── 2. Process approval (approve/reject) ──────────────────────────────────────
 branchHeadApprovalRouter.post('/process', h(async (req, res) => {
   try {
+    const branchHeadEmployeeId = await resolveEmployeeIdForAuthUser(req.authUser!.id);
     const input: ApprovalInput = {
       approval_id: req.body.approval_id,
-      branch_head_id: req.authUser!.id,
+      branch_head_id: branchHeadEmployeeId,
+      branch_head_user_id: req.authUser!.id,
       approval_status: req.body.approval_status,
       remarks: req.body.remarks,
     };
@@ -99,7 +111,7 @@ branchHeadApprovalRouter.get('/history/:candidateId', h(async (req: Request, res
 // ── 4. Get branch head statistics ─────────────────────────────────────────────
 branchHeadApprovalRouter.get('/stats', h(async (req, res) => {
   try {
-    const branchHeadId = req.authUser!.id;
+    const branchHeadId = await resolveEmployeeIdForAuthUser(req.authUser!.id);
     const stats = await getBranchHeadStats(branchHeadId);
 
     return res.json({
