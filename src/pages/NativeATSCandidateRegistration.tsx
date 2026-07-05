@@ -31,6 +31,11 @@ type RecruiterChoice = {
   mobile: string | null;
 };
 
+type RecruiterPickerChoice = RecruiterChoice & {
+  special?: "walkin" | "reference";
+  subLabel?: string;
+};
+
 type Bootstrap = {
   fields?: FieldDef[];
   companyName: string;
@@ -254,6 +259,14 @@ const css = `
   .native-ats-sw { position:relative; }
   .native-ats-sw::after { content:'▾'; position:absolute; right:12px; top:50%; transform:translateY(-50%); color:#94a3b8; pointer-events:none; font-size:13px; }
   .native-ats-si { cursor:pointer; padding-right:34px; }
+  .native-ats-recruiter-menu { position:absolute; z-index:50; top:calc(100% + 8px); left:0; right:0; max-height:260px; overflow-y:auto; background:#fff; border:1.5px solid #c7d2fe; border-radius:14px; box-shadow:0 18px 42px rgba(15,23,42,.18); padding:8px; }
+  .native-ats-recruiter-opt { width:100%; border:0; background:#fff; border-radius:11px; padding:10px 12px; text-align:left; cursor:pointer; display:flex; flex-direction:column; gap:2px; transition:background .15s, transform .15s; }
+  .native-ats-recruiter-opt:hover,.native-ats-recruiter-opt.selected { background:#eef2ff; }
+  .native-ats-recruiter-opt:active { transform:scale(.99); }
+  .native-ats-recruiter-opt.special { background:linear-gradient(135deg,#f8fafc,#eef2ff); border:1px solid #dbe4ff; margin-bottom:6px; }
+  .native-ats-recruiter-main { font-size:14px; font-weight:900; color:#172554; }
+  .native-ats-recruiter-sub { font-size:11px; font-weight:700; color:#64748b; }
+  .native-ats-recruiter-empty { padding:14px 12px; font-size:13px; font-weight:700; color:#64748b; text-align:center; }
   .native-ats-fe { font-size:12px; color:var(--ats-red); margin-top:4px; font-weight:700; display:none; }
   .native-ats-fe.show { display:block; }
 
@@ -371,6 +384,7 @@ export default function NativeATSCandidateRegistration() {
   const [consentGiven, setConsentGiven] = useState(false);
   const [branchRecruiters, setBranchRecruiters] = useState<RecruiterChoice[]>([]);
   const [recruiterSearch, setRecruiterSearch] = useState("");
+  const [recruiterDropdownOpen, setRecruiterDropdownOpen] = useState(false);
 
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -417,6 +431,47 @@ export default function NativeATSCandidateRegistration() {
     [branchRecruiters, form.recruiterId]
   );
 
+  const recruiterPickerOptions = useMemo<RecruiterPickerChoice[]>(() => {
+    if (!form.branch) return [];
+    const normalizedSearch = normalizeRecruiterLookupValue(recruiterSearch);
+    const specialOptions: RecruiterPickerChoice[] = [
+      {
+        id: WALKIN_OPTION_ID,
+        label: "Walk-in",
+        name: "Walk-in",
+        employee_code: null,
+        employee_id: null,
+        email: null,
+        mobile: null,
+        special: "walkin",
+        subLabel: "Auto-assign a recruiter from this branch",
+      },
+      {
+        id: REFERENCE_OPTION_ID,
+        label: "Employee Referral",
+        name: "Employee Referral",
+        employee_code: null,
+        employee_id: null,
+        email: null,
+        mobile: null,
+        special: "reference",
+        subLabel: "Capture the referring employee name",
+      },
+    ];
+    const recruiters = branchRecruiters.map((item) => ({
+      ...item,
+      subLabel: item.employee_code ? `Employee code: ${item.employee_code}` : "Branch recruiter",
+    }));
+    const combined = [...specialOptions, ...recruiters];
+    if (!normalizedSearch) return combined;
+    return combined.filter((item) => {
+      const haystack = [item.label, item.name, item.employee_code, item.subLabel]
+        .map((value) => normalizeRecruiterLookupValue(String(value ?? "")))
+        .join(" ");
+      return haystack.includes(normalizedSearch);
+    });
+  }, [branchRecruiters, form.branch, recruiterSearch]);
+
   const findRecruiterChoice = (rawValue: string) => {
     const normalized = normalizeRecruiterLookupValue(rawValue);
     if (!normalized) return null;
@@ -427,6 +482,27 @@ export default function NativeATSCandidateRegistration() {
       const name = normalizeRecruiterLookupValue(String(item.name ?? ""));
       return label === normalized || name === normalized || (!!code && code === normalized);
     }) ?? null;
+  };
+
+  const chooseRecruiter = (choice: RecruiterPickerChoice) => {
+    if (choice.id === WALKIN_OPTION_ID) {
+      setForm((prev) => ({ ...prev, recruiterId: WALKIN_OPTION_ID, recruiterName: "Walk-in", sourceType: "Walk-In", referredBy: "" }));
+      setRecruiterSearch("Walk-in");
+    } else if (choice.id === REFERENCE_OPTION_ID) {
+      setForm((prev) => ({ ...prev, recruiterId: REFERENCE_OPTION_ID, recruiterName: "Employee Referral", sourceType: "Reference" }));
+      setRecruiterSearch("Employee Referral");
+    } else {
+      setForm((prev) => ({
+        ...prev,
+        recruiterId: choice.id,
+        recruiterName: choice.name ?? choice.label,
+        sourceType: "Recruiter",
+        referredBy: "",
+      }));
+      setRecruiterSearch(choice.label);
+    }
+    setErrors((prev) => ({ ...prev, recruiterName: "", referredBy: "" }));
+    setRecruiterDropdownOpen(false);
   };
 
   useEffect(() => {
@@ -442,7 +518,7 @@ export default function NativeATSCandidateRegistration() {
     hrmsApi.get(`/api/ats/form-config/recruiters-by-branch?branch=${encodeURIComponent(branch)}`)
       .then((res: any) => {
         const list: RecruiterChoice[] = (res?.data ?? []).map((r: any) => ({
-          id: String(r.employee_id ?? ""),
+          id: String(r.id ?? r.employee_id ?? ""),
           label: `${String(r.name ?? "").trim()}${r.employee_code ? ` · ${r.employee_code}` : ""}`,
           employee_code: r.employee_code ?? null,
           employee_id: r.employee_id ?? null,
@@ -1060,12 +1136,15 @@ export default function NativeATSCandidateRegistration() {
               <>
                 <input
                   className={`native-ats-ti ${error ? 'error' : ''} ${isValid ? 'valid' : ''}`}
-                  list="native-ats-branch-recruiters"
                   value={recruiterSearch}
-                  placeholder={!form.branch ? "Select branch first" : "Type recruiter name, code, Walk-In, or Reference"}
+                  placeholder={!form.branch ? "Select branch first" : "Search recruiter, Walk-in, or Employee Referral"}
+                  onFocus={() => {
+                    if (form.branch) setRecruiterDropdownOpen(true);
+                  }}
                   onChange={(e) => {
                     const nextValue = e.target.value;
                     setRecruiterSearch(nextValue);
+                    setRecruiterDropdownOpen(true);
 
                     const normalized = normalizeRecruiterLookupValue(nextValue);
                     if (!normalized) {
@@ -1075,14 +1154,28 @@ export default function NativeATSCandidateRegistration() {
                     }
 
                     if (normalized === "walk-in" || normalized === "walk in" || normalized === "walkin") {
-                      setForm((prev) => ({ ...prev, recruiterId: WALKIN_OPTION_ID, recruiterName: "Walk-In", sourceType: "Walk-In", referredBy: "" }));
-                      setErrors((prev) => ({ ...prev, recruiterName: "", referredBy: "" }));
+                      chooseRecruiter({
+                        id: WALKIN_OPTION_ID,
+                        label: "Walk-in",
+                        name: "Walk-in",
+                        employee_code: null,
+                        employee_id: null,
+                        email: null,
+                        mobile: null,
+                      });
                       return;
                     }
 
-                    if (normalized === "reference") {
-                      setForm((prev) => ({ ...prev, recruiterId: REFERENCE_OPTION_ID, recruiterName: "Reference", sourceType: "Reference" }));
-                      setErrors((prev) => ({ ...prev, recruiterName: "", referredBy: "" }));
+                    if (normalized === "reference" || normalized === "employee referral" || normalized === "employee reference") {
+                      chooseRecruiter({
+                        id: REFERENCE_OPTION_ID,
+                        label: "Employee Referral",
+                        name: "Employee Referral",
+                        employee_code: null,
+                        employee_id: null,
+                        email: null,
+                        mobile: null,
+                      });
                       return;
                     }
 
@@ -1103,22 +1196,40 @@ export default function NativeATSCandidateRegistration() {
                     setForm((prev) => ({ ...prev, recruiterId: "", recruiterName: "", sourceType: "", referredBy: "" }));
                   }}
                   onBlur={() => {
-                    if (!recruiterSearch.trim()) return;
-                    if (form.recruiterId || !form.branch) return;
-                    setErrors((prev) => ({
-                      ...prev,
-                      recruiterName: "Select a recruiter from this branch, or choose Walk-In / Reference",
-                    }));
+                    window.setTimeout(() => {
+                      setRecruiterDropdownOpen(false);
+                      if (!recruiterSearch.trim()) return;
+                      if (form.recruiterId || !form.branch) return;
+                      setErrors((prev) => ({
+                        ...prev,
+                        recruiterName: "Select a recruiter from this branch, or choose Walk-in / Employee Referral",
+                      }));
+                    }, 120);
                   }}
                   disabled={!form.branch}
                 />
-                <datalist id="native-ats-branch-recruiters">
-                  <option value="Walk-In" />
-                  <option value="Reference" />
-                  {branchRecruiters.map((opt) => (
-                    <option key={opt.id} value={opt.label} />
-                  ))}
-                </datalist>
+                {recruiterDropdownOpen && form.branch && (
+                  <div className="native-ats-recruiter-menu">
+                    {recruiterPickerOptions.length === 0 ? (
+                      <div className="native-ats-recruiter-empty">No matching recruiter found for this branch</div>
+                    ) : (
+                      recruiterPickerOptions.map((opt) => (
+                        <button
+                          type="button"
+                          key={opt.id}
+                          className={`native-ats-recruiter-opt ${opt.special ? "special" : ""} ${form.recruiterId === opt.id ? "selected" : ""}`}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            chooseRecruiter(opt);
+                          }}
+                        >
+                          <span className="native-ats-recruiter-main">{opt.label}</span>
+                          <span className="native-ats-recruiter-sub">{opt.subLabel}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
               </>
             ) : (
               <select className={selectClass} value={String(value || "")} onChange={(e) => update(f.k, e.target.value)}>
@@ -1151,7 +1262,7 @@ export default function NativeATSCandidateRegistration() {
           )}
           {f.k === "recruiterName" && form.branch && (
             <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>
-              Type recruiter name or employee code. Options are limited to the selected branch, plus Walk-In and Reference.
+              Search recruiter name or employee code. Options are limited to selected-branch recruiters, plus Walk-in and Employee Referral.
             </div>
           )}
           <div className={`native-ats-fe ${error ? "show" : ""}`}>{error}</div>
