@@ -224,3 +224,9 @@ Then run domain searches for specific components:
 "C:/Users/ADMIN/AppData/Local/Programs/Python/Python312/python.exe" "C:/Users/ADMIN/.claude/skills/ui-ux-pro-max/scripts/search.py" "<component>" --domain ux --stack shadcn
 ```
 Never implement UI without consulting the design system. Use `/ux` slash command to trigger this workflow.
+
+### 4. Frontend Design — Distinctive Visual Decisions
+Invoke `/frontend-design` whenever making aesthetic or layout choices: new page layouts, component visual style, typography decisions, color usage, or any UI that risks looking generic/templated. Use it before finalizing any new screen design.
+
+### 5. Caveman Mode — Token Efficiency
+Invoke `/caveman` when responses are getting verbose or when the user asks for brevity. Use it for terse status updates, quick summaries, and any context where token efficiency matters over prose.

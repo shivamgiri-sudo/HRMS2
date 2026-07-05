@@ -190,6 +190,8 @@ const RunningPayrollBreakdown       = lazy(() => import("./pages/payroll/Running
 const HolidayMaster                 = lazy(() => import("./pages/payroll/HolidayMaster"));
 const HolidayWorkRequest            = lazy(() => import("./pages/payroll/HolidayWorkRequest"));
 const HolidayWorkApprovals          = lazy(() => import("./pages/payroll/HolidayWorkApprovals"));
+const PayrollValidationScreen       = lazy(() => import("./pages/payroll/PayrollValidationScreen"));
+const NocManagement                 = lazy(() => import("./pages/payroll/NocManagement"));
 const WeekoffFairness               = lazy(() => import("./pages/wfm/WeekoffFairness"));
 
 // Communication
@@ -464,6 +466,8 @@ const App = () => (
               <Route path="/payroll/holiday-master" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><HolidayMaster /></ProtectedRoute>} />
               <Route path="/payroll/holiday-work-requests" element={<ProtectedRoute roles={['super_admin','admin','wfm','payroll_head','payroll_branch']}><HolidayWorkRequest /></ProtectedRoute>} />
               <Route path="/payroll/holiday-work-approvals" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','wfm']}><HolidayWorkApprovals /></ProtectedRoute>} />
+              <Route path="/payroll/validation" element={<ProtectedRoute roles={['super_admin','payroll_head']}><PayrollValidationScreen /></ProtectedRoute>} />
+              <Route path="/payroll/noc" element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch','payroll','admin']}><NocManagement /></ProtectedRoute>} />
               <Route path="/wfm/weekoff-fairness" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><WeekoffFairness /></ProtectedRoute>} />
 
               {/* Communication */}

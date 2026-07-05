@@ -14,12 +14,46 @@ import { startIntegrationScheduler } from "./workers/integration-scheduler.worke
 import { startLeaveMonthlyWorker } from "./workers/leave-monthly-credit.worker.js";
 import { startAnnualLeaveWorker } from "./workers/leave-annual-el-credit.worker.js";
 import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-db.service.js";
+// Attendance data sync workers — APR/dialler + biometric COSEC
+import { startAprVicidialSyncWorker } from "./workers/apr-vicidial-sync.worker.js";
+import { runNcosecBiometricSync } from "../scripts/migrate-ncosec-biometric.js";
+// Payroll nightly recalc
+import { startPayrollNightlyRecalcWorker } from "./workers/payroll-nightly-recalc.worker.js";
+// KPI, SLA, LMS sync
+import { startKpiDailySyncWorker } from "./workers/kpi-daily-sync.worker.js";
+import { startSLABreachWorker } from "./workers/sla-breach-worker.js";
+import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
+
+// Single-instance guard: if server.ts is the sole entry point, run all workers here.
+// If all-workers.ts is also running (separate process), set WORKERS_PROCESS=external
+// to prevent double-scheduling.
+const WORKERS_EXTERNAL = process.env.WORKERS_PROCESS === "external";
+
+const BIOMETRIC_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 h
+
+async function startBiometricCosecWorker(): Promise<void> {
+  const run = async () => {
+    console.log("[biometric-cosec-sync] Starting NCOSEC sync...");
+    try {
+      const summary = await runNcosecBiometricSync();
+      console.log(
+        `[biometric-cosec-sync] Done — inserted: ${summary.attendance_inserted}, ` +
+        `updated: ${summary.attendance_updated}, errors: ${summary.errors.length}`
+      );
+    } catch (err: any) {
+      console.error("[biometric-cosec-sync] Failed:", err.message);
+    }
+  };
+  await run();
+  setInterval(run, BIOMETRIC_SYNC_INTERVAL_MS);
+}
 
 function startServer() {
   app.listen(env.PORT, () => {
     startOfficialEmailComplianceScheduler();
     startIntegrationScheduler();
-    console.log("[scheduler] official-email, integration, and COSEC sync checks completed");
+    console.log("[scheduler] official-email and integration scheduler started");
+
     if (env.ENABLE_SCHEDULERS) {
       startTenureBadgeScheduler();
       startCommunicationCleanup();
@@ -30,9 +64,41 @@ function startServer() {
       startLeaveMonthlyWorker();
       startAnnualLeaveWorker();
       startPayrollWindowClosureScheduler();
-      console.log(`[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window started`);
+      console.log("[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window started");
+
+      if (!WORKERS_EXTERNAL) {
+        // Attendance data sync: APR/dialler → apr table (daily at 01:30 IST)
+        startAprVicidialSyncWorker().catch(err =>
+          console.error("[apr-sync] startup error:", err.message)
+        );
+
+        // Biometric COSEC → cosec_daily_agg → ADR (every 6h)
+        startBiometricCosecWorker().catch(err =>
+          console.error("[biometric-cosec-sync] startup error:", err.message)
+        );
+
+        // Payroll nightly recalculation (23:45 IST = 18:15 UTC)
+        startPayrollNightlyRecalcWorker().catch(err =>
+          console.error("[payroll-nightly-recalc] startup error:", err.message)
+        );
+
+        // KPI daily sync, SLA breach detection, LMS sync
+        startKpiDailySyncWorker().catch(err =>
+          console.error("[kpi-daily-sync] startup error:", err.message)
+        );
+        startSLABreachWorker().catch(err =>
+          console.error("[sla-breach] startup error:", err.message)
+        );
+        startLmsSyncWorker().catch(err =>
+          console.error("[lms-sync] startup error:", err.message)
+        );
+
+        console.log("[workers] apr-sync, biometric-cosec-sync, payroll-nightly-recalc, kpi-sync, sla-breach, lms-sync started inline");
+      } else {
+        console.log("[workers] WORKERS_PROCESS=external — skipping inline workers (handled by all-workers process)");
+      }
     } else {
-      console.log(`[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)`);
+      console.log("[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)");
     }
     console.log(`MCN HRMS backend running on http://localhost:${env.PORT}`);
   });

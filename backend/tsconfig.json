@@ -11,6 +11,6 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "scripts/migrate-ncosec-biometric.ts", "scripts/ncosecDb.ts"],
   "exclude": ["node_modules", "dist", "tests", "src/tests", "src/**/__tests__"]
 }
