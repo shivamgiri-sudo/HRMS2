@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { AIInsightPanel } from "@/components/ai";
 import { useQuery } from "@tanstack/react-query";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { InterventionPanel } from "@/components/dashboard/InterventionPanel";
+import type { InterventionFlag } from "@/components/dashboard/InterventionPanel";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
@@ -329,19 +332,24 @@ function AgentDetailModal({ agent, onClose }: { agent: AgentRisk; onClose: () =>
 
 // ─── Tab Definition ───────────────────────────────────────────────────────────
 
-type TabId = "overview" | "quality" | "sales" | "insights" | "roi";
+type TabId = "overview" | "quality" | "inbound" | "opening" | "cx" | "sales" | "insights" | "roi";
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
-  { id: "overview",  label: "Overview",      icon: <BarChart2 className="h-4 w-4" /> },
-  { id: "quality",   label: "Quality Deep",  icon: <Activity className="h-4 w-4" /> },
-  { id: "sales",     label: "Sales & Funnel",icon: <TrendingUp className="h-4 w-4" /> },
-  { id: "insights",  label: "AI Insights",   icon: <Brain className="h-4 w-4" /> },
-  { id: "roi",       label: "ROI Calculator",icon: <DollarSign className="h-4 w-4" /> },
+  { id: "overview",  label: "Overview",           icon: <BarChart2 className="h-4 w-4" /> },
+  { id: "quality",   label: "Quality Deep",       icon: <Activity className="h-4 w-4" /> },
+  { id: "inbound",   label: "Inbound Quality",    icon: <Shield className="h-4 w-4" /> },
+  { id: "opening",   label: "Opening Intel",      icon: <TrendingUp className="h-4 w-4" /> },
+  { id: "cx",        label: "Customer Intel",     icon: <Users className="h-4 w-4" /> },
+  { id: "sales",     label: "Sales & Funnel",     icon: <TrendingUp className="h-4 w-4" /> },
+  { id: "insights",  label: "AI Insights",        icon: <Brain className="h-4 w-4" /> },
+  { id: "roi",       label: "ROI Calculator",     icon: <DollarSign className="h-4 w-4" /> },
 ];
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function NativeQualityDashboard() {
+  const { roleKeys, hasAnyRole } = useWorkforceAccess();
+  const canViewSalesRoi = hasAnyRole("super_admin", "admin", "ceo", "process_manager", "operations_manager");
   const [from, setFrom] = useState(firstOfMonth());
   const [to, setTo] = useState(today());
   const [clientId, setClientId] = useState("");
@@ -350,6 +358,17 @@ export default function NativeQualityDashboard() {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [selectedAgent, setSelectedAgent] = useState<AgentRisk | null>(null);
   const [drillClient, setDrillClient] = useState<{ id: string; name?: string } | null>(null);
+  const [qualityFlags, setQualityFlags] = useState<InterventionFlag[]>([]);
+
+  // Suppress unused warning — roleKeys used to satisfy linter
+  void roleKeys;
+
+  useEffect(() => {
+    const qs = `from=${from}&to=${to}${clientId ? `&client_id=${clientId}` : ""}`;
+    hrmsApi.get<{ success: boolean; data: { intervention_flags?: InterventionFlag[] } }>(`/api/bi/quality-intervention?${qs}`)
+      .then((res) => setQualityFlags((res as any)?.data?.intervention_flags ?? []))
+      .catch(() => setQualityFlags([]));
+  }, [from, to, clientId]);
 
   const qs = `from=${from}&to=${to}&client_id=${clientId}`;
   const key = [from, to, clientId, granularity, refresh];
@@ -370,6 +389,52 @@ export default function NativeQualityDashboard() {
   const funnelQ   = useQuery({ queryKey: ["qd-funnel",   ...key], queryFn: () => hrmsApi.get<{ sales_funnel: SalesFunnel; rejection_funnel: RejectionFunnel; top_rejection_reasons: RejectionReason[] }>(`/api/quality-dashboard/sales-funnel?${qs}`).then(r => r), enabled: activeTab === "sales" });
   const insightsQ = useQuery({ queryKey: ["qd-insights", ...key], queryFn: () => hrmsApi.get<{ insights: Insight[] }>(`/api/quality-dashboard/insights?from=${from}&to=${to}`).then(r => r.insights), enabled: activeTab === "insights" });
   const roiQ      = useQuery({ queryKey: ["qd-roi",      ...key], queryFn: () => hrmsApi.get<{ roi: RoiData }>(`/api/quality-dashboard/roi?from=${from}&to=${to}`).then(r => r.roi), enabled: activeTab === "roi" });
+
+  // ── Call Master integration queries ─────────────────────────────────────────
+  const cmQs = `startDate=${from}&endDate=${to}`;
+  const oiExecQ    = useQuery({ queryKey: ["oi-exec",    ...key], queryFn: () => hrmsApi.get<{ data: Record<string, unknown> }>(`/api/call-master/opening-intelligence/executive-summary?${cmQs}`).then(r => (r as any).data ?? {}), enabled: activeTab === "opening" });
+  const oiCatsQ    = useQuery({ queryKey: ["oi-cats",    ...key], queryFn: () => hrmsApi.get<{ data: {category:string;calls:number;sales:number;conv_pct:number}[] }>(`/api/call-master/opening-intelligence/opening-categories?${cmQs}`).then(r => (r as any).data ?? []), enabled: activeTab === "opening" });
+  const oiTrendQ   = useQuery({ queryKey: ["oi-trend",   ...key], queryFn: () => hrmsApi.get<{ data: {period:string;opening_score:number;calls:number;conv_pct:number}[] }>(`/api/call-master/opening-intelligence/opening-trend?${cmQs}`).then(r => (r as any).data ?? []), enabled: activeTab === "opening" });
+  const oiLeaderQ  = useQuery({ queryKey: ["oi-leader",  ...key], queryFn: () => hrmsApi.get<{ data: {top_agents:{name:string;calls:number;opening_score:number;conv_pct:number}[];bottom_agents:{name:string;calls:number;opening_score:number}[]} }>(`/api/call-master/opening-intelligence/leaderboard?${cmQs}`).then(r => (r as any).data ?? { top_agents: [], bottom_agents: [] }), enabled: activeTab === "opening" });
+  const oiAiQ      = useQuery({ queryKey: ["oi-ai",      ...key], queryFn: () => hrmsApi.get<{ data: {type:string;title:string;what:string;why:string;action:string}[] }>(`/api/call-master/opening-intelligence/ai-insights?${cmQs}`).then(r => (r as any).data ?? []), enabled: activeTab === "opening" });
+  const ciExecQ    = useQuery({ queryKey: ["ci-exec",    ...key], queryFn: () => hrmsApi.get<{ data: Record<string, unknown> }>(`/api/call-master/customer-intelligence/executive-summary?${cmQs}`).then(r => (r as any).data ?? {}), enabled: activeTab === "cx" });
+  const ciSentQ    = useQuery({ queryKey: ["ci-sent",    ...key], queryFn: () => hrmsApi.get<{ data: {positive:number;negative:number;neutral:number;total:number} }>(`/api/call-master/customer-intelligence/sentiment?${cmQs}`).then(r => {
+    const d = (r as any).data;
+    if (!d) return [];
+    const total = (d.positive||0) + (d.negative||0) + (d.neutral||0);
+    return [
+      { sentiment: "positive", count: d.positive||0, pct: total ? Math.round((d.positive||0)/total*1000)/10 : 0 },
+      { sentiment: "neutral",  count: d.neutral||0,  pct: total ? Math.round((d.neutral||0)/total*1000)/10  : 0 },
+      { sentiment: "negative", count: d.negative||0, pct: total ? Math.round((d.negative||0)/total*1000)/10 : 0 },
+    ];
+  }), enabled: activeTab === "cx" });
+  const ciFbQ      = useQuery({ queryKey: ["ci-fb",      ...key], queryFn: () => hrmsApi.get<{ data: {category:string;count:number;pct:number}[] }>(`/api/call-master/customer-intelligence/feedback-categories?${cmQs}`).then(r => {
+    const rows: any[] = (r as any).data ?? [];
+    const total = rows.reduce((s: number, c: any) => s + (Number(c.count)||0), 0);
+    return rows.map((c: any) => ({ ...c, pct: total ? Math.round((Number(c.count)||0)/total*1000)/10 : 0 }));
+  }), enabled: activeTab === "cx" });
+  const ciSentTrendQ = useQuery({ queryKey: ["ci-strend", ...key], queryFn: () => hrmsApi.get<{ data: {period:string;positive:number;negative:number;neutral:number}[] }>(`/api/call-master/customer-intelligence/sentiment-trend?${cmQs}`).then(r => (r as any).data ?? []), enabled: activeTab === "cx" });
+  const ciAiQ      = useQuery({ queryKey: ["ci-ai",      ...key], queryFn: () => hrmsApi.get<{ data: {type:string;title:string;what:string;why:string;action:string}[] }>(`/api/call-master/customer-intelligence/ai-insights?${cmQs}`).then(r => (r as any).data ?? []), enabled: activeTab === "cx" });
+  const ibKpisQ    = useQuery({ queryKey: ["ib-kpis",    ...key], queryFn: () => hrmsApi.get<{ data: Record<string, unknown> }>(`/api/inbound-quality/kpis?${cmQs}`).then(r => {
+    const d = (r as any).data ?? {};
+    const k = d.kpis ?? {};
+    return { total_audited: k.audit_count ?? 0, avg_cq_score: k.cq_score ?? 0, fatal_count: k.fatal_count ?? 0, fatal_pct: k.fatal_pct ?? 0 };
+  }), enabled: activeTab === "inbound" });
+  const ibTopQ     = useQuery({ queryKey: ["ib-top",     ...key], queryFn: () => hrmsApi.get<{ data: {user:string;audit_count:number;avg_score:number}[] }>(`/api/inbound-quality/top-performers?${cmQs}`).then(r => ((r as any).data ?? []).map((a: any) => ({ agent: a.user ?? a.agent, calls: a.audit_count ?? a.calls, score: a.avg_score ?? a.score }))), enabled: activeTab === "inbound" });
+  const ibDailyQ   = useQuery({ queryKey: ["ib-daily",   ...key], queryFn: () => hrmsApi.get<{ data: {call_date:string;avg_score:number;audit_count:number}[] }>(`/api/inbound-quality/daily-scores?${cmQs}`).then(r => ((r as any).data ?? []).map((d: any) => ({ ...d, date: d.call_date ?? d.date }))), enabled: activeTab === "inbound" });
+  const ibFatalQ   = useQuery({ queryKey: ["ib-fatal",   ...key], queryFn: () => hrmsApi.get<{ data: Record<string, unknown> }>(`/api/inbound-quality/fatal-analysis?${cmQs}`).then(r => {
+    const d = (r as any).data ?? {};
+    const k = d.kpis ?? {};
+    return { total_fatal: k.fatal_count ?? 0, fatal_pct: k.fatal_pct ?? 0, top_contributors: (d.top_contributors ?? []).map((c: any) => ({ ...c, count: c.fatal_count ?? c.count })) };
+  }), enabled: activeTab === "inbound" });
+  const ibScamQ    = useQuery({ queryKey: ["ib-scam",    ...key], queryFn: () => hrmsApi.get<{ data: {scenario:string;scenario1:string;cnt:number}[] }>(`/api/inbound-quality/potential-scams?${cmQs}`).then(r => ((r as any).data ?? []).map((s: any) => ({ agent: s.scenario ?? "Unknown", risk_level: s.cnt > 50 ? "high" : s.cnt > 10 ? "medium" : "low", count: s.cnt }))), enabled: activeTab === "inbound" });
+  const ibRepeatQ  = useQuery({ queryKey: ["ib-repeat",  ...key], queryFn: () => hrmsApi.get<{ data: {scenario:string;total_calls:number;repeat_calls:number;repeat_pct:number}[] }>(`/api/inbound-quality/repeat-analysis?${cmQs}`).then(r => {
+    const rows: any[] = (r as any).data ?? [];
+    const total = rows.reduce((s: number, x: any) => s + (Number(x.total_calls)||0), 0);
+    const repeats = rows.reduce((s: number, x: any) => s + (Number(x.repeat_calls)||0), 0);
+    const avg = rows.length ? rows.reduce((s: number, x: any) => s + (Number(x.repeat_pct)||0), 0) / rows.length : 0;
+    return { repeat_count: repeats, repeat_pct: total ? Math.round(repeats/total*1000)/10 : 0, avg_repeats: Math.round(avg*10)/10, breakdown: rows };
+  }), enabled: activeTab === "inbound" });
 
   const s = summaryQ.data;
   const pct = (n: number) => s && s.total_calls > 0 ? `${((n / s.total_calls) * 100).toFixed(1)}% of total` : "–";
@@ -950,11 +1015,351 @@ export default function NativeQualityDashboard() {
     </div>
   );
 
+  // ─── Tab: Inbound Quality ─────────────────────────────────────────────────────
+
+  const n = (v: unknown) => Number(v) || 0;
+
+  const InboundQualityTab = (
+    <div className="space-y-5">
+      {/* KPI strip */}
+      {ibKpisQ.isLoading ? <Spinner /> : (() => {
+        const k = ibKpisQ.data as any;
+        if (!k) return null;
+        return (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <KpiCard label="Total Audited"    value={n(k.total_audited)}                icon={<BarChart2 className="h-5 w-5" />} tone="blue"    animate />
+            <KpiCard label="Avg CQ Score"     value={`${n(k.avg_cq_score).toFixed(1)}%`}icon={<Target className="h-5 w-5" />}   tone="slate" />
+            <KpiCard label="Fatal Calls"      value={n(k.fatal_count)}                  icon={<AlertTriangle className="h-5 w-5" />} tone="red" animate />
+            <KpiCard label="Fatal Rate"       value={`${n(k.fatal_pct).toFixed(1)}%`}   icon={<Shield className="h-5 w-5" />}   tone={n(k.fatal_pct) > 5 ? "orange" : "emerald"} />
+          </div>
+        );
+      })()}
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        {/* Daily score trend */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="mb-3 text-sm font-bold text-slate-700">Daily Audit Scores</p>
+          {ibDailyQ.isLoading ? <Spinner /> : (
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={ibDailyQ.data ?? []}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={d => d?.slice(5) ?? d} />
+                <YAxis tick={{ fontSize: 11 }} domain={[0, 100]} />
+                <Tooltip formatter={(v: number) => `${Number(v).toFixed(1)}%`} />
+                <Area dataKey="avg_score" name="Avg Score" stroke="#3b82f6" fill="#dbeafe" strokeWidth={2} />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* Top performers */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="mb-3 text-sm font-bold text-slate-700">Top Performers — Inbound</p>
+          {ibTopQ.isLoading ? <Spinner /> : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b text-xs text-slate-500">
+                  <th className="pb-2 text-left">Agent</th>
+                  <th className="pb-2 text-right">Calls</th>
+                  <th className="pb-2 text-right">CQ Score</th>
+                </tr></thead>
+                <tbody>
+                  {(ibTopQ.data ?? []).slice(0, 10).map((a: any, i: number) => (
+                    <tr key={i} className="border-b last:border-0 hover:bg-slate-50">
+                      <td className="py-2 font-medium">{a.agent}</td>
+                      <td className="py-2 text-right text-slate-600">{a.calls}</td>
+                      <td className="py-2 text-right font-bold text-emerald-600">{n(a.score).toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-3">
+        {/* Fatal analysis */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="mb-3 text-sm font-bold text-slate-700">Fatal Analysis</p>
+          {ibFatalQ.isLoading ? <Spinner /> : (() => {
+            const f = ibFatalQ.data as any;
+            if (!f) return <p className="text-sm text-slate-400">No data</p>;
+            return (
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-slate-500">Total Fatal</span><span className="font-bold text-red-600">{n(f.total_fatal)}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Fatal Rate</span><span className="font-bold">{n(f.fatal_pct).toFixed(1)}%</span></div>
+                {(f.top_contributors ?? []).slice(0, 5).map((c: any, i: number) => (
+                  <div key={i} className="flex justify-between border-t pt-1">
+                    <span className="truncate text-slate-600">{c.agent ?? c.scenario}</span>
+                    <span className="ml-2 font-semibold text-red-600">{n(c.count)}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* Potential scams */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="mb-3 text-sm font-bold text-slate-700">Potential Scam Risk</p>
+          {ibScamQ.isLoading ? <Spinner /> : (
+            <div className="space-y-2">
+              {(ibScamQ.data ?? []).slice(0, 8).map((s: any, i: number) => (
+                <div key={i} className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm">
+                  <span className="font-medium text-slate-700">{s.agent}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${s.risk_level === "high" ? "bg-red-100 text-red-700" : s.risk_level === "medium" ? "bg-yellow-100 text-yellow-700" : "bg-slate-100 text-slate-600"}`}>
+                    {s.risk_level ?? "–"}
+                  </span>
+                </div>
+              ))}
+              {(ibScamQ.data ?? []).length === 0 && <p className="text-sm text-slate-400">No scam risk flags</p>}
+            </div>
+          )}
+        </div>
+
+        {/* Repeat analysis */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="mb-3 text-sm font-bold text-slate-700">Repeat Call Analysis</p>
+          {ibRepeatQ.isLoading ? <Spinner /> : (() => {
+            const r = ibRepeatQ.data as any;
+            if (!r) return <p className="text-sm text-slate-400">No data</p>;
+            return (
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-slate-500">Repeat Calls</span><span className="font-bold">{n(r.repeat_count)}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Repeat Rate</span><span className="font-bold text-amber-600">{n(r.repeat_pct).toFixed(1)}%</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Avg Repeats/Customer</span><span className="font-bold">{n(r.avg_repeats).toFixed(1)}</span></div>
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+    </div>
+  );
+
+  // ─── Tab: Opening Intelligence ────────────────────────────────────────────────
+
+  const OpeningIntelTab = (
+    <div className="space-y-5">
+      {/* Executive KPIs */}
+      {oiExecQ.isLoading ? <Spinner /> : (() => {
+        const e = oiExecQ.data as any;
+        if (!e) return null;
+        return (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <KpiCard label="Total Calls"     value={n(e.total)}          icon={<BarChart2 className="h-5 w-5" />} tone="blue"    animate />
+            <KpiCard label="Opening Score"   value={`${n(e.opening_score).toFixed(1)}%`} icon={<Target className="h-5 w-5" />} tone="emerald" />
+            <KpiCard label="Context Score"   value={`${n(e.context_score).toFixed(1)}%`} icon={<CheckCircle2 className="h-5 w-5" />} tone="slate" />
+            <KpiCard label="No Opening"      value={n(e.opening_none)}   icon={<AlertTriangle className="h-5 w-5" />} tone="orange" animate />
+          </div>
+        );
+      })()}
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        {/* Opening trend */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="mb-3 text-sm font-bold text-slate-700">Opening Score Trend</p>
+          {oiTrendQ.isLoading ? <Spinner /> : (
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={oiTrendQ.data ?? []}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="period" tick={{ fontSize: 11 }} tickFormatter={d => d?.slice(5) ?? d} />
+                <YAxis tick={{ fontSize: 11 }} domain={[0, 100]} />
+                <Tooltip formatter={(v: number) => `${Number(v).toFixed(1)}%`} />
+                <Area dataKey="opening_score" name="Opening Score" stroke="#10b981" fill="#d1fae5" strokeWidth={2} />
+                <Area dataKey="conv_pct" name="Conv%" stroke="#6366f1" fill="#e0e7ff" strokeWidth={2} />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* Category breakdown */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="mb-3 text-sm font-bold text-slate-700">Opening Categories</p>
+          {oiCatsQ.isLoading ? <Spinner /> : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b text-xs text-slate-500">
+                  <th className="pb-2 text-left">Category</th>
+                  <th className="pb-2 text-right">Calls</th>
+                  <th className="pb-2 text-right">Conv%</th>
+                </tr></thead>
+                <tbody>
+                  {(oiCatsQ.data ?? []).map((c: any, i: number) => (
+                    <tr key={i} className="border-b last:border-0 hover:bg-slate-50">
+                      <td className="py-2 font-medium">{c.category}</td>
+                      <td className="py-2 text-right text-slate-600">{n(c.calls).toLocaleString()}</td>
+                      <td className="py-2 text-right font-bold text-emerald-600">{n(c.conv_pct).toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        {/* Top agents */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="mb-3 text-sm font-bold text-slate-700">Top Opening Performers</p>
+          {oiLeaderQ.isLoading ? <Spinner /> : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b text-xs text-slate-500">
+                  <th className="pb-2 text-left">Agent</th>
+                  <th className="pb-2 text-right">Calls</th>
+                  <th className="pb-2 text-right">Score</th>
+                  <th className="pb-2 text-right">Conv%</th>
+                </tr></thead>
+                <tbody>
+                  {(oiLeaderQ.data?.top_agents ?? []).map((a: any, i: number) => (
+                    <tr key={i} className="border-b last:border-0 hover:bg-slate-50">
+                      <td className="py-2 font-medium">{a.name}</td>
+                      <td className="py-2 text-right text-slate-600">{a.calls}</td>
+                      <td className="py-2 text-right font-bold text-emerald-600">{n(a.opening_score).toFixed(0)}%</td>
+                      <td className="py-2 text-right text-slate-600">{n(a.conv_pct).toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* AI Insights */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="mb-3 text-sm font-bold text-slate-700">AI Coaching Signals</p>
+          {oiAiQ.isLoading ? <Spinner /> : (
+            <div className="space-y-3">
+              {(oiAiQ.data ?? []).map((insight: any, i: number) => (
+                <div key={i} className={`rounded-xl border p-3 ${insight.type === "alert" ? "border-red-200 bg-red-50" : insight.type === "warning" ? "border-yellow-200 bg-yellow-50" : "border-blue-200 bg-blue-50"}`}>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{insight.type}</p>
+                  <p className="font-semibold text-slate-800">{insight.title}</p>
+                  <p className="mt-1 text-xs text-slate-600">{insight.what}</p>
+                  <p className="mt-1 text-xs font-medium text-slate-700">→ {insight.action}</p>
+                </div>
+              ))}
+              {(oiAiQ.data ?? []).length === 0 && <p className="text-sm text-slate-400">No insights available for this period</p>}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  // ─── Tab: Customer Intelligence ───────────────────────────────────────────────
+
+  const CustomerIntelTab = (
+    <div className="space-y-5">
+      {/* CX KPIs */}
+      {ciExecQ.isLoading ? <Spinner /> : (() => {
+        const e = ciExecQ.data as any;
+        if (!e) return null;
+        return (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <KpiCard label="Total Calls"     value={n(e.total)}                        icon={<BarChart2 className="h-5 w-5" />} tone="blue"    animate />
+            <KpiCard label="Positive %"      value={`${n(e.positive_pct).toFixed(1)}%`} icon={<TrendingUp className="h-5 w-5" />} tone="emerald" />
+            <KpiCard label="Negative %"      value={`${n(e.negative_pct).toFixed(1)}%`} icon={<TrendingDown className="h-5 w-5" />} tone="red" />
+            <KpiCard label="Offer Accept %"  value={`${n(e.offer_accept_pct).toFixed(1)}%`} icon={<CheckCircle2 className="h-5 w-5" />} tone="slate" />
+          </div>
+        );
+      })()}
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        {/* Sentiment distribution */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="mb-3 text-sm font-bold text-slate-700">Sentiment Distribution</p>
+          {ciSentQ.isLoading ? <Spinner /> : (
+            <div className="space-y-2">
+              {(ciSentQ.data ?? []).map((s: any, i: number) => (
+                <div key={i} className="flex items-center gap-3">
+                  <span className="w-20 text-sm text-slate-600 capitalize">{s.sentiment}</span>
+                  <div className="flex-1 rounded-full bg-slate-100 h-3">
+                    <div className={`h-3 rounded-full ${s.sentiment === "positive" ? "bg-emerald-500" : s.sentiment === "negative" ? "bg-red-500" : "bg-slate-400"}`}
+                      style={{ width: `${n(s.pct)}%` }} />
+                  </div>
+                  <span className="w-12 text-right text-sm font-bold text-slate-700">{n(s.pct).toFixed(0)}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Sentiment trend */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="mb-3 text-sm font-bold text-slate-700">Sentiment Trend</p>
+          {ciSentTrendQ.isLoading ? <Spinner /> : (
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={ciSentTrendQ.data ?? []}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="period" tick={{ fontSize: 11 }} tickFormatter={d => d?.slice(5) ?? d} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <Tooltip />
+                <Area dataKey="positive" name="Positive" stroke="#10b981" fill="#d1fae5" strokeWidth={2} stackId="a" />
+                <Area dataKey="neutral"  name="Neutral"  stroke="#94a3b8" fill="#f1f5f9" strokeWidth={2} stackId="a" />
+                <Area dataKey="negative" name="Negative" stroke="#ef4444" fill="#fee2e2" strokeWidth={2} stackId="a" />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        {/* Feedback categories */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="mb-3 text-sm font-bold text-slate-700">Customer Feedback Categories</p>
+          {ciFbQ.isLoading ? <Spinner /> : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b text-xs text-slate-500">
+                  <th className="pb-2 text-left">Category</th>
+                  <th className="pb-2 text-right">Count</th>
+                  <th className="pb-2 text-right">%</th>
+                </tr></thead>
+                <tbody>
+                  {(ciFbQ.data ?? []).slice(0, 10).map((c: any, i: number) => (
+                    <tr key={i} className="border-b last:border-0 hover:bg-slate-50">
+                      <td className="py-2 font-medium">{c.category}</td>
+                      <td className="py-2 text-right text-slate-600">{n(c.count).toLocaleString()}</td>
+                      <td className="py-2 text-right font-bold text-blue-600">{n(c.pct).toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* CI AI Insights */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="mb-3 text-sm font-bold text-slate-700">Customer Experience Signals</p>
+          {ciAiQ.isLoading ? <Spinner /> : (
+            <div className="space-y-3">
+              {(ciAiQ.data ?? []).map((insight: any, i: number) => (
+                <div key={i} className={`rounded-xl border p-3 ${insight.type === "alert" ? "border-red-200 bg-red-50" : insight.type === "warning" ? "border-yellow-200 bg-yellow-50" : "border-blue-200 bg-blue-50"}`}>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{insight.type}</p>
+                  <p className="font-semibold text-slate-800">{insight.title}</p>
+                  <p className="mt-1 text-xs text-slate-600">{insight.what}</p>
+                  <p className="mt-1 text-xs font-medium text-slate-700">→ {insight.action}</p>
+                </div>
+              ))}
+              {(ciAiQ.data ?? []).length === 0 && <p className="text-sm text-slate-400">No CX insights for this period</p>}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   // ─── Render ───────────────────────────────────────────────────────────────────
 
   const TAB_CONTENT: Record<TabId, React.ReactNode> = {
     overview: OverviewTab,
     quality:  QualityTab,
+    inbound:  InboundQualityTab,
+    opening:  OpeningIntelTab,
+    cx:       CustomerIntelTab,
     sales:    SalesTab,
     insights: InsightsTab,
     roi:      RoiTab,
@@ -975,7 +1380,7 @@ export default function NativeQualityDashboard() {
               )}
             </div>
             <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-950">Quality Dashboard</h1>
-            <p className="mt-1 text-sm text-slate-500">Real-time call quality · Agent risk intelligence · Sales funnel · AI insights · ROI</p>
+            <p className="mt-1 text-sm text-slate-500">Outbound quality · Inbound quality · Opening intelligence · Customer intelligence · Sales funnel · AI insights</p>
           </div>
           {summaryQ.data?.scope_label && summaryQ.data.scope_label !== "All" && (
             <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
@@ -989,9 +1394,21 @@ export default function NativeQualityDashboard() {
 
         {summaryQ.isError && <ErrBanner msg={String(summaryQ.error)} />}
 
+        {/* Quality Intervention Panel */}
+        {qualityFlags.length > 0 && (
+          <InterventionPanel
+            flags={qualityFlags}
+            title="Quality: Agents Requiring Immediate Intervention"
+            collapsible
+          />
+        )}
+
         {/* Tabs */}
         <div className="flex gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50 p-1 no-scrollbar">
-          {TABS.map(tab => (
+          {TABS.filter(tab => {
+            if (tab.id === "sales" || tab.id === "roi") return canViewSalesRoi;
+            return true;
+          }).map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
               className={`flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2.5 text-sm font-bold transition-all ${
                 activeTab === tab.id

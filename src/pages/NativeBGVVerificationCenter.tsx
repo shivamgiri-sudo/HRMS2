@@ -4,6 +4,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatISTDate } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -87,6 +88,7 @@ const CHECK_LABELS: Record<string, string> = {
 
 export default function NativeBGVVerificationCenter() {
   const { user } = useAuth();
+  const { roleKeys } = useWorkforceAccess();
   const role = (user as any)?.role ?? "";
   const ALLOWED = ["admin", "super_admin", "hr", "recruiter"];
   const [queue, setQueue] = useState<QueueRow[]>([]);
@@ -207,7 +209,7 @@ export default function NativeBGVVerificationCenter() {
 
   useEffect(() => { void loadQueue(); }, []);
 
-  if (user && !ALLOWED.includes(role)) {
+  if (user && !roleKeys.some(k => ALLOWED.includes(k))) {
     return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
   }
 

@@ -359,6 +359,18 @@ export async function getTimeToHireMetrics(): Promise<{
   };
 }
 
+// Whitelist: only these column names may appear in filter keys or groupBy
+const ALLOWED_FILTER_COLUMNS = new Set([
+  'applied_for_branch', 'applied_for_role', 'current_stage', 'sourcing_channel',
+  'years_of_experience', 'gender', 'branch_display_name', 'active_status',
+]);
+
+const ALLOWED_GROUP_BY = new Set([
+  'applied_for_branch', 'applied_for_role', 'current_stage', 'sourcing_channel',
+  'years_of_experience', 'gender', 'branch_display_name',
+  'MONTH(created_at)', 'YEAR(created_at)', 'DATE(created_at)',
+]);
+
 /**
  * Get custom report data
  */
@@ -369,13 +381,15 @@ export async function getCustomReport(params: {
   dateTo?: string;
   filters?: Record<string, unknown>;
 }): Promise<Record<string, unknown>[]> {
-  // Build dynamic query based on params
   const { metrics, groupBy, dateFrom, dateTo, filters } = params;
 
-  let query = 'SELECT ';
+  // Validate groupBy against whitelist
+  if (!ALLOWED_GROUP_BY.has(groupBy)) {
+    throw new Error(`Invalid groupBy column: ${groupBy}`);
+  }
 
-  // Add metrics
-  const metricClauses: string[] = [];
+  // Build metric SELECT clauses (hardcoded — never interpolated from user input)
+  const metricClauses: string[] = [groupBy];
   metrics.forEach(metric => {
     switch (metric) {
       case 'count':
@@ -387,27 +401,34 @@ export async function getCustomReport(params: {
       case 'conversion_rate':
         metricClauses.push('ROUND((SUM(CASE WHEN current_stage = "joined" THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2) as conversion_rate');
         break;
-      // Add more metrics as needed
     }
   });
 
-  query += metricClauses.join(', ');
-  query += ` FROM ats_candidate WHERE active_status = 1`;
-
-  // Add date filters
-  if (dateFrom) query += ` AND created_at >= '${dateFrom}'`;
-  if (dateTo) query += ` AND created_at <= '${dateTo}'`;
-
-  // Add custom filters
-  if (filters) {
-    Object.entries(filters).forEach(([key, value]) => {
-      query += ` AND ${key} = '${String(value)}'`;
-    });
+  if (metricClauses.length === 1) {
+    // Only groupBy added — no metric selected; return empty rather than a bare GROUP BY
+    return [];
   }
 
-  // Add group by
-  query += ` GROUP BY ${groupBy}`;
+  const queryParts: string[] = [`SELECT ${metricClauses.join(', ')} FROM ats_candidate WHERE active_status = 1`];
+  const queryParams: unknown[] = [];
 
-  const [results] = await db.execute<RowDataPacket[]>(query);
+  // Date filters — values go through parameterized placeholders
+  if (dateFrom) { queryParts.push('AND created_at >= ?'); queryParams.push(dateFrom); }
+  if (dateTo)   { queryParts.push('AND created_at <= ?'); queryParams.push(dateTo); }
+
+  // Custom filters — keys validated against whitelist, values parameterized
+  if (filters) {
+    for (const [key, value] of Object.entries(filters)) {
+      if (!ALLOWED_FILTER_COLUMNS.has(key)) {
+        throw new Error(`Invalid filter column: ${key}`);
+      }
+      queryParts.push(`AND \`${key}\` = ?`);
+      queryParams.push(String(value));
+    }
+  }
+
+  queryParts.push(`GROUP BY ${groupBy}`);
+
+  const [results] = await db.execute<RowDataPacket[]>(queryParts.join(' '), queryParams);
   return results as Record<string, unknown>[];
 }

@@ -8,6 +8,7 @@ import {
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { AIInsightPanel } from "@/components/ai";
+import { InterventionPanel } from "@/components/dashboard/InterventionPanel";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
 
@@ -146,6 +147,7 @@ export default function NativeManagementDashboard() {
   const [acknowledgingId, setAcknowledgingId] = useState<string | null>(null);
   const [coachingForm, setCoachingForm] = useState<CoachingForm>({ employee_id: "", session_date: "", session_type: "one_on_one", notes: "", action_items: "" });
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [opsPulse, setOpsPulse] = useState<{ intervention_flags: { type: string; severity: "critical" | "warning" | "info"; detail: string; action: string }[] } | null>(null);
 
   const loadDashboard = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: DashboardStats }>("/api/management/dashboard"); setDashStats(res.data ?? null); } catch { /* handled by summary UI */ } };
   const loadCeoMetrics = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: CeoMetrics }>("/api/management/ceo-metrics"); setCeoMetrics(res.data ?? null); } catch { /* silent */ } };
@@ -153,7 +155,8 @@ export default function NativeManagementDashboard() {
   const loadCoaching = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: CoachingSession[] }>("/api/management/coaching"); setCoachingSessions(res.data ?? []); } catch { /* silent */ } };
   const loadAlerts = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: PerformanceAlert[] }>("/api/management/alerts"); setAlerts(res.data ?? []); } catch { /* silent */ } };
   const loadTeamMembers = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: TeamMember[] }>("/api/management/team-members"); setTeamMembers(res.data ?? []); } catch { /* silent */ } };
-  const loadAll = async () => { setLoading(true); setMessage(""); try { await Promise.all([loadDashboard(), loadCeoMetrics(), loadKpi(), loadCoaching(), loadAlerts(), loadTeamMembers()]); } catch (err: unknown) { setMessage(err instanceof Error ? err.message : "Unable to load data"); } finally { setLoading(false); } };
+  const loadOpsPulse = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: typeof opsPulse }>("/api/bi/daily-operations-pulse"); setOpsPulse(res.data ?? null); } catch { /* non-critical */ } };
+  const loadAll = async () => { setLoading(true); setMessage(""); try { await Promise.all([loadDashboard(), loadCeoMetrics(), loadKpi(), loadCoaching(), loadAlerts(), loadTeamMembers()]); void loadOpsPulse(); } catch (err: unknown) { setMessage(err instanceof Error ? err.message : "Unable to load data"); } finally { setLoading(false); } };
 
   useEffect(() => { void loadAll(); }, []);
   useEffect(() => { void loadKpi(); }, [kpiPeriod]);
@@ -206,9 +209,9 @@ export default function NativeManagementDashboard() {
     "People Alerts": "#",
     "Critical Risks": "#",
     "Coaching Open": "#",
-    "Open Pipeline": "/ats/recruiter",
+    "Open Pipeline": "/ats/recruiter/hiring-entry",
     "Offers Pending Join": "/ats/onboarding-bridge",
-    "F&F Pending": "/full-final",
+    "F&F Pending": "/exit/full-final",
     "Low KPI": "#",
     "Headcount": "/employees",
   };
@@ -293,6 +296,15 @@ export default function NativeManagementDashboard() {
             <AlertTriangle className="h-5 w-5 flex-shrink-0" />
             {message}
           </div>
+        )}
+
+        {/* Operations Intervention Panel */}
+        {opsPulse?.intervention_flags && opsPulse.intervention_flags.length > 0 && (
+          <InterventionPanel
+            flags={opsPulse.intervention_flags}
+            title="Operations: Immediate Action Required"
+            collapsible
+          />
         )}
 
         {/* Lens Selector + Search */}
@@ -384,7 +396,7 @@ export default function NativeManagementDashboard() {
                       : "✅ All processes adequately staffed. No immediate hiring pressure. Monitor attrition for proactive planning."
                   }
                   severity={(ceoMetrics?.hc_gap.total_gap ?? 0) > 0 ? "danger" : "success"}
-                  onClick={() => navigate("/ats/recruiter")}
+                  onClick={() => navigate("/ats/recruiter/hiring-entry")}
                 />
 
                 <InsightCard

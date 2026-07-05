@@ -36,6 +36,8 @@ export const portalApi = {
     portalRequest<{ token: string }>("POST", "/api/portal/auth/verify-otp", { email, otp }),
   getOverview: () =>
     portalRequest<{ data: any[] }>("GET", "/api/portal/overview"),
+  getProcess: (processId: string) =>
+    portalRequest<{ data: { process_name?: string; client_name?: string; rag?: string } }>("GET", `/api/portal/processes/${processId}/info`),
   getKpis: (processId: string, period?: string) =>
     portalRequest<{ data: any[] }>("GET", `/api/portal/processes/${processId}/kpis${period ? `?period=${period}` : ""}`),
   getGlidePaths: (processId: string, period?: string) =>

@@ -31,6 +31,7 @@ backend/*.tunnel.cjs
 
 # Local disk uploads — never commit uploaded files
 backend/uploads/
+backend/private-storage/
 
 # Backend env files with credentials — never commit
 backend/.env.production

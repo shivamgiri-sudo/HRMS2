@@ -106,6 +106,12 @@ const UnifiedAccessControl = lazy(() => import("./pages/UnifiedAccessControl"));
 const SuperAdminAccessControl = lazy(() => import("./pages/SuperAdminAccessControl"));
 const NativeManagementDashboard = lazy(() => import("./pages/NativeManagementDashboard"));
 const NativeCEOCommandCenter = lazy(() => import("./pages/NativeCEOCommandCenter"));
+const NativeCallMasterDashboard = lazy(() => import("./pages/NativeCallMasterDashboard"));
+const NativeInboundDashboard = lazy(() => import("./pages/NativeInboundDashboard"));
+const NativeSalesDashboard = lazy(() => import("./pages/NativeSalesDashboard"));
+const ExecutiveQualityDashboard = lazy(() => import("./pages/ExecutiveQualityDashboard"));
+const ManagerQualityDashboard = lazy(() => import("./pages/ManagerQualityDashboard"));
+const AgentQualityDashboard = lazy(() => import("./pages/AgentQualityDashboard"));
 const NativeSecurityCenter = lazy(() => import("./pages/NativeSecurityCenter"));
 
 const NativePerformanceFeedbackMyReports = lazy(() => import("./pages/NativePerformanceFeedbackMyReports"));
@@ -386,7 +392,15 @@ const App = () => (
               <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />
               <Route path="/roster-preference" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeRosterPreference /></Gate></ProtectedRoute>} />
               <Route path="/quality/dashboard" element={<ProtectedRoute><Gate pageCode="QUALITY_DASHBOARD"><NativeQualityDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/quality/executive" element={<ProtectedRoute roles={['super_admin','admin','ceo']}><ExecutiveQualityDashboard /></ProtectedRoute>} />
+              <Route path="/quality/team" element={<ProtectedRoute roles={['super_admin','admin','manager','process_manager','branch_head','team_leader']}><ManagerQualityDashboard /></ProtectedRoute>} />
+              <Route path="/quality/my-dashboard" element={<ProtectedRoute><AgentQualityDashboard /></ProtectedRoute>} />
+              <Route path="/quality/audit" element={<ProtectedRoute><Gate pageCode="QUALITY_DASHBOARD"><NativeQualityDashboard /></Gate></ProtectedRoute>} />
               <Route path="/agent-performance" element={<ProtectedRoute><NativeAgentPerformanceDashboard /></ProtectedRoute>} />
+              <Route path="/call-master" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst']}><NativeCallMasterDashboard /></ProtectedRoute>} />
+              <Route path="/call-master/inbound" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst']}><NativeInboundDashboard /></ProtectedRoute>} />
+              <Route path="/call-master/inbound/:projectKey" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst']}><NativeInboundDashboard /></ProtectedRoute>} />
+              <Route path="/sales/brand-analytics" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager']}><NativeSalesDashboard /></ProtectedRoute>} />
               <Route path="/operations/dashboard" element={<ProtectedRoute><Gate pageCode="OPERATIONS_DASHBOARD"><NativeOperationsDashboard /></Gate></ProtectedRoute>} />
               <Route path="/performance/command-center" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><UnifiedPerformanceCommandCenter /></Gate></ProtectedRoute>} />
               <Route path="/settings/access-control" element={<ProtectedRoute><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />

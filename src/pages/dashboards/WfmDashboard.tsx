@@ -16,6 +16,8 @@ import { Button } from "@/components/ui/button";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { normalizeDashboardSummary } from "@/lib/dashboardCompat";
 import { AIInsightPanel } from "@/components/ai";
+import { InterventionPanel } from "@/components/dashboard/InterventionPanel";
+import type { InterventionFlag } from "@/components/dashboard/InterventionPanel";
 
 const DASHBOARD_CODE = "WFM_DASHBOARD";
 
@@ -49,6 +51,7 @@ export default function WfmDashboard() {
   const [summary, setSummary] = useState<WfmSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [opsPulseFlags, setOpsPulseFlags] = useState<InterventionFlag[]>([]);
 
   const [drilldown, setDrilldown] = useState<DrilldownState>({
     open: false,
@@ -56,8 +59,8 @@ export default function WfmDashboard() {
     metricName: "",
   });
 
-  const [, setBranchId] = useState<string>("");
-  const [, setProcessId] = useState<string>("");
+  const [branchId, setBranchId] = useState<string>("");
+  const [processId, setProcessId] = useState<string>("");
 
   const openDrilldown = useCallback((metricCode: string, metricName: string) => {
     setDrilldown({ open: true, metricCode, metricName });
@@ -72,7 +75,12 @@ export default function WfmDashboard() {
     setSummaryLoading(true);
     setFetchError(null);
 
-    hrmsApi.get(`/api/dashboards/${DASHBOARD_CODE}/summary`)
+    const params = new URLSearchParams();
+    if (branchId) params.set("branchId", branchId);
+    if (processId) params.set("processId", processId);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+
+    hrmsApi.get(`/api/dashboards/${DASHBOARD_CODE}/summary${qs}`)
       .then((json) => {
         if (!cancelled) setSummary(normalizeDashboardSummary<WfmSummary>(DASHBOARD_CODE, json as any));
       })
@@ -86,7 +94,17 @@ export default function WfmDashboard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [branchId, processId]);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (branchId) params.set("branchId", branchId);
+    if (processId) params.set("processId", processId);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    hrmsApi.get<{ success: boolean; data: { intervention_flags?: InterventionFlag[] } }>(`/api/bi/daily-operations-pulse${qs}`)
+      .then((res) => setOpsPulseFlags((res as any)?.data?.intervention_flags ?? []))
+      .catch(() => setOpsPulseFlags([]));
+  }, [branchId, processId]);
 
   // Role check
   if (!roleLoading) {
@@ -214,6 +232,15 @@ export default function WfmDashboard() {
       <div className="space-y-6">
         {/* KPI Metrics */}
         <KpiMetricGrid metrics={metrics} columns={4} loading={summaryLoading} />
+
+        {/* Operations Pulse Interventions */}
+        {opsPulseFlags.length > 0 && (
+          <InterventionPanel
+            flags={opsPulseFlags}
+            title="Today's Operations Alerts"
+            collapsible
+          />
+        )}
 
         {/* AI Workforce Analysis */}
         <AIInsightPanel

@@ -1,35 +1,54 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { type DashboardScope, buildScopeWhere } from "../../shared/dashboardScope.js";
+import { enrichMetric, type MetricEnrichment } from "./dashboard-target.service.js";
+import { IST_DATE_EXPR } from "../../utils/dateUtils.js";
 
 // ─── Shared metric wrapper shape ──────────────────────────────────────────────
 export interface MetricResult {
   value: number | null;
-  previousValue: null;
-  target: null;
-  variance: null;
-  variancePct: null;
+  previousValue: number | null;
+  target: number | null;
+  variance: number | null;
+  variancePct: number | null;
   status: "ok" | "warn" | "critical" | "unknown";
-  trend: null;
+  trend: "up" | "down" | "stable" | null;
   drilldownApi: string;
   actionUrl: null;
   detail: Record<string, number | null>;
 }
 
-function wrap(
+async function wrapEnriched(
   metricCode: string,
   value: number | null,
   detail: Record<string, number | null>,
-  status: MetricResult["status"] = "ok"
-): MetricResult {
+  status: MetricResult["status"],
+  higherIsBetter: boolean,
+  branchId?: string | null,
+  processId?: string | null,
+): Promise<MetricResult> {
+  let enrichment: Partial<MetricEnrichment> = {
+    previousValue: null, target: null, variance: null, variancePct: null,
+    trend: undefined, status: undefined,
+  };
+  if (value !== null) {
+    try {
+      enrichment = await enrichMetric(metricCode, value, 'monthly', higherIsBetter, branchId, processId);
+      // Let enrichment override status only if it has target data; otherwise keep computed status
+      if (enrichment.target !== null && enrichment.status && enrichment.status !== 'unknown') {
+        const statusMap: Record<string, MetricResult["status"]> = { good: "ok", warning: "warn", critical: "critical", unknown: "unknown" };
+        status = statusMap[enrichment.status] ?? status;
+      }
+    } catch { /* enrichment is best-effort */ }
+  }
   return {
     value,
-    previousValue: null,
-    target: null,
-    variance: null,
-    variancePct: null,
+    previousValue: enrichment.previousValue ?? null,
+    target: enrichment.target ?? null,
+    variance: enrichment.variance ?? null,
+    variancePct: enrichment.variancePct ?? null,
     status,
-    trend: null,
+    trend: enrichment.trend ?? null,
     drilldownApi: `/api/dashboards/:dashboardCode/metric/${metricCode}/drilldown`,
     actionUrl: null,
     detail,
@@ -37,7 +56,12 @@ function wrap(
 }
 
 function nullResult(metricCode: string): MetricResult {
-  return wrap(metricCode, null, {}, "unknown");
+  return {
+    value: null, previousValue: null, target: null, variance: null,
+    variancePct: null, status: "unknown", trend: null,
+    drilldownApi: `/api/dashboards/:dashboardCode/metric/${metricCode}/drilldown`,
+    actionUrl: null, detail: {},
+  };
 }
 
 // ─── Headcount ────────────────────────────────────────────────────────────────
@@ -50,7 +74,7 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
     );
     const active = Number((rows[0] as any)?.active ?? 0);
     const status: MetricResult["status"] = active === 0 ? "warn" : "ok";
-    return wrap("HEADCOUNT", active, { active, required: null, available: null, short: null }, status);
+    return wrapEnriched("HEADCOUNT", active, { active, required: null, available: null, short: null }, status, true, scope.branchIds[0], scope.processIds[0]);
   } catch {
     return nullResult("HEADCOUNT");
   }
@@ -83,7 +107,7 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
     const otpPending = Number((otpRows[0] as any)?.otp_verified ?? 0);
 
     const status: MetricResult["status"] = stuck > 0 ? "critical" : pending > 10 ? "warn" : "ok";
-    return wrap("ONBOARDING", submitted + pending, { submitted, pending, otpPending, stuck }, status);
+    return wrapEnriched("ONBOARDING", submitted + pending, { submitted, pending, otpPending, stuck }, status, true, scope.branchIds[0], scope.processIds[0]);
   } catch {
     return nullResult("ONBOARDING");
   }
@@ -102,7 +126,7 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
          SUM(CASE WHEN attendance_status = 'missed_punch' THEN 1 ELSE 0 END) AS missedPunch,
          COUNT(*) AS total
        FROM wfm_attendance_session
-       WHERE DATE(session_date) = CURDATE() AND ${scopeSql}`,
+       WHERE DATE(session_date) = ${IST_DATE_EXPR} AND ${scopeSql}`,
       scopeParams
     ).catch(() => [[null]] as any);
 
@@ -119,7 +143,7 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
     const status: MetricResult["status"] =
       attendanceRate === null ? "unknown" : attendanceRate < 70 ? "critical" : attendanceRate < 85 ? "warn" : "ok";
 
-    return wrap("ATTENDANCE", attendanceRate, { present, absent, late, missedPunch, attendanceRate }, status);
+    return wrapEnriched("ATTENDANCE", attendanceRate, { present, absent, late, missedPunch, attendanceRate }, status, true, scope.branchIds[0], scope.processIds[0]);
   } catch {
     return nullResult("ATTENDANCE");
   }
@@ -156,11 +180,11 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
     const status: MetricResult["status"] =
       blockerCount === 0 ? "ok" : blockerCount > 10 ? "critical" : "warn";
 
-    return wrap(
+    return wrapEnriched(
       "PAYROLL_READINESS",
       readyCount,
       { readyCount, blockerCount, missingBank, missingPan, missingUan },
-      status
+      status, true, scope.branchIds[0], scope.processIds[0]
     );
   } catch {
     return nullResult("PAYROLL_READINESS");
@@ -192,11 +216,11 @@ export async function getIncentiveMetrics(scope: DashboardScope): Promise<Metric
     const status: MetricResult["status"] =
       rejectedBatches > 0 ? "warn" : pendingBatches > 5 ? "warn" : "ok";
 
-    return wrap(
+    return wrapEnriched(
       "INCENTIVE",
       pendingBatches,
       { pendingBatches, pendingAmount, approvedAmount, rejectedBatches },
-      status
+      status, false, scope.branchIds[0], scope.processIds[0]
     );
   } catch {
     return nullResult("INCENTIVE");
@@ -229,7 +253,7 @@ export async function getTatMetrics(scope: DashboardScope): Promise<MetricResult
     const status: MetricResult["status"] =
       breached > 0 ? "critical" : overdue > 0 ? "warn" : "ok";
 
-    return wrap("TAT", open, { open, overdue, breached, avgAgeHours }, status);
+    return wrapEnriched("TAT", open, { open, overdue, breached, avgAgeHours }, status, false, scope.branchIds[0], scope.processIds[0]);
   } catch {
     return nullResult("TAT");
   }
@@ -260,11 +284,11 @@ export async function getResignationMetrics(scope: DashboardScope): Promise<Metr
     const status: MetricResult["status"] =
       pendingDiscussion > 5 ? "critical" : pendingDiscussion > 0 ? "warn" : "ok";
 
-    return wrap(
+    return wrapEnriched(
       "RESIGNATION",
       totalActive,
       { pendingDiscussion, accepted, withdrawn, totalActive },
-      status
+      status, false, scope.branchIds[0], scope.processIds[0]
     );
   } catch {
     return nullResult("RESIGNATION");
@@ -303,12 +327,12 @@ export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult
       ).catch(() => [[{ pending: 0, cleared: 0, flagged: 0, breached: 0 }]] as any);
 
       const rb = bridgeRows[0] as any;
-      return wrap("BGV", Number(rb?.pending ?? 0), {
+      return wrapEnriched("BGV", Number(rb?.pending ?? 0), {
         pending: Number(rb?.pending ?? 0),
         cleared: Number(rb?.cleared ?? 0),
         flagged: 0,
         breached: 0,
-      }, "ok");
+      }, "ok", false, scope.branchIds[0], scope.processIds[0]);
     }
 
     const r = rows[0] as any;
@@ -320,7 +344,7 @@ export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult
     const status: MetricResult["status"] =
       breached > 0 || flagged > 0 ? "critical" : pending > 20 ? "warn" : "ok";
 
-    return wrap("BGV", pending, { pending, cleared, flagged, breached }, status);
+    return wrapEnriched("BGV", pending, { pending, cleared, flagged, breached }, status, false, scope.branchIds[0], scope.processIds[0]);
   } catch {
     return nullResult("BGV");
   }
@@ -352,7 +376,7 @@ export async function getNameMismatchMetrics(scope: DashboardScope): Promise<Met
     const status: MetricResult["status"] =
       blocking > 0 ? "critical" : mismatch > 0 ? "warn" : "ok";
 
-    return wrap("NAME_MISMATCH", mismatch + partial, { mismatch, partial, pending, blocking }, status);
+    return wrapEnriched("NAME_MISMATCH", mismatch + partial, { mismatch, partial, pending, blocking }, status, false, scope.branchIds[0], scope.processIds[0]);
   } catch {
     return nullResult("NAME_MISMATCH");
   }

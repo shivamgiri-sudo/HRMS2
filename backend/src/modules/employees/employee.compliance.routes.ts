@@ -33,9 +33,11 @@ import {
   uploadJoiningDocument,
 } from "./employeeJoiningDocuments.service.js";
 import {
+  ensureDefaultTemplateFieldMaps,
   employeeReviewChecklistByToken,
   generateChecklistDraft,
   getChecklistFieldReview,
+  inspectChecklistAcroFormTemplate,
   listTemplateFieldMaps,
   manualFillChecklistValues,
   replaceTemplateFieldMaps,
@@ -658,6 +660,12 @@ employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/checklist/:c
   return res.json({ success: true, data });
 }));
 
+employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/checklist/:checklistId/acroform/inspect", h(async (req: AuthenticatedRequest, res) => {
+  await resolveEmployeeDocumentAccessContext(req.authUser!.id, req.params.employeeId);
+  const data = await inspectChecklistAcroFormTemplate(req.params.checklistId);
+  return res.json({ success: true, data });
+}));
+
 employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/:checklistId/esign/status", h(async (req: AuthenticatedRequest, res) => {
   const data = await getJoiningDocumentEsignStatus({
     employeeId: req.params.employeeId,
@@ -732,8 +740,24 @@ employeeJoiningDocumentsRouter.put("/:employeeId/epf-compliance/profile", h(asyn
             pan_masked = ?,
             uan_masked = ?,
             previous_pf_member = ?,
+            previous_pf_account_number = ?,
+            previous_exit_date = ?,
+            scheme_certificate_number = ?,
+            ppo_number = ?,
             previous_eps_member = ?,
             international_worker = ?,
+            country_of_origin = ?,
+            passport_number = ?,
+            passport_valid_from = ?,
+            passport_valid_to = ?,
+            education_qualification = ?,
+            specially_abled = ?,
+            disability_type = ?,
+            aadhaar_name_as_per_kyc = ?,
+            pan_name_as_per_kyc = ?,
+            bank_verification_status = ?,
+            pan_verification_status = ?,
+            uan_verification_status = ?,
             excluded_employee = ?,
             joining_date = ?,
             basic_wage = ?,
@@ -755,8 +779,24 @@ employeeJoiningDocumentsRouter.put("/:employeeId/epf-compliance/profile", h(asyn
       panMasked,
       uanMasked,
       req.body.previous_pf_member ? 1 : 0,
+      req.body.previous_pf_account_number ?? null,
+      req.body.previous_exit_date ?? null,
+      req.body.scheme_certificate_number ?? null,
+      req.body.ppo_number ?? null,
       req.body.previous_eps_member ? 1 : 0,
       req.body.international_worker ? 1 : 0,
+      req.body.country_of_origin ?? null,
+      req.body.passport_number ?? null,
+      req.body.passport_valid_from ?? null,
+      req.body.passport_valid_to ?? null,
+      req.body.education_qualification ?? null,
+      req.body.specially_abled ? 1 : 0,
+      req.body.disability_type ?? null,
+      req.body.aadhaar_name_as_per_kyc ?? null,
+      req.body.pan_name_as_per_kyc ?? null,
+      req.body.bank_verification_status ?? null,
+      req.body.pan_verification_status ?? null,
+      req.body.uan_verification_status ?? null,
       req.body.excluded_employee ? 1 : 0,
       req.body.joining_date ?? null,
       req.body.basic_wage ?? null,
@@ -869,7 +909,7 @@ employeeJoiningDocumentsRouter.post("/:employeeId/epf-compliance/review-link", h
 }));
 
 export const hrDocumentTemplatesRouter = Router();
-hrDocumentTemplatesRouter.use(requireAuth, requireRole("admin", "super_admin", "hr"));
+hrDocumentTemplatesRouter.use(requireAuth, requireRole("admin", "super_admin", "hr", "payroll_hr", "payroll"));
 
 hrDocumentTemplatesRouter.get("/document-templates", h(async (_req: AuthenticatedRequest, res) => {
   return res.json({ success: true, data: await listJoiningDocumentTemplates() });
@@ -910,6 +950,20 @@ hrDocumentTemplatesRouter.post("/document-templates/:templateId/upload", upload.
       WHERE id = ?`,
     [storagePath, templateMimeFromName(req.file.originalname), fillMode, req.params.templateId],
   );
+  const [templateRows] = await db.execute<RowDataPacket[]>(
+    `SELECT document_code FROM employee_joining_document_template WHERE id = ? LIMIT 1`,
+    [req.params.templateId],
+  );
+  const documentCode = String(templateRows[0]?.document_code ?? "");
+  if (documentCode) {
+    await ensureDefaultTemplateFieldMaps({
+      templateId: req.params.templateId,
+      documentCode,
+      actorUserId: req.authUser!.id,
+      fileName: req.file.originalname,
+      fileBuffer: req.file.buffer,
+    });
+  }
   return res.json({ success: true, data: await listJoiningDocumentTemplates() });
 }));
 

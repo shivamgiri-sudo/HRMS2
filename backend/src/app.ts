@@ -120,6 +120,13 @@ import { externalDbRouter } from "./modules/external-db/external-db.routes.js";
 import { aprRouter } from "./modules/apr/apr.routes.js";
 import { qualityDashboardRouter } from "./modules/quality-dashboard/quality-dashboard.routes.js";
 import { qualityExecutiveRouter } from "./modules/quality-dashboard/quality-executive.routes.js";
+import { qualityManagerRouter } from "./modules/quality-dashboard/quality-manager.routes.js";
+import { qualityQARouter } from "./modules/quality-dashboard/quality-qa.routes.js";
+import { qualityAggregationRouter } from "./modules/quality-dashboard/quality-aggregation.routes.js";
+import { callMasterRouter } from "./modules/call-master/call-master.routes.js";
+import { inboundRouter } from "./modules/call-master/inbound.routes.js";
+import { salesUploadRouter } from "./modules/sales-upload/sales-upload.routes.js";
+import { inboundQualityRouter } from "./modules/quality-dashboard/inbound-quality.routes.js";
 import { performanceDashboardRouter } from "./modules/performance-dashboard/performance-dashboard.routes.js";
 import { kpiMasterRouter } from "./modules/kpi/kpi-master.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
@@ -356,6 +363,13 @@ app.use("/api/assistant/context", assistantContextRouter);
 app.use('/api/control-tower', controlTowerRouter);
 app.use("/api/quality-dashboard", qualityDashboardRouter);
 app.use("/api/executive", qualityExecutiveRouter);
+app.use("/api/manager", qualityManagerRouter);
+app.use("/api/qa", qualityQARouter);
+app.use("/api/agent", qualityAggregationRouter);
+app.use("/api/call-master", callMasterRouter);
+app.use("/api/inbound", inboundRouter);
+app.use("/api/sales-upload", salesUploadRouter);
+app.use("/api/inbound-quality", inboundQualityRouter);
 app.use("/api/performance-dashboard", performanceDashboardRouter);
 app.use("/api/legacy", legacyRouter);
 app.use("/api/expenses", expenseRouter);
@@ -377,6 +391,10 @@ app.use("/api/ats/super-admin", superAdminRouter);
 // ── AI Insights (Gemini-powered, role-aware, sanitized) ────────────────────
 import { aiInsightsRouter } from "./modules/ai/ai-insights.routes.js";
 app.use("/api/ai", aiInsightsRouter);
+
+// ── Business Intelligence — cross-DB ops pulse, attrition, revenue, quality ─
+import { biRouter } from "./modules/business-intelligence/bi.routes.js";
+app.use("/api/bi", biRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

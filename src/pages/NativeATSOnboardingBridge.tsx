@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 type Row = {
   id?: string;
@@ -38,6 +39,7 @@ const badgeTone = (value: string) => {
 
 export default function NativeATSOnboardingBridge() {
   const { user } = useAuth();
+  const { roleKeys } = useWorkforceAccess();
   const role = (user as any)?.role ?? "";
   const ALLOWED = ["admin", "super_admin", "hr", "recruiter"];
   const [rows, setRows] = useState<Row[]>([]);
@@ -96,7 +98,7 @@ export default function NativeATSOnboardingBridge() {
     Boolean(r.employee_id) || ["converted", "onboarded"].includes((r.latest_stage || "").toLowerCase())
   ).length;
 
-  if (user && !ALLOWED.includes(role)) {
+  if (user && !roleKeys.some(k => ALLOWED.includes(k))) {
     return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
   }
 

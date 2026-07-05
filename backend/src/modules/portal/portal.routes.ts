@@ -98,6 +98,7 @@ router.use("/processes",  requireClientAuth);
 router.use("/commentary", requireClientAuth);
 
 router.get ("/overview",                              h(c.getOverview));
+router.get ("/processes/:id/info",                    h(c.getProcessInfo));
 router.get ("/processes/:id/kpis",                    h(c.getKpis));
 router.get ("/processes/:id/glide-paths",             h(c.getGlidePaths));
 router.get ("/processes/:id/action-plans",            h(c.getActionPlans));

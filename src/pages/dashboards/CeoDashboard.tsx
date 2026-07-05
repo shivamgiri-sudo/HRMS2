@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { AlertCircle, ShieldX } from "lucide-react";
+import { AlertCircle, ShieldX, TrendingDown, Activity, Users } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
   RoleDashboardShell,
@@ -9,6 +9,8 @@ import {
   WorkInboxPanel,
   ScopedFilterBar,
 } from "@/components/dashboard";
+import { InterventionPanel } from "@/components/dashboard/InterventionPanel";
+import { MetricTileEnhanced } from "@/components/dashboard/MetricTileEnhanced";
 import type { KpiMetric } from "@/components/dashboard";
 import type { InsightItem } from "@/components/dashboard";
 import { useUserRole } from "@/hooks/useUserRole";
@@ -73,6 +75,11 @@ export default function CeoDashboard() {
   const [branchId, setBranchId] = useState<string>("");
   const [processId, setProcessId] = useState<string>("");
 
+  // BI data
+  const [opsPulse, setOpsPulse] = useState<any | null>(null);
+  const [revenueRisk, setRevenueRisk] = useState<any | null>(null);
+  const [trainingPulse, setTrainingPulse] = useState<any | null>(null);
+
   const openDrilldown = useCallback((metricCode: string, metricName: string) => {
     setDrilldown({ open: true, metricCode, metricName });
   }, []);
@@ -120,6 +127,15 @@ export default function CeoDashboard() {
       cancelled = true;
     };
   }, [branchId, processId]);
+
+  // Load BI data (non-critical, fail silently)
+  useEffect(() => {
+    let cancelled = false;
+    hrmsApi.get("/api/bi/daily-operations-pulse").then((r: any) => { if (!cancelled) setOpsPulse(r.data ?? null); }).catch(() => {});
+    hrmsApi.get("/api/bi/revenue-at-risk").then((r: any) => { if (!cancelled) setRevenueRisk(r.data ?? null); }).catch(() => {});
+    hrmsApi.get("/api/bi/training-readiness-pulse").then((r: any) => { if (!cancelled) setTrainingPulse(r.data ?? null); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // Role check
   if (!roleLoading) {
@@ -282,6 +298,51 @@ export default function CeoDashboard() {
       )}
 
       <div className="space-y-6">
+        {/* Today's Operations Intervention Panel */}
+        {opsPulse?.intervention_flags?.length > 0 && (
+          <InterventionPanel flags={opsPulse.intervention_flags} title="Today's Operations — Immediate Actions" />
+        )}
+
+        {/* BI cross-metric tiles */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <MetricTileEnhanced
+            label="Login Adherence"
+            value={opsPulse?.login_adherence_pct ?? null}
+            unit="%"
+            status={opsPulse?.login_adherence_pct >= 90 ? "ok" : opsPulse?.login_adherence_pct >= 80 ? "warn" : "critical"}
+            trend={opsPulse ? (opsPulse.login_adherence_pct >= 90 ? "up" : "down") : null}
+            icon={<Users className="h-4 w-4 text-blue-600" />}
+            higherIsBetter
+          />
+          <MetricTileEnhanced
+            label="Avg Shrinkage"
+            value={opsPulse?.avg_shrinkage_pct ?? null}
+            unit="%"
+            status={opsPulse?.avg_shrinkage_pct <= 18 ? "ok" : opsPulse?.avg_shrinkage_pct <= 25 ? "warn" : "critical"}
+            trend={opsPulse ? (opsPulse.avg_shrinkage_pct <= 18 ? "down" : "up") : null}
+            icon={<Activity className="h-4 w-4 text-orange-600" />}
+            higherIsBetter={false}
+          />
+          <MetricTileEnhanced
+            label="Revenue Gap MTD"
+            value={revenueRisk?.gap_pct ?? null}
+            unit="%"
+            status={revenueRisk?.gap_pct >= 0 ? "ok" : revenueRisk?.gap_pct >= -10 ? "warn" : "critical"}
+            trend={revenueRisk ? (revenueRisk.gap_pct >= 0 ? "up" : "down") : null}
+            icon={<TrendingDown className="h-4 w-4 text-red-600" />}
+            higherIsBetter
+          />
+          <MetricTileEnhanced
+            label="Certified Learners"
+            value={trainingPulse?.summary?.certified_pct ?? null}
+            unit="%"
+            status={trainingPulse?.summary?.certified_pct >= 80 ? "ok" : trainingPulse?.summary?.certified_pct >= 60 ? "warn" : "critical"}
+            trend={trainingPulse ? (trainingPulse.summary?.certified_pct >= 80 ? "up" : "down") : null}
+            icon={<Users className="h-4 w-4 text-emerald-600" />}
+            higherIsBetter
+          />
+        </div>
+
         {/* KPI Metrics */}
         <KpiMetricGrid metrics={metrics} columns={3} loading={summaryLoading} />
 

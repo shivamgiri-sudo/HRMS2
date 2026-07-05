@@ -20,7 +20,17 @@ export default function PortalProcessDashboard() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>("Performance");
-  const period = currentPeriod();
+  const [period, setPeriod] = useState(currentPeriod());
+
+  // Process meta (dynamic)
+  const procInfo = useQuery({
+    queryKey: ["portal-proc-info", id],
+    queryFn: () => portalApi.getProcess(id!),
+    enabled: !!id,
+  });
+  const processName = procInfo.data?.data?.process_name ?? "Loading…";
+  const clientName = procInfo.data?.data?.client_name ?? "";
+  const ragStatus = procInfo.data?.data?.rag ?? null;
 
   // Queries
   const kpis = useQuery({ queryKey: ["portal-kpis", id, period], queryFn: () => portalApi.getKpis(id!, period), enabled: tab === "Performance" });
@@ -29,9 +39,6 @@ export default function PortalProcessDashboard() {
   const governance = useQuery({ queryKey: ["portal-gov", id, period], queryFn: () => portalApi.getGovernance(id!, period), enabled: tab === "Governance" });
   const attrition = useQuery({ queryKey: ["portal-attrition", id, period], queryFn: () => portalApi.getAttrition(id!, period), enabled: tab === "Attrition" });
   const commentary = useQuery({ queryKey: ["portal-commentary", id, period], queryFn: () => portalApi.getCommentary(id!, period), enabled: tab === "Commentary" });
-
-  const processName = "Customer Support L2";
-  const clientName = "Airtel India";
 
   function handleLogout() {
     clearPortalToken();
@@ -106,20 +113,25 @@ export default function PortalProcessDashboard() {
             </h1>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded-xl flex items-center gap-3">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-md shadow-emerald-500/50" />
+              <div className={`w-2 h-2 rounded-full shadow-md ${ragStatus === "green" ? "bg-emerald-500 shadow-emerald-500/50" : ragStatus === "amber" ? "bg-amber-500 shadow-amber-500/50" : "bg-red-500 shadow-red-500/50"}`} />
               <div>
                 <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">Overall RAG</p>
-                <p className="text-xs font-bold text-emerald-400">Green (On Track)</p>
+                <p className={`text-xs font-bold ${ragStatus === "green" ? "text-emerald-400" : ragStatus === "amber" ? "text-amber-400" : ragStatus === "red" ? "text-red-400" : "text-slate-400"}`}>
+                  {ragStatus === "green" ? "Green (On Track)" : ragStatus === "amber" ? "Amber (Monitor)" : ragStatus === "red" ? "Red (At Risk)" : "—"}
+                </p>
               </div>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded-xl">
-              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">Data Period</p>
-              <p className="text-xs font-bold text-slate-300">
-                {formatIST()}
-              </p>
+            <div className="bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-xl">
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide mb-0.5">Period</p>
+              <input
+                type="month"
+                value={period}
+                onChange={(e) => setPeriod(e.target.value)}
+                className="bg-transparent text-xs font-bold text-slate-300 outline-none cursor-pointer"
+              />
             </div>
           </div>
         </div>

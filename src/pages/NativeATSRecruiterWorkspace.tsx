@@ -334,6 +334,10 @@ export default function NativeATSRecruiterWorkspace() {
   const [config] = useState<Config>(DEFAULT_CONFIG);
   const [selected, setSelected] = useState<CandidateRow | null>(null);
   const [interviewers, setInterviewers] = useState<Array<{ id: string; name: string; branch_name?: string | null; designation_name?: string | null }>>([]);
+  const [interviewerSearch, setInterviewerSearch] = useState("");
+  const [interviewerDropOpen, setInterviewerDropOpen] = useState(false);
+  const [interviewerSearchLoading, setInterviewerSearchLoading] = useState(false);
+  const interviewerSearchRef = useRef<HTMLDivElement>(null);
   const [form, setForm] = useState<Form>(EMPTY_FORM);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
@@ -399,6 +403,35 @@ export default function NativeATSRecruiterWorkspace() {
       setInterviewers([]);
     }
   };
+
+  const searchInterviewers = async (q: string) => {
+    const branch = recruiterProfile?.branch_name;
+    if (!branch) return;
+    setInterviewerSearchLoading(true);
+    try {
+      const params = new URLSearchParams({ branchName: branch, roundType: "second_round", limit: "30" });
+      if (q.trim()) params.set("search", q.trim());
+      const res = await hrmsApi.get<{ success: boolean; data: Array<{ id: string; name: string; branch_name?: string | null; designation_name?: string | null }> }>(
+        `/api/ats/interviewers?${params.toString()}`
+      );
+      setInterviewers(res.data ?? []);
+    } catch {
+      setInterviewers([]);
+    } finally {
+      setInterviewerSearchLoading(false);
+    }
+  };
+
+  // Close interviewer dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (interviewerSearchRef.current && !interviewerSearchRef.current.contains(e.target as Node)) {
+        setInterviewerDropOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   const loadWorkspace = async () => {
     setLoading(true);
@@ -476,6 +509,8 @@ export default function NativeATSRecruiterWorkspace() {
       offerDoj: h?.offer_doj || "",
     });
     void loadInterviewersForBranch(c.branch ?? null);
+    setInterviewerSearch(h?.second_round_interviewer_name_snapshot || "");
+    setInterviewerDropOpen(false);
     setMsg("");
     setScreen("form");
   };
@@ -1036,25 +1071,61 @@ export default function NativeATSRecruiterWorkspace() {
               <div className="form-section sec-green">
                 <div className="sec-title" style={{ color: "#047857" }}>Second Round Interviewer</div>
                 <div className="rw-grid rw-2">
-                  <div>
+                  <div ref={interviewerSearchRef} style={{ position: "relative" }}>
                     <label>Second Round Interviewer *</label>
-                    <select
-                      value={form.secondRoundInterviewerId}
+                    <input
+                      type="text"
+                      placeholder="Type name to search…"
+                      value={interviewerSearch}
+                      autoComplete="off"
                       onChange={(e) => {
-                        const selectedInterviewer = interviewers.find((item) => item.id === e.target.value);
-                        updateForm({
-                          secondRoundInterviewerId: e.target.value,
-                          secondRoundInterviewerNameSnapshot: selectedInterviewer?.name || "",
-                        });
+                        const q = e.target.value;
+                        setInterviewerSearch(q);
+                        setInterviewerDropOpen(true);
+                        searchInterviewers(q);
+                        if (!q) updateForm({ secondRoundInterviewerId: "", secondRoundInterviewerNameSnapshot: "" });
                       }}
-                    >
-                      <option value="">Select interviewer</option>
-                      {interviewers.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name}{item.designation_name ? ` · ${item.designation_name}` : ""}{item.branch_name ? ` · ${item.branch_name}` : ""}
-                        </option>
-                      ))}
-                    </select>
+                      onFocus={() => {
+                        setInterviewerDropOpen(true);
+                        if (!interviewers.length) searchInterviewers(interviewerSearch);
+                      }}
+                    />
+                    {interviewerDropOpen && (
+                      <div style={{
+                        position: "absolute", top: "100%", left: 0, right: 0, zIndex: 9999,
+                        background: "#fff", border: "1px solid #d1d5db", borderRadius: 8,
+                        boxShadow: "0 4px 16px rgba(0,0,0,0.12)", maxHeight: 220, overflowY: "auto",
+                      }}>
+                        {interviewerSearchLoading && (
+                          <div style={{ padding: "8px 12px", color: "#6b7280", fontSize: 13 }}>Searching…</div>
+                        )}
+                        {!interviewerSearchLoading && interviewers.length === 0 && (
+                          <div style={{ padding: "8px 12px", color: "#6b7280", fontSize: 13 }}>No interviewers found</div>
+                        )}
+                        {!interviewerSearchLoading && interviewers.map((item) => (
+                          <div
+                            key={item.id}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              updateForm({ secondRoundInterviewerId: item.id, secondRoundInterviewerNameSnapshot: item.name });
+                              setInterviewerSearch(item.name);
+                              setInterviewerDropOpen(false);
+                            }}
+                            style={{
+                              padding: "8px 12px", cursor: "pointer", fontSize: 14,
+                              background: form.secondRoundInterviewerId === item.id ? "#dcfce7" : undefined,
+                              borderBottom: "1px solid #f3f4f6",
+                            }}
+                            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "#f0fdf4"; }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = form.secondRoundInterviewerId === item.id ? "#dcfce7" : ""; }}
+                          >
+                            <span style={{ fontWeight: 500 }}>{item.name}</span>
+                            {item.designation_name && <span style={{ color: "#6b7280", marginLeft: 6, fontSize: 12 }}>· {item.designation_name}</span>}
+                            {item.branch_name && <span style={{ color: "#9ca3af", marginLeft: 4, fontSize: 12 }}>· {item.branch_name}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label>Interviewer Snapshot</label>
@@ -1099,47 +1170,6 @@ export default function NativeATSRecruiterWorkspace() {
               </div>
             )}
 
-            <div className="form-section sec-gray">
-              <div className="sec-title" style={{ color: "#475569" }}>Calling Follow-up</div>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <input
-                  type="checkbox"
-                  checked={form.followupRequired}
-                  onChange={(e) => updateForm({ followupRequired: e.target.checked })}
-                />
-                Follow-up required
-              </label>
-              <div className="rw-grid rw-3">
-                <div>
-                  <label>Follow-up Date</label>
-                  <input
-                    type="date"
-                    value={form.followupDate}
-                    onChange={(e) => updateForm({ followupDate: e.target.value })}
-                    disabled={!form.followupRequired}
-                  />
-                </div>
-                <div style={{ gridColumn: "span 2" }}>
-                  <label>Follow-up Reason</label>
-                  <input
-                    value={form.followupReason}
-                    onChange={(e) => updateForm({ followupReason: e.target.value })}
-                    disabled={!form.followupRequired}
-                    placeholder="Why we need to call again"
-                  />
-                </div>
-              </div>
-              <div className="rw-grid rw-2" style={{ marginTop: 10 }}>
-                <div>
-                  <label>Calling Activity ID</label>
-                  <input value={form.callingActivityId} onChange={(e) => updateForm({ callingActivityId: e.target.value })} placeholder="Link to calling tracker row" />
-                </div>
-                <div>
-                  <label>Calling Turn-up Status</label>
-                  <input value={form.callingTurnupStatus} onChange={(e) => updateForm({ callingTurnupStatus: e.target.value })} placeholder="Visited / Not reached / Rescheduled" />
-                </div>
-              </div>
-            </div>
 
             {/* Offer Details */}
             {form.finalDecision === "Selected" && (
