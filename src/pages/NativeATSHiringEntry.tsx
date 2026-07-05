@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import {
@@ -10,6 +10,7 @@ import {
   PhoneCall,
   RefreshCw,
   Save,
+  Search,
   Target,
   UserRound,
   Users,
@@ -233,6 +234,7 @@ export default function NativeATSHiringEntry() {
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [entrySearch, setEntrySearch] = useState("");
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const fieldRefs = useRef<Partial<Record<keyof FormState, HTMLElement | null>>>({});
 
@@ -332,6 +334,15 @@ export default function NativeATSHiringEntry() {
       window.setTimeout(() => focusField("process_name"), 0);
     }
   }, [bootstrap, loading]);
+
+  const filteredRows = useMemo(() => {
+    const q = entrySearch.toLowerCase().trim();
+    if (!q) return rows;
+    return rows.filter((r) =>
+      [r.candidate_name, r.mobile, r.process_name, r.position_name, r.activity_date, r.recruiter_remarks]
+        .join(" ").toLowerCase().includes(q)
+    );
+  }, [rows, entrySearch]);
 
   const sourceOptions = bootstrap?.options.sourceOptions ?? [];
   const processOptions = bootstrap?.options.processOptions ?? [];
@@ -800,19 +811,28 @@ export default function NativeATSHiringEntry() {
 
           <div className="space-y-6">
             <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center gap-2 text-sm font-black text-slate-950">
+              <div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-950">
                 <Users className="h-4 w-4" />
                 My entries and candidate progress
               </div>
-              <div className="mb-4 text-sm text-slate-600">
-                This list is recruiter-scoped, so each logged-in recruiter sees only their own calling entries and the latest downstream ATS status of those candidates.
-              </div>
+
+              <label className="relative mb-4 block">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={entrySearch}
+                  onChange={(e) => setEntrySearch(e.target.value)}
+                  placeholder="Search name, mobile, process, date, outcome…"
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-4 text-sm outline-none focus:border-slate-400 focus:bg-white"
+                />
+              </label>
 
               {rows.length === 0 ? (
                 <div className="py-10 text-center text-sm text-slate-500">No recruiter calling entries yet.</div>
+              ) : filteredRows.length === 0 ? (
+                <div className="py-8 text-center text-sm text-slate-500">No entries match "{entrySearch}".</div>
               ) : (
                 <div className="space-y-3">
-                  {rows.map((row) => {
+                  {filteredRows.map((row) => {
                     const arrived = isArrived(row);
                     const selected = isSelected(row);
                     return (
@@ -882,7 +902,7 @@ export default function NativeATSHiringEntry() {
                 </div>
               )}
 
-              {rows.length > 0 && rows.length < rowsTotal && (
+              {rows.length > 0 && rows.length < rowsTotal && !entrySearch && (
                 <button
                   type="button"
                   onClick={() => void loadMoreRows()}
