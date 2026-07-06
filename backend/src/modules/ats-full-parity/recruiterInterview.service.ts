@@ -1048,18 +1048,29 @@ export async function submitInterviewUpdate(
     await conn.commit();
 
     if (finalDecision === "Selected") {
+      console.log(`[ats] Sending onboarding token to candidate ${candidate.id} (${candidate.email || 'NO EMAIL'})`);
       try {
         await sendOnboardingToken(candidate.id, actorUserId ?? "SYSTEM");
+        console.log(`[ats] Onboarding token sent successfully to ${candidate.email}`);
       } catch (e) {
         console.error("[ats] automatic onboarding link failed:", e instanceof Error ? e.message : String(e));
       }
-    } else if ((finalDecision === "Rejected" || finalDecision === "No Show") && candidate.email) {
-      sendRejectedEmail({
-        candidateId: candidate.id,
-        to: candidate.email,
-        candidateName: candidate.full_name ?? "Candidate",
-        branchName: candidate.branch_display_name ?? candidate.applied_for_branch ?? "",
-      }).catch((e: unknown) => console.error("[ats] rejection email failed:", e instanceof Error ? e.message : String(e)));
+    } else if (finalDecision === "Rejected" || finalDecision === "No Show") {
+      if (!candidate.email) {
+        console.warn(`[ats] Cannot send rejection email - candidate ${candidate.id} has no email address`);
+      } else {
+        console.log(`[ats] Sending rejection email to ${candidate.email} (candidate ${candidate.id}, decision: ${finalDecision})`);
+        sendRejectedEmail({
+          candidateId: candidate.id,
+          to: candidate.email,
+          candidateName: candidate.full_name ?? "Candidate",
+          branchName: candidate.branch_display_name ?? candidate.applied_for_branch ?? "",
+        }).then(() => {
+          console.log(`[ats] Rejection email sent successfully to ${candidate.email}`);
+        }).catch((e: unknown) => {
+          console.error(`[ats] Rejection email failed for ${candidate.email}:`, e instanceof Error ? e.message : String(e));
+        });
+      }
     }
 
     // Fetch updated submission row for response (outside transaction)
