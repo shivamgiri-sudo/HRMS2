@@ -647,6 +647,10 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   const aadhaarMasked = maskAadhaar(input.aadhaarNumber ?? input.aadhar_number ?? input.aadhaar_number);
   const aadhaarHash = hashValue(input.aadhaarNumber ?? input.aadhar_number ?? input.aadhaar_number);
 
+  // Validate and prepare DOB (allow null, but convert empty strings to null)
+  const dobValue = input.dateOfBirth ?? tokenData.date_of_birth;
+  const normalizedDob = dobValue === "" || dobValue === "0000-00-00" ? null : dobValue ?? null;
+
   await db.execute(
     `INSERT INTO candidate_onboarding_profile
        (id, candidate_id, onboarding_token_hash, title, employee_name, relation, father_husband_name,
@@ -665,7 +669,7 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
      ON DUPLICATE KEY UPDATE
         title = VALUES(title), employee_name = VALUES(employee_name), relation = VALUES(relation),
         father_husband_name = VALUES(father_husband_name), gender = VALUES(gender), marital_status = VALUES(marital_status),
-        date_of_birth = VALUES(date_of_birth), blood_group = VALUES(blood_group),
+        date_of_birth = IF(VALUES(date_of_birth) IS NOT NULL, VALUES(date_of_birth), date_of_birth), blood_group = VALUES(blood_group),
         nominee_name = VALUES(nominee_name), nominee_relation = VALUES(nominee_relation),
         nominee_date_of_birth = VALUES(nominee_date_of_birth), nominee1_share_pct = VALUES(nominee1_share_pct),
         nominee2_name = VALUES(nominee2_name), nominee2_relation = VALUES(nominee2_relation),
@@ -694,7 +698,7 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       input.fatherHusbandName ?? input.father_name ?? null,
       input.gender ?? tokenData.gender ?? null,
       input.maritalStatus ?? null,
-      input.dateOfBirth ?? tokenData.date_of_birth ?? null,
+      normalizedDob,
       input.bloodGroup ?? null,
       input.nominee ?? input.nomineeName ?? null,
       input.nomineeRelation ?? null,
