@@ -17,6 +17,7 @@ import path from "path";
 import { atsQueueService } from "./ats.queue.service.js";
 import { verifyRecruiter, resolveRecruiterForActor, getMyPendingCandidates, getSubmissionHistory, getRecruiterDailyStats } from "../ats-full-parity/recruiterInterview.service.js";
 import { persistCandidateFile } from "./candidate-file.service.js";
+import { joiningDocumentsTrackerRouter } from "./ats.joiningDocumentsTracker.routes.js";
 
 export const atsRouter = Router();
 export const atsPublicRouter = Router(); // Public routes (no auth)
@@ -399,5 +400,8 @@ atsRouter.get("/recruiter/daily-stats", requireRole("admin", "hr", "super_admin"
   const stats = await getRecruiterDailyStats(recruiterName!, recruiterCode);
   return res.json({ success: true, data: stats });
 }));
+
+// Joining Documents Tracker routes
+atsRouter.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
 
 export default atsRouter;
