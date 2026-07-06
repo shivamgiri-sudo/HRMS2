@@ -81,60 +81,53 @@ export const leaveService = {
 
   async reviewRequest(id: string, input: ReviewLeaveInput, reviewerId: string): Promise<LeaveRequest> {
     const request = await this.getRequest(id);
-    
-    // Handle approval - deduct leave balance
-    if (input.status === 'approved') {
-      // Validate leave_type_id exists
-      if (!request.leave_type_id) {
-        throw new Error("Leave type is required for approval");
-      }
-      
-      const duration = request.total_days;
-      const employeeId = request.employee_id;
-      const leaveTypeId = request.leave_type_id;
-      const year = new Date(request.from_date).getFullYear();
-      
-      // Check current balance
+    const duration = Number(request.total_days ?? 0);
+    const employeeId = request.employee_id;
+    const leaveTypeId = request.leave_type_id;
+    const year = new Date(request.from_date).getFullYear();
+
+    const [leaveTypeRows] = await db.execute<RowDataPacket[]>(
+      "SELECT paid_leave FROM leave_type_master WHERE id = ? LIMIT 1",
+      [leaveTypeId]
+    );
+    const isPaidLeave = Number((leaveTypeRows[0] as any)?.paid_leave ?? 1) === 1;
+
+    if (input.status === 'approved' && request.status !== 'approved' && isPaidLeave) {
+      if (!leaveTypeId) throw new Error("Leave type is required for approval");
+
       const [balanceRows] = await db.execute<RowDataPacket[]>(
-        `SELECT * FROM leave_balance_ledger 
+        `SELECT * FROM leave_balance_ledger
          WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
         [employeeId, leaveTypeId, year]
       );
-      
+
       if (balanceRows.length === 0) {
-        // No ledger row exists - create one with used_days = duration and allocated_days = 0
-        await db.execute(
-          `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
-           VALUES (UUID(), ?, ?, ?, 0, ?, 0)`,
-          [employeeId, leaveTypeId, year, duration]
-        );
-      } else {
-        const balance = balanceRows[0];
-        const availableBalance = (balance.allocated_days || 0) + (balance.adjusted_days || 0) - (balance.used_days || 0);
-        
-        // Validate sufficient balance
-        if (duration > availableBalance) {
-          throw new Error(`Insufficient leave balance. Available: ${availableBalance}, Requested: ${duration}`);
-        }
-        
-        // Update used_days
-        await db.execute(
-          `UPDATE leave_balance_ledger 
-           SET used_days = used_days + ? 
-           WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-          [duration, employeeId, leaveTypeId, year]
-        );
+        throw new Error("Leave balance is not allocated for this leave type/year. Please seed balance before approval.");
       }
+
+      const balance = balanceRows[0] as any;
+      const availableBalance = Number(balance.allocated_days || 0) + Number(balance.adjusted_days || 0) - Number(balance.used_days || 0);
+      if (duration > availableBalance) {
+        throw new Error(`Insufficient leave balance. Available: ${availableBalance}, Requested: ${duration}`);
+      }
+
+      await db.execute(
+        `UPDATE leave_balance_ledger
+         SET used_days = used_days + ?
+         WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+        [duration, employeeId, leaveTypeId, year]
+      );
     }
-    
-    // Handle rejection - restore leave balance if previously approved
-    if (input.status === 'rejected' && request.status === 'approved') {
-      // TODO: Handle state transition from approved to rejected - deduct used_days
-      // This requires tracking the previous status which is a more complex change
-      // For now, log a warning about this edge case
-      console.warn(`Request ${id} was rejected after approval - balance was already deducted and should be restored manually`);
+
+    if (["rejected", "cancelled"].includes(input.status) && request.status === 'approved' && isPaidLeave && leaveTypeId) {
+      await db.execute(
+        `UPDATE leave_balance_ledger
+         SET used_days = GREATEST(0, used_days - ?)
+         WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+        [duration, employeeId, leaveTypeId, year]
+      );
     }
-    
+
     await db.execute(
       "UPDATE leave_request SET status = ? WHERE id = ?",
       [input.status, id]
@@ -180,15 +173,11 @@ export const leaveService = {
       [employeeId, year]
     );
 
-    const currentYear = new Date().getFullYear();
-    const currentMonth = new Date().getMonth() + 1; // 1-12
-
     return (rows as RowDataPacket[]).map((row: any) => {
       const allocated = Number(row.allocated_days ?? 0);
       const used = Number(row.used_days ?? 0);
       const adjusted = Number(row.adjusted_days ?? 0);
 
-      // available = allocated + adjustments - used (no automatic proration — HR sets the correct allocation)
       const available_days = Math.max(0, allocated + adjusted - used);
       return { ...row, available_days };
     });
