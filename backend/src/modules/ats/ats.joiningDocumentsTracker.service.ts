@@ -554,6 +554,9 @@ export async function streamBulkDocumentsZip(
 
   // Pipe archive data to Express response
   archive.pipe(res);
+  archive.on('error', (err: Error) => {
+    console.error('[tracker] Archive error during ZIP creation:', err.message);
+  });
 
   let sql = `
     SELECT
@@ -588,13 +591,18 @@ export async function streamBulkDocumentsZip(
     storage_path: string;
     original_filename: string;
   }>) {
-    const fullPath = path.join(STORAGE_ROOT, file.storage_path);
+    const resolvedPath = path.resolve(STORAGE_ROOT, file.storage_path);
+    if (!resolvedPath.startsWith(STORAGE_ROOT + path.sep) && resolvedPath !== STORAGE_ROOT) {
+      console.warn(`[tracker] Path traversal blocked for storage_path: ${file.storage_path}`);
+      continue;
+    }
 
-    if (fs.existsSync(fullPath)) {
+    if (fs.existsSync(resolvedPath)) {
       const safeName = file.full_name.replace(/[^a-zA-Z0-9]/g, '');
       const folderName = `${file.employee_code}-${safeName}`;
-      const archivePath = `${folderName}/${file.document_code}-${file.original_filename}`;
-      archive.file(fullPath, { name: archivePath });
+      const safeFilename = path.basename(file.original_filename);
+      const archivePath = `${folderName}/${file.document_code}-${safeFilename}`;
+      archive.file(resolvedPath, { name: archivePath });
     }
   }
 
