@@ -22,7 +22,8 @@ async function leaveListScope(userId: string): Promise<{ sql: string; params: un
 }
 
 async function canReviewLeave(userId: string, requestId: string): Promise<boolean> {
-  if (await hasAnyRole(userId, "super_admin")) return true;
+  // Keep admin/hr capability aligned with the existing UI and legacy route, while still blocking employees from approving their own request below.
+  if (await hasAnyRole(userId, "super_admin", "admin", "hr")) return true;
   const [rows] = await db.execute<RowDataPacket[]>(`SELECT lr.employee_id, e.branch_id, e.process_id, e.lob_id, e.department_id, e.reporting_manager_id, e.manager_id FROM leave_request lr JOIN employees e ON e.id = lr.employee_id WHERE lr.id = ? LIMIT 1`, [requestId]);
   const target = rows[0] as any;
   if (!target) return false;
