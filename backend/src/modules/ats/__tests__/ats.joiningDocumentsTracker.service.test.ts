@@ -71,15 +71,29 @@ vi.mock('../../employees/employeeJoiningDocuments.service.js', () => ({
   generateJoiningDocumentChecklist: vi.fn(),
 }));
 
-// Mock the DB module
-vi.mock('../../../db/mysql.js', () => {
-  const mockExecute = vi.fn();
-  return {
-    db: {
-      execute: mockExecute,
-    },
-  };
-});
+// Hoisted mock state — accessible inside vi.mock factory AND in test bodies
+const mocks = vi.hoisted(() => ({
+  mockDbExecute: vi.fn(),
+  mockConnectionExecute: vi.fn(),
+  mockBeginTransaction: vi.fn(),
+  mockCommit: vi.fn(),
+  mockRollback: vi.fn(),
+  mockRelease: vi.fn(),
+}));
+
+// Mock the DB module with connection support
+vi.mock('../../../db/mysql.js', () => ({
+  db: {
+    execute: mocks.mockDbExecute,
+    getConnection: vi.fn().mockResolvedValue({
+      execute: mocks.mockConnectionExecute,
+      beginTransaction: mocks.mockBeginTransaction,
+      commit: mocks.mockCommit,
+      rollback: mocks.mockRollback,
+      release: mocks.mockRelease,
+    }),
+  },
+}));
 
 import { db } from '../../../db/mysql.js';
 import { sendRejectedEmail } from '../ats.email.service.js';
@@ -259,21 +273,24 @@ import type { ResultSetHeader } from 'mysql2';
 describe('bulkAssignHR', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.mockBeginTransaction.mockResolvedValue(undefined);
+    mocks.mockCommit.mockResolvedValue(undefined);
+    mocks.mockRollback.mockResolvedValue(undefined);
   });
 
   it('should update assigned_hr_user_id for all checklist rows and return updated count', async () => {
     const mockResultSetHeader = { affectedRows: 5 } as ResultSetHeader;
     // First call: UPDATE checklist rows
-    vi.mocked(db.execute).mockResolvedValueOnce([mockResultSetHeader, []]);
+    mocks.mockConnectionExecute.mockResolvedValueOnce([mockResultSetHeader, []]);
     // Second call: audit log INSERT
-    vi.mocked(db.execute).mockResolvedValueOnce([{}, []]);
+    mocks.mockConnectionExecute.mockResolvedValueOnce([{}, []]);
 
     const result = await bulkAssignHR(['emp-1', 'emp-2'], 'hr-user-42', 'actor-user-1');
 
     expect(result).toEqual({ success: true, updated: 5 });
-    expect(db.execute).toHaveBeenCalledTimes(2);
+    expect(mocks.mockConnectionExecute).toHaveBeenCalledTimes(2);
     // First call should be the UPDATE
-    const firstCall = vi.mocked(db.execute).mock.calls[0];
+    const firstCall = mocks.mockConnectionExecute.mock.calls[0];
     expect(firstCall[0]).toMatch(/UPDATE employee_joining_document_checklist/i);
     expect(firstCall[0]).toMatch(/assigned_hr_user_id/i);
     expect(firstCall[1]).toEqual(['hr-user-42', ['emp-1', 'emp-2']]);
@@ -281,12 +298,12 @@ describe('bulkAssignHR', () => {
 
   it('should log audit entry with action_type BULK_ASSIGN_HR', async () => {
     const mockResultSetHeader = { affectedRows: 2 } as ResultSetHeader;
-    vi.mocked(db.execute).mockResolvedValueOnce([mockResultSetHeader, []]);
-    vi.mocked(db.execute).mockResolvedValueOnce([{}, []]);
+    mocks.mockConnectionExecute.mockResolvedValueOnce([mockResultSetHeader, []]);
+    mocks.mockConnectionExecute.mockResolvedValueOnce([{}, []]);
 
     await bulkAssignHR(['emp-1', 'emp-2'], 'hr-user-7', 'actor-user-1');
 
-    const auditCall = vi.mocked(db.execute).mock.calls[1];
+    const auditCall = mocks.mockConnectionExecute.mock.calls[1];
     expect(auditCall[0]).toMatch(/employee_joining_document_audit_log/i);
     expect(auditCall[0]).toMatch(/BULK_ASSIGN_HR/i);
     expect(auditCall[1]).toContain('actor-user-1');
@@ -294,8 +311,8 @@ describe('bulkAssignHR', () => {
 
   it('should return updated: 0 when no rows matched', async () => {
     const mockResultSetHeader = { affectedRows: 0 } as ResultSetHeader;
-    vi.mocked(db.execute).mockResolvedValueOnce([mockResultSetHeader, []]);
-    vi.mocked(db.execute).mockResolvedValueOnce([{}, []]);
+    mocks.mockConnectionExecute.mockResolvedValueOnce([mockResultSetHeader, []]);
+    mocks.mockConnectionExecute.mockResolvedValueOnce([{}, []]);
 
     const result = await bulkAssignHR(['unknown-emp'], 'hr-user-1', 'actor-user-1');
 
@@ -308,17 +325,20 @@ describe('bulkAssignHR', () => {
 describe('bulkSetDueDate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.mockBeginTransaction.mockResolvedValue(undefined);
+    mocks.mockCommit.mockResolvedValue(undefined);
+    mocks.mockRollback.mockResolvedValue(undefined);
   });
 
   it('should update due_at for all employees without document_codes filter', async () => {
     const mockResultSetHeader = { affectedRows: 8 } as ResultSetHeader;
-    vi.mocked(db.execute).mockResolvedValueOnce([mockResultSetHeader, []]);
-    vi.mocked(db.execute).mockResolvedValueOnce([{}, []]);
+    mocks.mockConnectionExecute.mockResolvedValueOnce([mockResultSetHeader, []]);
+    mocks.mockConnectionExecute.mockResolvedValueOnce([{}, []]);
 
     const result = await bulkSetDueDate(['emp-1', 'emp-2'], '2026-08-01', null, 'actor-user-1');
 
     expect(result).toEqual({ success: true, updated: 8 });
-    const updateCall = vi.mocked(db.execute).mock.calls[0];
+    const updateCall = mocks.mockConnectionExecute.mock.calls[0];
     expect(updateCall[0]).toMatch(/UPDATE employee_joining_document_checklist/i);
     expect(updateCall[0]).toMatch(/due_at/i);
     // Should NOT filter by document_code when null
@@ -327,8 +347,8 @@ describe('bulkSetDueDate', () => {
 
   it('should filter by document_codes when provided', async () => {
     const mockResultSetHeader = { affectedRows: 3 } as ResultSetHeader;
-    vi.mocked(db.execute).mockResolvedValueOnce([mockResultSetHeader, []]);
-    vi.mocked(db.execute).mockResolvedValueOnce([{}, []]);
+    mocks.mockConnectionExecute.mockResolvedValueOnce([mockResultSetHeader, []]);
+    mocks.mockConnectionExecute.mockResolvedValueOnce([{}, []]);
 
     const result = await bulkSetDueDate(
       ['emp-1', 'emp-2'],
@@ -338,7 +358,7 @@ describe('bulkSetDueDate', () => {
     );
 
     expect(result).toEqual({ success: true, updated: 3 });
-    const updateCall = vi.mocked(db.execute).mock.calls[0];
+    const updateCall = mocks.mockConnectionExecute.mock.calls[0];
     expect(updateCall[0]).toMatch(/document_code IN/i);
     const callParams = updateCall[1] as unknown[];
     expect(callParams[0]).toBe('2026-08-15');
@@ -347,12 +367,12 @@ describe('bulkSetDueDate', () => {
 
   it('should log audit entry with action_type BULK_SET_DUE_DATE', async () => {
     const mockResultSetHeader = { affectedRows: 4 } as ResultSetHeader;
-    vi.mocked(db.execute).mockResolvedValueOnce([mockResultSetHeader, []]);
-    vi.mocked(db.execute).mockResolvedValueOnce([{}, []]);
+    mocks.mockConnectionExecute.mockResolvedValueOnce([mockResultSetHeader, []]);
+    mocks.mockConnectionExecute.mockResolvedValueOnce([{}, []]);
 
     await bulkSetDueDate(['emp-1'], '2026-09-01', null, 'actor-user-1');
 
-    const auditCall = vi.mocked(db.execute).mock.calls[1];
+    const auditCall = mocks.mockConnectionExecute.mock.calls[1];
     expect(auditCall[0]).toMatch(/employee_joining_document_audit_log/i);
     expect(auditCall[0]).toMatch(/BULK_SET_DUE_DATE/i);
     expect(auditCall[1]).toContain('actor-user-1');
@@ -364,14 +384,17 @@ describe('bulkSetDueDate', () => {
 describe('bulkVerifyDocuments', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.mockBeginTransaction.mockResolvedValue(undefined);
+    mocks.mockCommit.mockResolvedValue(undefined);
+    mocks.mockRollback.mockResolvedValue(undefined);
   });
 
   it('should verify uploaded_pending_review documents and recalculate completion %', async () => {
     const updateResult = { affectedRows: 3 } as ResultSetHeader;
-    const statsResult = [{ total: 10, verified: 8 }];
+    const statsResult = [{ total: 10, verified_count: 8 }];
 
     // emp-1: UPDATE → 3 affected, audit log, stats SELECT, employees UPDATE
-    vi.mocked(db.execute)
+    mocks.mockConnectionExecute
       .mockResolvedValueOnce([updateResult, []])      // UPDATE checklist
       .mockResolvedValueOnce([{}, []])                 // INSERT audit log
       .mockResolvedValueOnce([statsResult, []])        // SELECT stats
@@ -386,9 +409,9 @@ describe('bulkVerifyDocuments', () => {
 
   it('should update employees table with correct completion % after verification', async () => {
     const updateResult = { affectedRows: 2 } as ResultSetHeader;
-    const statsResult = [{ total: 10, verified: 10 }]; // 100% complete
+    const statsResult = [{ total: 10, verified_count: 10 }]; // 100% complete
 
-    vi.mocked(db.execute)
+    mocks.mockConnectionExecute
       .mockResolvedValueOnce([updateResult, []])
       .mockResolvedValueOnce([{}, []])
       .mockResolvedValueOnce([statsResult, []])
@@ -397,7 +420,7 @@ describe('bulkVerifyDocuments', () => {
     await bulkVerifyDocuments(['emp-1'], 'actor-user-1');
 
     // The employees UPDATE should set pct=100 and status='verified_complete'
-    const empUpdateCall = vi.mocked(db.execute).mock.calls[3];
+    const empUpdateCall = mocks.mockConnectionExecute.mock.calls[3];
     expect(empUpdateCall[0]).toMatch(/UPDATE employees/i);
     expect(empUpdateCall[0]).toMatch(/joining_document_completion_pct/i);
     expect(empUpdateCall[1]).toContain(100);
@@ -407,12 +430,12 @@ describe('bulkVerifyDocuments', () => {
   it('should skip employees with no pending documents (0 affected rows)', async () => {
     const updateResult = { affectedRows: 0 } as ResultSetHeader;
 
-    vi.mocked(db.execute).mockResolvedValueOnce([updateResult, []]);
+    mocks.mockConnectionExecute.mockResolvedValueOnce([updateResult, []]);
 
     const result = await bulkVerifyDocuments(['emp-1'], 'actor-user-1');
 
     // Should not make further DB calls (audit, stats, employees update)
-    expect(db.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.mockConnectionExecute).toHaveBeenCalledTimes(1);
     expect(result.verified).toBe(0);
     expect(result.errors).toHaveLength(0);
   });
@@ -420,9 +443,9 @@ describe('bulkVerifyDocuments', () => {
   it('should process multiple employees and accumulate verified count', async () => {
     const updateResult1 = { affectedRows: 2 } as ResultSetHeader;
     const updateResult2 = { affectedRows: 3 } as ResultSetHeader;
-    const statsResult = [{ total: 5, verified: 5 }];
+    const statsResult = [{ total: 5, verified_count: 5 }];
 
-    vi.mocked(db.execute)
+    mocks.mockConnectionExecute
       // emp-1
       .mockResolvedValueOnce([updateResult1, []])
       .mockResolvedValueOnce([{}, []])
@@ -444,9 +467,10 @@ describe('bulkVerifyDocuments', () => {
   it('should collect errors per employee without stopping processing', async () => {
     const empCodeResult = [{ employee_code: 'EMP001' }];
 
-    vi.mocked(db.execute)
-      .mockRejectedValueOnce(new Error('DB timeout'))       // emp-1 UPDATE fails
-      .mockResolvedValueOnce([empCodeResult, []]);           // fetch employee_code for error
+    // connection.execute for the UPDATE throws (triggers rollback + error handling)
+    mocks.mockConnectionExecute.mockRejectedValueOnce(new Error('DB timeout'));
+    // db.execute for the employee_code lookup after rollback
+    vi.mocked(db.execute).mockResolvedValueOnce([empCodeResult, []]);
 
     const result = await bulkVerifyDocuments(['emp-1'], 'actor-user-1');
 
@@ -461,9 +485,9 @@ describe('bulkVerifyDocuments', () => {
 
   it('should log audit with action_type BULK_VERIFY for each verified employee', async () => {
     const updateResult = { affectedRows: 1 } as ResultSetHeader;
-    const statsResult = [{ total: 5, verified: 3 }];
+    const statsResult = [{ total: 5, verified_count: 3 }];
 
-    vi.mocked(db.execute)
+    mocks.mockConnectionExecute
       .mockResolvedValueOnce([updateResult, []])
       .mockResolvedValueOnce([{}, []])
       .mockResolvedValueOnce([statsResult, []])
@@ -471,7 +495,7 @@ describe('bulkVerifyDocuments', () => {
 
     await bulkVerifyDocuments(['emp-1'], 'actor-user-1');
 
-    const auditCall = vi.mocked(db.execute).mock.calls[1];
+    const auditCall = mocks.mockConnectionExecute.mock.calls[1];
     expect(auditCall[0]).toMatch(/employee_joining_document_audit_log/i);
     expect(auditCall[0]).toMatch(/BULK_VERIFY/i);
     expect(auditCall[1]).toContain('actor-user-1');

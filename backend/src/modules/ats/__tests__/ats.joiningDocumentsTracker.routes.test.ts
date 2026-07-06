@@ -386,7 +386,17 @@ describe('POST /joining-documents-tracker/bulk-set-due-date', () => {
       .send({ employee_ids: ['emp-1'] });
 
     expect(response.status).toBe(400);
-    expect(response.body).toMatchObject({ success: false, message: 'due_date is required' });
+    expect(response.body).toMatchObject({ success: false, message: 'due_date must be in YYYY-MM-DD format' });
+  });
+
+  it('should return 400 when due_date is not in YYYY-MM-DD format', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-set-due-date')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1'], due_date: '01/08/2026' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'due_date must be in YYYY-MM-DD format' });
   });
 
   it('should call bulkSetDueDate with null document_codes when not provided', async () => {

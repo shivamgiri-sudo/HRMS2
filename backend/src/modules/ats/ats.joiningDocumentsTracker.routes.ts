@@ -129,8 +129,8 @@ joiningDocumentsTrackerRouter.post('/bulk-set-due-date', h(async (req: Authentic
       return res.status(400).json({ success: false, message: 'employee_ids array is required' });
     }
 
-    if (!due_date) {
-      return res.status(400).json({ success: false, message: 'due_date is required' });
+    if (!due_date || !/^\d{4}-\d{2}-\d{2}$/.test(due_date)) {
+      return res.status(400).json({ success: false, message: 'due_date must be in YYYY-MM-DD format' });
     }
 
     const result = await bulkSetDueDate(
