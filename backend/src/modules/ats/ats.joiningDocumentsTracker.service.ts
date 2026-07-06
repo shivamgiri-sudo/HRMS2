@@ -379,18 +379,17 @@ export async function bulkGenerateChecklists(
     [employeeIds]
   );
 
-  for (const emp of employees as Array<{
-    id: string;
-    employee_code: string;
-    full_name: string;
-  }>) {
-    // Check if checklist already exists
-    const [existing] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM employee_joining_document_checklist WHERE employee_id = ? LIMIT 1`,
-      [emp.id]
-    );
+  const [existingChecklists] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT employee_id FROM employee_joining_document_checklist WHERE employee_id IN (?)`,
+    [employeeIds]
+  );
 
-    if (existing.length > 0) {
+  const existingEmployeeIds = new Set(
+    (existingChecklists as Array<{ employee_id: string }>).map(r => r.employee_id)
+  );
+
+  for (const emp of employees as Array<{ id: string; employee_code: string; full_name: string }>) {
+    if (existingEmployeeIds.has(emp.id)) {
       result.skipped++;
       continue;
     }

@@ -175,9 +175,7 @@ describe('bulkGenerateChecklists', () => {
 
     // First call: fetch employees
     vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
-    // Second call: check existing for emp-1 — none
-    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
-    // Third call: check existing for emp-2 — none
+    // Second call: batch fetch existing checklists — none exist
     vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
 
     vi.mocked(generateJoiningDocumentChecklist).mockResolvedValue({} as never);
@@ -197,11 +195,10 @@ describe('bulkGenerateChecklists', () => {
       { id: 'emp-2', employee_code: 'EMP002', full_name: 'Bob Jones' },
     ];
 
+    // First call: fetch employees
     vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
-    // emp-1 has existing checklist
-    vi.mocked(db.execute).mockResolvedValueOnce([[{ id: 'existing-id' }], []]);
-    // emp-2 has no checklist
-    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
+    // Second call: batch fetch existing checklists — emp-1 exists, emp-2 doesn't
+    vi.mocked(db.execute).mockResolvedValueOnce([[{ employee_id: 'emp-1' }], []]);
 
     vi.mocked(generateJoiningDocumentChecklist).mockResolvedValue({} as never);
 
@@ -220,7 +217,9 @@ describe('bulkGenerateChecklists', () => {
       { id: 'emp-1', employee_code: 'EMP001', full_name: 'Alice Smith' },
     ];
 
+    // First call: fetch employees
     vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
+    // Second call: batch fetch existing checklists — none exist
     vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
     vi.mocked(generateJoiningDocumentChecklist).mockRejectedValue(new Error('Template not found'));
 
@@ -238,6 +237,9 @@ describe('bulkGenerateChecklists', () => {
   });
 
   it('should return empty result when no employees found', async () => {
+    // First call: fetch employees — none found
+    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
+    // Second call: batch fetch existing checklists — none (because no employees)
     vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
 
     const result = await bulkGenerateChecklists(['unknown-id'], 'actor-user-1');
