@@ -10,6 +10,7 @@ vi.mock('../ats.joiningDocumentsTracker.service.js', () => ({
   bulkAssignHR: vi.fn(),
   bulkSetDueDate: vi.fn(),
   bulkVerifyDocuments: vi.fn(),
+  streamBulkDocumentsZip: vi.fn(),
 }));
 
 // Mock the middleware modules
@@ -25,7 +26,7 @@ vi.mock('../../../middleware/requireRole.js', () => ({
     (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 
-import { getJoiningDocumentsTracker, sendBulkReminders, bulkGenerateChecklists, bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments } from '../ats.joiningDocumentsTracker.service.js';
+import { getJoiningDocumentsTracker, sendBulkReminders, bulkGenerateChecklists, bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments, streamBulkDocumentsZip } from '../ats.joiningDocumentsTracker.service.js';
 
 describe('GET /joining-documents-tracker', () => {
   let app: express.Application;
@@ -522,5 +523,107 @@ describe('POST /joining-documents-tracker/bulk-verify', () => {
 
     expect(response.status).toBe(500);
     expect(response.body).toMatchObject({ success: false, message: 'Failed to verify documents' });
+  });
+});
+
+// ─── Task 6: Bulk Download route tests ───────────────────────────────────────
+
+describe('POST /joining-documents-tracker/bulk-download', () => {
+  let app: express.Application;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
+    app = express();
+    app.use(express.json());
+    app.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
+  });
+
+  it('should return 400 when employee_ids is missing', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-download')
+      .set('Authorization', 'Bearer test-token')
+      .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
+  });
+
+  it('should return 400 when employee_ids is empty array', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-download')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: [] });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
+  });
+
+  it('should return 400 when employee_ids is not an array', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-download')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: 'emp-1' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
+  });
+
+  it('should set correct Content-Type and Content-Disposition headers', async () => {
+    vi.mocked(streamBulkDocumentsZip).mockResolvedValueOnce(undefined);
+
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-download')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1', 'emp-2'] });
+
+    expect(response.headers['content-type']).toMatch(/application\/zip/i);
+    expect(response.headers['content-disposition']).toMatch(/attachment/i);
+    expect(response.headers['content-disposition']).toMatch(/joining-documents-\d{4}-\d{2}-\d{2}\.zip/);
+  });
+
+  it('should call streamBulkDocumentsZip with employee_ids and null document_codes', async () => {
+    vi.mocked(streamBulkDocumentsZip).mockResolvedValueOnce(undefined);
+
+    await request(app)
+      .post('/joining-documents-tracker/bulk-download')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1', 'emp-2'] });
+
+    expect(streamBulkDocumentsZip).toHaveBeenCalledWith(
+      ['emp-1', 'emp-2'],
+      null,
+      expect.anything()
+    );
+  });
+
+  it('should pass document_codes to streamBulkDocumentsZip when provided', async () => {
+    vi.mocked(streamBulkDocumentsZip).mockResolvedValueOnce(undefined);
+
+    await request(app)
+      .post('/joining-documents-tracker/bulk-download')
+      .set('Authorization', 'Bearer test-token')
+      .send({
+        employee_ids: ['emp-1'],
+        document_codes: ['APPOINTMENT_LETTER', 'ID_PROOF'],
+      });
+
+    expect(streamBulkDocumentsZip).toHaveBeenCalledWith(
+      ['emp-1'],
+      ['APPOINTMENT_LETTER', 'ID_PROOF'],
+      expect.anything()
+    );
+  });
+
+  it('should return 500 JSON when service throws before headers are sent', async () => {
+    vi.mocked(streamBulkDocumentsZip).mockRejectedValueOnce(new Error('ZIP creation failed'));
+
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-download')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1'] });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toMatchObject({ success: false, message: 'Failed to create ZIP file' });
   });
 });

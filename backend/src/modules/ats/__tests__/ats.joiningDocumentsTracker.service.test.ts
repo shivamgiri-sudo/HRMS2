@@ -267,7 +267,7 @@ describe('bulkGenerateChecklists', () => {
 
 // ─── Task 5: bulkAssignHR tests ───────────────────────────────────────────────
 
-import { bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments } from '../ats.joiningDocumentsTracker.service';
+import { bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments, streamBulkDocumentsZip } from '../ats.joiningDocumentsTracker.service';
 import type { ResultSetHeader } from 'mysql2';
 
 describe('bulkAssignHR', () => {
@@ -500,5 +500,181 @@ describe('bulkVerifyDocuments', () => {
     expect(auditCall[0]).toMatch(/BULK_VERIFY/i);
     expect(auditCall[1]).toContain('actor-user-1');
     expect(auditCall[1]).toContain('emp-1');
+  });
+});
+
+// ─── Task 6: streamBulkDocumentsZip tests ────────────────────────────────────
+
+vi.mock('archiver', () => {
+  const mockArchive = {
+    pipe: vi.fn(),
+    file: vi.fn(),
+    finalize: vi.fn().mockResolvedValue(undefined),
+    on: vi.fn(),
+  };
+  return {
+    default: vi.fn().mockReturnValue(mockArchive),
+  };
+});
+
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof import('fs')>('fs');
+  return {
+    ...actual,
+    existsSync: vi.fn(),
+  };
+});
+
+import archiver from 'archiver';
+import * as fsModule from 'fs';
+
+describe('streamBulkDocumentsZip', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('should query DB for verified files for the given employee IDs', async () => {
+    const mockFiles = [
+      {
+        employee_code: 'EMP001',
+        full_name: 'John Doe',
+        document_code: 'APPOINTMENT_LETTER',
+        storage_path: 'emp-1/appointment.pdf',
+        original_filename: 'appointment.pdf',
+      },
+    ];
+    vi.mocked(db.execute).mockResolvedValueOnce([mockFiles, []]);
+    vi.mocked(fsModule.existsSync).mockReturnValue(false); // file doesn't exist on disk
+
+    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
+
+    await streamBulkDocumentsZip(['emp-1'], null, mockRes);
+
+    const [[sql, params]] = vi.mocked(db.execute).mock.calls;
+    expect(sql).toMatch(/employee_joining_document_file/i);
+    expect(sql).toMatch(/employee_joining_document_checklist/i);
+    expect(sql).toMatch(/verification_status.*verified/i);
+    expect(sql).toMatch(/role IN/i);
+    expect(params).toContain(['emp-1']);
+  });
+
+  it('should filter by document_codes when provided', async () => {
+    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
+    vi.mocked(fsModule.existsSync).mockReturnValue(false);
+
+    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
+    await streamBulkDocumentsZip(['emp-1'], ['APPOINTMENT_LETTER', 'ID_PROOF'], mockRes);
+
+    const [[sql, params]] = vi.mocked(db.execute).mock.calls;
+    expect(sql).toMatch(/document_code IN/i);
+    expect((params as unknown[]).some(p => Array.isArray(p) && p.includes('APPOINTMENT_LETTER'))).toBe(true);
+  });
+
+  it('should not filter by document_codes when null', async () => {
+    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
+    vi.mocked(fsModule.existsSync).mockReturnValue(false);
+
+    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
+    await streamBulkDocumentsZip(['emp-1'], null, mockRes);
+
+    const [[sql]] = vi.mocked(db.execute).mock.calls;
+    expect(sql).not.toMatch(/document_code IN/i);
+  });
+
+  it('should add existing files to archive with correct folder structure', async () => {
+    const mockFiles = [
+      {
+        employee_code: 'EMP001',
+        full_name: 'John Doe',
+        document_code: 'APPOINTMENT_LETTER',
+        storage_path: 'emp-1/appointment.pdf',
+        original_filename: 'appointment.pdf',
+      },
+    ];
+    vi.mocked(db.execute).mockResolvedValueOnce([mockFiles, []]);
+    vi.mocked(fsModule.existsSync).mockReturnValue(true); // file exists
+
+    const mockArchiveInstance = (archiver as ReturnType<typeof vi.fn>).mock.results?.[0]?.value ??
+      { pipe: vi.fn(), file: vi.fn(), finalize: vi.fn().mockResolvedValue(undefined), on: vi.fn() };
+
+    // Reset to get fresh mock
+    const freshMockArchive = {
+      pipe: vi.fn(),
+      file: vi.fn(),
+      finalize: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn(),
+    };
+    vi.mocked(archiver).mockReturnValueOnce(freshMockArchive as ReturnType<typeof archiver>);
+
+    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
+    await streamBulkDocumentsZip(['emp-1'], null, mockRes);
+
+    expect(freshMockArchive.file).toHaveBeenCalledTimes(1);
+    const fileCall = freshMockArchive.file.mock.calls[0];
+    // Archive path: EMP001-JohnDoe/APPOINTMENT_LETTER-appointment.pdf
+    expect(fileCall[1]).toMatchObject({ name: 'EMP001-JohnDoe/APPOINTMENT_LETTER-appointment.pdf' });
+  });
+
+  it('should skip files that do not exist on disk', async () => {
+    const mockFiles = [
+      {
+        employee_code: 'EMP001',
+        full_name: 'John Doe',
+        document_code: 'APPOINTMENT_LETTER',
+        storage_path: 'emp-1/missing.pdf',
+        original_filename: 'missing.pdf',
+      },
+    ];
+    vi.mocked(db.execute).mockResolvedValueOnce([mockFiles, []]);
+    vi.mocked(fsModule.existsSync).mockReturnValue(false); // file does NOT exist
+
+    const freshMockArchive = {
+      pipe: vi.fn(),
+      file: vi.fn(),
+      finalize: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn(),
+    };
+    vi.mocked(archiver).mockReturnValueOnce(freshMockArchive as ReturnType<typeof archiver>);
+
+    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
+    await streamBulkDocumentsZip(['emp-1'], null, mockRes);
+
+    expect(freshMockArchive.file).not.toHaveBeenCalled();
+  });
+
+  it('should pipe archive to the response object', async () => {
+    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
+    vi.mocked(fsModule.existsSync).mockReturnValue(false);
+
+    const freshMockArchive = {
+      pipe: vi.fn(),
+      file: vi.fn(),
+      finalize: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn(),
+    };
+    vi.mocked(archiver).mockReturnValueOnce(freshMockArchive as ReturnType<typeof archiver>);
+
+    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
+    await streamBulkDocumentsZip(['emp-1'], null, mockRes);
+
+    expect(freshMockArchive.pipe).toHaveBeenCalledWith(mockRes);
+  });
+
+  it('should call archive.finalize() after adding all files', async () => {
+    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
+    vi.mocked(fsModule.existsSync).mockReturnValue(false);
+
+    const freshMockArchive = {
+      pipe: vi.fn(),
+      file: vi.fn(),
+      finalize: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn(),
+    };
+    vi.mocked(archiver).mockReturnValueOnce(freshMockArchive as ReturnType<typeof archiver>);
+
+    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
+    await streamBulkDocumentsZip(['emp-1'], null, mockRes);
+
+    expect(freshMockArchive.finalize).toHaveBeenCalledTimes(1);
   });
 });
