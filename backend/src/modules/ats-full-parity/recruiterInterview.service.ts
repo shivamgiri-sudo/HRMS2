@@ -300,14 +300,17 @@ export async function getRecruiterDailyStats(
 
   const [rows] = await db.execute<DailyStatsRow[]>(
     `SELECT
-       COUNT(*) AS total_submissions,
-       SUM(CASE WHEN s.final_decision = 'Selected' THEN 1 ELSE 0 END) AS selected_count,
-       SUM(CASE WHEN s.final_decision = 'Rejected' THEN 1 ELSE 0 END) AS rejected_count
+       COUNT(*) AS total_today,
+       SUM(CASE WHEN s.final_decision = 'Selected' THEN 1 ELSE 0 END) AS selected_today,
+       SUM(CASE WHEN s.final_decision = 'Rejected' THEN 1 ELSE 0 END) AS rejected_today,
+       SUM(CASE WHEN s.final_decision = 'No Show' THEN 1 ELSE 0 END) AS noshow_today,
+       SUM(CASE WHEN s.final_decision = 'Hold' THEN 1 ELSE 0 END) AS hold_today,
+       ROUND((SUM(CASE WHEN s.final_decision = 'Selected' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0)), 1) AS conversion_rate
      FROM ats_interview_submission s
      WHERE (${filters.join(" OR ")}) AND DATE(s.submitted_at) = CURDATE()`,
     params,
   );
-  return rows[0] ?? { total_submissions: 0, selected_count: 0, rejected_count: 0 };
+  return rows[0] ?? { total_today: 0, selected_today: 0, rejected_today: 0, noshow_today: 0, hold_today: 0, conversion_rate: 0 };
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
@@ -397,9 +400,12 @@ interface SubmissionHistoryRow extends RowDataPacket {
 }
 
 interface DailyStatsRow extends RowDataPacket {
-  total_submissions: number | null;
-  selected_count: number | null;
-  rejected_count: number | null;
+  total_today: number | null;
+  selected_today: number | null;
+  rejected_today: number | null;
+  noshow_today: number | null;
+  hold_today: number | null;
+  conversion_rate: number | null;
 }
 
 interface InterviewCandidateRow extends RowDataPacket {
