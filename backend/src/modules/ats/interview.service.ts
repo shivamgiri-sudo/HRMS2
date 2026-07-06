@@ -3,6 +3,7 @@ import { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'crypto';
 import { sendSelectionCongratulationsEmail } from './ats.email.service.js';
 import { sendOnboardingToken } from './ats.onboarding.service.js';
+import { env } from '../../config/env.js';
 
 /**
  * Interview Service
@@ -222,7 +223,7 @@ async function handleCandidateSelection(candidateId: string) {
       [loginId, candidateId, candidate.email, tempPassword]
     );
 
-    const onboardingPortalUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/candidate-portal/login`;
+    const onboardingPortalUrl = `${env.FRONTEND_URL}/candidate-portal/login`;
     sendSelectionCongratulationsEmail({
       candidateId: candidate.id,
       to: candidate.email,
