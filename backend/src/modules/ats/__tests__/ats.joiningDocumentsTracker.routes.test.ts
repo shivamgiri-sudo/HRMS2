@@ -570,7 +570,10 @@ describe('POST /joining-documents-tracker/bulk-download', () => {
   });
 
   it('should set correct Content-Type and Content-Disposition headers', async () => {
-    vi.mocked(streamBulkDocumentsZip).mockResolvedValueOnce(undefined);
+    // Mock must end the response; archiver normally does this via pipe
+    vi.mocked(streamBulkDocumentsZip).mockImplementationOnce(async (_ids, _codes, res) => {
+      res.end();
+    });
 
     const response = await request(app)
       .post('/joining-documents-tracker/bulk-download')
@@ -583,7 +586,9 @@ describe('POST /joining-documents-tracker/bulk-download', () => {
   });
 
   it('should call streamBulkDocumentsZip with employee_ids and null document_codes', async () => {
-    vi.mocked(streamBulkDocumentsZip).mockResolvedValueOnce(undefined);
+    vi.mocked(streamBulkDocumentsZip).mockImplementationOnce(async (_ids, _codes, res) => {
+      res.end();
+    });
 
     await request(app)
       .post('/joining-documents-tracker/bulk-download')
@@ -598,7 +603,9 @@ describe('POST /joining-documents-tracker/bulk-download', () => {
   });
 
   it('should pass document_codes to streamBulkDocumentsZip when provided', async () => {
-    vi.mocked(streamBulkDocumentsZip).mockResolvedValueOnce(undefined);
+    vi.mocked(streamBulkDocumentsZip).mockImplementationOnce(async (_ids, _codes, res) => {
+      res.end();
+    });
 
     await request(app)
       .post('/joining-documents-tracker/bulk-download')

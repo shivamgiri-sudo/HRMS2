@@ -519,9 +519,14 @@ vi.mock('archiver', () => {
 
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
+  const mockExistsSync = vi.fn();
   return {
     ...actual,
-    existsSync: vi.fn(),
+    existsSync: mockExistsSync,
+    default: {
+      ...(actual as unknown as Record<string, unknown>).default ?? actual,
+      existsSync: mockExistsSync,
+    },
   };
 });
 
@@ -555,7 +560,7 @@ describe('streamBulkDocumentsZip', () => {
     expect(sql).toMatch(/employee_joining_document_checklist/i);
     expect(sql).toMatch(/verification_status.*verified/i);
     expect(sql).toMatch(/role IN/i);
-    expect(params).toContain(['emp-1']);
+    expect(params).toContainEqual(['emp-1']);
   });
 
   it('should filter by document_codes when provided', async () => {
@@ -594,17 +599,15 @@ describe('streamBulkDocumentsZip', () => {
     vi.mocked(db.execute).mockResolvedValueOnce([mockFiles, []]);
     vi.mocked(fsModule.existsSync).mockReturnValue(true); // file exists
 
-    const mockArchiveInstance = (archiver as ReturnType<typeof vi.fn>).mock.results?.[0]?.value ??
-      { pipe: vi.fn(), file: vi.fn(), finalize: vi.fn().mockResolvedValue(undefined), on: vi.fn() };
-
-    // Reset to get fresh mock
+    // After vi.clearAllMocks() in beforeEach the factory default mock is wiped;
+    // set up a fresh instance to be returned by archiver()
     const freshMockArchive = {
       pipe: vi.fn(),
       file: vi.fn(),
       finalize: vi.fn().mockResolvedValue(undefined),
       on: vi.fn(),
     };
-    vi.mocked(archiver).mockReturnValueOnce(freshMockArchive as ReturnType<typeof archiver>);
+    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
 
     const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
     await streamBulkDocumentsZip(['emp-1'], null, mockRes);
@@ -634,7 +637,7 @@ describe('streamBulkDocumentsZip', () => {
       finalize: vi.fn().mockResolvedValue(undefined),
       on: vi.fn(),
     };
-    vi.mocked(archiver).mockReturnValueOnce(freshMockArchive as ReturnType<typeof archiver>);
+    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
 
     const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
     await streamBulkDocumentsZip(['emp-1'], null, mockRes);
@@ -652,7 +655,7 @@ describe('streamBulkDocumentsZip', () => {
       finalize: vi.fn().mockResolvedValue(undefined),
       on: vi.fn(),
     };
-    vi.mocked(archiver).mockReturnValueOnce(freshMockArchive as ReturnType<typeof archiver>);
+    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
 
     const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
     await streamBulkDocumentsZip(['emp-1'], null, mockRes);
@@ -670,7 +673,7 @@ describe('streamBulkDocumentsZip', () => {
       finalize: vi.fn().mockResolvedValue(undefined),
       on: vi.fn(),
     };
-    vi.mocked(archiver).mockReturnValueOnce(freshMockArchive as ReturnType<typeof archiver>);
+    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
 
     const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
     await streamBulkDocumentsZip(['emp-1'], null, mockRes);

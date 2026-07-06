@@ -10,6 +10,7 @@ import {
   bulkAssignHR,
   bulkSetDueDate,
   bulkVerifyDocuments,
+  streamBulkDocumentsZip,
   type TrackerQueryParams,
 } from './ats.joiningDocumentsTracker.service.js';
 
@@ -162,5 +163,37 @@ joiningDocumentsTrackerRouter.post('/bulk-verify', h(async (req: AuthenticatedRe
   } catch (error: unknown) {
     console.error('[tracker] POST /bulk-verify error:', error);
     return res.status(500).json({ success: false, message: 'Failed to verify documents' });
+  }
+}));
+
+// POST /api/ats/joining-documents-tracker/bulk-download
+joiningDocumentsTrackerRouter.post('/bulk-download', h(async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { employee_ids, document_codes } = req.body as {
+      employee_ids?: unknown;
+      document_codes?: string[];
+    };
+
+    if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'employee_ids array is required' });
+    }
+
+    const timestamp = new Date().toISOString().split('T')[0];
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="joining-documents-${timestamp}.zip"`);
+
+    await streamBulkDocumentsZip(employee_ids as string[], document_codes ?? null, res);
+
+    return res;
+  } catch (error: unknown) {
+    console.error('[tracker] POST /bulk-download error:', error);
+    if (!res.headersSent) {
+      // Reset headers set for ZIP so res.json() can write application/json
+      res.removeHeader('Content-Type');
+      res.removeHeader('Content-Disposition');
+      return res.status(500).json({ success: false, message: 'Failed to create ZIP file' });
+    }
+    // Headers already sent — streaming was in progress, can't send JSON
+    return res;
   }
 }));

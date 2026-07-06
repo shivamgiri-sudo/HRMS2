@@ -4,6 +4,20 @@ import { getUserRoleKeys } from '../../shared/scopeAccess.js';
 import { getEmployeeForUser } from '../../shared/accessGuard.js';
 import { sendRejectedEmail } from './ats.email.service.js';
 import { generateJoiningDocumentChecklist } from '../employees/employeeJoiningDocuments.service.js';
+// archiver ships a CJS default; @types/archiver only declares named exports so we
+// need a type-cast to satisfy the compiler while keeping vi.mock('archiver') working.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+import * as _archiverNs from 'archiver';
+import type { ArchiverOptions, Archiver as ArchiverInstance } from 'archiver';
+import fs from 'fs';
+import path from 'path';
+import type { Response } from 'express';
+
+// esModuleInterop wraps the CJS default as .default; fall back to the namespace itself.
+const archiverLib = ((_archiverNs as unknown as { default?: unknown }).default ??
+  _archiverNs) as (format: string, options?: ArchiverOptions) => ArchiverInstance;
+
+const STORAGE_ROOT = path.resolve(process.cwd(), 'private-storage', 'employee-joining-documents');
 
 export interface KeyDocumentStatus {
   code: 'APPOINTMENT_LETTER' | 'ID_PROOF' | 'BANK_DETAILS' | 'ADDRESS_PROOF';
@@ -527,6 +541,64 @@ export async function bulkVerifyDocuments(
   }
 
   return result;
+}
+
+// ─── streamBulkDocumentsZip ───────────────────────────────────────────────────
+
+export async function streamBulkDocumentsZip(
+  employeeIds: string[],
+  documentCodes: string[] | null,
+  res: Response
+): Promise<void> {
+  const archive = archiverLib('zip', { zlib: { level: 9 } });
+
+  // Pipe archive data to Express response
+  archive.pipe(res);
+
+  let sql = `
+    SELECT
+      e.employee_code,
+      e.full_name,
+      c.document_code,
+      f.storage_path,
+      f.original_filename
+    FROM employees e
+    JOIN employee_joining_document_checklist c ON e.id = c.employee_id
+    JOIN employee_joining_document_file f ON c.id = f.checklist_id
+    WHERE e.id IN (?)
+      AND f.role IN ('hr_uploaded', 'generated', 'signed')
+      AND c.verification_status = 'verified'
+  `;
+
+  const params: (string[] | string)[] = [employeeIds];
+
+  if (documentCodes && documentCodes.length > 0) {
+    sql += ` AND c.document_code IN (?)`;
+    params.push(documentCodes);
+  }
+
+  sql += ` ORDER BY e.employee_code, c.document_code`;
+
+  const [files] = await db.execute<RowDataPacket[]>(sql, params);
+
+  for (const file of files as Array<{
+    employee_code: string;
+    full_name: string;
+    document_code: string;
+    storage_path: string;
+    original_filename: string;
+  }>) {
+    const fullPath = path.join(STORAGE_ROOT, file.storage_path);
+
+    if (fs.existsSync(fullPath)) {
+      const safeName = file.full_name.replace(/[^a-zA-Z0-9]/g, '');
+      const folderName = `${file.employee_code}-${safeName}`;
+      const archivePath = `${folderName}/${file.document_code}-${file.original_filename}`;
+      archive.file(fullPath, { name: archivePath });
+    }
+  }
+
+  await archive.finalize();
 }
 
 // ─── bulkGenerateChecklists ───────────────────────────────────────────────────
