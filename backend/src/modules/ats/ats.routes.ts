@@ -19,6 +19,7 @@ import { verifyRecruiter, resolveRecruiterForActor, getMyPendingCandidates, getS
 import { persistCandidateFile } from "./candidate-file.service.js";
 
 export const atsRouter = Router();
+export const atsPublicRouter = Router(); // Public routes (no auth)
 
 type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
 const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
@@ -53,7 +54,7 @@ const candidateUpload = multer({
 });
 
 // PUBLIC endpoint for candidate uploads (within 1 hour of registration)
-atsRouter.post(
+atsPublicRouter.post(
   "/candidates/:id/upload",
   candidateUpload.single("file"),
   h(async (req: AuthenticatedRequest, res: Response) => {

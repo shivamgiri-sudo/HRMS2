@@ -39,7 +39,7 @@ import { employeeJoiningDocumentsRouter, hrDocumentTemplatesRouter, payrollEpfCo
 import { kpiRouter } from "./modules/kpi/kpi.routes.js";
 import { kpiProcessRoleRouter } from "./modules/kpi/kpi.process-role.routes.js";
 import { portalRouter } from "./modules/portal/portal.routes.js";
-import { atsRouter } from "./modules/ats/ats.routes.js";
+import { atsRouter, atsPublicRouter } from "./modules/ats/ats.routes.js";
 import { atsFormConfigRouter } from "./modules/ats/ats-form-config.routes.js";
 import { registrationEnhancedRouter } from "./modules/ats/registration.enhanced.routes.js";
 import mockDigilockerRouter from "./modules/ats/mock-digilocker.routes.js";
@@ -274,6 +274,7 @@ app.use("/api/ats/registration", registrationEnhancedRouter);
 app.use("/api/ats/queue", queuePublicRouter); // public display endpoints (no auth)
 app.use("/api/public/verify", employeeVerifyRouter); // public QR code verification (no auth)
 app.use("/api/ats/bgv", bgvVerificationRouter); // BGV token-driven routes (consent, verify, digilocker) — mount BEFORE requireAuth
+app.use("/api/ats", atsPublicRouter); // PUBLIC: candidate file uploads (no auth, 1-hour window)
 app.use("/api/ats", atsRouter);
 app.use("/api/ats/queue", queueRouter);
 app.use("/api/business-command", businessCommandRouter);
