@@ -72,3 +72,51 @@ export function parseKeyDocuments(keyDocumentsRaw: string | null): KeyDocumentSt
       };
     });
 }
+
+export function calculateTrackerSummary(employees: EmployeeDocumentRow[]): TrackerSummary {
+  if (employees.length === 0) {
+    return {
+      total: 0,
+      complete: 0,
+      pending_verification: 0,
+      in_progress: 0,
+      not_started: 0,
+      overdue: 0,
+      needs_correction: 0,
+    };
+  }
+
+  const summary: TrackerSummary = {
+    total: employees.length,
+    complete: 0,
+    pending_verification: 0,
+    in_progress: 0,
+    not_started: 0,
+    overdue: 0,
+    needs_correction: 0,
+  };
+
+  for (const emp of employees) {
+    const pct = emp.joining_document_completion_pct;
+
+    if (pct === 100) {
+      summary.complete++;
+    } else if (pct >= 75) {
+      summary.pending_verification++;
+    } else if (pct > 0) {
+      summary.in_progress++;
+    } else {
+      summary.not_started++;
+    }
+
+    if (emp.overdue_count > 0) {
+      summary.overdue++;
+    }
+
+    if (emp.needs_correction_count > 0) {
+      summary.needs_correction++;
+    }
+  }
+
+  return summary;
+}

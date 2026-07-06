@@ -1,4 +1,4 @@
-import { parseKeyDocuments } from '../ats.joiningDocumentsTracker.service';
+import { parseKeyDocuments, calculateTrackerSummary, type EmployeeDocumentRow } from '../ats.joiningDocumentsTracker.service';
 
 describe('parseKeyDocuments', () => {
   it('should parse valid key_documents_raw string', () => {
@@ -18,5 +18,41 @@ describe('parseKeyDocuments', () => {
 
   it('should return empty array for empty string', () => {
     expect(parseKeyDocuments('')).toEqual([]);
+  });
+});
+
+describe('calculateTrackerSummary', () => {
+  it('should calculate summary stats from employee rows', () => {
+    const employees: EmployeeDocumentRow[] = [
+      { joining_document_completion_pct: 100, needs_correction_count: 0, overdue_count: 0 } as EmployeeDocumentRow,
+      { joining_document_completion_pct: 85, needs_correction_count: 0, overdue_count: 0 } as EmployeeDocumentRow,
+      { joining_document_completion_pct: 50, needs_correction_count: 1, overdue_count: 0 } as EmployeeDocumentRow,
+      { joining_document_completion_pct: 0, needs_correction_count: 0, overdue_count: 2 } as EmployeeDocumentRow,
+    ];
+
+    const summary = calculateTrackerSummary(employees);
+
+    expect(summary).toEqual({
+      total: 4,
+      complete: 1,             // 100%
+      pending_verification: 1, // 75-99%
+      in_progress: 1,          // 1-74%
+      not_started: 1,          // 0%
+      overdue: 1,              // overdue_count > 0
+      needs_correction: 1,     // needs_correction_count > 0
+    });
+  });
+
+  it('should return zeros for empty array', () => {
+    const summary = calculateTrackerSummary([]);
+    expect(summary).toEqual({
+      total: 0,
+      complete: 0,
+      pending_verification: 0,
+      in_progress: 0,
+      not_started: 0,
+      overdue: 0,
+      needs_correction: 0,
+    });
   });
 });
