@@ -1,4 +1,4 @@
-import type { RowDataPacket } from 'mysql2';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { getUserRoleKeys } from '../../shared/scopeAccess.js';
 import { getEmployeeForUser } from '../../shared/accessGuard.js';
@@ -351,6 +351,148 @@ export async function sendBulkReminders(
       result.errors.push({
         employee_id: emp.id,
         employee_code: emp.employee_code,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return result;
+}
+
+// ─── bulkAssignHR ─────────────────────────────────────────────────────────────
+
+export interface BulkAssignResult {
+  success: true;
+  updated: number;
+}
+
+export async function bulkAssignHR(
+  employeeIds: string[],
+  assignedHrUserId: string,
+  actorUserId: string
+): Promise<BulkAssignResult> {
+  const [result] = await db.execute<ResultSetHeader>(
+    `UPDATE employee_joining_document_checklist
+     SET assigned_hr_user_id = ?, updated_at = NOW()
+     WHERE employee_id IN (?)`,
+    [assignedHrUserId, employeeIds]
+  );
+
+  await db.execute(
+    `INSERT INTO employee_joining_document_audit_log
+     (employee_id, action_type, actor_user_id, remarks, created_at)
+     SELECT DISTINCT employee_id, 'BULK_ASSIGN_HR', ?, ?, NOW()
+     FROM employee_joining_document_checklist
+     WHERE employee_id IN (?)`,
+    [actorUserId, JSON.stringify({ assigned_hr_user_id: assignedHrUserId }), employeeIds]
+  );
+
+  return { success: true, updated: result.affectedRows };
+}
+
+// ─── bulkSetDueDate ───────────────────────────────────────────────────────────
+
+export interface BulkSetDueDateResult {
+  success: true;
+  updated: number;
+}
+
+export async function bulkSetDueDate(
+  employeeIds: string[],
+  dueDate: string,
+  documentCodes: string[] | null,
+  actorUserId: string
+): Promise<BulkSetDueDateResult> {
+  let sql = `UPDATE employee_joining_document_checklist
+             SET due_at = ?, updated_at = NOW()
+             WHERE employee_id IN (?)`;
+  const params: (string | string[])[] = [dueDate, employeeIds];
+
+  if (documentCodes && documentCodes.length > 0) {
+    sql += ` AND document_code IN (?)`;
+    params.push(documentCodes);
+  }
+
+  const [result] = await db.execute<ResultSetHeader>(sql, params);
+
+  await db.execute(
+    `INSERT INTO employee_joining_document_audit_log
+     (employee_id, action_type, actor_user_id, remarks, created_at)
+     SELECT DISTINCT employee_id, 'BULK_SET_DUE_DATE', ?, ?, NOW()
+     FROM employee_joining_document_checklist
+     WHERE employee_id IN (?)`,
+    [actorUserId, JSON.stringify({ due_date: dueDate, document_codes: documentCodes }), employeeIds]
+  );
+
+  return { success: true, updated: result.affectedRows };
+}
+
+// ─── bulkVerifyDocuments ──────────────────────────────────────────────────────
+
+export interface BulkVerifyResult {
+  success: true;
+  verified: number;
+  errors: Array<{ employee_id: string; employee_code: string; error: string }>;
+}
+
+export async function bulkVerifyDocuments(
+  employeeIds: string[],
+  actorUserId: string
+): Promise<BulkVerifyResult> {
+  const result: BulkVerifyResult = {
+    success: true,
+    verified: 0,
+    errors: [],
+  };
+
+  for (const employeeId of employeeIds) {
+    try {
+      const [updateResult] = await db.execute<ResultSetHeader>(
+        `UPDATE employee_joining_document_checklist
+         SET verification_status = 'verified', verified_at = NOW(), verified_by = ?, updated_at = NOW()
+         WHERE employee_id = ? AND status = 'uploaded_pending_review'`,
+        [actorUserId, employeeId]
+      );
+
+      if (updateResult.affectedRows > 0) {
+        result.verified += updateResult.affectedRows;
+
+        await db.execute(
+          `INSERT INTO employee_joining_document_audit_log
+           (employee_id, action_type, actor_user_id, remarks, created_at)
+           VALUES (?, 'BULK_VERIFY', ?, 'Verified all pending documents', NOW())`,
+          [employeeId, actorUserId]
+        );
+
+        const [stats] = await db.execute<RowDataPacket[]>(
+          `SELECT
+             COUNT(*) AS total,
+             SUM(CASE WHEN verification_status = 'verified' THEN 1 ELSE 0 END) AS verified
+           FROM employee_joining_document_checklist
+           WHERE employee_id = ?`,
+          [employeeId]
+        );
+
+        const total = Number((stats[0] as { total: number } | undefined)?.total ?? 0);
+        const verifiedCount = Number((stats[0] as { verified: number } | undefined)?.verified ?? 0);
+        const pct = total > 0 ? Math.round((verifiedCount / total) * 100) : 0;
+        const docStatus = pct === 100 ? 'verified_complete' : 'pending_verification';
+
+        await db.execute(
+          `UPDATE employees
+           SET joining_document_completion_pct = ?, joining_document_status = ?, updated_at = NOW()
+           WHERE id = ?`,
+          [pct, docStatus, employeeId]
+        );
+      }
+    } catch (error: unknown) {
+      const [emp] = await db.execute<RowDataPacket[]>(
+        `SELECT employee_code FROM employees WHERE id = ?`,
+        [employeeId]
+      );
+      result.errors.push({
+        employee_id: employeeId,
+        employee_code: (emp[0] as { employee_code: string } | undefined)?.employee_code ?? employeeId,
         error: error instanceof Error ? error.message : String(error),
       });
     }

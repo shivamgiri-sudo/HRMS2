@@ -340,8 +340,9 @@ describe('bulkSetDueDate', () => {
     expect(result).toEqual({ success: true, updated: 3 });
     const updateCall = vi.mocked(db.execute).mock.calls[0];
     expect(updateCall[0]).toMatch(/document_code IN/i);
-    expect(updateCall[1]).toContain('2026-08-15');
-    expect(updateCall[1]).toContain(['APPOINTMENT_LETTER', 'ID_PROOF']);
+    const callParams = updateCall[1] as unknown[];
+    expect(callParams[0]).toBe('2026-08-15');
+    expect(callParams[2]).toEqual(['APPOINTMENT_LETTER', 'ID_PROOF']);
   });
 
   it('should log audit entry with action_type BULK_SET_DUE_DATE', async () => {
