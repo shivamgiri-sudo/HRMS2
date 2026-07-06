@@ -105,6 +105,9 @@ async function dispatchNotifications(
   entityId: string,
   actionUrl: string,
 ): Promise<void> {
+  // Deduplicate email recipients — one user with multiple roles should get only one email per task
+  const emailsSent = new Set<string>();
+
   for (const user of users) {
     await inboxService.createItem({
       user_id: user.userId,
@@ -117,7 +120,8 @@ async function dispatchNotifications(
       priority: 'high',
     }).catch((err: unknown) => console.error('[it-provisioning] inbox create failed:', err));
 
-    if (user.email) {
+    if (user.email && !emailsSent.has(user.email)) {
+      emailsSent.add(user.email);
       const fullActionUrl = frontendUrl(actionUrl);
       await emailService.send({
         to: user.email,

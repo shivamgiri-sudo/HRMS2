@@ -415,6 +415,14 @@ router.post("/digilocker/initiate", candidateWriteLimiter, h(async (req, res) =>
   return res.json({ success: true, data: await initiateCandidateDigilockerByToken(token) });
 }));
 
+router.post("/esign/initiate", candidateWriteLimiter, h(async (req, res) => {
+  const token = String(req.body.token ?? "");
+  const documentId = String(req.body.documentId ?? "");
+  if (!token) return res.status(400).json({ success: false, message: "token required" });
+  if (!documentId) return res.status(400).json({ success: false, message: "documentId required" });
+  return res.json({ success: true, data: await initiateCandidateESignByToken(token, documentId) });
+}));
+
 // ── Language proficiency route ────────────────────────────────────────────────
 router.post("/languages", h(async (req, res) => {
   const { token, languages } = req.body;

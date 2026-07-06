@@ -44,6 +44,8 @@ export default function OnboardingMobileShell({
   onDismissError,
   footerLeft,
   footerRight,
+  autosaveStatus,
+  sectionComplete,
 }: OnboardingMobileShellProps) {
   const pct = Math.max(0, Math.min(100, completion));
   const currentLabel = stepLabels[currentStep - 1] ?? "";

@@ -259,12 +259,16 @@ export async function listOnboardingRequests(scopeFilter: { sql: string; params:
     `SELECT r.id, r.status, r.created_at,
             c.id AS candidate_id, c.candidate_code, c.full_name, c.mobile,
             c.email, c.profile_status, c.applied_for_process,
-            b.branch_name,
-            o.id AS offer_id, o.status AS offer_status, o.offered_ctc
+            r.branch_id,
+            COALESCE(b.branch_name, c.branch_display_name, c.branch_text, c.applied_for_branch) AS branch_name,
+            o.id AS offer_id, o.status AS offer_status, o.offered_ctc,
+            ob.employee_id, e.employee_code
      FROM ats_onboarding_request r
      JOIN ats_candidate c ON c.id = r.candidate_id
      LEFT JOIN branch_master b ON b.id = r.branch_id
      LEFT JOIN ats_employment_offer o ON o.onboarding_request_id = r.id
+     LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
+     LEFT JOIN employees e ON e.id = ob.employee_id
      WHERE (${scopeFilter.sql})
      ORDER BY r.created_at DESC`,
     scopeFilter.params,
@@ -300,8 +304,8 @@ export async function saveOffer(
     const [bhRows] = await db.execute<RowDataPacket[]>(
       `SELECT u.email FROM auth_user u
        JOIN user_roles ur ON ur.user_id = u.id
-       LEFT JOIN employees e ON e.user_id = u.id AND e.active_status = 1
-       WHERE ur.role_key IN ('branch_head', 'admin') AND e.branch_id = ?
+       JOIN employees e ON e.user_id = u.id AND e.active_status = 1
+       WHERE ur.role_key = 'branch_head' AND e.branch_id = ?
        LIMIT 1`,
       [req.branch_id],
     );
@@ -690,6 +694,11 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
     }
 
     await conn.execute(
+      `UPDATE ats_employment_offer SET status = 'bh_approved', updated_at = NOW() WHERE id = ?`,
+      [offerId],
+    );
+
+    await conn.execute(
       `INSERT INTO ats_offer_approval (id, offer_id, approver_id, action, remarks)
        VALUES (UUID(), ?, ?, 'approved', ?)`,
       [offerId, approverId, remarks ?? null],
@@ -837,9 +846,9 @@ export async function rejectOffer(offerId: string, approverId: string, remarks: 
     [row.onboarding_request_id],
   );
 
-  // Remove the offer from the pending list by updating its status
+  // Mark offer as rejected so HR can revise and resubmit
   await db.execute(
-    `UPDATE ats_employment_offer SET status = 'draft', updated_at = NOW() WHERE id = ?`,
+    `UPDATE ats_employment_offer SET status = 'bh_rejected', updated_at = NOW() WHERE id = ?`,
     [offerId],
   );
   await db.execute(

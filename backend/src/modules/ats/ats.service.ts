@@ -305,7 +305,8 @@ export const atsService = {
               c.full_name,
               c.mobile,
               c.email,
-              COALESCE(b.branch_name, c.branch_display_name, c.branch_text, c.applied_for_branch, '-') AS branch_name,
+              COALESCE(b_uuid.id, b_name.id) AS branch_id,
+              COALESCE(b_uuid.branch_name, b_name.branch_name, c.branch_display_name, c.branch_text, c.applied_for_branch, '-') AS branch_name,
               COALESCE(c.role_applied, p.process_name, c.process_text, c.applied_for_process, '-') AS role_applied,
               COALESCE(c.recruiter_assigned_name, c.recruiter_name, '') AS recruiter_name,
               COALESCE(c.status, c.current_stage, ob.status, 'Waiting') AS status,
@@ -330,7 +331,8 @@ export const atsService = {
               ob.created_at
        FROM ats_onboarding_bridge ob
        JOIN ats_candidate c ON c.id = ob.candidate_id
-       LEFT JOIN branch_master b ON b.id = c.applied_for_branch
+       LEFT JOIN branch_master b_uuid ON b_uuid.id = c.applied_for_branch
+       LEFT JOIN branch_master b_name ON b_uuid.id IS NULL AND LOWER(b_name.branch_name) = LOWER(c.applied_for_branch)
        LEFT JOIN process_master p ON p.id = c.applied_for_process
        WHERE ${where}
        ORDER BY ob.created_at DESC`,

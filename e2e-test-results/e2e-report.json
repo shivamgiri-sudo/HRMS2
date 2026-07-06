@@ -1,0 +1,249 @@
+{
+  "candidateCode": "CND-MR7T9PMO",
+  "candidateId": "81eb5814-7655-480b-be9e-37bdb7719c51",
+  "timestamp": "2026-07-05T13:18:02.665Z",
+  "summary": {
+    "pass": 11,
+    "fail": 1,
+    "warn": 21,
+    "total": 33
+  },
+  "steps": [
+    {
+      "step": "AUTH",
+      "status": "PASS",
+      "detail": "Logged in as shivam.giri@teammas.in",
+      "data": null
+    },
+    {
+      "step": "WALKIN_UI_FILL",
+      "status": "WARN",
+      "detail": "Form fill: locator.fill: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('input[type=\"tel\"], in",
+      "data": null
+    },
+    {
+      "step": "WALKIN_API_FALLBACK",
+      "status": "FAIL",
+      "detail": "HTTP 400",
+      "data": "Branch \"NOIDA-2\" not found"
+    },
+    {
+      "step": "WALKIN_FALLBACK_EXISTING",
+      "status": "WARN",
+      "detail": "Using existing: CND-MR7T9PMO",
+      "data": null
+    },
+    {
+      "step": "PROFILE_FETCH",
+      "status": "PASS",
+      "detail": "Profile: Snsn dhsh",
+      "data": {
+        "name": "Snsn dhsh",
+        "mobile": "6946578481",
+        "stage": "Arrived",
+        "branch": "Okaya",
+        "bgv": "pending"
+      }
+    },
+    {
+      "step": "STAGE_SCREENING",
+      "status": "PASS",
+      "detail": "→ screening (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "STAGE_INTERVIEW",
+      "status": "PASS",
+      "detail": "→ interview (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "STAGE_SELECTED",
+      "status": "PASS",
+      "detail": "→ selected (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "BGV_DATA_FIELDS",
+      "status": "PASS",
+      "detail": "BGV fields saved (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "UPLOAD_AADHAR_CARD",
+      "status": "WARN",
+      "detail": "aadhaar.pdf → HTTP 400",
+      "data": null
+    },
+    {
+      "step": "UPLOAD_PAN_CARD",
+      "status": "WARN",
+      "detail": "pan.pdf → HTTP 400",
+      "data": null
+    },
+    {
+      "step": "UPLOAD_EDUCATION_CERTIFICATE",
+      "status": "WARN",
+      "detail": "education.pdf → HTTP 400",
+      "data": null
+    },
+    {
+      "step": "UPLOAD_EXPERIENCE_LETTER",
+      "status": "WARN",
+      "detail": "exp-letter.pdf → HTTP 400",
+      "data": null
+    },
+    {
+      "step": "BGV_MANUAL_ADDRESS",
+      "status": "WARN",
+      "detail": "Manual address (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "BGV_MANUAL_EDUCATION",
+      "status": "WARN",
+      "detail": "Manual education (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "BGV_MANUAL_EMPLOYMENT",
+      "status": "WARN",
+      "detail": "Manual employment (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "BGV_READINESS",
+      "status": "WARN",
+      "detail": "Readiness (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "ONBOARDING_STAGE",
+      "status": "PASS",
+      "detail": "→ onboarding (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_TOKEN",
+      "status": "PASS",
+      "detail": "Token: NOI-20260705-001...",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_PERSONAL",
+      "status": "WARN",
+      "detail": "Personal details (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_BANK",
+      "status": "WARN",
+      "detail": "Bank details (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_EDUCATION",
+      "status": "WARN",
+      "detail": "Education (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_FAMILY",
+      "status": "WARN",
+      "detail": "Family (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_EXPERIENCE",
+      "status": "WARN",
+      "detail": "Experience (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_FINAL",
+      "status": "WARN",
+      "detail": "Final section (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_PROGRESS",
+      "status": "WARN",
+      "detail": "Progress (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "HR_FULL_DATA",
+      "status": "WARN",
+      "detail": "Full data (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "HR_APPROVE",
+      "status": "WARN",
+      "detail": "HR review submit (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "HR_STATUS_UPDATE",
+      "status": "PASS",
+      "detail": "Status updated (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "EMPLOYEE_CONVERT",
+      "status": "WARN",
+      "detail": "Convert to employee (HTTP 404)",
+      "data": {
+        "employee_id": "",
+        "msg": "Route not found: POST /api/ats/candidates/81eb5814-7655-480b-be9e-37bdb7719c51/convert-to-employee"
+      }
+    },
+    {
+      "step": "CONVERT_VERIFY",
+      "status": "PASS",
+      "detail": "Post-conversion state",
+      "data": {
+        "stage": "Arrived",
+        "profile_status": "registered",
+        "bgv_status": "pending"
+      }
+    },
+    {
+      "step": "JOINING_DOCS",
+      "status": "WARN",
+      "detail": "Joining docs (HTTP 500)",
+      "data": null
+    },
+    {
+      "step": "JOURNEY_COMPLETE",
+      "status": "PASS",
+      "detail": "Full journey complete",
+      "data": {
+        "candidate_code": "CND-MR7T9PMO",
+        "stage": "Arrived",
+        "profile": "registered",
+        "bgv": "pending",
+        "offer": null
+      }
+    }
+  ],
+  "screenshots": [
+    "01_00_app_home_logged_in.png",
+    "02_00_app_loaded.png",
+    "02_ats_home.png",
+    "02_step1_registration_page_loaded.png",
+    "03_step1_form_error.png",
+    "04_step2_candidate_profile.png",
+    "05_step3_pipeline_screening.png",
+    "06_step3_pipeline_interview.png",
+    "07_step3_pipeline_selected.png",
+    "08_step4_bgv_queue.png",
+    "09_step4_bgv_candidate_profile.png",
+    "10_step5_onboarding_form_with_token.png",
+    "11_ats_pipeline_final.png",
+    "11_step5_ats_with_onboarding.png",
+    "12_step6_hr_review_approved.png",
+    "13_step8_employees_list.png",
+    "14_step8_ats_final_state.png"
+  ]
+}

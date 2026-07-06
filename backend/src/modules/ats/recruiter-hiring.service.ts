@@ -1489,6 +1489,8 @@ export async function searchInterviewers(branchName: string | null, query: strin
     return result;
   };
 
+  const safeLimit = Math.min(Math.max(1, Number(limit) || 20), 50);
+
   if (branch) {
     rows = await runQuery(
       `SELECT
@@ -1512,8 +1514,8 @@ export async function searchInterviewers(branchName: string | null, query: strin
             OR e.employee_code LIKE ?
           )
         ORDER BY e.first_name, e.last_name
-        LIMIT ?`,
-      [branch, branch, branch, q, q, limit]
+        LIMIT ${safeLimit}`,
+      [branch, branch, branch, q, q]
     );
   }
 
@@ -1540,11 +1542,9 @@ export async function searchInterviewers(branchName: string | null, query: strin
             OR COALESCE(e.first_name, '') LIKE ?
             OR COALESCE(e.last_name, '') LIKE ?
           )
-        ORDER BY CASE WHEN ? IS NOT NULL AND (b.branch_name = ? OR b.branch_code = ?) THEN 0 ELSE 1 END,
-                 e.first_name,
-                 e.last_name
-        LIMIT ?`,
-      [q, q, q, q, branch, branch, branch, limit]
+        ORDER BY e.first_name, e.last_name
+        LIMIT ${safeLimit}`,
+      [q, q, q, q]
     );
   }
 

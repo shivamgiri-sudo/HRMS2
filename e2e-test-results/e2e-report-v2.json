@@ -1,0 +1,476 @@
+{
+  "candidateCode": "CND-MR7TRM0Y",
+  "candidateId": "e24a64d7-7e7d-41d3-9c05-ac2ff24f0f36",
+  "onboardingToken": "cee2b764-2efa-4dba-8dbf-1df8feccf442-2ea0e10b-8f2a-4caf-a886-72faa9bd44de",
+  "timestamp": "2026-07-05T13:27:32.412Z",
+  "summary": {
+    "pass": 23,
+    "fail": 0,
+    "warn": 11,
+    "total": 34
+  },
+  "steps": [
+    {
+      "step": "AUTH",
+      "status": "PASS",
+      "detail": "Logged in: shivam.giri@teammas.in",
+      "data": null
+    },
+    {
+      "step": "WALKIN_UI_ERROR",
+      "status": "WARN",
+      "detail": "page.fill: Timeout 30000ms exceeded.",
+      "data": null
+    },
+    {
+      "step": "WALKIN_API",
+      "status": "PASS",
+      "detail": "Registered via API: CND-MR7TRM0Y (NOI-20260705-003)",
+      "data": {
+        "id": "e24a64d7-7e7d-41d3-9c05-ac2ff24f0f36",
+        "branch": "NOIDA-2",
+        "recruiter": "SRASHTI CHAUHAN"
+      }
+    },
+    {
+      "step": "PROFILE_API",
+      "status": "PASS",
+      "detail": "Profile: Priya Sharma",
+      "data": {
+        "name": "Priya Sharma",
+        "mobile": "9871293280",
+        "stage": "Arrived",
+        "branch": "Okaya"
+      }
+    },
+    {
+      "step": "STAGE_SCREENING",
+      "status": "PASS",
+      "detail": "→ screening (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "STAGE_INTERVIEW",
+      "status": "PASS",
+      "detail": "→ interview (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "STAGE_SELECTED",
+      "status": "PASS",
+      "detail": "→ selected (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "BGV_DATA",
+      "status": "PASS",
+      "detail": "BGV fields saved (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "BGV_UPLOAD_AADHAR_CARD",
+      "status": "WARN",
+      "detail": "aadhaar.pdf → HTTP 400",
+      "data": "token required"
+    },
+    {
+      "step": "BGV_UPLOAD_PAN_CARD",
+      "status": "WARN",
+      "detail": "pan-card.pdf → HTTP 400",
+      "data": "token required"
+    },
+    {
+      "step": "BGV_UPLOAD_EDUCATION_CERTIFICATE",
+      "status": "WARN",
+      "detail": "degree.pdf → HTTP 400",
+      "data": "token required"
+    },
+    {
+      "step": "BGV_UPLOAD_EXPERIENCE_LETTER",
+      "status": "WARN",
+      "detail": "exp-letter.pdf → HTTP 400",
+      "data": "token required"
+    },
+    {
+      "step": "BGV_VERIFY_ADDRESS",
+      "status": "WARN",
+      "detail": "address (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "BGV_VERIFY_EDUCATION",
+      "status": "WARN",
+      "detail": "education (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "BGV_VERIFY_EMPLOYMENT",
+      "status": "WARN",
+      "detail": "employment (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "BGV_READINESS",
+      "status": "PASS",
+      "detail": "Readiness (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_BRIDGE",
+      "status": "PASS",
+      "detail": "Bridge created (HTTP 201)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_TOKEN_GENERATE",
+      "status": "PASS",
+      "detail": "Token: cee2b764-2efa-4dba-8...",
+      "data": null
+    },
+    {
+      "step": "ONBOARDING_STAGE",
+      "status": "PASS",
+      "detail": "→ onboarding",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_PERSONAL",
+      "status": "PASS",
+      "detail": "Personal details (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_BANK",
+      "status": "PASS",
+      "detail": "Bank (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_EDUCATION",
+      "status": "PASS",
+      "detail": "Education (HTTP 201)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_FAMILY",
+      "status": "PASS",
+      "detail": "Family (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_EXPERIENCE",
+      "status": "PASS",
+      "detail": "Experience (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_FINAL",
+      "status": "PASS",
+      "detail": "Final section (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_DOC_AADHAAR",
+      "status": "WARN",
+      "detail": "aadhaar-ob.pdf (HTTP 429)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_DOC_PAN",
+      "status": "WARN",
+      "detail": "pan-ob.pdf (HTTP 429)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_STATUS",
+      "status": "PASS",
+      "detail": "Status check (HTTP 200)",
+      "data": {
+        "token": {
+          "candidate_id": "e24a64d7-7e7d-41d3-9c05-ac2ff24f0f36",
+          "candidate_code": "CND-MR7TRM0Y",
+          "full_name": "Priya Sharma",
+          "mobile": "9871293280",
+          "email": "priya.9871293280@gmail.com",
+          "gender": "Female",
+          "date_of_birth": null,
+          "branch_id": "NOIDA-2",
+          "branch_name": null,
+          "process_id": "Inbound Agent",
+          "process_name": null,
+          "source_type": "Walk-In",
+          "source": "Walk-In",
+          "resume_url": null,
+          "selfie_url": null,
+          "profile_status": "onboarding_sent",
+          "saved_profile": {
+            "id": "9e3b37cb-e781-4b1b-bf65-8fe450347602",
+            "candidate_id": "e24a64d7-7e7d-41d3-9c05-ac2ff24f0f36",
+            "onboarding_token_hash": "5ff851c95cbba1da4f277352b3cfccee4970230f27e24b1cde874c238ec2b772",
+            "title": null,
+            "employee_name": "Priya Sharma",
+            "relation": null,
+            "father_husband_name": "Rajesh Sharma",
+            "mother_name": null,
+            "gender": "Female",
+            "marital_status": null,
+            "date_of_birth": null,
+            "date_of_joining": null,
+            "blood_group": null,
+            "nominee_name": null,
+            "nominee_relation": null,
+            "nominee_date_of_birth": null,
+            "permanent_address": null,
+            "permanent_state": null,
+            "permanent_city": null,
+            "permanent_pincode": null,
+            "present_address": "45 Sector 18, Noida, Uttar Pradesh 201301",
+            "present_state": null,
+            "present_city": null,
+            "present_pincode": null,
+            "mobile_number": "9871293280",
+            "alt_mobile_number": null,
+            "emergency_contact_name": null,
+            "emergency_contact_relation": null,
+            "emergency_contact_mobile": null,
+            "personal_email_id": "priya.9871293280@gmail.com",
+            "official_email_id": null,
+            "pan_number_masked": "BXMXXXX9K",
+            "pan_number_hash": "cfc801b15bf03f25fa05a994a2a5213427d6d62cd8b71748d6f4b68c31e23844",
+            "aadhaar_number_masked": "XXXX-XXXX-2345",
+            "aadhaar_number_hash": "f17d2cfa56540ef4a65d2a1e4fb0df788d3a7d05b65d7c2a4fedcfb078790f01",
+            "source_type": "Walk-In",
+            "source": "Walk-In",
+            "profile_status": "final_saved",
+            "submitted_at": null,
+            "reviewed_by": null,
+            "reviewed_at": null,
+            "review_remarks": null,
+            "created_at": "2026-07-05 18:57:05",
+            "updated_at": "2026-07-05 18:57:11",
+            "passport_no": null,
+            "driving_license_no": null,
+            "epf_number": null,
+            "esic_number": null,
+            "uan_number": null,
+            "nominee2_name": null,
+            "nominee2_relation": null,
+            "nominee2_dob": null,
+            "nominee2_share_pct": null,
+            "nominee1_share_pct": null,
+            "current_step_idx": 0,
+            "passport_number": null,
+            "dl_number": null,
+            "landline_number": null,
+            "alt_landline_number": null,
+            "emp_location_type": null,
+            "work_status": null,
+            "sub_location": null,
+            "nationality": "Indian",
+            "religion": "Hindu",
+            "category": null,
+            "present_state_id": null,
+            "permanent_state_id": null,
+            "address_proof_type": null,
+            "eps_member": null,
+            "international_worker": 0,
+            "previous_pf_member": null,
+            "statutory_declaration_accepted": 0,
+            "statutory_declaration_at": null,
+            "otp_verified": 0,
+            "otp_verified_at": null,
+            "otp_mobile": null,
+            "guardian_name": null,
+            "present_address_line1": null,
+            "present_address_line2": null,
+            "permanent_address_line1": null,
+            "permanent_address_line2": null,
+            "bank_branch_name": null,
+            "uan": null,
+            "section_completion_json": null,
+            "dpdp_consent": 0,
+            "dpdp_consent_at": null,
+            "bgv_consent": 0,
+            "bgv_consent_at": null,
+            "submit_blocked_reason": null,
+            "pf_opt_out_elected": 0,
+            "pf_opt_out_consent_text": null,
+            "pf_opt_out_consented_at": null,
+            "submit_lat": null,
+            "submit_lng": null
+          }
+        },
+        "documents": [],
+        "bank": {
+          "id": "e32ee454-a406-42f7-a396-e58a6a2a3f44",
+          "candidate_id": "e24a64d7-7e7d-41d3-9c05-ac2ff24f0f36",
+          "bank_name": "State Bank of India",
+          "branch_name": null,
+          "account_holder_name": null,
+          "account_no_masked": "XXXXXX4321",
+          "account_no_hash": "e008467d8b2b933b72567444042ea6fdf7280f9c91b6e86dbe7f2d047c7821aa",
+          "ifsc_code": "SBIN0001234",
+          "account_type": null,
+          "cancelled_cheque_document_id": null,
+          "verification_status": "not_started",
+          "verification_ref": null,
+          "provider_name": null,
+          "verified_account_holder_name": null,
+          "verified_at": null,
+          "created_at": "2026-07-05 18:57:07",
+          "updated_at": "2026-07-05 18:57:07",
+          "validated_by": null,
+          "validated_at": null,
+          "validation_status": "pending",
+          "rejection_remarks": null,
+          "cheque_validation_id": null,
+          "name_validation_status": "not_required"
+        },
+        "qualifications": [
+          {
+            "id": "1fedff8a-a2c2-40cc-b88e-de87c6b76785",
+            "candidate_id": "e24a64d7-7e7d-41d3-9c05-ac2ff24f0f36",
+            "qualification": null,
+            "specialization_course_name": null,
+            "passed_out_year": null,
+            "passed_out_state": null,
+            "passed_out_city": null,
+            "passed_out_percentage": null,
+            "document_id": null,
+            "created_at": "2026-07-05 18:57:08",
+            "updated_at": "2026-07-05 18:57:08",
+            "institution_name": null,
+            "roll_number": null,
+            "board_type": null
+          }
+        ],
+        "family": {
+          "id": "00938558-ff23-4c84-8c8e-4ead7fc62221",
+          "candidate_id": "e24a64d7-7e7d-41d3-9c05-ac2ff24f0f36",
+          "annual_income": null,
+          "count_of_dependents": null,
+          "created_at": "2026-07-05 18:57:09",
+          "updated_at": "2026-07-05 18:57:09"
+        },
+        "experience": {
+          "id": "a2da17c2-39e6-4f79-acb5-7c13924c3dba",
+          "candidate_id": "e24a64d7-7e7d-41d3-9c05-ac2ff24f0f36",
+          "working_experience": "fresher",
+          "experience_year": null,
+          "experience_doc_type": null,
+          "experience_document_id": null,
+          "employer_name": null,
+          "from_date": null,
+          "to_date": null,
+          "last_designation": null,
+          "last_ctc": null,
+          "created_at": "2026-07-05 18:57:10",
+          "updated_at": "2026-07-05 18:57:10",
+          "reporting_manager_name": null,
+          "reporting_manager_mobile": null,
+          "reason_for_leaving": null
+        },
+        "digilocker": {
+          "provider": "luckpay",
+          "status": "not_started",
+          "verification_url": null,
+          "client_transaction_id": null,
+          "updated_at": null
+        },
+        "esign": {
+          "request_id": null,
+          "provider": "manual",
+          "status": "not_started",
+          "verification_url": null,
+          "client_transaction_id": null,
+          "updated_at": null
+        }
+      }
+    },
+    {
+      "step": "HR_FULL_DATA",
+      "status": "PASS",
+      "detail": "Full profile (HTTP 200)",
+      "data": {
+        "sections": "profile, documents, bank, qualifications, family, experience, digilocker, esign"
+      }
+    },
+    {
+      "step": "HR_APPROVE",
+      "status": "PASS",
+      "detail": "HR approval (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "HR_STATUS",
+      "status": "PASS",
+      "detail": "Status set (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "EMPLOYEE_CONVERT",
+      "status": "WARN",
+      "detail": "Convert (HTTP 409)",
+      "data": {
+        "empId": "",
+        "msg": "Employee creation happens automatically after the employment offer is approved. Complete onboarding, submit the offer, and obtain branch-head approval."
+      }
+    },
+    {
+      "step": "CONVERT_STATE",
+      "status": "PASS",
+      "detail": "Post-convert state",
+      "data": {
+        "stage": "Arrived",
+        "profile": "profile_submitted",
+        "bgv": "pending"
+      }
+    },
+    {
+      "step": "JOURNEY_FINAL",
+      "status": "PASS",
+      "detail": "★ Full journey complete",
+      "data": {
+        "code": "CND-MR7TRM0Y",
+        "stage": "Arrived",
+        "profile": "profile_submitted",
+        "bgv": "pending",
+        "onboarding_token": "✓ generated"
+      }
+    }
+  ],
+  "screenshots": [
+    "01_00_app_home.png",
+    "01_00_app_home_logged_in.png",
+    "02_00_app_loaded.png",
+    "02_01_registration_form.png",
+    "02_ats_home.png",
+    "02_step1_registration_page_loaded.png",
+    "03_01e_registration_error.png",
+    "03_step1_form_error.png",
+    "04_02_candidate_profile.png",
+    "04_step2_candidate_profile.png",
+    "05_03_pipeline_screening.png",
+    "05_step3_pipeline_screening.png",
+    "06_03_pipeline_interview.png",
+    "06_step3_pipeline_interview.png",
+    "07_03_pipeline_selected.png",
+    "07_step3_pipeline_selected.png",
+    "08_04a_bgv_queue.png",
+    "08_step4_bgv_queue.png",
+    "09_04b_candidate_with_bgv_docs.png",
+    "09_step4_bgv_candidate_profile.png",
+    "10_05a_onboarding_form_loaded.png",
+    "10_step5_onboarding_form_with_token.png",
+    "11_05b_onboarding_after_fill.png",
+    "11_ats_pipeline_final.png",
+    "11_step5_ats_with_onboarding.png",
+    "12_05c_hr_onboarding_queue.png",
+    "12_step6_hr_review_approved.png",
+    "13_06_hr_review_approved.png",
+    "13_step8_employees_list.png",
+    "14_08a_employees_list.png",
+    "14_step8_ats_final_state.png",
+    "15_08b_ats_final.png"
+  ]
+}

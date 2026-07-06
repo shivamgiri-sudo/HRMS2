@@ -121,22 +121,11 @@ export async function listPackages(filters: {
   grade_id?: string; slab_id?: string; location_id?: string;
 } = {}) {
   let sql = `
-    SELECT spm.*,
-           gbm.grade_name, gbm.band,
-           ssm.label AS slab_label,
-           lm.location_name,
-           ccm.cost_centre_name
+    SELECT spm.*
     FROM salary_package_master spm
-    JOIN grade_band_master gbm ON gbm.id = spm.grade_id
-    JOIN salary_slab_master ssm ON ssm.id = spm.slab_id
-    LEFT JOIN location_master lm ON lm.id = spm.location_id
-    LEFT JOIN cost_centre_master ccm ON ccm.id = spm.cost_centre_id
     WHERE 1=1`;
   const params: unknown[] = [];
-  if (filters.grade_id)    { sql += ' AND spm.grade_id = ?';    params.push(filters.grade_id); }
-  if (filters.slab_id)     { sql += ' AND spm.slab_id = ?';     params.push(filters.slab_id); }
-  if (filters.location_id) { sql += ' AND spm.location_id = ?'; params.push(filters.location_id); }
-  sql += ' ORDER BY gbm.band, ssm.seq_order';
+  sql += ' ORDER BY spm.created_at DESC';
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   return rows;
 }

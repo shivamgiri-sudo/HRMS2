@@ -68,9 +68,19 @@ export default function NativeBranchHeadApproval() {
     }
     setActing(offerId);
     try {
-      await hrmsApi.post(`/api/ats/onboarding/offers/${offerId}/${action}`, {
+      const result: any = await hrmsApi.post(`/api/ats/onboarding/offers/${offerId}/${action}`, {
         remarks: remarks[offerId] ?? '',
       });
+
+      if (action === 'approve' && result?.employeeId && result?.employeeCode) {
+        const docsUrl = `/employees/${result.employeeId}/joining-documents`;
+        const msg = `✅ Offer approved! Employee code ${result.employeeCode} has been generated.\n\nNext: Complete post-onboarding joining documents.\n\nClick OK to open the joining documents page, or Cancel to stay here.`;
+        if (window.confirm(msg)) {
+          window.location.href = docsUrl;
+          return; // Don't reload current page
+        }
+      }
+
       await load();
     } catch (e: any) {
       alert(e?.message ?? `Failed to ${action} the offer.`);

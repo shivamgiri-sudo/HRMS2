@@ -5,6 +5,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   F, T, RO, Chip, SectionHead, InfoBox,
 } from "./OnboardingFormPrimitives";
@@ -831,18 +833,24 @@ export function Step5Bgv({
 
         {/* Verification buttons */}
         <div>
-          <p className="text-xs font-black uppercase tracking-wide text-slate-500 mb-3">Run Individual Verifications</p>
-          <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <p className="text-xs font-black uppercase tracking-wide text-slate-500 mb-2">Run Verifications</p>
+          <InfoBox variant="info">
+            <p className="text-xs">
+              <strong>DigiLocker (Recommended):</strong> Fetches Aadhaar + PAN directly from government.
+              Auto-verifies both — no separate clicks needed. Use individual buttons only if DigiLocker unavailable.
+            </p>
+          </InfoBox>
+          <div className="mt-3 mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
             DigiLocker status: <span className="font-bold capitalize text-slate-900">{digilockerStatus || "not_started"}</span>
           </div>
           <div className="grid gap-2 grid-cols-2">
             {[
+              { label: "DigiLocker Link", onClick: onDigilocker, icon: "🔗", highlight: true },
               { label: "Verify Aadhaar", onClick: onVerifyAadhaar, icon: "🪪" },
               { label: "Verify PAN", onClick: onVerifyPan, icon: "📋" },
               { label: "Verify Bank A/C", onClick: onVerifyBank, icon: "🏦" },
               { label: "Verify UAN / Employment", onClick: onVerifyUan, icon: "🏢" },
-              { label: "DigiLocker Link", onClick: onDigilocker, icon: "🔗" },
-            ].map(({ label, onClick, icon }) => {
+            ].map(({ label, onClick, icon, highlight }) => {
               const checkType = label.toLowerCase().includes("aadhaar") ? "aadhaar"
                 : label.toLowerCase().includes("pan") ? "pan"
                 : label.toLowerCase().includes("bank") ? "bank"
@@ -852,7 +860,7 @@ export function Step5Bgv({
               return (
                 <Button
                   key={label}
-                  variant="outline"
+                  variant={highlight ? "default" : "outline"}
                   onClick={onClick}
                   disabled={!consentAccepted || saving || verified}
                   size="lg"

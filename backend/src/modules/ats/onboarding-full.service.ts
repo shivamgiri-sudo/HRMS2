@@ -8,6 +8,7 @@ import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { luckpayClient, sanitizeProviderPayload } from "../integrations/luckpay/luckpay.client.js";
+import { getConfiguredBgvProviderAdapter } from "./bgv-provider.adapter.js";
 
 type ActorType = "candidate" | "hr" | "system";
 type AuthenticatedUser = NonNullable<AuthenticatedRequest["authUser"]>;
@@ -1470,6 +1471,82 @@ export async function initiateCandidateDigilockerByToken(token: string) {
     initiatedBy: String(tokenData.candidate_id),
     initiatedByType: "candidate",
   });
+}
+
+export async function initiateCandidateESignByToken(token: string, documentId: string) {
+  const tokenData = await validateOnboardingToken(token);
+  const candidateId = String(tokenData.candidate_id);
+
+  // Fetch document from candidate_onboarding_document
+  const [docRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, doc_name, file_path FROM candidate_onboarding_document WHERE id = ? AND candidate_id = ? LIMIT 1`,
+    [documentId, candidateId]
+  );
+  if (!docRows.length) throw Object.assign(new Error("Document not found"), { statusCode: 404 });
+  const doc = docRows[0];
+
+  // Read file buffer
+  const fs = await import("fs/promises");
+  const filePath = String(doc.file_path);
+  const documentBuffer = await fs.readFile(filePath);
+
+  // Get candidate details
+  const [candidateRows] = await db.execute<RowDataPacket[]>(
+    `SELECT full_name, applied_for_branch FROM ats_candidate WHERE id = ? LIMIT 1`,
+    [candidateId]
+  );
+  const candidate = candidateRows[0];
+  if (!candidate) throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+
+  // Get branch name
+  const [branchRows] = await db.execute<RowDataPacket[]>(
+    `SELECT branch_name FROM branch_master WHERE id = ? LIMIT 1`,
+    [candidate.applied_for_branch]
+  );
+  const branchName = branchRows[0]?.branch_name ?? "India";
+
+  // Initiate e-Sign via BGV provider
+  const adapter = await getConfiguredBgvProviderAdapter();
+  if (!adapter.initiateESign) {
+    throw Object.assign(new Error("e-Sign not supported by current BGV provider"), { statusCode: 501 });
+  }
+
+  const session = await adapter.initiateESign({
+    candidateId,
+    documentBuffer,
+    documentName: String(doc.doc_name ?? "document.pdf"),
+    signedBy: String(candidate.full_name ?? "Candidate"),
+    location: branchName,
+    reason: "Digital Signature for Employment Document",
+  });
+
+  // Store e-sign session
+  await db.execute(
+    `INSERT INTO candidate_digilocker_session
+       (id, candidate_id, state_token, provider_key, auth_url, session_status, requested_documents_json, expires_at, created_at, updated_at)
+     VALUES (?, ?, ?, 'luckpay_esign', ?, 'created', ?, ?, NOW(), NOW())
+     ON DUPLICATE KEY UPDATE
+       state_token = VALUES(state_token),
+       auth_url = VALUES(auth_url),
+       session_status = VALUES(session_status),
+       expires_at = VALUES(expires_at),
+       updated_at = NOW()`,
+    [
+      randomUUID(),
+      candidateId,
+      session.state,
+      session.authUrl,
+      JSON.stringify({ documentId, documentName: doc.doc_name }),
+      session.expiresAt,
+    ]
+  );
+
+  return {
+    authUrl: session.authUrl,
+    state: session.state,
+    expiresAt: session.expiresAt,
+    requestId: session.requestId,
+  };
 }
 
 export async function initiateCandidateEsign(

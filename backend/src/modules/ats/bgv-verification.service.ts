@@ -391,7 +391,48 @@ export async function providerCallback(input: Record<string, unknown>) {
     [status, JSON.stringify(input), status, check.id]
   );
   await logEvent(check.candidate_id, "PROVIDER_CALLBACK", { status, input }, check.id, { actorType: "provider" });
+
+  // CRITICAL: If this is a Digilocker success callback, auto-create verified Aadhaar + PAN checks
+  // Digilocker fetches from government = already verified at source, no separate API calls needed
+  if (check.check_type === 'digilocker' && status === 'verified') {
+    await autoCreateDigilockerVerifiedChecks(check.candidate_id);
+  }
+
   return getBgvStatusForCandidate(check.candidate_id);
+}
+
+async function autoCreateDigilockerVerifiedChecks(candidateId: string) {
+  // Digilocker fetched Aadhaar + PAN from government = already verified
+  // Create verified check records to avoid redundant separate API calls
+  const checkTypes = ['aadhaar', 'pan'];
+
+  for (const checkType of checkTypes) {
+    const [existing] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
+      [candidateId, checkType]
+    );
+
+    if (existing.length > 0) {
+      // Update existing check
+      await db.execute(
+        `UPDATE candidate_bgv_check
+         SET status = 'verified', provider_key = 'digilocker', result_summary = 'Verified via DigiLocker',
+             verified_at = NOW(), updated_at = NOW()
+         WHERE id = ?`,
+        [existing[0].id]
+      );
+    } else {
+      // Create new verified check
+      await db.execute(
+        `INSERT INTO candidate_bgv_check
+         (id, candidate_id, check_type, provider_key, status, result_summary, verified_at, created_at, updated_at)
+         VALUES (?, ?, ?, 'digilocker', 'verified', 'Verified via DigiLocker', NOW(), NOW(), NOW())`,
+        [randomUUID(), candidateId, checkType]
+      );
+    }
+
+    await logEvent(candidateId, "BGV_AUTO_VERIFIED", { checkType, source: "digilocker" }, null, { actorType: "system" });
+  }
 }
 
 export async function manualReview(candidateId: string, input: { checkId?: string; status: "verified" | "mismatch" | "failed" | "manual_review"; remarks: string }, actorUserId: string) {

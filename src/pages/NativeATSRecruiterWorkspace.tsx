@@ -279,12 +279,12 @@ function validateForm(form: Form): string | null {
     if (form.round1Result === "Rejected" && !form.round1Voc) return "Round1 VOC is required when Round1 Result is Rejected.";
   }
   if (form.skillResult === "Rejected" && !form.skillVoc) return "SkillTest VOC is required when SkillTest Result is Rejected.";
-  if (rank >= 3) {
+  if (rank >= 3 && form.round1Result !== "Rejected") {
     if (!form.round2Result) return "Round2 Result is required from Round 2 stage onwards.";
     if (form.round2Result === "Rejected" && !form.round2Voc) return "Round2 VOC is required when Round2 Result is Rejected.";
     if (!form.secondRoundInterviewerId) return "Second Round Interviewer is required from Round 2 stage onwards.";
   }
-  if (rank >= 4) {
+  if (rank >= 4 && form.round1Result !== "Rejected" && form.round2Result !== "Rejected") {
     if (!form.round3Result) return "Round3 Result is required from Round 3 stage onwards.";
     if (form.round3Result === "Rejected" && !form.round3Voc) return "Round3 VOC is required when Round3 Result is Rejected.";
   }
@@ -350,6 +350,16 @@ export default function NativeATSRecruiterWorkspace() {
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const rank = STAGE_RANK[form.stageName] ?? 0;
+  // Effective rank caps at the stage where rejection occurred — downstream rounds don't happen
+  const effectiveRank = form.round1Result === "Rejected" ? Math.min(rank, 1)
+    : form.round2Result === "Rejected" ? Math.min(rank, 3)
+    : rank;
+  // Stage dropdown options filtered to only reachable stages given upstream rejections
+  const reachableStageOptions: string[] = form.round1Result === "Rejected"
+    ? (config.stageOptions as string[]).filter((s: string) => (STAGE_RANK[s] ?? 0) <= 1)
+    : form.round2Result === "Rejected"
+    ? (config.stageOptions as string[]).filter((s: string) => (STAGE_RANK[s] ?? 0) <= 3)
+    : (config.stageOptions as string[]);
 
   const loadPending = async () => {
     const res = await hrmsApi.get<{ success: boolean; data: any[]; recruiter?: RecruiterProfile | null }>(
@@ -405,12 +415,12 @@ export default function NativeATSRecruiterWorkspace() {
   };
 
   const searchInterviewers = async (q: string) => {
-    const branch = recruiterProfile?.branch_name;
-    if (!branch) return;
     setInterviewerSearchLoading(true);
     try {
-      const params = new URLSearchParams({ branchName: branch, roundType: "second_round", limit: "30" });
-      if (q.trim()) params.set("search", q.trim());
+      const params = new URLSearchParams({ roundType: "second_round", limit: "50" });
+      const branch = recruiterProfile?.branch_name;
+      if (branch) params.set("branchName", branch);
+      if (q.trim()) params.set("q", q.trim());
       const res = await hrmsApi.get<{ success: boolean; data: Array<{ id: string; name: string; branch_name?: string | null; designation_name?: string | null }> }>(
         `/api/ats/interviewers?${params.toString()}`
       );
@@ -517,7 +527,29 @@ export default function NativeATSRecruiterWorkspace() {
 
   const updateForm = (patch: Partial<Form>) => {
     setForm((prev) => {
-      const updated = { ...prev, ...patch };
+      let updated = { ...prev, ...patch };
+
+      // If round1 was rejected, cap stage and clear downstream rounds
+      if ("round1Result" in patch && patch.round1Result === "Rejected") {
+        updated.stageName = "Round 1- HR Screening";
+        updated.round2Result = "";
+        updated.round2Voc = "";
+        updated.round2Remarks = "";
+        updated.secondRoundInterviewerId = "";
+        updated.secondRoundInterviewerNameSnapshot = "";
+        updated.round3Result = "";
+        updated.round3Voc = "";
+        updated.round3Remarks = "";
+      }
+
+      // If round2 was rejected, cap stage and clear round3
+      if ("round2Result" in patch && patch.round2Result === "Rejected") {
+        if ((STAGE_RANK[updated.stageName] ?? 0) > 3) updated.stageName = "Round 2- Op's";
+        updated.round3Result = "";
+        updated.round3Voc = "";
+        updated.round3Remarks = "";
+      }
+
       if ("finalDecision" in patch || "stageName" in patch) {
         return cascadeSelected(updated);
       }
@@ -1008,13 +1040,13 @@ export default function NativeATSRecruiterWorkspace() {
               <div className="sec-title" style={{ color: "#475569" }}>Walk-in Summary</div>
               <div className="rw-grid rw-3">
                 {field("Interviewed for Process *", "processName", "select", config.processOptions)}
-                {field("Walk-in End Stage *", "stageName", "select", config.stageOptions)}
+                {field("Walk-in End Stage *", "stageName", "select", reachableStageOptions)}
                 {field("Final Decision *", "finalDecision", "select", config.decisionOptions)}
               </div>
             </div>
 
             {/* Round 1 */}
-            {rank >= 1 && (
+            {effectiveRank >= 1 && (
               <div className="form-section sec-blue">
                 <div className="sec-title" style={{ color: "#1d4ed8" }}>Round 1 — HR Screening</div>
                 <div className="rw-grid rw-2">
@@ -1026,7 +1058,7 @@ export default function NativeATSRecruiterWorkspace() {
             )}
 
             {/* Skill Test */}
-            {rank >= 2 && (
+            {effectiveRank >= 2 && (
               <div className="form-section sec-purple">
                 <div className="sec-title" style={{ color: "#7c3aed" }}>Skill Test</div>
                 <div className="rw-grid rw-3">
@@ -1044,7 +1076,7 @@ export default function NativeATSRecruiterWorkspace() {
             )}
 
             {/* Round 2 */}
-            {rank >= 3 && (
+            {effectiveRank >= 3 && (
               <div className="form-section sec-green">
                 <div className="sec-title" style={{ color: "#047857" }}>Round 2 — Operations</div>
                 <div className="rw-grid rw-2">
@@ -1056,7 +1088,7 @@ export default function NativeATSRecruiterWorkspace() {
             )}
 
             {/* Round 3 */}
-            {rank >= 4 && (
+            {effectiveRank >= 4 && (
               <div className="form-section sec-orange">
                 <div className="sec-title" style={{ color: "#c2410c" }}>Round 3 — Client</div>
                 <div className="rw-grid rw-2">
@@ -1067,7 +1099,7 @@ export default function NativeATSRecruiterWorkspace() {
               </div>
             )}
 
-            {rank >= 3 && (
+            {effectiveRank >= 3 && (
               <div className="form-section sec-green">
                 <div className="sec-title" style={{ color: "#047857" }}>Second Round Interviewer</div>
                 <div className="rw-grid rw-2">

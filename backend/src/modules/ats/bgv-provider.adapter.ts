@@ -114,7 +114,24 @@ export interface BgvProviderAdapter {
   verifyEducation(input: EducationVerificationInput): Promise<VerificationResult>;
   verifyCourt(input: CourtVerificationInput): Promise<CourtVerificationResult>;
   startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession>;
+  initiateESign?(input: ESignInput): Promise<ESignSession>;
   initiateCandidateBgv(input: BgvCandidatePortalInput): Promise<BgvPortalInitiationResult>;
+}
+
+export interface ESignInput {
+  candidateId: string;
+  documentBuffer: Buffer;
+  documentName: string;
+  signedBy: string;
+  location?: string;
+  reason?: string;
+}
+
+export interface ESignSession {
+  state: string;
+  authUrl: string;
+  expiresAt: Date;
+  requestId?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1181,6 +1198,54 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       state: String(d.state ?? state),
       authUrl: String(d.auth_url ?? d.redirect_url ?? d.access_link ?? d.redirectUrl ?? d.verificationUrl ?? d.verification_url ?? ""),
       expiresAt: this.providerString(d.expires_at) ? new Date(this.providerString(d.expires_at)!) : new Date(Date.now() + 30 * 60 * 1000),
+    };
+  }
+
+  async initiateESign(input: ESignInput): Promise<ESignSession> {
+    const state = randomUUID();
+    const accessToken = await this.getLuckpayAccessToken();
+
+    // Luckpay eSignWithURL uses multipart/form-data
+    const FormData = (await import("form-data")).default;
+    const formData = new FormData();
+
+    // File part
+    formData.append("file", input.documentBuffer, {
+      filename: input.documentName,
+      contentType: "application/pdf",
+    });
+
+    // Request metadata as JSON string
+    const requestMetadata = {
+      clientTransactionId: state,
+      signedBy: input.signedBy,
+      location: input.location || "India",
+      reason: input.reason || "Digital Signature for Employment Document",
+    };
+    formData.append("request", JSON.stringify(requestMetadata), {
+      contentType: "application/json",
+    });
+
+    let res;
+    try {
+      res = await axios.post(`${this.luckpayBaseUrl()}/eSignWithURL`, formData, {
+        headers: {
+          ...formData.getHeaders(),
+          Authorization: this.cfg.luckpay_client_id!,
+          "X-Access-Token": `Bearer ${accessToken}`,
+        },
+        timeout: env.LUCKPAY_TIMEOUT_MS,
+      });
+    } catch (error) {
+      throw this.toLuckpayError(error);
+    }
+
+    const d = res.data?.data ?? res.data ?? {};
+    return {
+      state,
+      authUrl: String(d.sign_url ?? d.signUrl ?? d.redirect_url ?? d.redirectUrl ?? d.auth_url ?? ""),
+      expiresAt: this.providerString(d.expires_at) ? new Date(this.providerString(d.expires_at)!) : new Date(Date.now() + 30 * 60 * 1000),
+      requestId: String(d.request_id ?? d.requestId ?? state),
     };
   }
 

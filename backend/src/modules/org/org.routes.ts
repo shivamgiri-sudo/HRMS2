@@ -86,11 +86,89 @@ buildCrud("/departments",   departmentService);
 buildCrud("/lobs",          lobService);
 buildCrud("/designations",  designationService);
 buildCrud("/campaigns",     campaignService);
-buildCrud("/cost-centres",  costCentreService);
 buildCrud("/grade-bands",   gradeBandService);
 buildCrud("/locations",     locationService);
 buildCrud("/policies",      policyService);
 buildCrud("/processes",     processService);
+
+// Cost-centres: only return CCs from ACTIVE branches; includes dominant process name for dropdown display
+router.get("/cost-centres", h(async (req: Request, res: Response) => {
+  const branchName = req.query.branch_name as string | undefined;
+  const branchId   = req.query.branch_id   as string | undefined;
+  let sql = `
+    SELECT cc.*,
+      (SELECT p.process_name
+       FROM employees e
+       JOIN process_master p ON p.id = e.process_id
+       WHERE e.cost_centre_id = cc.id AND e.active_status = 1
+       GROUP BY p.id ORDER BY COUNT(*) DESC LIMIT 1) AS process_name
+    FROM cost_centre_master cc
+    JOIN branch_master bm ON bm.id = cc.branch_id AND bm.active_status = 1
+    WHERE cc.active_status = 1`;
+  const params: string[] = [];
+  if (branchId)   { sql += " AND cc.branch_id = ?";                 params.push(branchId); }
+  if (branchName) { sql += " AND LOWER(bm.branch_name) = LOWER(?)"; params.push(branchName); }
+  sql += " ORDER BY cc.cost_centre_name";
+  const [rows] = await db.execute<any[]>(sql, params);
+  return res.json({ data: rows });
+}));
+router.get("/cost-centres/:id", h(async (req: Request, res: Response) => {
+  const item = await costCentreService.getById(req.params.id);
+  if (!item) return res.status(404).json({ error: "Not found" });
+  res.json({ data: item });
+}));
+router.post("/cost-centres", requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
+  const item = await costCentreService.create(req.body);
+  res.status(201).json({ data: item });
+}));
+router.put("/cost-centres/:id", requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
+  const item = await costCentreService.update(req.params.id, req.body);
+  res.json({ data: item });
+}));
+router.delete("/cost-centres/:id", requireRole("admin"), h(async (req: Request, res: Response) => {
+  await costCentreService.delete(req.params.id);
+  res.json({ ok: true });
+}));
+
+// Employees scoped to a cost centre (for reporting manager dropdown)
+router.get("/employees-by-cost-centre", h(async (req: Request, res: Response) => {
+  const costCentreId = req.query.cost_centre_id as string | undefined;
+  if (!costCentreId) return res.status(400).json({ error: "cost_centre_id is required" });
+  const [rows] = await db.execute<any[]>(
+    `SELECT e.id,
+            e.employee_code,
+            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS full_name,
+            d.designation_name
+     FROM employees e
+     LEFT JOIN designation_master d ON d.id = e.designation_id
+     WHERE e.cost_centre_id = ?
+       AND e.active_status = 1
+       AND LOWER(COALESCE(e.employment_status,'active')) = 'active'
+     ORDER BY full_name ASC`,
+    [costCentreId]
+  );
+  res.json({ ok: true, data: rows });
+}));
+
+// Employees scoped to a branch (for reporting manager dropdown)
+router.get("/employees-by-branch", h(async (req: Request, res: Response) => {
+  const branchId = req.query.branch_id as string | undefined;
+  if (!branchId) return res.status(400).json({ error: "branch_id is required" });
+  const [rows] = await db.execute<any[]>(
+    `SELECT e.id,
+            e.employee_code,
+            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS full_name,
+            d.designation_name
+     FROM employees e
+     LEFT JOIN designation_master d ON d.id = e.designation_id
+     WHERE e.branch_id = ?
+       AND e.active_status = 1
+       AND LOWER(COALESCE(e.employment_status,'active')) = 'active'
+     ORDER BY full_name ASC`,
+    [branchId]
+  );
+  res.json({ ok: true, data: rows });
+}));
 
 // Call Centre Code: PATCH can safely follow buildCrud (different HTTP method, no collision)
 router.patch("/branches/:id/call-centre-code",

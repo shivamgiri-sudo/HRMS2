@@ -661,9 +661,9 @@ export async function submitInterviewUpdate(
     if (nvl(input.secondRoundInterviewerId)) {
       const [interviewerRows] = await conn.execute<InterviewerRow[]>(
         `SELECT e.id,
-                COALESCE(NULLIF(TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))), ''), e.full_name, e.employee_name, e.employee_code) AS interviewer_name,
-                COALESCE(b.branch_name, e.branch_name, e.branch_id) AS branch_name,
-                COALESCE(des.designation_name, e.designation_name) AS designation_name
+                COALESCE(NULLIF(TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))), ''), e.full_name, e.employee_code) AS interviewer_name,
+                COALESCE(b.branch_name, b.branch_code) AS branch_name,
+                des.designation_name AS designation_name
            FROM employees e
            LEFT JOIN branch_master b ON b.id = e.branch_id
            LEFT JOIN designation_master des ON des.id = e.designation_id
@@ -674,10 +674,10 @@ export async function submitInterviewUpdate(
       const interviewer = interviewerRows[0];
       if (!interviewer) err("Second round interviewer not found", 404);
       const interviewerBranch = nvl(interviewer.branch_name);
-      const normalizedCandidateBranch = candidateBranch?.trim().toLowerCase().replace(/\s+/g, " ");
+      const recruiterBranch = recruiterProfile.branch?.trim().toLowerCase().replace(/\s+/g, " ");
       const normalizedInterviewerBranch = interviewerBranch?.trim().toLowerCase().replace(/\s+/g, " ");
-      if (normalizedCandidateBranch && normalizedInterviewerBranch && normalizedCandidateBranch !== normalizedInterviewerBranch) {
-        err("Second round interviewer must be selected from the candidate's branch", 400);
+      if (recruiterBranch && normalizedInterviewerBranch && recruiterBranch !== normalizedInterviewerBranch) {
+        err("Second round interviewer must be from the same branch as the recruiter", 400);
       }
       secondRoundInterviewerSnapshot = {
         id: String(interviewer.id),
@@ -972,7 +972,6 @@ export async function submitInterviewUpdate(
          offer_performance_incentive = ?,
          profile_status = CASE
            WHEN ? = 'Selected' THEN 'selected'
-           WHEN ? IN ('Rejected', 'No Show') THEN 'closed'
            ELSE profile_status
          END,
          updated_at = NOW()
@@ -1015,7 +1014,6 @@ export async function submitInterviewUpdate(
         nvl(input.offerDoj),
         nvl(input.reportingTiming),
         nvl(input.performanceIncentives),
-        finalDecision,
         finalDecision,
         candidate.id,
       ]

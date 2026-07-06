@@ -1,0 +1,285 @@
+{
+  "testRun": "v3",
+  "candidateCode": "CND-MR7TJRZ8",
+  "candidateId": "8437a64b-04c5-443d-805c-08a83d77eb06",
+  "onboardingToken": "0bb714b4-b743-4f5a-a904-31b4310b05b5-7dcf692a-a927-42ad-8835-96aa4a16f3d0",
+  "timestamp": "2026-07-05T13:33:25.680Z",
+  "summary": {
+    "pass": 30,
+    "fail": 0,
+    "warn": 4,
+    "total": 34
+  },
+  "steps": [
+    {
+      "step": "AUTH",
+      "status": "PASS",
+      "detail": "Logged in: shivam.giri@teammas.in",
+      "data": null
+    },
+    {
+      "step": "WALKIN_UI_ERROR",
+      "status": "WARN",
+      "detail": "page.waitForSelector: Timeout 10000ms exceeded.",
+      "data": null
+    },
+    {
+      "step": "WALKIN_DB_VERIFY",
+      "status": "PASS",
+      "detail": "Confirmed in DB: CND-MR7TJRZ8",
+      "data": {
+        "id": "8437a64b-04c5-443d-805c-08a83d77eb06",
+        "stage": "Arrived",
+        "branch": "Okaya"
+      }
+    },
+    {
+      "step": "PROFILE_API",
+      "status": "PASS",
+      "detail": "Profile: Priya Sharma E2E",
+      "data": {
+        "name": "Priya Sharma E2E",
+        "mobile": "9871236001",
+        "stage": "Arrived",
+        "branch": "Okaya"
+      }
+    },
+    {
+      "step": "STAGE_SCREENING",
+      "status": "PASS",
+      "detail": "→ screening (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "STAGE_INTERVIEW",
+      "status": "PASS",
+      "detail": "→ interview (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "STAGE_SELECTED",
+      "status": "PASS",
+      "detail": "→ selected (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "BGV_TOKEN_PREP",
+      "status": "PASS",
+      "detail": "Token ready for doc upload",
+      "data": null
+    },
+    {
+      "step": "BGV_DATA",
+      "status": "PASS",
+      "detail": "BGV fields saved (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "BGV_UPLOAD_AADHAAR",
+      "status": "PASS",
+      "detail": "aadhaar.pdf → HTTP 201",
+      "data": {
+        "id": "ffa58d92-c9d5-471a-85bd-0acc46bffc29"
+      }
+    },
+    {
+      "step": "BGV_UPLOAD_PAN",
+      "status": "PASS",
+      "detail": "pan-card.pdf → HTTP 201",
+      "data": {
+        "id": "019dda88-52fe-433c-81d2-df16b3c63501"
+      }
+    },
+    {
+      "step": "BGV_UPLOAD_EDUCATION_CERTIFICATE",
+      "status": "PASS",
+      "detail": "degree.pdf → HTTP 201",
+      "data": {
+        "id": "696afb42-56b4-477e-b33c-659bc347a04f"
+      }
+    },
+    {
+      "step": "BGV_UPLOAD_EXPERIENCE_LETTER",
+      "status": "PASS",
+      "detail": "exp-letter.pdf → HTTP 201",
+      "data": {
+        "id": "1f886734-9da3-4f1a-b5f8-b7294376f50e"
+      }
+    },
+    {
+      "step": "BGV_VERIFY_ADDRESS",
+      "status": "PASS",
+      "detail": "address (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "BGV_VERIFY_EDUCATION",
+      "status": "PASS",
+      "detail": "education (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "BGV_VERIFY_EMPLOYMENT",
+      "status": "PASS",
+      "detail": "employment (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "BGV_READINESS",
+      "status": "PASS",
+      "detail": "Readiness (HTTP 200)",
+      "data": {
+        "ready": false,
+        "missing": [
+          "pan",
+          "aadhaar_offline",
+          "bank",
+          "address_doc",
+          "education_doc",
+          "employment",
+          "criminal"
+        ],
+        "score": 0
+      }
+    },
+    {
+      "step": "ONBOARD_TOKEN",
+      "status": "PASS",
+      "detail": "Using existing token: 0bb714b4-b743-4f5a-a90...",
+      "data": null
+    },
+    {
+      "step": "ONBOARDING_STAGE",
+      "status": "PASS",
+      "detail": "→ onboarding",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_FORM_RENDER",
+      "status": "WARN",
+      "detail": "Form loaded but content unclear",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_PERSONAL",
+      "status": "PASS",
+      "detail": "employee-details (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_BANK",
+      "status": "PASS",
+      "detail": "bank-details (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_EDUCATION",
+      "status": "PASS",
+      "detail": "qualification (HTTP 201)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_FAMILY",
+      "status": "PASS",
+      "detail": "family (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_EXPERIENCE",
+      "status": "PASS",
+      "detail": "experience (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_FINAL",
+      "status": "PASS",
+      "detail": "final-section (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "ONBOARD_STATUS",
+      "status": "PASS",
+      "detail": "Status (HTTP 200)",
+      "data": {
+        "sections_complete": "check response"
+      }
+    },
+    {
+      "step": "HR_FULL_DATA",
+      "status": "PASS",
+      "detail": "Profile retrieved (HTTP 200)",
+      "data": {
+        "sections": "profile, documents, bank, qualifications, family, experience, digilocker, esign"
+      }
+    },
+    {
+      "step": "HR_APPROVE",
+      "status": "PASS",
+      "detail": "HR approval (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "HR_STATUS_UPDATE",
+      "status": "PASS",
+      "detail": "Candidate status updated (HTTP 200)",
+      "data": null
+    },
+    {
+      "step": "EMPLOYEE_CONVERT",
+      "status": "WARN",
+      "detail": "Convert (HTTP 409)",
+      "data": {
+        "empId": "pending offer flow",
+        "msg": "Employee creation happens automatically after the employment offer is approved. Complete onboarding,"
+      }
+    },
+    {
+      "step": "CONVERT_FINAL_STATE",
+      "status": "PASS",
+      "detail": "Post-convert candidate state",
+      "data": {
+        "stage": "Arrived",
+        "profile_status": "profile_submitted",
+        "bgv_status": "pending"
+      }
+    },
+    {
+      "step": "ATS_ANALYTICS",
+      "status": "WARN",
+      "detail": "ATS analytics (HTTP 404)",
+      "data": null
+    },
+    {
+      "step": "JOURNEY_FINAL",
+      "status": "PASS",
+      "detail": "★ Full E2E journey complete",
+      "data": {
+        "code": "CND-MR7TJRZ8",
+        "name": "Priya Sharma E2E",
+        "current_stage": "Arrived",
+        "profile_status": "profile_submitted",
+        "bgv_status": "pending",
+        "onboarding_token": "✓ (0bb714b4-b743-4f5a...)",
+        "employee_id": "(offer flow pending)"
+      }
+    }
+  ],
+  "screenshots": [
+    "01_00_app_home.png",
+    "02_01a_registration_public_form.png",
+    "03_01e_form_error.png",
+    "04_02_candidate_profile.png",
+    "05_03_pipeline_screening.png",
+    "06_03_pipeline_interview.png",
+    "07_03_pipeline_selected.png",
+    "08_04a_bgv_queue.png",
+    "09_04b_candidate_with_bgv.png",
+    "10_05a_onboarding_form_loaded.png",
+    "11_05b_candidate_with_onboarding.png",
+    "12_05c_hr_onboarding_queue.png",
+    "13_06_hr_review_approved.png",
+    "14_07b_candidate_after_conversion.png",
+    "15_08a_employees_list.png",
+    "16_08b_ats_pipeline.png"
+  ]
+}

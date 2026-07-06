@@ -158,6 +158,7 @@ import { branchHeadApprovalRouter } from "./modules/ats/branch-head-approval.rou
 import { commandCentreRouter } from "./modules/ats/command-centre.routes.js";
 import { interviewRouter } from "./modules/ats/interview.routes.js";
 import { bgvEnhancedRouter } from "./modules/ats/bgv.enhanced.routes.js";
+import bgvVerificationRouter from "./modules/ats/bgv-verification.routes.js";
 import { candidatePortalRouter } from "./modules/ats/candidate-portal.routes.js";
 import { superAdminRouter } from "./modules/ats/super-admin.routes.js";
 import onboardingFullRouter from "./modules/ats/onboarding-full.routes.js";
@@ -272,6 +273,7 @@ app.use("/api/ats", atsFormConfigRouter);
 app.use("/api/ats/registration", registrationEnhancedRouter);
 app.use("/api/ats/queue", queuePublicRouter); // public display endpoints (no auth)
 app.use("/api/public/verify", employeeVerifyRouter); // public QR code verification (no auth)
+app.use("/api/ats/bgv", bgvVerificationRouter); // BGV token-driven routes (consent, verify, digilocker) — mount BEFORE requireAuth
 app.use("/api/ats", atsRouter);
 app.use("/api/ats/queue", queueRouter);
 app.use("/api/business-command", businessCommandRouter);
