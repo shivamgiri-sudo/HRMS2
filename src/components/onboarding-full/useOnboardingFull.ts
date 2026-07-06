@@ -149,8 +149,8 @@ export const EMPTY_STATUTORY: StatutoryForm = {
 
 export type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 export const STEP_LABELS: Record<Step, string> = {
-  1: "Welcome", 2: "Personal", 3: "Address & KYC", 4: "Documents",
-  5: "BGV Consent", 6: "Bank", 7: "Education", 8: "Experience",
+  1: "Welcome", 2: "Personal", 3: "DigiLocker & KYC", 4: "Documents",
+  5: "Verification", 6: "Bank", 7: "Education", 8: "Experience",
   9: "Family & Language", 10: "Statutory & Submit",
 };
 

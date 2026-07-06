@@ -25,7 +25,7 @@ export function F({
       </Label>
       {opts ? (
         <select
-          className={`flex min-h-[48px] w-full rounded-xl border-2 bg-white px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-colors ${fieldError ? "border-red-400" : prefilled ? "border-emerald-200 bg-emerald-50" : "border-slate-200 hover:border-slate-300"}`}
+          className={`flex min-h-[48px] w-full rounded-lg border bg-white px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/20 focus-visible:border-blue-600 transition-colors ${fieldError ? "border-red-400" : prefilled ? "border-emerald-200 bg-emerald-50" : "border-slate-300 hover:border-slate-400"}`}
           value={value || ""}
           onChange={(e) => onChange(e.target.value)}
         >
@@ -40,7 +40,7 @@ export function F({
           onChange={(e) => onChange(e.target.value)}
           onBlur={onBlur}
           placeholder={placeholder}
-          className={`min-h-[48px] text-base rounded-xl border-2 transition-colors focus:ring-2 focus:ring-blue-400 ${fieldError ? "border-red-400 focus:border-red-400" : prefilled ? "bg-emerald-50 border-emerald-200 focus:border-emerald-400" : "border-slate-200 hover:border-slate-300 focus:border-blue-400"}`}
+          className={`min-h-[48px] text-base rounded-lg border transition-colors focus-visible:ring-2 focus-visible:ring-blue-600/20 ${fieldError ? "border-red-400 focus-visible:border-red-400" : prefilled ? "bg-emerald-50 border-emerald-200 focus-visible:border-emerald-400" : "border-slate-300 hover:border-slate-400 focus-visible:border-blue-600"}`}
         />
       )}
       {fieldError && (
@@ -69,7 +69,7 @@ export function T({ label, value, onChange, required, placeholder }: {
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         rows={3}
-        className="text-base rounded-xl border-2 border-slate-200 hover:border-slate-300 focus:ring-2 focus:ring-blue-400 focus:border-blue-400 min-h-[88px] transition-colors"
+        className="text-base rounded-lg border border-slate-300 hover:border-slate-400 focus-visible:ring-2 focus-visible:ring-blue-600/20 focus-visible:border-blue-600 min-h-[88px] transition-colors"
       />
     </div>
   );
@@ -77,7 +77,7 @@ export function T({ label, value, onChange, required, placeholder }: {
 
 export function RO({ label, value, highlight }: { label: string; value?: React.ReactNode; highlight?: boolean }) {
   return (
-    <div className={`rounded-xl border-2 p-3 ${highlight ? "bg-blue-50 border-blue-200" : "bg-slate-50 border-slate-200"}`}>
+    <div className={`rounded-lg border p-3 ${highlight ? "bg-blue-50 border-blue-200" : "bg-slate-50 border-slate-200"}`}>
       <p className="text-[10px] font-black uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-1 font-semibold text-slate-900 text-sm break-words">{value ?? "—"}</p>
     </div>
@@ -89,10 +89,10 @@ export function Chip({ label, active, onClick }: { label: string; active: boolea
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full px-4 py-2 text-sm font-bold border-2 transition-all min-h-[44px] select-none active:scale-95 ${
+      className={`rounded-full px-4 py-2 text-sm font-bold border transition-all min-h-[44px] select-none active:scale-95 ${
         active
           ? "bg-blue-600 text-white border-blue-600 shadow-md"
-          : "bg-white text-slate-700 border-slate-300 hover:border-blue-300 hover:text-blue-700"
+          : "bg-white text-slate-700 border-slate-300 hover:border-blue-400 hover:text-blue-700"
       }`}
     >
       {active && <span className="mr-1">✓</span>}{label}
@@ -102,7 +102,7 @@ export function Chip({ label, active, onClick }: { label: string; active: boolea
 
 export function SectionHead({ children, sub }: { children: React.ReactNode; sub?: string }) {
   return (
-    <div className="mt-7 mb-4 pb-2 border-b-2 border-slate-100">
+    <div className="mt-7 mb-4 pb-2 border-b border-slate-200">
       <p className="text-[11px] font-black uppercase tracking-[0.15em] text-slate-500">{children}</p>
       {sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
     </div>
@@ -118,7 +118,7 @@ export function InfoBox({ children, variant = "info" }: { children: React.ReactN
   const icons = { info: Info, warning: AlertCircle, success: CheckCircle2 };
   const Icon = icons[variant];
   return (
-    <div className={`rounded-xl border-2 p-4 flex items-start gap-3 text-sm leading-relaxed ${styles[variant]}`}>
+    <div className={`rounded-lg border p-4 flex items-start gap-3 text-sm leading-relaxed ${styles[variant]}`}>
       <Icon className="h-4 w-4 flex-shrink-0 mt-0.5" />
       <div>{children}</div>
     </div>
@@ -137,7 +137,7 @@ export function YNChip({ label, value, onChange, helpText }: {
             key={l}
             type="button"
             onClick={() => onChange(v)}
-            className={`flex-1 rounded-xl px-4 py-3 text-sm font-bold border-2 transition-all min-h-[48px] active:scale-95 ${
+            className={`flex-1 rounded-lg px-4 py-3 text-sm font-bold border transition-all min-h-[48px] active:scale-95 ${
               value === v
                 ? v ? "bg-emerald-600 text-white border-emerald-600 shadow-md" : "bg-slate-700 text-white border-slate-700 shadow-md"
                 : "bg-white text-slate-700 border-slate-300 hover:border-slate-500"
