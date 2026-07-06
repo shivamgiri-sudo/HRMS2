@@ -366,7 +366,15 @@ export default function NativeATSRecruiterWorkspace() {
       "/api/ats/recruiter/my-candidates"
     );
     setRecruiterProfile(res.recruiter ?? null);
-    setPending((res.data ?? []).map((c: any) => ({
+
+    // Sort by createdAt ascending (oldest first at top)
+    const sortedData = (res.data ?? []).sort((a: any, b: any) => {
+      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return dateA - dateB; // Ascending = oldest first
+    });
+
+    setPending(sortedData.map((c: any) => ({
       candidateId: c.candidateId,
       qToken: c.qToken ?? null,
       fullName: c.fullName,
