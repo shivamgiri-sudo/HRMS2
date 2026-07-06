@@ -3,7 +3,12 @@ import type { Response, NextFunction } from 'express';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
-import { getJoiningDocumentsTracker, type TrackerQueryParams } from './ats.joiningDocumentsTracker.service.js';
+import {
+  getJoiningDocumentsTracker,
+  sendBulkReminders,
+  bulkGenerateChecklists,
+  type TrackerQueryParams,
+} from './ats.joiningDocumentsTracker.service.js';
 
 export const joiningDocumentsTrackerRouter = Router();
 
@@ -37,5 +42,48 @@ joiningDocumentsTrackerRouter.get('/', h(async (req: AuthenticatedRequest, res: 
   } catch (error: unknown) {
     console.error('[tracker] GET /joining-documents-tracker error:', error);
     return res.status(500).json({ success: false, message: 'Failed to fetch joining documents tracker' });
+  }
+}));
+
+// POST /api/ats/joining-documents-tracker/bulk-remind
+joiningDocumentsTrackerRouter.post('/bulk-remind', h(async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { employee_ids, custom_message } = req.body as {
+      employee_ids?: unknown;
+      custom_message?: string;
+    };
+
+    if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'employee_ids array is required' });
+    }
+
+    const result = await sendBulkReminders(
+      employee_ids as string[],
+      custom_message ?? null,
+      req.authUser!.id
+    );
+
+    return res.json(result);
+  } catch (error: unknown) {
+    console.error('[tracker] POST /bulk-remind error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to send reminders' });
+  }
+}));
+
+// POST /api/ats/joining-documents-tracker/bulk-generate-checklist
+joiningDocumentsTrackerRouter.post('/bulk-generate-checklist', h(async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { employee_ids } = req.body as { employee_ids?: unknown };
+
+    if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'employee_ids array is required' });
+    }
+
+    const result = await bulkGenerateChecklists(employee_ids as string[], req.authUser!.id);
+
+    return res.json(result);
+  } catch (error: unknown) {
+    console.error('[tracker] POST /bulk-generate-checklist error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to generate checklists' });
   }
 }));

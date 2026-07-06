@@ -2,6 +2,8 @@ import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { getUserRoleKeys } from '../../shared/scopeAccess.js';
 import { getEmployeeForUser } from '../../shared/accessGuard.js';
+import { sendRejectedEmail } from './ats.email.service.js';
+import { generateJoiningDocumentChecklist } from '../employees/employeeJoiningDocuments.service.js';
 
 export interface KeyDocumentStatus {
   code: 'APPOINTMENT_LETTER' | 'ID_PROOF' | 'BANK_DETAILS' | 'ADDRESS_PROOF';
@@ -277,4 +279,133 @@ export async function getJoiningDocumentsTracker(
   const summary = calculateTrackerSummary(employees);
 
   return { employees, summary };
+}
+
+// ─── Bulk Action Types ────────────────────────────────────────────────────────
+
+export interface BulkRemindResult {
+  success: true;
+  sent: number;
+  failed: number;
+  errors: Array<{ employee_id: string; employee_code: string; error: string }>;
+}
+
+export interface BulkGenerateResult {
+  success: true;
+  generated: number;
+  skipped: number;
+  errors: Array<{ employee_id: string; employee_code: string; error: string }>;
+}
+
+// ─── sendBulkReminders ────────────────────────────────────────────────────────
+
+export async function sendBulkReminders(
+  employeeIds: string[],
+  customMessage: string | null,
+  actorUserId: string
+): Promise<BulkRemindResult> {
+  void actorUserId; // reserved for audit logging in future
+
+  const result: BulkRemindResult = {
+    success: true,
+    sent: 0,
+    failed: 0,
+    errors: [],
+  };
+
+  const [employees] = await db.execute<RowDataPacket[]>(
+    `SELECT id, employee_code, full_name, official_email, mobile
+     FROM employees
+     WHERE id IN (?) AND active_status = 1`,
+    [employeeIds]
+  );
+
+  for (const emp of employees as Array<{
+    id: string;
+    employee_code: string;
+    full_name: string;
+    official_email: string | null;
+    mobile: string | null;
+  }>) {
+    if (!emp.official_email) {
+      result.failed++;
+      result.errors.push({
+        employee_id: emp.id,
+        employee_code: emp.employee_code,
+        error: 'No email address',
+      });
+      continue;
+    }
+
+    try {
+      void customMessage; // reserved for future custom reminder template
+      await sendRejectedEmail({
+        candidateId: emp.id,
+        to: emp.official_email,
+        candidateName: emp.full_name,
+        branchName: '',
+      });
+      result.sent++;
+    } catch (error: unknown) {
+      result.failed++;
+      result.errors.push({
+        employee_id: emp.id,
+        employee_code: emp.employee_code,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return result;
+}
+
+// ─── bulkGenerateChecklists ───────────────────────────────────────────────────
+
+export async function bulkGenerateChecklists(
+  employeeIds: string[],
+  actorUserId: string
+): Promise<BulkGenerateResult> {
+  const result: BulkGenerateResult = {
+    success: true,
+    generated: 0,
+    skipped: 0,
+    errors: [],
+  };
+
+  const [employees] = await db.execute<RowDataPacket[]>(
+    `SELECT id, employee_code, full_name
+     FROM employees
+     WHERE id IN (?) AND active_status = 1`,
+    [employeeIds]
+  );
+
+  for (const emp of employees as Array<{
+    id: string;
+    employee_code: string;
+    full_name: string;
+  }>) {
+    // Check if checklist already exists
+    const [existing] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM employee_joining_document_checklist WHERE employee_id = ? LIMIT 1`,
+      [emp.id]
+    );
+
+    if (existing.length > 0) {
+      result.skipped++;
+      continue;
+    }
+
+    try {
+      await generateJoiningDocumentChecklist(emp.id, actorUserId);
+      result.generated++;
+    } catch (error: unknown) {
+      result.errors.push({
+        employee_id: emp.id,
+        employee_code: emp.employee_code,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return result;
 }
