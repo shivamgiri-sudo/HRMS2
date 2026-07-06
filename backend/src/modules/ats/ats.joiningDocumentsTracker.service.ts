@@ -156,20 +156,27 @@ export async function getJoiningDocumentsTracker(
   // Branch Head scoping
   if (isBranchHead) {
     const actorEmployee = await getEmployeeForUser(actorUserId);
+    let actorBranchId: string | undefined;
     if (actorEmployee?.id) {
       // Fetch branch_id for the actor's employee record
       const [branchRows] = await db.execute<RowDataPacket[]>(
         'SELECT branch_id FROM employees WHERE id = ? LIMIT 1',
         [actorEmployee.id]
       );
-      const actorBranchId = (branchRows[0] as { branch_id: string } | undefined)?.branch_id;
-
-      if (actorBranchId) {
-        whereClauses.push('e.branch_id = ?');
-        params.push(actorBranchId);
-      }
+      actorBranchId = (branchRows[0] as { branch_id: string } | undefined)?.branch_id;
     }
+    if (!actorBranchId) {
+      // Cannot resolve a branch for this branch_head — return empty rather than
+      // falling through to an unrestricted query.
+      return { employees: [], summary: calculateTrackerSummary([]) };
+    }
+    whereClauses.push('e.branch_id = ?');
+    params.push(actorBranchId);
   }
+
+  // Note: filters.status and filters.document_code are declared in TrackerQueryParams
+  // but are not yet applied as SQL WHERE conditions. They are reserved for
+  // route-level post-processing or a future enhancement task.
 
   // Apply filters
   if (filters.branch_id) {
