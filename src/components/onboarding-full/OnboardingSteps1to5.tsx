@@ -327,12 +327,14 @@ export function Step2Personal({
 // ── Step 3: Address & KYC ─────────────────────────────────────────────────────
 
 export function Step3AddressKyc({
-  employee, setEmployee, saving, onSave,
+  employee, setEmployee, saving, onSave, digilockerStatus, onDigilocker,
 }: {
   employee: EmployeeForm;
   setEmployee: React.Dispatch<React.SetStateAction<EmployeeForm>>;
   saving: boolean;
   onSave: () => void;
+  digilockerStatus?: string;
+  onDigilocker?: () => void;
 }) {
   const upd = (k: keyof EmployeeForm, v: string) => setEmployee((p) => ({ ...p, [k]: v }));
   const [sameAddr, setSameAddr] = useState(() =>

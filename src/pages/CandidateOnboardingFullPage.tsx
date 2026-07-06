@@ -156,6 +156,8 @@ export default function CandidateOnboardingFullPage() {
           setEmployee={onb.setEmployee}
           saving={onb.saving}
           onSave={onb.saveEmployee}
+          digilockerStatus={onb.status?.digilocker?.status}
+          onDigilocker={onb.startDigilocker}
         />
       )}
 
