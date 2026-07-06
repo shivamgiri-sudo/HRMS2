@@ -7,6 +7,9 @@ vi.mock('../ats.joiningDocumentsTracker.service.js', () => ({
   getJoiningDocumentsTracker: vi.fn(),
   sendBulkReminders: vi.fn(),
   bulkGenerateChecklists: vi.fn(),
+  bulkAssignHR: vi.fn(),
+  bulkSetDueDate: vi.fn(),
+  bulkVerifyDocuments: vi.fn(),
 }));
 
 // Mock the middleware modules
@@ -22,7 +25,7 @@ vi.mock('../../../middleware/requireRole.js', () => ({
     (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 
-import { getJoiningDocumentsTracker, sendBulkReminders, bulkGenerateChecklists } from '../ats.joiningDocumentsTracker.service.js';
+import { getJoiningDocumentsTracker, sendBulkReminders, bulkGenerateChecklists, bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments } from '../ats.joiningDocumentsTracker.service.js';
 
 describe('GET /joining-documents-tracker', () => {
   let app: express.Application;
@@ -280,5 +283,234 @@ describe('POST /joining-documents-tracker/bulk-generate-checklist', () => {
 
     expect(response.status).toBe(500);
     expect(response.body).toMatchObject({ success: false, message: 'Failed to generate checklists' });
+  });
+});
+
+// ─── Task 5: Bulk Assign HR route tests ──────────────────────────────────────
+
+describe('POST /joining-documents-tracker/bulk-assign', () => {
+  let app: express.Application;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
+    app = express();
+    app.use(express.json());
+    app.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
+  });
+
+  it('should return 400 when employee_ids is missing', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-assign')
+      .set('Authorization', 'Bearer test-token')
+      .send({ assigned_hr_user_id: 'hr-1' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
+  });
+
+  it('should return 400 when assigned_hr_user_id is missing', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-assign')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1'] });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'assigned_hr_user_id is required' });
+  });
+
+  it('should return 400 when employee_ids is empty array', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-assign')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: [], assigned_hr_user_id: 'hr-1' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
+  });
+
+  it('should call bulkAssignHR and return result on success', async () => {
+    const mockResult = { success: true as const, updated: 3 };
+    vi.mocked(bulkAssignHR).mockResolvedValueOnce(mockResult);
+
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-assign')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1', 'emp-2'], assigned_hr_user_id: 'hr-user-42' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(mockResult);
+    expect(bulkAssignHR).toHaveBeenCalledWith(['emp-1', 'emp-2'], 'hr-user-42', 'test-user-id');
+  });
+
+  it('should return 500 when service throws', async () => {
+    vi.mocked(bulkAssignHR).mockRejectedValueOnce(new Error('DB error'));
+
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-assign')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1'], assigned_hr_user_id: 'hr-1' });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toMatchObject({ success: false, message: 'Failed to assign HR' });
+  });
+});
+
+// ─── Task 5: Bulk Set Due Date route tests ────────────────────────────────────
+
+describe('POST /joining-documents-tracker/bulk-set-due-date', () => {
+  let app: express.Application;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
+    app = express();
+    app.use(express.json());
+    app.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
+  });
+
+  it('should return 400 when employee_ids is missing', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-set-due-date')
+      .set('Authorization', 'Bearer test-token')
+      .send({ due_date: '2026-08-01' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
+  });
+
+  it('should return 400 when due_date is missing', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-set-due-date')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1'] });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'due_date is required' });
+  });
+
+  it('should call bulkSetDueDate with null document_codes when not provided', async () => {
+    const mockResult = { success: true as const, updated: 5 };
+    vi.mocked(bulkSetDueDate).mockResolvedValueOnce(mockResult);
+
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-set-due-date')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1', 'emp-2'], due_date: '2026-08-01' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(mockResult);
+    expect(bulkSetDueDate).toHaveBeenCalledWith(['emp-1', 'emp-2'], '2026-08-01', null, 'test-user-id');
+  });
+
+  it('should pass document_codes when provided', async () => {
+    const mockResult = { success: true as const, updated: 2 };
+    vi.mocked(bulkSetDueDate).mockResolvedValueOnce(mockResult);
+
+    await request(app)
+      .post('/joining-documents-tracker/bulk-set-due-date')
+      .set('Authorization', 'Bearer test-token')
+      .send({
+        employee_ids: ['emp-1'],
+        due_date: '2026-08-15',
+        document_codes: ['APPOINTMENT_LETTER', 'ID_PROOF'],
+      });
+
+    expect(bulkSetDueDate).toHaveBeenCalledWith(
+      ['emp-1'],
+      '2026-08-15',
+      ['APPOINTMENT_LETTER', 'ID_PROOF'],
+      'test-user-id'
+    );
+  });
+
+  it('should return 500 when service throws', async () => {
+    vi.mocked(bulkSetDueDate).mockRejectedValueOnce(new Error('DB error'));
+
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-set-due-date')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1'], due_date: '2026-08-01' });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toMatchObject({ success: false, message: 'Failed to set due dates' });
+  });
+});
+
+// ─── Task 5: Bulk Verify route tests ─────────────────────────────────────────
+
+describe('POST /joining-documents-tracker/bulk-verify', () => {
+  let app: express.Application;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
+    app = express();
+    app.use(express.json());
+    app.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
+  });
+
+  it('should return 400 when employee_ids is missing', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-verify')
+      .set('Authorization', 'Bearer test-token')
+      .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
+  });
+
+  it('should return 400 when employee_ids is empty array', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-verify')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: [] });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
+  });
+
+  it('should call bulkVerifyDocuments and return result on success', async () => {
+    const mockResult = { success: true as const, verified: 4, errors: [] };
+    vi.mocked(bulkVerifyDocuments).mockResolvedValueOnce(mockResult);
+
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-verify')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1', 'emp-2'] });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(mockResult);
+    expect(bulkVerifyDocuments).toHaveBeenCalledWith(['emp-1', 'emp-2'], 'test-user-id');
+  });
+
+  it('should return partial success with errors array when some employees fail', async () => {
+    const mockResult = {
+      success: true as const,
+      verified: 2,
+      errors: [{ employee_id: 'emp-3', employee_code: 'EMP003', error: 'Not found' }],
+    };
+    vi.mocked(bulkVerifyDocuments).mockResolvedValueOnce(mockResult);
+
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-verify')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1', 'emp-2', 'emp-3'] });
+
+    expect(response.status).toBe(200);
+    expect(response.body.errors).toHaveLength(1);
+    expect(response.body.verified).toBe(2);
+  });
+
+  it('should return 500 when service throws', async () => {
+    vi.mocked(bulkVerifyDocuments).mockRejectedValueOnce(new Error('DB error'));
+
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-verify')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1'] });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toMatchObject({ success: false, message: 'Failed to verify documents' });
   });
 });
