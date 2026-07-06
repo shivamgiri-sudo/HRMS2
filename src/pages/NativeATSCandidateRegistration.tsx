@@ -574,10 +574,10 @@ export default function NativeATSCandidateRegistration() {
     const res = await hrmsApi.get('/api/ats/form-config/bootstrap').catch(() => null);
     const data = res?.data;
     if (data) {
-      // Use branch aliases (display names) if available, otherwise fall back to canonical names
+      // Use branch aliases (display names) if available, otherwise fall back to canonical names from database
       const branchOptions = data.branchAliases && data.branchAliases.length > 0
         ? data.branchAliases.map((a: BranchAlias) => a.display)
-        : data.branchOptions ?? ["Mumbai","Delhi","Bangalore"];
+        : data.branchOptions ?? [];
 
       setBootstrap({
         companyName:             "Mas Callnet India Pvt Ltd",
@@ -596,6 +596,7 @@ export default function NativeATSCandidateRegistration() {
         nightShiftComfortOptions:data.nightShiftComfortOptions ?? ["Comfortable","Not Comfortable","On Request"],
       });
     } else {
+      // API failed - show error, don't use hardcoded fallbacks
       setBootstrap({
         companyName:              "Mas Callnet India Pvt Ltd",
         educationOptions:         ["10th Pass","12th Pass","Graduate","Post Graduate","Diploma"],
@@ -603,13 +604,19 @@ export default function NativeATSCandidateRegistration() {
         genderOptions:            ["Male","Female","Other"],
         roleOptions:              ["Inbound Agent","Outbound Agent","Back Office","Team Leader","Quality Analyst"],
         recruiterOptions:         ["Admin","HR Team","Sourcer"],
-        branchOptions:            ["Mumbai","Delhi","Bangalore","Hyderabad","Chennai","Pune"],
+        branchOptions:            [],
         branchAliases:            [],
         sourceOptions:            ["Walk-In", "Reference", "Other"],
         yesNoOptions:             ["Yes","No"],
         preferredShiftOptions:    ["Morning","Afternoon","Night","Rotational"],
         nightShiftComfortOptions: ["Comfortable","Not Comfortable","On Request"],
       });
+      // Show error if no branches available
+      if (!data || !data.branchOptions || data.branchOptions.length === 0) {
+        setSubmitError("Unable to load branch list. Please contact HR or try again later.");
+        setScreen("error");
+        return;
+      }
     }
     setScreen("welcome");
   } catch (err: any) {

@@ -385,7 +385,15 @@ export function useOnboardingFull(token: string) {
   const saveEmployee = async () => {
     setSaving(true);
     try {
-      await hrmsApi.post(`${API}/employee-details`, { token, ...employee });
+      // Auto-calculate nominee share percentages
+      const hasNominee2 = employee.nominee2Name?.trim();
+      const employeeWithShares = {
+        ...employee,
+        nominee1SharePct: hasNominee2 ? "50" : "100",
+        nominee2SharePct: hasNominee2 ? "50" : "0",
+      };
+
+      await hrmsApi.post(`${API}/employee-details`, { token, ...employeeWithShares });
       updateSectionStatus("personal", true).catch((e) => console.warn("[onboarding] Background operation failed:", e));
       await load();
     } catch (e: any) {

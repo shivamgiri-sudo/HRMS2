@@ -292,8 +292,6 @@ export function Step2Personal({
           </div>
           <F label="Relation" value={employee.nomineeRelation} onChange={(v) => upd("nomineeRelation", v)} opts={NOM_RELS} required />
           <F label="Date of Birth" value={employee.nomineeDateOfBirth} onChange={(v) => upd("nomineeDateOfBirth", v)} type="date" />
-          <F label="Share %" value={employee.nominee1SharePct} onChange={(v) => upd("nominee1SharePct", v)}
-            mode="numeric" placeholder="100" helpText="Must total 100% across all nominees" />
         </div>
 
         <SectionHead sub="Optional — add a second nominee">Nominee 2 (Optional)</SectionHead>
@@ -303,31 +301,16 @@ export function Step2Personal({
           </div>
           <F label="Relation" value={employee.nominee2Relation} onChange={(v) => upd("nominee2Relation", v)} opts={NOM_RELS} />
           <F label="Date of Birth" value={employee.nominee2Dob} onChange={(v) => upd("nominee2Dob", v)} type="date" />
-          <F label="Share %" value={employee.nominee2SharePct} onChange={(v) => upd("nominee2SharePct", v)} mode="numeric" />
         </div>
 
-        {(() => {
-          const s1 = parseFloat(employee.nominee1SharePct || "0");
-          const s2 = parseFloat(employee.nominee2SharePct || "0");
-          const total = s1 + s2;
-          if (employee.nominee2Name && total !== 100) {
-            return (
-              <div className="mt-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2 text-sm font-semibold text-amber-800">
-                ⚠ Nominee share % total is {total}% — must equal 100% when two nominees are added.
-              </div>
-            );
-          }
-          return null;
-        })()}
+        <div className="mt-2 rounded-lg bg-blue-50 border border-blue-200 px-4 py-2 text-xs text-blue-800">
+          ℹ️ Share percentages are auto-calculated: {employee.nominee2Name?.trim() ? "50% each if two nominees" : "100% for primary nominee"}
+        </div>
 
         <div className="mt-6 flex gap-3 justify-end">
           <Button
             onClick={onSave}
-            disabled={saving || Boolean(dobError) || (() => {
-              const s1 = parseFloat(employee.nominee1SharePct || "0");
-              const s2 = parseFloat(employee.nominee2SharePct || "0");
-              return Boolean(employee.nominee2Name) && (s1 + s2) !== 100;
-            })()}
+            disabled={saving || Boolean(dobError)}
             size="lg"
             className="min-h-[52px] px-8 text-base font-bold bg-blue-600 hover:bg-blue-700 rounded-xl shadow-lg"
           >
