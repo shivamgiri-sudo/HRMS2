@@ -262,7 +262,7 @@ ON DUPLICATE KEY UPDATE status=VALUES(status);
 INSERT INTO performance_feedback_cycle (cycle_id, cycle_name, period, start_date, end_date, deadline, status, feedback_type, created_by)
 VALUES
   ('pf-cycle-001','Q1 2026 Performance Review','Q1-2026','2026-01-01','2026-03-31','2026-04-15','active','360',  'emp-hr-001'),
-  ('pf-cycle-002','Annual Appraisal 2025-26',  'FY25-26', '2025-04-01','2026-03-31','2026-04-30','active','annual','emp-hr-001')
+  ('pf-cycle-002','Annual Appraisal 2025-26',  'FY25-26', '2025-04-01','2026-03-31','2026-04-30','active','360','emp-hr-001')
 ON DUPLICATE KEY UPDATE status=VALUES(status);
 
 INSERT INTO performance_feedback_request (request_id, cycle_id, employee_id, reviewer_id, reviewer_type, status)
