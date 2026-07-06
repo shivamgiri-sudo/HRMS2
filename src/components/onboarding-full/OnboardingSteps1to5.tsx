@@ -377,16 +377,54 @@ export function Step3AddressKyc({
     <Card className="border-t-4 border-t-purple-500 shadow-sm border border-slate-200 rounded-xl overflow-hidden">
       <div className="px-5 pt-4 pb-3 border-b border-slate-100">
         <div className="flex items-center gap-2.5">
-          <span className="flex-shrink-0 w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center text-lg">📍</span>
+          <span className="flex-shrink-0 w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center text-lg">🔗</span>
           <div>
-            <CardTitle className="text-sm font-bold text-slate-900">Address & KYC Details</CardTitle>
-            <p className="text-xs text-slate-500 mt-0.5">Your addresses and identity documents</p>
+            <CardTitle className="text-sm font-bold text-slate-900">DigiLocker & KYC Details</CardTitle>
+            <p className="text-xs text-slate-500 mt-0.5">Connect DigiLocker first, then enter addresses</p>
           </div>
         </div>
       </div>
       <CardContent className="pt-4 px-5 pb-5">
 
-        <SectionHead sub="As on Aadhaar / official document">Permanent Address</SectionHead>
+        {/* DigiLocker Section - MOVED HERE from Step 5 */}
+        <SectionHead sub="Recommended — fetches Aadhaar + PAN from government">Step 1: Connect DigiLocker (Optional)</SectionHead>
+        <InfoBox variant="info">
+          <p className="text-xs">
+            <strong>🚀 Fast Track:</strong> Connect to government DigiLocker to automatically fetch your
+            Aadhaar and PAN documents. This will pre-fill your KYC details below and save you time!
+            <br /><br />
+            <strong>How it works:</strong> Click the button → Redirected to government portal →
+            Authenticate → Return here with Aadhaar + PAN auto-filled.
+          </p>
+        </InfoBox>
+
+        {digilockerStatus === "documents_received" ? (
+          <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 flex items-center gap-3">
+            <CheckCircle2 className="h-5 w-5 text-emerald-700 flex-shrink-0" />
+            <div>
+              <p className="text-sm font-bold text-emerald-900">DigiLocker Connected ✓</p>
+              <p className="text-xs text-emerald-700">Aadhaar and PAN fetched successfully. Check KYC fields below!</p>
+            </div>
+          </div>
+        ) : (
+          <Button
+            onClick={onDigilocker}
+            disabled={saving}
+            size="lg"
+            className="mt-3 min-h-[52px] px-8 text-base font-bold rounded-lg bg-indigo-600 hover:bg-indigo-700"
+          >
+            {saving ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                Redirecting to DigiLocker...
+              </>
+            ) : (
+              <>🔗 Connect DigiLocker</>
+            )}
+          </Button>
+        )}
+
+        <SectionHead sub="As on Aadhaar / official document">Step 2: Permanent Address</SectionHead>
         <div className="space-y-3">
           <T label="Full Permanent Address" value={employee.permanentAddress}
             onChange={(v) => syncPermanent("permanentAddress", v)} required
@@ -439,20 +477,26 @@ export function Step3AddressKyc({
           ))}
         </div>
 
-        <SectionHead sub="Required for onboarding — enter carefully">KYC Identity Numbers</SectionHead>
-        <InfoBox variant="warning">
-          <p className="font-bold mb-1">Security Note</p>
-          <p className="text-xs">These numbers are hashed and stored securely. PAN and Aadhaar are never shown in plain text after submission.</p>
+        <SectionHead sub="Required for onboarding — enter carefully">Step 3: KYC Identity Numbers</SectionHead>
+        <InfoBox variant={digilockerStatus === "documents_received" ? "success" : "warning"}>
+          <p className="font-bold mb-1">{digilockerStatus === "documents_received" ? "✓ Auto-filled from DigiLocker" : "Security Note"}</p>
+          <p className="text-xs">
+            {digilockerStatus === "documents_received"
+              ? "Your PAN and Aadhaar have been fetched from government DigiLocker. Verify and edit if needed."
+              : "These numbers are hashed and stored securely. PAN and Aadhaar are never shown in plain text after submission."}
+          </p>
         </InfoBox>
         <div className="grid gap-4 sm:grid-cols-2 mt-4">
           <F label="PAN Number" value={employee.panNumber} onChange={(v) => upd("panNumber", v.toUpperCase())}
             required placeholder="ABCDE1234F"
             error={!panOk ? "Invalid PAN format (e.g. ABCDE1234F)" : ""}
-            helpText="10-character PAN — required for tax compliance" />
+            helpText={digilockerStatus === "documents_received" ? "✓ Auto-filled from DigiLocker" : "10-character PAN — required for tax compliance"}
+            prefilled={digilockerStatus === "documents_received"} />
           <F label="Aadhaar Number" value={employee.aadhaarNumber} onChange={(v) => upd("aadhaarNumber", v.replace(/\D/g, ""))}
             mode="numeric" required placeholder="12-digit number"
             error={!aadhaarOk ? "Aadhaar must be exactly 12 digits" : ""}
-            helpText="Your 12-digit Aadhaar — not displayed after save" />
+            helpText={digilockerStatus === "documents_received" ? "✓ Auto-filled from DigiLocker" : "Your 12-digit Aadhaar — not displayed after save"}
+            prefilled={digilockerStatus === "documents_received"} />
           <F label="Passport Number" value={employee.passportNo} onChange={(v) => upd("passportNo", v.toUpperCase())}
             placeholder="Optional" helpText="Leave blank if not applicable" />
           <F label="Driving License Number" value={employee.drivingLicenseNo} onChange={(v) => upd("drivingLicenseNo", v.toUpperCase())}
@@ -539,6 +583,23 @@ export function Step4Documents({
         </div>
       </div>
       <CardContent className="pt-4 px-5 pb-5 space-y-5">
+
+        <InfoBox variant="info">
+          <p className="text-xs">
+            {status?.digilocker?.status === "documents_received" ? (
+              <>
+                <strong>✓ Aadhaar and PAN already fetched</strong> from DigiLocker in the previous step.
+                Now upload your <strong>photo, education certificates, and any other documents</strong> required for verification.
+              </>
+            ) : (
+              <>
+                <strong>Upload at least 3 documents</strong> including your photo, Aadhaar, PAN, and education certificates.
+                <br />
+                <strong>Tip:</strong> Connect DigiLocker in Step 3 to skip manual Aadhaar/PAN upload!
+              </>
+            )}
+          </p>
+        </InfoBox>
 
         {consentAccepted && (
           <InfoBox variant="success">
@@ -751,8 +812,8 @@ export function Step5Bgv({
         <div className="flex items-center gap-2.5">
           <span className="flex-shrink-0 w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-lg">🛡️</span>
           <div>
-            <CardTitle className="text-sm font-bold text-slate-900">BGV Consent & Verification</CardTitle>
-            <p className="text-xs text-slate-500 mt-0.5">Background verification and digital identity check</p>
+            <CardTitle className="text-sm font-bold text-slate-900">Background Verification</CardTitle>
+            <p className="text-xs text-slate-500 mt-0.5">Consent and optional additional verifications</p>
           </div>
         </div>
       </div>
@@ -816,19 +877,15 @@ export function Step5Bgv({
 
         {/* Verification buttons */}
         <div>
-          <p className="text-xs font-black uppercase tracking-wide text-slate-500 mb-2">Run Verifications</p>
+          <p className="text-xs font-black uppercase tracking-wide text-slate-500 mb-2">Additional Verifications</p>
           <InfoBox variant="info">
             <p className="text-xs">
-              <strong>DigiLocker (Recommended):</strong> Fetches Aadhaar + PAN directly from government.
-              Auto-verifies both — no separate clicks needed. Use individual buttons only if DigiLocker unavailable.
+              <strong>Optional verifications:</strong> Use these buttons if you need to verify specific details.
+              If you connected DigiLocker in Step 3, your Aadhaar and PAN are already fetched.
             </p>
           </InfoBox>
-          <div className="mt-3 mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-            DigiLocker status: <span className="font-bold capitalize text-slate-900">{digilockerStatus || "not_started"}</span>
-          </div>
-          <div className="grid gap-2 grid-cols-2">
+          <div className="grid gap-2 grid-cols-2 mt-3">
             {[
-              { label: "DigiLocker Link", onClick: onDigilocker, icon: "🔗", highlight: true },
               { label: "Verify Aadhaar", onClick: onVerifyAadhaar, icon: "🪪" },
               { label: "Verify PAN", onClick: onVerifyPan, icon: "📋" },
               { label: "Verify Bank A/C", onClick: onVerifyBank, icon: "🏦" },
