@@ -36,7 +36,7 @@ async function logEmail(
 ) {
   try {
     await db.execute(
-      `INSERT INTO ats_email_log (id, candidate_id, email_type, sent_to, status, error_message)
+      `INSERT IGNORE INTO ats_email_log (id, candidate_id, email_type, sent_to, status, error_message)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [randomUUID(), candidateId, type, sentTo, status, error ?? null],
     );
@@ -398,6 +398,34 @@ export async function sendBranchHeadApprovalEmail(params: {
     html,
     params.candidateId,
     'branch_head_approval',
+  );
+}
+
+export async function sendPayrollHrJoiningDocNotification(params: {
+  to: string;
+  hrName: string;
+  employeeCode: string;
+  employeeName: string;
+  joiningDocUrl: string;
+  candidateId?: string;
+}): Promise<SendResult> {
+  const cid = params.candidateId ?? params.employeeCode;
+  return send(
+    params.to,
+    `Action Required: Issue Joining Documents for ${params.employeeCode}`,
+    atsFrame({
+      eyebrow: "Post-Onboarding Action",
+      title: `Issue Joining Documents — ${params.employeeCode}`,
+      body: `<p>Dear <strong>${escapeHtml(params.hrName)}</strong>,</p>
+        <p>The offer for <strong>${escapeHtml(params.employeeName)}</strong> has been approved by the Branch Head.
+        The employee code <strong>${escapeHtml(params.employeeCode)}</strong> has been activated.</p>
+        <p>Please issue the joining documents (appointment letter, NDA, welcome kit) at your earliest convenience.</p>`,
+      actionLabel: "Open Joining Documents",
+      actionUrl: params.joiningDocUrl,
+      note: "This action is assigned to Payroll HR. The joining document issue is required before the employee's first day.",
+    }),
+    cid,
+    'payroll_hr_notification',
   );
 }
 

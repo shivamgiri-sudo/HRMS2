@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
 import PDFDocumentKit from "pdfkit";
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import pdfLib from "pdf-lib";
+const { PDFDocument, StandardFonts } = pdfLib;
 import PizZip from "pizzip";
 import type { RowDataPacket } from "mysql2";
 

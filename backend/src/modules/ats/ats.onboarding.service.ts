@@ -807,6 +807,34 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
     });
   }
 
+  // Notify Payroll HR to issue joining documents
+  try {
+    const branchId: string | null = (offer.resolved_branch_id ?? offer.applied_for_branch) || null;
+    const [hrRows] = await db.execute<RowDataPacket[]>(
+      `SELECT u.email, u.full_name
+         FROM auth_user u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN employees e ON e.user_id = u.id AND e.active_status = 1
+        WHERE ur.role_key = 'payroll_hr'
+          AND (? IS NULL OR e.branch_id = ?)
+        LIMIT 3`,
+      [branchId, branchId],
+    );
+    const { sendPayrollHrJoiningDocNotification } = await import('./ats.email.service.js');
+    for (const hr of hrRows as RowDataPacket[]) {
+      await sendPayrollHrJoiningDocNotification({
+        to: hr.email,
+        hrName: hr.full_name,
+        employeeCode,
+        employeeName: offer.full_name,
+        joiningDocUrl: `${baseUrl}/employees/${employeeId}/joining-documents`,
+        candidateId,
+      }).catch((err: unknown) => console.error('[approveOffer] payroll-hr email failed', err));
+    }
+  } catch (err: unknown) {
+    console.error('[approveOffer] payroll-hr notification failed', err);
+  }
+
   return { employeeId, employeeCode };
 }
 

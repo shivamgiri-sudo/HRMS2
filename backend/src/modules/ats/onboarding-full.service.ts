@@ -14,6 +14,13 @@ type ActorType = "candidate" | "hr" | "system";
 type AuthenticatedUser = NonNullable<AuthenticatedRequest["authUser"]>;
 export type OnboardingScopeFilter = { sql: string; params: unknown[] };
 
+function normDate(value: unknown): string | null {
+  if (value == null) return null;
+  const s = String(value).trim();
+  if (!s || s === "0000-00-00" || s === "dd-mm-yyyy") return null;
+  return s;
+}
+
 function normalizeCandidateScopeSql(sql: string) {
   return sql
     .replaceAll("c.applied_for_branch", "COALESCE(br_scope.id, c.applied_for_branch)")
@@ -528,8 +535,8 @@ async function triggerBgvAfterOnboardingSubmit(candidateId: string, meta?: { ip?
 
   await db.execute(
     `INSERT INTO candidate_bgv_report (id, candidate_id, overall_status, bgv_score, hr_remarks)
-     VALUES (?, ?, 'verified', 100, 'Auto-approved after onboarding profile submission')
-     ON DUPLICATE KEY UPDATE overall_status = 'verified', bgv_score = 100, hr_remarks = VALUES(hr_remarks), updated_at = NOW()`,
+     VALUES (?, ?, 'clear', 100, 'Auto-approved after onboarding profile submission')
+     ON DUPLICATE KEY UPDATE overall_status = 'clear', bgv_score = 100, hr_remarks = VALUES(hr_remarks), updated_at = NOW()`,
     [randomUUID(), candidateId]
   );
 
@@ -702,12 +709,12 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       input.bloodGroup ?? null,
       input.nominee ?? input.nomineeName ?? null,
       input.nomineeRelation ?? null,
-      input.nomineeDateOfBirth ?? null,
-      input.nominee1SharePct ?? null,
-      input.nominee2Name ?? null,
-      input.nominee2Relation ?? null,
-      input.nominee2Dob ?? null,
-      input.nominee2SharePct ?? null,
+      normDate(input.nomineeDateOfBirth),
+      input.nominee1SharePct || null,
+      input.nominee2Name || null,
+      input.nominee2Relation || null,
+      normDate(input.nominee2Dob),
+      input.nominee2SharePct || null,
       input.permanentAddress ?? null,
       input.permanentState ?? null,
       input.permanentCity ?? null,
@@ -914,13 +921,13 @@ export async function addQualification(token: string, input: Record<string, unkn
     [
       id,
       candidateId,
-      input.qualification ?? null,
-      input.specializationCourseName ?? input.specialization ?? null,
-      input.passedOutYear ?? null,
-      input.passedOutState ?? null,
-      input.passedOutCity ?? null,
-      input.passedOutPercentage ?? input.percentage ?? null,
-      input.documentId ?? null,
+      input.qualification || null,
+      input.specializationCourseName || input.specialization || null,
+      input.passedOutYear || null,
+      input.passedOutState || null,
+      input.passedOutCity || null,
+      input.passedOutPercentage || input.percentage || null,
+      input.documentId || null,
     ]
   );
   await logCandidateAction(candidateId, "ADD_QUALIFICATION", input, meta);
@@ -934,7 +941,7 @@ export async function saveFamilyDetails(token: string, input: Record<string, unk
     `INSERT INTO candidate_onboarding_family (id, candidate_id, annual_income, count_of_dependents)
      VALUES (?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE annual_income = VALUES(annual_income), count_of_dependents = VALUES(count_of_dependents), updated_at = NOW()`,
-    [randomUUID(), candidateId, input.annualIncome ?? null, input.countOfDependents ?? null]
+    [randomUUID(), candidateId, input.annualIncome || null, input.countOfDependents || null]
   );
   await logCandidateAction(candidateId, "SAVE_FAMILY_DETAILS", input, meta);
   return getFullOnboardingStatus(token);
@@ -955,13 +962,13 @@ export async function saveExperienceDetails(token: string, input: Record<string,
     [
       randomUUID(),
       candidateId,
-      input.workingExperience ?? "fresher",
-      input.experienceYear ?? null,
-      input.experienceDocType ?? null,
-      input.experienceDocumentId ?? null,
-      input.employerName ?? null,
-      input.lastDesignation ?? null,
-      input.lastCtc ?? null,
+      (String(input.workingExperience ?? "fresher")).substring(0, 50),
+      (input.experienceYear || input.experienceYear === 0) ? Number(input.experienceYear) || null : null,
+      input.experienceDocType || null,
+      input.experienceDocumentId || null,
+      input.employerName || null,
+      input.lastDesignation || null,
+      input.lastCtc || null,
     ]
   );
   await logCandidateAction(candidateId, "SAVE_EXPERIENCE_DETAILS", input, meta);
@@ -1079,7 +1086,7 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
       candidateId,
       input.docType ?? input.doc_type ?? "Other",
       input.docName ?? input.doc_name ?? file.originalname,
-      input.pageNo ?? input.page_no ?? null,
+      (input.pageNo || input.page_no) ? Number(input.pageNo ?? input.page_no) || null : null,
       file.originalname,
       file.path,
       fileUrl,

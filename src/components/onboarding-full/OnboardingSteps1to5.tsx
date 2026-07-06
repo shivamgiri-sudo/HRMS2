@@ -691,7 +691,7 @@ export function Step4Documents({
 
           <div className="space-y-2">
             <Label className="text-sm font-semibold text-slate-700">
-              Select File * <span className="font-normal text-slate-500">(PDF, JPG, PNG — max 5 MB)</span>
+              Select File * <span className="font-normal text-slate-500">(PDF, JPG, PNG, WEBP — max 5 MB)</span>
             </Label>
             <label className="flex items-center gap-3 cursor-pointer rounded-xl border-2 border-dashed border-orange-300 bg-orange-50 hover:bg-orange-100 transition-colors px-4 py-3 min-h-[52px]">
               <Camera className="h-5 w-5 text-orange-500 flex-shrink-0" />

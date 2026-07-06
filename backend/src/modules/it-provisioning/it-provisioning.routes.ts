@@ -34,6 +34,30 @@ function clean(value: unknown): string {
   return String(value ?? '').trim();
 }
 
+async function persistStructuredFields(taskId: string, body: Record<string, unknown>) {
+  const officialEmail  = clean(body.official_email)   || null;
+  const domainAccount  = clean(body.domain_account)   || null;
+  const assetTag       = clean(body.asset_tag)        || null;
+  const biometricDone  = body.biometric_enrolled != null ? (body.biometric_enrolled ? 1 : 0) : null;
+  const idCardDone     = body.id_card_printed    != null ? (body.id_card_printed    ? 1 : 0) : null;
+
+  // Only UPDATE if at least one structured field was sent
+  if (!officialEmail && !domainAccount && !assetTag && biometricDone == null && idCardDone == null) return;
+
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  if (officialEmail  !== null) { sets.push('official_email = ?');     vals.push(officialEmail); }
+  if (domainAccount  !== null) { sets.push('domain_account = ?');     vals.push(domainAccount); }
+  if (assetTag       !== null) { sets.push('asset_tag = ?');          vals.push(assetTag); }
+  if (biometricDone  != null)  { sets.push('biometric_enrolled = ?'); vals.push(biometricDone); }
+  if (idCardDone     != null)  { sets.push('id_card_printed = ?');    vals.push(idCardDone); }
+
+  if (sets.length) {
+    vals.push(taskId);
+    await db.execute(`UPDATE it_provisioning_request SET ${sets.join(', ')} WHERE id = ?`, vals);
+  }
+}
+
 function firstEvidence(body: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
     const value = clean(body[key]);
@@ -263,11 +287,27 @@ router.patch('/tasks/:id', requireRole(...PROVISIONING_ROLES), h(async (req: Aut
   if (note) {
     await actionProvisioningRequest({ requestId: req.params.id, actionedBy: req.authUser!.id, evidenceNote: String(note) });
   }
+  // Persist structured IT/Admin fields if provided
+  await persistStructuredFields(req.params.id, req.body);
   const data = await getProvisioningRequest(req.params.id);
   return res.json({ success: true, data });
 }));
 
 router.post('/tasks/:id/complete', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  // Validate mandatory fields for IT tasks before marking complete
+  const [taskRows] = await db.execute<RowDataPacket[]>(
+    `SELECT task_code FROM it_provisioning_request WHERE id = ? LIMIT 1`,
+    [req.params.id],
+  );
+  const taskCode: string = (taskRows as RowDataPacket[])[0]?.task_code ?? '';
+  if (taskCode === 'IT_EMAIL_DOMAIN_ASSET') {
+    const officialEmail = String(req.body.official_email ?? '').trim();
+    const domainAccount = String(req.body.domain_account ?? '').trim();
+    if (!officialEmail || !domainAccount) {
+      return res.status(400).json({ success: false, message: 'official_email and domain_account are required for IT tasks' });
+    }
+  }
+  await persistStructuredFields(req.params.id, req.body);
   await actionProvisioningRequest({ requestId: req.params.id, actionedBy: req.authUser!.id, evidenceNote: req.body.evidence_note ?? 'Completed from provisioning queue' });
   const data = await getProvisioningRequest(req.params.id);
   return res.json({ success: true, data });
@@ -333,6 +373,70 @@ router.post('/requests/:id/confirm', requireRole('admin', 'hr'), h(async (req: A
   await confirmAndLockRequest(req.params.id, req.authUser!.id);
   const data = await getProvisioningRequest(req.params.id);
   return res.json({ success: true, data });
+}));
+
+// ── GET /api/it-provisioning/tasks/:id/candidate-report ──────────────────────
+router.get('/tasks/:id/candidate-report', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       ipr.id AS task_id, ipr.task_code, ipr.status, ipr.locked,
+       ipr.official_email, ipr.domain_account, ipr.asset_tag,
+       ipr.biometric_enrolled, ipr.id_card_printed, ipr.evidence_note,
+       ipr.requested_at, ipr.actioned_at,
+       e.id AS employee_id, e.employee_code, e.first_name, e.last_name,
+       e.personal_email, e.mobile, e.designation, e.date_of_joining,
+       b.name AS branch_name, p.name AS process_name
+     FROM it_provisioning_request ipr
+     JOIN employees e ON e.id = ipr.employee_id
+     LEFT JOIN branches b ON b.id = e.branch_id
+     LEFT JOIN processes p ON p.id = e.process_id
+     WHERE ipr.id = ?
+     LIMIT 1`,
+    [req.params.id],
+  );
+  if (!(rows as RowDataPacket[]).length) return res.status(404).json({ success: false, message: 'Task not found' });
+  const row = (rows as RowDataPacket[])[0];
+  // Mask mobile
+  if (row.mobile && row.mobile.length >= 6) {
+    row.mobile = row.mobile.slice(0, 3) + 'XXXXX' + row.mobile.slice(-3);
+  }
+  return res.json({ success: true, data: row });
+}));
+
+// ── POST /api/it-provisioning/tasks/bulk-complete ────────────────────────────
+router.post('/tasks/bulk-complete', requireRole('it', 'branch_it', 'admin', 'super_admin', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const rows = req.body.rows as Array<{ employee_code: string; official_email?: string; domain_account?: string; asset_tag?: string }>;
+  if (!Array.isArray(rows) || !rows.length) {
+    return res.status(400).json({ success: false, message: 'rows array required' });
+  }
+  const results: { employee_code: string; status: 'ok' | 'error'; message?: string }[] = [];
+
+  for (const row of rows) {
+    try {
+      if (!row.employee_code?.trim()) { results.push({ employee_code: '', status: 'error', message: 'Missing employee_code' }); continue; }
+      const [taskRows] = await db.execute<RowDataPacket[]>(
+        `SELECT ipr.id, ipr.task_code FROM it_provisioning_request ipr
+           JOIN employees e ON e.id = ipr.employee_id
+          WHERE e.employee_code = ? AND ipr.task_code = 'IT_EMAIL_DOMAIN_ASSET' AND ipr.status = 'pending'
+          LIMIT 1`,
+        [row.employee_code.trim()],
+      );
+      const task = (taskRows as RowDataPacket[])[0];
+      if (!task) { results.push({ employee_code: row.employee_code, status: 'error', message: 'No pending IT task found' }); continue; }
+
+      if (!row.official_email?.trim() || !row.domain_account?.trim()) {
+        results.push({ employee_code: row.employee_code, status: 'error', message: 'official_email and domain_account required' }); continue;
+      }
+      await persistStructuredFields(task.id, row);
+      await actionProvisioningRequest({ requestId: task.id, actionedBy: req.authUser!.id, evidenceNote: `Bulk completed: ${row.official_email}` });
+      results.push({ employee_code: row.employee_code, status: 'ok' });
+    } catch (err: unknown) {
+      results.push({ employee_code: row.employee_code, status: 'error', message: (err as Error)?.message ?? 'Unknown error' });
+    }
+  }
+
+  const okCount = results.filter(r => r.status === 'ok').length;
+  return res.json({ success: true, processed: results.length, completed: okCount, results });
 }));
 
 export { router as itProvisioningRouter };

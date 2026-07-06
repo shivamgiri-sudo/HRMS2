@@ -420,7 +420,7 @@ router.post("/esign/initiate", candidateWriteLimiter, h(async (req, res) => {
   const documentId = String(req.body.documentId ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   if (!documentId) return res.status(400).json({ success: false, message: "documentId required" });
-  return res.json({ success: true, data: await initiateCandidateESignByToken(token, documentId) });
+  return res.json({ success: true, data: await initiateCandidateEsign(token, documentId) });
 }));
 
 // ── Language proficiency route ────────────────────────────────────────────────

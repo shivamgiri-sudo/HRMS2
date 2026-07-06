@@ -55,6 +55,7 @@ export default function CandidateOnboardingFullPage() {
   if (onb.submitted) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-gradient-to-br from-emerald-50 to-blue-50 px-6 text-center">
+        <img src="/mcn-logo.png" alt="Mas Callnet India Private Limited" className="h-12 w-auto object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
         <div className="w-24 h-24 rounded-full bg-emerald-100 flex items-center justify-center shadow-lg">
           <CheckCircle2 className="h-14 w-14 text-emerald-500" />
         </div>

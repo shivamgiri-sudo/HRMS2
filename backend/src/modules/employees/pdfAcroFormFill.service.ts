@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
-import { PDFDocument, PDFCheckBox, PDFTextField, StandardFonts } from "pdf-lib";
+import pdfLib from "pdf-lib";
+const { PDFDocument, PDFCheckBox, PDFTextField, StandardFonts } = pdfLib;
 import type { RowDataPacket } from "mysql2";
 
 type FieldMapLike = RowDataPacket | Record<string, unknown>;

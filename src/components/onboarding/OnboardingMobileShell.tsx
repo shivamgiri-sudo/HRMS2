@@ -61,14 +61,17 @@ export default function OnboardingMobileShell({
         {/* Brand bar */}
         <div className="bg-white px-4 py-2 flex items-center justify-between border-b border-slate-100">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center shadow-sm">
-              <span className="text-white text-xs font-black">M</span>
-            </div>
+            <img
+              src="/mcn-logo.png"
+              alt="Mas Callnet India Private Limited"
+              className="h-8 w-auto object-contain"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+            />
             <div>
-              <span className="text-slate-800 text-xs font-black uppercase tracking-wider leading-none block">
-                MAS Callnet
+              <span className="text-slate-700 text-[10px] font-black leading-none block">
+                Mas Callnet India Private Limited
               </span>
-              <span className="text-[9px] text-slate-400 font-semibold tracking-wider leading-none block">
+              <span className="text-[9px] text-slate-400 font-semibold tracking-wider leading-none block mt-0.5">
                 Employee Onboarding
               </span>
             </div>
