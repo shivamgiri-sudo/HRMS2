@@ -196,6 +196,7 @@ export default function CandidateOnboardingFullPage() {
           saving={onb.saving}
           onSave={onb.saveBank}
           onLookupIfsc={onb.lookupIfsc}
+          token={token}
         />
       )}
 

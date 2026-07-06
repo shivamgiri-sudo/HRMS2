@@ -11,6 +11,7 @@ import {
   F, T, RO, Chip, SectionHead, InfoBox,
 } from "./OnboardingFormPrimitives";
 import type { EmployeeForm, BankForm, StatusData, BgvStatus } from "./useOnboardingFull";
+import { PennyDropButton } from "./PennyDropButton";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -963,13 +964,14 @@ export function Step5Bgv({
 // ── Step 6: Bank Details ───────────────────────────────────────────────────────
 
 export function Step6Bank({
-  bank, setBank, saving, onSave, onLookupIfsc,
+  bank, setBank, saving, onSave, onLookupIfsc, token,
 }: {
   bank: BankForm;
   setBank: React.Dispatch<React.SetStateAction<BankForm>>;
   saving: boolean;
   onSave: () => void;
   onLookupIfsc: (ifsc: string) => void;
+  token?: string;
 }) {
   const upd = (k: keyof BankForm, v: string) => setBank((p) => ({ ...p, [k]: v }));
   const mismatch = Boolean(bank.accountNo && bank.confirmAccountNo && bank.accountNo !== bank.confirmAccountNo);
@@ -1107,6 +1109,29 @@ export function Step6Bank({
             </p>
           </InfoBox>
         </div>
+
+        {/* Penny Drop Verification */}
+        {token && (
+          <div className="mt-6">
+            <SectionHead sub="Optional — verify your account with ₹1 test transaction">Bank Account Verification</SectionHead>
+            <InfoBox variant="info">
+              <p className="text-xs">
+                <strong>Optional:</strong> Verify your bank account with a ₹1 test transaction.
+                We'll credit your account and confirm it matches your name.
+                This helps prevent payroll delays but is not mandatory.
+              </p>
+            </InfoBox>
+            <div className="mt-3">
+              <PennyDropButton
+                token={token}
+                accountNo={bank.accountNo || ""}
+                ifscCode={bank.ifscCode || ""}
+                accountHolderName={bank.accountHolderName || ""}
+                disabled={!bank.accountNo || !bank.ifscCode || mismatch}
+              />
+            </div>
+          </div>
+        )}
 
         <div className="mt-6 flex justify-end">
           <Button
