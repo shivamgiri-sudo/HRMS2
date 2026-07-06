@@ -56,3 +56,195 @@ describe('calculateTrackerSummary', () => {
     });
   });
 });
+
+// ─── Task 4: Bulk Action Tests ────────────────────────────────────────────────
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { sendBulkReminders, bulkGenerateChecklists } from '../ats.joiningDocumentsTracker.service';
+
+// Mock external service dependencies
+vi.mock('../ats.email.service.js', () => ({
+  sendRejectedEmail: vi.fn(),
+}));
+
+vi.mock('../../employees/employeeJoiningDocuments.service.js', () => ({
+  generateJoiningDocumentChecklist: vi.fn(),
+}));
+
+// Mock the DB module
+vi.mock('../../../db/mysql.js', () => {
+  const mockExecute = vi.fn();
+  return {
+    db: {
+      execute: mockExecute,
+    },
+  };
+});
+
+import { db } from '../../../db/mysql.js';
+import { sendRejectedEmail } from '../ats.email.service.js';
+import { generateJoiningDocumentChecklist } from '../../employees/employeeJoiningDocuments.service.js';
+
+describe('sendBulkReminders', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('should send emails to employees with email addresses', async () => {
+    const mockEmployees = [
+      { id: 'emp-1', employee_code: 'EMP001', full_name: 'Alice Smith', official_email: 'alice@example.com', mobile: '9999999999' },
+      { id: 'emp-2', employee_code: 'EMP002', full_name: 'Bob Jones', official_email: 'bob@example.com', mobile: null },
+    ];
+
+    vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
+    vi.mocked(sendRejectedEmail).mockResolvedValue({ success: true, message: 'sent' } as never);
+
+    const result = await sendBulkReminders(['emp-1', 'emp-2'], null, 'actor-user-1');
+
+    expect(result.success).toBe(true);
+    expect(result.sent).toBe(2);
+    expect(result.failed).toBe(0);
+    expect(result.errors).toHaveLength(0);
+    expect(sendRejectedEmail).toHaveBeenCalledTimes(2);
+  });
+
+  it('should skip employees without email and report them as failed', async () => {
+    const mockEmployees = [
+      { id: 'emp-1', employee_code: 'EMP001', full_name: 'Alice Smith', official_email: null, mobile: null },
+      { id: 'emp-2', employee_code: 'EMP002', full_name: 'Bob Jones', official_email: 'bob@example.com', mobile: null },
+    ];
+
+    vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
+    vi.mocked(sendRejectedEmail).mockResolvedValue({ success: true, message: 'sent' } as never);
+
+    const result = await sendBulkReminders(['emp-1', 'emp-2'], 'Please submit docs', 'actor-user-1');
+
+    expect(result.success).toBe(true);
+    expect(result.sent).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toMatchObject({
+      employee_id: 'emp-1',
+      employee_code: 'EMP001',
+      error: 'No email address',
+    });
+  });
+
+  it('should record email send errors without throwing', async () => {
+    const mockEmployees = [
+      { id: 'emp-1', employee_code: 'EMP001', full_name: 'Alice Smith', official_email: 'alice@example.com', mobile: null },
+    ];
+
+    vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
+    vi.mocked(sendRejectedEmail).mockRejectedValue(new Error('SMTP timeout'));
+
+    const result = await sendBulkReminders(['emp-1'], null, 'actor-user-1');
+
+    expect(result.success).toBe(true);
+    expect(result.sent).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(result.errors[0]).toMatchObject({
+      employee_id: 'emp-1',
+      employee_code: 'EMP001',
+      error: 'SMTP timeout',
+    });
+  });
+
+  it('should return empty result when no employees found', async () => {
+    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
+
+    const result = await sendBulkReminders(['unknown-id'], null, 'actor-user-1');
+
+    expect(result.success).toBe(true);
+    expect(result.sent).toBe(0);
+    expect(result.failed).toBe(0);
+    expect(result.errors).toHaveLength(0);
+  });
+});
+
+describe('bulkGenerateChecklists', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('should generate checklists for employees without existing checklists', async () => {
+    const mockEmployees = [
+      { id: 'emp-1', employee_code: 'EMP001', full_name: 'Alice Smith' },
+      { id: 'emp-2', employee_code: 'EMP002', full_name: 'Bob Jones' },
+    ];
+
+    // First call: fetch employees
+    vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
+    // Second call: check existing for emp-1 — none
+    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
+    // Third call: check existing for emp-2 — none
+    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
+
+    vi.mocked(generateJoiningDocumentChecklist).mockResolvedValue({} as never);
+
+    const result = await bulkGenerateChecklists(['emp-1', 'emp-2'], 'actor-user-1');
+
+    expect(result.success).toBe(true);
+    expect(result.generated).toBe(2);
+    expect(result.skipped).toBe(0);
+    expect(result.errors).toHaveLength(0);
+    expect(generateJoiningDocumentChecklist).toHaveBeenCalledTimes(2);
+  });
+
+  it('should skip employees that already have checklists', async () => {
+    const mockEmployees = [
+      { id: 'emp-1', employee_code: 'EMP001', full_name: 'Alice Smith' },
+      { id: 'emp-2', employee_code: 'EMP002', full_name: 'Bob Jones' },
+    ];
+
+    vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
+    // emp-1 has existing checklist
+    vi.mocked(db.execute).mockResolvedValueOnce([[{ id: 'existing-id' }], []]);
+    // emp-2 has no checklist
+    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
+
+    vi.mocked(generateJoiningDocumentChecklist).mockResolvedValue({} as never);
+
+    const result = await bulkGenerateChecklists(['emp-1', 'emp-2'], 'actor-user-1');
+
+    expect(result.success).toBe(true);
+    expect(result.generated).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(result.errors).toHaveLength(0);
+    expect(generateJoiningDocumentChecklist).toHaveBeenCalledTimes(1);
+    expect(generateJoiningDocumentChecklist).toHaveBeenCalledWith('emp-2', 'actor-user-1');
+  });
+
+  it('should record generation errors without throwing', async () => {
+    const mockEmployees = [
+      { id: 'emp-1', employee_code: 'EMP001', full_name: 'Alice Smith' },
+    ];
+
+    vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
+    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
+    vi.mocked(generateJoiningDocumentChecklist).mockRejectedValue(new Error('Template not found'));
+
+    const result = await bulkGenerateChecklists(['emp-1'], 'actor-user-1');
+
+    expect(result.success).toBe(true);
+    expect(result.generated).toBe(0);
+    expect(result.skipped).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toMatchObject({
+      employee_id: 'emp-1',
+      employee_code: 'EMP001',
+      error: 'Template not found',
+    });
+  });
+
+  it('should return empty result when no employees found', async () => {
+    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
+
+    const result = await bulkGenerateChecklists(['unknown-id'], 'actor-user-1');
+
+    expect(result.success).toBe(true);
+    expect(result.generated).toBe(0);
+    expect(result.skipped).toBe(0);
+    expect(result.errors).toHaveLength(0);
+  });
+});

@@ -5,6 +5,8 @@ import request from 'supertest';
 // Mock the service module before importing the router
 vi.mock('../ats.joiningDocumentsTracker.service.js', () => ({
   getJoiningDocumentsTracker: vi.fn(),
+  sendBulkReminders: vi.fn(),
+  bulkGenerateChecklists: vi.fn(),
 }));
 
 // Mock the middleware modules
@@ -20,7 +22,7 @@ vi.mock('../../../middleware/requireRole.js', () => ({
     (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 
-import { getJoiningDocumentsTracker } from '../ats.joiningDocumentsTracker.service.js';
+import { getJoiningDocumentsTracker, sendBulkReminders, bulkGenerateChecklists } from '../ats.joiningDocumentsTracker.service.js';
 
 describe('GET /joining-documents-tracker', () => {
   let app: express.Application;
@@ -126,5 +128,157 @@ describe('GET /joining-documents-tracker', () => {
       success: false,
       message: 'Failed to fetch joining documents tracker',
     });
+  });
+});
+
+// ─── Task 4: Bulk Remind route tests ─────────────────────────────────────────
+
+describe('POST /joining-documents-tracker/bulk-remind', () => {
+  let app: express.Application;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
+    app = express();
+    app.use(express.json());
+    app.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
+  });
+
+  it('should return 400 when employee_ids is missing', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-remind')
+      .set('Authorization', 'Bearer test-token')
+      .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
+  });
+
+  it('should return 400 when employee_ids is empty array', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-remind')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: [] });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
+  });
+
+  it('should return 400 when employee_ids is not an array', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-remind')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: 'emp-1' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
+  });
+
+  it('should call sendBulkReminders and return result on success', async () => {
+    const mockResult = { success: true as const, sent: 2, failed: 0, errors: [] };
+    vi.mocked(sendBulkReminders).mockResolvedValueOnce(mockResult);
+
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-remind')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1', 'emp-2'], custom_message: 'Please submit documents' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(mockResult);
+    expect(sendBulkReminders).toHaveBeenCalledWith(['emp-1', 'emp-2'], 'Please submit documents', 'test-user-id');
+  });
+
+  it('should pass null custom_message when not provided', async () => {
+    const mockResult = { success: true as const, sent: 1, failed: 0, errors: [] };
+    vi.mocked(sendBulkReminders).mockResolvedValueOnce(mockResult);
+
+    await request(app)
+      .post('/joining-documents-tracker/bulk-remind')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1'] });
+
+    expect(sendBulkReminders).toHaveBeenCalledWith(['emp-1'], null, 'test-user-id');
+  });
+
+  it('should return 500 when service throws', async () => {
+    vi.mocked(sendBulkReminders).mockRejectedValueOnce(new Error('DB error'));
+
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-remind')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1'] });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toMatchObject({ success: false, message: 'Failed to send reminders' });
+  });
+});
+
+// ─── Task 4: Bulk Generate Checklist route tests ──────────────────────────────
+
+describe('POST /joining-documents-tracker/bulk-generate-checklist', () => {
+  let app: express.Application;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
+    app = express();
+    app.use(express.json());
+    app.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
+  });
+
+  it('should return 400 when employee_ids is missing', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-generate-checklist')
+      .set('Authorization', 'Bearer test-token')
+      .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
+  });
+
+  it('should return 400 when employee_ids is empty array', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-generate-checklist')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: [] });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
+  });
+
+  it('should return 400 when employee_ids is not an array', async () => {
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-generate-checklist')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: 'emp-1' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
+  });
+
+  it('should call bulkGenerateChecklists and return result on success', async () => {
+    const mockResult = { success: true as const, generated: 2, skipped: 1, errors: [] };
+    vi.mocked(bulkGenerateChecklists).mockResolvedValueOnce(mockResult);
+
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-generate-checklist')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1', 'emp-2', 'emp-3'] });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(mockResult);
+    expect(bulkGenerateChecklists).toHaveBeenCalledWith(['emp-1', 'emp-2', 'emp-3'], 'test-user-id');
+  });
+
+  it('should return 500 when service throws', async () => {
+    vi.mocked(bulkGenerateChecklists).mockRejectedValueOnce(new Error('DB error'));
+
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-generate-checklist')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['emp-1'] });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toMatchObject({ success: false, message: 'Failed to generate checklists' });
   });
 });
