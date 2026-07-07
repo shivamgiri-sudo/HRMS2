@@ -313,11 +313,11 @@ export default function NativeLeaveTypeConfig() {
         setMessage({ text: `Leave type "${form.leave_name}" added.`, ok: true });
       } else if (editTarget) {
         await hrmsApi.put(`/api/leave/types/${editTarget.id}`, {
-          leave_name:       form.leave_name.trim(),
-          max_days_per_year: Number(form.max_days_per_year),
-          carry_forward:    form.carry_forward,
-          requires_approval: form.requires_approval,
-          paid_leave:       form.paid_leave,
+          leaveName:        form.leave_name.trim(),
+          maxDaysPerYear:   Number(form.max_days_per_year),
+          carryForward:     form.carry_forward,
+          requiresApproval: form.requires_approval,
+          paidLeave:        form.paid_leave,
         });
         setMessage({ text: `Leave type "${form.leave_name}" updated.`, ok: true });
       }

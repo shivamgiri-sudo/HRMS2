@@ -21,10 +21,24 @@ router.use(requireAuth);
 
 function buildCrud(
   path: string,
-  svc: { list(): any; getById(id: string): any; create(d: any): any; update(id: string, d: any): any; delete(id: string): any }
+  svc: {
+    list(options?: any): any;
+    getById(id: string): any;
+    create(d: any): any;
+    update(id: string, d: any): any;
+    delete(id: string): any;
+    setStatus?(id: string, status: number): any;
+  }
 ) {
-  router.get(path, h(async (_req: Request, res: Response) => {
-    res.json({ data: await svc.list() });
+  router.get(path, h(async (req: Request, res: Response) => {
+    const { q, active_status, page, limit } = req.query;
+    const options = {
+      q: q as string | undefined,
+      active_status: active_status as string | undefined,
+      page: page ? parseInt(page as string, 10) : undefined,
+      limit: limit ? parseInt(limit as string, 10) : undefined,
+    };
+    res.json({ data: await svc.list(options) });
   }));
   router.get(`${path}/:id`, h(async (req: Request, res: Response) => {
     const item = await svc.getById(req.params.id);
@@ -43,6 +57,16 @@ function buildCrud(
     await svc.delete(req.params.id);
     res.json({ ok: true });
   }));
+  if (svc.setStatus) {
+    router.patch(`${path}/:id/status`, requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
+      const { active_status } = req.body;
+      if (active_status !== 0 && active_status !== 1) {
+        return res.status(400).json({ error: "active_status must be 0 or 1" });
+      }
+      await svc.setStatus!(req.params.id, active_status);
+      res.json({ ok: true });
+    }));
+  }
 }
 
 // Canonical filter source for all pages. Use this instead of building filters from employee/report rows.
@@ -93,8 +117,7 @@ buildCrud("/processes",     processService);
 
 // Cost-centres: only return CCs from ACTIVE branches; includes dominant process name for dropdown display
 router.get("/cost-centres", h(async (req: Request, res: Response) => {
-  const branchName = req.query.branch_name as string | undefined;
-  const branchId   = req.query.branch_id   as string | undefined;
+  const { q, active_status, page, limit, branch_name, branch_id } = req.query;
   let sql = `
     SELECT cc.*,
       (SELECT p.process_name
@@ -103,12 +126,40 @@ router.get("/cost-centres", h(async (req: Request, res: Response) => {
        WHERE e.cost_centre_id = cc.id AND e.active_status = 1
        GROUP BY p.id ORDER BY COUNT(*) DESC LIMIT 1) AS process_name
     FROM cost_centre_master cc
-    JOIN branch_master bm ON bm.id = cc.branch_id AND bm.active_status = 1
-    WHERE cc.active_status = 1`;
-  const params: string[] = [];
-  if (branchId)   { sql += " AND cc.branch_id = ?";                 params.push(branchId); }
-  if (branchName) { sql += " AND LOWER(bm.branch_name) = LOWER(?)"; params.push(branchName); }
+    JOIN branch_master bm ON bm.id = cc.branch_id AND bm.active_status = 1`;
+  const params: (string | number)[] = [];
+  const whereClauses: string[] = [];
+
+  // Status filter
+  if (active_status === "0") {
+    whereClauses.push("cc.active_status = 0");
+  } else if (active_status === "all") {
+    // No filter
+  } else {
+    whereClauses.push("cc.active_status = 1"); // Default
+  }
+
+  // Branch filters
+  if (branch_id)   { whereClauses.push("cc.branch_id = ?");                 params.push(branch_id as string); }
+  if (branch_name) { whereClauses.push("LOWER(bm.branch_name) = LOWER(?)"); params.push(branch_name as string); }
+
+  // Search filter
+  if (q && typeof q === "string" && q.trim()) {
+    whereClauses.push("(cc.cost_centre_name LIKE ? OR cc.cost_centre_code LIKE ?)");
+    params.push(`%${q.trim()}%`, `%${q.trim()}%`);
+  }
+
+  sql += whereClauses.length > 0 ? ` WHERE ${whereClauses.join(" AND ")}` : "";
   sql += " ORDER BY cc.cost_centre_name";
+
+  // Pagination
+  if (limit && typeof limit === "string") {
+    const limitVal = Math.min(parseInt(limit, 10), 500);
+    const pageVal = page && typeof page === "string" ? parseInt(page, 10) : 1;
+    const offset = pageVal > 1 ? (pageVal - 1) * limitVal : 0;
+    sql += ` LIMIT ${limitVal} OFFSET ${offset}`;
+  }
+
   const [rows] = await db.execute<any[]>(sql, params);
   return res.json({ data: rows });
 }));
@@ -127,6 +178,14 @@ router.put("/cost-centres/:id", requireRole("admin", "hr"), h(async (req: Reques
 }));
 router.delete("/cost-centres/:id", requireRole("admin"), h(async (req: Request, res: Response) => {
   await costCentreService.delete(req.params.id);
+  res.json({ ok: true });
+}));
+router.patch("/cost-centres/:id/status", requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
+  const { active_status } = req.body;
+  if (active_status !== 0 && active_status !== 1) {
+    return res.status(400).json({ error: "active_status must be 0 or 1" });
+  }
+  await costCentreService.setStatus(req.params.id, active_status);
   res.json({ ok: true });
 }));
 

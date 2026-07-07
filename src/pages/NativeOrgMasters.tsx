@@ -240,6 +240,9 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"1" | "0" | "all">("1");
+
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState<Record<string, string>>({});
   const [addSubmitting, setAddSubmitting] = useState(false);
@@ -255,7 +258,11 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
     setLoading(true);
     setMessage("");
     try {
-      const res = await hrmsApi.get<{ data: OrgRecord[] } | OrgRecord[]>(tab.apiPath);
+      const params = new URLSearchParams();
+      if (searchQuery.trim()) params.set("q", searchQuery.trim());
+      params.set("active_status", statusFilter);
+      const url = `${tab.apiPath}${params.toString() ? `?${params.toString()}` : ""}`;
+      const res = await hrmsApi.get<{ data: OrgRecord[] } | OrgRecord[]>(url);
       const data = Array.isArray(res) ? res : (res as { data: OrgRecord[] }).data ?? [];
       setRecords(data);
     } catch (err: unknown) {
@@ -264,7 +271,7 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
     } finally {
       setLoading(false);
     }
-  }, [tab.apiPath]);
+  }, [tab.apiPath, searchQuery, statusFilter]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -333,27 +340,63 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
     }
   };
 
+  const toggleStatus = async (record: OrgRecord) => {
+    const newStatus = isActive(record) ? 0 : 1;
+    setMessage("");
+    try {
+      await hrmsApi.patch(`${tab.apiPath}/${record.id}/status`, { active_status: newStatus });
+      await load();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Status update failed";
+      setMessage(msg);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Tab toolbar */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => load()}
+              disabled={loading}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCcw className="h-4 w-4" />
+              Refresh
+            </button>
+            <div className="flex gap-1 rounded-xl border border-slate-200 bg-white p-1">
+              {(["1", "0", "all"] as const).map((status) => (
+                <button
+                  key={status}
+                  onClick={() => setStatusFilter(status)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    statusFilter === status
+                      ? "bg-slate-950 text-white"
+                      : "text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  {status === "1" ? "Active" : status === "0" ? "Inactive" : "All"}
+                </button>
+              ))}
+            </div>
+          </div>
           <button
-            onClick={() => load()}
-            disabled={loading}
-            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors cursor-pointer disabled:opacity-50"
+            onClick={openAdd}
+            className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition-colors cursor-pointer"
           >
-            <RefreshCcw className="h-4 w-4" />
-            Refresh
+            <Plus className="h-4 w-4" />
+            Add {tab.label.replace(/s$/, "")}
           </button>
         </div>
-        <button
-          onClick={openAdd}
-          className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition-colors cursor-pointer"
-        >
-          <Plus className="h-4 w-4" />
-          Add {tab.label.replace(/s$/, "")}
-        </button>
+        <input
+          type="text"
+          placeholder={`Search ${tab.label.toLowerCase()}...`}
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-blue-400 transition-colors"
+        />
       </div>
 
       {/* Message */}
@@ -417,31 +460,44 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
                         {isAdmin && (
-                          deleteConfirmId === rec.id ? (
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => submitDelete(rec.id)}
-                                disabled={deleteSubmitting}
-                                className="cursor-pointer rounded-xl bg-rose-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-rose-700 transition-colors disabled:opacity-50"
-                              >
-                                {deleteSubmitting ? "…" : "Confirm"}
-                              </button>
-                              <button
-                                onClick={() => setDeleteConfirmId(null)}
-                                className="cursor-pointer rounded-xl border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          ) : (
+                          <>
                             <button
-                              onClick={() => setDeleteConfirmId(rec.id)}
-                              className="cursor-pointer rounded-xl border border-rose-200 p-2 text-rose-500 hover:bg-rose-50 transition-colors"
-                              title="Delete"
+                              onClick={() => toggleStatus(rec)}
+                              className={`cursor-pointer rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                isActive(rec)
+                                  ? "border-amber-200 text-amber-700 hover:bg-amber-50"
+                                  : "border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                              }`}
+                              title={isActive(rec) ? "Deactivate" : "Activate"}
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
+                              {isActive(rec) ? "Deactivate" : "Activate"}
                             </button>
-                          )
+                            {deleteConfirmId === rec.id ? (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => submitDelete(rec.id)}
+                                  disabled={deleteSubmitting}
+                                  className="cursor-pointer rounded-xl bg-rose-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-rose-700 transition-colors disabled:opacity-50"
+                                >
+                                  {deleteSubmitting ? "…" : "Confirm"}
+                                </button>
+                                <button
+                                  onClick={() => setDeleteConfirmId(null)}
+                                  className="cursor-pointer rounded-xl border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setDeleteConfirmId(rec.id)}
+                                className="cursor-pointer rounded-xl border border-rose-200 p-2 text-rose-500 hover:bg-rose-50 transition-colors"
+                                title="Delete"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </>
                         )}
                       </div>
                     </td>

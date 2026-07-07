@@ -370,15 +370,22 @@ function RosterSettingsTab({ processId }: { processId: string }) {
   useEffect(() => {
     if (!processId) return;
     setLoading(true);
+    setMessage(null);
     Promise.all([
       hrmsApi
         .get<{ data: ShiftTemplate[] }>(`/api/roster-gov/shifts/templates?process_id=${processId}&active_status=1`)
         .then((r) => setShifts(r.data ?? []))
-        .catch(() => setShifts([])),
+        .catch((err: unknown) => {
+          setShifts([]);
+          console.warn("Failed to load shifts:", err);
+        }),
       hrmsApi
         .get<{ data: RosterCycle[] }>(`/api/roster-gov/cycles?process_id=${processId}`)
         .then((r) => setCycles(r.data ?? []))
-        .catch(() => setCycles([])),
+        .catch((err: unknown) => {
+          setCycles([]);
+          console.warn("Failed to load cycles:", err);
+        }),
       hrmsApi
         .get<{ success: boolean; data: StatutoryConfig }>(
           `/api/processes/${processId}/configuration`
@@ -390,7 +397,10 @@ function RosterSettingsTab({ processId }: { processId: string }) {
           setGracePeriod(String(cfg.gracePeriodMinutes ?? 15));
           setPubSla(String(cfg.publicationSlaDays ?? 3));
         })
-        .catch(() => {}),
+        .catch((err: unknown) => {
+          console.warn("Failed to load process configuration:", err);
+          setMessage({ text: err instanceof Error ? err.message : "Failed to load roster configuration", ok: false });
+        }),
     ]).finally(() => setLoading(false));
   }, [processId]);
 
@@ -737,8 +747,9 @@ export default function NativeProcessConfig() {
   const [activeTab, setActiveTab] = useState<TabKey>("kpi");
   const [message, setMessage] = useState("");
 
-  useEffect(() => {
+  const loadProcesses = () => {
     setLoadingProcesses(true);
+    setMessage("");
     hrmsApi
       .get<Process[] | { data: Process[] }>("/api/processes")
       .then((res) => {
@@ -752,6 +763,10 @@ export default function NativeProcessConfig() {
         setMessage(err instanceof Error ? err.message : "Failed to load processes")
       )
       .finally(() => setLoadingProcesses(false));
+  };
+
+  useEffect(() => {
+    loadProcesses();
   }, []);
 
   const selectedProcess = processes.find((p) => p.id === selectedProcessId);
@@ -809,12 +824,9 @@ export default function NativeProcessConfig() {
             </span>
           )}
           <button
-            onClick={() => {
-              setMessage("");
-              // force re-render by cycling through same id
-            }}
+            onClick={loadProcesses}
             className="ml-auto rounded-xl border border-slate-200 p-2 hover:bg-slate-50 transition-colors"
-            title="Refresh"
+            title="Refresh process list"
           >
             <RefreshCcw className="h-4 w-4 text-slate-500" />
           </button>
