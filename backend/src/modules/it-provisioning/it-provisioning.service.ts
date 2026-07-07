@@ -108,29 +108,63 @@ async function dispatchNotifications(
   // Deduplicate email recipients — one user with multiple roles should get only one email per task
   const emailsSent = new Set<string>();
 
+  console.log('[dispatchNotifications] Dispatching notifications:', {
+    usersCount: users.length,
+    type,
+    entityId,
+    actionUrl,
+  });
+
   for (const user of users) {
-    await inboxService.createItem({
-      user_id: user.userId,
-      type,
-      title,
-      description,
-      entity_type: 'it_provisioning_request',
-      entity_id: entityId,
-      action_url: actionUrl,
-      priority: 'high',
-    }).catch((err: unknown) => console.error('[it-provisioning] inbox create failed:', err));
+    try {
+      await inboxService.createItem({
+        user_id: user.userId,
+        type,
+        title,
+        description,
+        entity_type: 'it_provisioning_request',
+        entity_id: entityId,
+        action_url: actionUrl,
+        priority: 'high',
+      });
+      console.log('[dispatchNotifications] Inbox item created:', {
+        userId: user.userId,
+        entityId,
+      });
+    } catch (err: unknown) {
+      console.error('[dispatchNotifications] inbox create failed:', {
+        userId: user.userId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     if (user.email && !emailsSent.has(user.email)) {
       emailsSent.add(user.email);
       const fullActionUrl = frontendUrl(actionUrl);
-      await emailService.send({
-        to: user.email,
-        subject: title,
-        html: provisioningEmailHtml(title, description, fullActionUrl),
-        text: `${title}\n\n${description}\n\nOpen task in HRMS: ${fullActionUrl}`,
-      }).catch((err: unknown) => console.error('[it-provisioning] email send failed:', err));
+      try {
+        await emailService.send({
+          to: user.email,
+          subject: title,
+          html: provisioningEmailHtml(title, description, fullActionUrl),
+          text: `${title}\n\n${description}\n\nOpen task in HRMS: ${fullActionUrl}`,
+        });
+        console.log('[dispatchNotifications] Email sent:', {
+          to: user.email,
+          subject: title,
+        });
+      } catch (err: unknown) {
+        console.error('[dispatchNotifications] email send failed:', {
+          to: user.email,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
   }
+
+  console.log('[dispatchNotifications] Notifications dispatched:', {
+    inboxItems: users.length,
+    emailsSent: emailsSent.size,
+  });
 }
 
 // ── Create one provisioning request row ───────────────────────────────────────
@@ -234,8 +268,29 @@ export async function dispatchJoinProvisioningTasks(params: {
 }): Promise<void> {
   const { employeeId, employeeCode, employeeName, branchId, actorUserId, triggerEventId } = params;
 
+  console.log('[dispatchJoinProvisioningTasks] Starting join provisioning dispatch:', {
+    employeeId,
+    employeeCode,
+    employeeName,
+    branchId,
+    tasksCount: JOIN_TASKS.length,
+  });
+
   for (const task of JOIN_TASKS) {
     const users = await resolveUsers(task.assignedRole, branchId);
+
+    console.log(`[dispatchJoinProvisioningTasks] Resolved users for role ${task.assignedRole}:`, {
+      role: task.assignedRole,
+      branchId,
+      usersFound: users.length,
+      users: users.map(u => ({ userId: u.userId, email: u.email })),
+    });
+
+    if (users.length === 0) {
+      console.warn(`[dispatchJoinProvisioningTasks] No users found for role ${task.assignedRole}, skipping task ${task.taskCode}`);
+      continue;
+    }
+
     const title = task.titleFn(employeeName, employeeCode);
     const desc = task.descFn(employeeName, employeeCode);
 
@@ -249,8 +304,21 @@ export async function dispatchJoinProvisioningTasks(params: {
       actorUserId,
     });
 
+    console.log('[dispatchJoinProvisioningTasks] Created provisioning request:', {
+      requestId,
+      taskCode: task.taskCode,
+      role: task.assignedRole,
+      assignedTo: users[0]?.userId,
+    });
+
     await dispatchNotifications(users, 'it_provisioning', title, desc, requestId, task.actionUrl);
+
+    console.log(`[dispatchJoinProvisioningTasks] Dispatched notifications for ${task.taskCode}:`, {
+      notificationsSent: users.length,
+    });
   }
+
+  console.log(`[dispatchJoinProvisioningTasks] Completed provisioning dispatch for ${employeeCode}`);
 }
 
 // ── EXIT trigger ───────────────────────────────────────────────────────────────

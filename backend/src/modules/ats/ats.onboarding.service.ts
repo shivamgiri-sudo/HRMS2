@@ -14,6 +14,8 @@ import {
 import { createTemporaryPasswordCredential } from '../auth/tempPassword.service.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { providerFactory } from '../communication/providers/provider.factory.js';
+import { dispatchJoinProvisioningTasks } from '../it-provisioning/it-provisioning.service.js';
+import { sendPayrollHrJoiningDocNotification } from './ats.email.service.js';
 
 // ── PII Helpers ───────────────────────────────────────────────────────────────
 
@@ -782,16 +784,24 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
 
   // Fire IT provisioning tasks — runs after transaction commits, fire-and-forget
   const branchIdForProvisioning: string | null = (offer.resolved_branch_id ?? offer.applied_for_branch) || null;
-  import('../it-provisioning/it-provisioning.service.js').then(({ dispatchJoinProvisioningTasks }) => {
-    dispatchJoinProvisioningTasks({
+  try {
+    await dispatchJoinProvisioningTasks({
       employeeId,
       employeeCode,
       employeeName: offer.full_name,
       branchId: branchIdForProvisioning,
       actorUserId: approverId,
       triggerEventId: offerId,
-    }).catch((err: unknown) => console.error('[it-provisioning] join dispatch failed:', err));
-  }).catch((err: unknown) => console.error('[it-provisioning] module load failed:', err));
+    });
+    console.log(`[approveOffer] IT provisioning tasks dispatched successfully for ${employeeCode}`);
+  } catch (err: unknown) {
+    console.error('[approveOffer] Failed to dispatch IT provisioning tasks:', {
+      employeeCode,
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    // Don't throw - this is a non-blocking notification
+  }
 
   // Send welcome email after transaction commits — email failure should not roll back employee creation
   const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
@@ -820,7 +830,11 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
         LIMIT 3`,
       [branchId, branchId],
     );
-    const { sendPayrollHrJoiningDocNotification } = await import('./ats.email.service.js');
+
+    if (hrRows.length === 0) {
+      console.warn(`[approveOffer] No payroll_hr users found for branch ${branchId}, employee ${employeeCode}`);
+    }
+
     for (const hr of hrRows as RowDataPacket[]) {
       await sendPayrollHrJoiningDocNotification({
         to: hr.email,
@@ -831,8 +845,17 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
         candidateId,
       }).catch((err: unknown) => console.error('[approveOffer] payroll-hr email failed', err));
     }
+
+    if (hrRows.length > 0) {
+      console.log(`[approveOffer] Payroll HR joining doc notification sent to ${hrRows.length} users for ${employeeCode}`);
+    }
   } catch (err: unknown) {
-    console.error('[approveOffer] payroll-hr notification failed', err);
+    console.error('[approveOffer] Payroll HR notification failed:', {
+      employeeCode,
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    // Don't throw - this is a non-blocking notification
   }
 
   return { employeeId, employeeCode };
