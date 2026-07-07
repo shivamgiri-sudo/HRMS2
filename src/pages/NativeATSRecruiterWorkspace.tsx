@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 type CandidateRow = {
   candidateId: string;
@@ -14,6 +15,7 @@ type CandidateRow = {
   pendingMinutes?: number;
   createdAt?: string | null;
   recruiterName?: string;
+  recruiterAssignedName?: string | null;
 };
 
 type HistoryRow = {
@@ -64,6 +66,7 @@ type HistoryRow = {
   onboarding_joining_date?: string;
   email_dispatch_status?: string;
   email_sent_at?: string;
+  substitute_reason?: string | null;
 };
 
 type RecruiterProfile = {
@@ -325,10 +328,15 @@ function cascadeSelected(form: Form): Form {
 }
 
 export default function NativeATSRecruiterWorkspace() {
+  const { roleKeys } = useWorkforceAccess();
+  const isPrivilegedUser = ["admin", "hr", "super_admin"].some(r => roleKeys.includes(r));
+
   const [screen, setScreen] = useState<"workspace" | "form">("workspace");
   const [tab, setTab] = useState<"pending" | "history">("pending");
   const [recruiterProfile, setRecruiterProfile] = useState<RecruiterProfile | null>(null);
   const [pending, setPending] = useState<CandidateRow[]>([]);
+  const [otherPending, setOtherPending] = useState<CandidateRow[]>([]);
+  const [otherPendingOpen, setOtherPendingOpen] = useState(false);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [dailyStats, setDailyStats] = useState<DailyStats | null>(null);
   const [config] = useState<Config>(DEFAULT_CONFIG);
@@ -348,6 +356,19 @@ export default function NativeATSRecruiterWorkspace() {
   const [resendingId, setResendingId] = useState<string | null>(null);
   const [resendMsg, setResendMsg] = useState<{ id: string; text: string; ok: boolean } | null>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Substitute modal state
+  const [subCandidate, setSubCandidate] = useState<CandidateRow | null>(null);
+  const [subReason, setSubReason] = useState("");
+  const [substituteMode, setSubstituteMode] = useState(false);
+
+  // Reassign modal state
+  const [reassignCandidate, setReassignCandidate] = useState<CandidateRow | null>(null);
+  const [reassignRecruiters, setReassignRecruiters] = useState<Array<{ id: string; name: string }>>([]);
+  const [reassignTargetId, setReassignTargetId] = useState("");
+  const [reassignReason, setReassignReason] = useState("");
+  const [reassignLoading, setReassignLoading] = useState(false);
+  const [reassignMsg, setReassignMsg] = useState("");
 
   const rank = STAGE_RANK[form.stageName] ?? 0;
   // Effective rank caps at the stage where rejection occurred — downstream rounds don't happen
@@ -386,7 +407,38 @@ export default function NativeATSRecruiterWorkspace() {
       recruiterName: c.recruiterName ?? res.recruiter?.name,
       pendingMinutes: c.pendingMinutes ?? 0,
       createdAt: c.createdAt ?? null,
+      recruiterAssignedName: c.recruiterAssignedName ?? null,
     })));
+  };
+
+  const loadOtherPending = async () => {
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/ats/recruiter/other-pending");
+      setOtherPending((res.data ?? []).map((c: any) => ({
+        candidateId: c.candidateId,
+        qToken: c.qToken ?? null,
+        fullName: c.fullName,
+        mobile: c.mobile,
+        branch: c.branch,
+        roleApplied: c.process,
+        status: c.status,
+        stage: c.status,
+        pendingMinutes: c.pendingMinutes ?? 0,
+        createdAt: c.createdAt ?? null,
+        recruiterAssignedName: c.recruiterAssignedName ?? null,
+      })));
+    } catch {
+      setOtherPending([]);
+    }
+  };
+
+  const loadReassignRecruiters = async () => {
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/ats/recruiter-roster/active");
+      setReassignRecruiters((res.data ?? []).map((r: any) => ({ id: r.id, name: r.name })));
+    } catch {
+      setReassignRecruiters([]);
+    }
   };
 
   const loadHistory = async () => {
@@ -455,7 +507,7 @@ export default function NativeATSRecruiterWorkspace() {
     setLoading(true);
     setMsg("Loading workspace…");
     try {
-      await Promise.all([loadPending(), loadHistory(), loadDailyStats()]);
+      await Promise.all([loadPending(), loadOtherPending(), loadHistory(), loadDailyStats()]);
       setMsg("");
     } catch (err: any) {
       setMsg(err?.response?.data?.message || err.message || "Unable to load recruiter workspace");
@@ -468,7 +520,7 @@ export default function NativeATSRecruiterWorkspace() {
     setLoading(true);
     setMsg("");
     try {
-      await Promise.all([loadPending(), loadHistory(), loadDailyStats()]);
+      await Promise.all([loadPending(), loadOtherPending(), loadHistory(), loadDailyStats()]);
     } catch (err: any) {
       setMsg(err.message || "Unable to refresh");
     } finally {
@@ -492,8 +544,9 @@ export default function NativeATSRecruiterWorkspace() {
     };
   }, [screen, tab]);
 
-  const openForm = (c: CandidateRow, resubmit = false, h?: HistoryRow) => {
+  const openFormDirect = (c: CandidateRow, resubmit = false, h?: HistoryRow, isSubstitute = false) => {
     setSelected(c);
+    setSubstituteMode(isSubstitute);
     const asBool = (value: unknown) => value === 1 || value === "1" || value === true || value === "true" || value === "yes";
     setForm({
       ...EMPTY_FORM,
@@ -531,6 +584,20 @@ export default function NativeATSRecruiterWorkspace() {
     setInterviewerDropOpen(false);
     setMsg("");
     setScreen("form");
+  };
+
+  const openForm = (c: CandidateRow, resubmit = false, h?: HistoryRow) => {
+    const isOtherRecruiter = !!(
+      c.recruiterAssignedName &&
+      recruiterProfile &&
+      c.recruiterAssignedName !== recruiterProfile.name
+    );
+    if (isOtherRecruiter && !resubmit) {
+      setSubCandidate(c);
+      setSubReason("");
+      return;
+    }
+    openFormDirect(c, resubmit, h, false);
   };
 
   const updateForm = (patch: Partial<Form>) => {
@@ -617,6 +684,8 @@ export default function NativeATSRecruiterWorkspace() {
         reportingTiming: form.reportingTiming || null,
         otDetails: form.otDetails || null,
         performanceIncentives: form.performanceIncentives || null,
+        substituteFlag: substituteMode ? true : undefined,
+        substituteReason: substituteMode ? subReason : undefined,
       });
       setMsg("Update submitted successfully.");
       setScreen("workspace");
@@ -639,6 +708,27 @@ export default function NativeATSRecruiterWorkspace() {
       setResendMsg({ id: row.candidate_id, text: err?.response?.data?.message || err.message || "Failed to resend link", ok: false });
     } finally {
       setResendingId(null);
+    }
+  };
+
+  const handleReassign = async () => {
+    if (!reassignCandidate || !reassignTargetId || !reassignReason.trim()) return;
+    setReassignLoading(true);
+    setReassignMsg("");
+    try {
+      await hrmsApi.patch(`/api/ats/candidates/${reassignCandidate.candidateId}/reassign`, {
+        newRecruiterId: reassignTargetId,
+        reason: reassignReason.trim(),
+      });
+      setReassignCandidate(null);
+      setReassignTargetId("");
+      setReassignReason("");
+      setReassignMsg("");
+      await refresh();
+    } catch (err: any) {
+      setReassignMsg(err?.response?.data?.message || err.message || "Reassignment failed");
+    } finally {
+      setReassignLoading(false);
     }
   };
 
@@ -677,16 +767,16 @@ export default function NativeATSRecruiterWorkspace() {
     <div className="rw-page">
       <style>{`
         .rw-page{min-height:100dvh;background:#f1f5f9;font-family:Arial,sans-serif;color:#0f172a}
-        .rw-header{background:linear-gradient(135deg,#0f172a 0%,#1e3a8a 60%,#4c1d95 100%);color:#fff;padding:24px 20px 28px;position:relative}
+        .rw-header{background:linear-gradient(135deg,#0f172a 0%,#1e3a8a 60%,#4c1d95 100%);color:#fff;padding:12px 20px 14px;position:relative}
         .rw-header h1{margin:0;font-size:22px;font-weight:800;letter-spacing:-0.3px}
         .rw-header p{margin:6px 0 0;font-size:13px;color:#bfdbfe;opacity:.85}
         .rw-wrap{max-width:1200px;margin:16px auto 32px;padding:0 16px}
-        .rw-card{background:#fff;border:1px solid #e2e8f0;border-radius:20px;box-shadow:0 4px 24px rgba(15,23,42,.08);padding:20px;margin-bottom:14px}
+        .rw-card{background:#fff;border:1px solid #e2e8f0;border-radius:20px;box-shadow:0 4px 24px rgba(15,23,42,.08);padding:14px;margin-bottom:14px}
         .rw-kpi-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px}
         @media(max-width:900px){.rw-kpi-grid{grid-template-columns:repeat(3,1fr)}}
         @media(max-width:520px){.rw-kpi-grid{grid-template-columns:repeat(2,1fr)}}
-        .rw-kpi{border-radius:16px;padding:14px 16px;border:1px solid #e2e8f0}
-        .rw-kpi-num{font-size:28px;font-weight:800;line-height:1.1;margin:4px 0 2px}
+        .rw-kpi{border-radius:16px;padding:10px 12px;border:1px solid #e2e8f0}
+        .rw-kpi-num{font-size:22px;font-weight:800;line-height:1.1;margin:4px 0 2px}
         .rw-kpi-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;opacity:.7}
         .kpi-blue{background:#eff6ff;border-color:#bfdbfe;color:#1e40af}
         .kpi-gray{background:#f8fafc;border-color:#e2e8f0;color:#475569}
@@ -702,11 +792,11 @@ export default function NativeATSRecruiterWorkspace() {
         .rw-2{grid-template-columns:1fr 1fr}
         .rw-3{grid-template-columns:repeat(3,1fr)}
         @media(max-width:640px){.rw-2,.rw-3{grid-template-columns:1fr}}
-        label{display:block;font-size:12px;font-weight:700;margin:0 0 5px;color:#374151}
+        label{display:block;font-size:12px;font-weight:700;margin:0 0 3px;color:#374151}
         input,select,textarea,button{font-family:inherit;font-size:14px;border-radius:12px}
-        input,select,textarea{width:100%;border:1.5px solid #e2e8f0;padding:10px 12px;background:#fff;color:#0f172a;box-sizing:border-box}
+        input,select,textarea{width:100%;border:1.5px solid #e2e8f0;padding:7px 10px;background:#fff;color:#0f172a;box-sizing:border-box}
         input:focus,select:focus,textarea:focus{outline:none;border-color:#6366f1}
-        textarea{min-height:76px;resize:vertical}
+        textarea{min-height:52px;resize:vertical}
         button{border:0;background:linear-gradient(135deg,#2563eb,#7c3aed);color:#fff;font-weight:800;padding:10px 16px;cursor:pointer;transition:opacity .15s}
         button:disabled{opacity:.5;cursor:not-allowed}
         button:hover:not(:disabled){opacity:.88}
@@ -723,29 +813,39 @@ export default function NativeATSRecruiterWorkspace() {
         .badge-gray{background:#f8fafc;color:#475569}
         .badge-slate{background:#f1f5f9;color:#334155}
         .rw-table{width:100%;border-collapse:collapse}
-        .rw-table th{background:#f8fafc;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:10px 12px;text-align:left;border-bottom:2px solid #e2e8f0;white-space:nowrap}
-        .rw-table td{padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;vertical-align:middle}
+        .rw-table th{background:#f8fafc;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:8px 10px;text-align:left;border-bottom:2px solid #e2e8f0;white-space:nowrap}
+        .rw-table td{padding:8px 10px;border-bottom:1px solid #f1f5f9;font-size:13px;vertical-align:middle}
         .rw-table tr:hover td{background:#f8fafc}
         .rw-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
-        .rw-pending-row{border:1px solid #e2e8f0;border-radius:14px;padding:14px 16px;margin-bottom:10px;background:#fff;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+        .rw-pending-row{border:1px solid #e2e8f0;border-radius:12px;padding:10px 12px;margin-bottom:8px;background:#fff;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
         .rw-pending-row:hover{border-color:#c7d2fe;background:#fafbff}
-        .rw-seq{width:28px;height:28px;border-radius:50%;background:#e0e7ff;color:#3730a3;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+        .rw-seq{width:24px;height:24px;border-radius:50%;background:#e0e7ff;color:#3730a3;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
         .rw-msg{font-weight:700;color:#1d4ed8;font-size:13px;padding:8px 12px;background:#eff6ff;border-radius:10px;margin:0}
         .rw-err{color:#be123c;background:#fff1f2}
         .rw-success{color:#047857;background:#ecfdf5}
-        .form-section{border-radius:14px;padding:16px;margin-bottom:14px}
+        .form-section{border-radius:14px;padding:10px 12px;margin-bottom:0}
         .sec-blue{background:#eff6ff;border:1px solid #bfdbfe}
         .sec-purple{background:#faf5ff;border:1px solid #e9d5ff}
         .sec-green{background:#f0fdf4;border:1px solid #bbf7d0}
         .sec-orange{background:#fff7ed;border:1px solid #fed7aa}
         .sec-selected{background:#ecfdf5;border:2px solid #6ee7b7}
         .sec-gray{background:#f8fafc;border:1px solid #e2e8f0}
-        .sec-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px}
-        .filters-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px}
+        .sec-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px}
+        .form-sections-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start}
+        @media(max-width:768px){.form-sections-grid{grid-template-columns:1fr}}
+        .filters-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
         .filters-bar>div{flex:1;min-width:160px}
-        .chip-bar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
-        .chip{padding:5px 12px;border-radius:999px;font-size:12px;font-weight:700;border:1.5px solid #e2e8f0;cursor:pointer;background:#fff;color:#64748b}
+        .chip-bar{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px}
+        .chip{padding:4px 10px;border-radius:999px;font-size:11px;font-weight:700;border:1.5px solid #e2e8f0;cursor:pointer;background:#fff;color:#64748b}
         .chip.active{background:#0f172a;color:#fff;border-color:#0f172a}
+        .badge-sub{background:#fff7ed;color:#c2410c;border:1px solid #fed7aa}
+        .rw-modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px}
+        .rw-modal{background:#fff;border-radius:20px;box-shadow:0 8px 40px rgba(15,23,42,.2);padding:28px;width:100%;max-width:440px}
+        .rw-modal h3{margin:0 0 6px;font-size:17px;font-weight:800}
+        .rw-modal p{margin:0 0 16px;font-size:13px;color:#64748b}
+        .rw-other-section{border:1.5px dashed #e2e8f0;border-radius:16px;padding:14px 16px;margin-top:10px}
+        .rw-other-header{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+        .rw-other-header h4{margin:0;font-size:14px;font-weight:700;color:#7c3aed}
       `}</style>
 
       {/* ── Header ── */}
@@ -811,18 +911,18 @@ export default function NativeATSRecruiterWorkspace() {
           {/* ── PENDING QUEUE TAB ── */}
           {tab === "pending" && (
             <div className="rw-card">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                 <div>
                   <h3 style={{ margin: 0, fontSize: 15 }}>Waiting Candidates</h3>
-                  <p className="rw-muted" style={{ margin: "3px 0 0" }}>Oldest registration at top · auto-refreshes every 90s</p>
+                  <p className="rw-muted" style={{ margin: "2px 0 0" }}>Oldest registration at top · auto-refreshes every 90s</p>
                 </div>
               </div>
 
               {pending.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "32px 0", color: "#64748b" }}>
-                  <div style={{ fontSize: 36, marginBottom: 8 }}>✓</div>
+                <div style={{ textAlign: "center", padding: "24px 0", color: "#64748b" }}>
+                  <div style={{ fontSize: 32, marginBottom: 6 }}>✓</div>
                   <p style={{ margin: 0, fontWeight: 700 }}>Queue is clear</p>
-                  <p className="rw-muted" style={{ margin: "4px 0 0" }}>No waiting candidates right now.</p>
+                  <p className="rw-muted" style={{ margin: "3px 0 0" }}>No waiting candidates right now.</p>
                 </div>
               ) : (
                 pending.map((c, idx) => {
@@ -850,16 +950,98 @@ export default function NativeATSRecruiterWorkspace() {
                         <div style={{ fontSize: 12, fontWeight: 600, color: "#64748b" }}>Wait</div>
                         <WaitBadge mins={mins} />
                       </div>
-                      <button
-                        style={{ width: "auto", padding: "8px 16px", fontSize: 13, flexShrink: 0 }}
-                        disabled={!recruiterProfile}
-                        onClick={() => openForm(c)}
-                      >
-                        {recruiterProfile ? "Interview →" : "View Only"}
-                      </button>
+                      <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                        <button
+                          style={{ width: "auto", padding: "8px 16px", fontSize: 13 }}
+                          disabled={!recruiterProfile}
+                          onClick={() => openForm(c)}
+                        >
+                          {recruiterProfile ? "Interview →" : "View Only"}
+                        </button>
+                        {isPrivilegedUser && (
+                          <button
+                            className="btn-ghost btn-sm"
+                            style={{ width: "auto" }}
+                            onClick={() => {
+                              setReassignCandidate(c);
+                              setReassignTargetId("");
+                              setReassignReason("");
+                              setReassignMsg("");
+                              void loadReassignRecruiters();
+                            }}
+                            title="Reassign to different recruiter"
+                          >
+                            Reassign
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })
+              )}
+
+              {/* ── Other Recruiters' Walk-ins (same branch) ── */}
+              {otherPending.length > 0 && (
+                <div className="rw-other-section" style={{ marginTop: 12 }}>
+                  <div className="rw-other-header" onClick={() => setOtherPendingOpen((v) => !v)}>
+                    <span style={{ fontSize: 14 }}>{otherPendingOpen ? "▼" : "▶"}</span>
+                    <h4>Other Recruiters' Walk-ins ({otherPending.length} pending)</h4>
+                    <span className="rw-muted" style={{ fontSize: 12 }}>Same branch · assigned recruiter may be absent</span>
+                  </div>
+                  {otherPendingOpen && (
+                    <div style={{ marginTop: 10 }}>
+                      {otherPending.map((c) => {
+                        const mins = c.pendingMinutes ?? 0;
+                        return (
+                          <div className="rw-pending-row" key={c.candidateId} style={{ borderColor: "#e9d5ff", background: "#faf5ff" }}>
+                            <div className="rw-seq" style={{ background: "#ede9fe", color: "#7c3aed" }}>S</div>
+                            <div style={{ flex: 1, minWidth: 160 }}>
+                              <div style={{ fontWeight: 700, fontSize: 14 }}>{c.fullName || "—"}</div>
+                              <div className="rw-muted">{c.mobile || "—"}</div>
+                            </div>
+                            <div style={{ minWidth: 120 }}>
+                              <div style={{ fontSize: 11, fontWeight: 600, color: "#7c3aed" }}>Assigned to</div>
+                              <div style={{ fontSize: 12, color: "#7c3aed", fontWeight: 700 }}>{c.recruiterAssignedName || "—"}</div>
+                            </div>
+                            <div style={{ minWidth: 100 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: "#64748b" }}>Process</div>
+                              <div style={{ fontSize: 13 }}>{c.roleApplied || "—"}</div>
+                            </div>
+                            <div style={{ minWidth: 60 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: "#64748b" }}>Wait</div>
+                              <WaitBadge mins={mins} />
+                            </div>
+                            <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                              <button
+                                className="btn-amber"
+                                style={{ width: "auto", padding: "8px 16px", fontSize: 13 }}
+                                disabled={!recruiterProfile}
+                                onClick={() => openForm(c)}
+                              >
+                                Interview (Sub) →
+                              </button>
+                              {isPrivilegedUser && (
+                                <button
+                                  className="btn-ghost btn-sm"
+                                  style={{ width: "auto" }}
+                                  onClick={() => {
+                                    setReassignCandidate(c);
+                                    setReassignTargetId("");
+                                    setReassignReason("");
+                                    setReassignMsg("");
+                                    void loadReassignRecruiters();
+                                  }}
+                                >
+                                  Reassign
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -867,7 +1049,7 @@ export default function NativeATSRecruiterWorkspace() {
           {/* ── SUBMISSION HISTORY TAB ── */}
           {tab === "history" && (
             <div className="rw-card">
-              <h3 style={{ margin: "0 0 14px", fontSize: 15 }}>Submission History</h3>
+              <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>Submission History</h3>
 
               {/* Filters */}
               <div className="filters-bar">
@@ -904,18 +1086,18 @@ export default function NativeATSRecruiterWorkspace() {
               </div>
 
               {/* Sub-stats */}
-              <div className="rw-grid rw-3" style={{ marginBottom: 14 }}>
+              <div className="rw-grid rw-3" style={{ marginBottom: 10 }}>
                 <div className="rw-kpi kpi-gray">
                   <div className="rw-kpi-label">Showing</div>
-                  <div className="rw-kpi-num" style={{ fontSize: 20 }}>{filteredHistory.length}</div>
+                  <div className="rw-kpi-num" style={{ fontSize: 18 }}>{filteredHistory.length}</div>
                 </div>
                 <div className="rw-kpi kpi-green">
                   <div className="rw-kpi-label">Selected</div>
-                  <div className="rw-kpi-num" style={{ fontSize: 20 }}>{filteredHistory.filter(h => h.final_decision === "Selected").length}</div>
+                  <div className="rw-kpi-num" style={{ fontSize: 18 }}>{filteredHistory.filter(h => h.final_decision === "Selected").length}</div>
                 </div>
                 <div className="rw-kpi kpi-blue">
                   <div className="rw-kpi-label">Onboarding Pending</div>
-                  <div className="rw-kpi-num" style={{ fontSize: 20 }}>
+                  <div className="rw-kpi-num" style={{ fontSize: 18 }}>
                     {filteredHistory.filter(h => h.final_decision === "Selected" && h.onboarding_status !== "onboarding_complete" && h.onboarding_status !== "completed").length}
                   </div>
                 </div>
@@ -928,7 +1110,7 @@ export default function NativeATSRecruiterWorkspace() {
               )}
 
               {filteredHistory.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "32px 0", color: "#64748b" }}>
+                <div style={{ textAlign: "center", padding: "24px 0", color: "#64748b" }}>
                   <p style={{ margin: 0 }}>No submissions match the current filters.</p>
                 </div>
               ) : (
@@ -966,7 +1148,12 @@ export default function NativeATSRecruiterWorkspace() {
                         return (
                           <tr key={h.id} style={isSelected ? { background: "#f0fdf4" } : {}}>
                             <td>
-                              <div style={{ fontWeight: 700 }}>{h.full_name || "—"}</div>
+                              <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                                {h.full_name || "—"}
+                                {h.substitute_reason && (
+                                  <span className="rw-badge badge-sub" title={`Substitute: ${h.substitute_reason}`}>SUB</span>
+                                )}
+                              </div>
                               <div className="rw-muted">{h.candidate_code || h.candidate_id}</div>
                             </td>
                             <td>
@@ -1035,7 +1222,7 @@ export default function NativeATSRecruiterWorkspace() {
         {/* ── INTERVIEW FORM ── */}
         {screen === "form" && selected && (
           <div className="rw-card">
-            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
               <button className="btn-ghost" onClick={() => setScreen("workspace")} style={{ width: "auto", padding: "8px 16px" }}>← Back</button>
               <div>
                 <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Update Candidate</h2>
@@ -1043,197 +1230,291 @@ export default function NativeATSRecruiterWorkspace() {
               </div>
             </div>
 
-            {/* Walk-in Summary */}
-            <div className="form-section sec-gray">
-              <div className="sec-title" style={{ color: "#475569" }}>Walk-in Summary</div>
-              <div className="rw-grid rw-3">
-                {field("Interviewed for Process *", "processName", "select", config.processOptions)}
-                {field("Walk-in End Stage *", "stageName", "select", reachableStageOptions)}
-                {field("Final Decision *", "finalDecision", "select", config.decisionOptions)}
+            <div className="form-sections-grid">
+              {/* Walk-in Summary */}
+              <div className="form-section sec-gray">
+                <div className="sec-title" style={{ color: "#475569" }}>Walk-in Summary</div>
+                <div className="rw-grid rw-3">
+                  {field("Interviewed for Process *", "processName", "select", config.processOptions)}
+                  {field("Walk-in End Stage *", "stageName", "select", reachableStageOptions)}
+                  {field("Final Decision *", "finalDecision", "select", config.decisionOptions)}
+                </div>
               </div>
+
+              {/* Round 1 */}
+              {effectiveRank >= 1 && (
+                <div className="form-section sec-blue">
+                  <div className="sec-title" style={{ color: "#1d4ed8" }}>Round 1 — HR Screening</div>
+                  <div className="rw-grid rw-2">
+                    {field("Round 1 Result *", "round1Result", "select", config.decisionOptions)}
+                    {form.round1Result === "Rejected" && field("Round 1 VOC *", "round1Voc", "select", config.vocOptions)}
+                  </div>
+                  <div style={{ marginTop: 6, gridColumn: "1 / -1" }}>{field("Round 1 Remarks", "round1Remarks", "textarea")}</div>
+                </div>
+              )}
+
+              {/* Skill Test */}
+              {effectiveRank >= 2 && (
+                <div className="form-section sec-purple">
+                  <div className="sec-title" style={{ color: "#7c3aed" }}>Skill Test</div>
+                  <div className="rw-grid rw-3">
+                    {field("Typing Score", "skillTypingScore", "input")}
+                    {field("AI Score", "skillAiScore", "input")}
+                    {field("Skill Test Result", "skillResult", "select", config.decisionOptions)}
+                  </div>
+                  {form.skillResult === "Rejected" && (
+                    <div style={{ marginTop: 6 }} className="rw-grid rw-2">
+                      {field("Skill Test VOC *", "skillVoc", "select", config.skillVocOptions)}
+                    </div>
+                  )}
+                  <div style={{ marginTop: 6, gridColumn: "1 / -1" }}>{field("Skill Test Remarks", "skillRemarks", "textarea")}</div>
+                </div>
+              )}
+
+              {/* Round 2 */}
+              {effectiveRank >= 3 && (
+                <div className="form-section sec-green">
+                  <div className="sec-title" style={{ color: "#047857" }}>Round 2 — Operations</div>
+                  <div className="rw-grid rw-2">
+                    {field("Round 2 Result *", "round2Result", "select", config.decisionOptions)}
+                    {form.round2Result === "Rejected" && field("Round 2 VOC *", "round2Voc", "select", config.vocOptions)}
+                  </div>
+                  <div style={{ marginTop: 6, gridColumn: "1 / -1" }}>{field("Round 2 Remarks", "round2Remarks", "textarea")}</div>
+                </div>
+              )}
+
+              {/* Round 3 */}
+              {effectiveRank >= 4 && (
+                <div className="form-section sec-orange">
+                  <div className="sec-title" style={{ color: "#c2410c" }}>Round 3 — Client</div>
+                  <div className="rw-grid rw-2">
+                    {field("Round 3 Result *", "round3Result", "select", config.decisionOptions)}
+                    {form.round3Result === "Rejected" && field("Round 3 VOC *", "round3Voc", "select", config.vocOptions)}
+                  </div>
+                  <div style={{ marginTop: 6, gridColumn: "1 / -1" }}>{field("Round 3 Remarks", "round3Remarks", "textarea")}</div>
+                </div>
+              )}
+
+              {effectiveRank >= 3 && (
+                <div className="form-section sec-green">
+                  <div className="sec-title" style={{ color: "#047857" }}>Second Round Interviewer</div>
+                  <div className="rw-grid rw-2">
+                    <div ref={interviewerSearchRef} style={{ position: "relative" }}>
+                      <label>Second Round Interviewer *</label>
+                      <input
+                        type="text"
+                        placeholder="Type name to search…"
+                        value={interviewerSearch}
+                        autoComplete="off"
+                        onChange={(e) => {
+                          const q = e.target.value;
+                          setInterviewerSearch(q);
+                          setInterviewerDropOpen(true);
+                          searchInterviewers(q);
+                          if (!q) updateForm({ secondRoundInterviewerId: "", secondRoundInterviewerNameSnapshot: "" });
+                        }}
+                        onFocus={() => {
+                          setInterviewerDropOpen(true);
+                          if (!interviewers.length) searchInterviewers(interviewerSearch);
+                        }}
+                      />
+                      {interviewerDropOpen && (
+                        <div style={{
+                          position: "absolute", top: "100%", left: 0, right: 0, zIndex: 9999,
+                          background: "#fff", border: "1px solid #d1d5db", borderRadius: 8,
+                          boxShadow: "0 4px 16px rgba(0,0,0,0.12)", maxHeight: 220, overflowY: "auto",
+                        }}>
+                          {interviewerSearchLoading && (
+                            <div style={{ padding: "8px 12px", color: "#6b7280", fontSize: 13 }}>Searching…</div>
+                          )}
+                          {!interviewerSearchLoading && interviewers.length === 0 && (
+                            <div style={{ padding: "8px 12px", color: "#6b7280", fontSize: 13 }}>No interviewers found</div>
+                          )}
+                          {!interviewerSearchLoading && interviewers.map((item) => (
+                            <div
+                              key={item.id}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                updateForm({ secondRoundInterviewerId: item.id, secondRoundInterviewerNameSnapshot: item.name });
+                                setInterviewerSearch(item.name);
+                                setInterviewerDropOpen(false);
+                              }}
+                              style={{
+                                padding: "8px 12px", cursor: "pointer", fontSize: 14,
+                                background: form.secondRoundInterviewerId === item.id ? "#dcfce7" : undefined,
+                                borderBottom: "1px solid #f3f4f6",
+                              }}
+                              onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "#f0fdf4"; }}
+                              onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = form.secondRoundInterviewerId === item.id ? "#dcfce7" : ""; }}
+                            >
+                              <span style={{ fontWeight: 500 }}>{item.name}</span>
+                              {item.designation_name && <span style={{ color: "#6b7280", marginLeft: 6, fontSize: 12 }}>· {item.designation_name}</span>}
+                              {item.branch_name && <span style={{ color: "#9ca3af", marginLeft: 4, fontSize: 12 }}>· {item.branch_name}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <label>Interviewer Snapshot</label>
+                      <input value={form.secondRoundInterviewerNameSnapshot} readOnly placeholder="Auto-filled from selection" />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {rank >= 4 && (
+                <div className="form-section sec-orange">
+                  <div className="sec-title" style={{ color: "#c2410c" }}>Client Round</div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={form.clientRoundConducted}
+                      onChange={(e) => updateForm({ clientRoundConducted: e.target.checked })}
+                    />
+                    Client round conducted
+                  </label>
+                  <div className="rw-grid rw-2">
+                    <div>
+                      <label>Client Round Interviewer Name</label>
+                      <input
+                        value={form.clientRoundInterviewerName}
+                        onChange={(e) => updateForm({ clientRoundInterviewerName: e.target.value })}
+                        placeholder="Manually enter client interviewer"
+                      />
+                    </div>
+                    <div>
+                      <label>Client Round Result</label>
+                      <select
+                        value={form.clientRoundResult}
+                        onChange={(e) => updateForm({ clientRoundResult: e.target.value })}
+                      >
+                        <option value="">Select result</option>
+                        {config.decisionOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 6, gridColumn: "1 / -1" }}>{field("Client Round Remarks", "clientRoundRemarks", "textarea")}</div>
+                </div>
+              )}
+
+              {/* Offer Details */}
+              {form.finalDecision === "Selected" && (
+                <div className="form-section sec-selected">
+                  <div className="sec-title" style={{ color: "#047857" }}>Offer Details (Required for Selected)</div>
+                  <div className="rw-grid rw-3">
+                    {field("Offer Salary *", "offerSalary", "input")}
+                    {field("Date of Joining *", "offerDoj", "input")}
+                    {field("Reporting Timing *", "reportingTiming", "input")}
+                  </div>
+                  <div className="rw-grid rw-2" style={{ marginTop: 6 }}>
+                    {field("OT Details", "otDetails", "input")}
+                    {field("Performance Incentives", "performanceIncentives", "input")}
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Round 1 */}
-            {effectiveRank >= 1 && (
-              <div className="form-section sec-blue">
-                <div className="sec-title" style={{ color: "#1d4ed8" }}>Round 1 — HR Screening</div>
-                <div className="rw-grid rw-2">
-                  {field("Round 1 Result *", "round1Result", "select", config.decisionOptions)}
-                  {form.round1Result === "Rejected" && field("Round 1 VOC *", "round1Voc", "select", config.vocOptions)}
-                </div>
-                <div style={{ marginTop: 10 }}>{field("Round 1 Remarks", "round1Remarks", "textarea")}</div>
-              </div>
-            )}
-
-            {/* Skill Test */}
-            {effectiveRank >= 2 && (
-              <div className="form-section sec-purple">
-                <div className="sec-title" style={{ color: "#7c3aed" }}>Skill Test</div>
-                <div className="rw-grid rw-3">
-                  {field("Typing Score", "skillTypingScore", "input")}
-                  {field("AI Score", "skillAiScore", "input")}
-                  {field("Skill Test Result", "skillResult", "select", config.decisionOptions)}
-                </div>
-                {form.skillResult === "Rejected" && (
-                  <div style={{ marginTop: 10 }} className="rw-grid rw-2">
-                    {field("Skill Test VOC *", "skillVoc", "select", config.skillVocOptions)}
-                  </div>
-                )}
-                <div style={{ marginTop: 10 }}>{field("Skill Test Remarks", "skillRemarks", "textarea")}</div>
-              </div>
-            )}
-
-            {/* Round 2 */}
-            {effectiveRank >= 3 && (
-              <div className="form-section sec-green">
-                <div className="sec-title" style={{ color: "#047857" }}>Round 2 — Operations</div>
-                <div className="rw-grid rw-2">
-                  {field("Round 2 Result *", "round2Result", "select", config.decisionOptions)}
-                  {form.round2Result === "Rejected" && field("Round 2 VOC *", "round2Voc", "select", config.vocOptions)}
-                </div>
-                <div style={{ marginTop: 10 }}>{field("Round 2 Remarks", "round2Remarks", "textarea")}</div>
-              </div>
-            )}
-
-            {/* Round 3 */}
-            {effectiveRank >= 4 && (
-              <div className="form-section sec-orange">
-                <div className="sec-title" style={{ color: "#c2410c" }}>Round 3 — Client</div>
-                <div className="rw-grid rw-2">
-                  {field("Round 3 Result *", "round3Result", "select", config.decisionOptions)}
-                  {form.round3Result === "Rejected" && field("Round 3 VOC *", "round3Voc", "select", config.vocOptions)}
-                </div>
-                <div style={{ marginTop: 10 }}>{field("Round 3 Remarks", "round3Remarks", "textarea")}</div>
-              </div>
-            )}
-
-            {effectiveRank >= 3 && (
-              <div className="form-section sec-green">
-                <div className="sec-title" style={{ color: "#047857" }}>Second Round Interviewer</div>
-                <div className="rw-grid rw-2">
-                  <div ref={interviewerSearchRef} style={{ position: "relative" }}>
-                    <label>Second Round Interviewer *</label>
-                    <input
-                      type="text"
-                      placeholder="Type name to search…"
-                      value={interviewerSearch}
-                      autoComplete="off"
-                      onChange={(e) => {
-                        const q = e.target.value;
-                        setInterviewerSearch(q);
-                        setInterviewerDropOpen(true);
-                        searchInterviewers(q);
-                        if (!q) updateForm({ secondRoundInterviewerId: "", secondRoundInterviewerNameSnapshot: "" });
-                      }}
-                      onFocus={() => {
-                        setInterviewerDropOpen(true);
-                        if (!interviewers.length) searchInterviewers(interviewerSearch);
-                      }}
-                    />
-                    {interviewerDropOpen && (
-                      <div style={{
-                        position: "absolute", top: "100%", left: 0, right: 0, zIndex: 9999,
-                        background: "#fff", border: "1px solid #d1d5db", borderRadius: 8,
-                        boxShadow: "0 4px 16px rgba(0,0,0,0.12)", maxHeight: 220, overflowY: "auto",
-                      }}>
-                        {interviewerSearchLoading && (
-                          <div style={{ padding: "8px 12px", color: "#6b7280", fontSize: 13 }}>Searching…</div>
-                        )}
-                        {!interviewerSearchLoading && interviewers.length === 0 && (
-                          <div style={{ padding: "8px 12px", color: "#6b7280", fontSize: 13 }}>No interviewers found</div>
-                        )}
-                        {!interviewerSearchLoading && interviewers.map((item) => (
-                          <div
-                            key={item.id}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              updateForm({ secondRoundInterviewerId: item.id, secondRoundInterviewerNameSnapshot: item.name });
-                              setInterviewerSearch(item.name);
-                              setInterviewerDropOpen(false);
-                            }}
-                            style={{
-                              padding: "8px 12px", cursor: "pointer", fontSize: 14,
-                              background: form.secondRoundInterviewerId === item.id ? "#dcfce7" : undefined,
-                              borderBottom: "1px solid #f3f4f6",
-                            }}
-                            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "#f0fdf4"; }}
-                            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = form.secondRoundInterviewerId === item.id ? "#dcfce7" : ""; }}
-                          >
-                            <span style={{ fontWeight: 500 }}>{item.name}</span>
-                            {item.designation_name && <span style={{ color: "#6b7280", marginLeft: 6, fontSize: 12 }}>· {item.designation_name}</span>}
-                            {item.branch_name && <span style={{ color: "#9ca3af", marginLeft: 4, fontSize: 12 }}>· {item.branch_name}</span>}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div>
-                    <label>Interviewer Snapshot</label>
-                    <input value={form.secondRoundInterviewerNameSnapshot} readOnly placeholder="Auto-filled from selection" />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {rank >= 4 && (
-              <div className="form-section sec-orange">
-                <div className="sec-title" style={{ color: "#c2410c" }}>Client Round</div>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                  <input
-                    type="checkbox"
-                    checked={form.clientRoundConducted}
-                    onChange={(e) => updateForm({ clientRoundConducted: e.target.checked })}
-                  />
-                  Client round conducted
-                </label>
-                <div className="rw-grid rw-2">
-                  <div>
-                    <label>Client Round Interviewer Name</label>
-                    <input
-                      value={form.clientRoundInterviewerName}
-                      onChange={(e) => updateForm({ clientRoundInterviewerName: e.target.value })}
-                      placeholder="Manually enter client interviewer"
-                    />
-                  </div>
-                  <div>
-                    <label>Client Round Result</label>
-                    <select
-                      value={form.clientRoundResult}
-                      onChange={(e) => updateForm({ clientRoundResult: e.target.value })}
-                    >
-                      <option value="">Select result</option>
-                      {config.decisionOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div style={{ marginTop: 10 }}>{field("Client Round Remarks", "clientRoundRemarks", "textarea")}</div>
-              </div>
-            )}
-
-
-            {/* Offer Details */}
-            {form.finalDecision === "Selected" && (
-              <div className="form-section sec-selected">
-                <div className="sec-title" style={{ color: "#047857" }}>Offer Details (Required for Selected)</div>
-                <div className="rw-grid rw-3">
-                  {field("Offer Salary *", "offerSalary", "input")}
-                  {field("Date of Joining *", "offerDoj", "input")}
-                  {field("Reporting Timing *", "reportingTiming", "input")}
-                </div>
-                <div className="rw-grid rw-2" style={{ marginTop: 10 }}>
-                  {field("OT Details", "otDetails", "input")}
-                  {field("Performance Incentives", "performanceIncentives", "input")}
-                </div>
-              </div>
-            )}
-
-            {msg && <p className={`rw-msg ${msg.toLowerCase().includes("error") || msg.toLowerCase().includes("unable") || msg.toLowerCase().includes("required") ? "rw-err" : ""}`} style={{ marginBottom: 12 }}>{msg}</p>}
-            <button disabled={loading} onClick={submit} style={{ width: "100%", padding: "14px", fontSize: 15, borderRadius: 14 }}>
+            {msg && <p className={`rw-msg ${msg.toLowerCase().includes("error") || msg.toLowerCase().includes("unable") || msg.toLowerCase().includes("required") ? "rw-err" : ""}`} style={{ marginTop: 10, marginBottom: 10 }}>{msg}</p>}
+            <button disabled={loading} onClick={submit} style={{ width: "100%", padding: "10px 14px", fontSize: 15, borderRadius: 14 }}>
               {loading ? "Submitting…" : "Submit Update"}
             </button>
           </div>
         )}
       </div>
+
+      {/* ── Substitute Modal ── */}
+      {subCandidate && (
+        <div className="rw-modal-overlay" onClick={() => setSubCandidate(null)}>
+          <div className="rw-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>⚠ Proceed as Substitute?</h3>
+            <p>
+              <b>{subCandidate.fullName}</b> is assigned to{" "}
+              <b>{subCandidate.recruiterAssignedName}</b> who may be unavailable.
+            </p>
+            <div style={{ marginBottom: 14 }}>
+              <label>Reason for conducting as substitute *</label>
+              <textarea
+                value={subReason}
+                onChange={(e) => setSubReason(e.target.value)}
+                placeholder="e.g. Priya Sharma is absent today, taking over to avoid candidate wait"
+                style={{ minHeight: 72 }}
+              />
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                className="btn-amber"
+                style={{ flex: 1 }}
+                disabled={!subReason.trim()}
+                onClick={() => {
+                  const c = subCandidate;
+                  setSubCandidate(null);
+                  openFormDirect(c, false, undefined, true);
+                }}
+              >
+                Proceed as Substitute
+              </button>
+              <button
+                className="btn-ghost"
+                style={{ flex: 0, padding: "10px 18px", width: "auto" }}
+                onClick={() => setSubCandidate(null)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Reassign Modal ── */}
+      {reassignCandidate && (
+        <div className="rw-modal-overlay" onClick={() => setReassignCandidate(null)}>
+          <div className="rw-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Reassign Candidate</h3>
+            <p>
+              Permanently reassign <b>{reassignCandidate.fullName}</b> from{" "}
+              <b>{reassignCandidate.recruiterAssignedName || "unassigned"}</b> to another recruiter.
+            </p>
+            <div style={{ marginBottom: 12 }}>
+              <label>New Recruiter *</label>
+              <select value={reassignTargetId} onChange={(e) => setReassignTargetId(e.target.value)}>
+                <option value="">Select recruiter…</option>
+                {reassignRecruiters.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label>Reason *</label>
+              <textarea
+                value={reassignReason}
+                onChange={(e) => setReassignReason(e.target.value)}
+                placeholder="e.g. Recruiter is on leave, transferring to available recruiter"
+                style={{ minHeight: 60 }}
+              />
+            </div>
+            {reassignMsg && (
+              <p className="rw-msg rw-err" style={{ marginBottom: 10 }}>{reassignMsg}</p>
+            )}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                style={{ flex: 1 }}
+                disabled={!reassignTargetId || !reassignReason.trim() || reassignLoading}
+                onClick={handleReassign}
+              >
+                {reassignLoading ? "Reassigning…" : "Confirm Reassign"}
+              </button>
+              <button
+                className="btn-ghost"
+                style={{ flex: 0, padding: "10px 18px", width: "auto" }}
+                onClick={() => { setReassignCandidate(null); setReassignMsg(""); }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
