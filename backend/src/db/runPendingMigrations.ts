@@ -250,6 +250,7 @@ const MIGRATION_MANIFEST: string[] = [
   "364_incentive_bulk_upload_schema.sql",
   "365_payroll_deduction_type.sql",
   "366_page_codes_incentive_deduction.sql",
+  "367_dpdp_compliance_role_access.sql",
   ];
 
 export type MigrationHealth = {

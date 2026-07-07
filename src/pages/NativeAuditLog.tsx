@@ -16,6 +16,7 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Download, Loader2 } from "lucide-react";
+import { formatIST } from "@/lib/utils";
 
 interface AuditEvent {
   id: string;
