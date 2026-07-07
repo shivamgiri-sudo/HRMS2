@@ -160,7 +160,10 @@ export async function submitInterviewResult(input: InterviewResultInput) {
     );
 
     // Update queue status
-    const queueStatus = input.interview_status === 'selected' ? 'completed' : 'rejected';
+    const queueStatus =
+      input.interview_status === 'selected' ? 'completed' :
+      input.interview_status === 'no_show' ? 'no_show' :
+      'completed'; // rejected/hold/callback/walkout all become completed
     await connection.execute(
       `UPDATE ats_queue_token
        SET queue_status = ?,

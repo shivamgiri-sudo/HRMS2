@@ -131,7 +131,7 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
     LEFT JOIN employees e ON e.id = rr.employee_id
     WHERE ${conditions.join(' AND ')}
       AND (
-        qt.queue_status IN ('waiting','called','in_interview','completed','no_show')
+        qt.queue_status IN ('waiting','called','in_interview')
         OR (qt.queue_status IS NULL AND qt.status = 'active')
       )
       ORDER BY
@@ -404,4 +404,25 @@ export async function getQueuePosition(candidateId: string): Promise<number> {
   );
 
   return rows.length > 0 ? rows[0].position : 0;
+}
+
+/**
+ * Cleanup stale in_interview tokens
+ * Auto-transitions tokens that have been in_interview for more than 2 hours to no_show
+ */
+export async function cleanupStaleInterviews(): Promise<number> {
+  const STALE_THRESHOLD_MINUTES = 120; // 2 hours
+
+  const [result] = await db.execute(
+    `UPDATE ats_queue_token
+     SET queue_status = 'no_show',
+         interview_completed_at = NOW()
+     WHERE queue_status = 'in_interview'
+       AND interview_started_at IS NOT NULL
+       AND TIMESTAMPDIFF(MINUTE, interview_started_at, NOW()) > ?
+       AND DATE(COALESCE(arrival_time, created_at)) = CURDATE()`,
+    [STALE_THRESHOLD_MINUTES]
+  );
+
+  return (result as any).affectedRows || 0;
 }

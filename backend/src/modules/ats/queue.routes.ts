@@ -13,6 +13,7 @@ import {
   callNextCandidate,
   markNoShow,
   getQueuePosition,
+  cleanupStaleInterviews,
   type QueueFilters,
 } from './queue.enhanced.service.js';
 
@@ -127,6 +128,11 @@ queuePublicRouter.get('/display-stream', async (req: Request, res: Response) => 
   const heartbeat = setInterval(() => {
     if (!closed) res.write(`: keep-alive ${Date.now()}\n\n`);
   }, 25_000);
+
+  // Cleanup stale in_interview tokens on connection start
+  await cleanupStaleInterviews().catch((err) => {
+    console.error('[queue] Stale interview cleanup failed:', err);
+  });
 
   await pushSnapshot();
   const poll = setInterval(() => {
