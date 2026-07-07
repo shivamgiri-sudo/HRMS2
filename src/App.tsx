@@ -11,6 +11,7 @@ import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
 import ScrollToTop from "@/components/layout/ScrollToTop";
 import { PortalRoute } from "./components/portal/PortalRoute";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 import Auth from "./pages/AuthClean";
 import ResetPassword from "./pages/ResetPassword";
@@ -280,8 +281,9 @@ const App = () => (
       <BrowserRouter>
         <AuthProvider>
           <ScrollToTop />
-          <Suspense fallback={<PageLoader />}>
-            <Routes>
+          <ErrorBoundary>
+            <Suspense fallback={<PageLoader />}>
+              <Routes>
               <Route path="/" element={<Navigate to="/auth" replace />} />
               <Route path="/features" element={<Features />} />
               <Route path="/how-it-works" element={<HowItWorks />} />
@@ -536,11 +538,11 @@ const App = () => (
               <Route path="/compliance/dpdp-withdrawal-admin" element={<ProtectedRoute><Gate pageCode="DPDP_WITHDRAWAL_ADMIN"><NativeDPDPWithdrawalAdmin /></Gate></ProtectedRoute>} />
 
               {/* Governance / TAT */}
-              <Route path="/governance/tat-matrix" element={<ProtectedRoute><Gate pageCode="TAT_MATRIX"><NativePlaceholderPage /></Gate></ProtectedRoute>} />
-              <Route path="/governance/tat-dashboard" element={<ProtectedRoute><Gate pageCode="TAT_DASHBOARD"><NativePlaceholderPage /></Gate></ProtectedRoute>} />
+              <Route path="/governance/tat-matrix" element={<ProtectedRoute><Gate pageCode="TAT_MATRIX"><NativePlaceholderPage title="TAT Matrix" module="Governance" /></Gate></ProtectedRoute>} />
+              <Route path="/governance/tat-dashboard" element={<ProtectedRoute><Gate pageCode="TAT_DASHBOARD"><NativePlaceholderPage title="TAT Dashboard" module="Governance" /></Gate></ProtectedRoute>} />
 
               {/* ATS name consistency */}
-              <Route path="/ats/name-consistency" element={<ProtectedRoute><Gate pageCode="NAME_CONSISTENCY_MATRIX"><NativePlaceholderPage /></Gate></ProtectedRoute>} />
+              <Route path="/ats/name-consistency" element={<ProtectedRoute><Gate pageCode="NAME_CONSISTENCY_MATRIX"><NativePlaceholderPage title="Name Consistency Matrix" module="ATS" /></Gate></ProtectedRoute>} />
 
               {/* Appointment e-sign */}
               <Route path="/letters/appointment-esign" element={<ProtectedRoute><Gate pageCode="APPOINTMENT_ESIGN"><NativeAppointmentEsign /></Gate></ProtectedRoute>} />
@@ -549,7 +551,7 @@ const App = () => (
 
               {/* Exit / Resignation */}
               <Route path="/exit/resignation" element={<ProtectedRoute><Gate pageCode="RESIGNATION_MY_REQUEST"><NativeMyResignation /></Gate></ProtectedRoute>} />
-              <Route path="/exit/resignation-command-center" element={<ProtectedRoute><Gate pageCode="RESIGNATION_COMMAND_CENTER"><NativePlaceholderPage /></Gate></ProtectedRoute>} />
+              <Route path="/exit/resignation-command-center" element={<ProtectedRoute><Gate pageCode="RESIGNATION_COMMAND_CENTER"><NativePlaceholderPage title="Resignation Command Center" module="Exit Management" /></Gate></ProtectedRoute>} />
 
               {/* Public kiosk display — no auth required */}
               <Route path="/display/waiting-room" element={<WaitingRoomDisplay />} />
@@ -557,6 +559,7 @@ const App = () => (
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>
+          </ErrorBoundary>
           <CookieConsent />
           <OfflineFallback />
         </AuthProvider>

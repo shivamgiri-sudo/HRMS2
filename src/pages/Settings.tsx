@@ -434,11 +434,17 @@ const BgvProviderSettings = () => {
 };
 
 const Settings = () => {
-  const [activeTab, setActiveTab] = useState("user-roles");
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { isAdminOrHR, isLoading: roleLoading, role } = useIsAdminOrHR();
   const isAdmin = role === 'admin' || role === 'super_admin';
+
+  // Compute first visible tab based on role — always-visible tabs: departments, leave-types
+  const getDefaultTab = () => {
+    if (isAdmin) return "user-roles";
+    return "departments";
+  };
+  const [activeTab, setActiveTab] = useState(getDefaultTab());
   
   // Department state
   const [deptDialogOpen, setDeptDialogOpen] = useState(false);

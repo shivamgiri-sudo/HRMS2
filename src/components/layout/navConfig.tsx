@@ -240,13 +240,8 @@ export const navGroups: NavGroup[] = [
         label: "Management",   href: "/management/dashboard", icon: ic(BarChart3), pageCode: "MANAGEMENT_DASHBOARD", description: "Management dashboards",
         children: [
           { label: "Management Dashboard",     href: "/management/dashboard",          icon: ic(BarChart3),  pageCode: "MANAGEMENT_DASHBOARD",   description: "Management" },
-          { label: "CEO Command Center",       href: "/management/ceo-command-center", icon: ic(BarChart3),  roles: ["admin","hr","ceo","coo","finance","process_manager","manager"], description: "CEO dashboard" },
           { label: "Business Command Center",  href: "/business-command-center",       icon: ic(Briefcase),  roles: ["admin","ceo","coo","hr","manager","process_manager"],           description: "Business ops center" },
           { label: "Business Actions",         href: "/business-actions",              icon: ic(ClipboardList), roles: ["admin","ceo","coo","hr","manager","process_manager","team_leader","tl"], description: "Action queue" },
-          { label: "Control Tower",            href: "/control-tower",                 icon: ic(Activity),   pageCode: "CONTROL_TOWER",          description: "Control tower" },
-          { label: "Master Reports",           href: "/master-reports",                icon: ic(BarChart3),  pageCode: "ADVANCED_REPORTS",       description: "Master reports" },
-          { label: "Advanced Reports",         href: "/advanced-reports",              icon: ic(BarChart3),  pageCode: "ADVANCED_REPORTS",       description: "Advanced reports" },
-          { label: "Enterprise Reports",       href: "/reports/enterprise",            icon: ic(BarChart3),  pageCode: "ADVANCED_REPORTS",       description: "Enterprise reports" },
           { label: "People Experience",        href: "/people-experience/command-center", icon: ic(Users),   pageCode: "PEOPLE_EXPERIENCE",      description: "People ops" },
         ],
       },

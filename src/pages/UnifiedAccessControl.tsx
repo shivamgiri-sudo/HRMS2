@@ -22,6 +22,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -214,6 +215,9 @@ function QuickActionCard({
 
 export default function UnifiedAccessControl() {
   const queryClient = useQueryClient();
+  const { role } = useIsAdminOrHR();
+  const isAdmin = role === 'admin' || role === 'super_admin';
+
   const [activeTab, setActiveTab] = useState<TabKey>("users");
   const [userSearch, setUserSearch] = useState("");
   const [selectedUser, setSelectedUser] = useState<UserOption | null>(null);
@@ -299,37 +303,42 @@ export default function UnifiedAccessControl() {
       const res = await hrmsApi.get<{ data: AccessRequestRow[] }>("/api/access/requests?status=pending");
       return res.data ?? [];
     },
+    enabled: isAdmin,
     staleTime: 60 * 1000,
+    retry: false,
   });
 
-  const { data: accessRequests = [], isFetching: requestsLoading } = useQuery<AccessRequestRow[]>({
+  const { data: accessRequests = [], isFetching: requestsLoading, isError: requestsError } = useQuery<AccessRequestRow[]>({
     queryKey: ["access-control", "requests", requestStatus],
     queryFn: async () => {
       const res = await hrmsApi.get<{ data: AccessRequestRow[] }>(`/api/access/requests?status=${requestStatus}`);
       return res.data ?? [];
     },
-    enabled: activeTab === "admin",
+    enabled: activeTab === "admin" && isAdmin,
+    retry: false,
   });
 
-  const { data: rbacStatus, isFetching: rbacLoading, refetch: refetchRbac } = useQuery<RbacStatus>({
+  const { data: rbacStatus, isFetching: rbacLoading, refetch: refetchRbac, isError: rbacError } = useQuery<RbacStatus>({
     queryKey: ["access-control", "rbac-status"],
     queryFn: async () => {
       const res = await hrmsApi.get<{ data: RbacStatus }>("/api/access/rbac/status");
       return res.data;
     },
-    enabled: activeTab === "admin",
-    refetchInterval: activeTab === "admin" ? 5 * 60 * 1000 : false,
+    enabled: activeTab === "admin" && isAdmin,
+    refetchInterval: activeTab === "admin" && isAdmin ? 5 * 60 * 1000 : false,
     staleTime: 5 * 60 * 1000,
+    retry: false,
   });
 
-  const { data: activity = [], isFetching: activityLoading } = useQuery<ActivityItem[]>({
+  const { data: activity = [], isFetching: activityLoading, isError: activityError } = useQuery<ActivityItem[]>({
     queryKey: ["access-control", "activity"],
     queryFn: async () => {
       const res = await hrmsApi.get<{ data: ActivityItem[] }>("/api/access/activity?limit=10");
       return res.data ?? [];
     },
-    enabled: activeTab === "admin",
+    enabled: activeTab === "admin" && isAdmin,
     staleTime: 2 * 60 * 1000,
+    retry: false,
   });
 
   const assignRoleMutation = useMutation({
@@ -499,23 +508,25 @@ export default function UnifiedAccessControl() {
             action="Open permissions"
             onClick={() => setActiveTab("permissions")}
           />
-          <QuickActionCard
-            icon={Activity}
-            title="Pending Requests"
-            description="Approve or deny employee access requests from a single queue."
-            action="Review requests"
-            badge={pendingRequests.length}
-            onClick={() => setActiveTab("admin")}
-          />
+          {isAdmin && (
+            <QuickActionCard
+              icon={Activity}
+              title="Pending Requests"
+              description="Approve or deny employee access requests from a single queue."
+              action="Review requests"
+              badge={pendingRequests.length}
+              onClick={() => setActiveTab("admin")}
+            />
+          )}
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
           <div className="grid gap-1 sm:grid-cols-3">
-            {[
+            {([
               { key: "users" as const, label: "Users & Roles", icon: Users },
               { key: "permissions" as const, label: "Permissions", icon: Shield },
-              { key: "admin" as const, label: "Administration", icon: Activity },
-            ].map((tab) => {
+              ...(isAdmin ? [{ key: "admin" as const, label: "Administration", icon: Activity }] : []),
+            ] as const).map((tab) => {
               const Icon = tab.icon;
               return (
                 <button
@@ -828,7 +839,12 @@ export default function UnifiedAccessControl() {
                 </div>
               </div>
               <div className="mt-4 space-y-3">
-                {requestsLoading ? (
+                {requestsError ? (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50 p-6 text-center">
+                    <p className="text-sm font-semibold text-rose-700">Access denied or unavailable</p>
+                    <p className="mt-1 text-xs text-rose-600">You may not have permission to view access requests.</p>
+                  </div>
+                ) : requestsLoading ? (
                   <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
                 ) : accessRequests.length === 0 ? (
                   <EmptyState text={`No ${requestStatus} access requests.`} />

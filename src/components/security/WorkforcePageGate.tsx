@@ -89,7 +89,7 @@ function RequestAccessButton({ pageCode }: { pageCode: string }) {
 }
 
 export default function WorkforcePageGate({ pageCode, children }: WorkforcePageGateProps) {
-  const { isLoading, canViewPage, data } = useWorkforceAccess();
+  const { isLoading, canViewPage, data, isError, error } = useWorkforceAccess();
 
   // Show loading until we have data — don't evaluate canViewPage with undefined data
   if (isLoading || !data) {
@@ -97,6 +97,32 @@ export default function WorkforcePageGate({ pageCode, children }: WorkforcePageG
       <DashboardLayout>
         <div className="rounded-3xl border bg-white p-8 shadow-sm">
           <p className="text-sm font-semibold text-slate-500">Checking access...</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  // Handle API error (auth failure, network failure, etc.)
+  if (isError) {
+    return (
+      <DashboardLayout>
+        <div className="mx-auto max-w-2xl rounded-3xl border border-amber-200 bg-amber-50 p-8 text-center shadow-sm">
+          <ShieldAlert className="mx-auto h-12 w-12 text-amber-600" />
+          <h1 className="mt-4 text-2xl font-black text-amber-950">Unable to verify access</h1>
+          <p className="mt-3 text-sm leading-6 text-amber-800">
+            Could not load your permissions. This may be a temporary issue.
+          </p>
+          {error && (
+            <p className="mt-2 text-xs text-amber-700">{String(error)}</p>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-4 border-amber-300 text-amber-700 hover:bg-amber-100"
+            onClick={() => window.location.reload()}
+          >
+            Refresh Page
+          </Button>
         </div>
       </DashboardLayout>
     );
