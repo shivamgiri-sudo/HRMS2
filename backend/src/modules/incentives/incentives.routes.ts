@@ -5,6 +5,7 @@ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
+import multer from 'multer';
 
 import * as svc from './incentives.service.js';
 import {
@@ -15,12 +16,15 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
+const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
 export const incentivesRouter = Router();
 incentivesRouter.use(requireAuth);
 
 // ── MASTERS ───────────────────────────────────────────────────────────────────
-incentivesRouter.get('/masters', h(async (_req, res) => {
-  res.json({ success: true, data: await svc.listIncentiveMasters() });
+incentivesRouter.get('/masters', h(async (req, res) => {
+  const includeInactive = (req.query as any).all === 'true';
+  res.json({ success: true, data: await svc.listIncentiveMasters(includeInactive) });
 }));
 
 incentivesRouter.post('/masters', requireRole('admin', 'hr', 'finance'), h(async (req, res) => {
@@ -39,6 +43,168 @@ incentivesRouter.delete('/masters/:id', requireRole('admin'), h(async (req, res)
   await svc.softDeleteIncentiveMaster(req.params.id);
   res.json({ success: true });
 }));
+
+// PATCH /masters/:id/toggle — activate / deactivate incentive type
+incentivesRouter.patch('/masters/:id/toggle', requireRole('admin', 'hr', 'finance'), h(async (req, res) => {
+  const result = await svc.toggleIncentiveMaster(req.params.id);
+  res.json({ success: true, data: result });
+}));
+
+// ── BULK UPLOAD TEMPLATE ──────────────────────────────────────────────────────
+// GET /upload-template?month=YYYY-MM — download CSV template with dynamic incentive type columns
+incentivesRouter.get('/upload-template', requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'), h(async (req, res) => {
+  const month = ((req.query as any).month as string) || new Date().toISOString().slice(0, 7);
+
+  // Fetch active incentive types (alphabetical)
+  const [types] = await db.execute<RowDataPacket[]>(
+    'SELECT incentive_code FROM incentive_master WHERE active_status = 1 ORDER BY incentive_name'
+  );
+  const typeCodes = (types as any[]).map((t: any) => t.incentive_code as string);
+
+  // Fetch employees with branch + cost_centre
+  const [employees] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code, b.branch_name, cc.cost_centre_code
+     FROM employees e
+     LEFT JOIN branch_master b ON b.id = e.branch_id
+     LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+     WHERE e.employment_status IN ('active','on_leave')
+     ORDER BY e.employee_code
+     LIMIT 5000`
+  );
+
+  const headers = ['employee_code', 'month', 'branch', 'cost_centre', ...typeCodes, 'total_incentive'];
+  const rows = (employees as any[]).map((emp: any) => [
+    emp.employee_code,
+    month,
+    emp.branch_name ?? '',
+    emp.cost_centre_code ?? '',
+    ...typeCodes.map(() => 0),
+    0,
+  ]);
+
+  const csv = [headers.join(','), ...rows.map((r: any[]) => r.join(','))].join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="incentive_upload_${month}.csv"`);
+  res.send(csv);
+}));
+
+// ── BULK UPLOAD ───────────────────────────────────────────────────────────────
+// POST /bulk-upload — multipart CSV file upload
+// Creates one batch per incentive type found in the CSV and stores individual lines
+incentivesRouter.post('/bulk-upload',
+  requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'),
+  csvUpload.single('file'),
+  h(async (req: AuthenticatedRequest, res) => {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded. Send CSV as multipart field "file".' });
+
+    const uploadedBy = req.authUser!.id;
+    const csvText = req.file.buffer.toString('utf-8');
+    const lines = csvText.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) return res.status(400).json({ success: false, message: 'CSV has no data rows' });
+
+    const headers = lines[0].split(',').map((h: string) => h.trim().toLowerCase());
+    const FIXED = new Set(['employee_code', 'month', 'branch', 'cost_centre', 'total_incentive']);
+    const typeCols = headers.filter((h: string) => !FIXED.has(h));
+
+    if (!typeCols.length) return res.status(400).json({ success: false, message: 'No incentive type columns found in CSV' });
+
+    // Load incentive masters to map code → id
+    const [masters] = await db.execute<RowDataPacket[]>(
+      'SELECT id, incentive_code FROM incentive_master WHERE active_status = 1'
+    );
+    const masterMap = new Map((masters as any[]).map((m: any) => [m.incentive_code.toLowerCase(), m.id]));
+
+    // Load branch + cost_centre lookup maps
+    const [branches] = await db.execute<RowDataPacket[]>('SELECT id, branch_name FROM branch_master');
+    const branchMap = new Map((branches as any[]).map((b: any) => [b.branch_name?.toLowerCase(), b.id]));
+
+    const [costCentres] = await db.execute<RowDataPacket[]>('SELECT id, cost_centre_code FROM cost_centre_master');
+    const ccMap = new Map((costCentres as any[]).map((c: any) => [c.cost_centre_code?.toLowerCase(), c.id]));
+
+    const [empRows] = await db.execute<RowDataPacket[]>('SELECT id, employee_code FROM employees WHERE employment_status IN ("active","on_leave")');
+    const empMap = new Map((empRows as any[]).map((e: any) => [e.employee_code?.toLowerCase(), e.id]));
+
+    // One batch per incentive type (to preserve approval-per-type semantics)
+    const batchByType = new Map<string, string>(); // incentiveCode → batchId
+    let pay_month = '';
+    const perTypeTotals: Record<string, number> = {};
+    const perTypeEmployees: Record<string, Set<string>> = {};
+    let linesInserted = 0;
+    const errors: string[] = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',').map((c: string) => c.trim());
+      const row: Record<string, string> = {};
+      headers.forEach((h: string, idx: number) => { row[h] = cols[idx] ?? ''; });
+
+      const empCode = row['employee_code']?.toLowerCase();
+      const empId = empMap.get(empCode);
+      if (!empId) { errors.push(`Row ${i + 1}: employee_code "${row['employee_code']}" not found`); continue; }
+
+      pay_month = row['month'] || pay_month;
+      const branchId = branchMap.get(row['branch']?.toLowerCase()) ?? null;
+      const ccId = ccMap.get(row['cost_centre']?.toLowerCase()) ?? null;
+
+      for (const typeCode of typeCols) {
+        const amount = parseFloat(row[typeCode]);
+        if (!amount || amount <= 0) continue;
+
+        const incentiveMasterId = masterMap.get(typeCode.toLowerCase());
+        if (!incentiveMasterId) { errors.push(`Unknown incentive type: ${typeCode}`); continue; }
+
+        // Ensure batch exists for this type
+        if (!batchByType.has(typeCode)) {
+          const batchId = randomUUID();
+          const batchRef = `INCEN-${typeCode.toUpperCase()}-${pay_month}`;
+          await db.execute(
+            `INSERT INTO incentive_upload_batch
+               (id, incentive_id, pay_month, salary_month, batch_ref, status, uploaded_by, cost_centre_id, branch_id)
+             VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?)
+             ON DUPLICATE KEY UPDATE id = id`,
+            [batchId, incentiveMasterId, pay_month, pay_month, batchRef, uploadedBy, ccId, branchId]
+          );
+          batchByType.set(typeCode, batchId);
+        }
+
+        const batchId = batchByType.get(typeCode)!;
+        await db.execute(
+          `INSERT INTO incentive_upload_line
+             (id, batch_id, employee_id, employee_code, incentive_code, amount, validation_status, branch_id, cost_centre_id)
+           VALUES (?, ?, ?, ?, ?, ?, 'ok', ?, ?)
+           ON DUPLICATE KEY UPDATE amount = VALUES(amount), branch_id = VALUES(branch_id), cost_centre_id = VALUES(cost_centre_id)`,
+          [randomUUID(), batchId, empId, row['employee_code'], typeCode.toUpperCase(), amount, branchId, ccId]
+        );
+
+        perTypeTotals[typeCode] = (perTypeTotals[typeCode] ?? 0) + amount;
+        if (!perTypeEmployees[typeCode]) perTypeEmployees[typeCode] = new Set();
+        perTypeEmployees[typeCode].add(empId);
+        linesInserted++;
+      }
+    }
+
+    // Update batch totals
+    for (const [typeCode, batchId] of batchByType) {
+      const total = perTypeTotals[typeCode] ?? 0;
+      const empCount = perTypeEmployees[typeCode]?.size ?? 0;
+      await db.execute(
+        'UPDATE incentive_upload_batch SET total_employees=?, total_amount=? WHERE id=?',
+        [empCount, total, batchId]
+      );
+    }
+
+    return res.status(201).json({
+      success: true,
+      data: {
+        batches_created: batchByType.size,
+        batch_ids: Object.fromEntries(batchByType),
+        lines_inserted: linesInserted,
+        pay_month,
+        per_type_totals: perTypeTotals,
+        errors: errors.slice(0, 20),
+      },
+    });
+  })
+);
 
 // ── BATCHES ───────────────────────────────────────────────────────────────────
 incentivesRouter.get('/batches', h(async (req, res) => {

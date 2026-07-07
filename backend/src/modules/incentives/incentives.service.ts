@@ -4,14 +4,24 @@ import { randomUUID } from 'crypto';
 
 // ── INCENTIVE MASTER ──────────────────────────────────────────────────────────
 
-export async function listIncentiveMasters() {
+export async function listIncentiveMasters(includeInactive = false) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT *, CASE WHEN active_status = 1 THEN 'active' ELSE 'inactive' END AS status
        FROM incentive_master
-      WHERE active_status = 1
+      ${includeInactive ? '' : 'WHERE active_status = 1'}
       ORDER BY incentive_name`
   );
   return rows;
+}
+
+export async function toggleIncentiveMaster(id: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    'SELECT active_status FROM incentive_master WHERE id=?', [id]
+  );
+  if (!(rows as any[]).length) throw new Error('Incentive type not found');
+  const current = (rows[0] as any).active_status;
+  await db.execute('UPDATE incentive_master SET active_status=? WHERE id=?', [current ? 0 : 1, id]);
+  return { active_status: current ? 0 : 1 };
 }
 
 export async function getIncentiveMasterById(id: string) {
@@ -188,10 +198,11 @@ export async function rejectBatch(batchId: string, actorId: string, remarks?: st
 }
 
 export async function applyToRun(runId: string, payMonth: string, actorId: string) {
+  // Clear previous incentive components and rollup for this run
   await db.execute(
     `DELETE FROM salary_prep_line_component
      WHERE line_id IN (SELECT id FROM salary_prep_line WHERE run_id=?)
-       AND component_code LIKE 'INCEN_%'`,
+       AND (component_code LIKE 'INCEN_%' OR component_code = 'INCENTIVE')`,
     [runId]
   );
 
@@ -207,6 +218,9 @@ export async function applyToRun(runId: string, payMonth: string, actorId: strin
      WHERE iub.pay_month=? AND iub.status='approved'`,
     [payMonth]
   );
+
+  // Accumulate per-employee totals across all batches
+  const employeeTotals = new Map<string, { prepLineId: string; total: number }>();
 
   let applied = 0;
   for (const batch of batches as any[]) {
@@ -224,26 +238,51 @@ export async function applyToRun(runId: string, payMonth: string, actorId: strin
       );
       if (!prepLines.length) continue;
       const prepLineId = (prepLines[0] as any).id;
-      const compId = randomUUID();
 
+      // Insert per-type component (INCEN_NSA, INCEN_PERF, etc.)
       await db.execute(
         `INSERT INTO salary_prep_line_component
            (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
          VALUES (?, ?, ?, ?, ?, ?, 'earning', ?, 'incentive', ?)
          ON DUPLICATE KEY UPDATE amount=VALUES(amount)`,
-        [compId, runId, prepLineId, line.employee_id,
+        [randomUUID(), runId, prepLineId, line.employee_id,
          `INCEN_${batch.incentive_code}`, batch.incentive_name,
          line.amount, batch.taxable ?? 1]
       );
 
-      await db.execute(
-        'UPDATE salary_prep_line SET incentive_total = incentive_total + ? WHERE id=?',
-        [line.amount, prepLineId]
-      );
+      // Accumulate total for rollup
+      const prev = employeeTotals.get(line.employee_id);
+      if (prev) {
+        prev.total += Number(line.amount);
+      } else {
+        employeeTotals.set(line.employee_id, { prepLineId, total: Number(line.amount) });
+      }
       applied++;
     }
 
     await transitionBatch(batch.id, 'applied', actorId, 'applied');
+  }
+
+  // Insert/update rollup INCENTIVE component and update gross/net on salary_prep_line
+  for (const [employeeId, { prepLineId, total }] of employeeTotals) {
+    // Rollup component for payslip display (PayslipViewer reads earning("INCENTIVE"))
+    await db.execute(
+      `INSERT INTO salary_prep_line_component
+         (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
+       VALUES (?, ?, ?, ?, 'INCENTIVE', 'Total Incentive', 'earning', ?, 'incentive', 1)
+       ON DUPLICATE KEY UPDATE amount=VALUES(amount)`,
+      [randomUUID(), runId, prepLineId, employeeId, total]
+    );
+
+    // Update incentive_total, gross_salary and net_salary on the prep line
+    await db.execute(
+      `UPDATE salary_prep_line
+       SET incentive_total = ?,
+           gross_salary    = gross_salary + ?,
+           net_salary      = net_salary + ?
+       WHERE id = ?`,
+      [total, total, total, prepLineId]
+    );
   }
 
   return { batches_applied: (batches as any[]).length, lines_applied: applied };

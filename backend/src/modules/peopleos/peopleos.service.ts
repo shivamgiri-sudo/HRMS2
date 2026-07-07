@@ -419,7 +419,7 @@ export async function listAttendanceExceptions(actor: Actor, filters: QueryFilte
     conds.push("ae.severity = ?");
     params.push(filters.severity);
   }
-  params.push(limit(filters.limit));
+  const lim = limit(filters.limit);
   return queryRows(
     `SELECT ae.*, e.employee_code, e.full_name AS employee_name, b.branch_name, p.process_name
      FROM attendance_exception ae
@@ -428,7 +428,7 @@ export async function listAttendanceExceptions(actor: Actor, filters: QueryFilte
      LEFT JOIN process_master p ON p.id = ae.process_id
      WHERE ${conds.join(" AND ")}
      ORDER BY ae.exception_date DESC, FIELD(ae.severity,'critical','high','medium','low'), ae.detected_at DESC
-     LIMIT ?`,
+     LIMIT ${lim}`,
     params,
   );
 }
@@ -575,8 +575,8 @@ export async function getPayrollReadiness(actor: Actor, filters: QueryFilters) {
          AND prs.readiness_status IN ('blocked','hold')
          AND ${scoped.sql}
        ORDER BY prs.scanned_at DESC
-       LIMIT ?`,
-      [to, from, ...scoped.params, limit(filters.limit)],
+       LIMIT ${limit(filters.limit)}`,
+      [to, from, ...scoped.params],
     ),
   };
 }
@@ -693,8 +693,8 @@ export async function getWorkforcePlanning(actor: Actor, filters: QueryFilters) 
      LEFT JOIN branch_master b ON b.id = wrd.branch_id
      LEFT JOIN process_master p ON p.id = wrd.process_id
      ORDER BY wrd.roster_date DESC, wrd.created_at DESC
-     LIMIT ?`,
-    [limit(filters.limit)],
+     LIMIT ${limit(filters.limit)}`,
+    [],
   );
   return {
     summary: {

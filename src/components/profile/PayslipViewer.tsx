@@ -239,8 +239,14 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
 
     // Use component breakdown if available, otherwise fall back to aggregated columns
     if (latestRecord.earnings && latestRecord.earnings.length > 0) {
+      const hasPerTypeIncentives = latestRecord.earnings.some((c) => c.component_code.startsWith("INCEN_"));
       return latestRecord.earnings
-        .filter((component) => component.component_code !== "BASIC")
+        .filter((component) => {
+          if (component.component_code === "BASIC") return false;
+          // If per-type incentive lines exist, hide the rollup INCENTIVE to avoid double-counting
+          if (hasPerTypeIncentives && component.component_code === "INCENTIVE") return false;
+          return true;
+        })
         .map((component) => ({
           label: component.component_name,
           amount: Number(component.amount ?? 0),

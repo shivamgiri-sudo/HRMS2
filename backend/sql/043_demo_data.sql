@@ -250,10 +250,10 @@ ON DUPLICATE KEY UPDATE notes=VALUES(notes);
 -- ═══════════════════════════════════════════════════════════════════
 INSERT INTO helpdesk_ticket (id, ticket_code, employee_id, category, subject, description, priority, status)
 VALUES
-  ('ticket-001','TKT-001','emp-employee-001','IT',      'Laptop keyboard issue',       'Keys stuck on laptop',     'medium','open'),
-  ('ticket-002','TKT-002','emp-tl-001',      'HR',      'Salary slip correction April','Net pay mismatch in April','high',  'pending'),
-  ('ticket-003','TKT-003','emp-qa-001',      'Facility','AC not working in QA bay',    'Temperature too high',     'low',   'open'),
-  ('ticket-004','TKT-004','emp-recruiter-001','IT',     'VPN access for WFH',          'Need VPN credentials',     'medium','resolved')
+  ('ticket-001','TKT-001','emp-employee-001','it',      'Laptop keyboard issue',       'Keys stuck on laptop',     'medium','open'),
+  ('ticket-002','TKT-002','emp-tl-001',      'hr',      'Salary slip correction April','Net pay mismatch in April','high',  'pending_info'),
+  ('ticket-003','TKT-003','emp-qa-001',      'general', 'AC not working in QA bay',    'Temperature too high',     'low',   'open'),
+  ('ticket-004','TKT-004','emp-recruiter-001','it',     'VPN access for WFH',          'Need VPN credentials',     'medium','resolved')
 ON DUPLICATE KEY UPDATE status=VALUES(status);
 
 -- ═══════════════════════════════════════════════════════════════════

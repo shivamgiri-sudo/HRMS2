@@ -247,6 +247,9 @@ const MIGRATION_MANIFEST: string[] = [
   "361_widen_working_experience_column.sql",
   "362_provisioning_task_fields.sql",
   "363_joining_document_assigned_hr.sql",
+  "364_incentive_bulk_upload_schema.sql",
+  "365_payroll_deduction_type.sql",
+  "366_page_codes_incentive_deduction.sql",
   ];
 
 export type MigrationHealth = {

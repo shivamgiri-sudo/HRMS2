@@ -5,6 +5,8 @@ import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { db } from "../../db/mysql.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
+import multer from "multer";
+import { randomUUID } from "crypto";
 
 export const payrollMoreRouter = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -119,4 +121,373 @@ payrollMoreRouter.patch("/pt-slabs/:id", requireRole("admin", "finance"), h(asyn
   if (result.affectedRows === 0) return res.status(404).json({ success: false, message: "PT slab not found" });
   const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM pt_slab_master WHERE id = ? LIMIT 1", [id]);
   return res.json({ success: true, data: rows[0] });
+}));
+
+// ─── Payroll Config Flags ─────────────────────────────────────────────────────
+
+payrollMoreRouter.get("/config-flags", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { branch_id, process_id } = req.query as { branch_id?: string; process_id?: string };
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (branch_id)  { conds.push("branch_id = ?");  params.push(branch_id); }
+  if (process_id) { conds.push("process_id = ?"); params.push(process_id); }
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM payroll_config_flags ${where} ORDER BY config_key ASC`,
+    params
+  );
+  return res.json({ success: true, data: rows });
+}));
+
+payrollMoreRouter.put("/config-flags", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { branch_id, process_id, config_key, config_value, description } = req.body as {
+    branch_id?: string | null; process_id?: string | null;
+    config_key: string; config_value: string; description?: string;
+  };
+  if (!config_key || config_value === undefined) {
+    return res.status(400).json({ success: false, message: "config_key and config_value are required" });
+  }
+  const { randomUUID } = await import("crypto");
+  const id = randomUUID();
+  const actor = req.authUser?.id ?? "system";
+  await db.execute(
+    `INSERT INTO payroll_config_flags (id, branch_id, process_id, config_key, config_value, description, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), description = COALESCE(VALUES(description), description), updated_by = VALUES(updated_by), updated_at = NOW()`,
+    [id, branch_id ?? null, process_id ?? null, config_key, config_value, description ?? null, actor]
+  );
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM payroll_config_flags WHERE config_key = ? AND (branch_id <=> ?) AND (process_id <=> ?) LIMIT 1`,
+    [config_key, branch_id ?? null, process_id ?? null]
+  );
+  return res.json({ success: true, data: rows[0] });
+}));
+
+// ─── Recalculation Queue ─────────────────────────────────────────────────────
+
+payrollMoreRouter.get("/recalculation-queue", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { status, payrollMonth, page: rawPage, limit: rawLimit } = req.query as {
+    status?: string; payrollMonth?: string; page?: string; limit?: string;
+  };
+  const page  = Math.max(1, parseInt(rawPage ?? "1", 10));
+  const limit = Math.min(200, parseInt(rawLimit ?? "50", 10));
+  const offset = (page - 1) * limit;
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (status)        { conds.push("rq.status = ?");               params.push(status); }
+  if (payrollMonth)  { conds.push("DATE_FORMAT(rq.payroll_month, '%Y-%m') = ?"); params.push(payrollMonth); }
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT rq.*,
+            COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+            e.employee_code
+       FROM payroll_recalculation_queue rq
+       LEFT JOIN employees e ON e.id = rq.employee_id
+       ${where}
+       ORDER BY rq.requested_at DESC
+       LIMIT ${limit} OFFSET ${offset}`,
+    params
+  );
+  const [countRow] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM payroll_recalculation_queue rq ${where}`,
+    params
+  );
+  return res.json({ success: true, data: rows, total: (countRow[0] as any).total, page, limit });
+}));
+
+// ─── Holiday Master ───────────────────────────────────────────────────────────
+
+payrollMoreRouter.get("/holiday-master", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { year } = req.query as { year?: string };
+  const params: unknown[] = [];
+  let sql = `SELECT lhm.*,
+                    hcc.cost_centre_ids,
+                    hdm.designation_ids
+               FROM leave_holiday_master lhm
+               LEFT JOIN (
+                 SELECT holiday_id, JSON_ARRAYAGG(cost_centre_id) AS cost_centre_ids
+                   FROM holiday_cost_centre_mapping GROUP BY holiday_id
+               ) hcc ON hcc.holiday_id = lhm.id
+               LEFT JOIN (
+                 SELECT holiday_id, JSON_ARRAYAGG(designation_id) AS designation_ids
+                   FROM holiday_designation_mapping GROUP BY holiday_id
+               ) hdm ON hdm.holiday_id = lhm.id
+              WHERE lhm.active_status = 1`;
+  if (year) { sql += " AND YEAR(lhm.holiday_date) = ?"; params.push(year); }
+  sql += " ORDER BY lhm.holiday_date ASC";
+  const [rows] = await db.execute<RowDataPacket[]>(sql, params);
+  return res.json({ success: true, data: rows });
+}));
+
+payrollMoreRouter.post("/holiday-master/cc-mapping", requireRole("admin", "super_admin", "payroll", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { holiday_id, cost_centre_ids } = req.body as { holiday_id: string; cost_centre_ids: string[] };
+  if (!holiday_id || !Array.isArray(cost_centre_ids)) return res.status(400).json({ success: false, message: "holiday_id and cost_centre_ids required" });
+  await db.execute("DELETE FROM holiday_cost_centre_mapping WHERE holiday_id = ?", [holiday_id]);
+  for (const cc of cost_centre_ids) {
+    const { v4: uuidv4 } = await import("uuid");
+    await db.execute("INSERT INTO holiday_cost_centre_mapping (id, holiday_id, cost_centre_id) VALUES (?, ?, ?)", [uuidv4(), holiday_id, cc]);
+  }
+  return res.json({ success: true });
+}));
+
+payrollMoreRouter.post("/holiday-master/designation-mapping", requireRole("admin", "super_admin", "payroll", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { holiday_id, designation_ids } = req.body as { holiday_id: string; designation_ids: string[] };
+  if (!holiday_id || !Array.isArray(designation_ids)) return res.status(400).json({ success: false, message: "holiday_id and designation_ids required" });
+  await db.execute("DELETE FROM holiday_designation_mapping WHERE holiday_id = ?", [holiday_id]);
+  for (const did of designation_ids) {
+    const { v4: uuidv4 } = await import("uuid");
+    await db.execute("INSERT INTO holiday_designation_mapping (id, holiday_id, designation_id) VALUES (?, ?, ?)", [uuidv4(), holiday_id, did]);
+  }
+  return res.json({ success: true });
+}));
+
+// ─── Holiday Work Policies & Requests ────────────────────────────────────────
+
+payrollMoreRouter.get("/holiday-work/policies", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT * FROM holiday_work_policy_master WHERE is_active = 1 ORDER BY payout_type ASC"
+  );
+  return res.json({ success: true, data: rows });
+}));
+
+payrollMoreRouter.get("/holiday-work/requests", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { status, month } = req.query as { status?: string; month?: string };
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (status) { conds.push("hwr.status = ?"); params.push(status); }
+  if (month)  { conds.push("DATE_FORMAT(hwr.request_month, '%Y-%m') = ?"); params.push(month); }
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT hwr.*,
+            lhm.holiday_name, lhm.holiday_type,
+            hwp.payout_type, hwp.extra_multiplier AS payout_rate_multiplier,
+            COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS requested_by_name
+       FROM holiday_work_request hwr
+       LEFT JOIN leave_holiday_master lhm ON lhm.id = hwr.holiday_id
+       LEFT JOIN holiday_work_policy_master hwp ON hwp.id = hwr.payout_policy_id
+       LEFT JOIN employees e ON e.id = hwr.requested_by
+       ${where}
+       ORDER BY hwr.created_at DESC`,
+    params
+  );
+  return res.json({ success: true, data: rows });
+}));
+
+payrollMoreRouter.post("/holiday-work/requests", requireRole("admin", "super_admin", "payroll", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { holiday_id, request_month, branch_id, process_id, cost_centre_id, payout_policy_id, designation_ids, request_reason, remarks } = req.body as {
+    holiday_id: string; request_month: string; branch_id: string; process_id: string;
+    cost_centre_id?: string; payout_policy_id: string; designation_ids?: string[];
+    request_reason?: string; remarks?: string;
+  };
+  if (!holiday_id || !payout_policy_id) return res.status(400).json({ success: false, message: "holiday_id and payout_policy_id required" });
+  const month = request_month ?? new Date().toISOString().slice(0, 7) + "-01";
+  const { v4: uuidv4 } = await import("uuid");
+  const id = uuidv4();
+  await db.execute(
+    `INSERT INTO holiday_work_request (id, holiday_id, request_month, branch_id, process_id, cost_centre_id, payout_policy_id, request_reason, remarks, status, requested_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?)`,
+    [id, holiday_id, month, branch_id ?? null, process_id ?? null, cost_centre_id ?? null,
+     payout_policy_id, request_reason ?? remarks ?? "", remarks ?? null, req.authUser!.id]
+  );
+  if (Array.isArray(designation_ids) && designation_ids.length > 0) {
+    for (const did of designation_ids) {
+      await db.execute("INSERT INTO holiday_work_request_designation (id, request_id, designation_id) VALUES (?, ?, ?)", [uuidv4(), id, did]);
+    }
+  }
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM holiday_work_request WHERE id = ? LIMIT 1", [id]);
+  return res.status(201).json({ success: true, data: rows[0] });
+}));
+
+payrollMoreRouter.patch("/holiday-work/requests/:id/approve", requireRole("admin", "super_admin", "payroll", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const { action, remarks } = req.body as { action: "approve" | "reject"; remarks?: string };
+  if (!["approve", "reject"].includes(action)) return res.status(400).json({ success: false, message: "action must be approve or reject" });
+  const [existing] = await db.execute<RowDataPacket[]>("SELECT status FROM holiday_work_request WHERE id = ? LIMIT 1", [id]);
+  const fromStatus = (existing[0] as any)?.status ?? "";
+  const newStatus = action === "approve" ? "payroll_head_approved" : "rejected";
+  await db.execute("UPDATE holiday_work_request SET status = ? WHERE id = ?", [newStatus, id]);
+  const { v4: uuidv4 } = await import("uuid");
+  await db.execute(
+    "INSERT INTO holiday_work_approval_log (id, request_id, approver_id, approver_role, action, from_status, to_status, remarks) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    [uuidv4(), id, req.authUser!.id, "payroll_head", action === "approve" ? "approved" : "rejected", fromStatus, newStatus, remarks ?? null]
+  );
+  return res.json({ success: true, status: newStatus });
+}));
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DEDUCTION TYPE MASTER — CRUD + TOGGLE
+// ══════════════════════════════════════════════════════════════════════════════
+const dedCsvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+// GET /deductions/types — list all deduction types
+payrollMoreRouter.get("/deductions/types", h(async (req: AuthenticatedRequest, res: Response) => {
+  const includeInactive = (req.query as any).all === "true";
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM payroll_deduction_type ${includeInactive ? "" : "WHERE active_status = 1"} ORDER BY deduction_name`
+  );
+  return res.json({ success: true, data: rows });
+}));
+
+// POST /deductions/types — create new deduction type
+payrollMoreRouter.post("/deductions/types", requireRole("admin", "hr_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { deduction_code, deduction_name, description, is_prorated } = req.body as any;
+  if (!deduction_code || !deduction_name) return res.status(400).json({ success: false, message: "deduction_code and deduction_name are required" });
+  const code = String(deduction_code).toUpperCase().replace(/\s+/g, "_");
+  const id = randomUUID();
+  await db.execute(
+    "INSERT INTO payroll_deduction_type (id, deduction_code, deduction_name, description, is_prorated, active_status, created_by) VALUES (?, ?, ?, ?, ?, 1, ?)",
+    [id, code, deduction_name, description ?? null, is_prorated ? 1 : 0, req.authUser!.id]
+  );
+  return res.status(201).json({ success: true, data: { id, deduction_code: code, deduction_name } });
+}));
+
+// PUT /deductions/types/:id — update deduction type
+payrollMoreRouter.put("/deductions/types/:id", requireRole("admin", "hr_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { deduction_name, description, is_prorated } = req.body as any;
+  if (!deduction_name) return res.status(400).json({ success: false, message: "deduction_name is required" });
+  await db.execute(
+    "UPDATE payroll_deduction_type SET deduction_name=?, description=?, is_prorated=? WHERE id=?",
+    [deduction_name, description ?? null, is_prorated ? 1 : 0, req.params.id]
+  );
+  return res.json({ success: true });
+}));
+
+// PATCH /deductions/types/:id/toggle — activate / deactivate
+payrollMoreRouter.patch("/deductions/types/:id/toggle", requireRole("admin", "hr_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT active_status FROM payroll_deduction_type WHERE id=?", [req.params.id]);
+  if (!(rows as any[]).length) return res.status(404).json({ success: false, message: "Deduction type not found" });
+  const current = (rows[0] as any).active_status;
+  await db.execute("UPDATE payroll_deduction_type SET active_status=? WHERE id=?", [current ? 0 : 1, req.params.id]);
+  return res.json({ success: true, data: { active_status: current ? 0 : 1 } });
+}));
+
+// ── DEDUCTION UPLOAD TEMPLATE ─────────────────────────────────────────────────
+// GET /deductions/upload-template?month=YYYY-MM
+payrollMoreRouter.get("/deductions/upload-template", requireRole("admin", "hr_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const month = ((req.query as any).month as string) || new Date().toISOString().slice(0, 7);
+
+  const [types] = await db.execute<RowDataPacket[]>(
+    "SELECT deduction_code FROM payroll_deduction_type WHERE active_status = 1 ORDER BY deduction_name"
+  );
+  const typeCodes = (types as any[]).map((t: any) => t.deduction_code as string);
+
+  const [employees] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code, b.branch_name, cc.cost_centre_code
+     FROM employees e
+     LEFT JOIN branch_master b ON b.id = e.branch_id
+     LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+     WHERE e.employment_status IN ('active','on_leave')
+     ORDER BY e.employee_code
+     LIMIT 5000`
+  );
+
+  const headers = ["employee_code", "month", "branch", "cost_centre", ...typeCodes, "total_deduction"];
+  const rows = (employees as any[]).map((emp: any) => [
+    emp.employee_code, month,
+    emp.branch_name ?? "", emp.cost_centre_code ?? "",
+    ...typeCodes.map(() => 0), 0,
+  ]);
+
+  const csv = [headers.join(","), ...rows.map((r: any[]) => r.join(","))].join("\n");
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename="deduction_upload_${month}.csv"`);
+  return res.send(csv);
+}));
+
+// ── DEDUCTION BULK UPLOAD ─────────────────────────────────────────────────────
+// POST /deductions/bulk-upload — multipart CSV
+payrollMoreRouter.post("/deductions/bulk-upload",
+  requireRole("admin", "hr_admin", "finance", "payroll"),
+  dedCsvUpload.single("file"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded. Send CSV as multipart field "file".' });
+
+    const csvText = req.file.buffer.toString("utf-8");
+    const lines = csvText.split(/\r?\n/).filter((l: string) => l.trim());
+    if (lines.length < 2) return res.status(400).json({ success: false, message: "CSV has no data rows" });
+
+    const headers = lines[0].split(",").map((h: string) => h.trim().toLowerCase());
+    const FIXED = new Set(["employee_code", "month", "branch", "cost_centre", "total_deduction"]);
+    const typeCols = headers.filter((h: string) => !FIXED.has(h));
+
+    if (!typeCols.length) return res.status(400).json({ success: false, message: "No deduction type columns found in CSV" });
+
+    // Validate type columns exist in master
+    const [dedTypes] = await db.execute<RowDataPacket[]>(
+      "SELECT deduction_code, is_prorated FROM payroll_deduction_type WHERE active_status = 1"
+    );
+    const typeMap = new Map((dedTypes as any[]).map((t: any) => [t.deduction_code.toLowerCase(), t.is_prorated as number]));
+
+    const [branches] = await db.execute<RowDataPacket[]>("SELECT id, branch_name FROM branch_master");
+    const branchMap = new Map((branches as any[]).map((b: any) => [b.branch_name?.toLowerCase(), b.id]));
+
+    const [costCentres] = await db.execute<RowDataPacket[]>("SELECT id, cost_centre_code FROM cost_centre_master");
+    const ccMap = new Map((costCentres as any[]).map((c: any) => [c.cost_centre_code?.toLowerCase(), c.id]));
+
+    const [empRows] = await db.execute<RowDataPacket[]>("SELECT id, employee_code FROM employees WHERE employment_status IN ('active','on_leave')");
+    const empMap = new Map((empRows as any[]).map((e: any) => [e.employee_code?.toLowerCase(), e.id]));
+
+    let inserted = 0;
+    const errors: string[] = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(",").map((c: string) => c.trim());
+      const row: Record<string, string> = {};
+      headers.forEach((h: string, idx: number) => { row[h] = cols[idx] ?? ""; });
+
+      const empCode = row["employee_code"]?.toLowerCase();
+      const empId = empMap.get(empCode);
+      if (!empId) { errors.push(`Row ${i + 1}: employee_code "${row["employee_code"]}" not found`); continue; }
+
+      const runMonth = row["month"] || null;
+      const branchId = branchMap.get(row["branch"]?.toLowerCase()) ?? null;
+      const ccId = ccMap.get(row["cost_centre"]?.toLowerCase()) ?? null;
+
+      for (const typeCode of typeCols) {
+        const amount = parseFloat(row[typeCode]);
+        if (!amount || amount <= 0) continue;
+        if (!typeMap.has(typeCode.toLowerCase())) { errors.push(`Unknown deduction type: ${typeCode}`); continue; }
+
+        const isProrated = typeMap.get(typeCode.toLowerCase()) ?? 0;
+        await db.execute(
+          `INSERT INTO employee_deduction_entries
+             (id, employee_id, description, deduction_type_code, amount, is_prorated, run_month, status, branch_id, cost_centre_id, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+           ON DUPLICATE KEY UPDATE amount=VALUES(amount), is_prorated=VALUES(is_prorated), status='active'`,
+          [randomUUID(), empId, typeCode.toUpperCase(), typeCode.toUpperCase(),
+           amount, isProrated, runMonth, branchId, ccId, req.authUser!.id]
+        );
+        inserted++;
+      }
+    }
+
+    return res.status(201).json({
+      success: true,
+      data: { lines_inserted: inserted, errors: errors.slice(0, 20) },
+    });
+  })
+);
+
+// GET /deductions/employee/:employeeId — list deduction entries for one employee
+payrollMoreRouter.get("/deductions/employee/:employeeId", requireRole("admin", "hr_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { runMonth } = req.query as any;
+  const params: unknown[] = [req.params.employeeId];
+  let extra = "";
+  if (runMonth) { extra = " AND (run_month IS NULL OR run_month = ?)"; params.push(runMonth); }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ede.*, pdt.deduction_name FROM employee_deduction_entries ede
+     LEFT JOIN payroll_deduction_type pdt ON pdt.deduction_code = ede.deduction_type_code
+     WHERE ede.employee_id = ?${extra}
+     ORDER BY ede.created_at DESC`,
+    params
+  );
+  return res.json({ success: true, data: rows });
+}));
+
+// PATCH /deductions/entry/:id — activate / deactivate one entry
+payrollMoreRouter.patch("/deductions/entry/:id", requireRole("admin", "hr_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { status } = req.body as { status: "active" | "inactive" };
+  if (!["active", "inactive"].includes(status)) return res.status(400).json({ success: false, message: 'status must be "active" or "inactive"' });
+  await db.execute("UPDATE employee_deduction_entries SET status=? WHERE id=?", [status, req.params.id]);
+  return res.json({ success: true });
 }));

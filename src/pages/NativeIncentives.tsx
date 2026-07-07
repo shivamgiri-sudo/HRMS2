@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -20,13 +20,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Tabs,
   TabsContent,
   TabsList,
@@ -45,7 +38,7 @@ import { Textarea } from "@/components/ui/textarea";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface IncentiveMaster {
-  id: number;
+  id: string;
   incentive_code: string;
   incentive_name: string;
   description?: string;
@@ -57,10 +50,9 @@ interface IncentiveMaster {
 }
 
 interface IncentiveBatch {
-  id: number;
-  incentive_type_id: number;
+  id: string;
   incentive_name?: string;
-  pay_month: string; // "YYYY-MM"
+  pay_month: string;
   total_employees: number;
   total_amount: number;
   status: "draft" | "pending_approval" | "approved" | "rejected" | "applied";
@@ -69,19 +61,30 @@ interface IncentiveBatch {
 }
 
 interface IncentiveLine {
-  id: number;
-  batch_id: number;
+  id: string;
   employee_code: string;
   employee_name?: string;
   amount: number;
-  status?: string;
-  error_message?: string;
+  validation_status?: string;
+  validation_msg?: string;
 }
 
-interface ImportResult {
-  ok: number;
-  errors: number;
-  error_details?: { row: string; error: string }[];
+interface BulkUploadResult {
+  batches_created: number;
+  batch_ids: string[];
+  lines_inserted: number;
+  pay_month: string;
+  per_type_totals: Record<string, number>;
+  errors: string[];
+}
+
+interface PreviewRow {
+  employee_code: string;
+  month: string;
+  branch: string;
+  cost_centre: string;
+  total_incentive: number;
+  [key: string]: string | number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -150,40 +153,9 @@ function statusBadgeClass(status: IncentiveBatch["status"]): string {
   }
 }
 
-// Parse textarea content: lines of "EMP001,5000" or a JSON array
-function parseUploadLines(
-  raw: string
-): { employee_code: string; amount: number }[] {
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("[")) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (Array.isArray(parsed)) {
-        return parsed.map((item) => ({
-          employee_code: String(item.employee_code ?? item.emp_code ?? ""),
-          amount: Number(item.amount ?? 0),
-        }));
-      }
-    } catch {
-      // fall through to CSV parsing
-    }
-  }
-  return trimmed
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [code, amt] = line.split(",");
-      return {
-        employee_code: (code ?? "").trim(),
-        amount: parseFloat((amt ?? "0").trim()) || 0,
-      };
-    });
-}
-
 // ─── Tab 1: Incentive Types Master ───────────────────────────────────────────
 
-function emptyMasterForm(): Omit<IncentiveMaster, "id" | "status"> {
+function emptyMasterForm(): Omit<IncentiveMaster, "id" | "status" | "active_status"> {
   return {
     incentive_code: "",
     incentive_name: "",
@@ -199,8 +171,8 @@ function IncentiveTypesTab() {
   const qc = useQueryClient();
 
   const { data: mastersData, isLoading } = useQuery<{ data: IncentiveMaster[] } | IncentiveMaster[]>({
-    queryKey: ["incentive-masters"],
-    queryFn: () => hrmsApi.get("/api/incentives/masters"),
+    queryKey: ["incentive-masters-all"],
+    queryFn: () => hrmsApi.get("/api/incentives/masters?all=true"),
   });
 
   const masters: IncentiveMaster[] = Array.isArray(mastersData)
@@ -213,43 +185,40 @@ function IncentiveTypesTab() {
 
   // Edit dialog
   const [editOpen, setEditOpen] = useState(false);
-  const [editId, setEditId] = useState<number | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState(emptyMasterForm());
-
-  // Delete confirm
-  const [deleteId, setDeleteId] = useState<number | null>(null);
-  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const inv = () => {
+    qc.invalidateQueries({ queryKey: ["incentive-masters-all"] });
+    qc.invalidateQueries({ queryKey: ["incentive-masters"] });
+  };
+
+  const boolToInt = (f: ReturnType<typeof emptyMasterForm>) => ({
+    ...f,
+    taxable: toBool(f.taxable as 0 | 1 | boolean) ? 1 : 0,
+    pf_applicable: toBool(f.pf_applicable as 0 | 1 | boolean) ? 1 : 0,
+    esic_applicable: toBool(f.esic_applicable as 0 | 1 | boolean) ? 1 : 0,
+  });
+
   const addMutation = useMutation({
-    mutationFn: (body: typeof addForm) =>
-      hrmsApi.post("/api/incentives/masters", body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["incentive-masters"] });
-      setAddOpen(false);
-      setAddForm(emptyMasterForm());
-    },
+    mutationFn: (body: ReturnType<typeof emptyMasterForm>) =>
+      hrmsApi.post("/api/incentives/masters", boolToInt(body)),
+    onSuccess: () => { inv(); setAddOpen(false); setAddForm(emptyMasterForm()); },
     onError: (e: Error) => setErrorMsg(e.message),
   });
 
   const editMutation = useMutation({
-    mutationFn: (body: typeof editForm) =>
-      hrmsApi.put(`/api/incentives/masters/${editId}`, body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["incentive-masters"] });
-      setEditOpen(false);
-    },
+    mutationFn: (body: ReturnType<typeof emptyMasterForm>) =>
+      hrmsApi.put(`/api/incentives/masters/${editId}`, boolToInt(body)),
+    onSuccess: () => { inv(); setEditOpen(false); },
     onError: (e: Error) => setErrorMsg(e.message),
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: number) => hrmsApi.delete(`/api/incentives/masters/${id}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["incentive-masters"] });
-      setDeleteOpen(false);
-      setDeleteId(null);
-    },
+  const toggleMutation = useMutation({
+    mutationFn: (id: string) => hrmsApi.patch(`/api/incentives/masters/${id}/toggle`, {}),
+    onSuccess: inv,
     onError: (e: Error) => setErrorMsg(e.message),
   });
 
@@ -265,11 +234,6 @@ function IncentiveTypesTab() {
       esic_applicable: toBool(m.esic_applicable),
     });
     setEditOpen(true);
-  }
-
-  function openDelete(id: number) {
-    setDeleteId(id);
-    setDeleteOpen(true);
   }
 
   return (
@@ -325,7 +289,10 @@ function IncentiveTypesTab() {
                   <TableCell>{toBool(m.pf_applicable) ? "Yes" : "No"}</TableCell>
                   <TableCell>{toBool(m.esic_applicable) ? "Yes" : "No"}</TableCell>
                   <TableCell>
-                    <Badge variant={m.status === "active" ? "default" : "secondary"}>
+                    <Badge
+                      variant={m.status === "active" ? "default" : "secondary"}
+                      className={m.status === "active" ? "bg-green-600 text-white" : ""}
+                    >
                       {m.status}
                     </Badge>
                   </TableCell>
@@ -335,10 +302,11 @@ function IncentiveTypesTab() {
                     </Button>
                     <Button
                       size="sm"
-                      variant="destructive"
-                      onClick={() => openDelete(m.id)}
+                      variant={m.status === "active" ? "destructive" : "outline"}
+                      onClick={() => toggleMutation.mutate(m.id)}
+                      disabled={toggleMutation.isPending}
                     >
-                      Delete
+                      {m.status === "active" ? "Deactivate" : "Activate"}
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -390,37 +358,13 @@ function IncentiveTypesTab() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirm */}
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirm Delete</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            This will soft-delete the incentive type. Existing batch records will
-            not be affected. Continue?
-          </p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => deleteId !== null && deleteMutation.mutate(deleteId)}
-              disabled={deleteMutation.isPending}
-            >
-              {deleteMutation.isPending ? "Deleting…" : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
 
 interface MasterFormProps {
-  form: Omit<IncentiveMaster, "id" | "status">;
-  onChange: (f: Omit<IncentiveMaster, "id" | "status">) => void;
+  form: Omit<IncentiveMaster, "id" | "status" | "active_status">;
+  onChange: (f: Omit<IncentiveMaster, "id" | "status" | "active_status">) => void;
 }
 
 function MasterForm({ form, onChange }: MasterFormProps) {
@@ -518,273 +462,285 @@ function MonthlyUploadTab() {
     ? batchesData
     : (batchesData as { data?: IncentiveBatch[] })?.data ?? [];
 
-  const { data: mastersData } = useQuery<
-    { data: IncentiveMaster[] } | IncentiveMaster[]
-  >({
-    queryKey: ["incentive-masters"],
-    queryFn: () => hrmsApi.get("/api/incentives/masters"),
-  });
-  const masters: IncentiveMaster[] = Array.isArray(mastersData)
-    ? mastersData
-    : (mastersData as { data?: IncentiveMaster[] })?.data ?? [];
-
-  // New upload dialog
-  const [uploadOpen, setUploadOpen] = useState(false);
-  const [uploadTypeId, setUploadTypeId] = useState<string>("");
-  const [uploadLines, setUploadLines] = useState("");
-  const [uploadResult, setUploadResult] = useState<ImportResult | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploadResult, setUploadResult] = useState<BulkUploadResult | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
-
-  // View lines dialog
-  const [viewBatchId, setViewBatchId] = useState<number | null>(null);
+  const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
+  const [previewCols, setPreviewCols] = useState<string[]>([]);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [viewBatchId, setViewBatchId] = useState<string | null>(null);
   const [viewLinesOpen, setViewLinesOpen] = useState(false);
 
   const { data: linesData, isLoading: linesLoading } = useQuery<
     { data: IncentiveLine[] } | IncentiveLine[]
   >({
     queryKey: ["incentive-batch-lines", viewBatchId],
-    queryFn: () =>
-      hrmsApi.get(`/api/incentives/batches/${viewBatchId}/lines`),
+    queryFn: () => hrmsApi.get(`/api/incentives/batches/${viewBatchId}/lines`),
     enabled: viewBatchId !== null && viewLinesOpen,
   });
   const lines: IncentiveLine[] = Array.isArray(linesData)
     ? linesData
     : (linesData as { data?: IncentiveLine[] })?.data ?? [];
 
-  const createBatchMutation = useMutation({
-    mutationFn: async () => {
-      setUploadError(null);
-      setUploadResult(null);
-      const parsed = parseUploadLines(uploadLines);
-      if (!uploadTypeId) throw new Error("Select an incentive type.");
-      if (parsed.length === 0) throw new Error("No lines to upload.");
-
-      // Step 1: create batch
-      const batch = await hrmsApi.post<{ id: number } | { data: { id: number } }>(
-        "/api/incentives/batches",
-        {
-          incentive_type_id: Number(uploadTypeId),
-          pay_month: selectedMonth,
-        }
-      );
-      const batchId =
-        "data" in batch
-          ? (batch as { data: { id: number } }).data.id
-          : (batch as { id: number }).id;
-
-      // Step 2: import lines
-      const result = await hrmsApi.post<ImportResult>(
-        `/api/incentives/batches/${batchId}/lines/import`,
-        { lines: parsed }
-      );
-      return result;
-    },
-    onSuccess: (result) => {
-      setUploadResult(result);
-      qc.invalidateQueries({ queryKey: ["incentive-batches", selectedMonth] });
-    },
-    onError: (e: Error) => setUploadError(e.message),
-  });
-
   const submitMutation = useMutation({
-    mutationFn: (batchId: number) =>
-      hrmsApi.post(`/api/incentives/batches/${batchId}/submit`),
+    mutationFn: (batchId: string) =>
+      hrmsApi.post(`/api/incentives/batches/${batchId}/submit`, {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["incentive-batches", selectedMonth] });
     },
   });
 
-  function openViewLines(batchId: number) {
-    setViewBatchId(batchId);
-    setViewLinesOpen(true);
+  function downloadTemplate() {
+    const token = localStorage.getItem("hrms_access_token");
+    fetch(`/api/incentives/upload-template?month=${selectedMonth}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.blob())
+      .then((blob) => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `incentive_template_${selectedMonth}.csv`;
+        a.click();
+      })
+      .catch(() => setUploadError("Failed to download template"));
   }
 
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSelectedFile(file);
+    setUploadResult(null);
+    setUploadError(null);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      const rows = text.trim().split("\n");
+      if (rows.length < 2) return;
+      const headers = rows[0].split(",").map((h) => h.trim());
+      const fixed = ["employee_code", "month", "branch", "cost_centre", "total_incentive"];
+      setPreviewCols(headers.filter((h) => !fixed.includes(h)));
+      setPreviewRows(
+        rows.slice(1).map((line) => {
+          const vals = line.split(",");
+          const row: PreviewRow = {
+            employee_code: vals[0]?.trim() ?? "",
+            month: vals[1]?.trim() ?? "",
+            branch: vals[2]?.trim() ?? "",
+            cost_centre: vals[3]?.trim() ?? "",
+            total_incentive: 0,
+          };
+          headers.forEach((h, i) => {
+            if (!["employee_code", "month", "branch", "cost_centre"].includes(h)) {
+              row[h] = parseFloat(vals[i]?.trim() ?? "0") || 0;
+            }
+          });
+          return row;
+        })
+      );
+    };
+    reader.readAsText(file);
+  }
+
+  const uploadMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedFile) throw new Error("No file selected");
+      const token = localStorage.getItem("hrms_access_token");
+      const fd = new FormData();
+      fd.append("file", selectedFile);
+      fd.append("month", selectedMonth);
+      const res = await fetch("/api/incentives/bulk-upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({ message: res.statusText }));
+        throw new Error((e as { message?: string }).message ?? "Upload failed");
+      }
+      return res.json() as Promise<BulkUploadResult>;
+    },
+    onSuccess: (result) => {
+      setUploadResult(result);
+      setUploadError(null);
+      setSelectedFile(null);
+      setPreviewRows([]);
+      if (fileRef.current) fileRef.current.value = "";
+      qc.invalidateQueries({ queryKey: ["incentive-batches", selectedMonth] });
+    },
+    onError: (e: Error) => setUploadError(e.message),
+  });
+
   return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <Label>Month</Label>
+    <div className="space-y-6">
+      {/* Controls bar */}
+      <div className="flex flex-wrap items-end gap-4 bg-gray-50 rounded-lg p-4 border">
+        <div className="space-y-1">
+          <Label>Pay Month</Label>
           <Input
             type="month"
             value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            className="w-40"
+            onChange={(e) => {
+              setSelectedMonth(e.target.value);
+              setUploadResult(null);
+              setPreviewRows([]);
+              setSelectedFile(null);
+            }}
+            className="w-44"
           />
         </div>
-        <Button onClick={() => { setUploadOpen(true); setUploadResult(null); setUploadError(null); setUploadLines(""); setUploadTypeId(""); }}>
-          + New Upload
+        <Button variant="outline" onClick={downloadTemplate}>
+          Download Template
         </Button>
+        <div className="space-y-1">
+          <Label>Upload Filled CSV</Label>
+          <Input ref={fileRef} type="file" accept=".csv" onChange={handleFile} className="w-64" />
+        </div>
+        {selectedFile && !uploadResult && (
+          <Button onClick={() => uploadMutation.mutate()} disabled={uploadMutation.isPending}>
+            {uploadMutation.isPending ? "Uploading..." : "Upload CSV"}
+          </Button>
+        )}
       </div>
 
-      {batchesLoading && (
-        <p className="text-sm text-muted-foreground">Loading batches…</p>
+      {uploadError && (
+        <div className="text-sm text-red-600 bg-red-50 rounded p-3 flex justify-between">
+          <span>{uploadError}</span>
+          <button className="underline ml-2" onClick={() => setUploadError(null)}>Dismiss</button>
+        </div>
       )}
 
-      {!batchesLoading && batches.length === 0 && (
-        <p className="text-sm text-muted-foreground">
-          No batches for {selectedMonth}.
-        </p>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {batches.map((batch) => (
-          <Card key={batch.id}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold flex justify-between items-start">
-                <span>{batch.incentive_name ?? `Type #${batch.incentive_type_id}`}</span>
-                <span
-                  className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusBadgeClass(batch.status)}`}
-                >
-                  {statusLabel(batch.status)}
-                </span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1 text-sm">
-              <div className="flex justify-between text-muted-foreground">
-                <span>Month</span>
-                <span>{batch.pay_month}</span>
-              </div>
-              <div className="flex justify-between text-muted-foreground">
-                <span>Employees</span>
-                <span>{batch.total_employees}</span>
-              </div>
-              <div className="flex justify-between text-muted-foreground">
-                <span>Total Amount</span>
-                <span>₹{Number(batch.total_amount).toLocaleString("en-IN")}</span>
-              </div>
-              {(batch.upload_date ?? batch.created_at) && (
-                <div className="flex justify-between text-muted-foreground">
-                  <span>Uploaded</span>
-                  <span>
-                    {new Date(
-                      batch.upload_date ?? batch.created_at ?? ""
-                    ).toLocaleDateString()}
+      {/* Upload result */}
+      {uploadResult && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
+          <p className="font-semibold text-green-800">
+            Upload successful - {uploadResult.batches_created} batch(es), {uploadResult.lines_inserted} line(s) for {uploadResult.pay_month}
+          </p>
+          {Object.keys(uploadResult.per_type_totals).length > 0 && (
+            <div className="flex flex-wrap gap-3">
+              {Object.entries(uploadResult.per_type_totals).map(([code, total]) => (
+                <div key={code} className="bg-white rounded border px-3 py-2 text-sm">
+                  <span className="font-mono font-semibold text-blue-700">{code}</span>
+                  <span className="text-muted-foreground ml-2">
+                    Rs.{Number(total).toLocaleString("en-IN")}
                   </span>
                 </div>
-              )}
-              <div className="flex gap-2 pt-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => openViewLines(batch.id)}
-                >
-                  View Lines
-                </Button>
-                {batch.status === "draft" && (
-                  <Button
-                    size="sm"
-                    onClick={() => submitMutation.mutate(batch.id)}
-                    disabled={submitMutation.isPending}
-                  >
-                    Submit for Approval
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+              ))}
+            </div>
+          )}
+          {uploadResult.errors.length > 0 && (
+            <div className="text-xs text-red-700">
+              <p className="font-medium">Errors ({uploadResult.errors.length}):</p>
+              <ul className="list-disc list-inside mt-1">
+                {uploadResult.errors.slice(0, 10).map((e, i) => <li key={i}>{e}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
 
-      {/* New Upload Dialog */}
-      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>New Incentive Upload</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <Label>Incentive Type *</Label>
-              <Select value={uploadTypeId} onValueChange={setUploadTypeId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select incentive type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {masters
-                    .filter((m) => m.status === "active")
-                    .map((m) => (
-                      <SelectItem key={m.id} value={String(m.id)}>
-                        {m.incentive_name} ({m.incentive_code})
-                      </SelectItem>
+      {/* CSV Preview */}
+      {previewRows.length > 0 && !uploadResult && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+            Preview ({previewRows.length} rows)
+          </h3>
+          <div className="overflow-x-auto rounded border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Emp Code</TableHead>
+                  <TableHead>Month</TableHead>
+                  <TableHead>Branch</TableHead>
+                  <TableHead>Cost Centre</TableHead>
+                  {previewCols.map((c) => <TableHead key={c} className="font-mono">{c}</TableHead>)}
+                  <TableHead className="text-right">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {previewRows.slice(0, 20).map((row, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="font-mono text-sm">{row.employee_code}</TableCell>
+                    <TableCell>{row.month}</TableCell>
+                    <TableCell>{row.branch}</TableCell>
+                    <TableCell>{row.cost_centre}</TableCell>
+                    {previewCols.map((c) => (
+                      <TableCell key={c} className="text-right">
+                        {Number(row[c] ?? 0) > 0 ? `Rs.${Number(row[c]).toLocaleString("en-IN")}` : "-"}
+                      </TableCell>
                     ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>Month</Label>
-              <Input value={selectedMonth} readOnly className="bg-muted" />
-            </div>
-            <div className="space-y-1">
-              <Label>Employee Lines *</Label>
-              <p className="text-xs text-muted-foreground">
-                One per line: <code>EMP001,5000</code> — or paste a JSON array{" "}
-                <code>{`[{"employee_code":"EMP001","amount":5000}]`}</code>
-              </p>
-              <Textarea
-                rows={8}
-                value={uploadLines}
-                onChange={(e) => setUploadLines(e.target.value)}
-                placeholder={"EMP001,5000\nEMP002,3500\nEMP003,4200"}
-                className="font-mono text-sm"
-              />
-            </div>
-            {uploadError && (
-              <p className="text-sm text-red-600 bg-red-50 p-2 rounded">
-                {uploadError}
-              </p>
-            )}
-            {uploadResult && (
-              <div className="text-sm bg-green-50 border border-green-200 rounded p-3 space-y-1">
-                <p className="font-medium text-green-800">
-                  Import complete — {uploadResult.ok} line(s) imported successfully
-                  {uploadResult.errors > 0 &&
-                    `, ${uploadResult.errors} error(s)`}
-                  .
-                </p>
-                {uploadResult.error_details &&
-                  uploadResult.error_details.length > 0 && (
-                    <ul className="list-disc list-inside text-red-700 text-xs mt-1">
-                      {uploadResult.error_details.map((d, i) => (
-                        <li key={i}>
-                          {d.row}: {d.error}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-              </div>
-            )}
+                    <TableCell className="text-right font-semibold">
+                      Rs.{Number(row.total_incentive).toLocaleString("en-IN")}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {previewRows.length > 20 && (
+                  <TableRow>
+                    <TableCell colSpan={5 + previewCols.length} className="text-center text-xs text-muted-foreground py-2">
+                      ... {previewRows.length - 20} more rows
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
           </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setUploadOpen(false)}
-            >
-              {uploadResult ? "Close" : "Cancel"}
-            </Button>
-            {!uploadResult && (
-              <Button
-                onClick={() => createBatchMutation.mutate()}
-                disabled={createBatchMutation.isPending}
-              >
-                {createBatchMutation.isPending ? "Uploading…" : "Upload"}
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </div>
+      )}
+
+      {/* Existing batches */}
+      <div className="space-y-3">
+        <h3 className="text-base font-semibold">Batches for {selectedMonth}</h3>
+        {batchesLoading && <p className="text-sm text-muted-foreground">Loading...</p>}
+        {!batchesLoading && batches.length === 0 && (
+          <p className="text-sm text-muted-foreground">No batches for this month.</p>
+        )}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {batches.map((batch) => (
+            <Card key={batch.id}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-semibold flex justify-between items-start">
+                  <span>{batch.incentive_name ?? "Incentive Batch"}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusBadgeClass(batch.status)}`}>
+                    {statusLabel(batch.status)}
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1 text-sm">
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Employees</span><span>{batch.total_employees}</span>
+                </div>
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Total</span>
+                  <span className="font-semibold text-foreground">
+                    Rs.{Number(batch.total_amount).toLocaleString("en-IN")}
+                  </span>
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <Button size="sm" variant="outline" onClick={() => { setViewBatchId(batch.id); setViewLinesOpen(true); }}>
+                    View Lines
+                  </Button>
+                  {batch.status === "draft" && (
+                    <Button size="sm" onClick={() => submitMutation.mutate(batch.id)} disabled={submitMutation.isPending}>
+                      Submit
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
 
       {/* View Lines Dialog */}
       <Dialog open={viewLinesOpen} onOpenChange={setViewLinesOpen}>
         <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Batch Lines</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Batch Lines</DialogTitle></DialogHeader>
           {linesLoading ? (
-            <p className="text-sm text-muted-foreground py-4">Loading…</p>
+            <p className="text-sm text-muted-foreground py-4">Loading...</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Employee Code</TableHead>
+                  <TableHead>Emp Code</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
                   <TableHead>Status</TableHead>
@@ -794,40 +750,27 @@ function MonthlyUploadTab() {
               <TableBody>
                 {lines.length === 0 && (
                   <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="text-center text-muted-foreground py-6"
-                    >
-                      No lines found.
-                    </TableCell>
+                    <TableCell colSpan={5} className="text-center text-muted-foreground py-6">No lines.</TableCell>
                   </TableRow>
                 )}
                 {lines.map((line) => (
                   <TableRow key={line.id}>
-                    <TableCell className="font-mono text-sm">
-                      {line.employee_code}
-                    </TableCell>
-                    <TableCell>{line.employee_name ?? "—"}</TableCell>
-                    <TableCell className="text-right">
-                      ₹{Number(line.amount).toLocaleString("en-IN")}
-                    </TableCell>
+                    <TableCell className="font-mono text-sm">{line.employee_code}</TableCell>
+                    <TableCell>{line.employee_name ?? "-"}</TableCell>
+                    <TableCell className="text-right">Rs.{Number(line.amount).toLocaleString("en-IN")}</TableCell>
                     <TableCell>
-                      <Badge variant={line.status === "error" ? "destructive" : "secondary"}>
-                        {line.status ?? "ok"}
+                      <Badge variant={line.validation_status === "error" ? "destructive" : "secondary"}>
+                        {line.validation_status ?? "ok"}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-xs text-red-600">
-                      {line.error_message ?? ""}
-                    </TableCell>
+                    <TableCell className="text-xs text-red-600">{line.validation_msg ?? ""}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setViewLinesOpen(false)}>
-              Close
-            </Button>
+            <Button variant="outline" onClick={() => setViewLinesOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -843,7 +786,7 @@ function ApprovalQueueTab() {
   const { data: allBatchesData, isLoading } = useQuery<
     { data: IncentiveBatch[] } | IncentiveBatch[]
   >({
-    queryKey: ["incentive-batches-all"],
+    queryKey: ["incentive-batches-all-queue"],
     queryFn: () => hrmsApi.get("/api/incentives/batches"),
   });
   const allBatches: IncentiveBatch[] = Array.isArray(allBatchesData)
@@ -880,7 +823,7 @@ function ApprovalQueueTab() {
       return hrmsApi.post(endpoint, { remarks });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["incentive-batches-all"] });
+      qc.invalidateQueries({ queryKey: ["incentive-batches-all-queue"] });
       qc.invalidateQueries({ queryKey: ["incentive-batches"] });
       setActionOpen(false);
       setRemarks("");
@@ -900,7 +843,7 @@ function ApprovalQueueTab() {
     onSuccess: (res) => {
       setApplyResult(res);
       setApplyError(null);
-      qc.invalidateQueries({ queryKey: ["incentive-batches-all"] });
+      qc.invalidateQueries({ queryKey: ["incentive-batches-all-queue"] });
     },
     onError: (e: Error) => {
       setApplyError(e.message);
@@ -939,7 +882,7 @@ function ApprovalQueueTab() {
             <Card key={batch.id}>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-semibold flex justify-between items-start">
-                  <span>{batch.incentive_name ?? `Type #${batch.incentive_type_id}`}</span>
+                  <span>{batch.incentive_name ?? "Batch"}</span>
                   <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium">
                     Pending Approval
                   </span>

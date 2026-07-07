@@ -254,6 +254,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   let totalGross = 0;
   let totalDed = 0;
   let totalNet = 0;
+  let processedCount = 0;
 
   // Fetch employees on approved/active maternity leave covering this pay month.
   // Per MBA 1961 s.5(1) these employees receive full pay — no LWP deduction.
@@ -272,6 +273,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         continue;
       }
     }
+    processedCount++;
 
     // Step 1: Load designation and department to determine attendance source
     const [desigRows] = await db.execute<RowDataPacket[]>(
@@ -450,6 +452,35 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     );
     const advanceRecovery = Number((advRows as Array<{ monthly_recovery: number }>)[0]?.monthly_recovery ?? 0);
 
+    // Custom deductions from employee_deduction_entries (canteen, uniform, loan EMI, etc.)
+    let miscDeductions = 0;
+    const miscComponents: Array<{ code: string; name: string; amount: number }> = [];
+    try {
+      const runMonthStr = run.run_month.slice(0, 7);
+      const [dedEntries] = await db.execute<RowDataPacket[]>(
+        `SELECT ede.description, ede.deduction_type_code, ede.amount, ede.is_prorated,
+                COALESCE(pdt.deduction_name, ede.description) AS display_name
+         FROM employee_deduction_entries ede
+         LEFT JOIN payroll_deduction_type pdt ON pdt.deduction_code = ede.deduction_type_code
+         WHERE ede.employee_id = ?
+           AND ede.status = 'active'
+           AND (ede.run_month IS NULL OR ede.run_month = ?)`,
+        [emp.employee_id, runMonthStr]
+      );
+      for (const ded of dedEntries as any[]) {
+        const dedAmt = ded.is_prorated
+          ? Number(ded.amount) * (finalPayableDays / Math.max(1, activeCals))
+          : Number(ded.amount);
+        const rounded = Math.round(dedAmt * 100) / 100;
+        if (rounded <= 0) continue;
+        miscDeductions += rounded;
+        const typeCode = ded.deduction_type_code ?? "OTHER";
+        miscComponents.push({ code: `DED_${typeCode}`, name: ded.display_name ?? ded.description, amount: rounded });
+      }
+    } catch {
+      // employee_deduction_entries or payroll_deduction_type may not exist yet — non-fatal
+    }
+
     // Resolve PT from slab when employee has a state_code, else fall back to config value
     const professionalTax = emp.state_code
       ? await getPtFromSlab(emp.state_code, grossAfterLwp)
@@ -481,9 +512,9 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       esicOptOut,
     });
 
-    // Net pay = payrollService net + holiday work extra payout - advance recovery
-    const netPayFinal = Math.max(0, calc.net_salary + holidayWorkExtraPayout - advanceRecovery);
-    const totalDedFinal = calc.total_deductions + advanceRecovery;
+    // Net pay = payrollService net + holiday work extra payout - advance recovery - misc deductions
+    const netPayFinal = Math.max(0, calc.net_salary + holidayWorkExtraPayout - advanceRecovery - miscDeductions);
+    const totalDedFinal = calc.total_deductions + advanceRecovery + miscDeductions;
 
     // 6. Upsert prep line with extended columns
     const prepLineId = randomUUID();
@@ -497,8 +528,9 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
           professional_tax, tds, tds_amount, lwp_deduction, advance_recovery,
           paid_working_days, eligible_weekoff_days, eligible_holiday_days,
           final_payable_days, active_calendar_days, holiday_work_extra_payout,
+          other_deductions,
           status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
        ON DUPLICATE KEY UPDATE
          working_days = VALUES(working_days), present_days = VALUES(present_days),
          lwp_days = VALUES(lwp_days), gross_salary = VALUES(gross_salary),
@@ -516,6 +548,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
          final_payable_days = VALUES(final_payable_days),
          active_calendar_days = VALUES(active_calendar_days),
          holiday_work_extra_payout = VALUES(holiday_work_extra_payout),
+         other_deductions = VALUES(other_deductions),
          status = 'calculated'`,
       [
         prepLineId, runId, emp.employee_id, emp.employee_code,
@@ -525,6 +558,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         calc.pf_employee, calc.pf_employer, calc.esic_employee, calc.esic_employer,
         calc.professional_tax, tdsMonthly, tdsMonthly, lwpDeduction, advanceRecovery,
         effectivePaidBase, finalWeekoffs, finalHolidays, finalPayableDays, activeCals, holidayWorkExtraPayout,
+        miscDeductions,
       ]
     );
 
@@ -545,6 +579,17 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
          ON DUPLICATE KEY UPDATE
            amount = VALUES(amount), source = VALUES(source), taxable = VALUES(taxable)`,
         [randomUUID(), runId, prepLineId, emp.employee_id, comp.code, comp.name, comp.amount]
+      );
+    }
+
+    // Insert per-type deduction components for payslip breakdown
+    for (const ded of miscComponents) {
+      await db.execute(
+        `INSERT INTO salary_prep_line_component
+           (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
+         VALUES (?, ?, ?, ?, ?, ?, 'deduction', ?, 'custom_deduction', 0)
+         ON DUPLICATE KEY UPDATE amount = VALUES(amount)`,
+        [randomUUID(), runId, prepLineId, emp.employee_id, ded.code, ded.name, ded.amount]
       );
     }
 
@@ -611,7 +656,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         SET status = 'processing', total_employees = ?,
             total_gross = ?, total_deductions = ?, total_net = ?
       WHERE id = ?`,
-    [employees.length, totalGross, totalDed, totalNet, runId]
+    [processedCount, totalGross, totalDed, totalNet, runId]
   );
 
   const [updated] = await db.execute<RowDataPacket[]>(
@@ -621,7 +666,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   return {
     run_id: runId,
     status: (updated as SalaryPrepRun[])[0]?.status ?? "processing",
-    employees_processed: employees.length,
+    employees_processed: processedCount,
     total_gross: totalGross,
     total_deductions: totalDed,
     total_net: totalNet,

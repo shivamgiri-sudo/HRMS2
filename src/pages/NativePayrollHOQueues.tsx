@@ -7,7 +7,7 @@
  * 5. Employee salary history
  * 6. Payroll run window status & closure
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   BadgeCheck,
@@ -26,6 +26,7 @@ import {
   Eye,
   XCircle,
   Building2,
+  MinusCircle,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
@@ -1552,6 +1553,342 @@ function RunWindowTab() {
 // Tab definitions
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─── Custom Deductions Tab ───────────────────────────────────────────────────
+
+interface DeductionType {
+  id: string;
+  deduction_code: string;
+  deduction_name: string;
+  description?: string;
+  is_prorated: 0 | 1 | boolean;
+  active_status: 0 | 1;
+}
+
+interface DeductionUploadResult {
+  lines_inserted: number;
+  pay_month: string;
+  per_type_totals: Record<string, number>;
+  errors: string[];
+}
+
+interface DedPreviewRow {
+  employee_code: string; month: string; branch: string; cost_centre: string;
+  total_deduction: number; [key: string]: string | number;
+}
+
+function currentMonthDed(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function emptyDedTypeForm() {
+  return { deduction_code: "", deduction_name: "", description: "", is_prorated: false };
+}
+
+function CustomDeductionsTab() {
+  const qc = useQueryClient();
+
+  // ── Deduction Types ─────────────────────────────────────────────────────────
+  const { data: typesRaw, isLoading: typesLoading } = useQuery<{ data: DeductionType[] } | DeductionType[]>({
+    queryKey: ["deduction-types-all"],
+    queryFn: () => hrmsApi.get("/api/payroll/deductions/types?all=true"),
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dedTypes: DeductionType[] = Array.isArray(typesRaw) ? typesRaw : (typesRaw as any)?.data ?? [];
+
+  const [addTypeOpen, setAddTypeOpen] = useState(false);
+  const [addTypeForm, setAddTypeForm] = useState(emptyDedTypeForm());
+  const [editTypeOpen, setEditTypeOpen] = useState(false);
+  const [editTypeId, setEditTypeId] = useState<string | null>(null);
+  const [editTypeForm, setEditTypeForm] = useState(emptyDedTypeForm());
+  const [typeErr, setTypeErr] = useState<string | null>(null);
+
+  const invTypes = () => qc.invalidateQueries({ queryKey: ["deduction-types-all"] });
+
+  const addTypeM = useMutation({
+    mutationFn: (b: ReturnType<typeof emptyDedTypeForm>) =>
+      hrmsApi.post("/api/payroll/deductions/types", { ...b, is_prorated: b.is_prorated ? 1 : 0 }),
+    onSuccess: () => { invTypes(); setAddTypeOpen(false); setAddTypeForm(emptyDedTypeForm()); },
+    onError: (e: Error) => setTypeErr(e.message),
+  });
+
+  const editTypeM = useMutation({
+    mutationFn: (b: ReturnType<typeof emptyDedTypeForm>) =>
+      hrmsApi.put(`/api/payroll/deductions/types/${editTypeId}`, { ...b, is_prorated: b.is_prorated ? 1 : 0 }),
+    onSuccess: () => { invTypes(); setEditTypeOpen(false); },
+    onError: (e: Error) => setTypeErr(e.message),
+  });
+
+  const toggleTypeM = useMutation({
+    mutationFn: (id: string) => hrmsApi.patch(`/api/payroll/deductions/types/${id}/toggle`, {}),
+    onSuccess: invTypes,
+    onError: (e: Error) => setTypeErr(e.message),
+  });
+
+  // ── Monthly Upload ──────────────────────────────────────────────────────────
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthDed());
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploadResult, setUploadResult] = useState<DeductionUploadResult | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [previewRows, setPreviewRows] = useState<DedPreviewRow[]>([]);
+  const [previewCols, setPreviewCols] = useState<string[]>([]);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  function downloadDedTemplate() {
+    const token = localStorage.getItem("hrms_access_token");
+    fetch(`/api/payroll/deductions/upload-template?month=${selectedMonth}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.blob())
+      .then((blob) => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `deduction_template_${selectedMonth}.csv`;
+        a.click();
+      })
+      .catch(() => setUploadError("Failed to download template"));
+  }
+
+  function handleDedFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSelectedFile(file); setUploadResult(null); setUploadError(null);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      const rows = text.trim().split("\n");
+      if (rows.length < 2) return;
+      const headers = rows[0].split(",").map((h) => h.trim());
+      const fixed = ["employee_code", "month", "branch", "cost_centre", "total_deduction"];
+      setPreviewCols(headers.filter((h) => !fixed.includes(h)));
+      setPreviewRows(rows.slice(1).map((line) => {
+        const vals = line.split(",");
+        const row: DedPreviewRow = { employee_code: vals[0]?.trim() ?? "", month: vals[1]?.trim() ?? "", branch: vals[2]?.trim() ?? "", cost_centre: vals[3]?.trim() ?? "", total_deduction: 0 };
+        headers.forEach((h, i) => { if (!["employee_code", "month", "branch", "cost_centre"].includes(h)) row[h] = parseFloat(vals[i]?.trim() ?? "0") || 0; });
+        return row;
+      }));
+    };
+    reader.readAsText(file);
+  }
+
+  const uploadDedM = useMutation({
+    mutationFn: async () => {
+      if (!selectedFile) throw new Error("No file selected");
+      const token = localStorage.getItem("hrms_access_token");
+      const fd = new FormData(); fd.append("file", selectedFile); fd.append("month", selectedMonth);
+      const res = await fetch("/api/payroll/deductions/bulk-upload", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fd });
+      if (!res.ok) { const e = await res.json().catch(() => ({ message: res.statusText })); throw new Error((e as { message?: string }).message ?? "Upload failed"); }
+      return res.json() as Promise<DeductionUploadResult>;
+    },
+    onSuccess: (result) => {
+      setUploadResult(result); setUploadError(null); setSelectedFile(null); setPreviewRows([]);
+      if (fileRef.current) fileRef.current.value = "";
+    },
+    onError: (e: Error) => setUploadError(e.message),
+  });
+
+  return (
+    <div className="space-y-8">
+      {/* Section A: Deduction Types */}
+      <div className="space-y-4">
+        <div className="flex justify-between items-center">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Deduction Types</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Add types to make them appear as columns in the upload template</p>
+          </div>
+          <Button onClick={() => { setAddTypeForm(emptyDedTypeForm()); setTypeErr(null); setAddTypeOpen(true); }}>
+            + Add Type
+          </Button>
+        </div>
+
+        {typeErr && (
+          <div className="text-sm text-red-600 bg-red-50 rounded p-2 flex justify-between">
+            <span>{typeErr}</span>
+            <button className="underline ml-2" onClick={() => setTypeErr(null)}>Dismiss</button>
+          </div>
+        )}
+
+        <div className="rounded-xl border border-slate-200 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-600 text-xs font-medium uppercase tracking-wide">
+              <tr>
+                <th className="px-4 py-3 text-left">Code</th>
+                <th className="px-4 py-3 text-left">Name</th>
+                <th className="px-4 py-3 text-left">Prorated?</th>
+                <th className="px-4 py-3 text-left">Status</th>
+                <th className="px-4 py-3 text-left">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {typesLoading && (
+                <tr><td colSpan={5} className="px-4 py-6 text-center text-slate-400">Loading...</td></tr>
+              )}
+              {!typesLoading && dedTypes.length === 0 && (
+                <tr><td colSpan={5} className="px-4 py-6 text-center text-slate-400">No deduction types defined.</td></tr>
+              )}
+              {dedTypes.map((t) => (
+                <tr key={t.id} className={t.active_status === 0 ? "opacity-50 bg-slate-50" : "hover:bg-slate-50/50"}>
+                  <td className="px-4 py-3 font-mono text-xs">{t.deduction_code}</td>
+                  <td className="px-4 py-3 font-medium">{t.deduction_name}</td>
+                  <td className="px-4 py-3">{t.is_prorated ? "Yes" : "No"}</td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${t.active_status ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                      {t.active_status ? "Active" : "Inactive"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 space-x-2">
+                    <Button size="sm" variant="outline" onClick={() => { setEditTypeId(t.id); setEditTypeForm({ deduction_code: t.deduction_code, deduction_name: t.deduction_name, description: t.description ?? "", is_prorated: !!t.is_prorated }); setEditTypeOpen(true); }}>Edit</Button>
+                    <Button size="sm" variant={t.active_status ? "destructive" : "outline"} onClick={() => toggleTypeM.mutate(t.id)} disabled={toggleTypeM.isPending}>
+                      {t.active_status ? "Deactivate" : "Activate"}
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Section B: Monthly Upload */}
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900">Monthly Deduction Upload</h2>
+          <p className="text-xs text-slate-500 mt-0.5">Download the template, fill amounts, and upload to apply deductions for the selected month</p>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-4 bg-slate-50 rounded-lg p-4 border border-slate-200">
+          <div className="space-y-1">
+            <Label>Pay Month</Label>
+            <Input type="month" value={selectedMonth} onChange={(e) => { setSelectedMonth(e.target.value); setUploadResult(null); setPreviewRows([]); setSelectedFile(null); }} className="w-44" />
+          </div>
+          <Button variant="outline" onClick={downloadDedTemplate}>Download Template</Button>
+          <div className="space-y-1">
+            <Label>Upload Filled CSV</Label>
+            <Input ref={fileRef} type="file" accept=".csv" onChange={handleDedFile} className="w-64" />
+          </div>
+          {selectedFile && !uploadResult && (
+            <Button onClick={() => uploadDedM.mutate()} disabled={uploadDedM.isPending}>
+              {uploadDedM.isPending ? "Uploading..." : "Upload CSV"}
+            </Button>
+          )}
+        </div>
+
+        {uploadError && (
+          <div className="text-sm text-red-600 bg-red-50 rounded p-3 flex justify-between">
+            <span>{uploadError}</span>
+            <button className="underline ml-2" onClick={() => setUploadError(null)}>Dismiss</button>
+          </div>
+        )}
+
+        {uploadResult && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
+            <p className="font-semibold text-green-800">
+              Upload successful - {uploadResult.lines_inserted} deduction entries stored for {uploadResult.pay_month}
+            </p>
+            {Object.keys(uploadResult.per_type_totals).length > 0 && (
+              <div className="flex flex-wrap gap-3">
+                {Object.entries(uploadResult.per_type_totals).map(([code, total]) => (
+                  <div key={code} className="bg-white rounded border px-3 py-2 text-sm">
+                    <span className="font-mono font-semibold text-rose-700">{code}</span>
+                    <span className="text-muted-foreground ml-2">Rs.{Number(total).toLocaleString("en-IN")}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {uploadResult.errors.length > 0 && (
+              <div className="text-xs text-red-700">
+                <p className="font-medium">Errors ({uploadResult.errors.length}):</p>
+                <ul className="list-disc list-inside mt-1">{uploadResult.errors.slice(0, 10).map((e, i) => <li key={i}>{e}</li>)}</ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {previewRows.length > 0 && !uploadResult && (
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">Preview ({previewRows.length} rows)</h3>
+            <div className="overflow-x-auto rounded border">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-xs font-medium text-slate-600 uppercase tracking-wide">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Emp Code</th>
+                    <th className="px-3 py-2 text-left">Month</th>
+                    <th className="px-3 py-2 text-left">Branch</th>
+                    <th className="px-3 py-2 text-left">Cost Centre</th>
+                    {previewCols.map((c) => <th key={c} className="px-3 py-2 text-right font-mono">{c}</th>)}
+                    <th className="px-3 py-2 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {previewRows.slice(0, 20).map((row, i) => (
+                    <tr key={i} className="hover:bg-slate-50/50">
+                      <td className="px-3 py-2 font-mono text-xs">{row.employee_code}</td>
+                      <td className="px-3 py-2">{row.month}</td>
+                      <td className="px-3 py-2">{row.branch}</td>
+                      <td className="px-3 py-2">{row.cost_centre}</td>
+                      {previewCols.map((c) => <td key={c} className="px-3 py-2 text-right">{Number(row[c] ?? 0) > 0 ? `Rs.${Number(row[c]).toLocaleString("en-IN")}` : "-"}</td>)}
+                      <td className="px-3 py-2 text-right font-semibold">Rs.{Number(row.total_deduction).toLocaleString("en-IN")}</td>
+                    </tr>
+                  ))}
+                  {previewRows.length > 20 && (
+                    <tr><td colSpan={5 + previewCols.length} className="px-3 py-2 text-center text-xs text-slate-400">... {previewRows.length - 20} more rows</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Add Type Dialog */}
+      <Dialog open={addTypeOpen} onOpenChange={setAddTypeOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Add Deduction Type</DialogTitle></DialogHeader>
+          <DedTypeForm form={addTypeForm} onChange={setAddTypeForm} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddTypeOpen(false)}>Cancel</Button>
+            <Button onClick={() => addTypeM.mutate(addTypeForm)} disabled={addTypeM.isPending}>{addTypeM.isPending ? "Saving..." : "Save"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Type Dialog */}
+      <Dialog open={editTypeOpen} onOpenChange={setEditTypeOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Edit Deduction Type</DialogTitle></DialogHeader>
+          <DedTypeForm form={editTypeForm} onChange={setEditTypeForm} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTypeOpen(false)}>Cancel</Button>
+            <Button onClick={() => editTypeM.mutate(editTypeForm)} disabled={editTypeM.isPending}>{editTypeM.isPending ? "Saving..." : "Update"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function DedTypeForm({ form, onChange }: { form: ReturnType<typeof emptyDedTypeForm>; onChange: (f: ReturnType<typeof emptyDedTypeForm>) => void }) {
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1"><Label>Code *</Label>
+          <Input value={form.deduction_code} onChange={(e) => onChange({ ...form, deduction_code: e.target.value.toUpperCase().replace(/\s/g, "_") })} placeholder="e.g. CANTEEN" />
+        </div>
+        <div className="space-y-1"><Label>Name *</Label>
+          <Input value={form.deduction_name} onChange={(e) => onChange({ ...form, deduction_name: e.target.value })} placeholder="e.g. Canteen Charges" />
+        </div>
+      </div>
+      <div className="space-y-1"><Label>Description</Label>
+        <Input value={form.description ?? ""} onChange={(e) => onChange({ ...form, description: e.target.value })} />
+      </div>
+      <label className="flex items-center gap-2 text-sm cursor-pointer pt-1">
+        <input type="checkbox" checked={!!form.is_prorated} onChange={() => onChange({ ...form, is_prorated: !form.is_prorated })} />
+        Prorated (scaled by payable days / calendar days)
+      </label>
+    </div>
+  );
+}
+
 const TABS = [
   { value: "optout", label: "PF/ESI Opt-Out", icon: ShieldAlert },
   { value: "tds", label: "Manual TDS", icon: FileText },
@@ -1559,6 +1896,7 @@ const TABS = [
   { value: "bankchg", label: "Bank Changes", icon: Banknote },
   { value: "salhistory", label: "Salary History", icon: TrendingUp },
   { value: "window", label: "Run Windows", icon: Clock },
+  { value: "deductions", label: "Custom Deductions", icon: MinusCircle },
 ] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1621,6 +1959,9 @@ export default function NativePayrollHOQueues() {
             </TabsContent>
             <TabsContent value="window" className="mt-0">
               <RunWindowTab />
+            </TabsContent>
+            <TabsContent value="deductions" className="mt-0">
+              <CustomDeductionsTab />
             </TabsContent>
           </div>
         </Tabs>
