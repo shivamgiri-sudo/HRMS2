@@ -5,20 +5,33 @@ import {
   AlertCircle,
   BadgeCheck,
   CalendarDays,
+  CheckCircle2,
   ChevronDown,
+  ChevronRight,
   Clock3,
+  Mail,
   PhoneCall,
+  PhoneIcon,
+  Plus,
   RefreshCw,
   Save,
   Search,
   Target,
   UserRound,
   Users,
+  X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SkeletonCard } from "@/components/ui/skeletons";
+import { SessionContextPanel } from "@/components/ats/SessionContextPanel";
+import {
+  loadSessionContext,
+  saveSessionContext,
+  clearSessionContext,
+  type SessionContext,
+} from "@/lib/sessionContext";
 
 type HiringActivityRow = Record<string, any>;
 
@@ -223,6 +236,8 @@ export default function NativeATSHiringEntry() {
 
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [sessionLocked, setSessionLocked] = useState(false);
+  const [showOptionalFields, setShowOptionalFields] = useState(false);
   const [rows, setRows] = useState<HiringActivityRow[]>([]);
   const [rowsTotal, setRowsTotal] = useState(0);
   const [rowsPage, setRowsPage] = useState(1);
@@ -302,6 +317,19 @@ export default function NativeATSHiringEntry() {
       setBootstrap(bootstrapRes.data);
       setRows(rowsRes.data ?? []);
       setRowsTotal(rowsRes.total ?? 0);
+
+      // Load session context from localStorage
+      const savedContext = loadSessionContext();
+      if (savedContext) {
+        setForm((prev) => ({
+          ...prev,
+          process_name: savedContext.process_name,
+          hiring_source: savedContext.hiring_source,
+          position_name: savedContext.position_name,
+          wp_group: savedContext.wp_group,
+        }));
+        setSessionLocked(savedContext.locked);
+      }
     } catch (error: unknown) {
       setLoadError((error as { message?: string })?.message || "Unable to load hiring entry. Please refresh.");
     } finally {
@@ -338,15 +366,65 @@ export default function NativeATSHiringEntry() {
     }
   };
 
+  // Handle session context lock toggle
+  const toggleSessionLock = () => {
+    if (sessionLocked) {
+      // Unlock
+      setSessionLocked(false);
+      clearSessionContext();
+    } else {
+      // Lock
+      const context: SessionContext = {
+        process_name: form.process_name,
+        hiring_source: form.hiring_source,
+        position_name: form.position_name,
+        wp_group: form.wp_group,
+        locked: true,
+        timestamp: Date.now(),
+      };
+      saveSessionContext(context);
+      setSessionLocked(true);
+      // Focus first candidate field
+      window.setTimeout(() => focusField("candidate_name"), 100);
+    }
+  };
+
+  // Update session context field
+  const updateSessionField = (field: string, value: string) => {
+    updateForm(field as keyof FormState, value);
+  };
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handleGlobalKeyboard = (e: globalThis.KeyboardEvent) => {
+      // Ctrl/Cmd + Enter: Save entry
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !saving && sessionLocked) {
+        e.preventDefault();
+        void saveEntry();
+      }
+      // Ctrl/Cmd + D: Toggle optional fields
+      if ((e.ctrlKey || e.metaKey) && e.key === "d") {
+        e.preventDefault();
+        setShowOptionalFields((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKeyboard);
+    return () => window.removeEventListener("keydown", handleGlobalKeyboard);
+  }, [saving, sessionLocked]);
+
   useEffect(() => {
     void loadPageData();
   }, []);
 
   useEffect(() => {
     if (bootstrap && !loading) {
-      window.setTimeout(() => focusField("process_name"), 0);
+      if (sessionLocked) {
+        window.setTimeout(() => focusField("candidate_name"), 0);
+      } else {
+        window.setTimeout(() => focusField("process_name"), 0);
+      }
     }
-  }, [bootstrap, loading]);
+  }, [bootstrap, loading, sessionLocked]);
 
   const filteredRows = useMemo(() => {
     const q = entrySearch.toLowerCase().trim();
@@ -575,248 +653,285 @@ export default function NativeATSHiringEntry() {
           />
         </div>
 
+        {/* Session Context Panel - replaces static auto-captured fields */}
+        <SessionContextPanel
+          process_name={form.process_name}
+          hiring_source={form.hiring_source}
+          position_name={form.position_name}
+          wp_group={form.wp_group}
+          locked={sessionLocked}
+          processOptions={processOptions}
+          sourceOptions={sourceOptions}
+          positionOptions={positionOptions}
+          wpGroupOptions={wpGroupOptions}
+          onUpdate={updateSessionField}
+          onToggleLock={toggleSessionLock}
+          onKeyAdvance={handleKeyAdvance}
+        />
+
+        {/* Auto-captured metadata - compact version */}
+        {sessionLocked && (
+          <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="flex flex-wrap items-center gap-6 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-slate-500">Recruiter:</span>
+                <span className="font-semibold text-slate-800">{bootstrap?.actor.recruiterName ?? "-"}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-slate-500">Branch:</span>
+                <span className="font-semibold text-slate-800">{bootstrap?.actor.branchName ?? "-"}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <CalendarDays className="h-4 w-4 text-slate-500" />
+                <span className="font-semibold text-slate-800">{bootstrap?.actor.activityDate ?? "-"}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-slate-500">Month:</span>
+                <span className="font-semibold text-slate-800">{bootstrap?.actor.activityMonth ?? "-"}</span>
+              </div>
+            </div>
+          </section>
+        )}
+
         <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <div className="space-y-6">
-            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="grid gap-4 lg:grid-cols-4">
-                <div className="rounded-2xl bg-slate-50 p-4">
-                  <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Recruiter</div>
-                  <div className="mt-2 text-lg font-black text-slate-950">{bootstrap?.actor.recruiterName ?? "-"}</div>
-                  <div className="mt-1 text-xs text-slate-500">{bootstrap?.actor.recruiterCode || "Auto from login"}</div>
-                </div>
-                <div className="rounded-2xl bg-slate-50 p-4">
-                  <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Branch</div>
-                  <div className="mt-2 text-lg font-black text-slate-950">{bootstrap?.actor.branchName ?? "-"}</div>
-                  <div className="mt-1 text-xs text-slate-500">Auto mapped from recruiter profile</div>
-                </div>
-                <div className="rounded-2xl bg-slate-50 p-4">
-                  <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Date</div>
-                  <div className="mt-2 inline-flex items-center gap-2 text-lg font-black text-slate-950">
-                    <CalendarDays className="h-4 w-4 text-slate-500" />
-                    {bootstrap?.actor.activityDate ?? "-"}
-                  </div>
-                  <div className="mt-1 text-xs text-slate-500">Saved in backend automatically</div>
-                </div>
-                <div className="rounded-2xl bg-slate-50 p-4">
-                  <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Month Bucket</div>
-                  <div className="mt-2 text-lg font-black text-slate-950">{bootstrap?.actor.activityMonth ?? "-"}</div>
-                  <div className="mt-1 text-xs text-slate-500">Used for reporting and monthly funnel</div>
-                </div>
-              </div>
-            </section>
 
-            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            {/* Primary Entry Form - Two Zone Design */}
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-md">
               <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-black text-slate-950">Quick entry form</div>
+                  <div className="text-lg font-black text-slate-950">Rapid Entry Mode</div>
                   <div className="mt-1 text-sm text-slate-600">
-                    Save one calling row fast. Later ATS steps will map back automatically instead of being typed twice.
+                    {sessionLocked ? (
+                      <>Essential fields only. Press <kbd className="rounded border border-slate-300 bg-slate-100 px-1.5 py-0.5 text-xs font-bold">Ctrl+Enter</kbd> to save.</>
+                    ) : (
+                      "Lock session context above to start rapid entry."
+                    )}
                   </div>
                 </div>
                 <div className="rounded-full bg-sky-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-sky-700">
-                  Smart duplicate mode: update same candidate instead of adding noise
+                  Auto-update duplicates
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <Field label="Process Name" help="Configurable from ATS form config" required>
-                  <select
-                    ref={assignFieldRef("process_name") as any}
-                    value={form.process_name}
-                    onChange={(event) => updateForm("process_name", event.target.value)}
-                    onKeyDown={handleKeyAdvance("process_name")}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
+              {/* Primary Zone - Always Visible Core Fields */}
+              <div className="space-y-5">
+                <div className="space-y-4">
+                  <label className="block space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
+                      <UserRound className="h-4 w-4" />
+                      <span>Candidate Name</span>
+                      <span className="text-rose-500">*</span>
+                    </div>
+                    <input
+                      ref={assignFieldRef("candidate_name") as any}
+                      value={form.candidate_name}
+                      onChange={(event) => updateForm("candidate_name", event.target.value)}
+                      onKeyDown={handleKeyAdvance("candidate_name")}
+                      disabled={!sessionLocked}
+                      className="h-14 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-lg font-medium outline-none disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400 focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+                      placeholder={sessionLocked ? "Type candidate name..." : "Lock context first"}
+                      autoComplete="name"
+                    />
+                  </label>
+
+                  <label className="block space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
+                      <PhoneIcon className="h-4 w-4" />
+                      <span>Mobile Number</span>
+                      <span className="text-rose-500">*</span>
+                      {digitsOnly(form.mobile).length === 10 && (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                      )}
+                    </div>
+                    <input
+                      ref={assignFieldRef("mobile") as any}
+                      value={form.mobile}
+                      onChange={(event) => updateForm("mobile", event.target.value)}
+                      onKeyDown={handleKeyAdvance("mobile")}
+                      disabled={!sessionLocked}
+                      className="h-14 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-lg font-medium outline-none disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400 focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+                      placeholder={sessionLocked ? "10-digit mobile..." : "Lock context first"}
+                      inputMode="numeric"
+                      autoComplete="tel"
+                    />
+                  </label>
+
+                  <label className="block space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
+                      <CheckCircle2 className="h-4 w-4" />
+                      <span>Calling Outcome</span>
+                      <span className="text-rose-500">*</span>
+                    </div>
+                    <select
+                      ref={assignFieldRef("recruiter_remarks") as any}
+                      value={form.recruiter_remarks}
+                      onChange={(event) => updateForm("recruiter_remarks", event.target.value)}
+                      onKeyDown={handleKeyAdvance("recruiter_remarks")}
+                      disabled={!sessionLocked}
+                      className="h-14 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-lg font-medium text-slate-700 outline-none disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400 focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+                    >
+                      <option value="">Select outcome...</option>
+                      {outcomeOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {/* Conditional Rejection Reason */}
+                  {(form.recruiter_remarks.toLowerCase() === "rejected" ||
+                    form.recruiter_remarks.toLowerCase() === "not contacted") && (
+                    <label className="block space-y-2">
+                      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-rose-500">
+                        <span>Reason (Required)</span>
+                      </div>
+                      <textarea
+                        ref={assignFieldRef("recruiter_rejection_reason") as any}
+                        value={form.recruiter_rejection_reason}
+                        onChange={(event) => updateForm("recruiter_rejection_reason", event.target.value)}
+                        className="min-h-[88px] w-full rounded-xl border-2 border-rose-300 bg-white px-4 py-3 text-base outline-none focus:border-rose-400 focus:ring-4 focus:ring-rose-100"
+                        placeholder="Why rejected or not contacted? (e.g., Busy, Switched off, Wrong number, Not interested...)"
+                      />
+                    </label>
+                  )}
+                </div>
+
+                {/* Optional Fields Toggle */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowOptionalFields(!showOptionalFields)}
+                    disabled={!sessionLocked}
+                    className="flex w-full items-center justify-between rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700 hover:border-slate-400 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    <option value="">Select process</option>
-                    {processOptions.map((option) => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
-                  </select>
-                </Field>
+                    <div className="flex items-center gap-2">
+                      {showOptionalFields ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                      <span>
+                        {showOptionalFields ? "Hide" : "Add"} Optional Details
+                      </span>
+                      <span className="text-xs text-slate-500">(Email, Gender, Education, Experience, Location)</span>
+                    </div>
+                    <kbd className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs">Ctrl+D</kbd>
+                  </button>
 
-                <Field label="Hiring Source" required>
-                  <select
-                    ref={assignFieldRef("hiring_source") as any}
-                    value={form.hiring_source}
-                    onChange={(event) => updateForm("hiring_source", event.target.value)}
-                    onKeyDown={handleKeyAdvance("hiring_source")}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
-                  >
-                    <option value="">Walk-in, portal, reference</option>
-                    {sourceOptions.map((option) => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
-                  </select>
-                </Field>
+                  {/* Secondary Zone - Optional Fields (Collapsible) */}
+                  {showOptionalFields && sessionLocked && (
+                    <div className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                      <div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-600">
+                        <ChevronRight className="h-3 w-3" />
+                        Optional Details
+                      </div>
 
-                <Field label="Position" required>
-                  <select
-                    ref={assignFieldRef("position_name") as any}
-                    value={form.position_name}
-                    onChange={(event) => updateForm("position_name", event.target.value)}
-                    onKeyDown={handleKeyAdvance("position_name")}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
-                  >
-                    <option value="">Select position</option>
-                    {positionOptions.map((option) => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
-                  </select>
-                </Field>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <label className="space-y-2">
+                          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                            <Mail className="h-3 w-3" />
+                            <span>Email</span>
+                          </div>
+                          <input
+                            ref={assignFieldRef("candidate_email") as any}
+                            value={form.candidate_email}
+                            onChange={(event) => updateForm("candidate_email", event.target.value)}
+                            onKeyDown={handleKeyAdvance("candidate_email")}
+                            className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none focus:border-sky-400"
+                            placeholder="Optional email"
+                            autoComplete="email"
+                          />
+                        </label>
 
-                <Field label="WP Group" required>
-                  <select
-                    ref={assignFieldRef("wp_group") as any}
-                    value={form.wp_group}
-                    onChange={(event) => updateForm("wp_group", event.target.value)}
-                    onKeyDown={handleKeyAdvance("wp_group")}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
-                  >
-                    <option value="">Select WP group</option>
-                    {wpGroupOptions.map((option) => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
-                  </select>
-                </Field>
+                        <label className="space-y-2">
+                          <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Gender</div>
+                          <select
+                            ref={assignFieldRef("gender") as any}
+                            value={form.gender}
+                            onChange={(event) => updateForm("gender", event.target.value)}
+                            onKeyDown={handleKeyAdvance("gender")}
+                            className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-700 outline-none focus:border-sky-400"
+                          >
+                            <option value="">Select...</option>
+                            {genderOptions.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
 
-                <Field label="Candidate Name" required>
-                  <input
-                    ref={assignFieldRef("candidate_name") as any}
-                    value={form.candidate_name}
-                    onChange={(event) => updateForm("candidate_name", event.target.value)}
-                    onKeyDown={handleKeyAdvance("candidate_name")}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"
-                    placeholder="Full name"
-                    autoComplete="name"
-                  />
-                </Field>
+                        <label className="space-y-2">
+                          <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Education</div>
+                          <select
+                            ref={assignFieldRef("education_qualification") as any}
+                            value={form.education_qualification}
+                            onChange={(event) => updateForm("education_qualification", event.target.value)}
+                            onKeyDown={handleKeyAdvance("education_qualification")}
+                            className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-700 outline-none focus:border-sky-400"
+                          >
+                            <option value="">Select...</option>
+                            {educationOptions.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
 
-                <Field label="Mobile Number" help="Digits only, duplicate-safe" required>
-                  <input
-                    ref={assignFieldRef("mobile") as any}
-                    value={form.mobile}
-                    onChange={(event) => updateForm("mobile", event.target.value)}
-                    onKeyDown={handleKeyAdvance("mobile")}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"
-                    placeholder="10-digit mobile"
-                    inputMode="numeric"
-                    autoComplete="tel"
-                  />
-                </Field>
+                        <label className="space-y-2">
+                          <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Experience</div>
+                          <select
+                            ref={assignFieldRef("experience_level") as any}
+                            value={form.experience_level}
+                            onChange={(event) => updateForm("experience_level", event.target.value)}
+                            onKeyDown={handleKeyAdvance("experience_level")}
+                            className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-700 outline-none focus:border-sky-400"
+                          >
+                            <option value="">Select...</option>
+                            {experienceOptions.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
 
-                <Field label="Email">
-                  <input
-                    ref={assignFieldRef("candidate_email") as any}
-                    value={form.candidate_email}
-                    onChange={(event) => updateForm("candidate_email", event.target.value)}
-                    onKeyDown={handleKeyAdvance("candidate_email")}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"
-                    placeholder="Optional email"
-                    autoComplete="email"
-                  />
-                </Field>
-
-                <Field label="Gender">
-                  <select
-                    ref={assignFieldRef("gender") as any}
-                    value={form.gender}
-                    onChange={(event) => updateForm("gender", event.target.value)}
-                    onKeyDown={handleKeyAdvance("gender")}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
-                  >
-                    <option value="">Optional</option>
-                    {genderOptions.map((option) => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
-                  </select>
-                </Field>
-
-                <Field label="Education">
-                  <select
-                    ref={assignFieldRef("education_qualification") as any}
-                    value={form.education_qualification}
-                    onChange={(event) => updateForm("education_qualification", event.target.value)}
-                    onKeyDown={handleKeyAdvance("education_qualification")}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
-                  >
-                    <option value="">Optional</option>
-                    {educationOptions.map((option) => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
-                  </select>
-                </Field>
-
-                <Field label="Experience">
-                  <select
-                    ref={assignFieldRef("experience_level") as any}
-                    value={form.experience_level}
-                    onChange={(event) => updateForm("experience_level", event.target.value)}
-                    onKeyDown={handleKeyAdvance("experience_level")}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
-                  >
-                    <option value="">Optional</option>
-                    {experienceOptions.map((option) => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
-                  </select>
-                </Field>
-
-                <Field label="Candidate Location">
-                  <input
-                    ref={assignFieldRef("candidate_location") as any}
-                    value={form.candidate_location}
-                    onChange={(event) => updateForm("candidate_location", event.target.value)}
-                    onKeyDown={handleKeyAdvance("candidate_location")}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"
-                    placeholder="Area / town"
-                  />
-                </Field>
-
-                <Field label="Calling Outcome" help="Required — select one" required>
-                  <select
-                    ref={assignFieldRef("recruiter_remarks") as any}
-                    value={form.recruiter_remarks}
-                    onChange={(event) => updateForm("recruiter_remarks", event.target.value)}
-                    onKeyDown={handleKeyAdvance("recruiter_remarks")}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
-                  >
-                    <option value="">Shortlisted, rejected, callback…</option>
-                    {outcomeOptions.map((option) => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
-                  </select>
-                </Field>
-
-                <Field
-                  label="Reason / Callback Note"
-                  help="Required when outcome is Rejected or Not Contacted"
-                >
-                  <textarea
-                    ref={assignFieldRef("recruiter_rejection_reason") as any}
-                    value={form.recruiter_rejection_reason}
-                    onChange={(event) => updateForm("recruiter_rejection_reason", event.target.value)}
-                    className="min-h-[44px] w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
-                    placeholder="Busy, switched off, wrong number, rejected, call again tomorrow..."
-                  />
-                </Field>
+                        <label className="space-y-2 md:col-span-2">
+                          <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Location</div>
+                          <input
+                            ref={assignFieldRef("candidate_location") as any}
+                            value={form.candidate_location}
+                            onChange={(event) => updateForm("candidate_location", event.target.value)}
+                            onKeyDown={handleKeyAdvance("candidate_location")}
+                            className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none focus:border-sky-400"
+                            placeholder="Area / town"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-5">
+              {/* Save Button & Footer */}
+              <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t-2 border-slate-100 pt-6">
                 <div className="text-sm text-slate-600">
-                  Turn-up, selection, and joining numbers will map back automatically once the candidate moves through registration and later ATS stages.
+                  Turn-up, selection, and joining will auto-sync from later ATS stages.
                 </div>
                 <button
                   type="button"
                   onClick={() => void saveEntry()}
-                  disabled={saving || loading}
-                  className={`inline-flex h-12 items-center gap-2 rounded-2xl px-5 text-sm font-black ${
-                    saving || loading
-                      ? "cursor-not-allowed bg-slate-200 text-slate-500"
-                      : "bg-slate-950 text-white hover:bg-slate-800"
+                  disabled={saving || loading || !sessionLocked}
+                  className={`inline-flex h-14 items-center gap-3 rounded-2xl px-6 text-base font-black shadow-lg ${
+                    saving || loading || !sessionLocked
+                      ? "cursor-not-allowed bg-slate-300 text-slate-500"
+                      : "bg-gradient-to-r from-slate-900 to-slate-700 text-white hover:from-slate-800 hover:to-slate-600"
                   }`}
                 >
-                  {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  Save Calling Entry
+                  {saving ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
+                  Save Entry
+                  {sessionLocked && (
+                    <kbd className="rounded border border-white/30 bg-white/20 px-1.5 py-0.5 text-xs">Ctrl+Enter</kbd>
+                  )}
                 </button>
               </div>
             </section>
