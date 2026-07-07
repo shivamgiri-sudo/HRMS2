@@ -131,7 +131,7 @@ queuePublicRouter.get('/display-stream', async (req: Request, res: Response) => 
   await pushSnapshot();
   const poll = setInterval(() => {
     void pushSnapshot();
-  }, 15_000);
+  }, 5_000);
 
   req.on('close', () => {
     closed = true;

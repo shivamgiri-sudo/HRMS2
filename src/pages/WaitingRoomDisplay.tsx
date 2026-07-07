@@ -55,7 +55,7 @@ const TICKER_TIPS = [
   "Welcome to MAS Callnet — we are excited to meet you!",
 ];
 
-const POLL_INTERVAL = 15_000;
+const POLL_INTERVAL = 5_000;
 const TICKER_INTERVAL = 7_000;
 const BASE_URL = "";
 
