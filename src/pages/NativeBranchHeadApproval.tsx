@@ -1,13 +1,20 @@
-import { useState, useEffect, useCallback, useId } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { useAuth } from "@/contexts/AuthContext";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, CheckCircle2, XCircle, X, AlertCircle, RefreshCw, Users } from 'lucide-react';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 interface PendingOffer {
   offer_id: string;
@@ -36,102 +43,86 @@ function offersFrom(payload: unknown): PendingOffer[] {
   return [];
 }
 
-// Single offer card with stable IDs for label association
-function OfferCard({
+// Single offer row component
+function OfferRow({
   offer,
   acting,
   onAct,
+  remark,
+  onRemarkChange,
 }: {
   offer: PendingOffer;
   acting: string | null;
   onAct: (id: string, action: 'approve' | 'reject', remark: string) => void;
+  remark: string;
+  onRemarkChange: (offerId: string, value: string) => void;
 }) {
-  const uid = useId();
-  const remarksId = `remarks-${uid}`;
-  const [remark, setRemark] = useState('');
   const isActing = acting === offer.offer_id;
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base">{offer.full_name}</CardTitle>
-          <Badge variant="outline">{offer.candidate_code}</Badge>
+    <TableRow>
+      <TableCell>
+        <div className="flex flex-col gap-1">
+          <span className="font-medium">{offer.full_name}</span>
+          <Badge variant="outline" className="w-fit">{offer.candidate_code}</Badge>
         </div>
-        <p className="text-sm text-slate-500">
-          {offer.branch_name} | {offer.emp_type}
-        </p>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="grid grid-cols-2 gap-2 text-sm bg-slate-50 rounded-xl p-3">
-          <div>
-            <span className="text-slate-500">Joining Date:</span>{' '}
-            <strong>{offer.date_of_joining}</strong>
-          </div>
-          <div>
-            <span className="text-slate-500">Salary Band:</span>{' '}
-            <strong>{offer.salary_band}</strong>
-          </div>
-          <div>
-            <span className="text-slate-500">Monthly CTC:</span>{' '}
-            <strong>₹{offer.offered_ctc?.toLocaleString('en-IN')}</strong>
-          </div>
-          <div>
-            <span className="text-slate-500">Gross:</span>{' '}
-            <strong>₹{offer.gross?.toLocaleString('en-IN')}</strong>
-          </div>
-          <div>
-            <span className="text-slate-500">Net in Hand:</span>{' '}
-            <strong>₹{offer.net_in_hand?.toLocaleString('en-IN')}</strong>
-          </div>
-          <div>
-            <span className="text-slate-500">Mobile:</span>{' '}
-            {offer.mobile ? offer.mobile.slice(0, 3) + 'XXXXX' + offer.mobile.slice(-3) : '—'}
-          </div>
+      </TableCell>
+      <TableCell>
+        <div className="flex flex-col gap-0.5 text-sm">
+          <span>{offer.branch_name}</span>
+          <span className="text-slate-500">{offer.emp_type}</span>
         </div>
-
-        <div>
-          <label htmlFor={remarksId} className="text-sm font-medium block mb-1">
-            Remarks
-            <span className="ml-1 text-slate-400 font-normal text-xs">(optional for approval — required for rejection)</span>
-          </label>
-          <Input
-            id={remarksId}
-            value={remark}
-            onChange={e => setRemark(e.target.value)}
-            placeholder="Enter remarks…"
-            disabled={isActing}
-            className="min-h-[44px]"
-          />
-        </div>
-
-        <div className="flex gap-2 flex-wrap">
+      </TableCell>
+      <TableCell className="text-sm">{offer.date_of_joining}</TableCell>
+      <TableCell className="text-sm">{offer.salary_band}</TableCell>
+      <TableCell className="text-right font-medium">
+        ₹{offer.offered_ctc?.toLocaleString('en-IN')}
+      </TableCell>
+      <TableCell className="text-right">
+        ₹{offer.gross?.toLocaleString('en-IN')}
+      </TableCell>
+      <TableCell className="text-right">
+        ₹{offer.net_in_hand?.toLocaleString('en-IN')}
+      </TableCell>
+      <TableCell className="text-sm">
+        {offer.mobile ? offer.mobile.slice(0, 3) + 'XXXXX' + offer.mobile.slice(-3) : '—'}
+      </TableCell>
+      <TableCell>
+        <Input
+          value={remark}
+          onChange={e => onRemarkChange(offer.offer_id, e.target.value)}
+          placeholder="Enter remarks…"
+          disabled={isActing}
+          className="min-h-[36px] text-sm"
+        />
+      </TableCell>
+      <TableCell>
+        <div className="flex gap-2 flex-nowrap">
           <Button
-            className="bg-emerald-600 hover:bg-emerald-700 text-white min-h-[44px]"
+            size="sm"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white"
             disabled={isActing}
             onClick={() => onAct(offer.offer_id, 'approve', remark)}
             aria-label={`Approve and activate ${offer.full_name}`}
           >
             {isActing ? (
-              <Loader2 className="animate-spin h-4 w-4 mr-1" aria-hidden="true" />
+              <Loader2 className="animate-spin h-4 w-4" aria-hidden="true" />
             ) : (
-              <CheckCircle2 className="h-4 w-4 mr-1" aria-hidden="true" />
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
             )}
-            Approve & Activate
           </Button>
           <Button
+            size="sm"
             variant="destructive"
             disabled={isActing}
             onClick={() => onAct(offer.offer_id, 'reject', remark)}
             aria-label={`Reject offer for ${offer.full_name}`}
-            className="min-h-[44px]"
           >
-            <XCircle className="h-4 w-4 mr-1" aria-hidden="true" />
-            Reject
+            <XCircle className="h-4 w-4" aria-hidden="true" />
           </Button>
         </div>
-      </CardContent>
-    </Card>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -146,6 +137,7 @@ export default function NativeBranchHeadApproval() {
   const [acting, setActing]           = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [approvalSuccess, setApprovalSuccess] = useState<{ employeeCode: string; employeeName: string } | null>(null);
+  const [remarks, setRemarks]         = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -162,6 +154,10 @@ export default function NativeBranchHeadApproval() {
 
   useEffect(() => { load(); }, [load]);
 
+  const handleRemarkChange = (offerId: string, value: string) => {
+    setRemarks(prev => ({ ...prev, [offerId]: value }));
+  };
+
   const act = async (offerId: string, action: 'approve' | 'reject', remark: string) => {
     if (action === 'reject' && !remark.trim()) {
       setActionError('Please enter rejection remarks before rejecting.');
@@ -175,6 +171,12 @@ export default function NativeBranchHeadApproval() {
         const approvedOffer = offers.find(o => o.offer_id === offerId);
         setApprovalSuccess({ employeeCode: result.employeeCode, employeeName: approvedOffer?.full_name ?? '' });
       }
+      // Clear remark after successful action
+      setRemarks(prev => {
+        const updated = { ...prev };
+        delete updated[offerId];
+        return updated;
+      });
       await load();
     } catch (e: any) {
       setActionError(e?.message ?? `Failed to ${action} the offer.`);
@@ -280,16 +282,38 @@ export default function NativeBranchHeadApproval() {
               </div>
             )}
 
-            <div className="grid gap-4 max-w-2xl">
-              {offers.map(o => (
-                <OfferCard
-                  key={o.offer_id}
-                  offer={o}
-                  acting={acting}
-                  onAct={act}
-                />
-              ))}
-            </div>
+            {offers.length > 0 && (
+              <div className="rounded-lg border border-slate-200 bg-white overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Candidate</TableHead>
+                      <TableHead>Branch & Type</TableHead>
+                      <TableHead>Joining Date</TableHead>
+                      <TableHead>Salary Band</TableHead>
+                      <TableHead className="text-right">Monthly CTC</TableHead>
+                      <TableHead className="text-right">Gross</TableHead>
+                      <TableHead className="text-right">Net in Hand</TableHead>
+                      <TableHead>Mobile</TableHead>
+                      <TableHead>Remarks</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {offers.map(o => (
+                      <OfferRow
+                        key={o.offer_id}
+                        offer={o}
+                        acting={acting}
+                        onAct={act}
+                        remark={remarks[o.offer_id] || ''}
+                        onRemarkChange={handleRemarkChange}
+                      />
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </>
         )}
       </div>

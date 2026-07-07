@@ -423,22 +423,22 @@ export default function AttendanceRegularization() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
+      <div className="space-y-4">
         {/* Header */}
-        <div className="rounded-3xl bg-gradient-to-r from-green-600 to-teal-600 p-6 text-white">
+        <div className="rounded-lg bg-gradient-to-r from-green-600 to-teal-600 p-4 text-white">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <CalendarCheck className="h-10 w-10" />
+              <CalendarCheck className="h-7 w-7" />
               <div>
-                <h1 className="text-3xl font-black">Attendance Regularization</h1>
-                <p className="mt-1 text-sm opacity-90">
+                <h1 className="text-2xl font-black">Attendance Regularization</h1>
+                <p className="mt-0.5 text-xs opacity-90">
                   Submit attendance correction requests and track their approval status.
                 </p>
               </div>
             </div>
             <button
               onClick={loadRequests}
-              className="flex items-center gap-2 rounded-xl border border-white/30 bg-white/15 px-4 py-2 text-sm font-semibold text-white hover:bg-white/25 transition-colors"
+              className="flex items-center gap-2 rounded-lg border border-white/30 bg-white/15 px-3 py-1.5 text-sm font-semibold text-white hover:bg-white/25 transition-colors"
             >
               <RefreshCw className="h-4 w-4" />
               Refresh
@@ -447,7 +447,7 @@ export default function AttendanceRegularization() {
         </div>
 
         {linkedEmployeeId && (
-          <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
             Deep-linked from notification — Employee ID:{" "}
             <span className="font-mono font-bold">{linkedEmployeeId}</span>. The date below has been
             pre-filled.
@@ -455,7 +455,7 @@ export default function AttendanceRegularization() {
         )}
 
         {/* Stats */}
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <StatCard label="Total Requests" value={stats.total} />
           <StatCard label="Pending Manager" value={stats.pendingManager} accent="amber" />
           <StatCard label="Pending Admin" value={stats.pendingAdmin} accent="sky" />
@@ -464,31 +464,31 @@ export default function AttendanceRegularization() {
         </div>
 
         {/* Submission Form */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-base font-semibold text-slate-950">New Regularization Request</h2>
-          <p className="mt-1 text-sm text-slate-500">
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 className="text-sm font-semibold text-slate-950">New Regularization Request</h2>
+          <p className="mt-0.5 text-xs text-slate-500">
             Use this form when your attendance is wrong, missing, or needs correction.
           </p>
 
           <Form {...form}>
             <form
               onSubmit={form.handleSubmit((v) => submitMutation.mutate(v))}
-              className="mt-5 space-y-6"
+              className="mt-3 space-y-4"
             >
               {/* Row 1: Date + Dispute Type */}
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-3 md:grid-cols-2">
                 <FormField
                   control={form.control}
                   name="attendanceDate"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>
+                      <FormLabel className="text-xs">
                         Attendance Date <span className="text-rose-500">*</span>
                       </FormLabel>
                       <FormControl>
-                        <Input type="date" {...field} />
+                        <Input type="date" {...field} className="h-9 text-sm" />
                       </FormControl>
-                      <FormDescription>Cannot be a future date.</FormDescription>
+                      <FormDescription className="text-xs">Cannot be a future date.</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -499,7 +499,7 @@ export default function AttendanceRegularization() {
                   name="disputeType"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>
+                      <FormLabel className="text-xs">
                         Dispute Type{" "}
                         <span className="text-slate-400 font-normal text-xs">(optional)</span>
                       </FormLabel>
@@ -508,7 +508,7 @@ export default function AttendanceRegularization() {
                         onValueChange={(v) => field.onChange(v === "none" ? null : v)}
                       >
                         <FormControl>
-                          <SelectTrigger className="bg-white !text-slate-900 [&>span]:!text-slate-900">
+                          <SelectTrigger className="h-9 bg-white !text-slate-900 text-sm [&>span]:!text-slate-900">
                             <SelectValue placeholder="Select dispute type" />
                           </SelectTrigger>
                         </FormControl>
@@ -529,19 +529,19 @@ export default function AttendanceRegularization() {
 
               {/* Current Attendance section */}
               <div>
-                <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">
+                <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-2">
                   Current Attendance (as recorded)
                 </p>
-                <div className="grid gap-4 md:grid-cols-3">
+                <div className="grid gap-3 md:grid-cols-3">
                   <FormField
                     control={form.control}
                     name="currentStatus"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Current Status</FormLabel>
+                        <FormLabel className="text-xs">Current Status</FormLabel>
                         <Select value={field.value ?? ""} onValueChange={field.onChange}>
                           <FormControl>
-                            <SelectTrigger className="bg-white !text-slate-900 [&>span]:!text-slate-900">
+                            <SelectTrigger className="h-9 bg-white !text-slate-900 text-sm [&>span]:!text-slate-900">
                               <SelectValue placeholder="Select status" />
                             </SelectTrigger>
                           </FormControl>
@@ -563,11 +563,11 @@ export default function AttendanceRegularization() {
                     name="currentLoginTime"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Current Login Time</FormLabel>
+                        <FormLabel className="text-xs">Current Login Time</FormLabel>
                         <FormControl>
-                          <Input type="time" {...field} />
+                          <Input type="time" {...field} className="h-9 text-sm" />
                         </FormControl>
-                        <FormDescription>24-hour format</FormDescription>
+                        <FormDescription className="text-xs">24-hour format</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -578,11 +578,11 @@ export default function AttendanceRegularization() {
                     name="currentLogoutTime"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Current Logout Time</FormLabel>
+                        <FormLabel className="text-xs">Current Logout Time</FormLabel>
                         <FormControl>
-                          <Input type="time" {...field} />
+                          <Input type="time" {...field} className="h-9 text-sm" />
                         </FormControl>
-                        <FormDescription>24-hour format</FormDescription>
+                        <FormDescription className="text-xs">24-hour format</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -603,19 +603,19 @@ export default function AttendanceRegularization() {
               </div>
 
               {/* Requested Correction section */}
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-3 md:grid-cols-2">
                 <FormField
                   control={form.control}
                   name="requestedLoginTime"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>
+                      <FormLabel className="text-xs">
                         Requested Login Time <span className="text-rose-500">*</span>
                       </FormLabel>
                       <FormControl>
-                        <Input type="time" {...field} />
+                        <Input type="time" {...field} className="h-9 text-sm" />
                       </FormControl>
-                      <FormDescription>At least one of login/logout is required.</FormDescription>
+                      <FormDescription className="text-xs">At least one of login/logout is required.</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -626,13 +626,13 @@ export default function AttendanceRegularization() {
                   name="requestedLogoutTime"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>
+                      <FormLabel className="text-xs">
                         Requested Logout Time <span className="text-rose-500">*</span>
                       </FormLabel>
                       <FormControl>
-                        <Input type="time" {...field} />
+                        <Input type="time" {...field} className="h-9 text-sm" />
                       </FormControl>
-                      <FormDescription>Must be after login time if both are set.</FormDescription>
+                      <FormDescription className="text-xs">Must be after login time if both are set.</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -647,19 +647,19 @@ export default function AttendanceRegularization() {
                   const len = field.value?.length ?? 0;
                   return (
                     <FormItem>
-                      <FormLabel>
+                      <FormLabel className="text-xs">
                         Reason{" "}
                         <span className="text-slate-400 font-normal text-xs">(optional)</span>
                       </FormLabel>
                       <FormControl>
                         <Textarea
                           placeholder="E.g. Forgot to punch out due to system issue."
-                          className="min-h-[88px]"
+                          className="min-h-[60px] text-sm"
                           {...field}
                         />
                       </FormControl>
                       <div className="flex items-center justify-between">
-                        <FormDescription>
+                        <FormDescription className="text-xs">
                           If left blank, the requested times will be used as the reason.
                         </FormDescription>
                         <span
@@ -678,7 +678,7 @@ export default function AttendanceRegularization() {
               />
 
               <div className="flex justify-end">
-                <Button type="submit" disabled={submitMutation.isPending} className="w-full sm:w-auto">
+                <Button type="submit" disabled={submitMutation.isPending} className="h-9 w-full sm:w-auto text-sm">
                   {submitMutation.isPending ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -697,11 +697,11 @@ export default function AttendanceRegularization() {
         </div>
 
         {/* Requests List */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <h2 className="text-base font-semibold text-slate-950">Regularization Requests</h2>
-              <p className="mt-1 text-sm text-slate-500">
+              <h2 className="text-sm font-semibold text-slate-950">Regularization Requests</h2>
+              <p className="mt-0.5 text-xs text-slate-500">
                 Review request status, approval stages, audit trail, and WFM validation evidence.
               </p>
             </div>
@@ -710,14 +710,16 @@ export default function AttendanceRegularization() {
               <Button
                 type="button"
                 variant="outline"
+                size="sm"
                 disabled={safeBulkIds.length === 0 || bulkApproveMutation.isPending}
                 onClick={() => bulkApproveMutation.mutate(safeBulkIds)}
+                className="h-9 text-xs"
               >
-                {bulkApproveMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                {bulkApproveMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />}
                 Bulk approve safe ({safeBulkIds.length})
               </Button>
               <Select value={filterStatus} onValueChange={setFilterStatus}>
-                <SelectTrigger className="w-full md:w-52 bg-white !text-slate-900 [&>span]:!text-slate-900">
+                <SelectTrigger className="h-9 w-full md:w-44 bg-white !text-slate-900 text-sm [&>span]:!text-slate-900">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-white !text-slate-900">
@@ -731,19 +733,19 @@ export default function AttendanceRegularization() {
             </div>
           </div>
 
-          <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+          <div className="mt-3 overflow-hidden rounded-lg border border-slate-200">
             {isLoading ? (
-              <div className="flex items-center gap-2 p-6 text-sm text-slate-500">
+              <div className="flex items-center gap-2 p-4 text-xs text-slate-500">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Loading requests…
               </div>
             ) : filteredRequests.length === 0 ? (
-              <div className="p-8 text-center text-sm text-slate-500">
+              <div className="p-6 text-center text-xs text-slate-500">
                 No regularization requests found.
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <table className="min-w-full divide-y divide-slate-200 text-xs">
                   <thead className="bg-slate-50">
                     <tr>
                       <Th>Select</Th>
@@ -766,7 +768,7 @@ export default function AttendanceRegularization() {
                           <Td>
                             <input
                               type="checkbox"
-                              className="h-4 w-4 rounded border-slate-300"
+                              className="h-3.5 w-3.5 rounded border-slate-300"
                               checked={isSelected}
                               onChange={(event) => {
                                 setSelectedIds((current) =>
@@ -805,10 +807,10 @@ export default function AttendanceRegularization() {
                           </Td>
                           <Td>{request.payroll_impact_status}</Td>
                           <Td>
-                            <div className="flex flex-wrap gap-2">
+                            <div className="flex flex-wrap gap-1.5">
                               <button
                                 onClick={() => setSelectedRequest(request)}
-                                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                                className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
                               >
                                 View
                               </button>
@@ -816,13 +818,13 @@ export default function AttendanceRegularization() {
                                 <>
                                   <button
                                     onClick={() => reviewMutation.mutate({ id: request.id, status: "approved" })}
-                                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                                    className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
                                   >
                                     Approve
                                   </button>
                                   <button
                                     onClick={() => reviewMutation.mutate({ id: request.id, status: "rejected" })}
-                                    className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                                    className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100"
                                   >
                                     Reject
                                   </button>
@@ -868,9 +870,9 @@ function StatCard({
     rose: "text-rose-600",
   };
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">{label}</p>
-      <p className={cn("mt-2 text-2xl font-semibold", accent ? accentClass[accent] : "text-slate-950")}>
+      <p className={cn("mt-1 text-xl font-semibold", accent ? accentClass[accent] : "text-slate-950")}>
         {value}
       </p>
     </div>
@@ -879,14 +881,14 @@ function StatCard({
 
 function Th({ children }: { children: ReactNode }) {
   return (
-    <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
+    <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
       {children}
     </th>
   );
 }
 
 function Td({ children }: { children: ReactNode }) {
-  return <td className="whitespace-nowrap px-4 py-3 text-slate-600">{children}</td>;
+  return <td className="whitespace-nowrap px-3 py-2 text-slate-600">{children}</td>;
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -947,30 +949,30 @@ function DetailDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
-      <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-lg bg-white p-4 shadow-xl">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-400">
               Request Detail
             </p>
-            <h3 className="mt-1 text-xl font-semibold text-slate-950">{request.request_no}</h3>
-            <div className="mt-2">
+            <h3 className="mt-0.5 text-lg font-semibold text-slate-950">{request.request_no}</h3>
+            <div className="mt-1.5">
               <StatusBadge status={request.current_status} />
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
           >
             Close
           </button>
         </div>
 
-        <div className="mt-5 grid gap-4 lg:grid-cols-2">
-          <div className="rounded-2xl border border-slate-200 p-4">
-            <h4 className="text-sm font-semibold text-slate-950">Attendance Correction</h4>
-            <div className="mt-4 grid gap-3 text-sm">
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          <div className="rounded-lg border border-slate-200 p-3">
+            <h4 className="text-xs font-semibold text-slate-950">Attendance Correction</h4>
+            <div className="mt-3 grid gap-2 text-xs">
               <InfoRow label="Attendance Date" value={detail?.attendance_date} />
               <InfoRow label="Current Status" value={detail?.current_status} />
               <InfoRow label="Current Login" value={detail?.current_login_time} />
@@ -982,14 +984,14 @@ function DetailDialog({
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 p-4">
-            <h4 className="text-sm font-semibold text-slate-950">Approval Stages</h4>
-            <div className="mt-4 space-y-3">
+          <div className="rounded-lg border border-slate-200 p-3">
+            <h4 className="text-xs font-semibold text-slate-950">Approval Stages</h4>
+            <div className="mt-3 space-y-2">
               {stages.map((stage) => (
-                <div key={stage.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div key={stage.id} className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-sm font-semibold text-slate-950">
+                      <p className="text-xs font-semibold text-slate-950">
                         Stage {stage.stage_no}: {stage.stage_name}
                       </p>
                       <p className="mt-0.5 text-xs text-slate-500">
@@ -999,7 +1001,7 @@ function DetailDialog({
                     <StatusBadge status={stage.status} />
                   </div>
                   {stage.remarks && (
-                    <p className="mt-2 text-xs text-slate-500">Remarks: {stage.remarks}</p>
+                    <p className="mt-1.5 text-xs text-slate-500">Remarks: {stage.remarks}</p>
                   )}
                   {stage.acted_at && (
                     <p className="mt-1 text-xs text-slate-400">
@@ -1009,39 +1011,39 @@ function DetailDialog({
                 </div>
               ))}
               {stages.length === 0 && (
-                <p className="text-sm text-slate-400">No approval stages recorded yet.</p>
+                <p className="text-xs text-slate-400">No approval stages recorded yet.</p>
               )}
             </div>
           </div>
         </div>
 
         {support && (
-          <div className="mt-4 rounded-2xl border border-slate-200 p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mt-3 rounded-lg border border-slate-200 p-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h4 className="text-sm font-semibold text-slate-950">WFM Validation Evidence</h4>
-                <p className="mt-1 text-xs text-slate-500">
+                <h4 className="text-xs font-semibold text-slate-950">WFM Validation Evidence</h4>
+                <p className="mt-0.5 text-xs text-slate-500">
                   Use this before final approval. Manager approval is only the first checkpoint.
                 </p>
               </div>
               <RiskBadge support={support} />
             </div>
             {support.flags.length > 0 ? (
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-2 flex flex-wrap gap-1.5">
                 {support.flags.map((flag) => (
-                  <span key={flag} className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">
+                  <span key={flag} className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
                     <AlertTriangle className="h-3 w-3" />
                     {flag}
                   </span>
                 ))}
               </div>
             ) : (
-              <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+              <div className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
                 <CheckCircle2 className="h-3 w-3" />
                 No major risk detected
               </div>
             )}
-            <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
+            <div className="mt-3 grid gap-2 text-xs md:grid-cols-2">
               <InfoRow label="Current Attendance" value={support.evidence.currentAttendanceStatus} />
               <InfoRow label="Current LWP" value={String(support.evidence.currentLwp ?? "")} />
               <InfoRow label="First Punch" value={support.evidence.firstPunch} />
@@ -1056,10 +1058,10 @@ function DetailDialog({
           </div>
         )}
 
-        <div className="mt-4 rounded-2xl border border-slate-200 p-4">
-          <h4 className="text-sm font-semibold text-slate-950">Audit Log</h4>
-          <div className="mt-4 overflow-hidden rounded-xl border border-slate-200">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <div className="mt-3 rounded-lg border border-slate-200 p-3">
+          <h4 className="text-xs font-semibold text-slate-950">Audit Log</h4>
+          <div className="mt-3 overflow-hidden rounded-lg border border-slate-200">
+            <table className="min-w-full divide-y divide-slate-200 text-xs">
               <thead className="bg-slate-50">
                 <tr>
                   <Th>Action</Th>
@@ -1085,7 +1087,7 @@ function DetailDialog({
                 ))}
                 {logs.length === 0 && (
                   <tr>
-                    <td className="p-4 text-center text-sm text-slate-400" colSpan={5}>
+                    <td className="p-3 text-center text-xs text-slate-400" colSpan={5}>
                       No audit entries yet.
                     </td>
                   </tr>
@@ -1101,7 +1103,7 @@ function DetailDialog({
 
 function InfoRow({ label, value }: { label: string; value?: string | null }) {
   return (
-    <div className="flex justify-between gap-4 border-b border-slate-100 pb-2 last:border-0">
+    <div className="flex justify-between gap-3 border-b border-slate-100 pb-1.5 last:border-0">
       <span className="text-slate-500">{label}</span>
       <span className="text-right font-medium text-slate-900">{value || "—"}</span>
     </div>
