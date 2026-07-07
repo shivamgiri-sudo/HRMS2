@@ -72,44 +72,14 @@ async function loadBranchNames(): Promise<string[]> {
     branch_name?: string | null;
   }
   const [rows] = await db.execute<BranchNameRow[]>(
-    `SELECT DISTINCT branch_name
-       FROM (
-         SELECT COALESCE(
-                  NULLIF(qt.branch_name, ''),
-                  NULLIF(c.branch_display_name, ''),
-                  NULLIF(bm.branch_name, ''),
-                  NULLIF(c.applied_for_branch, '')
-                ) AS branch_name
-            FROM ats_queue_token qt
-            INNER JOIN ats_candidate c ON c.id = qt.candidate_id
-            LEFT JOIN branch_master bm ON bm.id = c.applied_for_branch
-           WHERE COALESCE(
-                   NULLIF(qt.branch_name, ''),
-                   NULLIF(c.branch_display_name, ''),
-                   NULLIF(bm.branch_name, ''),
-                   NULLIF(c.applied_for_branch, '')
-                 ) IS NOT NULL
-          UNION
-         SELECT DISTINCT COALESCE(
-                  NULLIF(c.branch_display_name, ''),
-                  NULLIF(bm.branch_name, ''),
-                  NULLIF(c.applied_for_branch, '')
-                ) AS branch_name
-            FROM ats_candidate c
-            LEFT JOIN branch_master bm ON bm.id = c.applied_for_branch
-           WHERE COALESCE(
-                   NULLIF(c.branch_display_name, ''),
-                   NULLIF(bm.branch_name, ''),
-                   NULLIF(c.applied_for_branch, '')
-                 ) IS NOT NULL
-        ) branches
-       ORDER BY branch_name ASC`
+    `SELECT branch_name
+       FROM branch_master
+      WHERE active_status = 1
+        AND branch_name IS NOT NULL
+        AND branch_name != ''
+      ORDER BY branch_name ASC`
   );
-  const branches = new Set<string>();
-  for (const row of rows) {
-    if (row.branch_name) branches.add(String(row.branch_name));
-  }
-  return Array.from(branches).sort((a, b) => a.localeCompare(b));
+  return rows.filter((r) => r.branch_name).map((r) => String(r.branch_name));
 }
 
 queuePublicRouter.get('/branches', h(async (_req: Request, res: Response) => {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import mcnLogo from "@/assets/brand/mcn-logo.png";
 
 // ── Brand Colors (exact from MCN logo) ────────────────────────────────────────
@@ -242,9 +243,15 @@ const PARTICLES = Array.from({ length: 20 }, (_, i) => ({
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function WaitingRoomDisplay() {
+  const [searchParams] = useSearchParams();
+  const urlBranch = searchParams.get("branch") ?? "";
+  const isBranchLocked = urlBranch !== "";
+
   const [clock, setClock] = useState(new Date());
   const [branches, setBranches] = useState<string[]>([]);
-  const [selectedBranch, setSelectedBranch] = useState<string>(() => localStorage.getItem("wr_branch") ?? "");
+  const [selectedBranch, setSelectedBranch] = useState<string>(
+    () => urlBranch || (localStorage.getItem("wr_branch") ?? "")
+  );
   const [queue, setQueue] = useState<SafeQueueEntry[]>([]);
   const [metrics, setMetrics] = useState<QueueMetrics | null>(null);
   const [tickerIdx, setTickerIdx] = useState(0);
@@ -317,6 +324,9 @@ export default function WaitingRoomDisplay() {
     }
     if (!nowToken && prevCalledRef.current) {
       prevCalledRef.current = null;
+      setCalledToken(null);
+      setCalledRole(null);
+      setCalledName(null);
     }
   }, []);
 
@@ -475,6 +485,21 @@ export default function WaitingRoomDisplay() {
           min-width: 150px;
         }
         .wr-branch-select option { background: #1565C0; color: #fff; }
+        .wr-branch-locked {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 2px;
+          background: rgba(255,255,255,0.1);
+          border: 1px solid rgba(255,255,255,0.2);
+          border-radius: 10px;
+          padding: 5px 14px;
+          min-width: 130px;
+          font-family: 'Poppins', sans-serif;
+          color: #FFFFFF;
+          font-size: 13px;
+          font-weight: 600;
+        }
         .wr-clock {
           text-align: right;
         }
@@ -948,17 +973,24 @@ export default function WaitingRoomDisplay() {
               {sseConnected ? "Live" : "Reconnecting"}
             </div>
 
-            {branches.length > 0 && (
-              <select
-                className="wr-branch-select"
-                value={selectedBranch}
-                onChange={(e) => handleBranchChange(e.target.value)}
-              >
-                <option value="">All Branches</option>
-                {branches.map((b) => (
-                  <option key={b} value={b}>{b}</option>
-                ))}
-              </select>
+            {isBranchLocked ? (
+              <div className="wr-branch-locked">
+                <span style={{ fontSize: "10px", opacity: 0.65, fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase" }}>Branch</span>
+                <span>{selectedBranch}</span>
+              </div>
+            ) : (
+              branches.length > 0 && (
+                <select
+                  className="wr-branch-select"
+                  value={selectedBranch}
+                  onChange={(e) => handleBranchChange(e.target.value)}
+                >
+                  <option value="">All Branches</option>
+                  {branches.map((b) => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+                </select>
+              )
             )}
 
             <div className="wr-clock">
