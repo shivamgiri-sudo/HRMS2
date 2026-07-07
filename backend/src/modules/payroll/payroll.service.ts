@@ -48,6 +48,31 @@ export const payrollService = {
     return rec;
   },
 
+  async updateStructure(id: string, input: Partial<CreateStructureInput>, _userId: string): Promise<SalaryStructure> {
+    const fields: string[] = [];
+    const params: any[] = [];
+    if (input.structureName !== undefined) { fields.push("structure_name = ?"); params.push(input.structureName); }
+    if (input.description   !== undefined) { fields.push("description = ?");    params.push(input.description ?? null); }
+    if (input.basicPct      !== undefined) { fields.push("basic_pct = ?");      params.push(input.basicPct); }
+    if (input.hraPct        !== undefined) { fields.push("hra_pct = ?");        params.push(input.hraPct); }
+    if (!fields.length) throw Object.assign(new Error("No fields to update"), { statusCode: 400 });
+    fields.push("updated_at = NOW()");
+    params.push(id);
+    await db.execute(`UPDATE salary_structure_master SET ${fields.join(", ")} WHERE id = ?`, params);
+    return this.getStructure(id);
+  },
+
+  async deleteStructure(id: string): Promise<void> {
+    const [inUse] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM employee_salary_assignment WHERE structure_id = ? AND active_status = 1 LIMIT 1",
+      [id]
+    );
+    if ((inUse as RowDataPacket[]).length > 0) {
+      throw Object.assign(new Error("Structure is in use by active salary assignments"), { statusCode: 409 });
+    }
+    await db.execute("UPDATE salary_structure_master SET active_status = 0 WHERE id = ?", [id]);
+  },
+
   async createStructure(input: CreateStructureInput, _userId: string): Promise<SalaryStructure> {
     const [dup] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM salary_structure_master WHERE structure_code = ? LIMIT 1",
@@ -95,7 +120,7 @@ export const payrollService = {
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    const conds = ["e.active_status = 1", "e.employment_status = 'Active'"];
+    const conds = ["e.active_status = 1", "LOWER(e.employment_status) = 'active'"];
     const params: unknown[] = [];
     if (input.processId) { conds.push("e.process_id = ?"); params.push(input.processId); }
     if (input.branchId)  { conds.push("e.branch_id = ?");  params.push(input.branchId); }
@@ -199,25 +224,35 @@ export const payrollService = {
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    await db.execute(
-      "UPDATE employee_salary_assignment SET active_status = 0 WHERE employee_id = ? AND active_status = 1",
-      [input.employeeId]
-    );
     const id = randomUUID();
-    await db.execute(
-      `INSERT INTO employee_salary_assignment
-         (id, employee_id, structure_id, ctc_annual, effective_from, effective_to,
-          salary_slab_id, salary_proposal_id, governance_mode, assigned_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id, input.employeeId, input.structureId, input.ctcAnnual,
-        input.effectiveFrom, input.effectiveTo ?? null,
-        govResult.salarySlabId ?? null,
-        govResult.salaryProposalId ?? null,
-        govResult.mode,
-        userId,
-      ]
-    );
+    const conn = await (db as any).getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.execute(
+        "UPDATE employee_salary_assignment SET active_status = 0 WHERE employee_id = ? AND active_status = 1",
+        [input.employeeId]
+      );
+      await conn.execute(
+        `INSERT INTO employee_salary_assignment
+           (id, employee_id, structure_id, ctc_annual, effective_from, effective_to,
+            salary_slab_id, salary_proposal_id, governance_mode, assigned_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id, input.employeeId, input.structureId, input.ctcAnnual,
+          input.effectiveFrom, input.effectiveTo ?? null,
+          govResult.salarySlabId ?? null,
+          govResult.salaryProposalId ?? null,
+          govResult.mode,
+          userId,
+        ]
+      );
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_salary_assignment WHERE id = ? LIMIT 1", [id]
     );
@@ -479,28 +514,81 @@ export const payrollService = {
   },
 
   async listPayrollRecords(filters: {
-    page?: number; limit?: number; runMonth?: string; scopeFilter?: any;
+    page?: number; limit?: number; runMonth?: string; search?: string;
+    status?: string; branchId?: string; processId?: string; departmentId?: string;
+    scopeFilter?: { sql: string; params: unknown[] };
   }): Promise<{ data: any[]; total: number; page: number; limit: number }> {
     const page = Math.max(1, filters.page ?? 1);
-    const limit = Math.min(100, filters.limit ?? 25);
+    const limit = Math.min(1000, filters.limit ?? 50);
     const offset = (page - 1) * limit;
-    const params: any[] = [];
-    let where = "1=1";
-    if (filters.runMonth) { where += " AND spr.run_month = ?"; params.push(filters.runMonth); }
+    const innerParams: any[] = [];
+    const innerConds: string[] = [];
+
+    if (filters.runMonth) { innerConds.push("spr.run_month = ?"); innerParams.push(filters.runMonth); }
+    if (filters.status)   { innerConds.push("spl.status = ?");    innerParams.push(filters.status); }
+    if (filters.branchId) { innerConds.push("e.branch_id = ?");   innerParams.push(filters.branchId); }
+    if (filters.processId){ innerConds.push("e.process_id = ?");  innerParams.push(filters.processId); }
+    if (filters.departmentId) { innerConds.push("e.department_id = ?"); innerParams.push(filters.departmentId); }
+    if (filters.search) {
+      innerConds.push("(e.employee_code LIKE ? OR e.full_name LIKE ? OR e.email LIKE ?)");
+      const s = `%${filters.search}%`;
+      innerParams.push(s, s, s);
+    }
+
+    // scope enforcement — use 1=0 deny-all when no scope provided rather than fallback to open
+    const scopeSql = filters.scopeFilter?.sql ?? "1=0";
+    const scopeParams = filters.scopeFilter?.params ?? [];
+    innerConds.push(`(${scopeSql})`);
+
+    const whereClause = innerConds.length ? innerConds.join(" AND ") : "1=1";
+    const allParams = [...innerParams, ...scopeParams];
+
+    const baseSql = `
+      FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+      LEFT JOIN employees e    ON e.id = spl.employee_id
+      LEFT JOIN branch_master bm   ON bm.id = e.branch_id
+      LEFT JOIN process_master pm  ON pm.id = e.process_id
+      LEFT JOIN department_master dm ON dm.id = e.department_id
+      LEFT JOIN designation_master dsg ON dsg.id = e.designation_id
+      WHERE ${whereClause}`;
+
+    const selectSql = `
+      SELECT
+        spl.id,
+        spl.run_id,
+        spl.employee_id,
+        COALESCE(spl.employee_code, e.employee_code) AS employee_code,
+        COALESCE(NULLIF(TRIM(e.full_name),''),
+                 TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,''))),
+                 spl.employee_code) AS employee_name,
+        e.email AS employee_email,
+        e.avatar_url AS employee_avatar,
+        spr.run_month,
+        spr.status AS run_status,
+        spr.disbursed_at,
+        spl.status AS line_status,
+        COALESCE(spl.basic, 0)             AS basic,
+        COALESCE(spl.hra, 0)               AS hra,
+        COALESCE(spl.special_allowance, 0) AS special_allowance,
+        COALESCE(spl.gross_salary, 0)      AS gross_salary,
+        COALESCE(spl.total_deductions, 0)  AS total_deductions,
+        COALESCE(spl.net_salary, 0)        AS net_salary,
+        COALESCE(spl.working_days, 0)      AS working_days,
+        COALESCE(spl.present_days, 0)      AS present_days,
+        COALESCE(spl.lwp_days, 0)          AS lwp_days,
+        bm.branch_name,
+        pm.process_name,
+        dm.dept_name AS department_name,
+        dsg.designation_name AS designation`;
+
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT spl.id, spl.employee_id, e.employee_name, spr.run_month,
-              spl.gross_pay, spl.net_pay, spl.status
-       FROM salary_prep_line spl
-       JOIN salary_prep_run spr ON spr.id = spl.run_id
-       LEFT JOIN employees e ON e.id = spl.employee_id
-       WHERE ${where}
-       ORDER BY spr.run_month DESC, e.employee_name ASC
-       LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      `${selectSql} ${baseSql} ORDER BY spr.run_month DESC, employee_name ASC LIMIT ? OFFSET ?`,
+      [...allParams, limit, offset]
     );
     const [countRow] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) as total FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id WHERE ${where}`,
-      params
+      `SELECT COUNT(*) as total ${baseSql}`,
+      allParams
     );
     return {
       data: Array.isArray(rows) ? rows : [],
@@ -533,13 +621,13 @@ export const payrollService = {
 
   async updateOvertime(
     lineId: string,
-    data: { overtimeHours?: number; overtimePay?: number },
+    data: { overtimeHours?: number; overtimeAmount?: number },
     _updatedBy: string
   ): Promise<any> {
     const fields: string[] = [];
     const params: any[] = [];
-    if (data.overtimeHours !== undefined) { fields.push("overtime_hours = ?"); params.push(data.overtimeHours); }
-    if (data.overtimePay !== undefined)   { fields.push("overtime_pay = ?");   params.push(data.overtimePay); }
+    if (data.overtimeHours  !== undefined) { fields.push("overtime_hours = ?");  params.push(data.overtimeHours); }
+    if (data.overtimeAmount !== undefined) { fields.push("overtime_amount = ?"); params.push(data.overtimeAmount); }
     if (!fields.length) throw Object.assign(new Error("No overtime fields to update"), { statusCode: 400 });
     fields.push("updated_at = NOW()");
     params.push(lineId);

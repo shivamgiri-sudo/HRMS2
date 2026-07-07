@@ -1,0 +1,230 @@
+bdb81f38 feat(backend): add GET /api/ats/joining-documents-tracker endpoint
+4ab8a72b test(ats): add failing tests for GET /joining-documents-tracker route
+ .../ats.joiningDocumentsTracker.routes.test.ts     | 130 +++++++++++++++++++++
+ .../ats/ats.joiningDocumentsTracker.routes.ts      |  41 +++++++
+ backend/src/modules/ats/ats.routes.ts              |   4 +
+ 3 files changed, 175 insertions(+)
+diff --git a/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.routes.test.ts b/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.routes.test.ts
+new file mode 100644
+index 00000000..fadbdbc7
+--- /dev/null
++++ b/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.routes.test.ts
+@@ -0,0 +1,130 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++import express from 'express';
++import request from 'supertest';
++
++// Mock the service module before importing the router
++vi.mock('../ats.joiningDocumentsTracker.service.js', () => ({
++  getJoiningDocumentsTracker: vi.fn(),
++}));
++
++// Mock the middleware modules
++vi.mock('../../../middleware/authMiddleware.js', () => ({
++  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
++    (req as express.Request & { authUser: { id: string } }).authUser = { id: 'test-user-id' };
++    next();
++  },
++}));
++
++vi.mock('../../../middleware/requireRole.js', () => ({
++  requireRole: (..._roles: string[]) =>
++    (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
++}));
++
++import { getJoiningDocumentsTracker } from '../ats.joiningDocumentsTracker.service.js';
++
++describe('GET /joining-documents-tracker', () => {
++  let app: express.Application;
++
++  beforeEach(async () => {
++    vi.clearAllMocks();
++    // Dynamic import to get a fresh router after mocks are set
++    const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
++    app = express();
++    app.use(express.json());
++    app.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
++  });
++
++  it('should return 200 with tracker data on success', async () => {
++    const mockResponse = {
++      employees: [
++        {
++          id: 'emp-1',
++          employee_code: 'EMP001',
++          full_name: 'John Doe',
++          branch_name: 'Mumbai',
++          process_name: 'Sales',
++          lob_name: null,
++          date_of_joining: '2026-01-15',
++          joining_document_status: 'in_progress',
++          joining_document_completion_pct: 50,
++          total_documents: 10,
++          verified_count: 5,
++          needs_correction_count: 0,
++          overdue_count: 0,
++          last_document_update: '2026-01-20',
++          assigned_hr_name: null,
++          key_documents: [],
++        },
++      ],
++      summary: {
++        total: 1,
++        complete: 0,
++        pending_verification: 0,
++        in_progress: 1,
++        not_started: 0,
++        overdue: 0,
++        needs_correction: 0,
++      },
++    };
++
++    vi.mocked(getJoiningDocumentsTracker).mockResolvedValueOnce(mockResponse);
++
++    const response = await request(app)
++      .get('/joining-documents-tracker')
++      .set('Authorization', 'Bearer test-token');
++
++    expect(response.status).toBe(200);
++    expect(response.body).toEqual({ success: true, data: mockResponse });
++    expect(getJoiningDocumentsTracker).toHaveBeenCalledWith('test-user-id', expect.objectContaining({
++      branch_id: undefined,
++      process_id: undefined,
++      overdue_only: false,
++    }));
++  });
++
++  it('should pass query parameters to the service', async () => {
++    vi.mocked(getJoiningDocumentsTracker).mockResolvedValueOnce({ employees: [], summary: { total: 0, complete: 0, pending_verification: 0, in_progress: 0, not_started: 0, overdue: 0, needs_correction: 0 } });
++
++    await request(app)
++      .get('/joining-documents-tracker?branch_id=br-1&process_id=pr-1&search=John&overdue_only=true&completion_min=25&completion_max=75')
++      .set('Authorization', 'Bearer test-token');
++
++    expect(getJoiningDocumentsTracker).toHaveBeenCalledWith('test-user-id', {
++      branch_id: 'br-1',
++      process_id: 'pr-1',
++      status: undefined,
++      completion_min: 25,
++      completion_max: 75,
++      document_code: undefined,
++      overdue_only: true,
++      updated_since: undefined,
++      search: 'John',
++    });
++  });
++
++  it('should treat overdue_only=false as false', async () => {
++    vi.mocked(getJoiningDocumentsTracker).mockResolvedValueOnce({ employees: [], summary: { total: 0, complete: 0, pending_verification: 0, in_progress: 0, not_started: 0, overdue: 0, needs_correction: 0 } });
++
++    await request(app)
++      .get('/joining-documents-tracker?overdue_only=false')
++      .set('Authorization', 'Bearer test-token');
++
++    expect(getJoiningDocumentsTracker).toHaveBeenCalledWith('test-user-id', expect.objectContaining({
++      overdue_only: false,
++    }));
++  });
++
++  it('should return 500 when the service throws an error', async () => {
++    vi.mocked(getJoiningDocumentsTracker).mockRejectedValueOnce(new Error('DB connection failed'));
++
++    const response = await request(app)
++      .get('/joining-documents-tracker')
++      .set('Authorization', 'Bearer test-token');
++
++    expect(response.status).toBe(500);
++    expect(response.body).toEqual({
++      success: false,
++      message: 'Failed to fetch joining documents tracker',
++    });
++  });
++});
+diff --git a/backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts b/backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts
+new file mode 100644
+index 00000000..1c02b182
+--- /dev/null
++++ b/backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts
+@@ -0,0 +1,41 @@
++import { Router } from 'express';
++import type { Response, NextFunction } from 'express';
++import { requireAuth } from '../../middleware/authMiddleware.js';
++import { requireRole } from '../../middleware/requireRole.js';
++import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
++import { getJoiningDocumentsTracker, type TrackerQueryParams } from './ats.joiningDocumentsTracker.service.js';
++
++export const joiningDocumentsTrackerRouter = Router();
++
++type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
++const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
++  void fn(req, res).catch(next);
++};
++
++// All routes require authentication and specific roles
++joiningDocumentsTrackerRouter.use(requireAuth);
++joiningDocumentsTrackerRouter.use(requireRole('admin', 'super_admin', 'hr', 'payroll_hr', 'branch_head'));
++
++// GET /api/ats/joining-documents-tracker
++joiningDocumentsTrackerRouter.get('/', h(async (req: AuthenticatedRequest, res: Response) => {
++  try {
++    const filters: TrackerQueryParams = {
++      branch_id: req.query.branch_id as string | undefined,
++      process_id: req.query.process_id as string | undefined,
++      status: req.query.status as string | undefined,
++      completion_min: req.query.completion_min ? Number(req.query.completion_min) : undefined,
++      completion_max: req.query.completion_max ? Number(req.query.completion_max) : undefined,
++      document_code: req.query.document_code as string | undefined,
++      overdue_only: req.query.overdue_only === 'true',
++      updated_since: req.query.updated_since as string | undefined,
++      search: req.query.search as string | undefined,
++    };
++
++    const data = await getJoiningDocumentsTracker(req.authUser!.id, filters);
++
++    return res.json({ success: true, data });
++  } catch (error: unknown) {
++    console.error('[tracker] GET /joining-documents-tracker error:', error);
++    return res.status(500).json({ success: false, message: 'Failed to fetch joining documents tracker' });
++  }
++}));
+diff --git a/backend/src/modules/ats/ats.routes.ts b/backend/src/modules/ats/ats.routes.ts
+index c4a2bcfd..0b4cea32 100644
+--- a/backend/src/modules/ats/ats.routes.ts
++++ b/backend/src/modules/ats/ats.routes.ts
+@@ -10,20 +10,21 @@ import { convertCandidateToEmployee } from "./ats.convert.service.js";
+ import onboardingRouter from "./ats.onboarding.routes.js";
+ import onboardingFullRouter from "./onboarding-full.routes.js";
+ import bgvVerificationRouter from "./bgv-verification.routes.js";
+ import { recruiterHiringRouter } from "./recruiter-hiring.routes.js";
+ import multer from "multer";
+ import path from "path";
+ 
+ import { atsQueueService } from "./ats.queue.service.js";
+ import { verifyRecruiter, resolveRecruiterForActor, getMyPendingCandidates, getSubmissionHistory, getRecruiterDailyStats } from "../ats-full-parity/recruiterInterview.service.js";
+ import { persistCandidateFile } from "./candidate-file.service.js";
++import { joiningDocumentsTrackerRouter } from "./ats.joiningDocumentsTracker.routes.js";
+ 
+ export const atsRouter = Router();
+ export const atsPublicRouter = Router(); // Public routes (no auth)
+ 
+ type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+   void fn(req, res).catch(next);
+ };
+ 
+ // â”€â”€ PUBLIC â€” candidate self-registration (no auth required) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+@@ -393,11 +394,14 @@ atsRouter.get("/recruiter/daily-stats", requireRole("admin", "hr", "super_admin"
+     if (!profile) return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
+     recruiterName = profile.name;
+     recruiterCode = profile.recruiterCode ?? null;
+   } else {
+     return res.status(400).json({ success: false, message: "recruiterName is required for privileged non-recruiter users" });
+   }
+   const stats = await getRecruiterDailyStats(recruiterName!, recruiterCode);
+   return res.json({ success: true, data: stats });
+ }));
+ 
++// Joining Documents Tracker routes
++atsRouter.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
++
+ export default atsRouter;

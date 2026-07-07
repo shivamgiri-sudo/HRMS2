@@ -1,0 +1,8 @@
+fa46964e perf(backend): batch-fetch existing checklists in bulkGenerateChecklists
+640b06f0 feat(backend): implement bulk remind and generate checklist endpoints
+9b677a0d test(backend): add failing tests for bulk remind and generate checklist
+ .../ats.joiningDocumentsTracker.routes.test.ts     | 156 ++++++++++++++++-
+ .../ats.joiningDocumentsTracker.service.test.ts    | 194 +++++++++++++++++++++
+ .../ats/ats.joiningDocumentsTracker.routes.ts      |  50 +++++-
+ .../ats/ats.joiningDocumentsTracker.service.ts     | 130 ++++++++++++++
+ 4 files changed, 528 insertions(+), 2 deletions(-)

@@ -1,0 +1,91 @@
+diff --git a/src/types/joiningDocumentsTracker.ts b/src/types/joiningDocumentsTracker.ts
+new file mode 100644
+index 00000000..99e8c675
+--- /dev/null
++++ b/src/types/joiningDocumentsTracker.ts
+@@ -0,0 +1,85 @@
++export interface KeyDocumentStatus {
++  code: 'APPOINTMENT_LETTER' | 'ID_PROOF' | 'BANK_DETAILS' | 'ADDRESS_PROOF';
++  status: string;
++  verification_status: string | null;
++}
++
++export interface EmployeeDocumentRow {
++  id: string;
++  employee_code: string;
++  full_name: string;
++  branch_name: string;
++  process_name: string;
++  lob_name: string | null;
++  date_of_joining: string;
++  joining_document_status: string | null;
++  joining_document_completion_pct: number;
++  total_documents: number;
++  verified_count: number;
++  needs_correction_count: number;
++  overdue_count: number;
++  last_document_update: string | null;
++  assigned_hr_name: string | null;
++  key_documents: KeyDocumentStatus[];
++}
++
++export interface TrackerSummary {
++  total: number;
++  complete: number;
++  pending_verification: number;
++  in_progress: number;
++  not_started: number;
++  overdue: number;
++  needs_correction: number;
++}
++
++export interface TrackerResponse {
++  employees: EmployeeDocumentRow[];
++  summary: TrackerSummary;
++}
++
++export interface TrackerFilters {
++  branch_id?: string;
++  process_id?: string;
++  status?: string;
++  completion_min?: number;
++  completion_max?: number;
++  document_code?: string;
++  overdue_only?: boolean;
++  updated_since?: string;
++  search?: string;
++}
++
++export type DocumentStatus =
++  | 'not_started'
++  | 'in_progress'
++  | 'pending_verification'
++  | 'needs_correction'
++  | 'verified_complete';
++
++export const STATUS_COLORS: Record<DocumentStatus, string> = {
++  not_started: 'bg-slate-100 text-slate-500',
++  in_progress: 'bg-blue-50 text-blue-700',
++  pending_verification: 'bg-amber-50 text-amber-700',
++  needs_correction: 'bg-rose-50 text-rose-700',
++  verified_complete: 'bg-emerald-50 text-emerald-700',
++};
++
++export const STATUS_LABELS: Record<DocumentStatus, string> = {
++  not_started: 'Not Started',
++  in_progress: 'In Progress',
++  pending_verification: 'Pending Verification',
++  needs_correction: 'Needs Correction',
++  verified_complete: 'Verified & Complete',
++};
++
++export function calculateOverallStatus(row: EmployeeDocumentRow): DocumentStatus {
++  const pct = row.joining_document_completion_pct;
++  const needsCorrection = row.needs_correction_count > 0;
++
++  if (needsCorrection) return 'needs_correction';
++  if (pct === 100) return 'verified_complete';
++  if (pct >= 75) return 'pending_verification';
++  if (pct > 0) return 'in_progress';
++  return 'not_started';
++}

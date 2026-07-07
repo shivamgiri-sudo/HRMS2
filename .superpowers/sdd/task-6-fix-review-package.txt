@@ -1,0 +1,65 @@
+diff --git a/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts b/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts
+index bb25a15a..dbe1e123 100644
+--- a/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts
++++ b/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts
+@@ -547,20 +547,23 @@ export async function bulkVerifyDocuments(
+ 
+ export async function streamBulkDocumentsZip(
+   employeeIds: string[],
+   documentCodes: string[] | null,
+   res: Response
+ ): Promise<void> {
+   const archive = archiverLib('zip', { zlib: { level: 9 } });
+ 
+   // Pipe archive data to Express response
+   archive.pipe(res);
++  archive.on('error', (err: Error) => {
++    console.error('[tracker] Archive error during ZIP creation:', err.message);
++  });
+ 
+   let sql = `
+     SELECT
+       e.employee_code,
+       e.full_name,
+       c.document_code,
+       f.storage_path,
+       f.original_filename
+     FROM employees e
+     JOIN employee_joining_document_checklist c ON e.id = c.employee_id
+@@ -581,27 +584,32 @@ export async function streamBulkDocumentsZip(
+ 
+   const [files] = await db.execute<RowDataPacket[]>(sql, params);
+ 
+   for (const file of files as Array<{
+     employee_code: string;
+     full_name: string;
+     document_code: string;
+     storage_path: string;
+     original_filename: string;
+   }>) {
+-    const fullPath = path.join(STORAGE_ROOT, file.storage_path);
++    const resolvedPath = path.resolve(STORAGE_ROOT, file.storage_path);
++    if (!resolvedPath.startsWith(STORAGE_ROOT + path.sep) && resolvedPath !== STORAGE_ROOT) {
++      console.warn(`[tracker] Path traversal blocked for storage_path: ${file.storage_path}`);
++      continue;
++    }
+ 
+-    if (fs.existsSync(fullPath)) {
++    if (fs.existsSync(resolvedPath)) {
+       const safeName = file.full_name.replace(/[^a-zA-Z0-9]/g, '');
+       const folderName = `${file.employee_code}-${safeName}`;
+-      const archivePath = `${folderName}/${file.document_code}-${file.original_filename}`;
+-      archive.file(fullPath, { name: archivePath });
++      const safeFilename = path.basename(file.original_filename);
++      const archivePath = `${folderName}/${file.document_code}-${safeFilename}`;
++      archive.file(resolvedPath, { name: archivePath });
+     }
+   }
+ 
+   await archive.finalize();
+ }
+ 
+ // ─── bulkGenerateChecklists ───────────────────────────────────────────────────
+ 
+ export async function bulkGenerateChecklists(
+   employeeIds: string[],

@@ -280,13 +280,13 @@ export async function lookupBandForDesignation(departmentId: string, designation
   );
   if (!rows.length) return null;
   const entry = rows[0] as any;
-  let suggestedPackage = null;
+  let suggestedPackage: RowDataPacket | null = null;
   if (entry.min_slab_id) {
     const [pkgs] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM salary_package_master WHERE grade_id=? AND slab_id=? AND active_status=1 ORDER BY effective_from DESC LIMIT 1`,
       [entry.grade_id, entry.min_slab_id]
     );
-    suggestedPackage = pkgs[0] ?? null;
+    suggestedPackage = (pkgs as RowDataPacket[])[0] ?? null;
   }
   return { ...entry, suggested_package: suggestedPackage };
 }

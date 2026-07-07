@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Clock,
   IndianRupee,
@@ -104,7 +104,7 @@ export default function PayrollOvertimeManagement() {
   const { data: runs, isLoading: runsLoading } = useQuery({
     queryKey: ["payroll-runs", runMonth],
     queryFn: async () => {
-      const response = await hrmsApi.get<{ data: Run[] }>(`/payroll/runs?runMonth=${runMonth}`);
+      const response = await hrmsApi.get<{ data: Run[] }>(`/api/payroll/runs?runMonth=${runMonth}`);
       return response.data;
     },
   });
@@ -114,18 +114,18 @@ export default function PayrollOvertimeManagement() {
     queryKey: ["payroll-lines", selectedRun],
     queryFn: async () => {
       if (!selectedRun) return [];
-      const response = await hrmsApi.get<{ data: PayrollLine[] }>(`/payroll/runs/${selectedRun}/lines`);
+      const response = await hrmsApi.get<{ data: PayrollLine[] }>(`/api/payroll/runs/${selectedRun}/lines`);
       return response.data;
     },
     enabled: !!selectedRun,
   });
 
   // Auto-select first run when month changes
-  useState(() => {
+  useEffect(() => {
     if (runs && runs.length > 0 && !selectedRun) {
       setSelectedRun(runs[0].id);
     }
-  });
+  }, [runs, selectedRun]);
 
   // Filter lines by search query
   const filteredLines = lines?.filter((line) => {

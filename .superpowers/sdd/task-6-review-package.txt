@@ -1,0 +1,1495 @@
+d1848fde feat(ats): implement bulk download ZIP endpoint (Task 6)
+4be27597 test(ats): add Task 6 failing tests for bulk download ZIP endpoint
+ backend/package-lock.json                          | 437 +++++++++++++++++++++
+ backend/package.json                               |   1 +
+ .../ats.joiningDocumentsTracker.routes.test.ts     | 112 +++++-
+ .../ats.joiningDocumentsTracker.service.test.ts    | 181 ++++++++-
+ .../ats/ats.joiningDocumentsTracker.routes.ts      |  33 ++
+ .../ats/ats.joiningDocumentsTracker.service.ts     |  72 ++++
+ 6 files changed, 834 insertions(+), 2 deletions(-)
+diff --git a/backend/package-lock.json b/backend/package-lock.json
+index f31a9e1e..d3a36ee3 100644
+--- a/backend/package-lock.json
++++ b/backend/package-lock.json
+@@ -2,20 +2,21 @@
+   "name": "mcn-hrms-backend",
+   "version": "1.0.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "mcn-hrms-backend",
+       "version": "1.0.0",
+       "dependencies": {
+         "@pdf-lib/standard-fonts": "^1.0.0",
++        "archiver": "^8.0.0",
+         "axios": "^1.7.9",
+         "bcryptjs": "^3.0.3",
+         "cloudinary": "^2.10.0",
+         "compression": "^1.8.1",
+         "cors": "^2.8.5",
+         "cron-parser": "^5.5.0",
+         "dotenv": "^16.4.7",
+         "express": "^4.21.2",
+         "express-rate-limit": "^8.5.2",
+         "handlebars": "^4.7.9",
+@@ -2070,20 +2071,56 @@
+       "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+       "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+       "license": "MIT"
+     },
+     "node_modules/append-field": {
+       "version": "1.0.0",
+       "resolved": "https://registry.npmjs.org/append-field/-/append-field-1.0.0.tgz",
+       "integrity": "sha512-klpgFSWLW1ZEs8svjfb7g4qWY0YS5imI82dTg+QahUvJ8YqAY0P10Uk8tTyh9ZGuYEZEMaeJYCF5BFuX552hsw==",
+       "license": "MIT"
+     },
++    "node_modules/archiver": {
++      "version": "8.0.0",
++      "resolved": "https://registry.npmjs.org/archiver/-/archiver-8.0.0.tgz",
++      "integrity": "sha512-fV1orZfsnPn9BaSByR/qE67rJCLJEy2Ox5bq7nJh+jquWaNh6Sfec75kJ2T6PtdGUbPQlrVoSVCEOa5SdiTQ1g==",
++      "license": "MIT",
++      "dependencies": {
++        "async": "^3.2.4",
++        "buffer-crc32": "^1.0.0",
++        "is-stream": "^4.0.0",
++        "lazystream": "^1.0.0",
++        "normalize-path": "^3.0.0",
++        "readable-stream": "^4.0.0",
++        "readdir-glob": "^3.0.0",
++        "tar-stream": "^3.0.0",
++        "zip-stream": "^7.0.2"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/archiver/node_modules/readable-stream": {
++      "version": "4.7.0",
++      "resolved": "https://registry.npmjs.org/readable-stream/-/readable-stream-4.7.0.tgz",
++      "integrity": "sha512-oIGGmcpTLwPga8Bn6/Z75SVaH1z5dUut2ibSyAMVhmUggWpmDn2dapB0n7f8nwaSiRtepAsfJyfXIO5DCVAODg==",
++      "license": "MIT",
++      "dependencies": {
++        "abort-controller": "^3.0.0",
++        "buffer": "^6.0.3",
++        "events": "^3.3.0",
++        "process": "^0.11.10",
++        "string_decoder": "^1.3.0"
++      },
++      "engines": {
++        "node": "^12.22.0 || ^14.17.0 || >=16.0.0"
++      }
++    },
+     "node_modules/array-flatten": {
+       "version": "1.1.1",
+       "resolved": "https://registry.npmjs.org/array-flatten/-/array-flatten-1.1.1.tgz",
+       "integrity": "sha512-PCVAQswWemu6UdxsDFFX/+gVeYqKAod3D3UVm91jHwynguOwAvYPhx8nNlM++NqRcK6CxxpUafjmhIdKiHibqg==",
+       "license": "MIT"
+     },
+     "node_modules/asap": {
+       "version": "2.0.6",
+       "resolved": "https://registry.npmjs.org/asap/-/asap-2.0.6.tgz",
+       "integrity": "sha512-BSHWgDSAiKs50o2Re8ppvp3seVHXSRM44cdSsT9FfNEUUZLOGWVCsiWaRPWM1Znn+mqZ1OfVZ3z3DWEzSp7hRA==",
+@@ -2115,20 +2152,26 @@
+       "resolved": "https://registry.npmjs.org/ast-v8-to-istanbul/-/ast-v8-to-istanbul-1.0.0.tgz",
+       "integrity": "sha512-1fSfIwuDICFA4LKkCzRPO7F0hzFf0B7+Xqrl27ynQaa+Rh0e1Es0v6kWHPott3lU10AyAr7oKHa65OppjLn3Rg==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@jridgewell/trace-mapping": "^0.3.31",
+         "estree-walker": "^3.0.3",
+         "js-tokens": "^10.0.0"
+       }
+     },
++    "node_modules/async": {
++      "version": "3.2.6",
++      "resolved": "https://registry.npmjs.org/async/-/async-3.2.6.tgz",
++      "integrity": "sha512-htCUDlxyyCLMgaM3xXg0C0LW2xqfuQ6p05pCEIsXuyQ+a1koYKTuBMzRNwmybfLgvJDMd0r1LTn4+E0Ti6C2AA==",
++      "license": "MIT"
++    },
+     "node_modules/asynckit": {
+       "version": "0.4.0",
+       "resolved": "https://registry.npmjs.org/asynckit/-/asynckit-0.4.0.tgz",
+       "integrity": "sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==",
+       "license": "MIT"
+     },
+     "node_modules/aws-ssl-profiles": {
+       "version": "1.1.2",
+       "resolved": "https://registry.npmjs.org/aws-ssl-profiles/-/aws-ssl-profiles-1.1.2.tgz",
+       "integrity": "sha512-NZKeq9AfyQvEeNlN0zSYAaWrmBffJh3IELMZfRpJVWgrpEbtEpnjvzqBPf+mxoI287JohRDoa+/nsfqqiZmF6g==",
+@@ -2142,20 +2185,135 @@
+       "resolved": "https://registry.npmjs.org/axios/-/axios-1.16.1.tgz",
+       "integrity": "sha512-caYkukvroVPO8KrzuJEb50Hm07KwfBZPEC3VeFHTsqWHvKTsy54hjJz9BS/cdaypROE2rH6xvm9mHX4fgWkr3A==",
+       "license": "MIT",
+       "dependencies": {
+         "follow-redirects": "^1.16.0",
+         "form-data": "^4.0.5",
+         "https-proxy-agent": "^5.0.1",
+         "proxy-from-env": "^2.1.0"
+       }
+     },
++    "node_modules/b4a": {
++      "version": "1.8.1",
++      "resolved": "https://registry.npmjs.org/b4a/-/b4a-1.8.1.tgz",
++      "integrity": "sha512-aiqre1Nr0B/6DgE2N5vwTc+2/oQZ4Wh1t4NznYY4E00y8LCt6NqdRv81so00oo27D8MVKTpUa/MwUUtBLXCoDw==",
++      "license": "Apache-2.0",
++      "peerDependencies": {
++        "react-native-b4a": "*"
++      },
++      "peerDependenciesMeta": {
++        "react-native-b4a": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/balanced-match": {
++      "version": "4.0.4",
++      "resolved": "https://registry.npmjs.org/balanced-match/-/balanced-match-4.0.4.tgz",
++      "integrity": "sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==",
++      "license": "MIT",
++      "engines": {
++        "node": "18 || 20 || >=22"
++      }
++    },
++    "node_modules/bare-events": {
++      "version": "2.9.1",
++      "resolved": "https://registry.npmjs.org/bare-events/-/bare-events-2.9.1.tgz",
++      "integrity": "sha512-Z0oHEHAFDZkffN8Qc39zNZjQlMDkPJRyyyZieU1VH7u8c5S+qHZ2S8ixdKIAxEjfHO7FJxXmJWgteOghVanIsg==",
++      "license": "Apache-2.0",
++      "peerDependencies": {
++        "bare-abort-controller": "*"
++      },
++      "peerDependenciesMeta": {
++        "bare-abort-controller": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/bare-fs": {
++      "version": "4.7.3",
++      "resolved": "https://registry.npmjs.org/bare-fs/-/bare-fs-4.7.3.tgz",
++      "integrity": "sha512-xRgplks8SvcKkdlv2M6Z2LZmRsmqd+x0nXXGXeMEjwdibj1HSDrlnqBRLeYdMvsgCox7Bq0e+DHwfczOfsn6IA==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "bare-events": "^2.5.4",
++        "bare-path": "^3.0.0",
++        "bare-stream": "^2.6.4",
++        "bare-url": "^2.2.2",
++        "fast-fifo": "^1.3.2"
++      },
++      "engines": {
++        "bare": ">=1.16.0"
++      },
++      "peerDependencies": {
++        "bare-buffer": "*"
++      },
++      "peerDependenciesMeta": {
++        "bare-buffer": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/bare-os": {
++      "version": "3.9.3",
++      "resolved": "https://registry.npmjs.org/bare-os/-/bare-os-3.9.3.tgz",
++      "integrity": "sha512-fF4Q7QsyKVF5Rj0qvI8BgUNjqzC2JvQlpTaPLjVJVxYVUX5Zr9un+y3w1HmA4nNKdFmRBT8z/WmrjvXzXVerKQ==",
++      "license": "Apache-2.0",
++      "engines": {
++        "bare": ">=1.14.0"
++      }
++    },
++    "node_modules/bare-path": {
++      "version": "3.0.1",
++      "resolved": "https://registry.npmjs.org/bare-path/-/bare-path-3.0.1.tgz",
++      "integrity": "sha512-ghj2DSK/2e99a1anTVPCV4m4YIYtrbXhfM7V3D7XZLOTsybnYyaJloymGqssQc8l/or0UoDyRtNQkmkEF/ysgQ==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "bare-os": "^3.0.1"
++      }
++    },
++    "node_modules/bare-stream": {
++      "version": "2.13.3",
++      "resolved": "https://registry.npmjs.org/bare-stream/-/bare-stream-2.13.3.tgz",
++      "integrity": "sha512-Kc+brLqvEqGkjyfiwJmImAOqLZL7OsoLKuavx+hJjgVV3nLTOjloJyPMFxjUPerGGHrNH0fLU06jjykMLWrERQ==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "b4a": "^1.8.1",
++        "streamx": "^2.25.0",
++        "teex": "^1.0.1"
++      },
++      "peerDependencies": {
++        "bare-abort-controller": "*",
++        "bare-buffer": "*",
++        "bare-events": "*"
++      },
++      "peerDependenciesMeta": {
++        "bare-abort-controller": {
++          "optional": true
++        },
++        "bare-buffer": {
++          "optional": true
++        },
++        "bare-events": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/bare-url": {
++      "version": "2.4.5",
++      "resolved": "https://registry.npmjs.org/bare-url/-/bare-url-2.4.5.tgz",
++      "integrity": "sha512-K+y9xF1tN+CdPu4qWwr0QiK1Al07eFPGYK5M2pDXcmHdMdgC/tT/bpmMe1hrmRHaidKLkXrC+cRNYf3XVDUhSQ==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "bare-path": "^3.0.0"
++      }
++    },
+     "node_modules/base64-js": {
+       "version": "1.5.1",
+       "resolved": "https://registry.npmjs.org/base64-js/-/base64-js-1.5.1.tgz",
+       "integrity": "sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==",
+       "funding": [
+         {
+           "type": "github",
+           "url": "https://github.com/sponsors/feross"
+         },
+         {
+@@ -2251,20 +2409,32 @@
+         "qs": "~6.15.1",
+         "raw-body": "~2.5.3",
+         "type-is": "~1.6.18",
+         "unpipe": "~1.0.0"
+       },
+       "engines": {
+         "node": ">= 0.8",
+         "npm": "1.2.8000 || >= 1.4.16"
+       }
+     },
++    "node_modules/brace-expansion": {
++      "version": "5.0.7",
++      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
++      "integrity": "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
++      "license": "MIT",
++      "dependencies": {
++        "balanced-match": "^4.0.2"
++      },
++      "engines": {
++        "node": "18 || 20 || >=22"
++      }
++    },
+     "node_modules/brotli": {
+       "version": "1.3.3",
+       "resolved": "https://registry.npmjs.org/brotli/-/brotli-1.3.3.tgz",
+       "integrity": "sha512-oTKjJdShmDuGW94SyyaoQvAjf30dZaHnjJ8uAF+u2/vGJkJbJPJAT1gDiOJP5v1Zb6f9KEyW/1HpuaWIXtGHPg==",
+       "license": "MIT",
+       "dependencies": {
+         "base64-js": "^1.1.2"
+       }
+     },
+     "node_modules/browserify-zlib": {
+@@ -2293,20 +2463,29 @@
+           "type": "consulting",
+           "url": "https://feross.org/support"
+         }
+       ],
+       "license": "MIT",
+       "dependencies": {
+         "base64-js": "^1.3.1",
+         "ieee754": "^1.2.1"
+       }
+     },
++    "node_modules/buffer-crc32": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/buffer-crc32/-/buffer-crc32-1.0.0.tgz",
++      "integrity": "sha512-Db1SbgBS/fg/392AblrMJk97KggmvYhr4pB5ZIMTWtaivCPMWLkmb7m21cJvpvgK+J3nsU2CmmixNBZx4vFj/w==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=8.0.0"
++      }
++    },
+     "node_modules/buffer-equal-constant-time": {
+       "version": "1.0.1",
+       "resolved": "https://registry.npmjs.org/buffer-equal-constant-time/-/buffer-equal-constant-time-1.0.1.tgz",
+       "integrity": "sha512-zRpUiDwd/xk6ADqPMATG8vc9VPrkck7T07OIx0gnjmJAnHnTVXNQG3vfvWNuiZIkwu9KrKdA1iJKfsfTVxE6NA==",
+       "license": "BSD-3-Clause"
+     },
+     "node_modules/buffer-from": {
+       "version": "1.1.2",
+       "resolved": "https://registry.npmjs.org/buffer-from/-/buffer-from-1.1.2.tgz",
+       "integrity": "sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==",
+@@ -2463,20 +2642,52 @@
+     "node_modules/component-emitter": {
+       "version": "1.3.1",
+       "resolved": "https://registry.npmjs.org/component-emitter/-/component-emitter-1.3.1.tgz",
+       "integrity": "sha512-T0+barUSQRTUQASh8bx02dl+DhF54GtIDY13Y3m9oWTklKbb3Wv974meRpeZ3lp1JpLVECWWNHC4vaG2XHXouQ==",
+       "dev": true,
+       "license": "MIT",
+       "funding": {
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
++    "node_modules/compress-commons": {
++      "version": "7.0.1",
++      "resolved": "https://registry.npmjs.org/compress-commons/-/compress-commons-7.0.1.tgz",
++      "integrity": "sha512-g0S8KAD8qf4+V//pr3BfB1aBnARLXNz2Gx+jmHU0LEriUuoQUOPOulVquHKTJ8+EAIIO7fhseNDr9wK5Q9FKBQ==",
++      "license": "MIT",
++      "dependencies": {
++        "crc-32": "^1.2.0",
++        "crc32-stream": "^7.0.1",
++        "is-stream": "^4.0.0",
++        "normalize-path": "^3.0.0",
++        "readable-stream": "^4.0.0"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/compress-commons/node_modules/readable-stream": {
++      "version": "4.7.0",
++      "resolved": "https://registry.npmjs.org/readable-stream/-/readable-stream-4.7.0.tgz",
++      "integrity": "sha512-oIGGmcpTLwPga8Bn6/Z75SVaH1z5dUut2ibSyAMVhmUggWpmDn2dapB0n7f8nwaSiRtepAsfJyfXIO5DCVAODg==",
++      "license": "MIT",
++      "dependencies": {
++        "abort-controller": "^3.0.0",
++        "buffer": "^6.0.3",
++        "events": "^3.3.0",
++        "process": "^0.11.10",
++        "string_decoder": "^1.3.0"
++      },
++      "engines": {
++        "node": "^12.22.0 || ^14.17.0 || >=16.0.0"
++      }
++    },
+     "node_modules/compressible": {
+       "version": "2.0.18",
+       "resolved": "https://registry.npmjs.org/compressible/-/compressible-2.0.18.tgz",
+       "integrity": "sha512-AF3r7P5dWxL8MxyITRMlORQNaOA2IkAFaTr4k7BUumjPtRpGDTZpl0Pb1XCO6JeDCBdp126Cgs9sMxqSjgYyRg==",
+       "license": "MIT",
+       "dependencies": {
+         "mime-db": ">= 1.43.0 < 2"
+       },
+       "engines": {
+         "node": ">= 0.6"
+@@ -2567,20 +2778,26 @@
+       "integrity": "sha512-NXdYc3dLr47pBkpUCHtKSwIOQXLVn8dZEuywboCOJY/osA0wFSLlSawr3KN8qXJEyX66FcONTH8EIlVuK0yyFA==",
+       "license": "MIT"
+     },
+     "node_modules/cookiejar": {
+       "version": "2.1.4",
+       "resolved": "https://registry.npmjs.org/cookiejar/-/cookiejar-2.1.4.tgz",
+       "integrity": "sha512-LDx6oHrK+PhzLKJU9j5S7/Y3jM/mUHvD/DeI1WQmJn652iPC5Y4TBzC9l+5OMOXlyTTA+SmVUPm0HQUwpD5Jqw==",
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/core-util-is": {
++      "version": "1.0.3",
++      "resolved": "https://registry.npmjs.org/core-util-is/-/core-util-is-1.0.3.tgz",
++      "integrity": "sha512-ZQBvi1DcpJ4GDqanjucZ2Hj3wEO5pZDS89BWbkcrvdxksJorwUDDZamX9ldFkp9aw2lmBDLgkObEA4DWNJ9FYQ==",
++      "license": "MIT"
++    },
+     "node_modules/cors": {
+       "version": "2.8.6",
+       "resolved": "https://registry.npmjs.org/cors/-/cors-2.8.6.tgz",
+       "integrity": "sha512-tJtZBBHA6vjIAaF6EnIaq6laBBP9aq/Y3ouVJjEfoHbRBcHBAHYcMh/w8LDrk2PvIMMq8gmopa5D4V8RmbrxGw==",
+       "license": "MIT",
+       "dependencies": {
+         "object-assign": "^4",
+         "vary": "^1"
+       },
+       "engines": {
+@@ -2611,20 +2828,49 @@
+       "resolved": "https://registry.npmjs.org/crc-32/-/crc-32-1.2.2.tgz",
+       "integrity": "sha512-ROmzCKrTnOwybPcJApAA6WBWij23HVfGVNKqqrZpuyZOHqK2CwHSvpGuyt/UNNvaIjEd8X5IFGp4Mh+Ie1IHJQ==",
+       "license": "Apache-2.0",
+       "bin": {
+         "crc32": "bin/crc32.njs"
+       },
+       "engines": {
+         "node": ">=0.8"
+       }
+     },
++    "node_modules/crc32-stream": {
++      "version": "7.0.1",
++      "resolved": "https://registry.npmjs.org/crc32-stream/-/crc32-stream-7.0.1.tgz",
++      "integrity": "sha512-IBWsY8xznyQrcHn8h4bC8/4ErNke5elzgG8GcqF4RFPw6aHkWWRc7Tgw6upjaTX/CT/yQgqYENkxYsTYN+hW2g==",
++      "license": "MIT",
++      "dependencies": {
++        "crc-32": "^1.2.0",
++        "readable-stream": "^4.0.0"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/crc32-stream/node_modules/readable-stream": {
++      "version": "4.7.0",
++      "resolved": "https://registry.npmjs.org/readable-stream/-/readable-stream-4.7.0.tgz",
++      "integrity": "sha512-oIGGmcpTLwPga8Bn6/Z75SVaH1z5dUut2ibSyAMVhmUggWpmDn2dapB0n7f8nwaSiRtepAsfJyfXIO5DCVAODg==",
++      "license": "MIT",
++      "dependencies": {
++        "abort-controller": "^3.0.0",
++        "buffer": "^6.0.3",
++        "events": "^3.3.0",
++        "process": "^0.11.10",
++        "string_decoder": "^1.3.0"
++      },
++      "engines": {
++        "node": "^12.22.0 || ^14.17.0 || >=16.0.0"
++      }
++    },
+     "node_modules/cron-parser": {
+       "version": "5.5.0",
+       "resolved": "https://registry.npmjs.org/cron-parser/-/cron-parser-5.5.0.tgz",
+       "integrity": "sha512-oML4lKUXxizYswqmxuOCpgFS8BNUJpIu6k/2HVHyaL8Ynnf3wdf9tkns0yRdJLSIjkJ+b0DXHMZEHGpMwjnPww==",
+       "license": "MIT",
+       "dependencies": {
+         "luxon": "^3.7.1"
+       },
+       "engines": {
+         "node": ">=18"
+@@ -2929,20 +3175,29 @@
+     },
+     "node_modules/events": {
+       "version": "3.3.0",
+       "resolved": "https://registry.npmjs.org/events/-/events-3.3.0.tgz",
+       "integrity": "sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q==",
+       "license": "MIT",
+       "engines": {
+         "node": ">=0.8.x"
+       }
+     },
++    "node_modules/events-universal": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/events-universal/-/events-universal-1.0.1.tgz",
++      "integrity": "sha512-LUd5euvbMLpwOF8m6ivPCbhQeSiYVNb8Vs0fQ8QjXo0JTkEHpz8pxdQf0gStltaPpw0Cca8b39KxvK9cfKRiAw==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "bare-events": "^2.7.0"
++      }
++    },
+     "node_modules/expect-type": {
+       "version": "1.3.0",
+       "resolved": "https://registry.npmjs.org/expect-type/-/expect-type-1.3.0.tgz",
+       "integrity": "sha512-knvyeauYhqjOYvQ66MznSMs83wmHrCycNEN6Ao+2AeYEfxUIkuiVxdEa1qlGEPK+We3n0THiDciYSsCcgW/DoA==",
+       "dev": true,
+       "license": "Apache-2.0",
+       "engines": {
+         "node": ">=12.0.0"
+       }
+     },
+@@ -3009,20 +3264,26 @@
+       "peerDependencies": {
+         "express": ">= 4.11"
+       }
+     },
+     "node_modules/fast-deep-equal": {
+       "version": "3.1.3",
+       "resolved": "https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz",
+       "integrity": "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==",
+       "license": "MIT"
+     },
++    "node_modules/fast-fifo": {
++      "version": "1.3.2",
++      "resolved": "https://registry.npmjs.org/fast-fifo/-/fast-fifo-1.3.2.tgz",
++      "integrity": "sha512-/d9sfos4yxzpwkDkuN7k2SqFKtYNmCTzgfEpz82x34IM9/zc8KGxQoXg1liNC/izpRM/MBdt44Nmx41ZWqk+FQ==",
++      "license": "MIT"
++    },
+     "node_modules/fast-safe-stringify": {
+       "version": "2.1.1",
+       "resolved": "https://registry.npmjs.org/fast-safe-stringify/-/fast-safe-stringify-2.1.1.tgz",
+       "integrity": "sha512-W+KJc2dmILlPplD/H4K9l9LcAHAfPtP6BY84uVLXQ6Evcz9Lcg33Y2z1IVblT6xdY54PXYVHEv+0Wpq8Io6zkA==",
+       "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/fdir": {
+       "version": "6.5.0",
+       "resolved": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz",
+@@ -3514,35 +3775,53 @@
+       "funding": {
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
+     "node_modules/is-property": {
+       "version": "1.0.2",
+       "resolved": "https://registry.npmjs.org/is-property/-/is-property-1.0.2.tgz",
+       "integrity": "sha512-Ks/IoX00TtClbGQr4TWXemAnktAQvYB7HzcCxDGqEZU6oCmb2INHuOoKxbtR+HFkmYWBKv/dOZtGRiAjDhj92g==",
+       "license": "MIT"
+     },
++    "node_modules/is-stream": {
++      "version": "4.0.1",
++      "resolved": "https://registry.npmjs.org/is-stream/-/is-stream-4.0.1.tgz",
++      "integrity": "sha512-Dnz92NInDqYckGEUJv689RbRiTSEHCQ7wOVeALbkOz999YpqT46yMRIGtSNl2iCL1waAZSx40+h59NV/EwzV/A==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
+     "node_modules/is-wsl": {
+       "version": "3.1.1",
+       "resolved": "https://registry.npmjs.org/is-wsl/-/is-wsl-3.1.1.tgz",
+       "integrity": "sha512-e6rvdUCiQCAuumZslxRJWR/Doq4VpPR82kqclvcS0efgt430SlGIk05vdCN58+VrzgtIcfNODjozVielycD4Sw==",
+       "license": "MIT",
+       "dependencies": {
+         "is-inside-container": "^1.0.0"
+       },
+       "engines": {
+         "node": ">=16"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
++    "node_modules/isarray": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/isarray/-/isarray-1.0.0.tgz",
++      "integrity": "sha512-VLghIWNM6ELQzo7zwmcg0NmTVyWKYjvIeM83yjp0wRDTmUnrM678fQbcKBo6n2CJEF0szoG//ytg+TKla89ALQ==",
++      "license": "MIT"
++    },
+     "node_modules/istanbul-lib-coverage": {
+       "version": "3.2.2",
+       "resolved": "https://registry.npmjs.org/istanbul-lib-coverage/-/istanbul-lib-coverage-3.2.2.tgz",
+       "integrity": "sha512-O8dpsF+r0WV/8MNRKfnmrtCWhuKjxrq2w+jpzBL5UZKTi2LeVWnWOmWRxFlesJONmc+wLAGvKQZEOanko0LFTg==",
+       "dev": true,
+       "license": "BSD-3-Clause",
+       "engines": {
+         "node": ">=8"
+       }
+     },
+@@ -3636,20 +3915,62 @@
+     "node_modules/jws": {
+       "version": "4.0.1",
+       "resolved": "https://registry.npmjs.org/jws/-/jws-4.0.1.tgz",
+       "integrity": "sha512-EKI/M/yqPncGUUh44xz0PxSidXFr/+r0pA70+gIYhjv+et7yxM+s29Y+VGDkovRofQem0fs7Uvf4+YmAdyRduA==",
+       "license": "MIT",
+       "dependencies": {
+         "jwa": "^2.0.1",
+         "safe-buffer": "^5.0.1"
+       }
+     },
++    "node_modules/lazystream": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/lazystream/-/lazystream-1.0.1.tgz",
++      "integrity": "sha512-b94GiNHQNy6JNTrt5w6zNyffMrNkXZb3KTkCZJb2V1xaEGCk093vkZ2jk3tpaeP33/OiXC+WvK9AxUebnf5nbw==",
++      "license": "MIT",
++      "dependencies": {
++        "readable-stream": "^2.0.5"
++      },
++      "engines": {
++        "node": ">= 0.6.3"
++      }
++    },
++    "node_modules/lazystream/node_modules/readable-stream": {
++      "version": "2.3.8",
++      "resolved": "https://registry.npmjs.org/readable-stream/-/readable-stream-2.3.8.tgz",
++      "integrity": "sha512-8p0AUk4XODgIewSi0l8Epjs+EVnWiK7NoDIEGU0HhE7+ZyY8D1IMY7odu5lRrFXGg71L15KG8QrPmum45RTtdA==",
++      "license": "MIT",
++      "dependencies": {
++        "core-util-is": "~1.0.0",
++        "inherits": "~2.0.3",
++        "isarray": "~1.0.0",
++        "process-nextick-args": "~2.0.0",
++        "safe-buffer": "~5.1.1",
++        "string_decoder": "~1.1.1",
++        "util-deprecate": "~1.0.1"
++      }
++    },
++    "node_modules/lazystream/node_modules/safe-buffer": {
++      "version": "5.1.2",
++      "resolved": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.1.2.tgz",
++      "integrity": "sha512-Gd2UZBJDkXlY7GbJxfsE8/nvKkUEU1G38c1siN6QP6a9PT9MmHB8GnpscSmMJSoF8LOIrt8ud/wPtojys4G6+g==",
++      "license": "MIT"
++    },
++    "node_modules/lazystream/node_modules/string_decoder": {
++      "version": "1.1.1",
++      "resolved": "https://registry.npmjs.org/string_decoder/-/string_decoder-1.1.1.tgz",
++      "integrity": "sha512-n/ShnvDi6FHbbVfviro+WojiFzv+s8MPMHBczVePfUpDJLwoLT0ht1l4YwBCbi8pJAveEEdnkHyPyTP/mzRfwg==",
++      "license": "MIT",
++      "dependencies": {
++        "safe-buffer": "~5.1.0"
++      }
++    },
+     "node_modules/lightningcss": {
+       "version": "1.32.0",
+       "resolved": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.32.0.tgz",
+       "integrity": "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ==",
+       "dev": true,
+       "license": "MPL-2.0",
+       "dependencies": {
+         "detect-libc": "^2.0.3"
+       },
+       "engines": {
+@@ -4101,20 +4422,35 @@
+       "resolved": "https://registry.npmjs.org/mime-types/-/mime-types-2.1.35.tgz",
+       "integrity": "sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw==",
+       "license": "MIT",
+       "dependencies": {
+         "mime-db": "1.52.0"
+       },
+       "engines": {
+         "node": ">= 0.6"
+       }
+     },
++    "node_modules/minimatch": {
++      "version": "10.2.5",
++      "resolved": "https://registry.npmjs.org/minimatch/-/minimatch-10.2.5.tgz",
++      "integrity": "sha512-MULkVLfKGYDFYejP07QOurDLLQpcjk7Fw+7jXS2R2czRQzR56yHRveU5NDJEOviH+hETZKSkIk5c+T23GjFUMg==",
++      "license": "BlueOak-1.0.0",
++      "dependencies": {
++        "brace-expansion": "^5.0.5"
++      },
++      "engines": {
++        "node": "18 || 20 || >=22"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/isaacs"
++      }
++    },
+     "node_modules/minimist": {
+       "version": "1.2.8",
+       "resolved": "https://registry.npmjs.org/minimist/-/minimist-1.2.8.tgz",
+       "integrity": "sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==",
+       "license": "MIT",
+       "funding": {
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
+     "node_modules/morgan": {
+@@ -4312,20 +4648,29 @@
+     },
+     "node_modules/nodemailer": {
+       "version": "9.0.1",
+       "resolved": "https://registry.npmjs.org/nodemailer/-/nodemailer-9.0.1.tgz",
+       "integrity": "sha512-Gwv8SQewT616ZM/URn0H54b8PWo/Wum7md3EW2aWy1lO27+WZCX+Xyak3J+NlmHUjDh5ME+uesJUDRbR3Ye8Bw==",
+       "license": "MIT-0",
+       "engines": {
+         "node": ">=6.0.0"
+       }
+     },
++    "node_modules/normalize-path": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/normalize-path/-/normalize-path-3.0.0.tgz",
++      "integrity": "sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
+     "node_modules/object-assign": {
+       "version": "4.1.1",
+       "resolved": "https://registry.npmjs.org/object-assign/-/object-assign-4.1.1.tgz",
+       "integrity": "sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg==",
+       "license": "MIT",
+       "engines": {
+         "node": ">=0.10.0"
+       }
+     },
+     "node_modules/object-inspect": {
+@@ -4576,20 +4921,26 @@
+     },
+     "node_modules/process": {
+       "version": "0.11.10",
+       "resolved": "https://registry.npmjs.org/process/-/process-0.11.10.tgz",
+       "integrity": "sha512-cdGef/drWFoydD1JsMzuFf8100nZl+GT+yacc2bEced5f9Rjk4z+WtFUTBu9PhOi9j/jfmBPu0mMEY4wIdAF8A==",
+       "license": "MIT",
+       "engines": {
+         "node": ">= 0.6.0"
+       }
+     },
++    "node_modules/process-nextick-args": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/process-nextick-args/-/process-nextick-args-2.0.1.tgz",
++      "integrity": "sha512-3ouUOpQhtgrbOa17J7+uxOTpITYWaGP7/AhoR3+A+/1e9skrzelGi/dXzEYyvbxubEF6Wn2ypscTKiKJFFn1ag==",
++      "license": "MIT"
++    },
+     "node_modules/proxy-addr": {
+       "version": "2.0.7",
+       "resolved": "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.7.tgz",
+       "integrity": "sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==",
+       "license": "MIT",
+       "dependencies": {
+         "forwarded": "0.2.0",
+         "ipaddr.js": "1.9.1"
+       },
+       "engines": {
+@@ -4651,20 +5002,35 @@
+       "license": "MIT",
+       "dependencies": {
+         "inherits": "^2.0.3",
+         "string_decoder": "^1.1.1",
+         "util-deprecate": "^1.0.1"
+       },
+       "engines": {
+         "node": ">= 6"
+       }
+     },
++    "node_modules/readdir-glob": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/readdir-glob/-/readdir-glob-3.0.0.tgz",
++      "integrity": "sha512-AhNB2KgKeVJr16nK9LLZbJNWnYoT23ZrumNKFDebHBdkC8KHSqWo871JAUhoWC/RtjEVdqNMFpM6qrwRbaUqpw==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "minimatch": "^10.2.2"
++      },
++      "engines": {
++        "node": ">=18"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/yqnn"
++      }
++    },
+     "node_modules/restructure": {
+       "version": "3.0.2",
+       "resolved": "https://registry.npmjs.org/restructure/-/restructure-3.0.2.tgz",
+       "integrity": "sha512-gSfoiOEA0VPE6Tukkrr7I0RBdE0s7H1eFCDBk05l1KIQT1UIKNc5JZy6jdyW6eYH3aR3g5b3PuL77rq0hvwtAw==",
+       "license": "MIT"
+     },
+     "node_modules/rolldown": {
+       "version": "1.0.3",
+       "resolved": "https://registry.npmjs.org/rolldown/-/rolldown-1.0.3.tgz",
+       "integrity": "sha512-i00lAJ2ks1BYr7rjNjKC7BcqAS7nVfiT3QX1SI5aY+AFHblCmaUf9OE9dbdzDvW6dJxbi2ZCZiy9v3CcwOiX3g==",
+@@ -4979,20 +5345,31 @@
+       "license": "MIT"
+     },
+     "node_modules/streamsearch": {
+       "version": "1.1.0",
+       "resolved": "https://registry.npmjs.org/streamsearch/-/streamsearch-1.1.0.tgz",
+       "integrity": "sha512-Mcc5wHehp9aXz1ax6bZUyY5afg9u2rv5cqQI3mRrYkGC8rW2hM02jWuwjtL++LS5qinSyhj2QfLyNsuc+VsExg==",
+       "engines": {
+         "node": ">=10.0.0"
+       }
+     },
++    "node_modules/streamx": {
++      "version": "2.28.0",
++      "resolved": "https://registry.npmjs.org/streamx/-/streamx-2.28.0.tgz",
++      "integrity": "sha512-1Yowhzjf0ivGMrTIkY9hav5TxobO9qIVqUE41fiCGMGgc3CLlf4MY+9AHmZqBWgDTue0fY9zWjYFVyf6Diuobw==",
++      "license": "MIT",
++      "dependencies": {
++        "events-universal": "^1.0.0",
++        "fast-fifo": "^1.3.2",
++        "text-decoder": "^1.1.0"
++      }
++    },
+     "node_modules/string_decoder": {
+       "version": "1.3.0",
+       "resolved": "https://registry.npmjs.org/string_decoder/-/string_decoder-1.3.0.tgz",
+       "integrity": "sha512-hkRX8U1WjJFd8LsDJ2yQ/wWWxaopEsABU1XfkM8A+j0+85JAGppt16cr1Whg6KIbb4okU6Mql6BOj+uup/wKeA==",
+       "license": "MIT",
+       "dependencies": {
+         "safe-buffer": "~5.2.0"
+       }
+     },
+     "node_modules/superagent": {
+@@ -5085,20 +5462,32 @@
+       "integrity": "sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "has-flag": "^4.0.0"
+       },
+       "engines": {
+         "node": ">=8"
+       }
+     },
++    "node_modules/tar-stream": {
++      "version": "3.2.0",
++      "resolved": "https://registry.npmjs.org/tar-stream/-/tar-stream-3.2.0.tgz",
++      "integrity": "sha512-ojzvCvVaNp6aOTFmG7jaRD0meowIAuPc3cMMhSgKiVWws1GyHbGd/xvnyuRKcKlMpt3qvxx6r0hreCNITP9hIg==",
++      "license": "MIT",
++      "dependencies": {
++        "b4a": "^1.6.4",
++        "bare-fs": "^4.5.5",
++        "fast-fifo": "^1.2.0",
++        "streamx": "^2.15.0"
++      }
++    },
+     "node_modules/tarn": {
+       "version": "3.0.2",
+       "resolved": "https://registry.npmjs.org/tarn/-/tarn-3.0.2.tgz",
+       "integrity": "sha512-51LAVKUSZSVfI05vjPESNc5vwqqZpbXCsU+/+wxlOrUjk2SnFTt97v9ZgQrD4YmxYW1Px6w2KjaDitCfkvgxMQ==",
+       "license": "MIT",
+       "engines": {
+         "node": ">=8.0.0"
+       }
+     },
+     "node_modules/tedious": {
+@@ -5131,20 +5520,38 @@
+         "safer-buffer": ">= 2.1.2 < 3.0.0"
+       },
+       "engines": {
+         "node": ">=0.10.0"
+       },
+       "funding": {
+         "type": "opencollective",
+         "url": "https://opencollective.com/express"
+       }
+     },
++    "node_modules/teex": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/teex/-/teex-1.0.1.tgz",
++      "integrity": "sha512-eYE6iEI62Ni1H8oIa7KlDU6uQBtqr4Eajni3wX7rpfXD8ysFx8z0+dri+KWEPWpBsxXfxu58x/0jvTVT1ekOSg==",
++      "license": "MIT",
++      "dependencies": {
++        "streamx": "^2.12.5"
++      }
++    },
++    "node_modules/text-decoder": {
++      "version": "1.2.7",
++      "resolved": "https://registry.npmjs.org/text-decoder/-/text-decoder-1.2.7.tgz",
++      "integrity": "sha512-vlLytXkeP4xvEq2otHeJfSQIRyWxo/oZGEbXrtEEF9Hnmrdly59sUbzZ/QgyWuLYHctCHxFF4tRQZNQ9k60ExQ==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "b4a": "^1.6.4"
++      }
++    },
+     "node_modules/tiny-inflate": {
+       "version": "1.0.3",
+       "resolved": "https://registry.npmjs.org/tiny-inflate/-/tiny-inflate-1.0.3.tgz",
+       "integrity": "sha512-pkY1fj1cKHb2seWDy0B16HeWyczlJA9/WW3u3c4z/NiWDsO3DOU5D7nhTLE9CF0yXv/QZFY7sEJmj24dK+Rrqw==",
+       "license": "MIT"
+     },
+     "node_modules/tinybench": {
+       "version": "2.9.0",
+       "resolved": "https://registry.npmjs.org/tinybench/-/tinybench-2.9.0.tgz",
+       "integrity": "sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==",
+@@ -5646,20 +6053,50 @@
+     },
+     "node_modules/xmlbuilder": {
+       "version": "13.0.2",
+       "resolved": "https://registry.npmjs.org/xmlbuilder/-/xmlbuilder-13.0.2.tgz",
+       "integrity": "sha512-Eux0i2QdDYKbdbA6AM6xE4m6ZTZr4G4xF9kahI2ukSEMCzwce2eX9WlTI5J3s+NU7hpasFsr8hWIONae7LluAQ==",
+       "license": "MIT",
+       "engines": {
+         "node": ">=6.0"
+       }
+     },
++    "node_modules/zip-stream": {
++      "version": "7.0.5",
++      "resolved": "https://registry.npmjs.org/zip-stream/-/zip-stream-7.0.5.tgz",
++      "integrity": "sha512-dSvYKdvLsAHCDqPOhIwk/q5CvuWtTB3Dgpoe0uVEFjTzIOAmsQpprX25InCvrvJsirEbu1OHyy67n/kAj1Sw/w==",
++      "license": "MIT",
++      "dependencies": {
++        "compress-commons": "^7.0.0",
++        "normalize-path": "^3.0.0",
++        "readable-stream": "^4.0.0"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/zip-stream/node_modules/readable-stream": {
++      "version": "4.7.0",
++      "resolved": "https://registry.npmjs.org/readable-stream/-/readable-stream-4.7.0.tgz",
++      "integrity": "sha512-oIGGmcpTLwPga8Bn6/Z75SVaH1z5dUut2ibSyAMVhmUggWpmDn2dapB0n7f8nwaSiRtepAsfJyfXIO5DCVAODg==",
++      "license": "MIT",
++      "dependencies": {
++        "abort-controller": "^3.0.0",
++        "buffer": "^6.0.3",
++        "events": "^3.3.0",
++        "process": "^0.11.10",
++        "string_decoder": "^1.3.0"
++      },
++      "engines": {
++        "node": "^12.22.0 || ^14.17.0 || >=16.0.0"
++      }
++    },
+     "node_modules/zod": {
+       "version": "3.25.76",
+       "resolved": "https://registry.npmjs.org/zod/-/zod-3.25.76.tgz",
+       "integrity": "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==",
+       "license": "MIT",
+       "funding": {
+         "url": "https://github.com/sponsors/colinhacks"
+       }
+     }
+   }
+diff --git a/backend/package.json b/backend/package.json
+index 2c2dc712..0cc6159f 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -13,20 +13,21 @@
+     "test:watch": "vitest",
+     "test:coverage": "vitest run --coverage",
+     "seed:demo": "tsx scripts/seed-demo-auth.ts",
+     "migrate:fresh:test": "tsx scripts/migrate-fresh-test.ts",
+     "phase2:describe": "tsx scripts/phase2-describe.ts",
+     "phase2:smoke": "npm run phase2:smoke:live:dangerous",
+     "phase2:smoke:live:dangerous": "tsx scripts/smoke/hrms2-lifecycle-smoke.ts"
+   },
+   "dependencies": {
+     "@pdf-lib/standard-fonts": "^1.0.0",
++    "archiver": "^8.0.0",
+     "axios": "^1.7.9",
+     "bcryptjs": "^3.0.3",
+     "cloudinary": "^2.10.0",
+     "compression": "^1.8.1",
+     "cors": "^2.8.5",
+     "cron-parser": "^5.5.0",
+     "dotenv": "^16.4.7",
+     "express": "^4.21.2",
+     "express-rate-limit": "^8.5.2",
+     "handlebars": "^4.7.9",
+diff --git a/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.routes.test.ts b/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.routes.test.ts
+index d6bd5e4c..318b0e9d 100644
+--- a/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.routes.test.ts
++++ b/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.routes.test.ts
+@@ -3,36 +3,37 @@ import express from 'express';
+ import request from 'supertest';
+ 
+ // Mock the service module before importing the router
+ vi.mock('../ats.joiningDocumentsTracker.service.js', () => ({
+   getJoiningDocumentsTracker: vi.fn(),
+   sendBulkReminders: vi.fn(),
+   bulkGenerateChecklists: vi.fn(),
+   bulkAssignHR: vi.fn(),
+   bulkSetDueDate: vi.fn(),
+   bulkVerifyDocuments: vi.fn(),
++  streamBulkDocumentsZip: vi.fn(),
+ }));
+ 
+ // Mock the middleware modules
+ vi.mock('../../../middleware/authMiddleware.js', () => ({
+   requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+     (req as express.Request & { authUser: { id: string } }).authUser = { id: 'test-user-id' };
+     next();
+   },
+ }));
+ 
+ vi.mock('../../../middleware/requireRole.js', () => ({
+   requireRole: (..._roles: string[]) =>
+     (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
+ }));
+ 
+-import { getJoiningDocumentsTracker, sendBulkReminders, bulkGenerateChecklists, bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments } from '../ats.joiningDocumentsTracker.service.js';
++import { getJoiningDocumentsTracker, sendBulkReminders, bulkGenerateChecklists, bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments, streamBulkDocumentsZip } from '../ats.joiningDocumentsTracker.service.js';
+ 
+ describe('GET /joining-documents-tracker', () => {
+   let app: express.Application;
+ 
+   beforeEach(async () => {
+     vi.clearAllMocks();
+     // Dynamic import to get a fresh router after mocks are set
+     const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
+     app = express();
+     app.use(express.json());
+@@ -517,10 +518,119 @@ describe('POST /joining-documents-tracker/bulk-verify', () => {
+ 
+     const response = await request(app)
+       .post('/joining-documents-tracker/bulk-verify')
+       .set('Authorization', 'Bearer test-token')
+       .send({ employee_ids: ['emp-1'] });
+ 
+     expect(response.status).toBe(500);
+     expect(response.body).toMatchObject({ success: false, message: 'Failed to verify documents' });
+   });
+ });
++
++// ─── Task 6: Bulk Download route tests ───────────────────────────────────────
++
++describe('POST /joining-documents-tracker/bulk-download', () => {
++  let app: express.Application;
++
++  beforeEach(async () => {
++    vi.clearAllMocks();
++    const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
++    app = express();
++    app.use(express.json());
++    app.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
++  });
++
++  it('should return 400 when employee_ids is missing', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-download')
++      .set('Authorization', 'Bearer test-token')
++      .send({});
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
++  });
++
++  it('should return 400 when employee_ids is empty array', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-download')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: [] });
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
++  });
++
++  it('should return 400 when employee_ids is not an array', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-download')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: 'emp-1' });
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
++  });
++
++  it('should set correct Content-Type and Content-Disposition headers', async () => {
++    // Mock must end the response; archiver normally does this via pipe
++    vi.mocked(streamBulkDocumentsZip).mockImplementationOnce(async (_ids, _codes, res) => {
++      res.end();
++    });
++
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-download')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1', 'emp-2'] });
++
++    expect(response.headers['content-type']).toMatch(/application\/zip/i);
++    expect(response.headers['content-disposition']).toMatch(/attachment/i);
++    expect(response.headers['content-disposition']).toMatch(/joining-documents-\d{4}-\d{2}-\d{2}\.zip/);
++  });
++
++  it('should call streamBulkDocumentsZip with employee_ids and null document_codes', async () => {
++    vi.mocked(streamBulkDocumentsZip).mockImplementationOnce(async (_ids, _codes, res) => {
++      res.end();
++    });
++
++    await request(app)
++      .post('/joining-documents-tracker/bulk-download')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1', 'emp-2'] });
++
++    expect(streamBulkDocumentsZip).toHaveBeenCalledWith(
++      ['emp-1', 'emp-2'],
++      null,
++      expect.anything()
++    );
++  });
++
++  it('should pass document_codes to streamBulkDocumentsZip when provided', async () => {
++    vi.mocked(streamBulkDocumentsZip).mockImplementationOnce(async (_ids, _codes, res) => {
++      res.end();
++    });
++
++    await request(app)
++      .post('/joining-documents-tracker/bulk-download')
++      .set('Authorization', 'Bearer test-token')
++      .send({
++        employee_ids: ['emp-1'],
++        document_codes: ['APPOINTMENT_LETTER', 'ID_PROOF'],
++      });
++
++    expect(streamBulkDocumentsZip).toHaveBeenCalledWith(
++      ['emp-1'],
++      ['APPOINTMENT_LETTER', 'ID_PROOF'],
++      expect.anything()
++    );
++  });
++
++  it('should return 500 JSON when service throws before headers are sent', async () => {
++    vi.mocked(streamBulkDocumentsZip).mockRejectedValueOnce(new Error('ZIP creation failed'));
++
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-download')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1'] });
++
++    expect(response.status).toBe(500);
++    expect(response.body).toMatchObject({ success: false, message: 'Failed to create ZIP file' });
++  });
++});
+diff --git a/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.service.test.ts b/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.service.test.ts
+index bee81707..239f2493 100644
+--- a/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.service.test.ts
++++ b/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.service.test.ts
+@@ -260,21 +260,21 @@ describe('bulkGenerateChecklists', () => {
+ 
+     expect(result.success).toBe(true);
+     expect(result.generated).toBe(0);
+     expect(result.skipped).toBe(0);
+     expect(result.errors).toHaveLength(0);
+   });
+ });
+ 
+ // ─── Task 5: bulkAssignHR tests ───────────────────────────────────────────────
+ 
+-import { bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments } from '../ats.joiningDocumentsTracker.service';
++import { bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments, streamBulkDocumentsZip } from '../ats.joiningDocumentsTracker.service';
+ import type { ResultSetHeader } from 'mysql2';
+ 
+ describe('bulkAssignHR', () => {
+   beforeEach(() => {
+     vi.clearAllMocks();
+     mocks.mockBeginTransaction.mockResolvedValue(undefined);
+     mocks.mockCommit.mockResolvedValue(undefined);
+     mocks.mockRollback.mockResolvedValue(undefined);
+   });
+ 
+@@ -495,10 +495,189 @@ describe('bulkVerifyDocuments', () => {
+ 
+     await bulkVerifyDocuments(['emp-1'], 'actor-user-1');
+ 
+     const auditCall = mocks.mockConnectionExecute.mock.calls[1];
+     expect(auditCall[0]).toMatch(/employee_joining_document_audit_log/i);
+     expect(auditCall[0]).toMatch(/BULK_VERIFY/i);
+     expect(auditCall[1]).toContain('actor-user-1');
+     expect(auditCall[1]).toContain('emp-1');
+   });
+ });
++
++// ─── Task 6: streamBulkDocumentsZip tests ────────────────────────────────────
++
++vi.mock('archiver', () => {
++  const mockArchive = {
++    pipe: vi.fn(),
++    file: vi.fn(),
++    finalize: vi.fn().mockResolvedValue(undefined),
++    on: vi.fn(),
++  };
++  return {
++    default: vi.fn().mockReturnValue(mockArchive),
++  };
++});
++
++vi.mock('fs', async () => {
++  const actual = await vi.importActual<typeof import('fs')>('fs');
++  const mockExistsSync = vi.fn();
++  return {
++    ...actual,
++    existsSync: mockExistsSync,
++    default: {
++      ...(actual as unknown as Record<string, unknown>).default ?? actual,
++      existsSync: mockExistsSync,
++    },
++  };
++});
++
++import archiver from 'archiver';
++import * as fsModule from 'fs';
++
++describe('streamBulkDocumentsZip', () => {
++  beforeEach(() => {
++    vi.clearAllMocks();
++  });
++
++  it('should query DB for verified files for the given employee IDs', async () => {
++    const mockFiles = [
++      {
++        employee_code: 'EMP001',
++        full_name: 'John Doe',
++        document_code: 'APPOINTMENT_LETTER',
++        storage_path: 'emp-1/appointment.pdf',
++        original_filename: 'appointment.pdf',
++      },
++    ];
++    vi.mocked(db.execute).mockResolvedValueOnce([mockFiles, []]);
++    vi.mocked(fsModule.existsSync).mockReturnValue(false); // file doesn't exist on disk
++
++    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
++
++    await streamBulkDocumentsZip(['emp-1'], null, mockRes);
++
++    const [[sql, params]] = vi.mocked(db.execute).mock.calls;
++    expect(sql).toMatch(/employee_joining_document_file/i);
++    expect(sql).toMatch(/employee_joining_document_checklist/i);
++    expect(sql).toMatch(/verification_status.*verified/i);
++    expect(sql).toMatch(/role IN/i);
++    expect(params).toContainEqual(['emp-1']);
++  });
++
++  it('should filter by document_codes when provided', async () => {
++    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
++    vi.mocked(fsModule.existsSync).mockReturnValue(false);
++
++    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
++    await streamBulkDocumentsZip(['emp-1'], ['APPOINTMENT_LETTER', 'ID_PROOF'], mockRes);
++
++    const [[sql, params]] = vi.mocked(db.execute).mock.calls;
++    expect(sql).toMatch(/document_code IN/i);
++    expect((params as unknown[]).some(p => Array.isArray(p) && p.includes('APPOINTMENT_LETTER'))).toBe(true);
++  });
++
++  it('should not filter by document_codes when null', async () => {
++    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
++    vi.mocked(fsModule.existsSync).mockReturnValue(false);
++
++    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
++    await streamBulkDocumentsZip(['emp-1'], null, mockRes);
++
++    const [[sql]] = vi.mocked(db.execute).mock.calls;
++    expect(sql).not.toMatch(/document_code IN/i);
++  });
++
++  it('should add existing files to archive with correct folder structure', async () => {
++    const mockFiles = [
++      {
++        employee_code: 'EMP001',
++        full_name: 'John Doe',
++        document_code: 'APPOINTMENT_LETTER',
++        storage_path: 'emp-1/appointment.pdf',
++        original_filename: 'appointment.pdf',
++      },
++    ];
++    vi.mocked(db.execute).mockResolvedValueOnce([mockFiles, []]);
++    vi.mocked(fsModule.existsSync).mockReturnValue(true); // file exists
++
++    // After vi.clearAllMocks() in beforeEach the factory default mock is wiped;
++    // set up a fresh instance to be returned by archiver()
++    const freshMockArchive = {
++      pipe: vi.fn(),
++      file: vi.fn(),
++      finalize: vi.fn().mockResolvedValue(undefined),
++      on: vi.fn(),
++    };
++    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
++
++    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
++    await streamBulkDocumentsZip(['emp-1'], null, mockRes);
++
++    expect(freshMockArchive.file).toHaveBeenCalledTimes(1);
++    const fileCall = freshMockArchive.file.mock.calls[0];
++    // Archive path: EMP001-JohnDoe/APPOINTMENT_LETTER-appointment.pdf
++    expect(fileCall[1]).toMatchObject({ name: 'EMP001-JohnDoe/APPOINTMENT_LETTER-appointment.pdf' });
++  });
++
++  it('should skip files that do not exist on disk', async () => {
++    const mockFiles = [
++      {
++        employee_code: 'EMP001',
++        full_name: 'John Doe',
++        document_code: 'APPOINTMENT_LETTER',
++        storage_path: 'emp-1/missing.pdf',
++        original_filename: 'missing.pdf',
++      },
++    ];
++    vi.mocked(db.execute).mockResolvedValueOnce([mockFiles, []]);
++    vi.mocked(fsModule.existsSync).mockReturnValue(false); // file does NOT exist
++
++    const freshMockArchive = {
++      pipe: vi.fn(),
++      file: vi.fn(),
++      finalize: vi.fn().mockResolvedValue(undefined),
++      on: vi.fn(),
++    };
++    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
++
++    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
++    await streamBulkDocumentsZip(['emp-1'], null, mockRes);
++
++    expect(freshMockArchive.file).not.toHaveBeenCalled();
++  });
++
++  it('should pipe archive to the response object', async () => {
++    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
++    vi.mocked(fsModule.existsSync).mockReturnValue(false);
++
++    const freshMockArchive = {
++      pipe: vi.fn(),
++      file: vi.fn(),
++      finalize: vi.fn().mockResolvedValue(undefined),
++      on: vi.fn(),
++    };
++    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
++
++    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
++    await streamBulkDocumentsZip(['emp-1'], null, mockRes);
++
++    expect(freshMockArchive.pipe).toHaveBeenCalledWith(mockRes);
++  });
++
++  it('should call archive.finalize() after adding all files', async () => {
++    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
++    vi.mocked(fsModule.existsSync).mockReturnValue(false);
++
++    const freshMockArchive = {
++      pipe: vi.fn(),
++      file: vi.fn(),
++      finalize: vi.fn().mockResolvedValue(undefined),
++      on: vi.fn(),
++    };
++    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
++
++    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
++    await streamBulkDocumentsZip(['emp-1'], null, mockRes);
++
++    expect(freshMockArchive.finalize).toHaveBeenCalledTimes(1);
++  });
++});
+diff --git a/backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts b/backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts
+index d2f1d0ec..50cf34cf 100644
+--- a/backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts
++++ b/backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts
+@@ -3,20 +3,21 @@ import type { Response, NextFunction } from 'express';
+ import { requireAuth } from '../../middleware/authMiddleware.js';
+ import { requireRole } from '../../middleware/requireRole.js';
+ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+ import {
+   getJoiningDocumentsTracker,
+   sendBulkReminders,
+   bulkGenerateChecklists,
+   bulkAssignHR,
+   bulkSetDueDate,
+   bulkVerifyDocuments,
++  streamBulkDocumentsZip,
+   type TrackerQueryParams,
+ } from './ats.joiningDocumentsTracker.service.js';
+ 
+ export const joiningDocumentsTrackerRouter = Router();
+ 
+ type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+   void fn(req, res).catch(next);
+ };
+ 
+@@ -157,10 +158,42 @@ joiningDocumentsTrackerRouter.post('/bulk-verify', h(async (req: AuthenticatedRe
+     }
+ 
+     const result = await bulkVerifyDocuments(employee_ids as string[], req.authUser!.id);
+ 
+     return res.json(result);
+   } catch (error: unknown) {
+     console.error('[tracker] POST /bulk-verify error:', error);
+     return res.status(500).json({ success: false, message: 'Failed to verify documents' });
+   }
+ }));
++
++// POST /api/ats/joining-documents-tracker/bulk-download
++joiningDocumentsTrackerRouter.post('/bulk-download', h(async (req: AuthenticatedRequest, res: Response) => {
++  try {
++    const { employee_ids, document_codes } = req.body as {
++      employee_ids?: unknown;
++      document_codes?: string[];
++    };
++
++    if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
++      return res.status(400).json({ success: false, message: 'employee_ids array is required' });
++    }
++
++    const timestamp = new Date().toISOString().split('T')[0];
++    res.setHeader('Content-Type', 'application/zip');
++    res.setHeader('Content-Disposition', `attachment; filename="joining-documents-${timestamp}.zip"`);
++
++    await streamBulkDocumentsZip(employee_ids as string[], document_codes ?? null, res);
++
++    return res;
++  } catch (error: unknown) {
++    console.error('[tracker] POST /bulk-download error:', error);
++    if (!res.headersSent) {
++      // Reset headers set for ZIP so res.json() can write application/json
++      res.removeHeader('Content-Type');
++      res.removeHeader('Content-Disposition');
++      return res.status(500).json({ success: false, message: 'Failed to create ZIP file' });
++    }
++    // Headers already sent — streaming was in progress, can't send JSON
++    return res;
++  }
++}));
+diff --git a/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts b/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts
+index fb571ba3..bb25a15a 100644
+--- a/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts
++++ b/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts
+@@ -1,16 +1,30 @@
+ import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+ import { db } from '../../db/mysql.js';
+ import { getUserRoleKeys } from '../../shared/scopeAccess.js';
+ import { getEmployeeForUser } from '../../shared/accessGuard.js';
+ import { sendRejectedEmail } from './ats.email.service.js';
+ import { generateJoiningDocumentChecklist } from '../employees/employeeJoiningDocuments.service.js';
++// archiver ships a CJS default; @types/archiver only declares named exports so we
++// need a type-cast to satisfy the compiler while keeping vi.mock('archiver') working.
++// eslint-disable-next-line @typescript-eslint/no-explicit-any
++import * as _archiverNs from 'archiver';
++import type { ArchiverOptions, Archiver as ArchiverInstance } from 'archiver';
++import fs from 'fs';
++import path from 'path';
++import type { Response } from 'express';
++
++// esModuleInterop wraps the CJS default as .default; fall back to the namespace itself.
++const archiverLib = ((_archiverNs as unknown as { default?: unknown }).default ??
++  _archiverNs) as (format: string, options?: ArchiverOptions) => ArchiverInstance;
++
++const STORAGE_ROOT = path.resolve(process.cwd(), 'private-storage', 'employee-joining-documents');
+ 
+ export interface KeyDocumentStatus {
+   code: 'APPOINTMENT_LETTER' | 'ID_PROOF' | 'BANK_DETAILS' | 'ADDRESS_PROOF';
+   status: string;
+   verification_status: string | null;
+ }
+ 
+ export interface EmployeeDocumentRow {
+   id: string;
+   employee_code: string;
+@@ -522,20 +536,78 @@ export async function bulkVerifyDocuments(
+         error: error instanceof Error ? error.message : String(error),
+       });
+     } finally {
+       connection.release();
+     }
+   }
+ 
+   return result;
+ }
+ 
++// ─── streamBulkDocumentsZip ───────────────────────────────────────────────────
++
++export async function streamBulkDocumentsZip(
++  employeeIds: string[],
++  documentCodes: string[] | null,
++  res: Response
++): Promise<void> {
++  const archive = archiverLib('zip', { zlib: { level: 9 } });
++
++  // Pipe archive data to Express response
++  archive.pipe(res);
++
++  let sql = `
++    SELECT
++      e.employee_code,
++      e.full_name,
++      c.document_code,
++      f.storage_path,
++      f.original_filename
++    FROM employees e
++    JOIN employee_joining_document_checklist c ON e.id = c.employee_id
++    JOIN employee_joining_document_file f ON c.id = f.checklist_id
++    WHERE e.id IN (?)
++      AND f.role IN ('hr_uploaded', 'generated', 'signed')
++      AND c.verification_status = 'verified'
++  `;
++
++  const params: (string[] | string)[] = [employeeIds];
++
++  if (documentCodes && documentCodes.length > 0) {
++    sql += ` AND c.document_code IN (?)`;
++    params.push(documentCodes);
++  }
++
++  sql += ` ORDER BY e.employee_code, c.document_code`;
++
++  const [files] = await db.execute<RowDataPacket[]>(sql, params);
++
++  for (const file of files as Array<{
++    employee_code: string;
++    full_name: string;
++    document_code: string;
++    storage_path: string;
++    original_filename: string;
++  }>) {
++    const fullPath = path.join(STORAGE_ROOT, file.storage_path);
++
++    if (fs.existsSync(fullPath)) {
++      const safeName = file.full_name.replace(/[^a-zA-Z0-9]/g, '');
++      const folderName = `${file.employee_code}-${safeName}`;
++      const archivePath = `${folderName}/${file.document_code}-${file.original_filename}`;
++      archive.file(fullPath, { name: archivePath });
++    }
++  }
++
++  await archive.finalize();
++}
++
+ // ─── bulkGenerateChecklists ───────────────────────────────────────────────────
+ 
+ export async function bulkGenerateChecklists(
+   employeeIds: string[],
+   actorUserId: string
+ ): Promise<BulkGenerateResult> {
+   const result: BulkGenerateResult = {
+     success: true,
+     generated: 0,
+     skipped: 0,

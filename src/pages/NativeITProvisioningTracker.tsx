@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { HrmsBentoTile, HrmsModernShell } from "@/components/ui/hrms-modern";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {
   Server, Lock, CheckCircle, Clock, AlertTriangle, Search, XCircle,
   ShieldCheck, RefreshCw, Upload, Download, User, ChevronRight,
@@ -607,6 +608,7 @@ export default function NativeITProvisioningTracker() {
 
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
+    <DashboardLayout>
     <HrmsModernShell
       eyebrow="Provisioning"
       title={preset?.title ?? "IT Provisioning Tracker"}
@@ -919,5 +921,6 @@ export default function NativeITProvisioningTracker() {
       {/* Bulk Upload Dialog */}
       <BulkUploadDialog open={bulkOpen} onClose={() => setBulkOpen(false)} />
     </HrmsModernShell>
+    </DashboardLayout>
   );
 }

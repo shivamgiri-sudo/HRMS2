@@ -1,0 +1,80 @@
+956a50a6 chore: update task-2 report with post-review fix commit hash
+dc046254 fix(backend): close branch head scope bypass + document unimplemented filters
+ .superpowers/sdd/task-2-report.md                     |  7 +++++++
+ .../ats/ats.joiningDocumentsTracker.service.ts        | 19 +++++++++++++------
+ 2 files changed, 20 insertions(+), 6 deletions(-)
+diff --git a/.superpowers/sdd/task-2-report.md b/.superpowers/sdd/task-2-report.md
+index 6de1222a..af98d196 100644
+--- a/.superpowers/sdd/task-2-report.md
++++ b/.superpowers/sdd/task-2-report.md
+@@ -63,10 +63,17 @@ Implementation follows TDD methodology strictly:
+ 4. Repeat for next function
+ 
+ Code quality:
+ - TypeScript strict mode compliant
+ - Proper type interfaces for all data structures
+ - DRY: helper functions reused by main function
+ - YAGNI: no extra features beyond plan spec
+ 
+ ## Concerns
+ None. All tests passing, TypeScript compiles without errors for this service, ready for Task 3 (route integration).
++
++## Fix Applied (post-review)
++- Fix 1: Branch head fallthrough closed — empty result returned when branch_id unresolvable
++- Fix 2: Comment added for unimplemented status/document_code filters
++- Tests after fix: 5/5 passing
++- Build: clean (no new errors in ats.joiningDocumentsTracker.service.ts; pre-existing errors in other modules unchanged)
++- Commit: dc046254
+diff --git a/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts b/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts
+index f6d74803..f894385d 100644
+--- a/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts
++++ b/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts
+@@ -149,35 +149,42 @@ export async function getJoiningDocumentsTracker(
+   const roleKeys = await getUserRoleKeys(actorUserId);
+   const isBranchHead = roleKeys.includes('branch_head');
+ 
+   // Build WHERE clause filters
+   const whereClauses: string[] = ['e.active_status = 1', 'e.employee_code IS NOT NULL'];
+   const params: (string | number)[] = [];
+ 
+   // Branch Head scoping
+   if (isBranchHead) {
+     const actorEmployee = await getEmployeeForUser(actorUserId);
++    let actorBranchId: string | undefined;
+     if (actorEmployee?.id) {
+       // Fetch branch_id for the actor's employee record
+       const [branchRows] = await db.execute<RowDataPacket[]>(
+         'SELECT branch_id FROM employees WHERE id = ? LIMIT 1',
+         [actorEmployee.id]
+       );
+-      const actorBranchId = (branchRows[0] as { branch_id: string } | undefined)?.branch_id;
+-
+-      if (actorBranchId) {
+-        whereClauses.push('e.branch_id = ?');
+-        params.push(actorBranchId);
+-      }
++      actorBranchId = (branchRows[0] as { branch_id: string } | undefined)?.branch_id;
++    }
++    if (!actorBranchId) {
++      // Cannot resolve a branch for this branch_head — return empty rather than
++      // falling through to an unrestricted query.
++      return { employees: [], summary: calculateTrackerSummary([]) };
+     }
++    whereClauses.push('e.branch_id = ?');
++    params.push(actorBranchId);
+   }
+ 
++  // Note: filters.status and filters.document_code are declared in TrackerQueryParams
++  // but are not yet applied as SQL WHERE conditions. They are reserved for
++  // route-level post-processing or a future enhancement task.
++
+   // Apply filters
+   if (filters.branch_id) {
+     whereClauses.push('e.branch_id = ?');
+     params.push(filters.branch_id);
+   }
+ 
+   if (filters.process_id) {
+     whereClauses.push('e.process_id = ?');
+     params.push(filters.process_id);
+   }

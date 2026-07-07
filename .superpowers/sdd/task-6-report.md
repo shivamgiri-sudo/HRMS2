@@ -89,4 +89,4 @@ Result: **70 passed (70)** — 0 failures
 - Fix 2: archive error handler added
 - Fix 3: path.basename sanitization on original_filename
 - Tests after fix: 70/70 passing
-- Commit: [pending]
+- Commit: 1c6979e0

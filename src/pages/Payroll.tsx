@@ -171,9 +171,9 @@ const Payroll = () => {
   }, [runSummaries]);
 
   const availableMonths = useMemo(() => {
-    return runSummaries
+    return Array.from(new Set(runSummaries
       .map((r) => r.run_month)
-      .filter(Boolean)
+      .filter(Boolean)))
       .sort()
       .reverse();
   }, [runSummaries]);

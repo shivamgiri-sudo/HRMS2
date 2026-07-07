@@ -28,6 +28,20 @@ export const payrollController = {
     res.status(201).json({ data });
   },
 
+  async updateStructure(req: Request, res: Response) {
+    const parsed = createStructureSchema.partial().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const svc = payrollService as any;
+    const data = await svc.updateStructure(req.params.id, parsed.data, (req as any).authUser?.id ?? "system");
+    res.json({ data });
+  },
+
+  async deleteStructure(req: Request, res: Response) {
+    const svc = payrollService as any;
+    await svc.deleteStructure(req.params.id);
+    res.json({ success: true });
+  },
+
   // ─── Components ────────────────────────────────────────────────────────────
 
   async listComponents(req: Request, res: Response) {

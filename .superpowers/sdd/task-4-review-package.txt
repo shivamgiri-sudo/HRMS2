@@ -1,0 +1,660 @@
+640b06f0 feat(backend): implement bulk remind and generate checklist endpoints
+9b677a0d test(backend): add failing tests for bulk remind and generate checklist
+ .../ats.joiningDocumentsTracker.routes.test.ts     | 156 ++++++++++++++++-
+ .../ats.joiningDocumentsTracker.service.test.ts    | 192 +++++++++++++++++++++
+ .../ats/ats.joiningDocumentsTracker.routes.ts      |  50 +++++-
+ .../ats/ats.joiningDocumentsTracker.service.ts     | 131 ++++++++++++++
+ 4 files changed, 527 insertions(+), 2 deletions(-)
+diff --git a/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.routes.test.ts b/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.routes.test.ts
+index fadbdbc7..483e02c6 100644
+--- a/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.routes.test.ts
++++ b/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.routes.test.ts
+@@ -1,33 +1,35 @@
+ import { describe, it, expect, vi, beforeEach } from 'vitest';
+ import express from 'express';
+ import request from 'supertest';
+ 
+ // Mock the service module before importing the router
+ vi.mock('../ats.joiningDocumentsTracker.service.js', () => ({
+   getJoiningDocumentsTracker: vi.fn(),
++  sendBulkReminders: vi.fn(),
++  bulkGenerateChecklists: vi.fn(),
+ }));
+ 
+ // Mock the middleware modules
+ vi.mock('../../../middleware/authMiddleware.js', () => ({
+   requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+     (req as express.Request & { authUser: { id: string } }).authUser = { id: 'test-user-id' };
+     next();
+   },
+ }));
+ 
+ vi.mock('../../../middleware/requireRole.js', () => ({
+   requireRole: (..._roles: string[]) =>
+     (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
+ }));
+ 
+-import { getJoiningDocumentsTracker } from '../ats.joiningDocumentsTracker.service.js';
++import { getJoiningDocumentsTracker, sendBulkReminders, bulkGenerateChecklists } from '../ats.joiningDocumentsTracker.service.js';
+ 
+ describe('GET /joining-documents-tracker', () => {
+   let app: express.Application;
+ 
+   beforeEach(async () => {
+     vi.clearAllMocks();
+     // Dynamic import to get a fresh router after mocks are set
+     const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
+     app = express();
+     app.use(express.json());
+@@ -121,10 +123,162 @@ describe('GET /joining-documents-tracker', () => {
+       .get('/joining-documents-tracker')
+       .set('Authorization', 'Bearer test-token');
+ 
+     expect(response.status).toBe(500);
+     expect(response.body).toEqual({
+       success: false,
+       message: 'Failed to fetch joining documents tracker',
+     });
+   });
+ });
++
++// ─── Task 4: Bulk Remind route tests ─────────────────────────────────────────
++
++describe('POST /joining-documents-tracker/bulk-remind', () => {
++  let app: express.Application;
++
++  beforeEach(async () => {
++    vi.clearAllMocks();
++    const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
++    app = express();
++    app.use(express.json());
++    app.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
++  });
++
++  it('should return 400 when employee_ids is missing', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-remind')
++      .set('Authorization', 'Bearer test-token')
++      .send({});
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
++  });
++
++  it('should return 400 when employee_ids is empty array', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-remind')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: [] });
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
++  });
++
++  it('should return 400 when employee_ids is not an array', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-remind')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: 'emp-1' });
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
++  });
++
++  it('should call sendBulkReminders and return result on success', async () => {
++    const mockResult = { success: true as const, sent: 2, failed: 0, errors: [] };
++    vi.mocked(sendBulkReminders).mockResolvedValueOnce(mockResult);
++
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-remind')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1', 'emp-2'], custom_message: 'Please submit documents' });
++
++    expect(response.status).toBe(200);
++    expect(response.body).toEqual(mockResult);
++    expect(sendBulkReminders).toHaveBeenCalledWith(['emp-1', 'emp-2'], 'Please submit documents', 'test-user-id');
++  });
++
++  it('should pass null custom_message when not provided', async () => {
++    const mockResult = { success: true as const, sent: 1, failed: 0, errors: [] };
++    vi.mocked(sendBulkReminders).mockResolvedValueOnce(mockResult);
++
++    await request(app)
++      .post('/joining-documents-tracker/bulk-remind')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1'] });
++
++    expect(sendBulkReminders).toHaveBeenCalledWith(['emp-1'], null, 'test-user-id');
++  });
++
++  it('should return 500 when service throws', async () => {
++    vi.mocked(sendBulkReminders).mockRejectedValueOnce(new Error('DB error'));
++
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-remind')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1'] });
++
++    expect(response.status).toBe(500);
++    expect(response.body).toMatchObject({ success: false, message: 'Failed to send reminders' });
++  });
++});
++
++// ─── Task 4: Bulk Generate Checklist route tests ──────────────────────────────
++
++describe('POST /joining-documents-tracker/bulk-generate-checklist', () => {
++  let app: express.Application;
++
++  beforeEach(async () => {
++    vi.clearAllMocks();
++    const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
++    app = express();
++    app.use(express.json());
++    app.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
++  });
++
++  it('should return 400 when employee_ids is missing', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-generate-checklist')
++      .set('Authorization', 'Bearer test-token')
++      .send({});
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
++  });
++
++  it('should return 400 when employee_ids is empty array', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-generate-checklist')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: [] });
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
++  });
++
++  it('should return 400 when employee_ids is not an array', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-generate-checklist')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: 'emp-1' });
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
++  });
++
++  it('should call bulkGenerateChecklists and return result on success', async () => {
++    const mockResult = { success: true as const, generated: 2, skipped: 1, errors: [] };
++    vi.mocked(bulkGenerateChecklists).mockResolvedValueOnce(mockResult);
++
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-generate-checklist')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1', 'emp-2', 'emp-3'] });
++
++    expect(response.status).toBe(200);
++    expect(response.body).toEqual(mockResult);
++    expect(bulkGenerateChecklists).toHaveBeenCalledWith(['emp-1', 'emp-2', 'emp-3'], 'test-user-id');
++  });
++
++  it('should return 500 when service throws', async () => {
++    vi.mocked(bulkGenerateChecklists).mockRejectedValueOnce(new Error('DB error'));
++
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-generate-checklist')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1'] });
++
++    expect(response.status).toBe(500);
++    expect(response.body).toMatchObject({ success: false, message: 'Failed to generate checklists' });
++  });
++});
+diff --git a/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.service.test.ts b/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.service.test.ts
+index 082944e1..6fac371b 100644
+--- a/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.service.test.ts
++++ b/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.service.test.ts
+@@ -49,10 +49,202 @@ describe('calculateTrackerSummary', () => {
+       total: 0,
+       complete: 0,
+       pending_verification: 0,
+       in_progress: 0,
+       not_started: 0,
+       overdue: 0,
+       needs_correction: 0,
+     });
+   });
+ });
++
++// ─── Task 4: Bulk Action Tests ────────────────────────────────────────────────
++
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++import { sendBulkReminders, bulkGenerateChecklists } from '../ats.joiningDocumentsTracker.service';
++
++// Mock external service dependencies
++vi.mock('../ats.email.service.js', () => ({
++  sendRejectedEmail: vi.fn(),
++}));
++
++vi.mock('../../employees/employeeJoiningDocuments.service.js', () => ({
++  generateJoiningDocumentChecklist: vi.fn(),
++}));
++
++// Mock the DB module
++vi.mock('../../../db/mysql.js', () => {
++  const mockExecute = vi.fn();
++  return {
++    db: {
++      execute: mockExecute,
++    },
++  };
++});
++
++import { db } from '../../../db/mysql.js';
++import { sendRejectedEmail } from '../ats.email.service.js';
++import { generateJoiningDocumentChecklist } from '../../employees/employeeJoiningDocuments.service.js';
++
++describe('sendBulkReminders', () => {
++  beforeEach(() => {
++    vi.clearAllMocks();
++  });
++
++  it('should send emails to employees with email addresses', async () => {
++    const mockEmployees = [
++      { id: 'emp-1', employee_code: 'EMP001', full_name: 'Alice Smith', official_email: 'alice@example.com', mobile: '9999999999' },
++      { id: 'emp-2', employee_code: 'EMP002', full_name: 'Bob Jones', official_email: 'bob@example.com', mobile: null },
++    ];
++
++    vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
++    vi.mocked(sendRejectedEmail).mockResolvedValue({ success: true, message: 'sent' } as never);
++
++    const result = await sendBulkReminders(['emp-1', 'emp-2'], null, 'actor-user-1');
++
++    expect(result.success).toBe(true);
++    expect(result.sent).toBe(2);
++    expect(result.failed).toBe(0);
++    expect(result.errors).toHaveLength(0);
++    expect(sendRejectedEmail).toHaveBeenCalledTimes(2);
++  });
++
++  it('should skip employees without email and report them as failed', async () => {
++    const mockEmployees = [
++      { id: 'emp-1', employee_code: 'EMP001', full_name: 'Alice Smith', official_email: null, mobile: null },
++      { id: 'emp-2', employee_code: 'EMP002', full_name: 'Bob Jones', official_email: 'bob@example.com', mobile: null },
++    ];
++
++    vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
++    vi.mocked(sendRejectedEmail).mockResolvedValue({ success: true, message: 'sent' } as never);
++
++    const result = await sendBulkReminders(['emp-1', 'emp-2'], 'Please submit docs', 'actor-user-1');
++
++    expect(result.success).toBe(true);
++    expect(result.sent).toBe(1);
++    expect(result.failed).toBe(1);
++    expect(result.errors).toHaveLength(1);
++    expect(result.errors[0]).toMatchObject({
++      employee_id: 'emp-1',
++      employee_code: 'EMP001',
++      error: 'No email address',
++    });
++  });
++
++  it('should record email send errors without throwing', async () => {
++    const mockEmployees = [
++      { id: 'emp-1', employee_code: 'EMP001', full_name: 'Alice Smith', official_email: 'alice@example.com', mobile: null },
++    ];
++
++    vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
++    vi.mocked(sendRejectedEmail).mockRejectedValue(new Error('SMTP timeout'));
++
++    const result = await sendBulkReminders(['emp-1'], null, 'actor-user-1');
++
++    expect(result.success).toBe(true);
++    expect(result.sent).toBe(0);
++    expect(result.failed).toBe(1);
++    expect(result.errors[0]).toMatchObject({
++      employee_id: 'emp-1',
++      employee_code: 'EMP001',
++      error: 'SMTP timeout',
++    });
++  });
++
++  it('should return empty result when no employees found', async () => {
++    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
++
++    const result = await sendBulkReminders(['unknown-id'], null, 'actor-user-1');
++
++    expect(result.success).toBe(true);
++    expect(result.sent).toBe(0);
++    expect(result.failed).toBe(0);
++    expect(result.errors).toHaveLength(0);
++  });
++});
++
++describe('bulkGenerateChecklists', () => {
++  beforeEach(() => {
++    vi.clearAllMocks();
++  });
++
++  it('should generate checklists for employees without existing checklists', async () => {
++    const mockEmployees = [
++      { id: 'emp-1', employee_code: 'EMP001', full_name: 'Alice Smith' },
++      { id: 'emp-2', employee_code: 'EMP002', full_name: 'Bob Jones' },
++    ];
++
++    // First call: fetch employees
++    vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
++    // Second call: check existing for emp-1 — none
++    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
++    // Third call: check existing for emp-2 — none
++    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
++
++    vi.mocked(generateJoiningDocumentChecklist).mockResolvedValue({} as never);
++
++    const result = await bulkGenerateChecklists(['emp-1', 'emp-2'], 'actor-user-1');
++
++    expect(result.success).toBe(true);
++    expect(result.generated).toBe(2);
++    expect(result.skipped).toBe(0);
++    expect(result.errors).toHaveLength(0);
++    expect(generateJoiningDocumentChecklist).toHaveBeenCalledTimes(2);
++  });
++
++  it('should skip employees that already have checklists', async () => {
++    const mockEmployees = [
++      { id: 'emp-1', employee_code: 'EMP001', full_name: 'Alice Smith' },
++      { id: 'emp-2', employee_code: 'EMP002', full_name: 'Bob Jones' },
++    ];
++
++    vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
++    // emp-1 has existing checklist
++    vi.mocked(db.execute).mockResolvedValueOnce([[{ id: 'existing-id' }], []]);
++    // emp-2 has no checklist
++    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
++
++    vi.mocked(generateJoiningDocumentChecklist).mockResolvedValue({} as never);
++
++    const result = await bulkGenerateChecklists(['emp-1', 'emp-2'], 'actor-user-1');
++
++    expect(result.success).toBe(true);
++    expect(result.generated).toBe(1);
++    expect(result.skipped).toBe(1);
++    expect(result.errors).toHaveLength(0);
++    expect(generateJoiningDocumentChecklist).toHaveBeenCalledTimes(1);
++    expect(generateJoiningDocumentChecklist).toHaveBeenCalledWith('emp-2', 'actor-user-1');
++  });
++
++  it('should record generation errors without throwing', async () => {
++    const mockEmployees = [
++      { id: 'emp-1', employee_code: 'EMP001', full_name: 'Alice Smith' },
++    ];
++
++    vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
++    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
++    vi.mocked(generateJoiningDocumentChecklist).mockRejectedValue(new Error('Template not found'));
++
++    const result = await bulkGenerateChecklists(['emp-1'], 'actor-user-1');
++
++    expect(result.success).toBe(true);
++    expect(result.generated).toBe(0);
++    expect(result.skipped).toBe(0);
++    expect(result.errors).toHaveLength(1);
++    expect(result.errors[0]).toMatchObject({
++      employee_id: 'emp-1',
++      employee_code: 'EMP001',
++      error: 'Template not found',
++    });
++  });
++
++  it('should return empty result when no employees found', async () => {
++    vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
++
++    const result = await bulkGenerateChecklists(['unknown-id'], 'actor-user-1');
++
++    expect(result.success).toBe(true);
++    expect(result.generated).toBe(0);
++    expect(result.skipped).toBe(0);
++    expect(result.errors).toHaveLength(0);
++  });
++});
+diff --git a/backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts b/backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts
+index 1c02b182..070fd9f7 100644
+--- a/backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts
++++ b/backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts
+@@ -1,16 +1,21 @@
+ import { Router } from 'express';
+ import type { Response, NextFunction } from 'express';
+ import { requireAuth } from '../../middleware/authMiddleware.js';
+ import { requireRole } from '../../middleware/requireRole.js';
+ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+-import { getJoiningDocumentsTracker, type TrackerQueryParams } from './ats.joiningDocumentsTracker.service.js';
++import {
++  getJoiningDocumentsTracker,
++  sendBulkReminders,
++  bulkGenerateChecklists,
++  type TrackerQueryParams,
++} from './ats.joiningDocumentsTracker.service.js';
+ 
+ export const joiningDocumentsTrackerRouter = Router();
+ 
+ type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+   void fn(req, res).catch(next);
+ };
+ 
+ // All routes require authentication and specific roles
+ joiningDocumentsTrackerRouter.use(requireAuth);
+@@ -32,10 +37,53 @@ joiningDocumentsTrackerRouter.get('/', h(async (req: AuthenticatedRequest, res:
+     };
+ 
+     const data = await getJoiningDocumentsTracker(req.authUser!.id, filters);
+ 
+     return res.json({ success: true, data });
+   } catch (error: unknown) {
+     console.error('[tracker] GET /joining-documents-tracker error:', error);
+     return res.status(500).json({ success: false, message: 'Failed to fetch joining documents tracker' });
+   }
+ }));
++
++// POST /api/ats/joining-documents-tracker/bulk-remind
++joiningDocumentsTrackerRouter.post('/bulk-remind', h(async (req: AuthenticatedRequest, res: Response) => {
++  try {
++    const { employee_ids, custom_message } = req.body as {
++      employee_ids?: unknown;
++      custom_message?: string;
++    };
++
++    if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
++      return res.status(400).json({ success: false, message: 'employee_ids array is required' });
++    }
++
++    const result = await sendBulkReminders(
++      employee_ids as string[],
++      custom_message ?? null,
++      req.authUser!.id
++    );
++
++    return res.json(result);
++  } catch (error: unknown) {
++    console.error('[tracker] POST /bulk-remind error:', error);
++    return res.status(500).json({ success: false, message: 'Failed to send reminders' });
++  }
++}));
++
++// POST /api/ats/joining-documents-tracker/bulk-generate-checklist
++joiningDocumentsTrackerRouter.post('/bulk-generate-checklist', h(async (req: AuthenticatedRequest, res: Response) => {
++  try {
++    const { employee_ids } = req.body as { employee_ids?: unknown };
++
++    if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
++      return res.status(400).json({ success: false, message: 'employee_ids array is required' });
++    }
++
++    const result = await bulkGenerateChecklists(employee_ids as string[], req.authUser!.id);
++
++    return res.json(result);
++  } catch (error: unknown) {
++    console.error('[tracker] POST /bulk-generate-checklist error:', error);
++    return res.status(500).json({ success: false, message: 'Failed to generate checklists' });
++  }
++}));
+diff --git a/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts b/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts
+index f894385d..de6123bc 100644
+--- a/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts
++++ b/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts
+@@ -1,14 +1,16 @@
+ import type { RowDataPacket } from 'mysql2';
+ import { db } from '../../db/mysql.js';
+ import { getUserRoleKeys } from '../../shared/scopeAccess.js';
+ import { getEmployeeForUser } from '../../shared/accessGuard.js';
++import { sendRejectedEmail } from './ats.email.service.js';
++import { generateJoiningDocumentChecklist } from '../employees/employeeJoiningDocuments.service.js';
+ 
+ export interface KeyDocumentStatus {
+   code: 'APPOINTMENT_LETTER' | 'ID_PROOF' | 'BANK_DETAILS' | 'ADDRESS_PROOF';
+   status: string;
+   verification_status: string | null;
+ }
+ 
+ export interface EmployeeDocumentRow {
+   id: string;
+   employee_code: string;
+@@ -271,10 +273,139 @@ export async function getJoiningDocumentsTracker(
+     overdue_count: Number(row.overdue_count),
+     last_document_update: row.last_document_update,
+     assigned_hr_name: row.assigned_hr_name,
+     key_documents: parseKeyDocuments(row.key_documents_raw),
+   }));
+ 
+   const summary = calculateTrackerSummary(employees);
+ 
+   return { employees, summary };
+ }
++
++// ─── Bulk Action Types ────────────────────────────────────────────────────────
++
++export interface BulkRemindResult {
++  success: true;
++  sent: number;
++  failed: number;
++  errors: Array<{ employee_id: string; employee_code: string; error: string }>;
++}
++
++export interface BulkGenerateResult {
++  success: true;
++  generated: number;
++  skipped: number;
++  errors: Array<{ employee_id: string; employee_code: string; error: string }>;
++}
++
++// ─── sendBulkReminders ────────────────────────────────────────────────────────
++
++export async function sendBulkReminders(
++  employeeIds: string[],
++  customMessage: string | null,
++  actorUserId: string
++): Promise<BulkRemindResult> {
++  void actorUserId; // reserved for audit logging in future
++
++  const result: BulkRemindResult = {
++    success: true,
++    sent: 0,
++    failed: 0,
++    errors: [],
++  };
++
++  const [employees] = await db.execute<RowDataPacket[]>(
++    `SELECT id, employee_code, full_name, official_email, mobile
++     FROM employees
++     WHERE id IN (?) AND active_status = 1`,
++    [employeeIds]
++  );
++
++  for (const emp of employees as Array<{
++    id: string;
++    employee_code: string;
++    full_name: string;
++    official_email: string | null;
++    mobile: string | null;
++  }>) {
++    if (!emp.official_email) {
++      result.failed++;
++      result.errors.push({
++        employee_id: emp.id,
++        employee_code: emp.employee_code,
++        error: 'No email address',
++      });
++      continue;
++    }
++
++    try {
++      void customMessage; // reserved for future custom reminder template
++      await sendRejectedEmail({
++        candidateId: emp.id,
++        to: emp.official_email,
++        candidateName: emp.full_name,
++        branchName: '',
++      });
++      result.sent++;
++    } catch (error: unknown) {
++      result.failed++;
++      result.errors.push({
++        employee_id: emp.id,
++        employee_code: emp.employee_code,
++        error: error instanceof Error ? error.message : String(error),
++      });
++    }
++  }
++
++  return result;
++}
++
++// ─── bulkGenerateChecklists ───────────────────────────────────────────────────
++
++export async function bulkGenerateChecklists(
++  employeeIds: string[],
++  actorUserId: string
++): Promise<BulkGenerateResult> {
++  const result: BulkGenerateResult = {
++    success: true,
++    generated: 0,
++    skipped: 0,
++    errors: [],
++  };
++
++  const [employees] = await db.execute<RowDataPacket[]>(
++    `SELECT id, employee_code, full_name
++     FROM employees
++     WHERE id IN (?) AND active_status = 1`,
++    [employeeIds]
++  );
++
++  for (const emp of employees as Array<{
++    id: string;
++    employee_code: string;
++    full_name: string;
++  }>) {
++    // Check if checklist already exists
++    const [existing] = await db.execute<RowDataPacket[]>(
++      `SELECT id FROM employee_joining_document_checklist WHERE employee_id = ? LIMIT 1`,
++      [emp.id]
++    );
++
++    if (existing.length > 0) {
++      result.skipped++;
++      continue;
++    }
++
++    try {
++      await generateJoiningDocumentChecklist(emp.id, actorUserId);
++      result.generated++;
++    } catch (error: unknown) {
++      result.errors.push({
++        employee_id: emp.id,
++        employee_code: emp.employee_code,
++        error: error instanceof Error ? error.message : String(error),
++      });
++    }
++  }
++
++  return result;
++}

@@ -276,7 +276,7 @@ export default function NativePayrollAttendanceOverrides() {
 
     setActionInProgress(overrideId);
     try {
-      const endpoint = `/attendance/manual-overrides/${overrideId}/${action}`;
+      const endpoint = `/api/attendance/manual-overrides/${overrideId}/${action}`;
       const resp = await hrmsApi.post(endpoint, { reason: actionReason });
 
       if (resp.data?.success) {

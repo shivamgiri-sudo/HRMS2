@@ -42,6 +42,8 @@ router.use(requireAuth);
 
 router.get("/structures", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.listStructures));
 router.post("/structures", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.createStructure));
+router.put("/structures/:id", requireRole("admin", "super_admin", "finance", "payroll"), h(c.updateStructure));
+router.delete("/structures/:id", requireRole("admin", "super_admin"), h(c.deleteStructure));
 
 // ─── Employee Salaries (per-employee assignment with computed monthly amounts) ─
 router.get("/employee-salaries", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
@@ -132,7 +134,8 @@ router.get("/runs", requireRole("admin", "hr", "super_admin", "finance", "payrol
       );
     }
   } catch (_err) {
-    scoped = { sql: "1=1", params: [] };
+    // deny-all on scope error — never open-access on exception
+    scoped = { sql: "1=0", params: [] };
   }
   (req as any).scopeFilter = scoped;
   return c.listRuns(req, res);
@@ -152,7 +155,8 @@ router.get("/records", requireRole("admin", "hr", "super_admin", "finance", "pay
       );
     }
   } catch (_err) {
-    scoped = { sql: "1=1", params: [] };
+    // deny-all on scope error — never open-access on exception
+    scoped = { sql: "1=0", params: [] };
   }
   (req as any).scopeFilter = scoped;
   return c.listPayrollRecords(req, res);
@@ -197,7 +201,8 @@ router.post("/runs/:id/calculate", requireRole("admin", "super_admin", "finance"
   try {
     await assertRunEditable(req.params.id);
     const actorId = req.authUser?.id ?? "system";
-    if (process.env.PAYROLL_STRICT_READINESS === "true") {
+    // Readiness is enforced by default; set PAYROLL_SKIP_READINESS=true only in dev/migration
+    if (process.env.PAYROLL_SKIP_READINESS !== "true") {
       const readiness = await payrollGovernanceService.readiness(req.params.id);
 
       if (!readiness.canCalculate || !readiness.attendanceSnapshotLocked) {
@@ -883,7 +888,7 @@ router.get("/analytics", requireRole("admin", "hr", "super_admin", "finance", "p
     `SELECT ${d.sel},
             COUNT(DISTINCT spl.employee_id)                                                           AS headcount,
             ROUND(SUM(spl.basic),2)                                                                   AS total_basic,
-            ROUND(SUM(COALESCE(spl.hra,0)+COALESCE(spl.special_allowance,0)+COALESCE(spl.incentive_total,0)),2) AS total_allowances,
+            ROUND(SUM(COALESCE(spl.hra,0)+COALESCE(spl.special_allowance,0)),2) AS total_allowances,
             ROUND(SUM(spl.gross_salary),2)                                                            AS total_gross,
             ROUND(SUM(spl.total_deductions),2)                                                        AS total_deductions,
             ROUND(SUM(spl.net_salary),2)                                                              AS total_net,

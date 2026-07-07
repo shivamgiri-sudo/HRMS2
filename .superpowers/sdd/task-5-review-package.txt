@@ -1,0 +1,826 @@
+a86abd3f feat(ats): implement bulk assign HR, set due date, and verify documents
+1dbb3010 test(ats): add failing tests for Task 5 bulk assign/due-date/verify
+ .../ats.joiningDocumentsTracker.routes.test.ts     | 234 ++++++++++++++++++++-
+ .../ats.joiningDocumentsTracker.service.test.ts    | 228 ++++++++++++++++++++
+ .../ats/ats.joiningDocumentsTracker.routes.ts      |  77 +++++++
+ .../ats/ats.joiningDocumentsTracker.service.ts     | 144 ++++++++++++-
+ 4 files changed, 681 insertions(+), 2 deletions(-)
+diff --git a/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.routes.test.ts b/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.routes.test.ts
+index 483e02c6..04aaeec5 100644
+--- a/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.routes.test.ts
++++ b/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.routes.test.ts
+@@ -1,35 +1,38 @@
+ import { describe, it, expect, vi, beforeEach } from 'vitest';
+ import express from 'express';
+ import request from 'supertest';
+ 
+ // Mock the service module before importing the router
+ vi.mock('../ats.joiningDocumentsTracker.service.js', () => ({
+   getJoiningDocumentsTracker: vi.fn(),
+   sendBulkReminders: vi.fn(),
+   bulkGenerateChecklists: vi.fn(),
++  bulkAssignHR: vi.fn(),
++  bulkSetDueDate: vi.fn(),
++  bulkVerifyDocuments: vi.fn(),
+ }));
+ 
+ // Mock the middleware modules
+ vi.mock('../../../middleware/authMiddleware.js', () => ({
+   requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+     (req as express.Request & { authUser: { id: string } }).authUser = { id: 'test-user-id' };
+     next();
+   },
+ }));
+ 
+ vi.mock('../../../middleware/requireRole.js', () => ({
+   requireRole: (..._roles: string[]) =>
+     (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
+ }));
+ 
+-import { getJoiningDocumentsTracker, sendBulkReminders, bulkGenerateChecklists } from '../ats.joiningDocumentsTracker.service.js';
++import { getJoiningDocumentsTracker, sendBulkReminders, bulkGenerateChecklists, bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments } from '../ats.joiningDocumentsTracker.service.js';
+ 
+ describe('GET /joining-documents-tracker', () => {
+   let app: express.Application;
+ 
+   beforeEach(async () => {
+     vi.clearAllMocks();
+     // Dynamic import to get a fresh router after mocks are set
+     const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
+     app = express();
+     app.use(express.json());
+@@ -275,10 +278,239 @@ describe('POST /joining-documents-tracker/bulk-generate-checklist', () => {
+ 
+     const response = await request(app)
+       .post('/joining-documents-tracker/bulk-generate-checklist')
+       .set('Authorization', 'Bearer test-token')
+       .send({ employee_ids: ['emp-1'] });
+ 
+     expect(response.status).toBe(500);
+     expect(response.body).toMatchObject({ success: false, message: 'Failed to generate checklists' });
+   });
+ });
++
++// ─── Task 5: Bulk Assign HR route tests ──────────────────────────────────────
++
++describe('POST /joining-documents-tracker/bulk-assign', () => {
++  let app: express.Application;
++
++  beforeEach(async () => {
++    vi.clearAllMocks();
++    const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
++    app = express();
++    app.use(express.json());
++    app.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
++  });
++
++  it('should return 400 when employee_ids is missing', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-assign')
++      .set('Authorization', 'Bearer test-token')
++      .send({ assigned_hr_user_id: 'hr-1' });
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
++  });
++
++  it('should return 400 when assigned_hr_user_id is missing', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-assign')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1'] });
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'assigned_hr_user_id is required' });
++  });
++
++  it('should return 400 when employee_ids is empty array', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-assign')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: [], assigned_hr_user_id: 'hr-1' });
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
++  });
++
++  it('should call bulkAssignHR and return result on success', async () => {
++    const mockResult = { success: true as const, updated: 3 };
++    vi.mocked(bulkAssignHR).mockResolvedValueOnce(mockResult);
++
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-assign')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1', 'emp-2'], assigned_hr_user_id: 'hr-user-42' });
++
++    expect(response.status).toBe(200);
++    expect(response.body).toEqual(mockResult);
++    expect(bulkAssignHR).toHaveBeenCalledWith(['emp-1', 'emp-2'], 'hr-user-42', 'test-user-id');
++  });
++
++  it('should return 500 when service throws', async () => {
++    vi.mocked(bulkAssignHR).mockRejectedValueOnce(new Error('DB error'));
++
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-assign')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1'], assigned_hr_user_id: 'hr-1' });
++
++    expect(response.status).toBe(500);
++    expect(response.body).toMatchObject({ success: false, message: 'Failed to assign HR' });
++  });
++});
++
++// ─── Task 5: Bulk Set Due Date route tests ────────────────────────────────────
++
++describe('POST /joining-documents-tracker/bulk-set-due-date', () => {
++  let app: express.Application;
++
++  beforeEach(async () => {
++    vi.clearAllMocks();
++    const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
++    app = express();
++    app.use(express.json());
++    app.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
++  });
++
++  it('should return 400 when employee_ids is missing', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-set-due-date')
++      .set('Authorization', 'Bearer test-token')
++      .send({ due_date: '2026-08-01' });
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
++  });
++
++  it('should return 400 when due_date is missing', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-set-due-date')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1'] });
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'due_date is required' });
++  });
++
++  it('should call bulkSetDueDate with null document_codes when not provided', async () => {
++    const mockResult = { success: true as const, updated: 5 };
++    vi.mocked(bulkSetDueDate).mockResolvedValueOnce(mockResult);
++
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-set-due-date')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1', 'emp-2'], due_date: '2026-08-01' });
++
++    expect(response.status).toBe(200);
++    expect(response.body).toEqual(mockResult);
++    expect(bulkSetDueDate).toHaveBeenCalledWith(['emp-1', 'emp-2'], '2026-08-01', null, 'test-user-id');
++  });
++
++  it('should pass document_codes when provided', async () => {
++    const mockResult = { success: true as const, updated: 2 };
++    vi.mocked(bulkSetDueDate).mockResolvedValueOnce(mockResult);
++
++    await request(app)
++      .post('/joining-documents-tracker/bulk-set-due-date')
++      .set('Authorization', 'Bearer test-token')
++      .send({
++        employee_ids: ['emp-1'],
++        due_date: '2026-08-15',
++        document_codes: ['APPOINTMENT_LETTER', 'ID_PROOF'],
++      });
++
++    expect(bulkSetDueDate).toHaveBeenCalledWith(
++      ['emp-1'],
++      '2026-08-15',
++      ['APPOINTMENT_LETTER', 'ID_PROOF'],
++      'test-user-id'
++    );
++  });
++
++  it('should return 500 when service throws', async () => {
++    vi.mocked(bulkSetDueDate).mockRejectedValueOnce(new Error('DB error'));
++
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-set-due-date')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1'], due_date: '2026-08-01' });
++
++    expect(response.status).toBe(500);
++    expect(response.body).toMatchObject({ success: false, message: 'Failed to set due dates' });
++  });
++});
++
++// ─── Task 5: Bulk Verify route tests ─────────────────────────────────────────
++
++describe('POST /joining-documents-tracker/bulk-verify', () => {
++  let app: express.Application;
++
++  beforeEach(async () => {
++    vi.clearAllMocks();
++    const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
++    app = express();
++    app.use(express.json());
++    app.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
++  });
++
++  it('should return 400 when employee_ids is missing', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-verify')
++      .set('Authorization', 'Bearer test-token')
++      .send({});
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
++  });
++
++  it('should return 400 when employee_ids is empty array', async () => {
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-verify')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: [] });
++
++    expect(response.status).toBe(400);
++    expect(response.body).toMatchObject({ success: false, message: 'employee_ids array is required' });
++  });
++
++  it('should call bulkVerifyDocuments and return result on success', async () => {
++    const mockResult = { success: true as const, verified: 4, errors: [] };
++    vi.mocked(bulkVerifyDocuments).mockResolvedValueOnce(mockResult);
++
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-verify')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1', 'emp-2'] });
++
++    expect(response.status).toBe(200);
++    expect(response.body).toEqual(mockResult);
++    expect(bulkVerifyDocuments).toHaveBeenCalledWith(['emp-1', 'emp-2'], 'test-user-id');
++  });
++
++  it('should return partial success with errors array when some employees fail', async () => {
++    const mockResult = {
++      success: true as const,
++      verified: 2,
++      errors: [{ employee_id: 'emp-3', employee_code: 'EMP003', error: 'Not found' }],
++    };
++    vi.mocked(bulkVerifyDocuments).mockResolvedValueOnce(mockResult);
++
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-verify')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1', 'emp-2', 'emp-3'] });
++
++    expect(response.status).toBe(200);
++    expect(response.body.errors).toHaveLength(1);
++    expect(response.body.verified).toBe(2);
++  });
++
++  it('should return 500 when service throws', async () => {
++    vi.mocked(bulkVerifyDocuments).mockRejectedValueOnce(new Error('DB error'));
++
++    const response = await request(app)
++      .post('/joining-documents-tracker/bulk-verify')
++      .set('Authorization', 'Bearer test-token')
++      .send({ employee_ids: ['emp-1'] });
++
++    expect(response.status).toBe(500);
++    expect(response.body).toMatchObject({ success: false, message: 'Failed to verify documents' });
++  });
++});
+diff --git a/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.service.test.ts b/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.service.test.ts
+index 396f12da..828f003b 100644
+--- a/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.service.test.ts
++++ b/backend/src/modules/ats/__tests__/ats.joiningDocumentsTracker.service.test.ts
+@@ -243,10 +243,238 @@ describe('bulkGenerateChecklists', () => {
+     vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
+ 
+     const result = await bulkGenerateChecklists(['unknown-id'], 'actor-user-1');
+ 
+     expect(result.success).toBe(true);
+     expect(result.generated).toBe(0);
+     expect(result.skipped).toBe(0);
+     expect(result.errors).toHaveLength(0);
+   });
+ });
++
++// ─── Task 5: bulkAssignHR tests ───────────────────────────────────────────────
++
++import { bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments } from '../ats.joiningDocumentsTracker.service';
++import type { ResultSetHeader } from 'mysql2';
++
++describe('bulkAssignHR', () => {
++  beforeEach(() => {
++    vi.clearAllMocks();
++  });
++
++  it('should update assigned_hr_user_id for all checklist rows and return updated count', async () => {
++    const mockResultSetHeader = { affectedRows: 5 } as ResultSetHeader;
++    // First call: UPDATE checklist rows
++    vi.mocked(db.execute).mockResolvedValueOnce([mockResultSetHeader, []]);
++    // Second call: audit log INSERT
++    vi.mocked(db.execute).mockResolvedValueOnce([{}, []]);
++
++    const result = await bulkAssignHR(['emp-1', 'emp-2'], 'hr-user-42', 'actor-user-1');
++
++    expect(result).toEqual({ success: true, updated: 5 });
++    expect(db.execute).toHaveBeenCalledTimes(2);
++    // First call should be the UPDATE
++    const firstCall = vi.mocked(db.execute).mock.calls[0];
++    expect(firstCall[0]).toMatch(/UPDATE employee_joining_document_checklist/i);
++    expect(firstCall[0]).toMatch(/assigned_hr_user_id/i);
++    expect(firstCall[1]).toEqual(['hr-user-42', ['emp-1', 'emp-2']]);
++  });
++
++  it('should log audit entry with action_type BULK_ASSIGN_HR', async () => {
++    const mockResultSetHeader = { affectedRows: 2 } as ResultSetHeader;
++    vi.mocked(db.execute).mockResolvedValueOnce([mockResultSetHeader, []]);
++    vi.mocked(db.execute).mockResolvedValueOnce([{}, []]);
++
++    await bulkAssignHR(['emp-1', 'emp-2'], 'hr-user-7', 'actor-user-1');
++
++    const auditCall = vi.mocked(db.execute).mock.calls[1];
++    expect(auditCall[0]).toMatch(/employee_joining_document_audit_log/i);
++    expect(auditCall[0]).toMatch(/BULK_ASSIGN_HR/i);
++    expect(auditCall[1]).toContain('actor-user-1');
++  });
++
++  it('should return updated: 0 when no rows matched', async () => {
++    const mockResultSetHeader = { affectedRows: 0 } as ResultSetHeader;
++    vi.mocked(db.execute).mockResolvedValueOnce([mockResultSetHeader, []]);
++    vi.mocked(db.execute).mockResolvedValueOnce([{}, []]);
++
++    const result = await bulkAssignHR(['unknown-emp'], 'hr-user-1', 'actor-user-1');
++
++    expect(result).toEqual({ success: true, updated: 0 });
++  });
++});
++
++// ─── Task 5: bulkSetDueDate tests ─────────────────────────────────────────────
++
++describe('bulkSetDueDate', () => {
++  beforeEach(() => {
++    vi.clearAllMocks();
++  });
++
++  it('should update due_at for all employees without document_codes filter', async () => {
++    const mockResultSetHeader = { affectedRows: 8 } as ResultSetHeader;
++    vi.mocked(db.execute).mockResolvedValueOnce([mockResultSetHeader, []]);
++    vi.mocked(db.execute).mockResolvedValueOnce([{}, []]);
++
++    const result = await bulkSetDueDate(['emp-1', 'emp-2'], '2026-08-01', null, 'actor-user-1');
++
++    expect(result).toEqual({ success: true, updated: 8 });
++    const updateCall = vi.mocked(db.execute).mock.calls[0];
++    expect(updateCall[0]).toMatch(/UPDATE employee_joining_document_checklist/i);
++    expect(updateCall[0]).toMatch(/due_at/i);
++    // Should NOT filter by document_code when null
++    expect(updateCall[0]).not.toMatch(/document_code IN/i);
++  });
++
++  it('should filter by document_codes when provided', async () => {
++    const mockResultSetHeader = { affectedRows: 3 } as ResultSetHeader;
++    vi.mocked(db.execute).mockResolvedValueOnce([mockResultSetHeader, []]);
++    vi.mocked(db.execute).mockResolvedValueOnce([{}, []]);
++
++    const result = await bulkSetDueDate(
++      ['emp-1', 'emp-2'],
++      '2026-08-15',
++      ['APPOINTMENT_LETTER', 'ID_PROOF'],
++      'actor-user-1'
++    );
++
++    expect(result).toEqual({ success: true, updated: 3 });
++    const updateCall = vi.mocked(db.execute).mock.calls[0];
++    expect(updateCall[0]).toMatch(/document_code IN/i);
++    const callParams = updateCall[1] as unknown[];
++    expect(callParams[0]).toBe('2026-08-15');
++    expect(callParams[2]).toEqual(['APPOINTMENT_LETTER', 'ID_PROOF']);
++  });
++
++  it('should log audit entry with action_type BULK_SET_DUE_DATE', async () => {
++    const mockResultSetHeader = { affectedRows: 4 } as ResultSetHeader;
++    vi.mocked(db.execute).mockResolvedValueOnce([mockResultSetHeader, []]);
++    vi.mocked(db.execute).mockResolvedValueOnce([{}, []]);
++
++    await bulkSetDueDate(['emp-1'], '2026-09-01', null, 'actor-user-1');
++
++    const auditCall = vi.mocked(db.execute).mock.calls[1];
++    expect(auditCall[0]).toMatch(/employee_joining_document_audit_log/i);
++    expect(auditCall[0]).toMatch(/BULK_SET_DUE_DATE/i);
++    expect(auditCall[1]).toContain('actor-user-1');
++  });
++});
++
++// ─── Task 5: bulkVerifyDocuments tests ───────────────────────────────────────
++
++describe('bulkVerifyDocuments', () => {
++  beforeEach(() => {
++    vi.clearAllMocks();
++  });
++
++  it('should verify uploaded_pending_review documents and recalculate completion %', async () => {
++    const updateResult = { affectedRows: 3 } as ResultSetHeader;
++    const statsResult = [{ total: 10, verified: 8 }];
++
++    // emp-1: UPDATE → 3 affected, audit log, stats SELECT, employees UPDATE
++    vi.mocked(db.execute)
++      .mockResolvedValueOnce([updateResult, []])      // UPDATE checklist
++      .mockResolvedValueOnce([{}, []])                 // INSERT audit log
++      .mockResolvedValueOnce([statsResult, []])        // SELECT stats
++      .mockResolvedValueOnce([{}, []]);                // UPDATE employees
++
++    const result = await bulkVerifyDocuments(['emp-1'], 'actor-user-1');
++
++    expect(result.success).toBe(true);
++    expect(result.verified).toBe(3);
++    expect(result.errors).toHaveLength(0);
++  });
++
++  it('should update employees table with correct completion % after verification', async () => {
++    const updateResult = { affectedRows: 2 } as ResultSetHeader;
++    const statsResult = [{ total: 10, verified: 10 }]; // 100% complete
++
++    vi.mocked(db.execute)
++      .mockResolvedValueOnce([updateResult, []])
++      .mockResolvedValueOnce([{}, []])
++      .mockResolvedValueOnce([statsResult, []])
++      .mockResolvedValueOnce([{}, []]);
++
++    await bulkVerifyDocuments(['emp-1'], 'actor-user-1');
++
++    // The employees UPDATE should set pct=100 and status='verified_complete'
++    const empUpdateCall = vi.mocked(db.execute).mock.calls[3];
++    expect(empUpdateCall[0]).toMatch(/UPDATE employees/i);
++    expect(empUpdateCall[0]).toMatch(/joining_document_completion_pct/i);
++    expect(empUpdateCall[1]).toContain(100);
++    expect(empUpdateCall[1]).toContain('verified_complete');
++  });
++
++  it('should skip employees with no pending documents (0 affected rows)', async () => {
++    const updateResult = { affectedRows: 0 } as ResultSetHeader;
++
++    vi.mocked(db.execute).mockResolvedValueOnce([updateResult, []]);
++
++    const result = await bulkVerifyDocuments(['emp-1'], 'actor-user-1');
++
++    // Should not make further DB calls (audit, stats, employees update)
++    expect(db.execute).toHaveBeenCalledTimes(1);
++    expect(result.verified).toBe(0);
++    expect(result.errors).toHaveLength(0);
++  });
++
++  it('should process multiple employees and accumulate verified count', async () => {
++    const updateResult1 = { affectedRows: 2 } as ResultSetHeader;
++    const updateResult2 = { affectedRows: 3 } as ResultSetHeader;
++    const statsResult = [{ total: 5, verified: 5 }];
++
++    vi.mocked(db.execute)
++      // emp-1
++      .mockResolvedValueOnce([updateResult1, []])
++      .mockResolvedValueOnce([{}, []])
++      .mockResolvedValueOnce([statsResult, []])
++      .mockResolvedValueOnce([{}, []])
++      // emp-2
++      .mockResolvedValueOnce([updateResult2, []])
++      .mockResolvedValueOnce([{}, []])
++      .mockResolvedValueOnce([statsResult, []])
++      .mockResolvedValueOnce([{}, []]);
++
++    const result = await bulkVerifyDocuments(['emp-1', 'emp-2'], 'actor-user-1');
++
++    expect(result.success).toBe(true);
++    expect(result.verified).toBe(5);
++    expect(result.errors).toHaveLength(0);
++  });
++
++  it('should collect errors per employee without stopping processing', async () => {
++    const empCodeResult = [{ employee_code: 'EMP001' }];
++
++    vi.mocked(db.execute)
++      .mockRejectedValueOnce(new Error('DB timeout'))       // emp-1 UPDATE fails
++      .mockResolvedValueOnce([empCodeResult, []]);           // fetch employee_code for error
++
++    const result = await bulkVerifyDocuments(['emp-1'], 'actor-user-1');
++
++    expect(result.success).toBe(true);
++    expect(result.verified).toBe(0);
++    expect(result.errors).toHaveLength(1);
++    expect(result.errors[0]).toMatchObject({
++      employee_id: 'emp-1',
++      error: 'DB timeout',
++    });
++  });
++
++  it('should log audit with action_type BULK_VERIFY for each verified employee', async () => {
++    const updateResult = { affectedRows: 1 } as ResultSetHeader;
++    const statsResult = [{ total: 5, verified: 3 }];
++
++    vi.mocked(db.execute)
++      .mockResolvedValueOnce([updateResult, []])
++      .mockResolvedValueOnce([{}, []])
++      .mockResolvedValueOnce([statsResult, []])
++      .mockResolvedValueOnce([{}, []]);
++
++    await bulkVerifyDocuments(['emp-1'], 'actor-user-1');
++
++    const auditCall = vi.mocked(db.execute).mock.calls[1];
++    expect(auditCall[0]).toMatch(/employee_joining_document_audit_log/i);
++    expect(auditCall[0]).toMatch(/BULK_VERIFY/i);
++    expect(auditCall[1]).toContain('actor-user-1');
++    expect(auditCall[1]).toContain('emp-1');
++  });
++});
+diff --git a/backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts b/backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts
+index 070fd9f7..b3efa996 100644
+--- a/backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts
++++ b/backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts
+@@ -1,19 +1,22 @@
+ import { Router } from 'express';
+ import type { Response, NextFunction } from 'express';
+ import { requireAuth } from '../../middleware/authMiddleware.js';
+ import { requireRole } from '../../middleware/requireRole.js';
+ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+ import {
+   getJoiningDocumentsTracker,
+   sendBulkReminders,
+   bulkGenerateChecklists,
++  bulkAssignHR,
++  bulkSetDueDate,
++  bulkVerifyDocuments,
+   type TrackerQueryParams,
+ } from './ats.joiningDocumentsTracker.service.js';
+ 
+ export const joiningDocumentsTrackerRouter = Router();
+ 
+ type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+   void fn(req, res).catch(next);
+ };
+ 
+@@ -80,10 +83,84 @@ joiningDocumentsTrackerRouter.post('/bulk-generate-checklist', h(async (req: Aut
+     }
+ 
+     const result = await bulkGenerateChecklists(employee_ids as string[], req.authUser!.id);
+ 
+     return res.json(result);
+   } catch (error: unknown) {
+     console.error('[tracker] POST /bulk-generate-checklist error:', error);
+     return res.status(500).json({ success: false, message: 'Failed to generate checklists' });
+   }
+ }));
++
++// POST /api/ats/joining-documents-tracker/bulk-assign
++joiningDocumentsTrackerRouter.post('/bulk-assign', h(async (req: AuthenticatedRequest, res: Response) => {
++  try {
++    const { employee_ids, assigned_hr_user_id } = req.body as {
++      employee_ids?: unknown;
++      assigned_hr_user_id?: string;
++    };
++
++    if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
++      return res.status(400).json({ success: false, message: 'employee_ids array is required' });
++    }
++
++    if (!assigned_hr_user_id) {
++      return res.status(400).json({ success: false, message: 'assigned_hr_user_id is required' });
++    }
++
++    const result = await bulkAssignHR(employee_ids as string[], assigned_hr_user_id, req.authUser!.id);
++
++    return res.json(result);
++  } catch (error: unknown) {
++    console.error('[tracker] POST /bulk-assign error:', error);
++    return res.status(500).json({ success: false, message: 'Failed to assign HR' });
++  }
++}));
++
++// POST /api/ats/joining-documents-tracker/bulk-set-due-date
++joiningDocumentsTrackerRouter.post('/bulk-set-due-date', h(async (req: AuthenticatedRequest, res: Response) => {
++  try {
++    const { employee_ids, due_date, document_codes } = req.body as {
++      employee_ids?: unknown;
++      due_date?: string;
++      document_codes?: string[];
++    };
++
++    if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
++      return res.status(400).json({ success: false, message: 'employee_ids array is required' });
++    }
++
++    if (!due_date) {
++      return res.status(400).json({ success: false, message: 'due_date is required' });
++    }
++
++    const result = await bulkSetDueDate(
++      employee_ids as string[],
++      due_date,
++      document_codes ?? null,
++      req.authUser!.id
++    );
++
++    return res.json(result);
++  } catch (error: unknown) {
++    console.error('[tracker] POST /bulk-set-due-date error:', error);
++    return res.status(500).json({ success: false, message: 'Failed to set due dates' });
++  }
++}));
++
++// POST /api/ats/joining-documents-tracker/bulk-verify
++joiningDocumentsTrackerRouter.post('/bulk-verify', h(async (req: AuthenticatedRequest, res: Response) => {
++  try {
++    const { employee_ids } = req.body as { employee_ids?: unknown };
++
++    if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
++      return res.status(400).json({ success: false, message: 'employee_ids array is required' });
++    }
++
++    const result = await bulkVerifyDocuments(employee_ids as string[], req.authUser!.id);
++
++    return res.json(result);
++  } catch (error: unknown) {
++    console.error('[tracker] POST /bulk-verify error:', error);
++    return res.status(500).json({ success: false, message: 'Failed to verify documents' });
++  }
++}));
+diff --git a/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts b/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts
+index 8e723ae7..94ce1072 100644
+--- a/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts
++++ b/backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts
+@@ -1,11 +1,11 @@
+-import type { RowDataPacket } from 'mysql2';
++import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+ import { db } from '../../db/mysql.js';
+ import { getUserRoleKeys } from '../../shared/scopeAccess.js';
+ import { getEmployeeForUser } from '../../shared/accessGuard.js';
+ import { sendRejectedEmail } from './ats.email.service.js';
+ import { generateJoiningDocumentChecklist } from '../employees/employeeJoiningDocuments.service.js';
+ 
+ export interface KeyDocumentStatus {
+   code: 'APPOINTMENT_LETTER' | 'ID_PROOF' | 'BANK_DETAILS' | 'ADDRESS_PROOF';
+   status: string;
+   verification_status: string | null;
+@@ -352,20 +352,162 @@ export async function sendBulkReminders(
+         employee_id: emp.id,
+         employee_code: emp.employee_code,
+         error: error instanceof Error ? error.message : String(error),
+       });
+     }
+   }
+ 
+   return result;
+ }
+ 
++// ─── bulkAssignHR ─────────────────────────────────────────────────────────────
++
++export interface BulkAssignResult {
++  success: true;
++  updated: number;
++}
++
++export async function bulkAssignHR(
++  employeeIds: string[],
++  assignedHrUserId: string,
++  actorUserId: string
++): Promise<BulkAssignResult> {
++  const [result] = await db.execute<ResultSetHeader>(
++    `UPDATE employee_joining_document_checklist
++     SET assigned_hr_user_id = ?, updated_at = NOW()
++     WHERE employee_id IN (?)`,
++    [assignedHrUserId, employeeIds]
++  );
++
++  await db.execute(
++    `INSERT INTO employee_joining_document_audit_log
++     (employee_id, action_type, actor_user_id, remarks, created_at)
++     SELECT DISTINCT employee_id, 'BULK_ASSIGN_HR', ?, ?, NOW()
++     FROM employee_joining_document_checklist
++     WHERE employee_id IN (?)`,
++    [actorUserId, JSON.stringify({ assigned_hr_user_id: assignedHrUserId }), employeeIds]
++  );
++
++  return { success: true, updated: result.affectedRows };
++}
++
++// ─── bulkSetDueDate ───────────────────────────────────────────────────────────
++
++export interface BulkSetDueDateResult {
++  success: true;
++  updated: number;
++}
++
++export async function bulkSetDueDate(
++  employeeIds: string[],
++  dueDate: string,
++  documentCodes: string[] | null,
++  actorUserId: string
++): Promise<BulkSetDueDateResult> {
++  let sql = `UPDATE employee_joining_document_checklist
++             SET due_at = ?, updated_at = NOW()
++             WHERE employee_id IN (?)`;
++  const params: (string | string[])[] = [dueDate, employeeIds];
++
++  if (documentCodes && documentCodes.length > 0) {
++    sql += ` AND document_code IN (?)`;
++    params.push(documentCodes);
++  }
++
++  const [result] = await db.execute<ResultSetHeader>(sql, params);
++
++  await db.execute(
++    `INSERT INTO employee_joining_document_audit_log
++     (employee_id, action_type, actor_user_id, remarks, created_at)
++     SELECT DISTINCT employee_id, 'BULK_SET_DUE_DATE', ?, ?, NOW()
++     FROM employee_joining_document_checklist
++     WHERE employee_id IN (?)`,
++    [actorUserId, JSON.stringify({ due_date: dueDate, document_codes: documentCodes }), employeeIds]
++  );
++
++  return { success: true, updated: result.affectedRows };
++}
++
++// ─── bulkVerifyDocuments ──────────────────────────────────────────────────────
++
++export interface BulkVerifyResult {
++  success: true;
++  verified: number;
++  errors: Array<{ employee_id: string; employee_code: string; error: string }>;
++}
++
++export async function bulkVerifyDocuments(
++  employeeIds: string[],
++  actorUserId: string
++): Promise<BulkVerifyResult> {
++  const result: BulkVerifyResult = {
++    success: true,
++    verified: 0,
++    errors: [],
++  };
++
++  for (const employeeId of employeeIds) {
++    try {
++      const [updateResult] = await db.execute<ResultSetHeader>(
++        `UPDATE employee_joining_document_checklist
++         SET verification_status = 'verified', verified_at = NOW(), verified_by = ?, updated_at = NOW()
++         WHERE employee_id = ? AND status = 'uploaded_pending_review'`,
++        [actorUserId, employeeId]
++      );
++
++      if (updateResult.affectedRows > 0) {
++        result.verified += updateResult.affectedRows;
++
++        await db.execute(
++          `INSERT INTO employee_joining_document_audit_log
++           (employee_id, action_type, actor_user_id, remarks, created_at)
++           VALUES (?, 'BULK_VERIFY', ?, 'Verified all pending documents', NOW())`,
++          [employeeId, actorUserId]
++        );
++
++        const [stats] = await db.execute<RowDataPacket[]>(
++          `SELECT
++             COUNT(*) AS total,
++             SUM(CASE WHEN verification_status = 'verified' THEN 1 ELSE 0 END) AS verified
++           FROM employee_joining_document_checklist
++           WHERE employee_id = ?`,
++          [employeeId]
++        );
++
++        const total = Number((stats[0] as { total: number } | undefined)?.total ?? 0);
++        const verifiedCount = Number((stats[0] as { verified: number } | undefined)?.verified ?? 0);
++        const pct = total > 0 ? Math.round((verifiedCount / total) * 100) : 0;
++        const docStatus = pct === 100 ? 'verified_complete' : 'pending_verification';
++
++        await db.execute(
++          `UPDATE employees
++           SET joining_document_completion_pct = ?, joining_document_status = ?, updated_at = NOW()
++           WHERE id = ?`,
++          [pct, docStatus, employeeId]
++        );
++      }
++    } catch (error: unknown) {
++      const [emp] = await db.execute<RowDataPacket[]>(
++        `SELECT employee_code FROM employees WHERE id = ?`,
++        [employeeId]
++      );
++      result.errors.push({
++        employee_id: employeeId,
++        employee_code: (emp[0] as { employee_code: string } | undefined)?.employee_code ?? employeeId,
++        error: error instanceof Error ? error.message : String(error),
++      });
++    }
++  }
++
++  return result;
++}
++
+ // ─── bulkGenerateChecklists ───────────────────────────────────────────────────
+ 
+ export async function bulkGenerateChecklists(
+   employeeIds: string[],
+   actorUserId: string
+ ): Promise<BulkGenerateResult> {
+   const result: BulkGenerateResult = {
+     success: true,
+     generated: 0,
+     skipped: 0,
