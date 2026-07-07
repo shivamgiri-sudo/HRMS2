@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { useAuth } from "@/contexts/AuthContext";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
@@ -26,7 +27,7 @@ interface ApprovalRequest {
 }
 
 export default function HolidayWorkApprovals() {
-  const { user } = useAuth();
+  const { roleKeys } = useWorkforceAccess();
   const [requests, setRequests] = useState<ApprovalRequest[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -35,14 +36,10 @@ export default function HolidayWorkApprovals() {
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const role = user?.role ?? "";
-
   const fetchRequests = () => {
     setLoading(true);
-    const token = localStorage.getItem("token");
-    fetch("/api/payroll/holiday-work/requests", { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.json())
-      .then((data) => setRequests(Array.isArray(data) ? data : data.requests ?? []))
+    hrmsApi.get<{ data?: ApprovalRequest[]; requests?: ApprovalRequest[] } | ApprovalRequest[]>("/api/payroll/holiday-work/requests")
+      .then((data: any) => setRequests(Array.isArray(data) ? data : data.data ?? data.requests ?? []))
       .catch(() => setError("Failed to load holiday work requests."))
       .finally(() => setLoading(false));
   };
@@ -65,24 +62,18 @@ export default function HolidayWorkApprovals() {
     if (!selected) return;
     setSubmitting(true);
     setActionError(null);
-    const token = localStorage.getItem("token");
     try {
-      const res = await fetch(`/api/payroll/holiday-work/requests/${selected.id}/approve`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ action, remarks }),
-      });
-      if (!res.ok) throw new Error((await res.json()).message ?? "Action failed");
+      await hrmsApi.patch(`/api/payroll/holiday-work/requests/${selected.id}/approve`, { action, remarks });
       closeDialog();
       fetchRequests();
     } catch (e: any) {
-      setActionError(e.message);
+      setActionError(e.message ?? "Action failed");
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (!ALLOWED_ROLES.includes(role)) {
+  if (!ALLOWED_ROLES.some(r => roleKeys.includes(r))) {
     return <div className="p-8 text-red-600">Access denied.</div>;
   }
 

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useAuth } from "@/contexts/AuthContext";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,9 +37,8 @@ function SummaryCard({ label, value }: { label: string; value: string | number }
 }
 
 export default function RunningPayrollBreakdown() {
-  const { user } = useAuth();
-  const role = user?.role ?? "";
-  const isSelfOnly = role === "employee";
+  const { roleKeys } = useWorkforceAccess();
+  const isSelfOnly = roleKeys.length === 1 && roleKeys.includes("employee");
 
   const today = new Date();
   const defaultMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
@@ -54,10 +54,11 @@ export default function RunningPayrollBreakdown() {
   const searchEmployees = (q: string) => {
     setSearch(q);
     if (q.length < 2) { setSuggestions([]); return; }
-    const token = localStorage.getItem("token");
-    fetch(`/api/employees?search=${encodeURIComponent(q)}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.json())
-      .then((data) => setSuggestions(Array.isArray(data) ? data : data.employees ?? []))
+    hrmsApi.get<{ employees?: Employee[] } | Employee[]>(`/api/employees?search=${encodeURIComponent(q)}`)
+      .then((res) => {
+        const data = res as any;
+        setSuggestions(Array.isArray(data) ? data : data.employees ?? data.data ?? []);
+      })
       .catch(() => {});
   };
 
@@ -65,14 +66,15 @@ export default function RunningPayrollBreakdown() {
     setLoading(true);
     setError(null);
     setSummary(null);
-    const token = localStorage.getItem("token");
-    const runDate = `${runMonth}-01`;
+    // runMonth is already YYYY-MM from the month input
     const endpoint = isSelfOnly
-      ? `/api/payroll/running-summary/me?runMonth=${runDate}`
-      : `/api/payroll/running-summary/${selectedEmployee!.id}?runMonth=${runDate}`;
-    fetch(endpoint, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.json())
-      .then((data) => setSummary(data.data ?? data.summary ?? data))
+      ? `/api/payroll/running-summary/me?runMonth=${runMonth}`
+      : `/api/payroll/running-summary/${selectedEmployee!.id}?runMonth=${runMonth}`;
+    hrmsApi.get<{ data?: Summary; summary?: Summary }>(endpoint)
+      .then((res) => {
+        const data = res as any;
+        setSummary(data.data ?? data.summary ?? data);
+      })
       .catch(() => setError("Failed to load running summary."))
       .finally(() => setLoading(false));
   };
@@ -83,7 +85,7 @@ export default function RunningPayrollBreakdown() {
     setSuggestions([]);
   };
 
-  if (!ALLOWED_ROLES.includes(role)) {
+  if (!ALLOWED_ROLES.some(r => roleKeys.includes(r))) {
     return <div className="p-8 text-red-600">Access denied.</div>;
   }
 

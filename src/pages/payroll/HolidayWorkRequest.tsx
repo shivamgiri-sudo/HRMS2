@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { useAuth } from "@/contexts/AuthContext";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 const ALLOWED_ROLES = ["wfm", "admin", "super_admin"];
 
@@ -15,11 +16,8 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
   rejected: "destructive",
 };
 
-const api = (path: string, opts?: RequestInit) =>
-  fetch(`/api${path}`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}`, "Content-Type": "application/json" }, ...opts });
-
 export default function HolidayWorkRequest() {
-  const { user } = useAuth();
+  const { roleKeys } = useWorkforceAccess();
   const qc = useQueryClient();
 
   const [form, setForm] = useState({
@@ -33,12 +31,12 @@ export default function HolidayWorkRequest() {
   const [desInput, setDesInput] = useState("");
   const [designationIds, setDesignationIds] = useState<string[]>([]);
 
-  const { data: holidays = [] } = useQuery({ queryKey: ["holiday-master"], queryFn: () => api("/payroll/holiday-master").then(r => r.json()) });
-  const { data: policies = [] } = useQuery({ queryKey: ["holiday-work-policies"], queryFn: () => api("/payroll/holiday-work/policies").then(r => r.json()) });
-  const { data: requests = [] } = useQuery({ queryKey: ["holiday-work-requests"], queryFn: () => api("/payroll/holiday-work/requests").then(r => r.json()) });
+  const { data: holidays = [] } = useQuery({ queryKey: ["holiday-master"], queryFn: () => hrmsApi.get<any>("/api/payroll/holiday-master").then((d: any) => Array.isArray(d) ? d : d.data ?? []) });
+  const { data: policies = [] } = useQuery({ queryKey: ["holiday-work-policies"], queryFn: () => hrmsApi.get<any>("/api/payroll/holiday-work/policies").then((d: any) => Array.isArray(d) ? d : d.data ?? []) });
+  const { data: requests = [] } = useQuery({ queryKey: ["holiday-work-requests"], queryFn: () => hrmsApi.get<any>("/api/payroll/holiday-work/requests").then((d: any) => Array.isArray(d) ? d : d.data ?? []) });
 
   const submit = useMutation({
-    mutationFn: () => api("/payroll/holiday-work/requests", { method: "POST", body: JSON.stringify({ ...form, designation_ids: designationIds }) }),
+    mutationFn: () => hrmsApi.post("/api/payroll/holiday-work/requests", { ...form, designation_ids: designationIds }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["holiday-work-requests"] });
       setForm({ holiday_id: "", branch_id: "", process_id: "", cost_centre_id: "", policy_id: "", remarks: "" });
@@ -46,7 +44,7 @@ export default function HolidayWorkRequest() {
     },
   });
 
-  if (!user || !ALLOWED_ROLES.includes(user.role)) {
+  if (!ALLOWED_ROLES.some(r => roleKeys.includes(r))) {
     return <div className="p-6 text-red-500">Access denied.</div>;
   }
 

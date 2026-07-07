@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Info } from "lucide-react";
 import mcnLogo from "@/assets/brand/mcn-logo.png";
+
+// ── Brand Colors (exact from MCN logo) ────────────────────────────────────────
+// Blue  #1565C0  · Red  #E53935  · Green  #43A047
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -13,6 +15,7 @@ interface SafeQueueEntry {
   branch_name: string | null;
   called_at: string | null;
   interview_started_at: string | null;
+  candidate_name: string | null;
 }
 
 interface QueueMetrics {
@@ -39,33 +42,156 @@ interface DisplayStreamEvent {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const TICKER_TIPS = [
-  "Keep your original ID proof and a photocopy ready",
-  "Dress professionally — first impressions matter",
+  "Please keep your original ID proof and a photocopy ready",
+  "Dress professionally — first impressions count!",
   "MAS Callnet — one of India's leading BPO organisations",
-  "Our team is here to help — feel free to ask at the front desk",
+  "Our team is here to help — ask at the front desk anytime",
   "Interview rounds typically take 30–45 minutes",
-  "We offer PF, ESIC, incentives and career growth opportunities",
-  "Thank you for your patience — we'll call your token shortly",
+  "We offer PF, ESIC, incentives and strong career growth",
+  "Thank you for your patience — we will call your token shortly",
   "Please keep your mobile on silent during the interview",
   "Bring your educational certificates for verification today",
-  "Welcome to MAS Callnet — we're excited to meet you!",
+  "Welcome to MAS Callnet — we are excited to meet you!",
 ];
 
 const POLL_INTERVAL = 15_000;
-const TICKER_INTERVAL = 8_000;
+const TICKER_INTERVAL = 7_000;
 const BASE_URL = "";
 
-// ── Particle background ───────────────────────────────────────────────────────
+// ── Audio helpers ─────────────────────────────────────────────────────────────
 
-const PARTICLES = Array.from({ length: 28 }, (_, i) => ({
-  id: i,
-  x: (i * 37 + 11) % 97,
-  y: (i * 53 + 7) % 93,
-  size: (i % 4) + 2,
-  duration: 6 + (i % 5),
-  delay: -(i * 0.7),
-  opacity: 0.06 + (i % 4) * 0.03,
-}));
+let audioCtx: AudioContext | null = null;
+
+function getAudioCtx(): AudioContext {
+  if (!audioCtx) audioCtx = new AudioContext();
+  return audioCtx;
+}
+
+function playChime() {
+  try {
+    const ctx = getAudioCtx();
+    const notes = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const t = ctx.currentTime + i * 0.22;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.35, t + 0.06);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      osc.start(t);
+      osc.stop(t + 0.7);
+    });
+  } catch {/* silent */}
+}
+
+function playNotificationBeep() {
+  try {
+    const ctx = getAudioCtx();
+    [880, 1100].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const t = ctx.currentTime + i * 0.15;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.25, t + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+      osc.start(t);
+      osc.stop(t + 0.4);
+    });
+  } catch {/* silent */}
+}
+
+function buildAnnouncementText(tokenNumber: string, candidateName: string | null, role: string | null): string {
+  const digits = tokenNumber.slice(-3).split("").join(" "); // space out digits for natural TTS pacing
+  const namePhrase = candidateName ? `, ${candidateName},` : "";
+  const rolePhrase = role ? ` for the position of ${role}` : "";
+  return `Attention please. Token number ${digits}${namePhrase}${rolePhrase}. Please approach the Interview Room for your interview. Thank you.`;
+}
+
+// Microsoft Neural voice priority list — ordered best to fallback
+const MS_NEURAL_PRIORITY = [
+  "Microsoft Neerja Online (Natural) - English (India)",   // best: en-IN Neural female
+  "Microsoft Prabhat Online (Natural) - English (India)",  // best: en-IN Neural male
+  "Microsoft Aria Online (Natural) - English (United States)",
+  "Microsoft Jenny Online (Natural) - English (United States)",
+  "Microsoft Guy Online (Natural) - English (United States)",
+  "Microsoft Libby Online (Natural) - English (United Kingdom)",
+  "Microsoft Ryan Online (Natural) - English (United Kingdom)",
+  // Offline / local Neural fallbacks
+  "Microsoft Neerja - English (India)",
+  "Microsoft Prabhat - English (India)",
+  "Microsoft Aria - English (United States)",
+  "Microsoft Jenny - English (United States)",
+  "Microsoft Zira - English (United States)",
+  "Microsoft David - English (United States)",
+];
+
+function pickBestVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
+  // 1. Exact Microsoft Neural match from priority list
+  for (const name of MS_NEURAL_PRIORITY) {
+    const v = voices.find((v) => v.name === name);
+    if (v) return v;
+  }
+  // 2. Any Microsoft Online (Neural) en-IN
+  const msOnlineIN = voices.find((v) => /microsoft/i.test(v.name) && /online/i.test(v.name) && v.lang === "en-IN");
+  if (msOnlineIN) return msOnlineIN;
+  // 3. Any Microsoft Online (Neural) en-*
+  const msOnlineEN = voices.find((v) => /microsoft/i.test(v.name) && /online/i.test(v.name) && v.lang.startsWith("en"));
+  if (msOnlineEN) return msOnlineEN;
+  // 4. Any Microsoft en-IN
+  const msIN = voices.find((v) => /microsoft/i.test(v.name) && v.lang === "en-IN");
+  if (msIN) return msIN;
+  // 5. Any Microsoft en-*
+  const msEN = voices.find((v) => /microsoft/i.test(v.name) && v.lang.startsWith("en"));
+  if (msEN) return msEN;
+  // 6. Any Google en-IN
+  const gIN = voices.find((v) => /google/i.test(v.name) && v.lang === "en-IN");
+  if (gIN) return gIN;
+  // 7. Any en-IN
+  const anyIN = voices.find((v) => v.lang === "en-IN");
+  if (anyIN) return anyIN;
+  // 8. Any English
+  return voices.find((v) => v.lang.startsWith("en")) ?? null;
+}
+
+function speakWithBrowserTTS(text: string) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+
+  const speak = () => {
+    const voices = window.speechSynthesis.getVoices();
+    const voice = pickBestVoice(voices);
+    const utt = new SpeechSynthesisUtterance(text);
+    if (voice) utt.voice = voice;
+    utt.lang = voice?.lang ?? "en-IN";
+    utt.rate = 0.88;
+    utt.pitch = 1.0;
+    utt.volume = 1.0;
+    window.speechSynthesis.speak(utt);
+  };
+
+  if (window.speechSynthesis.getVoices().length === 0) {
+    window.speechSynthesis.onvoiceschanged = () => {
+      window.speechSynthesis.onvoiceschanged = null;
+      speak();
+    };
+  } else {
+    speak();
+  }
+}
+
+function announceToken(tokenNumber: string, candidateName: string | null, role: string | null) {
+  const text = buildAnnouncementText(tokenNumber, candidateName, role);
+  // Delay so chime plays first
+  setTimeout(() => speakWithBrowserTTS(text), 1800);
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -83,6 +209,10 @@ function formatWait(minutes: number | null): string {
   return `~${Math.round(minutes / 60)}h`;
 }
 
+function last3(token: string): string {
+  return token.slice(-3);
+}
+
 function statusLabel(status: SafeQueueEntry["queue_status"]): string {
   const map: Record<string, string> = {
     waiting: "Waiting",
@@ -93,6 +223,19 @@ function statusLabel(status: SafeQueueEntry["queue_status"]): string {
   };
   return map[status] ?? status;
 }
+
+// ── Particle data (fixed, no randomness) ─────────────────────────────────────
+
+const PARTICLES = Array.from({ length: 20 }, (_, i) => ({
+  id: i,
+  x: (i * 47 + 13) % 96,
+  y: (i * 61 + 9) % 94,
+  size: (i % 3) + 2,
+  duration: 7 + (i % 6),
+  delay: -(i * 0.9),
+  opacity: 0.08 + (i % 3) * 0.04,
+  color: i % 3 === 0 ? "#E53935" : i % 3 === 1 ? "#43A047" : "#FFFFFF",
+}));
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
@@ -106,358 +249,670 @@ export default function WaitingRoomDisplay() {
   const [tickerVisible, setTickerVisible] = useState(true);
   const [calledToken, setCalledToken] = useState<string | null>(null);
   const [calledRole, setCalledRole] = useState<string | null>(null);
+  const [calledName, setCalledName] = useState<string | null>(null);
   const [tokenAnimKey, setTokenAnimKey] = useState(0);
   const [sseConnected, setSseConnected] = useState(false);
+  const [audioReady, setAudioReady] = useState(false);
 
   const prevCalledRef = useRef<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Clock tick
+  // Unlock audio on first interaction
+  useEffect(() => {
+    const unlock = () => {
+      try { getAudioCtx().resume(); setAudioReady(true); } catch {/* */}
+      document.removeEventListener("click", unlock);
+      document.removeEventListener("keydown", unlock);
+    };
+    document.addEventListener("click", unlock);
+    document.addEventListener("keydown", unlock);
+    return () => {
+      document.removeEventListener("click", unlock);
+      document.removeEventListener("keydown", unlock);
+    };
+  }, []);
+
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  // Ticker rotation
   useEffect(() => {
     const t = setInterval(() => {
       setTickerVisible(false);
-      setTimeout(() => {
-        setTickerIdx((i) => (i + 1) % TICKER_TIPS.length);
-        setTickerVisible(true);
-      }, 400);
+      setTimeout(() => { setTickerIdx((i) => (i + 1) % TICKER_TIPS.length); setTickerVisible(true); }, 400);
     }, TICKER_INTERVAL);
     return () => clearInterval(t);
   }, []);
 
-  // Load branches
   useEffect(() => {
     fetch(`${BASE_URL}/api/ats/queue/branches`)
       .then((r) => r.json())
       .then((j) => {
         if (j.success && Array.isArray(j.data)) {
           setBranches(j.data);
-          const savedBranch = localStorage.getItem("wr_branch") ?? "";
-          if (savedBranch && !j.data.includes(savedBranch)) {
-            localStorage.removeItem("wr_branch");
-            setSelectedBranch("");
-          }
+          const saved = localStorage.getItem("wr_branch") ?? "";
+          if (saved && !j.data.includes(saved)) { localStorage.removeItem("wr_branch"); setSelectedBranch(""); }
         }
       })
-      .catch(() => {/* silent */});
+      .catch(() => {});
   }, []);
 
-  // Process incoming payload
   const applyPayload = useCallback((payload: DisplayPayload) => {
     setQueue(payload.queue ?? []);
     setMetrics(payload.metrics ?? null);
-
-    // Detect "now calling" — first entry with status 'called'
     const nowCalling = payload.queue.find((q) => q.queue_status === "called");
     const nowToken = nowCalling?.token_number ?? null;
     if (nowToken && nowToken !== prevCalledRef.current) {
       prevCalledRef.current = nowToken;
       setCalledToken(nowToken);
       setCalledRole(nowCalling?.applied_role ?? null);
+      setCalledName(nowCalling?.candidate_name ?? null);
       setTokenAnimKey((k) => k + 1);
+      playChime();
+      announceToken(nowToken, nowCalling?.candidate_name ?? null, nowCalling?.applied_role ?? null);
     }
     if (!nowToken && prevCalledRef.current) {
       prevCalledRef.current = null;
     }
   }, []);
 
-  // Fetch once (used for fallback polling)
   const fetchSnapshot = useCallback(() => {
     const params = new URLSearchParams();
     if (selectedBranch) params.set("branch", selectedBranch);
     fetch(`${BASE_URL}/api/ats/queue/public-display?${params}`)
       .then((r) => r.json())
       .then((j) => { if (j.success) applyPayload({ ...j.data, ts: Date.now() }); })
-      .catch(() => {/* silent */});
+      .catch(() => {});
   }, [selectedBranch, applyPayload]);
 
-  // SSE connection
   useEffect(() => {
-    // Cleanup previous
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-
     const params = new URLSearchParams();
     if (selectedBranch) params.set("branch", selectedBranch);
-    const url = `${BASE_URL}/api/ats/queue/display-stream?${params}`;
-
-    const es = new EventSource(url);
+    const es = new EventSource(`${BASE_URL}/api/ats/queue/display-stream?${params}`);
     esRef.current = es;
-
     es.onopen = () => setSseConnected(true);
-
     es.onmessage = (e) => {
       try {
         const payload: DisplayStreamEvent = JSON.parse(e.data);
-        if (payload.data) {
-          applyPayload({ ...payload.data, ts: payload.ts ?? Date.now() });
-        }
-      } catch {/* malformed */}
+        if (payload.data) applyPayload({ ...payload.data, ts: payload.ts ?? Date.now() });
+      } catch {/* */}
     };
-
     es.onerror = () => {
       setSseConnected(false);
       es.close();
       esRef.current = null;
-      // Fallback polling
       fetchSnapshot();
       pollRef.current = setInterval(fetchSnapshot, POLL_INTERVAL);
     };
-
-    return () => {
-      es.close();
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
+    return () => { es.close(); if (pollRef.current) clearInterval(pollRef.current); };
   }, [selectedBranch, applyPayload, fetchSnapshot]);
 
-  // Persist branch selection
   const handleBranchChange = (b: string) => {
     setSelectedBranch(b);
-    if (b) {
-      localStorage.setItem("wr_branch", b);
-    } else {
-      localStorage.removeItem("wr_branch");
-    }
+    b ? localStorage.setItem("wr_branch", b) : localStorage.removeItem("wr_branch");
   };
 
-  const waitingQueue = queue.filter((q) => q.queue_status === "waiting").slice(0, 8);
-  const inInterviewQueue = queue.filter((q) => q.queue_status === "in_interview").slice(0, 3);
+  const waitingQueue = queue.filter((q) => q.queue_status === "waiting").slice(0, 7);
+  const inInterviewQueue = queue.filter((q) => q.queue_status === "in_interview").slice(0, 4);
 
   return (
     <>
-      {/* Google Fonts */}
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;900&family=Inter:wght@400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&display=swap');
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        .wr-root {
-          width: 100vw; height: 100dvh; overflow: hidden;
-          background: radial-gradient(ellipse at 50% 40%, #0F1A2E 0%, #020617 70%);
-          color: #F8FAFC;
-          font-family: 'Inter', sans-serif;
-          display: flex; flex-direction: column;
-          position: relative;
-        }
-
-        /* Particles */
-        .particle {
-          position: absolute; border-radius: 50%;
-          background: #1B6AB5;
-          pointer-events: none;
-          animation: floatUp linear infinite;
-        }
-        @keyframes floatUp {
-          0%   { transform: translateY(0)   scale(1);   }
-          50%  { transform: translateY(-18px) scale(1.2); }
-          100% { transform: translateY(0)   scale(1);   }
-        }
-
-        /* Header */
-        .wr-header {
-          display: flex; align-items: center; justify-content: space-between;
-          padding: 14px 32px;
-          border-bottom: 1px solid #1E3A5F;
-          background: rgba(11,18,35,0.85);
-          backdrop-filter: blur(8px);
-          z-index: 10; flex-shrink: 0;
-        }
-        .wr-logo-area { display: flex; align-items: center; gap: 14px; }
-        .wr-logo { height: 40px; width: auto; }
-        .wr-company { font-family: 'Orbitron', sans-serif; font-size: 18px; font-weight: 700; color: #F8FAFC; letter-spacing: 0.08em; }
-        .wr-tagline { font-size: 11px; color: #94A3B8; letter-spacing: 0.06em; margin-top: 1px; }
-        .wr-clock-area { text-align: right; }
-        .wr-time { font-family: 'Orbitron', sans-serif; font-size: 28px; font-weight: 700; color: #1B6AB5; letter-spacing: 0.12em; }
-        .wr-date { font-size: 12px; color: #94A3B8; margin-top: 2px; }
-        .wr-branch-select {
-          background: #0E1223; border: 1px solid #1E3A5F; color: #F8FAFC;
-          padding: 6px 12px; border-radius: 8px; font-size: 13px;
-          font-family: 'Inter', sans-serif; cursor: pointer; outline: none;
-          appearance: none; -webkit-appearance: none;
-          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2394A3B8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
-          background-repeat: no-repeat; background-position: right 10px center;
-          padding-right: 28px; min-width: 160px;
-        }
-        .wr-branch-select option { background: #0E1223; }
-        .wr-status-dot {
-          width: 8px; height: 8px; border-radius: 50%;
-          display: inline-block; margin-right: 6px;
-          background: #22C55E;
-        }
-        .wr-status-dot.offline { background: #EF4444; }
-
-        /* Main body */
-        .wr-body {
-          flex: 1; display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 0;
+        .wr {
+          width: 100vw;
+          height: 100dvh;
           overflow: hidden;
-          padding: 24px 32px;
-          gap: 24px;
-        }
-
-        /* Left — Now Calling */
-        .wr-left {
-          display: flex; flex-direction: column; align-items: center; justify-content: center;
-          gap: 24px;
-        }
-        .wr-calling-label {
-          font-size: 13px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase;
-          color: #94A3B8;
-        }
-        .wr-calling-card {
+          background: linear-gradient(145deg, #0A2E6E 0%, #0D3B8C 35%, #1050AA 65%, #1565C0 100%);
+          color: #FFFFFF;
+          font-family: 'Poppins', system-ui, sans-serif;
+          display: flex;
+          flex-direction: column;
           position: relative;
-          border: 2px solid #F59E0B;
-          border-radius: 24px;
-          background: linear-gradient(135deg, #0E1223 0%, #101828 100%);
-          padding: 40px 56px;
-          text-align: center;
-          width: 100%; max-width: 440px;
-          animation: glowPulse 1.8s ease-in-out infinite;
         }
-        @keyframes glowPulse {
-          0%, 100% { box-shadow: 0 0 24px #F59E0B33, 0 0 48px #F59E0B1A; }
-          50%       { box-shadow: 0 0 40px #F59E0B55, 0 0 80px #F59E0B2A; }
-        }
-        .wr-calling-card.empty {
-          border-color: #1E3A5F;
-          animation: none;
-          box-shadow: none;
-        }
-        .wr-now-calling-badge {
-          font-size: 11px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase;
-          color: #F59E0B; margin-bottom: 20px;
-        }
-        .wr-token-number {
-          font-family: 'Orbitron', sans-serif;
-          font-size: clamp(56px, 7vw, 96px);
-          font-weight: 900;
-          color: #F59E0B;
-          letter-spacing: 0.15em;
-          line-height: 1;
-          animation: tokenIn 0.35s ease-out;
-        }
-        @keyframes tokenIn {
-          0%   { transform: scale(0.7); opacity: 0; }
-          70%  { transform: scale(1.04); }
-          100% { transform: scale(1);   opacity: 1; }
-        }
-        .wr-calling-sub {
-          margin-top: 16px; font-size: 14px; color: #94A3B8; letter-spacing: 0.04em;
-        }
-        .wr-calling-role {
-          margin-top: 8px; font-size: 16px; font-weight: 600; color: #60A5FA;
-        }
-        .wr-no-calling {
-          font-family: 'Orbitron', sans-serif; font-size: 18px; color: #334155;
-          font-weight: 600; letter-spacing: 0.08em;
-        }
-        .wr-no-calling-sub { font-size: 12px; color: #475569; margin-top: 8px; }
 
-        /* Right — Queue + Metrics */
-        .wr-right { display: flex; flex-direction: column; gap: 20px; overflow: hidden; }
-        .wr-section-title {
-          font-size: 11px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase;
-          color: #64748B; margin-bottom: 10px;
+        /* ── Ambient particles ── */
+        .wr-particle {
+          position: absolute;
+          border-radius: 50%;
+          pointer-events: none;
+          animation: wr-float linear infinite;
+        }
+        @keyframes wr-float {
+          0%, 100% { transform: translateY(0) scale(1); opacity: var(--op); }
+          50%       { transform: translateY(-20px) scale(1.15); opacity: calc(var(--op) * 0.6); }
+        }
+
+        /* ── Header ── */
+        .wr-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 0 32px;
+          height: 72px;
+          background: rgba(0,0,0,0.25);
+          backdrop-filter: blur(10px);
+          border-bottom: 2px solid rgba(255,255,255,0.15);
+          flex-shrink: 0;
+          z-index: 10;
+        }
+        .wr-header-left { display: flex; align-items: center; gap: 14px; }
+        .wr-logo {
+          height: 44px;
+          width: auto;
+          object-fit: contain;
+        }
+        .wr-company {
+          font-size: 20px;
+          font-weight: 800;
+          letter-spacing: 0.06em;
+          color: #FFFFFF;
+          line-height: 1.1;
+        }
+        .wr-tagline {
+          font-size: 10px;
+          font-weight: 600;
+          color: #FFFFFF;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          margin-top: 2px;
+        }
+        .wr-header-right {
+          display: flex;
+          align-items: center;
+          gap: 24px;
+        }
+        .wr-live-badge {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          background: rgba(255,255,255,0.1);
+          border: 1px solid rgba(255,255,255,0.2);
+          border-radius: 999px;
+          padding: 4px 12px;
+          font-size: 11px;
+          font-weight: 600;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .wr-live-dot {
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          background: #43A047;
+          animation: wr-live-pulse 1.5s ease-in-out infinite;
+        }
+        .wr-live-dot.offline { background: #E53935; animation: none; }
+        @keyframes wr-live-pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50%       { opacity: 0.5; transform: scale(0.85); }
+        }
+        .wr-branch-select {
+          background: rgba(255,255,255,0.12);
+          border: 1px solid rgba(255,255,255,0.25);
+          color: #FFFFFF;
+          padding: 6px 28px 6px 12px;
+          border-radius: 10px;
+          font-size: 13px;
+          font-weight: 500;
+          font-family: 'Poppins', sans-serif;
+          cursor: pointer;
+          outline: none;
+          appearance: none;
+          -webkit-appearance: none;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='white' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+          background-repeat: no-repeat;
+          background-position: right 10px center;
+          min-width: 150px;
+        }
+        .wr-branch-select option { background: #1565C0; color: #fff; }
+        .wr-clock {
+          text-align: right;
+        }
+        .wr-time {
+          font-size: 30px;
+          font-weight: 800;
+          color: #FFFFFF;
+          letter-spacing: 0.06em;
+          line-height: 1;
+        }
+        .wr-date {
+          font-size: 11px;
+          font-weight: 600;
+          color: #FFFFFF;
+          margin-top: 2px;
+          text-align: right;
+        }
+
+        /* ── Body ── */
+        .wr-body {
+          flex: 1;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 20px;
+          padding: 20px 28px;
+          overflow: hidden;
+          min-height: 0;
+        }
+
+        /* ── Left panel ── */
+        .wr-left {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 20px;
+        }
+
+        .wr-now-calling-label {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.22em;
+          text-transform: uppercase;
+          color: #FFFFFF;
+        }
+        .wr-now-calling-label::before,
+        .wr-now-calling-label::after {
+          content: '';
+          flex: 1;
+          height: 1px;
+          background: rgba(255,255,255,0.5);
+          max-width: 60px;
+        }
+
+        /* Calling card */
+        .wr-calling-card {
+          width: 100%;
+          max-width: 400px;
+          background: #FFFFFF;
+          border-radius: 24px;
+          padding: 28px 32px 24px;
+          text-align: center;
+          position: relative;
+          overflow: hidden;
+          border-top: 6px solid #E53935;
+          box-shadow: 0 8px 40px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.1);
+        }
+        .wr-calling-card.active {
+          animation: wr-card-glow 2s ease-in-out infinite;
+        }
+        @keyframes wr-card-glow {
+          0%, 100% { box-shadow: 0 8px 40px rgba(229,57,53,0.3), 0 0 60px rgba(229,57,53,0.15); }
+          50%       { box-shadow: 0 8px 60px rgba(229,57,53,0.5), 0 0 100px rgba(229,57,53,0.25); }
+        }
+        .wr-calling-card.idle {
+          border-top-color: rgba(255,255,255,0.3);
+          background: rgba(255,255,255,0.08);
+          box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        }
+
+        /* Red accent strip behind token */
+        .wr-card-accent {
+          position: absolute;
+          top: 0; left: 0; right: 0;
+          height: 3px;
+          background: linear-gradient(90deg, #E53935, #FF5252, #E53935);
+          background-size: 200% 100%;
+          animation: wr-shimmer 2s linear infinite;
+        }
+        @keyframes wr-shimmer {
+          0%   { background-position: 100% 0; }
+          100% { background-position: -100% 0; }
+        }
+
+        .wr-badge-now-calling {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          background: #E53935;
+          color: #FFFFFF;
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 0.18em;
+          text-transform: uppercase;
+          padding: 4px 14px;
+          border-radius: 999px;
+          margin-bottom: 16px;
+        }
+        .wr-badge-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: #FFFFFF;
+          animation: wr-badge-blink 0.8s ease-in-out infinite;
+        }
+        @keyframes wr-badge-blink {
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0.3; }
+        }
+
+        /* Token display — last 3 digits only, never overflows */
+        .wr-token-display {
+          font-size: clamp(72px, 9vw, 120px);
+          font-weight: 900;
+          color: #E53935;
+          line-height: 1;
+          letter-spacing: 0.06em;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: clip;
+          max-width: 100%;
+        }
+        .wr-token-display.in-anim {
+          animation: wr-token-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+        }
+        @keyframes wr-token-pop {
+          0%   { transform: scale(0.5); opacity: 0; }
+          70%  { transform: scale(1.06); }
+          100% { transform: scale(1); opacity: 1; }
+        }
+
+        .wr-token-full {
+          font-size: 13px;
+          font-weight: 600;
+          color: #1565C0;
+          margin-top: 4px;
+          letter-spacing: 0.05em;
+        }
+        .wr-token-role {
+          font-size: 15px;
+          font-weight: 700;
+          color: #1565C0;
+          margin-top: 10px;
+        }
+        .wr-token-instruction {
+          font-size: 13px;
+          font-weight: 500;
+          color: #546E7A;
+          margin-top: 6px;
+          line-height: 1.4;
+        }
+
+        /* Idle card */
+        .wr-idle-icon {
+          font-size: 40px;
+          margin-bottom: 10px;
+          opacity: 0.35;
+        }
+        .wr-idle-text {
+          font-size: 20px;
+          font-weight: 700;
+          color: rgba(255,255,255,0.85);
+          letter-spacing: 0.04em;
+        }
+        .wr-idle-sub {
+          font-size: 12px;
+          font-weight: 500;
+          color: rgba(255,255,255,0.7);
+          margin-top: 6px;
+        }
+
+        /* In interview strip */
+        .wr-in-interview-wrap {
+          width: 100%;
+          max-width: 400px;
+        }
+        .wr-section-label {
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 0.18em;
+          text-transform: uppercase;
+          color: #FFFFFF;
+          margin-bottom: 8px;
+        }
+        .wr-interview-pill {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          background: rgba(67,160,71,0.15);
+          border: 1px solid rgba(67,160,71,0.4);
+          border-radius: 12px;
+          padding: 8px 14px;
+          margin-bottom: 6px;
+        }
+        .wr-green-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #43A047;
+          flex-shrink: 0;
+          animation: wr-live-pulse 1.5s ease-in-out infinite;
+        }
+        .wr-interview-token {
+          font-size: 15px;
+          font-weight: 700;
+          color: #FFFFFF;
+          flex: 1;
+          letter-spacing: 0.04em;
+        }
+        .wr-interview-badge {
+          font-size: 10px;
+          font-weight: 600;
+          color: #43A047;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+        }
+
+        /* ── Right panel ── */
+        .wr-right {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          min-height: 0;
+          overflow: hidden;
         }
 
         /* Queue list */
-        .wr-queue-list { display: flex; flex-direction: column; gap: 8px; flex: 1; overflow: hidden; }
-        .wr-queue-row {
-          display: flex; align-items: center; gap: 14px;
-          background: #0E1223; border: 1px solid #1E3A5F;
-          border-radius: 12px; padding: 12px 16px;
-          animation: slideInRight 0.3s ease-out both;
+        .wr-queue-scroll {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 7px;
+          overflow: hidden;
+          min-height: 0;
         }
-        .wr-queue-row.in-interview { border-color: #22C55E33; background: #0A1A12; }
-        @keyframes slideInRight {
-          from { transform: translateX(30px); opacity: 0; }
+        .wr-queue-row {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          background: rgba(255,255,255,0.18);
+          border: 1px solid rgba(255,255,255,0.35);
+          border-radius: 14px;
+          padding: 11px 16px;
+          animation: wr-slide-in 0.3s ease-out both;
+          backdrop-filter: blur(4px);
+          flex-shrink: 0;
+        }
+        .wr-queue-row:nth-child(1) { animation-delay: 0ms; }
+        .wr-queue-row:nth-child(2) { animation-delay: 40ms; }
+        .wr-queue-row:nth-child(3) { animation-delay: 80ms; }
+        .wr-queue-row:nth-child(4) { animation-delay: 120ms; }
+        .wr-queue-row:nth-child(5) { animation-delay: 160ms; }
+        .wr-queue-row:nth-child(6) { animation-delay: 200ms; }
+        .wr-queue-row:nth-child(7) { animation-delay: 240ms; }
+        @keyframes wr-slide-in {
+          from { transform: translateX(24px); opacity: 0; }
           to   { transform: translateX(0);    opacity: 1; }
         }
-        .wr-status-indicator {
-          width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+        .wr-row-pos {
+          font-size: 11px;
+          font-weight: 700;
+          color: rgba(255,255,255,0.75);
+          width: 22px;
+          text-align: center;
+          flex-shrink: 0;
         }
-        .wr-status-indicator.waiting   { background: #F59E0B; animation: dotPulse 1.4s ease-in-out infinite; }
-        .wr-status-indicator.called    { background: #1B6AB5; }
-        .wr-status-indicator.in_interview { background: #22C55E; }
-        @keyframes dotPulse {
-          0%, 100% { opacity: 1; transform: scale(1); }
-          50%      { opacity: 0.5; transform: scale(0.8); }
+        .wr-row-indicator {
+          width: 9px;
+          height: 9px;
+          border-radius: 50%;
+          flex-shrink: 0;
         }
-        .wr-row-position {
-          font-family: 'Orbitron', sans-serif; font-size: 11px; color: #475569;
-          min-width: 24px;
+        .wr-row-indicator.waiting    { background: #FFA726; animation: wr-live-pulse 1.4s ease-in-out infinite; }
+        .wr-row-indicator.called     { background: #42A5F5; }
+        .wr-row-indicator.in_interview { background: #43A047; }
+        .wr-row-body { flex: 1; min-width: 0; }
+        .wr-row-token-text {
+          font-size: 18px;
+          font-weight: 700;
+          color: #FFFFFF;
+          letter-spacing: 0.04em;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
-        .wr-row-token {
-          font-family: 'Orbitron', sans-serif; font-size: 20px; font-weight: 700;
-          color: #F8FAFC; flex: 1; letter-spacing: 0.06em;
+        .wr-row-role-text {
+          font-size: 11px;
+          font-weight: 600;
+          color: rgba(255,255,255,0.9);
+          margin-top: 1px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
-        .wr-row-role { font-size: 12px; color: #64748B; margin-top: 1px; }
-        .wr-row-wait { font-size: 12px; color: #475569; text-align: right; flex-shrink: 0; }
-        .wr-row-status-badge {
-          font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
-          padding: 2px 8px; border-radius: 999px; flex-shrink: 0;
+        .wr-row-right { text-align: right; flex-shrink: 0; }
+        .wr-row-wait {
+          font-size: 12px;
+          font-weight: 700;
+          color: #FFFFFF;
         }
-        .wr-row-status-badge.waiting     { background: #F59E0B1A; color: #F59E0B; }
-        .wr-row-status-badge.in_interview { background: #22C55E1A; color: #22C55E; }
+        .wr-row-status {
+          font-size: 10px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          padding: 2px 8px;
+          border-radius: 999px;
+          margin-top: 3px;
+          display: inline-block;
+        }
+        .wr-row-status.waiting     { background: rgba(255,167,38,0.15); color: #FFA726; }
+        .wr-row-status.in_interview { background: rgba(67,160,71,0.15);  color: #43A047; }
+        .wr-row-status.called      { background: rgba(66,165,245,0.15); color: #42A5F5; }
 
         .wr-empty-queue {
-          flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-          color: #334155; gap: 8px;
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          color: rgba(255,255,255,0.7);
+          gap: 8px;
         }
-        .wr-empty-queue-icon { font-size: 32px; opacity: 0.4; }
-        .wr-empty-queue-text { font-size: 14px; font-weight: 500; }
+        .wr-empty-icon { font-size: 36px; }
+        .wr-empty-text { font-size: 14px; font-weight: 600; }
 
         /* Metrics */
-        .wr-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; flex-shrink: 0; }
-        .wr-metric-card {
-          background: #0E1223; border: 1px solid #1E3A5F; border-radius: 14px;
-          padding: 14px 16px; text-align: center;
+        .wr-metrics {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 10px;
+          flex-shrink: 0;
+        }
+        .wr-metric {
+          background: rgba(255,255,255,0.18);
+          border: 1px solid rgba(255,255,255,0.35);
+          border-radius: 16px;
+          padding: 14px 12px;
+          text-align: center;
+          backdrop-filter: blur(4px);
         }
         .wr-metric-number {
-          font-family: 'Orbitron', sans-serif; font-size: clamp(22px, 2.5vw, 32px);
-          font-weight: 700; color: #1B6AB5; line-height: 1;
+          font-size: clamp(24px, 2.8vw, 36px);
+          font-weight: 800;
+          line-height: 1;
         }
-        .wr-metric-number.amber  { color: #F59E0B; }
-        .wr-metric-number.green  { color: #22C55E; }
-        .wr-metric-number.slate  { color: #64748B; }
-        .wr-metric-label { font-size: 10px; color: #475569; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; margin-top: 6px; }
+        .wr-metric-number.amber  { color: #FFA726; }
+        .wr-metric-number.blue   { color: #64B5F6; }
+        .wr-metric-number.green  { color: #66BB6A; }
+        .wr-metric-number.white  { color: #FFFFFF; }
+        .wr-metric-label {
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 0.1em;
+          text-transform: uppercase;
+          color: #FFFFFF;
+          margin-top: 6px;
+        }
 
-        /* Ticker */
+        /* ── Ticker ── */
         .wr-ticker {
           flex-shrink: 0;
-          border-top: 1px solid #1E3A5F;
-          background: rgba(11,18,35,0.9);
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 10px 28px;
+          background: rgba(0,0,0,0.25);
+          border-top: 1px solid rgba(255,255,255,0.1);
           backdrop-filter: blur(8px);
-          padding: 12px 32px;
-          display: flex; align-items: center; gap: 12px;
         }
-        .wr-ticker-icon { color: #1B6AB5; flex-shrink: 0; }
+        .wr-ticker-tag {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          background: #43A047;
+          color: #FFFFFF;
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          padding: 3px 10px;
+          border-radius: 999px;
+          white-space: nowrap;
+          flex-shrink: 0;
+        }
         .wr-ticker-text {
-          font-size: 13px; color: #94A3B8;
+          font-size: 13px;
+          font-weight: 600;
+          color: #FFFFFF;
+          letter-spacing: 0.01em;
           transition: opacity 0.4s ease;
-          letter-spacing: 0.02em;
         }
         .wr-ticker-text.hidden { opacity: 0; }
+
+        /* Audio hint */
+        .wr-audio-hint {
+          position: fixed;
+          bottom: 60px;
+          right: 20px;
+          background: rgba(0,0,0,0.6);
+          color: rgba(255,255,255,0.7);
+          font-size: 11px;
+          font-weight: 500;
+          padding: 6px 12px;
+          border-radius: 8px;
+          z-index: 50;
+          pointer-events: none;
+          animation: wr-fadeout 3s ease forwards 5s;
+        }
+        @keyframes wr-fadeout {
+          to { opacity: 0; }
+        }
       `}</style>
 
-      <div className="wr-root">
-        {/* Floating particles */}
+      <div className="wr">
+        {/* Ambient particles */}
         {PARTICLES.map((p) => (
           <div
             key={p.id}
-            className="particle"
+            className="wr-particle"
             style={{
               left: `${p.x}%`,
               top: `${p.y}%`,
               width: `${p.size}px`,
               height: `${p.size}px`,
+              background: p.color,
+              ["--op" as any]: p.opacity,
               opacity: p.opacity,
               animationDuration: `${p.duration}s`,
               animationDelay: `${p.delay}s`,
@@ -465,22 +920,30 @@ export default function WaitingRoomDisplay() {
           />
         ))}
 
-        {/* Header */}
+        {/* Audio tap hint */}
+        {!audioReady && (
+          <div className="wr-audio-hint">Tap anywhere to enable audio announcements</div>
+        )}
+
+        {/* ── Header ── */}
         <header className="wr-header">
-          <div className="wr-logo-area">
-            <img src={mcnLogo} alt="MAS Callnet" className="wr-logo" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+          <div className="wr-header-left">
+            <img
+              src={mcnLogo}
+              alt="MAS Callnet"
+              className="wr-logo"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+            />
             <div>
               <div className="wr-company">MAS CALLNET</div>
-              <div className="wr-tagline">INTERVIEW WAITING HALL</div>
+              <div className="wr-tagline">Interview Waiting Hall</div>
             </div>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <span className={`wr-status-dot${sseConnected ? "" : " offline"}`} />
-              <span style={{ fontSize: "11px", color: "#64748B" }}>
-                {sseConnected ? "Live" : "Updating"}
-              </span>
+          <div className="wr-header-right">
+            <div className="wr-live-badge">
+              <span className={`wr-live-dot${sseConnected ? "" : " offline"}`} />
+              {sseConnected ? "Live" : "Reconnecting"}
             </div>
 
             {branches.length > 0 && (
@@ -496,119 +959,139 @@ export default function WaitingRoomDisplay() {
               </select>
             )}
 
-            <div className="wr-clock-area">
+            <div className="wr-clock">
               <div className="wr-time">{formatClock(clock)}</div>
               <div className="wr-date">{formatDate(clock)}</div>
             </div>
           </div>
         </header>
 
-        {/* Body */}
+        {/* ── Body ── */}
         <div className="wr-body">
+
           {/* Left — Now Calling */}
           <div className="wr-left">
-            <div className="wr-calling-label">Current Status</div>
+            <div className="wr-now-calling-label">Now Calling</div>
 
-            <div className={`wr-calling-card${calledToken ? "" : " empty"}`}>
+            <div className={`wr-calling-card${calledToken ? " active" : " idle"}`}>
               {calledToken ? (
                 <>
-                  <div className="wr-now-calling-badge">▶ NOW CALLING</div>
-                  <div key={tokenAnimKey} className="wr-token-number">{calledToken}</div>
-                  {calledRole && <div className="wr-calling-role">{calledRole}</div>}
-                  <div className="wr-calling-sub">Please proceed to the interview room</div>
+                  <div className="wr-card-accent" />
+                  <div className="wr-badge-now-calling">
+                    <span className="wr-badge-dot" />
+                    Now Calling
+                  </div>
+                  {/* Last 3 digits — large, never overflows */}
+                  <div key={tokenAnimKey} className="wr-token-display in-anim">
+                    {last3(calledToken)}
+                  </div>
+                  {/* Full token reference */}
+                  <div className="wr-token-full">Token: {calledToken}</div>
+                  {/* Candidate name */}
+                  {calledName && (
+                    <div style={{ fontSize: "17px", fontWeight: 700, color: "#1565C0", marginTop: "8px", letterSpacing: "0.02em" }}>
+                      {calledName}
+                    </div>
+                  )}
+                  {calledRole && <div className="wr-token-role">{calledRole}</div>}
+                  <div className="wr-token-instruction">
+                    Please proceed to the Interview Room
+                  </div>
                 </>
               ) : (
                 <>
-                  <div style={{ fontSize: "32px", marginBottom: "16px", opacity: 0.3 }}>⏳</div>
-                  <div className="wr-no-calling">Standby</div>
-                  <div className="wr-no-calling-sub">Next token will be announced shortly</div>
+                  <div className="wr-idle-icon">🕐</div>
+                  <div className="wr-idle-text">Standby</div>
+                  <div className="wr-idle-sub">Next token will be announced shortly</div>
                 </>
               )}
             </div>
 
             {/* In Interview */}
             {inInterviewQueue.length > 0 && (
-              <div style={{ width: "100%", maxWidth: "440px" }}>
-                <div className="wr-section-title">Currently in Interview</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                  {inInterviewQueue.map((entry) => (
-                    <div key={entry.token_number} style={{
-                      display: "flex", alignItems: "center", gap: "10px",
-                      background: "#0A1A12", border: "1px solid #22C55E33",
-                      borderRadius: "10px", padding: "8px 14px",
-                    }}>
-                      <span className="wr-status-indicator in_interview" />
-                      <span style={{ fontFamily: "'Orbitron', sans-serif", fontSize: "15px", fontWeight: 700, color: "#22C55E", flex: 1 }}>
-                        {entry.token_number}
+              <div className="wr-in-interview-wrap">
+                <div className="wr-section-label">Currently in Interview</div>
+                {inInterviewQueue.map((entry) => (
+                  <div key={entry.token_number} className="wr-interview-pill">
+                    <span className="wr-green-dot" />
+                    <span className="wr-interview-token">{entry.token_number}</span>
+                    {entry.applied_role && (
+                      <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.9)" }}>
+                        {entry.applied_role}
                       </span>
-                      <span style={{ fontSize: "11px", color: "#22C55E88" }}>In Interview</span>
-                    </div>
-                  ))}
-                </div>
+                    )}
+                    <span className="wr-interview-badge">In Progress</span>
+                  </div>
+                ))}
               </div>
             )}
           </div>
 
           {/* Right — Queue + Metrics */}
           <div className="wr-right">
-            <div>
-              <div className="wr-section-title">
-                Waiting Queue
-                {waitingQueue.length > 0 && (
-                  <span style={{ marginLeft: "8px", color: "#F59E0B", fontFamily: "'Orbitron', sans-serif", fontSize: "13px" }}>
-                    {waitingQueue.length}
-                  </span>
-                )}
-              </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+              <div className="wr-section-label" style={{ marginBottom: 0 }}>Waiting Queue</div>
+              {waitingQueue.length > 0 && (
+                <span style={{
+                  background: "rgba(255,167,38,0.2)",
+                  color: "#FFA726",
+                  fontSize: "12px",
+                  fontWeight: 700,
+                  padding: "2px 10px",
+                  borderRadius: "999px",
+                  border: "1px solid rgba(255,167,38,0.4)",
+                }}>
+                  {waitingQueue.length} waiting
+                </span>
+              )}
+            </div>
 
-              <div className="wr-queue-list">
-                {waitingQueue.length === 0 ? (
-                  <div className="wr-empty-queue">
-                    <div className="wr-empty-queue-icon">✓</div>
-                    <div className="wr-empty-queue-text">No candidates waiting</div>
-                  </div>
-                ) : (
-                  waitingQueue.map((entry, idx) => (
-                    <div
-                      key={entry.token_number}
-                      className={`wr-queue-row${entry.queue_status === "in_interview" ? " in-interview" : ""}`}
-                      style={{ animationDelay: `${idx * 50}ms` }}
-                    >
-                      <span className={`wr-status-indicator ${entry.queue_status}`} />
-                      <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
-                        <div className="wr-row-token">{entry.token_number}</div>
-                        {entry.applied_role && <div className="wr-row-role">{entry.applied_role}</div>}
-                      </div>
-                      <div style={{ textAlign: "right", flexShrink: 0 }}>
-                        <div className="wr-row-wait">{formatWait(entry.estimated_wait_time)}</div>
-                        <span className={`wr-row-status-badge ${entry.queue_status}`}>
-                          {statusLabel(entry.queue_status)}
-                        </span>
-                      </div>
+            <div className="wr-queue-scroll">
+              {waitingQueue.length === 0 ? (
+                <div className="wr-empty-queue">
+                  <div className="wr-empty-icon">✓</div>
+                  <div className="wr-empty-text">No candidates waiting</div>
+                </div>
+              ) : (
+                waitingQueue.map((entry, idx) => (
+                  <div key={entry.token_number} className="wr-queue-row">
+                    <span className="wr-row-pos">{idx + 1}</span>
+                    <span className={`wr-row-indicator ${entry.queue_status}`} />
+                    <div className="wr-row-body">
+                      <div className="wr-row-token-text">{entry.token_number}</div>
+                      {entry.applied_role && (
+                        <div className="wr-row-role-text">{entry.applied_role}</div>
+                      )}
                     </div>
-                  ))
-                )}
-              </div>
+                    <div className="wr-row-right">
+                      <div className="wr-row-wait">{formatWait(entry.estimated_wait_time)}</div>
+                      <span className={`wr-row-status ${entry.queue_status}`}>
+                        {statusLabel(entry.queue_status)}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
 
             {/* Metrics */}
             <div>
-              <div className="wr-section-title">Today's Summary</div>
+              <div className="wr-section-label">Today's Summary</div>
               <div className="wr-metrics">
-                <div className="wr-metric-card">
+                <div className="wr-metric">
                   <div className="wr-metric-number amber">{metrics?.total_waiting ?? 0}</div>
                   <div className="wr-metric-label">Waiting</div>
                 </div>
-                <div className="wr-metric-card">
-                  <div className="wr-metric-number">{metrics?.total_in_interview ?? 0}</div>
+                <div className="wr-metric">
+                  <div className="wr-metric-number blue">{metrics?.total_in_interview ?? 0}</div>
                   <div className="wr-metric-label">In Room</div>
                 </div>
-                <div className="wr-metric-card">
+                <div className="wr-metric">
                   <div className="wr-metric-number green">{metrics?.total_completed_today ?? 0}</div>
                   <div className="wr-metric-label">Done</div>
                 </div>
-                <div className="wr-metric-card">
-                  <div className="wr-metric-number slate">
+                <div className="wr-metric">
+                  <div className="wr-metric-number white">
                     {metrics?.average_wait_time ? `${Math.round(metrics.average_wait_time)}m` : "--"}
                   </div>
                   <div className="wr-metric-label">Avg Wait</div>
@@ -618,9 +1101,14 @@ export default function WaitingRoomDisplay() {
           </div>
         </div>
 
-        {/* Ticker */}
+        {/* ── Ticker ── */}
         <div className="wr-ticker">
-          <Info size={16} className="wr-ticker-icon" />
+          <span className="wr-ticker-tag">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <circle cx="5" cy="5" r="4" fill="white" opacity="0.8"/>
+            </svg>
+            Info
+          </span>
           <span className={`wr-ticker-text${tickerVisible ? "" : " hidden"}`}>
             {TICKER_TIPS[tickerIdx]}
           </span>

@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { useAuth } from "@/contexts/AuthContext";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
@@ -29,8 +29,8 @@ type Row = {
 };
 
 export default function WeekoffFairness() {
-  const { user } = useAuth();
-  const token = localStorage.getItem("token");
+  const { roleKeys } = useWorkforceAccess();
+  const token = localStorage.getItem("hrms_access_token");
 
   const [processId, setProcessId] = useState("");
   const [weekStartDate, setWeekStartDate] = useState(upcomingMonday());
@@ -39,7 +39,7 @@ export default function WeekoffFairness() {
   const [computing, setComputing] = useState(false);
   const [inline, setInline] = useState<Record<number, { day: string; reason: string }>>({});
 
-  const allowed = ["wfm", "admin", "super_admin"].includes(user?.role ?? "");
+  const allowed = ["wfm", "admin", "super_admin"].some(r => roleKeys.includes(r));
 
   async function fetchScores() {
     if (!processId) return;

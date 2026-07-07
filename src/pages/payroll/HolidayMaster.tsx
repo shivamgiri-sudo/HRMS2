@@ -1,13 +1,12 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { useAuth } from "@/contexts/AuthContext";
-
-const ALLOWED_ROLES = ["super_admin", "admin", "payroll_head", "payroll_branch"];
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 const TYPE_BADGE: Record<string, string> = {
   national: "bg-blue-100 text-blue-800",
@@ -16,11 +15,8 @@ const TYPE_BADGE: Record<string, string> = {
   process_specific: "bg-orange-100 text-orange-800",
 };
 
-const api = (path: string, opts?: RequestInit) =>
-  fetch(`/api${path}`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}`, "Content-Type": "application/json" }, ...opts });
-
 export default function HolidayMaster() {
-  const { user } = useAuth();
+  const { roleKeys } = useWorkforceAccess();
   const [ccRow, setCcRow] = useState<number | null>(null);
   const [desRow, setDesRow] = useState<number | null>(null);
   const [ccForm, setCcForm] = useState({ branch_id: "", process_id: "", cost_centre_id: "", department_id: "", applies_to_all_in_scope: false });
@@ -28,20 +24,21 @@ export default function HolidayMaster() {
 
   const { data: holidays = [] } = useQuery({
     queryKey: ["holiday-master"],
-    queryFn: () => api("/payroll/holiday-master").then(r => r.json()),
+    queryFn: () => hrmsApi.get<any>("/api/payroll/holiday-master").then((d: any) => Array.isArray(d) ? d : d.data ?? []),
   });
 
   const ccMutation = useMutation({
-    mutationFn: (body: object) => api("/payroll/holiday-master/cc-mapping", { method: "POST", body: JSON.stringify(body) }),
+    mutationFn: (body: object) => hrmsApi.post("/api/payroll/holiday-master/cc-mapping", body),
     onSuccess: () => setCcRow(null),
   });
 
   const desMutation = useMutation({
-    mutationFn: (body: object) => api("/payroll/holiday-master/designation-mapping", { method: "POST", body: JSON.stringify(body) }),
+    mutationFn: (body: object) => hrmsApi.post("/api/payroll/holiday-master/designation-mapping", body),
     onSuccess: () => setDesRow(null),
   });
 
-  if (!user || !ALLOWED_ROLES.includes(user.role)) {
+  const ALLOWED_ROLES = ["super_admin", "admin", "payroll_head", "payroll_branch"];
+  if (!roleKeys.some(r => ALLOWED_ROLES.includes(r))) {
     return <div className="p-6 text-red-500">Access denied.</div>;
   }
 

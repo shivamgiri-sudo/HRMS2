@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { useAuth } from "../../contexts/AuthContext";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 
@@ -25,32 +26,28 @@ interface QueueItem {
 }
 
 export default function RecalculationQueue() {
-  const { user } = useAuth();
+  const { roleKeys } = useWorkforceAccess();
   const [items, setItems] = useState<QueueItem[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [monthFilter, setMonthFilter] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const role = user?.role ?? "";
-
   const fetchQueue = () => {
     setLoading(true);
     setError(null);
-    const token = localStorage.getItem("token");
     const params = new URLSearchParams();
     if (statusFilter) params.set("status", statusFilter);
     if (monthFilter) params.set("payrollMonth", monthFilter);
-    fetch(`/api/payroll/recalculation-queue?${params}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.json())
-      .then((data) => setItems(Array.isArray(data) ? data : data.items ?? []))
+    hrmsApi.get<{ data?: QueueItem[] } | QueueItem[]>(`/api/payroll/recalculation-queue?${params}`)
+      .then((data: any) => setItems(Array.isArray(data) ? data : data.data ?? data.items ?? []))
       .catch(() => setError("Failed to load recalculation queue."))
       .finally(() => setLoading(false));
   };
 
   useEffect(() => { fetchQueue(); }, [statusFilter, monthFilter]);
 
-  if (!ALLOWED_ROLES.includes(role)) {
+  if (!ALLOWED_ROLES.some(r => roleKeys.includes(r))) {
     return <div className="p-8 text-red-600">Access denied.</div>;
   }
 

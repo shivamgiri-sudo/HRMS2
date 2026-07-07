@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { useAuth } from "@/contexts/AuthContext";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -32,7 +33,7 @@ interface ConfigFlag {
 }
 
 export default function PayrollConfigFlags() {
-  const { user } = useAuth();
+  const { roleKeys } = useWorkforceAccess();
   const [flags, setFlags] = useState<ConfigFlag[]>([]);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -40,13 +41,9 @@ export default function PayrollConfigFlags() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const role = user?.role ?? "";
-
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    fetch("/api/payroll/config-flags", { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.json())
-      .then((data) => setFlags(Array.isArray(data) ? data : data.flags ?? []))
+    hrmsApi.get<{ data?: ConfigFlag[] } | ConfigFlag[]>("/api/payroll/config-flags")
+      .then((data: any) => setFlags(Array.isArray(data) ? data : data.data ?? data.flags ?? []))
       .catch(() => setError("Failed to load config flags."));
   }, []);
 
@@ -66,30 +63,24 @@ export default function PayrollConfigFlags() {
     setSaving(true);
     setError(null);
     setSuccess(null);
-    const token = localStorage.getItem("token");
     try {
-      const res = await fetch("/api/payroll/config-flags", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          branch_id: flag.branch_id ?? null,
-          process_id: flag.process_id ?? null,
-          config_key: flag.config_key,
-          config_value: editValue,
-        }),
+      await hrmsApi.put("/api/payroll/config-flags", {
+        branch_id: flag.branch_id ?? null,
+        process_id: flag.process_id ?? null,
+        config_key: flag.config_key,
+        config_value: editValue,
       });
-      if (!res.ok) throw new Error((await res.json()).message ?? "Save failed");
       setFlags((prev) => prev.map((f) => (f.config_key === flag.config_key ? { ...f, config_value: editValue } : f)));
       setSuccess(`Saved: ${flag.config_key}`);
       setEditingKey(null);
     } catch (e: any) {
-      setError(e.message);
+      setError(e.message ?? "Save failed");
     } finally {
       setSaving(false);
     }
   };
 
-  if (!ALLOWED_ROLES.includes(role)) {
+  if (!ALLOWED_ROLES.some(r => roleKeys.includes(r))) {
     return <div className="p-8 text-red-600">Access denied.</div>;
   }
 

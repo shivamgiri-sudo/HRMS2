@@ -21,7 +21,8 @@ import {
   X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { useAuth } from "@/contexts/AuthContext";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { hrmsApi } from "@/lib/hrmsApi";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,8 +50,11 @@ interface AuditEntry {
 
 interface MinWageRow {
   id: string;
-  state: string;
-  skill_category: string;
+  state?: string;
+  state_code?: string;
+  state_name?: string;
+  skill_category?: string;
+  category?: string;
   daily_rate: string;
   monthly_rate: string;
   effective_from: string;
@@ -85,42 +89,16 @@ function fmtDate(raw: string | undefined): string {
   }
 }
 
-function getToken(): string {
-  return localStorage.getItem("hrms_access_token") || "";
-}
-
 async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(path, { headers: { Authorization: `Bearer ${getToken()}` } });
-  if (!res.ok) {
-    const j = await res.json().catch(() => ({}));
-    throw new Error((j as { message?: string }).message ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<T>;
+  return hrmsApi.get<T>(path);
 }
 
 async function apiPatch(path: string, body: unknown): Promise<void> {
-  const res = await fetch(path, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const j = await res.json().catch(() => ({}));
-    throw new Error((j as { message?: string }).message ?? `HTTP ${res.status}`);
-  }
+  await hrmsApi.patch(path, body);
 }
 
 async function apiPost(path: string, body: unknown): Promise<unknown> {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const j = await res.json().catch(() => ({}));
-    throw new Error((j as { message?: string }).message ?? `HTTP ${res.status}`);
-  }
-  return res.json();
+  return hrmsApi.post(path, body);
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -429,9 +407,9 @@ function MinimumWagesSection({ isSuperAdmin, onToast }: { isSuperAdmin: boolean;
                 <tr key={row.id} className="border-t hover:bg-slate-50/60">
                   {editingId === row.id ? (
                     <>
-                      <td className="px-4 py-2"><input type="text" className="w-24 rounded border px-2 py-1 text-xs" value={editData.state ?? ""} onChange={(e) => setEditData((p) => ({ ...p, state: e.target.value }))} /></td>
+                      <td className="px-4 py-2"><input type="text" className="w-24 rounded border px-2 py-1 text-xs" value={editData.state ?? editData.state_name ?? editData.state_code ?? ""} onChange={(e) => setEditData((p) => ({ ...p, state: e.target.value, state_name: e.target.value }))} /></td>
                       <td className="px-4 py-2">
-                        <select className="rounded border px-2 py-1 text-xs" value={editData.skill_category ?? "unskilled"} onChange={(e) => setEditData((p) => ({ ...p, skill_category: e.target.value }))}>
+                        <select className="rounded border px-2 py-1 text-xs" value={editData.skill_category ?? editData.category ?? "unskilled"} onChange={(e) => setEditData((p) => ({ ...p, skill_category: e.target.value, category: e.target.value }))}>
                           {["unskilled", "semi_skilled", "skilled", "highly_skilled"].map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
                       </td>
@@ -445,15 +423,15 @@ function MinimumWagesSection({ isSuperAdmin, onToast }: { isSuperAdmin: boolean;
                     </>
                   ) : (
                     <>
-                      <td className="px-4 py-2.5 font-medium text-slate-800">{row.state}</td>
-                      <td className="px-4 py-2.5 text-slate-600 capitalize">{row.skill_category?.replace("_", " ")}</td>
+                      <td className="px-4 py-2.5 font-medium text-slate-800">{row.state ?? row.state_name ?? row.state_code ?? "—"}</td>
+                      <td className="px-4 py-2.5 text-slate-600 capitalize">{(row.skill_category ?? row.category ?? "").replace("_", " ")}</td>
                       <td className="px-4 py-2.5 text-slate-700">{row.daily_rate ? `₹${row.daily_rate}` : "—"}</td>
                       <td className="px-4 py-2.5 font-semibold text-slate-900">{row.monthly_rate ? `₹${Number(row.monthly_rate).toLocaleString("en-IN")}` : "—"}</td>
                       <td className="px-4 py-2.5 text-xs text-slate-500">{fmtDate(row.effective_from)}</td>
                       {isSuperAdmin && (
                         <td className="px-4 py-2.5 text-right">
                           <button
-                            onClick={() => { setEditingId(row.id); setEditData({ state: row.state, skill_category: row.skill_category, daily_rate: row.daily_rate, monthly_rate: row.monthly_rate, effective_from: row.effective_from?.slice(0, 10) }); }}
+                            onClick={() => { setEditingId(row.id); setEditData({ state: row.state ?? row.state_name ?? row.state_code, state_name: row.state_name, state_code: row.state_code, skill_category: row.skill_category ?? row.category, category: row.category ?? row.skill_category, daily_rate: row.daily_rate, monthly_rate: row.monthly_rate, effective_from: row.effective_from?.slice(0, 10) }); }}
                             className="rounded-lg border px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 cursor-pointer"
                           >
                             <Edit2 className="h-3 w-3 inline-block mr-1" />Edit
@@ -520,8 +498,8 @@ function MinimumWagesSection({ isSuperAdmin, onToast }: { isSuperAdmin: boolean;
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function NativeStatutoryConfig() {
-  const { user } = useAuth();
-  const isSuperAdmin = user?.role === "super_admin";
+  const { roleKeys } = useWorkforceAccess();
+  const isSuperAdmin = roleKeys.includes("super_admin");
 
   const [rows, setRows] = useState<StatutoryConfigRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -539,8 +517,8 @@ export default function NativeStatutoryConfig() {
     setLoading(true);
     setError("");
     try {
-      const r = await apiGet<{ success: boolean; data: StatutoryConfigRow[] }>("/api/payroll/statutory-config");
-      setRows((r.data as StatutoryConfigRow[]) ?? []);
+      const r = await apiGet<{ success: boolean; details?: StatutoryConfigRow[]; data?: unknown }>("/api/payroll/statutory-config");
+      setRows(r.details ?? []);
     } catch (e: unknown) {
       setError((e as Error).message ?? "Failed to load statutory configuration");
     } finally {
