@@ -323,7 +323,7 @@ const App = () => (
               <Route path="/attendance-regularization" element={<ProtectedRoute><Gate pageCode="ATTENDANCE_REGULARIZATION"><AttendanceRegularization /></Gate></ProtectedRoute>} />
               <Route path="/attendance/regularizations" element={<ProtectedRoute><Gate pageCode="ATTENDANCE_REGULARIZATION"><AttendanceRegularization /></Gate></ProtectedRoute>} />
               <Route path="/bulk-upload" element={<ProtectedRoute roles={['admin','hr','super_admin','wfm','payroll','payroll_hr']}><BulkUploadHub /></ProtectedRoute>} />
-              <Route path="/departments" element={<ProtectedRoute><Gate pageCode="ORG_MASTERS"><Departments /></Gate></ProtectedRoute>} />
+              <Route path="/departments" element={<ProtectedRoute><Departments /></ProtectedRoute>} />
               <Route path="/calendar" element={<ProtectedRoute><CompanyCalendar /></ProtectedRoute>} />
               <Route path="/notification-preferences" element={<ProtectedRoute><NotificationPreferences /></ProtectedRoute>} />
               <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />

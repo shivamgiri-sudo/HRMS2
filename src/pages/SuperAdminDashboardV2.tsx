@@ -367,7 +367,7 @@ export default function SuperAdminDashboardV2() {
                 </div>
               </button>
               <button
-                onClick={() => (window.location.href = "/settings/org-masters")}
+                onClick={() => (window.location.href = "/org-masters")}
                 className="flex items-center gap-3 rounded-lg border border-slate-200 p-4 text-left hover:bg-slate-50 transition-colors cursor-pointer"
               >
                 <Database className="h-5 w-5 text-violet-600" />

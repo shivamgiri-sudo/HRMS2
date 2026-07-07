@@ -89,9 +89,10 @@ function RequestAccessButton({ pageCode }: { pageCode: string }) {
 }
 
 export default function WorkforcePageGate({ pageCode, children }: WorkforcePageGateProps) {
-  const { isLoading, canViewPage } = useWorkforceAccess();
+  const { isLoading, canViewPage, data } = useWorkforceAccess();
 
-  if (isLoading) {
+  // Show loading until we have data — don't evaluate canViewPage with undefined data
+  if (isLoading || !data) {
     return (
       <DashboardLayout>
         <div className="rounded-3xl border bg-white p-8 shadow-sm">

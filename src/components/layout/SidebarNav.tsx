@@ -3,7 +3,7 @@
  * Master items with `children` render as accordion-style expanders.
  * Leaf items render as direct links (unchanged behaviour).
  */
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import { useState, useEffect, type ReactNode } from "react";
@@ -56,7 +56,8 @@ function MasterNavItem({
 }) {
   const children = item.children ?? [];
   const childActive = useIsChildActive(children, pathname);
-  const [open, setOpen] = useState(childActive);
+  const [open, setOpen] = useState(() => childActive);
+  const navigate = useNavigate();
 
   // Auto-open when a child becomes active (e.g. direct URL navigation)
   useEffect(() => {
@@ -67,7 +68,10 @@ function MasterNavItem({
     <div>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (!open) navigate(item.href);
+          setOpen((v) => !v);
+        }}
         className={cn(
           "nav-item group w-full text-left",
           childActive && "active"
