@@ -162,37 +162,6 @@ function pickBestVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | n
   return voices.find((v) => v.lang.startsWith("en")) ?? null;
 }
 
-function speakWithBrowserTTS(text: string) {
-  if (!window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
-
-  const speak = () => {
-    const voices = window.speechSynthesis.getVoices();
-    const voice = pickBestVoice(voices);
-    const utt = new SpeechSynthesisUtterance(text);
-    if (voice) utt.voice = voice;
-    utt.lang = voice?.lang ?? "en-IN";
-    utt.rate = 0.88;
-    utt.pitch = 1.0;
-    utt.volume = 1.0;
-    window.speechSynthesis.speak(utt);
-  };
-
-  if (window.speechSynthesis.getVoices().length === 0) {
-    window.speechSynthesis.onvoiceschanged = () => {
-      window.speechSynthesis.onvoiceschanged = null;
-      speak();
-    };
-  } else {
-    speak();
-  }
-}
-
-function announceToken(tokenNumber: string, candidateName: string | null, role: string | null) {
-  const text = buildAnnouncementText(tokenNumber, candidateName, role);
-  // Delay so chime plays first
-  setTimeout(() => speakWithBrowserTTS(text), 1800);
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -256,14 +225,16 @@ export default function WaitingRoomDisplay() {
   const [metrics, setMetrics] = useState<QueueMetrics | null>(null);
   const [tickerIdx, setTickerIdx] = useState(0);
   const [tickerVisible, setTickerVisible] = useState(true);
-  const [calledToken, setCalledToken] = useState<string | null>(null);
-  const [calledRole, setCalledRole] = useState<string | null>(null);
-  const [calledName, setCalledName] = useState<string | null>(null);
+  const [displayToken, setDisplayToken] = useState<{ token: string; name: string | null; role: string | null } | null>(null);
   const [tokenAnimKey, setTokenAnimKey] = useState(0);
   const [sseConnected, setSseConnected] = useState(false);
   const [audioReady, setAudioReady] = useState(false);
 
-  const prevCalledRef = useRef<string | null>(null);
+  // Announcement queue — tokens to announce one-by-one without interruption
+  const seenCalledRef = useRef<Set<string>>(new Set());
+  const announceQueueRef = useRef<Array<{ token: string; name: string | null; role: string | null }>>([]);
+  const isSpeakingRef = useRef(false);
+
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -308,27 +279,69 @@ export default function WaitingRoomDisplay() {
       .catch(() => {});
   }, []);
 
+  // Drain the announcement queue one token at a time — never interrupts a playing announcement
+  const drainQueue = useCallback(() => {
+    if (isSpeakingRef.current) return;
+    const next = announceQueueRef.current.shift();
+    if (!next) return;
+
+    isSpeakingRef.current = true;
+    setDisplayToken(next);
+    setTokenAnimKey((k) => k + 1);
+    playChime();
+
+    setTimeout(() => {
+      if (!window.speechSynthesis) { isSpeakingRef.current = false; drainQueue(); return; }
+      const text = buildAnnouncementText(next.token, next.name, next.role);
+      const voices = window.speechSynthesis.getVoices();
+      const doSpeak = () => {
+        const utt = new SpeechSynthesisUtterance(text);
+        const voice = pickBestVoice(window.speechSynthesis.getVoices());
+        if (voice) utt.voice = voice;
+        utt.lang = voice?.lang ?? "en-IN";
+        utt.rate = 0.88;
+        utt.pitch = 1.0;
+        utt.volume = 1.0;
+        utt.onend = () => { isSpeakingRef.current = false; drainQueue(); };
+        utt.onerror = () => { isSpeakingRef.current = false; drainQueue(); };
+        window.speechSynthesis.speak(utt);
+      };
+      if (voices.length === 0) {
+        window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.onvoiceschanged = null; doSpeak(); };
+      } else {
+        doSpeak();
+      }
+    }, 1800);
+  }, []);
+
   const applyPayload = useCallback((payload: DisplayPayload) => {
     setQueue(payload.queue ?? []);
     setMetrics(payload.metrics ?? null);
-    const nowCalling = payload.queue.find((q) => q.queue_status === "called");
-    const nowToken = nowCalling?.token_number ?? null;
-    if (nowToken && nowToken !== prevCalledRef.current) {
-      prevCalledRef.current = nowToken;
-      setCalledToken(nowToken);
-      setCalledRole(nowCalling?.applied_role ?? null);
-      setCalledName(nowCalling?.candidate_name ?? null);
-      setTokenAnimKey((k) => k + 1);
-      playChime();
-      announceToken(nowToken, nowCalling?.candidate_name ?? null, nowCalling?.applied_role ?? null);
+
+    // Enqueue any newly-called tokens not yet seen
+    const calledEntries = payload.queue.filter((q) => q.queue_status === "called");
+    calledEntries.forEach((entry) => {
+      if (!seenCalledRef.current.has(entry.token_number)) {
+        seenCalledRef.current.add(entry.token_number);
+        announceQueueRef.current.push({
+          token: entry.token_number,
+          name: (entry as any).candidate_name ?? null,
+          role: entry.applied_role ?? null,
+        });
+      }
+    });
+
+    // Prune seen set for tokens no longer in the queue at all
+    const activeTokens = new Set(payload.queue.map((q) => q.token_number));
+    seenCalledRef.current.forEach((t) => { if (!activeTokens.has(t)) seenCalledRef.current.delete(t); });
+
+    // Return to standby when no called entries and nothing queued or speaking
+    if (calledEntries.length === 0 && announceQueueRef.current.length === 0 && !isSpeakingRef.current) {
+      setDisplayToken(null);
     }
-    if (!nowToken && prevCalledRef.current) {
-      prevCalledRef.current = null;
-      setCalledToken(null);
-      setCalledRole(null);
-      setCalledName(null);
-    }
-  }, []);
+
+    drainQueue();
+  }, [drainQueue]);
 
   const fetchSnapshot = useCallback(() => {
     const params = new URLSearchParams();
@@ -1007,8 +1020,8 @@ export default function WaitingRoomDisplay() {
           <div className="wr-left">
             <div className="wr-now-calling-label">Now Calling</div>
 
-            <div className={`wr-calling-card${calledToken ? " active" : " idle"}`}>
-              {calledToken ? (
+            <div className={`wr-calling-card${displayToken ? " active" : " idle"}`}>
+              {displayToken ? (
                 <>
                   <div className="wr-card-accent" />
                   <div className="wr-badge-now-calling">
@@ -1017,17 +1030,17 @@ export default function WaitingRoomDisplay() {
                   </div>
                   {/* Last 3 digits — large, never overflows */}
                   <div key={tokenAnimKey} className="wr-token-display in-anim">
-                    {last3(calledToken)}
+                    {last3(displayToken.token)}
                   </div>
                   {/* Full token reference */}
-                  <div className="wr-token-full">Token: {calledToken}</div>
+                  <div className="wr-token-full">Token: {displayToken.token}</div>
                   {/* Candidate name */}
-                  {calledName && (
+                  {displayToken.name && (
                     <div style={{ fontSize: "17px", fontWeight: 700, color: "#1565C0", marginTop: "8px", letterSpacing: "0.02em" }}>
-                      {calledName}
+                      {displayToken.name}
                     </div>
                   )}
-                  {calledRole && <div className="wr-token-role">{calledRole}</div>}
+                  {displayToken.role && <div className="wr-token-role">{displayToken.role}</div>}
                   <div className="wr-token-instruction">
                     Please proceed to the Interview Room
                   </div>
