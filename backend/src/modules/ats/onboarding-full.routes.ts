@@ -328,16 +328,33 @@ router.post("/otp/send", h(async (req, res) => {
     [otpId, tokenData.candidate_id, mobile, otpHash, expiresAt]
   );
 
-  // Send via SMTP (SMS gateway or email fallback)
-  try {
-    const { sendOnboardingOtp } = await import("./ats.email.service.js");
-    await sendOnboardingOtp({ mobile, otp, candidateName: tokenData.full_name, email: tokenData.email });
-  } catch (_e) {
-    // Non-fatal in dev — log otp for debugging
+  // Send via SMS (primary) or email (fallback)
+  const { sendOnboardingOtpViaSms } = await import("./ats.otp.service.js");
+  const deliveryResult = await sendOnboardingOtpViaSms({
+    mobile,
+    otp,
+    candidateName: tokenData.full_name,
+    email: tokenData.email
+  });
+
+  if (!deliveryResult.success) {
+    console.error(`[OTP] Delivery failed via ${deliveryResult.channel}: ${deliveryResult.error}`);
+    // Log OTP for dev debugging
     console.info(`[OTP-DEV] ${mobile}: ${otp}`);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send OTP. Please try again or contact support."
+    });
   }
 
-  return res.json({ success: true, message: "OTP sent", maskedMobile: mobile.slice(-4).padStart(mobile.length, "*") });
+  // Log successful delivery channel
+  console.info(`[OTP] Delivered via ${deliveryResult.channel} to candidate ${tokenData.candidate_id}`);
+
+  return res.json({
+    success: true,
+    message: `OTP sent via ${deliveryResult.channel === 'sms' ? 'SMS' : 'email'}`,
+    maskedMobile: mobile.slice(-4).padStart(mobile.length, "*")
+  });
 }));
 
 router.post("/otp/verify", h(async (req, res) => {
