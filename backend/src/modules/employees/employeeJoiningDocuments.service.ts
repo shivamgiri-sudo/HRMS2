@@ -11,6 +11,7 @@ import { hasAnyRole, hasScopedAccess, getUserRoleKeys } from "../../shared/scope
 import { analyzeEmployeeJoiningDocument } from "./employeeJoiningDocumentAnalysis.service.js";
 import { esignWithUrl, generateClientTransactionId, sanitizeProviderPayload } from "../integrations/luckpay/luckpay.client.js";
 import { generateChecklistDraft } from "./universalDigitalFormFill.service.js";
+import { inboxService } from "../inbox/inbox.service.js";
 
 const STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "employee-joining-documents");
 const ALLOWED_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx"]);
@@ -1685,6 +1686,44 @@ async function finalizeChecklistEsign(params: {
     ipAddress: params.ipAddress ?? null,
     userAgent: params.userAgent ?? null,
   });
+
+  if (isLuckpayVerifiedWebhook) {
+    try {
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        `SELECT employee_code, full_name, branch_id FROM employees WHERE id = ? LIMIT 1`,
+        [params.checklist.employee_id],
+      );
+      const emp = empRows[0] as { employee_code: string; full_name: string; branch_id: string | null } | undefined;
+      if (emp) {
+        const [hrRows] = await db.execute<RowDataPacket[]>(
+          `SELECT DISTINCT u.id as user_id, u.email, u.full_name
+           FROM auth_user u
+           JOIN user_roles ur ON ur.user_id = u.id
+           JOIN employees e ON e.user_id = u.id AND e.active_status = 1
+           WHERE ur.role_key = 'payroll_hr'
+             AND (? IS NULL OR e.branch_id = ?)
+           LIMIT 3`,
+          [emp.branch_id, emp.branch_id],
+        );
+        for (const hr of hrRows as RowDataPacket[]) {
+          await inboxService
+            .createItem({
+              user_id: hr.user_id,
+              type: "esign_completed",
+              title: `E-Sign Completed: ${params.checklist.document_name} — ${emp.full_name} [${emp.employee_code}]`,
+              description: `${emp.full_name} has completed Aadhaar eSign for ${params.checklist.document_name}. You can now review and verify the signed document.`,
+              entity_type: "employee_joining_document_checklist",
+              entity_id: params.checklist.id,
+              action_url: `/employees/${params.checklist.employee_id}/joining-documents`,
+              priority: "medium",
+            })
+            .catch((err: unknown) => console.error("[finalizeChecklistEsign] inbox notification failed:", err));
+        }
+      }
+    } catch (err: unknown) {
+      console.error("[finalizeChecklistEsign] Failed to send eSign completion notification:", err);
+    }
+  }
 
   await recalculateDocumentProgress(params.checklist.employee_id);
   return {

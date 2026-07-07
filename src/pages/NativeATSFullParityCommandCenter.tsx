@@ -16,6 +16,15 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { SkeletonCard } from "@/components/ui/skeletons";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CoverTab } from "@/components/ats/command-center/CoverTab";
+import { DashboardTab } from "@/components/ats/command-center/DashboardTab";
+import { TrendsTab } from "@/components/ats/command-center/TrendsTab";
+import { RecruitersTab } from "@/components/ats/command-center/RecruitersTab";
+import { RejectionsTab } from "@/components/ats/command-center/RejectionsTab";
+import { SourcingTab } from "@/components/ats/command-center/SourcingTab";
+import { LiveQueueTab } from "@/components/ats/command-center/LiveQueueTab";
+import { JourneyTab } from "@/components/ats/command-center/JourneyTab";
+import { HealthTab } from "@/components/ats/command-center/HealthTab";
 
 type AnyRow = Record<string, unknown>;
 
@@ -355,331 +364,80 @@ export default function NativeATSFullParityCommandCenter() {
             </TabsList>
           </div>
 
-          {/* Cover tab */}
-          <TabsContent value="Cover" className="mt-4 space-y-4">
-            {loading ? (
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
-              </div>
-            ) : (
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                <Kpi label="Arrivals" value={n(summary.totalArrival)} foot="Selected / rejected / pending" />
-                <Kpi label="Selected" value={n(summary.totalSelection)} foot={pct(summary.selectionRate)} />
-                <Kpi label="Pending" value={n(summary.pending)} foot={`${n(summary.waiting)} waiting`} />
-                <Kpi label="SLA Breach" value={n(summary.slaBreach)} foot={pct(summary.slaBreachRate)} />
-              </div>
-            )}
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div>
-                <p className="mb-2 text-sm font-bold text-slate-700">Critical Queue (longest wait)</p>
-                <SimpleTable
-                  rows={criticalQueue}
-                  columns={[
-                    { key: "QToken", label: "Token" },
-                    { key: "FullName", label: "Candidate" },
-                    { key: "Branch", label: "Branch" },
-                    { key: "RecruiterAssignedName", label: "Recruiter" },
-                    { key: "WaitingMinutes", label: "Waiting", render: (r) => mins(r.WaitingMinutes) },
-                    { key: "SLAFlag", label: "SLA" },
-                  ]}
-                />
-              </div>
-              <div>
-                <p className="mb-2 text-sm font-bold text-slate-700">Branch Summary</p>
-                <SimpleTable
-                  rows={(data?.branchTable || []).slice(0, 12)}
-                  columns={[
-                    { key: "Name", label: "Branch" },
-                    { key: "TotalArrival", label: "Arrival" },
-                    { key: "Selection", label: "Selected" },
-                    { key: "Waiting", label: "Waiting" },
-                    { key: "SlaBreach", label: "SLA" },
-                    { key: "SelectionRate", label: "Sel %", render: (r) => pct(r.SelectionRate) },
-                  ]}
-                  empty="No branch data"
-                />
-              </div>
-            </div>
+          {/* Cover tab - Enhanced Dashboard */}
+          <TabsContent value="Cover" className="mt-4">
+            <CoverTab
+              summary={summary}
+              queueRows={data?.queueRows || []}
+              branchTable={data?.branchTable || []}
+              processTable={data?.processTable || []}
+              recruiterTable={data?.recruiterTable || []}
+              sourceTable={data?.sourceTable || []}
+              dashboardRows={data?.dashboardRows || []}
+              loading={loading}
+            />
           </TabsContent>
 
           {/* Dashboard tab */}
           <TabsContent value="Dashboard" className="mt-4">
-            <SimpleTable
-              rows={data?.dashboardRows || []}
-              columns={[
-                { key: "Date", label: "Period" },
-                { key: "Total Arrival", label: "Arrival" },
-                { key: "Selection", label: "Selected" },
-                { key: "Rejection", label: "Rejected" },
-                { key: "Pending", label: "Pending" },
-                { key: "SLA Breach", label: "SLA" },
-                { key: "Avg Time", label: "Avg", render: (r) => mins(r["Avg Time"]) },
-              ]}
+            <DashboardTab
+              dashboardRows={data?.dashboardRows || []}
+              branchTable={data?.branchTable || []}
+              loading={loading}
             />
           </TabsContent>
 
           {/* Trends tab */}
           <TabsContent value="Trends" className="mt-4">
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div>
-                <p className="mb-2 text-sm font-bold text-slate-700">By Process</p>
-                <SimpleTable
-                  rows={data?.processTable || []}
-                  columns={[
-                    { key: "Name", label: "Process" },
-                    { key: "TotalArrival", label: "Arrival" },
-                    { key: "Selection", label: "Selected" },
-                    { key: "Rejection", label: "Rejected" },
-                    { key: "SelectionRate", label: "Sel %", render: (r) => pct(r.SelectionRate) },
-                  ]}
-                />
-              </div>
-              <div>
-                <p className="mb-2 text-sm font-bold text-slate-700">By Slot</p>
-                <SimpleTable
-                  rows={data?.slotTable || []}
-                  columns={[
-                    { key: "Name", label: "Slot" },
-                    { key: "TotalArrival", label: "Arrival" },
-                    { key: "Selection", label: "Selected" },
-                    { key: "SlaBreach", label: "SLA" },
-                    { key: "AvgWaitMinutes", label: "Avg Wait", render: (r) => mins(r.AvgWaitMinutes) },
-                  ]}
-                />
-              </div>
-            </div>
+            <TrendsTab
+              processTable={data?.processTable || []}
+              sourceTable={data?.sourceTable || []}
+              slotTable={data?.slotTable || []}
+              loading={loading}
+            />
           </TabsContent>
 
           {/* Rejections tab */}
           <TabsContent value="Rejections" className="mt-4">
-            <SimpleTable
-              rows={(data?.candidateRows || []).filter((r) => r._rejected || r._hardRejectReason)}
-              columns={[
-                { key: "CandidateID", label: "Candidate ID" },
-                { key: "FullName", label: "Candidate" },
-                { key: "Branch", label: "Branch" },
-                { key: "_endStage", label: "Stage" },
-                { key: "_hardRejectReason", label: "Hard reason" },
-                { key: "rejection_voc", label: "VOC" },
-              ]}
-              empty="No rejections in this period"
+            <RejectionsTab
+              candidateRows={data?.candidateRows || []}
+              loading={loading}
             />
           </TabsContent>
 
           {/* Recruiters tab */}
           <TabsContent value="Recruiters" className="mt-4">
-            <SimpleTable
-              rows={data?.recruiterTable || []}
-              columns={[
-                { key: "Recruiter", label: "Recruiter" },
-                { key: "Branch", label: "Branch" },
-                { key: "SourcedCount", label: "Sourced" },
-                { key: "AttendedCount", label: "Attended" },
-                { key: "SlaCompliancePercent", label: "SLA %", render: (r) => pct(r.SlaCompliancePercent) },
-                { key: "SelectionRate", label: "Sel %", render: (r) => pct(r.SelectionRate) },
-                { key: "AvgWaitMinutes", label: "Avg Wait", render: (r) => mins(r.AvgWaitMinutes) },
-                {
-                  key: "AttentionFlag",
-                  label: "Attention",
-                  render: (r) =>
-                    r.AttentionFlag ? (
-                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800">
-                        {String(r.AttentionFlag)}
-                      </span>
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    ),
-                },
-              ]}
-              empty="No recruiter data for this filter"
+            <RecruitersTab
+              recruiterTable={data?.recruiterTable || []}
+              loading={loading}
             />
           </TabsContent>
 
           {/* Sourcing tab */}
           <TabsContent value="Sourcing" className="mt-4">
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div>
-                <p className="mb-2 text-sm font-bold text-slate-700">By Source Channel</p>
-                <SimpleTable
-                  rows={data?.sourceTable || []}
-                  columns={[
-                    { key: "Name", label: "Source" },
-                    { key: "TotalArrival", label: "Arrival" },
-                    { key: "Selection", label: "Selected" },
-                    { key: "Rejection", label: "Rejected" },
-                    { key: "SelectionRate", label: "Sel %", render: (r) => pct(r.SelectionRate) },
-                  ]}
-                />
-              </div>
-              <div>
-                <p className="mb-2 text-sm font-bold text-slate-700">Reusable Pool</p>
-                <SimpleTable
-                  rows={data?.reusablePool || []}
-                  columns={[
-                    { key: "CandidateID", label: "Candidate ID" },
-                    { key: "FullName", label: "Candidate" },
-                    { key: "Branch", label: "Branch" },
-                    { key: "_candidateQualityLabel", label: "Quality" },
-                    { key: "_reusableReason", label: "Reusable reason" },
-                  ]}
-                  empty="No reusable candidates in pool"
-                />
-              </div>
-            </div>
+            <SourcingTab
+              sourceTable={data?.sourceTable || []}
+              reusablePool={data?.reusablePool || []}
+              loading={loading}
+            />
           </TabsContent>
 
           {/* Live Queue tab */}
           <TabsContent value="Live Queue" className="mt-4">
-            <SimpleTable
-              rows={data?.queueRows || []}
-              columns={[
-                { key: "QToken", label: "Token" },
-                { key: "CandidateID", label: "Candidate ID" },
-                { key: "FullName", label: "Candidate" },
-                { key: "Branch", label: "Branch" },
-                { key: "RoleApplied", label: "Role" },
-                { key: "RecruiterAssignedName", label: "Recruiter" },
-                { key: "CurrentStage", label: "Stage" },
-                { key: "WaitingMinutes", label: "Waiting", render: (r) => mins(r.WaitingMinutes) },
-                {
-                  key: "SLAFlag",
-                  label: "SLA",
-                  render: (r) =>
-                    r.SLAFlag ? (
-                      <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700">
-                        Breach
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-700">
-                        OK
-      </span>
-                    ),
-                },
-              ]}
-              empty="Queue is empty"
+            <LiveQueueTab
+              queueRows={data?.queueRows || []}
+              loading={loading}
             />
           </TabsContent>
 
-          {/* Candidate Journey tab */}
-          <TabsContent value="Journey" className="mt-4 space-y-4">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="mb-3 text-sm font-bold text-slate-700">Search candidate journey</p>
-              <div className="flex gap-3">
-                <input
-                  value={journeyQuery}
-                  onChange={(e) => setJourneyQuery(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") void runJourney(); }}
-                  placeholder="Candidate ID / QToken / mobile / email / name"
-                  className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-                />
-                <button
-                  onClick={() => void runJourney()}
-                  disabled={journeyLoading || !journeyQuery.trim()}
-                  className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white disabled:opacity-60"
-                >
-                  {journeyLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                  {journeyLoading ? "Searching…" : "Search"}
-                </button>
-              </div>
-              {journeyError && (
-                <div className="mt-2 flex items-center gap-2 text-sm text-rose-600">
-                  <AlertTriangle className="h-4 w-4" /> {journeyError}
-                </div>
-              )}
-            </div>
-            {journey && (
-              <>
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                  <Kpi label="Candidate" value={String((journey.candidate as AnyRow)?.FullName ?? "-")} foot={String((journey.candidate as AnyRow)?.CandidateID ?? (journey.candidate as AnyRow)?.candidate_code ?? "")} />
-                  <Kpi label="Stage" value={String((journey.candidate as AnyRow)?.CurrentStage ?? (journey.candidate as AnyRow)?.current_stage ?? "-")} foot={String((journey.candidate as AnyRow)?.Status ?? (journey.candidate as AnyRow)?.status ?? "")} />
-                  <Kpi label="Quality" value={String((journey.candidate as AnyRow)?._candidateQualityScore ?? 0)} foot={String((journey.candidate as AnyRow)?._candidateQualityLabel ?? "")} />
-                  <Kpi label="Handling" value={String((journey.candidate as AnyRow)?._handlingQualityScore ?? 0)} foot={String((journey.candidate as AnyRow)?._handlingQualityLabel ?? "")} />
-                </div>
-                <div className="grid gap-4 lg:grid-cols-2">
-                  <div>
-                    <p className="mb-2 text-sm font-bold text-slate-700">Stage Log</p>
-                    <SimpleTable
-                      rows={Array.isArray(journey.stageLogs) ? journey.stageLogs as AnyRow[] : []}
-                      columns={[
-                        { key: "from_stage", label: "From" },
-                        { key: "to_stage", label: "To" },
-                        { key: "stage_date", label: "Date" },
-                        { key: "remarks", label: "Remarks" },
-                      ]}
-                      empty="No stage transitions recorded"
-                    />
-                  </div>
-                  <div>
-                    <p className="mb-2 text-sm font-bold text-slate-700">Confirmations</p>
-                    <SimpleTable
-                      rows={Array.isArray(journey.confirmations) ? journey.confirmations as AnyRow[] : []}
-                      columns={[
-                        { key: "will_join", label: "Will Join" },
-                        { key: "hr_query", label: "HR Query" },
-                        { key: "process_name", label: "Process" },
-                        { key: "created_at", label: "Date" },
-                      ]}
-                      empty="No confirmations"
-                    />
-                  </div>
-                </div>
-              </>
-            )}
+          {/* Journey tab - Candidate 360° View */}
+          <TabsContent value="Journey" className="mt-4">
+            <JourneyTab />
           </TabsContent>
 
-          {/* Health tab */}
-          <TabsContent value="Health" className="mt-4 space-y-3">
-            {healthLoading ? (
-              <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">
-                <Loader2 className="h-5 w-5 animate-spin" /> Running health checks…
-              </div>
-            ) : health ? (
-              <>
-                <div
-                  className={`flex items-center gap-3 rounded-2xl border p-3 text-sm font-bold ${
-                    health.ok
-                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                      : "border-rose-200 bg-rose-50 text-rose-700"
-                  }`}
-                >
-                  {health.ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-                  Overall: {health.ok ? "All checks passed" : "One or more checks need attention"}
-                  <button
-                    onClick={() => void loadHealth()}
-                    className="ml-auto inline-flex items-center gap-1 rounded-lg border border-current px-2 py-1 text-xs font-bold opacity-70 hover:opacity-100"
-                  >
-                    <RefreshCcw className="h-3 w-3" /> Re-run
-                  </button>
-                </div>
-                <SimpleTable
-                  rows={Array.isArray(health.checks) ? health.checks as AnyRow[] : []}
-                  columns={[
-                    { key: "type", label: "Type" },
-                    { key: "name", label: "Check" },
-                    {
-                      key: "ok",
-                      label: "Status",
-                      render: (r) =>
-                        r.ok ? (
-                          <span className="flex items-center gap-1 font-bold text-emerald-600">
-                            <CheckCircle2 className="h-3.5 w-3.5" /> OK
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1 font-bold text-rose-600">
-                            <AlertTriangle className="h-3.5 w-3.5" /> Fix needed
-                          </span>
-                        ),
-                    },
-                    { key: "count", label: "Count" },
-                  ]}
-                  empty="No health check results"
-                />
-              </>
-            ) : (
-              <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">
-                <ActivitySquare className="h-5 w-5" /> Health check data will appear here once loaded.
-              </div>
-            )}
+          {/* Health tab - System Diagnostics */}
+          <TabsContent value="Health" className="mt-4">
+            <HealthTab />
           </TabsContent>
         </Tabs>
       </div>

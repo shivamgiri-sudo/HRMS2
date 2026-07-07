@@ -7,6 +7,7 @@ import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { atsFullParityService as svc } from "./atsFullParity.service.js";
 import { submitInterviewUpdate, resolveRecruiterForActor } from "./recruiterInterview.service.js";
+import { simpleAnalyticsService as analyticsService } from "./analytics-simple.service.js";
 import type { RowDataPacket } from "mysql2";
 
 export const atsFullParityRouter = Router();
@@ -215,5 +216,36 @@ atsFullParityRouter.post("/daily-report/send", requireRole("admin", "hr"), h(asy
 
 atsFullParityRouter.get("/health", requireRole("admin", "hr", "ceo"), h(async (_req, res) => {
   const data = await svc.healthCheck();
+  res.json({ success: true, data });
+}));
+
+// Analytics endpoints for enhanced command center
+atsFullParityRouter.get("/analytics/funnel", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
+  const data = await analyticsService.getHiringFunnel(req.query as Record<string, string>);
+  res.json({ success: true, data });
+}));
+
+atsFullParityRouter.get("/analytics/trends", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
+  const data = await analyticsService.getTrendsData(req.query as Record<string, string>);
+  res.json({ success: true, data });
+}));
+
+atsFullParityRouter.get("/analytics/recruiters", requireRole("admin", "hr", "manager", "branch_head", "ceo"), h(async (req: AuthenticatedRequest, res) => {
+  const data = await analyticsService.getRecruiterPerformance(req.query as Record<string, string>);
+  res.json({ success: true, data });
+}));
+
+atsFullParityRouter.get("/analytics/sources", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
+  const data = await analyticsService.getSourceAnalytics(req.query as Record<string, string>);
+  res.json({ success: true, data });
+}));
+
+atsFullParityRouter.get("/analytics/rejections", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
+  const data = await analyticsService.getRejectionAnalytics(req.query as Record<string, string>);
+  res.json({ success: true, data });
+}));
+
+atsFullParityRouter.get("/analytics/queue-realtime", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
+  const data = await analyticsService.getQueueMetrics(req.query as Record<string, string>);
   res.json({ success: true, data });
 }));

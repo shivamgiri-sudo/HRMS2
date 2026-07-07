@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { Link } from "react-router-dom";
 import {
   Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight,
-  Clock, Copy, Eye, FileText, Loader2, RefreshCw, Send, ShieldCheck, Upload, XCircle,
+  Clock, Copy, Download, Eye, FileText, Loader2, RefreshCw, Send, ShieldCheck, Upload, XCircle,
 } from "lucide-react";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -255,6 +255,23 @@ export default function EmployeeJoiningDocumentsPage() {
     }
   };
 
+  const downloadFile = async (fileId: string | null, fileName: string) => {
+    if (!fileId) return;
+    try {
+      const blob = await hrmsApi.getBlob(`/api/employees/${employeeId}/joining-documents/files/${fileId}/download`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName || "document.pdf";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError(err?.message || "Unable to download the document.");
+    }
+  };
+
   const uploadSupportFile = async (item: ChecklistItem, file: File | null) => {
     if (!file) return;
     setActionBusy(`upload-${item.id}`);
@@ -395,6 +412,15 @@ export default function EmployeeJoiningDocumentsPage() {
                                   className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30"
                                 >
                                   <Eye className="h-4 w-4" />
+                                </button>
+                                <button
+                                  title="Download document"
+                                  aria-label="Download document"
+                                  disabled={!item.latest_file_id}
+                                  onClick={e => { e.stopPropagation(); void downloadFile(item.latest_file_id, `${item.document_name}.pdf`); }}
+                                  className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30"
+                                >
+                                  <Download className="h-4 w-4" />
                                 </button>
                                 <label
                                   title="Upload document"

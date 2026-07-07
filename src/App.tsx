@@ -126,6 +126,7 @@ const NativePerformanceFeedbackTeamReports = lazy(() => import("./pages/NativePe
 const NativeEmployeeStatCard        = lazy(() => import("./pages/NativeEmployeeStatCard"));
 const NativeEmployee360             = lazy(() => import("./pages/NativeEmployee360"));
 const EmployeeJoiningDocumentsPage  = lazy(() => import("./pages/EmployeeJoiningDocumentsPage"));
+const JoiningDocumentsTrackerPage   = lazy(() => import("./pages/JoiningDocumentsTrackerPage"));
 const EmployeeEpfCompliancePage     = lazy(() => import("./pages/EmployeeEpfCompliancePage"));
 const PayrollEpfCompliancePage      = lazy(() => import("./pages/PayrollEpfCompliancePage"));
 const EmployeeDocumentEsignReviewPage = lazy(() => import("./pages/EmployeeDocumentEsignReviewPage"));
@@ -307,6 +308,7 @@ const App = () => (
               <Route path="/employees/:id/360" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployee360 /></Gate></ProtectedRoute>} />
               <Route path="/employees/:id" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployeeStatCard /></Gate></ProtectedRoute>} />
               <Route path="/employees/:employeeId/joining-documents" element={<ProtectedRoute roles={['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll', 'employee']}><EmployeeJoiningDocumentsPage /></ProtectedRoute>} />
+              <Route path="/ats/joining-documents-tracker" element={<ProtectedRoute roles={['admin', 'super_admin', 'hr', 'payroll_hr', 'branch_head']}><Gate pageCode="ATS_JOINING_DOCUMENTS_TRACKER"><JoiningDocumentsTrackerPage /></Gate></ProtectedRoute>} />
               <Route path="/employees/:employeeId/epf-compliance" element={<ProtectedRoute roles={['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll', 'employee']}><EmployeeEpfCompliancePage /></ProtectedRoute>} />
               <Route path="/onboarding" element={<ProtectedRoute roles={['admin','hr']}><Onboarding /></ProtectedRoute>} />
               <Route path="/onboarding-requests" element={<Navigate to="/onboarding?tab=requests" replace />} />
