@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 type CandidateRow = {
   candidateId: string;
@@ -764,13 +765,14 @@ export default function NativeATSRecruiterWorkspace() {
   const convRate = dailyStats?.conversion_rate ?? 0;
 
   return (
+    <DashboardLayout>
     <div className="rw-page">
       <style>{`
         .rw-page{min-height:100dvh;background:#f1f5f9;font-family:Arial,sans-serif;color:#0f172a}
         .rw-header{background:linear-gradient(135deg,#0f172a 0%,#1e3a8a 60%,#4c1d95 100%);color:#fff;padding:12px 20px 14px;position:relative}
         .rw-header h1{margin:0;font-size:22px;font-weight:800;letter-spacing:-0.3px}
         .rw-header p{margin:6px 0 0;font-size:13px;color:#bfdbfe;opacity:.85}
-        .rw-wrap{max-width:1200px;margin:16px auto 32px;padding:0 16px}
+        .rw-wrap{max-width:100%;margin:16px auto 32px;padding:0 16px}
         .rw-card{background:#fff;border:1px solid #e2e8f0;border-radius:20px;box-shadow:0 4px 24px rgba(15,23,42,.08);padding:14px;margin-bottom:14px}
         .rw-kpi-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px}
         @media(max-width:900px){.rw-kpi-grid{grid-template-columns:repeat(3,1fr)}}
@@ -1516,5 +1518,6 @@ export default function NativeATSRecruiterWorkspace() {
         </div>
       )}
     </div>
+    </DashboardLayout>
   );
 }

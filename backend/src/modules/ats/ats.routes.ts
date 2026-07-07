@@ -15,7 +15,7 @@ import multer from "multer";
 import path from "path";
 
 import { atsQueueService } from "./ats.queue.service.js";
-import { verifyRecruiter, resolveRecruiterForActor, getMyPendingCandidates, getSubmissionHistory, getRecruiterDailyStats } from "../ats-full-parity/recruiterInterview.service.js";
+import { verifyRecruiter, resolveRecruiterForActor, getMyPendingCandidates, getOtherRecruitersPendingCandidates, reassignCandidate, getSubmissionHistory, getRecruiterDailyStats } from "../ats-full-parity/recruiterInterview.service.js";
 import { persistCandidateFile } from "./candidate-file.service.js";
 import { joiningDocumentsTrackerRouter } from "./ats.joiningDocumentsTracker.routes.js";
 
@@ -399,6 +399,46 @@ atsRouter.get("/recruiter/daily-stats", requireRole("admin", "hr", "super_admin"
   }
   const stats = await getRecruiterDailyStats(recruiterName!, recruiterCode);
   return res.json({ success: true, data: stats });
+}));
+
+// GET /api/ats/recruiter/other-pending — candidates in same branch assigned to absent recruiters
+atsRouter.get("/recruiter/other-pending", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const profile = await resolveRecruiterForActor(req.authUser!.id);
+  if (!profile) {
+    return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
+  }
+  if (!profile.branch) {
+    return res.json({ success: true, data: [] });
+  }
+  const data = await getOtherRecruitersPendingCandidates(profile.name, profile.branch);
+  return res.json({ success: true, data, recruiter: profile });
+}));
+
+// GET /api/ats/recruiter-roster/active — list of active recruiters for reassignment dropdown
+atsRouter.get("/recruiter-roster/active", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { db } = await import("../../db/mysql.js");
+  const [rows] = await db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT id, name, recruiter_code, branch, email
+     FROM ats_recruiter_roster
+     WHERE active_status = 1
+     ORDER BY name ASC`,
+    []
+  );
+  return res.json({ success: true, data: rows });
+}));
+
+// PATCH /api/ats/candidates/:id/reassign — HR/Admin formal reassignment with audit
+atsRouter.patch("/candidates/:id/reassign", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { newRecruiterId, reason } = req.body;
+  if (!newRecruiterId || typeof newRecruiterId !== "string") {
+    return res.status(400).json({ success: false, message: "newRecruiterId is required" });
+  }
+  if (!reason || typeof reason !== "string" || !reason.trim()) {
+    return res.status(400).json({ success: false, message: "reason is required" });
+  }
+  const actorEmail = req.authUser!.email ?? req.authUser!.id;
+  await reassignCandidate(req.params.id, newRecruiterId, reason.trim(), actorEmail);
+  return res.json({ success: true, message: "Candidate reassigned successfully" });
 }));
 
 // Joining Documents Tracker routes

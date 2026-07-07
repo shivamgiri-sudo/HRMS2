@@ -211,6 +211,7 @@ export interface PendingCandidate {
   branch: string | null;
   pendingMinutes: number;
   status: string;
+  recruiterAssignedName?: string | null;
 }
 
 export async function getMyPendingCandidates(recruiterName?: string): Promise<PendingCandidate[]> {
@@ -227,6 +228,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
        applied_for_process,
        applied_for_branch,
        status,
+       recruiter_assigned_name,
        TIMESTAMPDIFF(MINUTE,
          CONCAT(COALESCE(created_date, DATE(created_at)), ' ', COALESCE(created_time, TIME(created_at))),
          CONVERT_TZ(NOW(), @@session.time_zone, '+05:30')
@@ -248,6 +250,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
     branch: r.applied_for_branch ?? null,
     pendingMinutes: Number(r.pending_minutes ?? 0),
     status: r.status ?? "Waiting",
+    recruiterAssignedName: (r as any).recruiter_assigned_name ?? null,
   }));
 }
 
@@ -313,6 +316,108 @@ export async function getRecruiterDailyStats(
   return rows[0] ?? { total_today: 0, selected_today: 0, rejected_today: 0, noshow_today: 0, hold_today: 0, conversion_rate: 0 };
 }
 
+// ── Other-recruiters pending candidates (for substitute flow) ─────────────────
+
+export async function getOtherRecruitersPendingCandidates(
+  excludeRecruiterName: string,
+  branch: string
+): Promise<PendingCandidate[]> {
+  const [rows] = await db.execute<PendingCandidateRow[]>(
+    `SELECT
+       id,
+       candidate_code,
+       full_name,
+       mobile,
+       q_token,
+       applied_for_process,
+       applied_for_branch,
+       status,
+       recruiter_assigned_name,
+       TIMESTAMPDIFF(MINUTE,
+         CONCAT(COALESCE(created_date, DATE(created_at)), ' ', COALESCE(created_time, TIME(created_at))),
+         CONVERT_TZ(NOW(), @@session.time_zone, '+05:30')
+       ) AS pending_minutes
+     FROM ats_candidate
+     WHERE active_status = 1
+       AND status = 'Waiting'
+       AND recruiter_assigned_name IS NOT NULL
+       AND recruiter_assigned_name != ''
+       AND recruiter_assigned_name != ?
+       AND applied_for_branch = ?
+     ORDER BY pending_minutes DESC`,
+    [excludeRecruiterName, branch]
+  );
+  return rows.map((r) => ({
+    candidateId: r.id,
+    candidateCode: r.candidate_code ?? r.id,
+    fullName: r.full_name ?? "Candidate",
+    mobile: r.mobile ?? "",
+    qToken: r.q_token ?? null,
+    process: r.applied_for_process ?? null,
+    branch: r.applied_for_branch ?? null,
+    pendingMinutes: Number(r.pending_minutes ?? 0),
+    status: r.status ?? "Waiting",
+    recruiterAssignedName: (r as any).recruiter_assigned_name ?? null,
+  }));
+}
+
+// ── Formal HR reassignment ────────────────────────────────────────────────────
+
+export async function reassignCandidate(
+  candidateId: string,
+  newRecruiterId: string,
+  reason: string,
+  actorEmail: string
+): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, recruiter_id, recruiter_assigned_id, recruiter_assigned_name
+       FROM ats_candidate WHERE id = ? LIMIT 1`,
+    [candidateId]
+  );
+  if (!rows.length) err("Candidate not found", 404);
+  const candidate = rows[0] as { id: string; recruiter_id?: string | null; recruiter_assigned_id?: string | null; recruiter_assigned_name?: string | null };
+
+  const [recRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, name FROM ats_recruiter_roster WHERE id = ? AND active_status = 1 LIMIT 1`,
+    [newRecruiterId]
+  );
+  if (!recRows.length) err("Target recruiter not found or inactive", 404);
+  const newRec = recRows[0] as { id: string; name: string };
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.execute(
+      `UPDATE ats_candidate
+         SET recruiter_id = ?,
+             recruiter_assigned_id = ?,
+             recruiter_assigned_name = ?,
+             recruiter_assigned_at = NOW()
+       WHERE id = ?`,
+      [newRec.id, newRec.id, newRec.name, candidateId]
+    );
+    await conn.execute(
+      `INSERT INTO ats_recruiter_assignment_log
+         (id, candidate_id, old_recruiter_id, new_recruiter_id, assignment_reason, assigned_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        randomUUID(),
+        candidateId,
+        candidate.recruiter_assigned_id ?? candidate.recruiter_id ?? null,
+        newRec.id,
+        reason || "HR reassignment",
+        actorEmail,
+      ]
+    );
+    await conn.commit();
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
+  }
+}
+
 // ── Validation ────────────────────────────────────────────────────────────────
 
 interface SubmissionInput {
@@ -362,6 +467,8 @@ interface SubmissionInput {
   reportingTiming?: string;
   otDetails?: string;
   performanceIncentives?: string;
+  substituteFlag?: boolean;
+  substituteReason?: string;
 }
 
 interface RecruiterRosterRow extends RowDataPacket {
@@ -386,6 +493,7 @@ interface PendingCandidateRow extends RowDataPacket {
   applied_for_branch: string | null;
   status: string | null;
   pending_minutes: number | null;
+  recruiter_assigned_name?: string | null;
 }
 
 interface SubmissionHistoryRow extends RowDataPacket {
@@ -636,7 +744,7 @@ export async function submitInterviewUpdate(
     const candidate = candRows[0];
     if (!candidate) err("Candidate not found", 404);
 
-    // Ownership check
+    // Ownership check — allow substitute with explicit flag + reason
     const assignedRecruiterIds = [
       candidate.recruiter_id,
       candidate.recruiter_assigned_id,
@@ -645,7 +753,9 @@ export async function submitInterviewUpdate(
     const assignedById = assignedRecruiterIds.length > 0 && assignedRecruiterIds.includes(String(recruiterProfile.id));
     const assignedByName = candidate.recruiter_assigned_name && candidate.recruiter_assigned_name === recruiterProfile.name;
     if ((assignedRecruiterIds.length > 0 || candidate.recruiter_assigned_name) && !assignedById && !assignedByName) {
-      err("This candidate is assigned to a different recruiter", 403);
+      if (!input.substituteFlag || !input.substituteReason?.trim()) {
+        err("This candidate is assigned to a different recruiter. Provide a substitute reason to proceed.", 403);
+      }
     }
 
     // QToken consistency: if we matched by candidateId, ensure qToken (if given) belongs to this candidate
@@ -731,6 +841,8 @@ export async function submitInterviewUpdate(
     const callingLastRemarks = nvl(input.callingLastRemarks) ?? candidate.calling_last_remarks ?? null;
     const callingLineupDate = nvl(input.callingLineupDate) ?? candidate.calling_lineup_date ?? null;
     const callingTurnupStatus = nvl(input.callingTurnupStatus) ?? candidate.calling_turnup_status ?? null;
+    const substituteInterviewerId = input.substituteFlag && input.substituteReason?.trim() ? recruiterProfile.id : null;
+    const substituteReason = input.substituteFlag && input.substituteReason?.trim() ? input.substituteReason.trim() : null;
 
     if (isUpdate) {
       await conn.execute(
@@ -781,6 +893,8 @@ export async function submitInterviewUpdate(
            reporting_timing = ?,
            ot_details = ?,
            performance_incentives = ?,
+           substitute_interviewer_id = COALESCE(?, substitute_interviewer_id),
+           substitute_reason = COALESCE(?, substitute_reason),
            previous_submitted_time = submitted_at,
            last_walkin_end_stage = walkin_end_stage,
            last_final_decision = final_decision,
@@ -833,6 +947,8 @@ export async function submitInterviewUpdate(
           nvl(input.reportingTiming),
           nvl(input.otDetails),
           nvl(input.performanceIncentives),
+          substituteInterviewerId,
+          substituteReason,
           submissionId,
         ]
       );
@@ -853,8 +969,9 @@ export async function submitInterviewUpdate(
             calling_activity_id, candidate_called_at, interview_started_at, calling_source_snapshot,
             calling_last_remarks, calling_lineup_date, calling_turnup_status,
             offer_salary, offer_doj, reporting_timing, ot_details, performance_incentives,
+            substitute_interviewer_id, substitute_reason,
             submitted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
           submissionId,
           candidate.id,
@@ -905,6 +1022,8 @@ export async function submitInterviewUpdate(
           nvl(input.reportingTiming),
           nvl(input.otDetails),
           nvl(input.performanceIncentives),
+          substituteInterviewerId,
+          substituteReason,
         ]
       );
     }
