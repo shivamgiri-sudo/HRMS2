@@ -146,13 +146,14 @@ async function getAccessToken() {
     {
       timeout: env.LUCKPAY_TIMEOUT_MS,
       headers: {
-        Authorization: `Basic ${env.LUCKPAY_BASIC_TOKEN}`,
+        Authorization: `Basic ${String(env.LUCKPAY_BASIC_TOKEN ?? "").replace(/\s+/g, "").trim()}`,
       },
     }
   ));
 
   const payload = response.data?.data ?? response.data ?? {};
-  const accessToken = String(payload.accessToken ?? payload.access_token ?? payload.token ?? "");
+  // Sanitize the token — strip any whitespace/newlines before using in HTTP headers.
+  const accessToken = String(payload.accessToken ?? payload.access_token ?? payload.token ?? "").replace(/\s+/g, "").trim();
   if (!accessToken) {
     throw Object.assign(new Error("Luckpay auth token response did not include an access token."), { statusCode: 502 });
   }
@@ -174,7 +175,7 @@ async function requestJson<T>(path: string, payload: Record<string, unknown>) {
     {
       timeout: env.LUCKPAY_TIMEOUT_MS,
       headers: {
-        Authorization: env.LUCKPAY_CLIENT_ID,
+        Authorization: String(env.LUCKPAY_CLIENT_ID ?? "").replace(/\s+/g, "").trim(),
         "X-Access-Token": `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
@@ -191,7 +192,7 @@ async function requestMultipart<T>(path: string, form: FormData) {
     {
       timeout: env.LUCKPAY_TIMEOUT_MS,
       headers: {
-        Authorization: env.LUCKPAY_CLIENT_ID,
+        Authorization: String(env.LUCKPAY_CLIENT_ID ?? "").replace(/\s+/g, "").trim(),
         "X-Access-Token": `Bearer ${accessToken}`,
       },
       maxBodyLength: Infinity,

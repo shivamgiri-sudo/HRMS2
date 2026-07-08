@@ -27,6 +27,7 @@ import {
   waiveCheck,
   dispatchToVendor,
   updateVendorResult,
+  syncBgvChecksToReport,
 } from "./bgv-verification.service.js";
 import { overrideNameMatchReview, runNameMatchCheck } from "./bgv.enhanced.service.js";
 import { getConfiguredBgvProviderAdapter, resetBgvProviderAdapterCache } from "./bgv-provider.adapter.js";
@@ -530,6 +531,14 @@ router.put("/admin/provider-config", requireAuth, requireRole("admin"), h(async 
   resetBgvProviderAdapterCache();
 
   res.json({ success: true, message: "BGV provider configuration saved. Adapter reinitialized." });
+}));
+
+// ── Sync API check results → BGV report ──────────────────────────────────────
+router.post("/bgv/sync-report", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { candidate_id } = req.body;
+  if (!candidate_id) return res.status(400).json({ success: false, message: "candidate_id required" });
+  const result = await syncBgvChecksToReport(String(candidate_id));
+  res.json({ success: true, ...result });
 }));
 
 export default router;

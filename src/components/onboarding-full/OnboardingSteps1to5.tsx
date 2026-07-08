@@ -39,9 +39,10 @@ const INDIA_STATES = [
 const REQUIRED_DOCS = [
   { type: "Aadhaar", label: "Aadhaar Card", required: true },
   { type: "PAN Card", label: "PAN Card", required: true },
-  { type: "10th Marksheet", label: "10th Marksheet / Certificate", required: true },
+  { type: "Address Proof", label: "Address Proof", required: true },
   { type: "Cancelled Cheque", label: "Cancelled Cheque / Bank Passbook", required: true },
   { type: "Passport Photo", label: "Passport Size Photo", required: true },
+  { type: "10th Marksheet", label: "10th Marksheet / Certificate (if applicable)", required: false },
   { type: "12th Marksheet", label: "12th Marksheet (if applicable)", required: false },
   { type: "Degree Certificate", label: "Degree / Diploma Certificate (if applicable)", required: false },
   { type: "Experience Letter", label: "Experience Letter (if experienced)", required: false },
@@ -493,12 +494,12 @@ export function Step3AddressKyc({
           <F label="PAN Number" value={employee.panNumber} onChange={(v) => upd("panNumber", v.toUpperCase())}
             required placeholder="ABCDE1234F"
             error={!panOk ? "Invalid PAN format (e.g. ABCDE1234F)" : ""}
-            helpText={digilockerStatus === "documents_received" ? "✓ Auto-filled from DigiLocker" : "10-character PAN — required for tax compliance"}
+            helpText={digilockerStatus === "documents_received" ? "✓ Auto-filled from DigiLocker" : "Re-enter each session — PAN is not shown after save (stored encrypted)"}
             prefilled={digilockerStatus === "documents_received"} />
           <F label="Aadhaar Number" value={employee.aadhaarNumber} onChange={(v) => upd("aadhaarNumber", v.replace(/\D/g, ""))}
             mode="numeric" required placeholder="12-digit number"
             error={!aadhaarOk ? "Aadhaar must be exactly 12 digits" : ""}
-            helpText={digilockerStatus === "documents_received" ? "✓ Auto-filled from DigiLocker" : "Your 12-digit Aadhaar — not displayed after save"}
+            helpText={digilockerStatus === "documents_received" ? "✓ Auto-filled from DigiLocker" : "Re-enter each session — Aadhaar is not shown after save (stored encrypted)"}
             prefilled={digilockerStatus === "documents_received"} />
           <F label="Passport Number" value={employee.passportNo} onChange={(v) => upd("passportNo", v.toUpperCase())}
             placeholder="Optional" helpText="Leave blank if not applicable" />

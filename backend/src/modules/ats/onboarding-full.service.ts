@@ -820,12 +820,13 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
   await db.execute(
     `INSERT INTO candidate_onboarding_bank_detail
        (id, candidate_id, bank_name, branch_name, account_holder_name, account_no_masked,
-        account_no_hash, ifsc_code, account_type, cancelled_cheque_document_id, verification_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'not_started')
+        account_no_hash, ifsc_code, account_type, cancelled_cheque_document_id, name_on_cheque, verification_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'not_started')
      ON DUPLICATE KEY UPDATE
        bank_name = VALUES(bank_name), branch_name = VALUES(branch_name), account_holder_name = VALUES(account_holder_name),
        account_no_masked = VALUES(account_no_masked), account_no_hash = VALUES(account_no_hash), ifsc_code = VALUES(ifsc_code),
        account_type = VALUES(account_type), cancelled_cheque_document_id = VALUES(cancelled_cheque_document_id),
+       name_on_cheque = VALUES(name_on_cheque),
        updated_at = NOW()`,
     [
       id,
@@ -838,6 +839,7 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
       String(input.ifscCode ?? input.bank_ifsc ?? "").trim().toUpperCase() || null,
       input.accountType ?? null,
       input.cancelledChequeDocumentId ?? null,
+      String(input.nameOnCheque ?? input.name_on_cheque ?? "").trim() || null,
     ]
   );
 

@@ -229,7 +229,9 @@ app.get("/", (_req, res) => res.json({ success: true, service: "MCN HRMS Backend
 
 app.use("/api/auth", authRouter);
 app.use("/api/auth", passwordResetRouter);
-app.use("/api/mock-digilocker", mockDigilockerRouter);
+if (process.env.NODE_ENV !== "production") {
+  app.use("/api/mock-digilocker", mockDigilockerRouter);
+}
 app.use("/api/auth/launch", authLaunchRouter);
 app.use("/api/health", healthRouter);
 app.use("/api/admin", roleAssignmentRouter);

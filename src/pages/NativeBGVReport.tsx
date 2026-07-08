@@ -157,6 +157,7 @@ export default function NativeBGVReport() {
   const [selected, setSelected] = useState<CandidateSummary | null>(null);
   const [report, setReport] = useState<BGVReport | null>(null);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [verifying, setVerifying] = useState('');
   const [initiatingPortal, setInitiatingPortal] = useState(false);
   const [search, setSearch] = useState('');
@@ -206,6 +207,21 @@ export default function NativeBGVReport() {
       alert(e?.message ?? 'Save failed');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const syncFromApiResults = async () => {
+    if (!selected || !report) return;
+    setSyncing(true);
+    try {
+      await hrmsApi.post('/api/ats/bgv/sync-report', { candidate_id: selected.id });
+      const r = await hrmsApi.get<any>(`/api/ats/bgv/report?candidateId=${selected.id}`);
+      if (r?.data) setReport(r.data);
+      alert('Synced API check results into report.');
+    } catch (e: any) {
+      alert(e?.message ?? 'Sync failed');
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -330,6 +346,12 @@ export default function NativeBGVReport() {
             </Button>
           )}
           <Button variant="outline" onClick={exportPDF}><Download className="w-4 h-4 mr-1" /> Export PDF</Button>
+          {!report.locked && (
+            <Button variant="outline" onClick={() => void syncFromApiResults()} disabled={syncing}
+              className="border-teal-300 text-teal-700 hover:bg-teal-50" title="Pull real API check results into this report">
+              <RefreshCw className={`w-4 h-4 mr-1 ${syncing ? "animate-spin" : ""}`} /> Sync API Results
+            </Button>
+          )}
           {!report.locked && <Button variant="outline" onClick={() => void saveReport(false)} disabled={saving}>Save Draft</Button>}
           {!report.locked && (
             <Button onClick={() => void saveReport(true)} disabled={saving} className="bg-slate-900 text-white hover:bg-slate-700">

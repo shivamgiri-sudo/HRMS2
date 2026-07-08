@@ -775,9 +775,17 @@ export function getBgvProviderAdapter(): BgvProviderAdapter {
     case "digio":
       _adapterCache = new DigioBgvAdapter();
       break;
+    case "befisc_luckpay":
+      _adapterCache = new CompositeBgvProviderAdapter({
+        bgv_provider: "befisc_luckpay",
+        luckpay_api_url:     env.LUCKPAY_BASE_URL,
+        luckpay_basic_token: env.LUCKPAY_BASIC_TOKEN,
+        luckpay_client_id:   env.LUCKPAY_CLIENT_ID,
+      } as BgvDbConfig);
+      break;
     default:
       if (env.NODE_ENV === "production") {
-        console.warn("[BGV] BGV_PROVIDER=mock in production — set BGV_PROVIDER=infinity_ai or digio for live verification.");
+        console.warn("[BGV] BGV_PROVIDER=mock in production — set BGV_PROVIDER=befisc_luckpay, infinity_ai or digio for live verification.");
       }
       _adapterCache = new MockBgvProviderAdapter();
   }
@@ -855,7 +863,9 @@ export function buildAdapterFromDbConfig(cfg: BgvDbConfig): BgvProviderAdapter {
 }
 
 function cleanSettingValue(value: unknown): string | undefined {
-  const str = String(value ?? "").trim();
+  // Strip all whitespace including embedded newlines/carriage-returns that cause
+  // "Invalid header value char" when credential tokens are pasted via the Admin UI.
+  const str = String(value ?? "").replace(/\s+/g, "").trim();
   if (!str || str === "••••••••") return undefined;
   return str;
 }

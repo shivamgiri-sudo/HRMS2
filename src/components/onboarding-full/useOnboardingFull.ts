@@ -194,6 +194,7 @@ export function useOnboardingFull(token: string) {
       const sp = s.saved_profile ?? (s.token as any).saved_profile ?? {};
       setStatus(s);
       setOtpVerified(Boolean(sp.otp_verified));
+      setPrivacyConsentAccepted(Boolean(sp.dpdp_consent));
 
       // Try BGV status separately — if it fails we note it and continue (non-blocking)
       let bgvConsent = false;
@@ -488,6 +489,12 @@ export function useOnboardingFull(token: string) {
   };
 
   const verifyBank = async () => {
+    // PAN must be saved in Step 3 before bank verification (Luckpay penny-drop requires PAN).
+    const panSaved = Boolean((status as any)?.saved_profile?.pan_number_masked);
+    if (!panSaved) {
+      setError("Please save your PAN number in Step 3 (KYC & Address) before verifying your bank account.");
+      return;
+    }
     setSaving(true);
     try { await hrmsApi.post(`${BGV}/verify/bank`, { token, accountNo: bank.accountNo, ifscCode: bank.ifscCode, accountHolderName: bank.accountHolderName }); await load(); }
     catch (e: any) { setError(e?.message || "Bank verification failed"); }

@@ -118,6 +118,11 @@ export async function saveBgvConsentByToken(token: string, input: { consentText?
      VALUES (?, ?, 'BGV-DPDP-v1', ?, ?, 'granted', ?, ?)`,
     [randomUUID(), candidateId, consentTextHash, input.purposes ? JSON.stringify(input.purposes) : null, meta?.ip ?? null, meta?.userAgent ?? null]
   );
+  // Mirror consent flag to onboarding profile so getOnboardingBlockers reads it correctly.
+  await db.execute(
+    `UPDATE candidate_onboarding_profile SET bgv_consent = 1, updated_at = NOW() WHERE candidate_id = ?`,
+    [candidateId]
+  );
   await logEvent(candidateId, "BGV_CONSENT_GRANTED", { status: "granted", purposes: input.purposes }, null, { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent });
   return getBgvStatusForCandidate(candidateId);
 }
@@ -258,7 +263,7 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
        (id, candidate_id, account_no_last4, account_no_hash, ifsc_code, input_account_holder_name,
         provider_account_holder_name, name_match_score, verification_method, provider_key, provider_reference_id,
         verification_status, result_json, verified_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'mock', ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       randomUUID(),
       candidateId,
@@ -268,6 +273,7 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
       accountHolderName ?? null,
       result.matchedName ?? null,
       result.matchScore ?? null,
+      result.providerKey ?? "unknown",
       result.providerKey,
       result.providerReferenceId,
       result.status,
@@ -738,4 +744,58 @@ export async function listBgvQueueScoped(status: string | undefined, scopeClause
     [status ?? null, status ?? null, ...scopeClause.params]
   );
   return rows;
+}
+
+/**
+ * Sync real API check results from candidate_bgv_check into candidate_bgv_report.
+ * Only updates status columns that have an actual API result — does not overwrite
+ * locked reports or manually set remarks.
+ */
+export async function syncBgvChecksToReport(candidateId: string): Promise<{ synced: number }> {
+  const [checks] = await db.execute<RowDataPacket[]>(
+    `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ? AND deleted_at IS NULL`,
+    [candidateId]
+  );
+
+  if (!checks.length) return { synced: 0 };
+
+  const columnMap: Record<string, string> = {
+    pan:        "pan_status",
+    bank:       "bank_status",
+    aadhaar:    "aadhaar_status",
+    court:      "criminal_status",
+    education:  "education_status",
+    employment: "employment_status",
+    address:    "address_status",
+  };
+
+  const statusMap: Record<string, string> = {
+    verified:      "passed",
+    mismatch:      "failed",
+    failed:        "failed",
+    manual_review: "discrepancy",
+    pending:       "pending",
+    initiated:     "pending",
+  };
+
+  const setClauses: string[] = [];
+  const updateParams: unknown[] = [];
+  for (const row of checks as RowDataPacket[]) {
+    const col = columnMap[String(row.check_type)];
+    if (!col) continue;
+    const mapped = statusMap[String(row.status)] ?? "pending";
+    setClauses.push(`${col} = IF(locked = 1, ${col}, ?)`);
+    updateParams.push(mapped);
+  }
+
+  if (!setClauses.length) return { synced: 0 };
+
+  updateParams.push(candidateId);
+  await db.execute(
+    `INSERT INTO candidate_bgv_report (candidate_id) VALUES (?)
+     ON DUPLICATE KEY UPDATE ${setClauses.join(", ")}, updated_at = NOW()`,
+    [candidateId, ...updateParams]
+  );
+
+  return { synced: setClauses.length };
 }
