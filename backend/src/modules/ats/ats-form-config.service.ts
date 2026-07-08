@@ -169,9 +169,9 @@ export const atsFormConfigService = {
     return {
       fields:                   configMap['formFields']             ?? DEFAULT_FIELDS,
       recruiterOptions,
-      recruiterDetails,         // NEW: Full recruiter contact details
+      recruiterDetails,
       branchOptions:            branchOptions.length > 0 ? branchOptions : ['Mumbai','Delhi','Bangalore'],
-      branchAliases,            // NEW: Branch display names
+      branchAliases,
       roleOptions:              configMap['roleOptions']             ?? DEFAULT_OPTIONS.roleOptions,
       educationOptions:         configMap['educationOptions']        ?? DEFAULT_OPTIONS.educationOptions,
       experienceOptions:        configMap['experienceOptions']       ?? DEFAULT_OPTIONS.experienceOptions,
@@ -180,6 +180,11 @@ export const atsFormConfigService = {
       genderOptions:            configMap['genderOptions']           ?? DEFAULT_OPTIONS.genderOptions,
       yesNoOptions:             ['Yes','No'],
       companyName:              'Mas Callnet India Pvt Ltd',
+      hiringProcessOptions:     Array.isArray(configMap['hiringProcessOptions'])     ? configMap['hiringProcessOptions']     as string[] : [],
+      hiringSourceOptions:      Array.isArray(configMap['hiringSourceOptions'])      ? configMap['hiringSourceOptions']      as string[] : [],
+      hiringPositionOptions:    Array.isArray(configMap['hiringPositionOptions'])    ? configMap['hiringPositionOptions']    as string[] : [],
+      hiringWpGroupOptions:     Array.isArray(configMap['hiringWpGroupOptions'])     ? configMap['hiringWpGroupOptions']     as string[] : [],
+      hiringCallingOutcomeOptions: Array.isArray(configMap['hiringCallingOutcomeOptions']) ? configMap['hiringCallingOutcomeOptions'] as string[] : [],
     };
   },
 

@@ -340,7 +340,7 @@ export default function NativeATSRecruiterWorkspace() {
   const [otherPendingOpen, setOtherPendingOpen] = useState(false);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [dailyStats, setDailyStats] = useState<DailyStats | null>(null);
-  const [config] = useState<Config>(DEFAULT_CONFIG);
+  const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [selected, setSelected] = useState<CandidateRow | null>(null);
   const [interviewers, setInterviewers] = useState<Array<{ id: string; name: string; branch_name?: string | null; designation_name?: string | null }>>([]);
   const [interviewerSearch, setInterviewerSearch] = useState("");
@@ -504,11 +504,30 @@ export default function NativeATSRecruiterWorkspace() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  const loadConfig = async () => {
+    try {
+      // Use the public bootstrap (no actor context required) to get DB-managed option lists.
+      // Falls back to DEFAULT_CONFIG values already in state if the call fails.
+      const res = await hrmsApi.get<{ success: boolean; data: any }>(
+        "/api/ats/form-config/bootstrap"
+      );
+      const d = res.data ?? {};
+      setConfig(prev => ({
+        ...prev,
+        ...(Array.isArray(d.hiringProcessOptions) && d.hiringProcessOptions.length > 0
+          ? { processOptions: d.hiringProcessOptions }
+          : {}),
+      }));
+    } catch {
+      // Non-critical — fallback to DEFAULT_CONFIG.processOptions already in state
+    }
+  };
+
   const loadWorkspace = async () => {
     setLoading(true);
     setMsg("Loading workspace…");
     try {
-      await Promise.all([loadPending(), loadOtherPending(), loadHistory(), loadDailyStats()]);
+      await Promise.all([loadPending(), loadOtherPending(), loadHistory(), loadDailyStats(), loadConfig()]);
       setMsg("");
     } catch (err: any) {
       setMsg(err?.response?.data?.message || err.message || "Unable to load recruiter workspace");

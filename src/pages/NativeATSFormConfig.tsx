@@ -236,9 +236,16 @@ function OptionsTab({ optionMap, loading, onSave }: {
   const [saving, setSaving] = useState(false);
 
   React.useEffect(() => {
-    if (Object.keys(optionMap).length > 0 && Object.keys(localOptions).length === 0) {
-      setLocalOptions({ ...optionMap });
-    }
+    if (Object.keys(optionMap).length === 0) return;
+    setLocalOptions(prev => {
+      // Pull in any DB keys not yet present in local state (new groups, first load, etc.)
+      // without overwriting keys the user has already edited this session.
+      const missing: Record<string, string[]> = {};
+      for (const k of Object.keys(optionMap)) {
+        if (!(k in prev)) missing[k] = optionMap[k];
+      }
+      return Object.keys(missing).length > 0 ? { ...prev, ...missing } : prev;
+    });
   }, [optionMap]);
 
   const current = localOptions[selectedKey] ?? [];
