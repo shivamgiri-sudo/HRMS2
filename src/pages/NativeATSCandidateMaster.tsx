@@ -139,7 +139,10 @@ const STAGE_RANK: Record<string, number> = {
 
 const fmt = (value?: string) => {
   if (!value) return "-";
-  const d = new Date(value);
+  // MySQL returns bare "YYYY-MM-DD HH:mm:ss" (no timezone); treat as UTC so
+  // toLocaleString("en-IN") converts correctly to IST for display.
+  const normalized = value.includes("T") ? value : value.replace(" ", "T") + "Z";
+  const d = new Date(normalized);
   if (Number.isNaN(d.getTime())) return value;
   return d.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
 };
