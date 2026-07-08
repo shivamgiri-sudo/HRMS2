@@ -634,4 +634,93 @@ router.get("/report/full", requireAuth, requireRole("admin", "hr"), h(async (req
   });
 }));
 
+// ── BGV API Monitor Routes ────────────────────────────────────────────────────
+// Real-time monitoring of BGV API calls and provider status
+
+router.get("/provider-status", requireAuth, requireRole("admin", "hr"), h(async (_req: Request, res: Response) => {
+  const adapter = await getConfiguredBgvProviderAdapter();
+  const runtime = (adapter as any).getRuntimeStatus?.() || null;
+  return res.json({ success: true, data: runtime });
+}));
+
+router.get("/api-logs", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const limit = Math.min(Number(req.query.limit) || 100, 500);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT l.*, c.full_name AS candidate_name, c.candidate_code
+       FROM candidate_bgv_api_request_log l
+       LEFT JOIN ats_candidate c ON c.id = l.candidate_id
+      ORDER BY l.created_at DESC
+      LIMIT ?`,
+    [limit]
+  );
+  return res.json({ success: true, data: rows });
+}));
+
+router.get("/api-stats", requireAuth, requireRole("admin", "hr"), h(async (_req: Request, res: Response) => {
+  const [todayRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) as total, SUM(success_flag) as successful, AVG(duration_ms) as avg_duration,
+            SUM(CASE WHEN provider_key = 'mock' THEN 1 ELSE 0 END) as mock_count,
+            SUM(CASE WHEN provider_key != 'mock' THEN 1 ELSE 0 END) as real_count
+       FROM candidate_bgv_api_request_log
+      WHERE DATE(created_at) = CURDATE()`
+  );
+
+  const [weekRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) as total
+       FROM candidate_bgv_api_request_log
+      WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)`
+  );
+
+  const [monthRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) as total
+       FROM candidate_bgv_api_request_log
+      WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
+  );
+
+  const [endpointRows] = await db.execute<RowDataPacket[]>(
+    `SELECT endpoint_key, COUNT(*) as count
+       FROM candidate_bgv_api_request_log
+      WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+      GROUP BY endpoint_key
+      ORDER BY count DESC`
+  );
+
+  const today = (todayRows as RowDataPacket[])[0] || {};
+  const week = (weekRows as RowDataPacket[])[0] || {};
+  const month = (monthRows as RowDataPacket[])[0] || {};
+
+  const callsByEndpoint: Record<string, number> = {};
+  for (const row of endpointRows as RowDataPacket[]) {
+    callsByEndpoint[String(row.endpoint_key)] = Number(row.count);
+  }
+
+  return res.json({
+    success: true,
+    data: {
+      totalCallsToday: Number(today.total || 0),
+      totalCallsWeek: Number(week.total || 0),
+      totalCallsMonth: Number(month.total || 0),
+      successRate: today.total > 0 ? (Number(today.successful || 0) / Number(today.total)) * 100 : 100,
+      avgDurationMs: Math.round(Number(today.avg_duration || 0)),
+      mockCallsCount: Number(today.mock_count || 0),
+      realCallsCount: Number(today.real_count || 0),
+      callsByEndpoint,
+    },
+  });
+}));
+
+router.post("/test-connection", requireAuth, requireRole("admin", "hr"), h(async (_req: Request, res: Response) => {
+  try {
+    const adapter = await getConfiguredBgvProviderAdapter();
+    // Attempt a lightweight test (e.g., check runtime status)
+    const runtime = (adapter as any).getRuntimeStatus?.();
+    if (!runtime || runtime.enabled === false) {
+      throw new Error("BGV provider is not enabled or configured");
+    }
+    return res.json({ success: true, message: "BGV provider connection test passed", data: runtime });
+  } catch (error: any) {
+    return res.status(502).json({ success: false, message: error.message || "Connection test failed" });
+  }
+}));
+
 export default router;
