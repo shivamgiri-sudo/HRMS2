@@ -77,8 +77,8 @@ async function assertOnboardingCandidateScope(req: AuthenticatedRequest, candida
     req.authUser!.id,
     [...scopedRoles],
     {
-      branchId: candidate.applied_for_branch ? String(candidate.applied_for_branch) : undefined,
-      processId: candidate.applied_for_process ? String(candidate.applied_for_process) : undefined,
+      branchId: candidate.branch_id_resolved ? String(candidate.branch_id_resolved) : undefined,
+      processId: candidate.process_id_resolved ? String(candidate.process_id_resolved) : undefined,
     },
     { allowAdminBypass: true, requireScopeForNonAdmin: true }
   );

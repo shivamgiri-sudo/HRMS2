@@ -1130,9 +1130,17 @@ export async function deleteOnboardingDocument(token: string, documentId: string
 
 export async function getOnboardingCandidateScope(candidateId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, applied_for_branch, applied_for_process
-       FROM ats_candidate
-       WHERE id = ?
+    `SELECT c.id,
+            c.applied_for_branch,
+            c.applied_for_process,
+            COALESCE(bm.id, c.applied_for_branch) AS branch_id_resolved,
+            COALESCE(pm.id, c.applied_for_process) AS process_id_resolved
+       FROM ats_candidate c
+       LEFT JOIN branch_master  bm ON bm.id = c.applied_for_branch
+                                   OR LOWER(bm.branch_name) = LOWER(c.applied_for_branch)
+       LEFT JOIN process_master pm ON pm.id = c.applied_for_process
+                                   OR LOWER(pm.process_name) = LOWER(c.applied_for_process)
+       WHERE c.id = ?
       LIMIT 1`,
     [candidateId]
   );
