@@ -1,7 +1,8 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { sendSelectedEmail, sendRejectedEmail } from "./ats.email.service.js";
+import { env } from "../../config/env.js";
+import { sendSelectedEmail, sendRejectedEmail, sendSelectionLetterOfIntent } from "./ats.email.service.js";
 import { sendOnboardingToken } from "./ats.onboarding.service.js";
 import { transitionCandidateState } from "./ats.status-machine.js";
 import type {
@@ -158,14 +159,73 @@ export const atsService = {
 
     // Fire email side-effects after the stage is committed — failure must not break the stage move
     if ((toStage === 'Selected' || toStage === 'selected') && candidate.email) {
-      sendSelectedEmail({
-        candidateId,
-        to: candidate.email,
-        candidateName: candidate.full_name ?? '',
-        branchName: candidate.applied_for_branch ?? '',
-        hrName: 'HR Team',
-        hrPhone: '',
-      }).catch(() => { /* already logged in ats_email_log */ });
+      // Fetch complete selection data for professional Letter of Intent
+      const [selectionData] = await db.execute<RowDataPacket[]>(
+        `SELECT
+           c.full_name, c.email, c.role_applied,
+           c.recruiter_assigned_name, c.recruiter_name, c.recruiter_email, c.recruiter_mobile,
+           b.branch_name,
+           ob.joining_date,
+           isub.offer_doj, isub.reporting_timing, isub.offer_salary,
+           isub.ot_details, isub.performance_incentives,
+           COALESCE(c.offer_salary, isub.offer_salary) AS final_offer_salary
+         FROM ats_candidate c
+         LEFT JOIN branch_master b
+           ON b.id = c.applied_for_branch
+           OR b.branch_name = c.applied_for_branch
+           OR b.branch_code = c.applied_for_branch
+         LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
+         LEFT JOIN ats_interview_submission isub ON isub.candidate_id = c.id
+         WHERE c.id = ? AND c.active_status = 1
+         LIMIT 1`,
+        [candidateId]
+      );
+
+      if (selectionData.length > 0) {
+        const data = selectionData[0];
+        const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
+        const onboardingLink = `${baseUrl}/onboard-full?candidate=${candidateId}`;
+
+        // Format date if available (DD MMM YYYY format)
+        let formattedDate: string | null = null;
+        const rawDate = data.offer_doj ?? data.joining_date;
+        if (rawDate) {
+          try {
+            const date = new Date(rawDate);
+            formattedDate = date.toLocaleDateString('en-GB', {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric'
+            });
+          } catch {
+            formattedDate = String(rawDate);
+          }
+        }
+
+        // Format salary if available
+        const salaryStructure = data.final_offer_salary
+          ? `₹${Number(data.final_offer_salary).toLocaleString('en-IN')} per month`
+          : null;
+
+        sendSelectionLetterOfIntent({
+          candidateId,
+          to: candidate.email,
+          candidateName: data.full_name ?? candidate.full_name ?? '',
+          roleOffered: data.role_applied ?? 'Team Member',
+          branchName: data.branch_name ?? candidate.applied_for_branch ?? '',
+          dateOfJoining: formattedDate,
+          reportingTiming: data.reporting_timing ?? null,
+          salaryStructure,
+          otDetails: data.ot_details ?? null,
+          performanceIncentives: data.performance_incentives ?? null,
+          onboardingLink,
+          recruiterName: data.recruiter_assigned_name ?? data.recruiter_name ?? null,
+          recruiterMobile: data.recruiter_mobile ?? null,
+          recruiterEmail: data.recruiter_email ?? null,
+        }).catch(() => { /* already logged in ats_email_log */ });
+      }
+
+      // Still send onboarding token (separate technical email with secure token)
       sendOnboardingToken(candidateId, userId).catch(() => {});
     } else if ((toStage === 'Rejected' || toStage === 'rejected') && candidate.email) {
       sendRejectedEmail({

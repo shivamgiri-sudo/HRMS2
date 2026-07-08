@@ -6,6 +6,7 @@ import {
   candidateSuccessEmail,
   recruiterNotificationEmail,
   selectionCongratulationsEmail,
+  selectionLetterOfIntent,
   bgvCompletionEmail,
   payrollHRNotificationEmail,
   branchHeadApprovalEmail,
@@ -13,7 +14,7 @@ import {
 } from './email.templates.js';
 
 type EmailType = 'registration' | 'selected' | 'rejected' | 'rejected_professional' | 'token_sent' | 'offer_review' | 'approved' | 'welcome' |
-                 'recruiter_notification' | 'selection_congratulations' | 'bgv_completion' | 'payroll_hr_notification' | 'branch_head_approval' | 'otp_verification';
+                 'recruiter_notification' | 'selection_congratulations' | 'selection_letter' | 'bgv_completion' | 'payroll_hr_notification' | 'branch_head_approval' | 'otp_verification';
 
 interface SendResult { ok: boolean; error?: string }
 
@@ -319,6 +320,46 @@ export async function sendSelectionCongratulationsEmail(params: {
     html,
     params.candidateId,
     'selection_congratulations',
+  );
+}
+
+export async function sendSelectionLetterOfIntent(params: {
+  candidateId: string;
+  to: string;
+  candidateName: string;
+  roleOffered: string;
+  branchName: string;
+  dateOfJoining: string | null;
+  reportingTiming: string | null;
+  salaryStructure: string | null;
+  otDetails: string | null;
+  performanceIncentives: string | null;
+  onboardingLink: string;
+  recruiterName: string | null;
+  recruiterMobile: string | null;
+  recruiterEmail: string | null;
+}): Promise<SendResult> {
+  const html = selectionLetterOfIntent({
+    candidateName: params.candidateName,
+    roleOffered: params.roleOffered,
+    branchName: params.branchName,
+    dateOfJoining: params.dateOfJoining,
+    reportingTiming: params.reportingTiming,
+    salaryStructure: params.salaryStructure,
+    otDetails: params.otDetails,
+    performanceIncentives: params.performanceIncentives,
+    onboardingLink: params.onboardingLink,
+    recruiterName: params.recruiterName,
+    recruiterMobile: params.recruiterMobile,
+    recruiterEmail: params.recruiterEmail,
+  });
+
+  return send(
+    params.to,
+    'Selection Letter of Intent - MAS Callnet',
+    html,
+    params.candidateId,
+    'selection_letter',
   );
 }
 

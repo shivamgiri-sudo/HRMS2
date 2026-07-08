@@ -263,6 +263,382 @@ export function selectionCongratulationsEmail(data: SelectionEmailData): string 
   `;
 }
 
+// ── Professional Selection Letter of Intent ──────────────────────────────────
+
+interface SelectionLetterData {
+  candidateName: string;
+  roleOffered: string;
+  branchName: string;
+  dateOfJoining: string | null;
+  reportingTiming: string | null;
+  salaryStructure: string | null;
+  otDetails: string | null;
+  performanceIncentives: string | null;
+  onboardingLink: string;
+  recruiterName: string | null;
+  recruiterMobile: string | null;
+  recruiterEmail: string | null;
+}
+
+export function selectionLetterOfIntent(data: SelectionLetterData): string {
+  const logoUrl = `${process.env.FRONTEND_URL || 'https://mcnhrms.teammas.in'}/mcn-logo.png`;
+
+  // Format joining details with fallbacks
+  const joiningDate = data.dateOfJoining || '<em style="color:#94a3b8">To be confirmed</em>';
+  const reportingTime = data.reportingTiming || '9:00 AM';
+  const salary = data.salaryStructure || '<em style="color:#94a3b8">As per offer discussion</em>';
+  const hasPerks = data.otDetails || data.performanceIncentives;
+
+  // Recruiter contact with fallback to HR
+  const recruiterName = data.recruiterName || 'HR Team';
+  const recruiterMobile = data.recruiterMobile || 'Contact your branch';
+  const recruiterEmail = data.recruiterEmail || 'hr@mascallnet.com';
+
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Selection Letter of Intent - MAS Callnet</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background-color: #f3f4f6;
+      color: #111827;
+    }
+    .email-container {
+      max-width: 680px;
+      margin: 0 auto;
+      background-color: #ffffff;
+    }
+    .header {
+      background: linear-gradient(135deg, #083344 0%, #0f766e 60%, #14b8a6 100%);
+      padding: 40px 32px;
+      text-align: center;
+      color: #ffffff;
+    }
+    .logo-container {
+      margin-bottom: 20px;
+    }
+    .logo {
+      max-width: 180px;
+      height: auto;
+    }
+    .company-name {
+      font-size: 22px;
+      font-weight: 800;
+      margin: 12px 0 4px;
+      letter-spacing: 0.5px;
+    }
+    .tagline {
+      font-size: 13px;
+      color: rgba(255,255,255,0.9);
+      font-weight: 500;
+    }
+    .content {
+      padding: 40px 32px;
+    }
+    .salutation {
+      font-size: 17px;
+      color: #111827;
+      margin: 0 0 20px;
+      font-weight: 600;
+    }
+    .opening {
+      font-size: 15px;
+      color: #374151;
+      line-height: 1.7;
+      margin: 0 0 28px;
+    }
+    .section-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #111827;
+      margin: 32px 0 16px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #0f766e;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 20px 0;
+    }
+    .info-card {
+      background: #f9fafb;
+      border-left: 4px solid #0f766e;
+      padding: 16px;
+      border-radius: 8px;
+    }
+    .info-card.full-width {
+      grid-column: 1 / -1;
+    }
+    .info-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+    .info-value {
+      font-size: 16px;
+      font-weight: 700;
+      color: #111827;
+    }
+    .perks-badge {
+      display: inline-block;
+      background: #ecfdf5;
+      color: #065f46;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 700;
+      margin: 8px 0;
+      border: 1px solid #a7f3d0;
+    }
+    .cta-section {
+      text-align: center;
+      margin: 32px 0;
+      padding: 24px;
+      background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+      border-radius: 12px;
+    }
+    .cta-button {
+      display: inline-block;
+      background: linear-gradient(135deg, #0f766e 0%, #14b8a6 100%);
+      color: #ffffff;
+      text-decoration: none;
+      padding: 16px 32px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 16px;
+      margin: 12px 0;
+      box-shadow: 0 4px 12px rgba(15, 118, 110, 0.3);
+      transition: transform 0.2s;
+    }
+    .cta-button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(15, 118, 110, 0.4);
+    }
+    .link-fallback {
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 12px;
+      word-break: break-all;
+    }
+    .document-list {
+      list-style: none;
+      padding: 0;
+      margin: 16px 0;
+    }
+    .document-list li {
+      padding: 12px 16px;
+      margin: 8px 0;
+      background: #f9fafb;
+      border-left: 4px solid #f59e0b;
+      border-radius: 6px;
+      font-size: 14px;
+      color: #374151;
+    }
+    .document-list li:before {
+      content: "✓";
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      background: #f59e0b;
+      color: #ffffff;
+      border-radius: 50%;
+      text-align: center;
+      line-height: 24px;
+      margin-right: 12px;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .closing {
+      margin: 32px 0 24px;
+      font-size: 15px;
+      color: #374151;
+      line-height: 1.6;
+    }
+    .signature {
+      margin: 24px 0;
+    }
+    .signature p {
+      margin: 4px 0;
+      font-size: 15px;
+      color: #111827;
+    }
+    .signature .title {
+      font-weight: 700;
+      font-size: 16px;
+    }
+    .divider {
+      height: 1px;
+      background: #e5e7eb;
+      margin: 32px 0;
+    }
+    .footer {
+      background: #f9fafb;
+      padding: 32px;
+      border-top: 1px solid #e5e7eb;
+    }
+    .footer-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #111827;
+      margin: 0 0 12px;
+    }
+    .recruiter-card {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 12px 0;
+    }
+    .recruiter-row {
+      display: flex;
+      align-items: center;
+      margin: 8px 0;
+      font-size: 14px;
+      color: #374151;
+    }
+    .recruiter-icon {
+      display: inline-block;
+      width: 32px;
+      height: 32px;
+      background: #0f766e;
+      color: #ffffff;
+      border-radius: 50%;
+      text-align: center;
+      line-height: 32px;
+      margin-right: 12px;
+      font-weight: 700;
+    }
+    .legal-footer {
+      text-align: center;
+      padding: 24px 32px;
+      font-size: 11px;
+      color: #94a3b8;
+      line-height: 1.6;
+    }
+    @media only screen and (max-width: 600px) {
+      .content, .footer, .legal-footer { padding: 24px 20px; }
+      .header { padding: 32px 20px; }
+      .info-grid { grid-template-columns: 1fr; }
+      .company-name { font-size: 20px; }
+      .section-title { font-size: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="email-container">
+    <!-- Header with Logo -->
+    <div class="header">
+      <div class="logo-container">
+        <img src="${logoUrl}" alt="MAS Callnet Logo" class="logo" />
+      </div>
+      <h1 class="company-name">MAS CALLNET INDIA PVT. LTD.</h1>
+      <p class="tagline">Talent Acquisition Team</p>
+    </div>
+
+    <!-- Main Content -->
+    <div class="content">
+      <p class="salutation">Dear ${data.candidateName},</p>
+
+      <p class="opening">
+        <strong>Congratulations!</strong> We are pleased to inform you that you have been selected for the role of
+        <strong>${data.roleOffered}</strong> at <strong>MAS Callnet India Pvt. Ltd.</strong>, ${data.branchName} branch.
+      </p>
+
+      <!-- Joining Details Section -->
+      <h2 class="section-title">Joining Details</h2>
+      <div class="info-grid">
+        <div class="info-card">
+          <div class="info-label">Date of Joining</div>
+          <div class="info-value">${joiningDate}</div>
+        </div>
+        <div class="info-card">
+          <div class="info-label">Reporting Timing</div>
+          <div class="info-value">${reportingTime}</div>
+        </div>
+        <div class="info-card full-width">
+          <div class="info-label">Salary Structure</div>
+          <div class="info-value">${salary}</div>
+        </div>
+      </div>
+
+      ${hasPerks ? '<div class="perks-badge">✨ Additional Perks: Over Time & Performance Incentive</div>' : ''}
+
+      <!-- Onboarding CTA Section -->
+      <h2 class="section-title">Next Steps</h2>
+      <div class="cta-section">
+        <p style="margin:0 0 16px;font-size:15px;color:#1e40af;font-weight:600;">
+          Please complete the following forms before joining:
+        </p>
+        <a href="${data.onboardingLink}" class="cta-button">Complete Onboarding Forms →</a>
+        <p class="link-fallback">
+          If the button doesn't work, copy this link:<br>
+          <span style="color:#0f766e;">${data.onboardingLink}</span>
+        </p>
+      </div>
+
+      <!-- Documents Checklist -->
+      <h2 class="section-title">Documents to Carry on Day-1</h2>
+      <ul class="document-list">
+        <li>ID Proof (Aadhaar / PAN Card)</li>
+        <li>Address Proof</li>
+        <li>Education Certificates</li>
+        <li>2 Passport-size Photographs</li>
+        <li>Bank Account Details (if not submitted online)</li>
+      </ul>
+
+      <div class="divider"></div>
+
+      <p class="closing">
+        We look forward to welcoming you to the team!
+      </p>
+
+      <div class="signature">
+        <p style="margin-bottom:8px;">Regards,</p>
+        <p class="title">MAS Callnet India Pvt. Ltd.</p>
+        <p>Recruitment Team</p>
+      </div>
+    </div>
+
+    <!-- Recruiter Contact Footer -->
+    <div class="footer">
+      <p class="footer-title">For any queries, contact your recruiter:</p>
+      <div class="recruiter-card">
+        <div class="recruiter-row">
+          <span class="recruiter-icon">👤</span>
+          <strong>${recruiterName}</strong>
+        </div>
+        <div class="recruiter-row">
+          <span class="recruiter-icon">📞</span>
+          ${recruiterMobile}
+        </div>
+        <div class="recruiter-row">
+          <span class="recruiter-icon">✉️</span>
+          <a href="mailto:${recruiterEmail}" style="color:#0f766e;text-decoration:none;">${recruiterEmail}</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Legal Footer -->
+    <div class="legal-footer">
+      <p style="margin:0 0 8px;">This is an automated notification from MAS Callnet HRMS. Please keep candidate information confidential.</p>
+      <p style="margin:0;">© 2026 Mas Callnet India Pvt. Ltd. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+}
+
 interface BGVCompletionEmailData {
   candidateName: string;
   bgvStatus: 'verified' | 'negative' | 'insufficient';
