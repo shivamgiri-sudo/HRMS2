@@ -4,6 +4,8 @@ import crypto from 'crypto';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { env } from '../../config/env.js';
+import { logSensitiveAction } from '../../shared/auditLog.js';
+import type { Request } from 'express';
 
 const JWT_SECRET = env.JWT_SECRET;
 const JWT_EXPIRES_IN = '15m';
@@ -143,37 +145,39 @@ async function createOrRepairEmployeeAuthUser(employee: RowDataPacket, email: st
 }
 
 export const authService = {
-  async login(identifier: string, password: string): Promise<AuthTokens> {
+  async login(identifier: string, password: string, req?: Request): Promise<AuthTokens> {
     // identifier can be email OR employee_code — try both
     const trimmed = identifier.trim();
-    const [rows] = await db.execute<AuthUserRow[]>(
-      `SELECT au.id, au.email, au.password_hash, au.is_blocked,
-              COALESCE(au.must_change_password, 0) AS must_change_password,
-              e.active_status
-         FROM auth_user au
-         LEFT JOIN employees e ON e.user_id = au.id
-        WHERE LOWER(au.email) = LOWER(?)
-        UNION
-       SELECT au.id, au.email, au.password_hash, au.is_blocked,
-              COALESCE(au.must_change_password, 0) AS must_change_password,
-              e.active_status
-         FROM auth_user au
-         JOIN employees e ON e.user_id = au.id
-        WHERE UPPER(e.employee_code) = UPPER(?)
-        LIMIT 1`,
-      [trimmed, trimmed]
-    );
-    const user = rows[0];
-    if (!user) throw new Error('Invalid credentials');
-    if (user.is_blocked) throw new Error('Account is blocked');
 
-    // CRITICAL: Block inactive employees from logging in
-    if (Number(user.active_status ?? 1) === 0) {
-      throw new Error('Account is inactive. Please contact HR for assistance.');
-    }
+    try {
+      const [rows] = await db.execute<AuthUserRow[]>(
+        `SELECT au.id, au.email, au.password_hash, au.is_blocked,
+                COALESCE(au.must_change_password, 0) AS must_change_password,
+                e.active_status
+           FROM auth_user au
+           LEFT JOIN employees e ON e.user_id = au.id
+          WHERE LOWER(au.email) = LOWER(?)
+          UNION
+         SELECT au.id, au.email, au.password_hash, au.is_blocked,
+                COALESCE(au.must_change_password, 0) AS must_change_password,
+                e.active_status
+           FROM auth_user au
+           JOIN employees e ON e.user_id = au.id
+          WHERE UPPER(e.employee_code) = UPPER(?)
+          LIMIT 1`,
+        [trimmed, trimmed]
+      );
+      const user = rows[0];
+      if (!user) throw new Error('Invalid credentials');
+      if (user.is_blocked) throw new Error('Account is blocked');
 
-    const valid = await bcrypt.compare(password, user.password_hash as string);
-    if (!valid) throw new Error('Invalid credentials');
+      // CRITICAL: Block inactive employees from logging in
+      if (Number(user.active_status ?? 1) === 0) {
+        throw new Error('Account is inactive. Please contact HR for assistance.');
+      }
+
+      const valid = await bcrypt.compare(password, user.password_hash as string);
+      if (!valid) throw new Error('Invalid credentials');
 
     await db.execute('UPDATE auth_user SET last_login_at = NOW() WHERE id = ?', [user.id]);
 
@@ -193,6 +197,19 @@ export const authService = {
     );
 
     const mustChangePassword = Number(user.must_change_password ?? 0) === 1;
+
+    // Log successful login
+    if (req) {
+      logSensitiveAction({
+        actor_user_id: user.id,
+        action_type: "LOGIN_SUCCESS",
+        module_key: "AUTH",
+        entity_type: "auth_user",
+        entity_id: user.id,
+        change_summary: { email: user.email, identifier: trimmed },
+        req
+      }).catch(() => {}); // Non-blocking
+    }
 
     // Check global 2FA toggle in org_settings
     const [tfaSettingRows] = await db.execute<OrgSettingRow[]>(
@@ -238,6 +255,22 @@ export const authService = {
         twoFactorVerified: true,
       },
     };
+    } catch (error) {
+      // Log failed login attempt
+      if (req) {
+        logSensitiveAction({
+          actor_user_id: null, // Unknown user
+          action_type: "LOGIN_FAILED",
+          module_key: "AUTH",
+          change_summary: {
+            identifier: trimmed,
+            reason: error instanceof Error ? error.message : String(error)
+          },
+          req
+        }).catch(() => {}); // Non-blocking
+      }
+      throw error;
+    }
   },
 
   async refreshAccess(rawRefreshToken: string): Promise<{ accessToken: string }> {
@@ -258,9 +291,29 @@ export const authService = {
     return { accessToken };
   },
 
-  async logout(rawRefreshToken: string): Promise<void> {
+  async logout(rawRefreshToken: string, req?: Request): Promise<void> {
     const tokenHash = crypto.createHash('sha256').update(rawRefreshToken).digest('hex');
+
+    // Get user_id from refresh token before revoking
+    const [rows] = await db.execute<RefreshRow[]>(
+      `SELECT user_id FROM auth_refresh_token WHERE token_hash = ? LIMIT 1`,
+      [tokenHash]
+    );
+    const userId = rows[0]?.user_id as string | undefined;
+
     await db.execute('UPDATE auth_refresh_token SET revoked = 1 WHERE token_hash = ?', [tokenHash]);
+
+    // Log logout event
+    if (userId && req) {
+      logSensitiveAction({
+        actor_user_id: userId,
+        action_type: "LOGOUT",
+        module_key: "AUTH",
+        entity_type: "auth_user",
+        entity_id: userId,
+        req
+      }).catch(() => {}); // Non-blocking
+    }
   },
 
   // Called after verifyTwoFactorChallenge() succeeds — trades pre_auth token for full access token.

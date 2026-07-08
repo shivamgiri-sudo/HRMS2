@@ -147,7 +147,7 @@ router.post("/login", authLimiter, h(async (req, res) => {
   if (!identifier || !password) return res.status(400).json({ error: "identifier (email or employee code) and password required" });
 
   try {
-    const tokens = await authService.login(identifier, password);
+    const tokens = await authService.login(identifier, password, req);
     return res.json({ data: tokens });
   } catch (error: unknown) {
     return res.status(401).json({ error: error instanceof Error ? error.message : "Authentication failed" });
@@ -255,7 +255,7 @@ router.post("/refresh", h(async (req, res) => {
 // POST /api/auth/logout — requires auth
 router.post("/logout", requireAuth, h(async (req, res) => {
   const { refreshToken } = req.body;
-  if (refreshToken) await authService.logout(refreshToken);
+  if (refreshToken) await authService.logout(refreshToken, req);
   return res.json({ success: true });
 }));
 
