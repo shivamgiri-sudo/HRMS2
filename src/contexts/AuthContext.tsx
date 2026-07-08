@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { getDemoCred, buildDemoSession } from "@/lib/demoCreds";
 import { useGeoCapture } from "@/hooks/useGeoCapture";
 import { apiUrl } from "@/lib/apiBase";
+import { useInactivityTimeout } from "@/hooks/useInactivityTimeout";
 
 export interface HrmsUser {
   id: string;
@@ -129,6 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
   const queryClient = useQueryClient();
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [autoLogoutMinutes, setAutoLogoutMinutes] = useState<number>(0);
 
   const scheduleRefresh = () => {
     if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
@@ -199,6 +201,68 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
     };
   }, []);
+
+  // Fetch auto-logout setting from server
+  useEffect(() => {
+    const fetchAutoLogoutSetting = async () => {
+      try {
+        const res = await fetch(apiUrl('/api/org-settings/public/auto-logout-minutes'));
+        if (res.ok) {
+          const data = await res.json();
+          setAutoLogoutMinutes(data.minutes || 0);
+        }
+      } catch (error) {
+        console.error('[AuthContext] Failed to fetch auto-logout setting:', error);
+        // Default to 0 (disabled) on error
+        setAutoLogoutMinutes(0);
+      }
+    };
+
+    fetchAutoLogoutSetting();
+  }, []);
+
+  // Setup inactivity timeout - only when user is logged in
+  useInactivityTimeout(
+    user ? autoLogoutMinutes : 0,
+    async () => {
+      if (!user) return;
+
+      console.log('[AuthContext] Inactivity timeout triggered - logging out');
+
+      // Perform logout
+      const refreshToken = localStorage.getItem('hrms_refresh_token');
+      setIsSigningOut(true);
+
+      try {
+        if (refreshToken) {
+          await fetchJson('/api/auth/logout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refreshToken }),
+          });
+        }
+      } catch (error) {
+        console.error('[AuthContext] Logout request failed:', error);
+      } finally {
+        localStorage.removeItem('hrms_access_token');
+        localStorage.removeItem('hrms_refresh_token');
+        localStorage.removeItem('hrms_demo_session');
+        localStorage.removeItem('hrms_must_change_password');
+        localStorage.removeItem('hrms_2fa_required');
+        localStorage.removeItem('hrms_2fa_verified');
+        setUser(null);
+        setMustChangePassword(false);
+        setTwoFactorRequired(false);
+        setTwoFactorVerified(false);
+        queryClient.clear();
+        if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+        setIsSigningOut(false);
+
+        // Optional: Show a toast notification
+        // toast.warning('You have been logged out due to inactivity');
+      }
+    }
+  );
 
   const signIn = async (identifier: string, password: string): Promise<{ error: Error | null }> => {
     if (DEMO_LOGIN_ENABLED) {

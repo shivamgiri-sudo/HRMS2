@@ -37,4 +37,14 @@ router.put("/:key", requireRole("admin"), h(async (req: AuthenticatedRequest, re
   res.json({ success: true, data: (rows as RowDataPacket[])[0] });
 }));
 
+// Convenience endpoint for frontend to get auto-logout timeout
+// Public (no auth required) - frontend needs this before user logs in
+router.get("/public/auto-logout-minutes", h(async (_req: any, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT setting_value FROM org_settings WHERE setting_key = 'auto_logout_minutes' LIMIT 1"
+  );
+  const minutes = rows[0]?.setting_value ? parseInt(String(rows[0].setting_value), 10) : 0;
+  res.json({ success: true, minutes });
+}));
+
 export { router as orgSettingsRouter };
