@@ -533,8 +533,9 @@ import { RecruiterLayout } from "@/components/dashboard/layouts/RecruiterLayout"
 import { OpsLayout }      from "@/components/dashboard/layouts/OpsLayout";
 import { FinanceLayout }  from "@/components/dashboard/layouts/FinanceLayout";
 import { EmployeeLayout } from "@/components/dashboard/layouts/EmployeeLayout";
+import { ManagerLayout }  from "@/components/dashboard/layouts/ManagerLayout";
 
-type RoleLayout = "ceo" | "hr" | "recruiter" | "ops" | "finance" | "employee";
+type RoleLayout = "ceo" | "hr" | "recruiter" | "ops" | "finance" | "manager" | "employee";
 
 function resolveLayout(role?: string): RoleLayout {
   if (!role) return "employee";
@@ -544,6 +545,7 @@ function resolveLayout(role?: string): RoleLayout {
   if (r === "recruiter" || r === "recruitment") return "recruiter";
   if (r === "processmanager" || r === "branchhead" || r === "operationsmanager" || r === "ops") return "ops";
   if (r === "finance" || r === "payroll") return "finance";
+  if (r === "manager" || r === "teamleader" || r === "tl") return "manager";
   return "employee";
 }
 
@@ -560,6 +562,7 @@ export default function Index() {
     case "recruiter": content = <RecruiterLayout />; break;
     case "ops":       content = <OpsLayout />; break;
     case "finance":   content = <FinanceLayout />; break;
+    case "manager":   content = <ManagerLayout />; break;
     default:          content = <EmployeeLayout />;
   }
   return <DashboardLayout>{content}</DashboardLayout>;
