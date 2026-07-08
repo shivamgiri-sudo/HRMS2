@@ -53,7 +53,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
-import { useIsAdminOrHR } from "@/hooks/useUserRole";
+import { useIsAdminOrHR, useUserRole } from "@/hooks/useUserRole";
 import type {
   EngagementSummary,
   LeaderboardEntry,
@@ -553,7 +553,8 @@ function resolveLayout(role?: string): RoleLayout {
 
 export default function Index() {
   const { user } = useAuth();
-  const layout = resolveLayout(user?.role);
+  const { data: roleData } = useUserRole();
+  const layout = resolveLayout(roleData?.primaryRole || undefined);
 
   let content: React.ReactNode;
   switch (layout) {
