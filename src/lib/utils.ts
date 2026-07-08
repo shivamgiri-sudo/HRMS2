@@ -76,6 +76,23 @@ export function formatDateTime(dateString: string | null | undefined): string {
   }
 }
 
+/** Normalise a raw MySQL DATETIME string ("YYYY-MM-DD HH:mm:ss") to an
+ *  unambiguous ISO 8601 string tagged as IST (+05:30) so parseISO does not
+ *  treat it as local-browser or UTC time. Already-tagged strings pass through. */
+function normaliseToIST(date: Date | string): Date | string {
+  if (typeof date !== "string") return date;
+  const s = date.trim();
+  // "YYYY-MM-DD HH:mm:ss" — MySQL DATETIME, no timezone info
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) {
+    return s.replace(" ", "T") + "+05:30";
+  }
+  // "YYYY-MM-DDTHH:mm:ss" — naive ISO, treat as IST wall-clock
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(s)) {
+    return s + "+05:30";
+  }
+  return s;
+}
+
 /** Format date/time for display in IST timezone (never UTC) */
 export function formatIST(
   date: Date | string | null | undefined,
@@ -84,7 +101,8 @@ export function formatIST(
   if (!date) return "";
 
   try {
-    const d = typeof date === "string" ? parseISO(date) : date;
+    const normalised = normaliseToIST(date);
+    const d = typeof normalised === "string" ? parseISO(normalised) : normalised;
     if (!isValid(d)) return String(date);
 
     // Use Intl API with Asia/Kolkata timezone for consistent IST display
@@ -110,7 +128,8 @@ export function formatISTTime(
   if (!date) return "";
 
   try {
-    const d = typeof date === "string" ? parseISO(date) : date;
+    const normalised = normaliseToIST(date);
+    const d = typeof normalised === "string" ? parseISO(normalised) : normalised;
     if (!isValid(d)) return String(date);
 
     return d.toLocaleString("en-IN", {
@@ -132,7 +151,8 @@ export function formatISTDate(
   if (!date) return "";
 
   try {
-    const d = typeof date === "string" ? parseISO(date) : date;
+    const normalised = normaliseToIST(date);
+    const d = typeof normalised === "string" ? parseISO(normalised) : normalised;
     if (!isValid(d)) return String(date);
 
     return d.toLocaleString("en-IN", {

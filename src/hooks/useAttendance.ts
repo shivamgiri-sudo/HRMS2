@@ -148,6 +148,7 @@ export function useTodayAttendance(employeeId?: string) {
     staleTime: 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
     refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -247,9 +248,10 @@ export function useTodayLivePunch(employeeId?: string) {
       return res.data ?? null;
     },
     enabled: !!employeeId,
-    staleTime: 30 * 1000,
-    refetchInterval: 60 * 1000,
+    staleTime: 10 * 1000,
+    refetchInterval: 15 * 1000,
     refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 }
 

@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Clock, MapPin, CalendarDays, Coffee, AlertCircle } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
+import { formatISTTime } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { calculateTotalBreakHours, AttendanceBreak } from "@/hooks/useAttendanceBreaks";
 
@@ -117,16 +118,6 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
     );
   }
 
-  const formatTime = (timestamp: string | null) => {
-    if (!timestamp) return "-";
-    // If timestamp has no timezone info (MySQL datetime stored as UTC), append Z so JS parses as UTC
-    // then display in IST (UTC+5:30)
-    const ts = /[Zz+-]\d*$/.test(timestamp) ? timestamp : timestamp.replace(" ", "T") + "Z";
-    const d = new Date(ts);
-    if (isNaN(d.getTime())) return "-";
-    const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
-    return format(ist, "h:mm a") + " IST";
-  };
 
   const formatHours = (hours: number | null) => {
     if (hours === null) return "-";
@@ -170,7 +161,7 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger className="flex items-center gap-1">
-                            {formatTime(record.clock_in || record.clock_in_time)}
+                            {formatISTTime(record.clock_in || record.clock_in_time) || "-"}
                             {(record.clock_in_location || record.clock_in_location) && (
                               <MapPin className="h-3 w-3 text-muted-foreground" />
                             )}
@@ -187,7 +178,7 @@ export function MyAttendanceHistory({ employeeId }: MyAttendanceHistoryProps) {
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger className="flex items-center gap-1">
-                            {formatTime(record.clock_out || record.clock_out_time)}
+                            {formatISTTime(record.clock_out || record.clock_out_time) || "-"}
                             {(record.clock_out_location || record.clock_out_location) && (
                               <MapPin className="h-3 w-3 text-muted-foreground" />
                             )}
