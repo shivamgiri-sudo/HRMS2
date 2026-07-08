@@ -265,6 +265,57 @@ export const authService = {
 
     const mustChangePassword = Number(user.must_change_password ?? 0) === 1;
 
+    // Check single device session mode - if enabled, revoke all other sessions
+    try {
+      const [singleDeviceRows] = await db.execute<OrgSettingRow[]>(
+        "SELECT setting_value FROM org_settings WHERE setting_key = 'single_device_session_mode' LIMIT 1"
+      );
+      const singleDeviceMode = singleDeviceRows[0]?.setting_value === '1' || singleDeviceRows[0]?.setting_value === 'true';
+
+      if (singleDeviceMode) {
+        // Revoke all OTHER refresh tokens (not the one we just created)
+        const [revokeResult] = await db.execute<ResultSetHeader>(
+          `UPDATE auth_refresh_token
+              SET revoked = 1
+            WHERE user_id = ?
+              AND token_hash != ?
+              AND revoked = 0`,
+          [user.id, tokenHash]
+        );
+
+        // Revoke all OTHER device sessions
+        await db.execute(
+          `UPDATE user_device_sessions
+              SET revoked_at = NOW()
+            WHERE user_id = ?
+              AND refresh_token_hash != ?
+              AND revoked_at IS NULL`,
+          [user.id, tokenHash]
+        );
+
+        const revokedCount = revokeResult.affectedRows || 0;
+
+        if (revokedCount > 0 && req) {
+          // Log the auto-revocation
+          logSensitiveAction({
+            actor_user_id: user.id,
+            action_type: "ALL_OTHER_SESSIONS_REVOKED",
+            module_key: "AUTH",
+            change_summary: {
+              reason: "Single device session mode enabled - new login auto-revoked other sessions",
+              revoked_count: revokedCount,
+              device_name: parseUserAgent(req.headers['user-agent']),
+              ip_address: req.ip
+            },
+            req
+          }).catch(() => {});
+        }
+      }
+    } catch (error) {
+      // Non-blocking: single device mode failure doesn't break login
+      console.error('[auth] Failed to enforce single device mode:', error);
+    }
+
     // Log successful login
     if (req) {
       logSensitiveAction({
@@ -326,7 +377,7 @@ export const authService = {
       // Log failed login attempt
       if (req) {
         logSensitiveAction({
-          actor_user_id: null, // Unknown user
+          actor_user_id: '00000000-0000-0000-0000-000000000000', // Unknown user (failed login)
           action_type: "LOGIN_FAILED",
           module_key: "AUTH",
           change_summary: {
