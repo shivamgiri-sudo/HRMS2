@@ -8,6 +8,17 @@ import type { RowDataPacket } from "mysql2";
 
 const router = Router();
 const h = (fn: any) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+
+// Public endpoint - must come BEFORE requireAuth middleware to bypass auth
+router.get("/public/auto-logout-minutes", h(async (_req: any, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT setting_value FROM org_settings WHERE setting_key = 'auto_logout_minutes' LIMIT 1"
+  );
+  const minutes = rows[0]?.setting_value ? parseInt(String(rows[0].setting_value), 10) : 0;
+  res.json({ success: true, minutes });
+}));
+
+// All other routes require authentication
 router.use(requireAuth);
 
 router.get("/", h(async (_req: AuthenticatedRequest, res: Response) => {
@@ -35,16 +46,6 @@ router.put("/:key", requireRole("admin"), h(async (req: AuthenticatedRequest, re
   }
   const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM org_settings WHERE setting_key = ? LIMIT 1", [req.params.key]);
   res.json({ success: true, data: (rows as RowDataPacket[])[0] });
-}));
-
-// Convenience endpoint for frontend to get auto-logout timeout
-// Public (no auth required) - frontend needs this before user logs in
-router.get("/public/auto-logout-minutes", h(async (_req: any, res: Response) => {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT setting_value FROM org_settings WHERE setting_key = 'auto_logout_minutes' LIMIT 1"
-  );
-  const minutes = rows[0]?.setting_value ? parseInt(String(rows[0].setting_value), 10) : 0;
-  res.json({ success: true, minutes });
 }));
 
 export { router as orgSettingsRouter };

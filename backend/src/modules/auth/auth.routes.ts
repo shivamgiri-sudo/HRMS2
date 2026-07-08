@@ -668,9 +668,10 @@ router.post("/admin-reset-password", requireAuth, h(async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 
 // GET /api/auth/sessions — List active sessions for current user
+// Pass current refresh token via header (x-refresh-token) or query param (?token=...) to mark isCurrent
 router.get("/sessions", requireAuth, h(async (req, res) => {
   const userId = req.authUser!.id;
-  const currentRefreshToken = req.body.refreshToken || req.headers['x-refresh-token'];
+  const currentRefreshToken = req.headers['x-refresh-token'] || req.query.token;
   const currentTokenHash = currentRefreshToken
     ? crypto.createHash('sha256').update(String(currentRefreshToken)).digest('hex')
     : null;

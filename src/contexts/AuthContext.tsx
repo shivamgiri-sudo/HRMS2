@@ -226,41 +226,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user ? autoLogoutMinutes : 0,
     async () => {
       if (!user) return;
-
       console.log('[AuthContext] Inactivity timeout triggered - logging out');
-
-      // Perform logout
-      const refreshToken = localStorage.getItem('hrms_refresh_token');
-      setIsSigningOut(true);
-
-      try {
-        if (refreshToken) {
-          await fetchJson('/api/auth/logout', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refreshToken }),
-          });
-        }
-      } catch (error) {
-        console.error('[AuthContext] Logout request failed:', error);
-      } finally {
-        localStorage.removeItem('hrms_access_token');
-        localStorage.removeItem('hrms_refresh_token');
-        localStorage.removeItem('hrms_demo_session');
-        localStorage.removeItem('hrms_must_change_password');
-        localStorage.removeItem('hrms_2fa_required');
-        localStorage.removeItem('hrms_2fa_verified');
-        setUser(null);
-        setMustChangePassword(false);
-        setTwoFactorRequired(false);
-        setTwoFactorVerified(false);
-        queryClient.clear();
-        if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
-        setIsSigningOut(false);
-
-        // Optional: Show a toast notification
-        // toast.warning('You have been logged out due to inactivity');
-      }
+      await signOut();
     }
   );
 
