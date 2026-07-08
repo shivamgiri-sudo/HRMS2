@@ -295,6 +295,99 @@ export async function getResignationMetrics(scope: DashboardScope): Promise<Metr
   }
 }
 
+// DPDP withdrawal
+export async function getDpdpWithdrawalMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN dcw.status IN ('submitted','in_review') THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN dcw.status = 'approved' THEN 1 ELSE 0 END) AS approved,
+         SUM(CASE WHEN dcw.status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
+         SUM(CASE WHEN dcw.processing_hold_active = 1 THEN 1 ELSE 0 END) AS holdsActive,
+         SUM(CASE WHEN dcw.status IN ('submitted','in_review') AND dcw.created_at < DATE_SUB(NOW(), INTERVAL 72 HOUR) THEN 1 ELSE 0 END) AS overdue
+       FROM dpdp_consent_withdrawal dcw
+       LEFT JOIN employees e ON e.user_id = dcw.requester_id
+       WHERE ${scopeSql}`,
+      scopeParams
+    ).catch(() => [[{ total: 0, pending: 0, approved: 0, rejected: 0, holdsActive: 0, overdue: 0 }]] as any);
+
+    const r = rows[0] as any;
+    const pending = Number(r.pending ?? 0);
+    const overdue = Number(r.overdue ?? 0);
+    const status: MetricResult["status"] = overdue > 0 ? "critical" : pending > 0 ? "warn" : "ok";
+
+    return wrapEnriched(
+      "DPDP_WITHDRAWAL",
+      pending,
+      {
+        total: Number(r.total ?? 0),
+        pending,
+        approved: Number(r.approved ?? 0),
+        rejected: Number(r.rejected ?? 0),
+        holdsActive: Number(r.holdsActive ?? 0),
+        overdue,
+      },
+      status,
+      false,
+      scope.branchIds[0],
+      scope.processIds[0],
+    );
+  } catch {
+    return nullResult("DPDP_WITHDRAWAL");
+  }
+}
+
+// Appointment letter eSign
+export async function getAppointmentEsignMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN alr.current_state IN ('candidate_esign_pending','company_sign_pending','override_requested')
+                   OR alr.candidate_esign_status = 'pending'
+                   OR alr.company_sign_status = 'pending'
+             THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN alr.current_state = 'candidate_esign_pending' OR alr.candidate_esign_status = 'pending' THEN 1 ELSE 0 END) AS candidatePending,
+         SUM(CASE WHEN alr.current_state = 'company_sign_pending' OR alr.company_sign_status = 'pending' THEN 1 ELSE 0 END) AS companyPending,
+         SUM(CASE WHEN alr.current_state = 'override_requested' THEN 1 ELSE 0 END) AS overrideRequested,
+         SUM(CASE WHEN alr.current_state IN ('completed','locked') OR alr.pdf_locked = 1 THEN 1 ELSE 0 END) AS completed
+       FROM appointment_letter_request alr
+       LEFT JOIN employees e ON e.id = alr.employee_id
+       WHERE ${scopeSql}`,
+      scopeParams
+    ).catch(() => [[{ total: 0, pending: 0, candidatePending: 0, companyPending: 0, overrideRequested: 0, completed: 0 }]] as any);
+
+    const r = rows[0] as any;
+    const pending = Number(r.pending ?? 0);
+    const overrideRequested = Number(r.overrideRequested ?? 0);
+    const status: MetricResult["status"] = overrideRequested > 0 ? "warn" : pending > 10 ? "warn" : "ok";
+
+    return wrapEnriched(
+      "APPOINTMENT_ESIGN",
+      pending,
+      {
+        total: Number(r.total ?? 0),
+        pending,
+        candidatePending: Number(r.candidatePending ?? 0),
+        companyPending: Number(r.companyPending ?? 0),
+        overrideRequested,
+        completed: Number(r.completed ?? 0),
+      },
+      status,
+      false,
+      scope.branchIds[0],
+      scope.processIds[0],
+    );
+  } catch {
+    return nullResult("APPOINTMENT_ESIGN");
+  }
+}
+
 // ─── BGV ──────────────────────────────────────────────────────────────────────
 export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
@@ -379,5 +472,50 @@ export async function getNameMismatchMetrics(scope: DashboardScope): Promise<Met
     return wrapEnriched("NAME_MISMATCH", mismatch + partial, { mismatch, partial, pending, blocking }, status, false, scope.branchIds[0], scope.processIds[0]);
   } catch {
     return nullResult("NAME_MISMATCH");
+  }
+}
+
+// ─── Joining Document eSign ──────────────────────────────────────────────────
+export async function getJoiningDocEsignMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN c.status IN ('pending_candidate_esign','esign_initiated') THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN c.status IN ('esign_completed','completed','signed_verified') THEN 1 ELSE 0 END) AS completed,
+         SUM(CASE WHEN c.status = 'esign_failed' THEN 1 ELSE 0 END) AS failed,
+         SUM(CASE WHEN c.status IN ('pending_candidate_esign','esign_initiated') AND c.due_at < NOW() THEN 1 ELSE 0 END) AS overdue
+       FROM employee_joining_document_checklist c
+       JOIN employees e ON e.id = c.employee_id
+       WHERE c.action_type = 'esign'
+         AND ${scopeSql}`,
+      scopeParams,
+    ).catch(() => [[{ total: 0, pending: 0, completed: 0, failed: 0, overdue: 0 }]] as any);
+
+    const r = rows[0] as any;
+    const pending = Number(r.pending ?? 0);
+    const overdue = Number(r.overdue ?? 0);
+    const failed = Number(r.failed ?? 0);
+    const status: MetricResult["status"] = overdue > 0 ? "critical" : failed > 0 ? "warn" : pending > 10 ? "warn" : "ok";
+
+    return wrapEnriched(
+      "JOINING_DOC_ESIGN",
+      pending,
+      {
+        total: Number(r.total ?? 0),
+        pending,
+        completed: Number(r.completed ?? 0),
+        failed,
+        overdue,
+      },
+      status,
+      false,
+      scope.branchIds[0],
+      scope.processIds[0],
+    );
+  } catch {
+    return nullResult("JOINING_DOC_ESIGN");
   }
 }

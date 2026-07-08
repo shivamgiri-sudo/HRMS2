@@ -10,6 +10,7 @@ import { startSLABreachWorker } from './sla-breach-worker.js';
 import { startLmsSyncWorker } from './lms-sync.worker.js';
 import { startPayrollNightlyRecalcWorker } from './payroll-nightly-recalc.worker.js';
 import { startAprVicidialSyncWorker } from './apr-vicidial-sync.worker.js';
+import { startEsignComplianceWorker, stopEsignComplianceWorker } from './esign-compliance.worker.js';
 import { runNcosecBiometricSync } from '../../scripts/migrate-ncosec-biometric.js';
 
 const BIOMETRIC_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
@@ -74,6 +75,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     name: 'apr-vicidial-sync',
     start: startAprVicidialSyncWorker,
   },
+  {
+    name: 'esign-compliance',
+    start: startEsignComplianceWorker,
+  },
 ];
 
 async function startAllWorkers(): Promise<void> {
@@ -98,6 +103,7 @@ function shutdown(): void {
   console.log('\n[workers] Shutting down...');
   stopAccessExpiryScheduler();
   stopIntegrationScheduler();
+  stopEsignComplianceWorker();
   console.log('[workers] Clean shutdown complete.');
   process.exit(0);
 }

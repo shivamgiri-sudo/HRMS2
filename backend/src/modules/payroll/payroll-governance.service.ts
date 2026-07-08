@@ -164,6 +164,19 @@ export const payrollGovernanceService = {
         "warning",
         "Employees missing active UAN/PF record",
       ),
+      countIssue(
+        `${eligibleSql}
+          AND EXISTS (
+            SELECT 1 FROM employee_joining_document_checklist ejdc
+             WHERE ejdc.employee_id = e.id
+               AND ejdc.mandatory = 1
+               AND ejdc.status NOT IN ('verified','completed','esign_completed','signed_verified','wet_signed_uploaded')
+          )`,
+        params,
+        "INCOMPLETE_JOINING_DOCUMENTS",
+        "warning",
+        "Employees with mandatory joining documents pending completion/signing",
+      ),
     ];
 
     for (const issue of await Promise.all(checks)) {

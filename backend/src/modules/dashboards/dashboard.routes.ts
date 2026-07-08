@@ -14,8 +14,11 @@ import {
   getIncentiveMetrics,
   getTatMetrics,
   getResignationMetrics,
+  getDpdpWithdrawalMetrics,
+  getAppointmentEsignMetrics,
   getBgvMetrics,
   getNameMismatchMetrics,
+  getJoiningDocEsignMetrics,
 } from "./dashboard-metric.service.js";
 
 const router = Router();
@@ -36,7 +39,7 @@ router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: a
     [user.id, ctx.primaryRole]
   ).catch(() => [[{ pending_count: 0, overdue_count: 0 }]] as any);
 
-  const [hc, onb, att, payroll, incentive, tat, resign, bgv, nm] = await Promise.all([
+  const [hc, onb, att, payroll, incentive, tat, resign, dpdp, appointmentEsign, bgv, nm, joiningDocEsign] = await Promise.all([
     getHeadcountMetrics(scope),
     getOnboardingMetrics(scope),
     getAttendanceMetrics(scope),
@@ -44,8 +47,11 @@ router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: a
     getIncentiveMetrics(scope),
     getTatMetrics(scope),
     getResignationMetrics(scope),
+    getDpdpWithdrawalMetrics(scope),
+    getAppointmentEsignMetrics(scope),
     getBgvMetrics(scope),
     getNameMismatchMetrics(scope),
+    getJoiningDocEsignMetrics(scope),
   ]);
 
   return res.json({
@@ -54,7 +60,7 @@ router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: a
       dashboardCode,
       scope,
       workItems: workItems[0] ?? { pending_count: 0, overdue_count: 0 },
-      metrics: { hc, onb, att, payroll, incentive, tat, resign, bgv, nm },
+      metrics: { hc, onb, att, payroll, incentive, tat, resign, dpdp, appointmentEsign, bgv, nm, joiningDocEsign },
       generatedAt: new Date().toISOString(),
     },
   });
@@ -108,7 +114,7 @@ router.get("/:dashboardCode/metric-values", h(async (req: AuthenticatedRequest, 
   const role = ctx.primaryRole;
   const scope = await resolveDashboardScope(user.id, role);
 
-  const [headcount, onboarding, attendance, payroll, incentive, tat, resignation, bgv, nameMismatch] =
+  const [headcount, onboarding, attendance, payroll, incentive, tat, resignation, dpdp, appointmentEsign, bgv, nameMismatch, joiningDocEsign] =
     await Promise.all([
       getHeadcountMetrics(scope),
       getOnboardingMetrics(scope),
@@ -117,8 +123,11 @@ router.get("/:dashboardCode/metric-values", h(async (req: AuthenticatedRequest, 
       getIncentiveMetrics(scope),
       getTatMetrics(scope),
       getResignationMetrics(scope),
+      getDpdpWithdrawalMetrics(scope),
+      getAppointmentEsignMetrics(scope),
       getBgvMetrics(scope),
       getNameMismatchMetrics(scope),
+      getJoiningDocEsignMetrics(scope),
     ]);
 
   const replaceApi = (m: ReturnType<typeof getHeadcountMetrics> extends Promise<infer T> ? T : never, code: string) => ({
@@ -139,8 +148,11 @@ router.get("/:dashboardCode/metric-values", h(async (req: AuthenticatedRequest, 
         INCENTIVE: replaceApi(incentive as any, "INCENTIVE_PENDING"),
         TAT: replaceApi(tat as any, "TAT_BREACHED"),
         RESIGNATION: replaceApi(resignation as any, "RESIGNATION_PENDING"),
+        DPDP_WITHDRAWAL: replaceApi(dpdp as any, "DPDP_WITHDRAWAL"),
+        APPOINTMENT_ESIGN: replaceApi(appointmentEsign as any, "APPOINTMENT_ESIGN"),
         BGV: replaceApi(bgv as any, "BGV"),
         NAME_MISMATCH: replaceApi(nameMismatch as any, "NAME_MISMATCH"),
+        JOINING_DOC_ESIGN: replaceApi(joiningDocEsign as any, "JOINING_DOC_ESIGN"),
       },
     },
   });

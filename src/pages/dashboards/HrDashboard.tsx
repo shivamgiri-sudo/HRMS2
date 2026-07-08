@@ -6,6 +6,8 @@ import {
   KpiMetricGrid,
   DashboardDrilldownDrawer,
   WorkInboxPanel,
+  DashboardActionStrip,
+  DashboardCard,
 } from "@/components/dashboard";
 import type { KpiMetric } from "@/components/dashboard";
 import { useUserRole } from "@/hooks/useUserRole";
@@ -15,6 +17,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { normalizeDashboardSummary } from "@/lib/dashboardCompat";
 
 const DASHBOARD_CODE = "HR_DASHBOARD";
+type DashboardPayload = Parameters<typeof normalizeDashboardSummary>[1];
 
 interface HrSummary {
   selectedCandidates?: number;
@@ -25,6 +28,10 @@ interface HrSummary {
   };
   bgvPending?: number;
   dpdpWithdrawals?: number;
+  dpdpOverdue?: number | null;
+  appointmentEsignPending?: number | null;
+  joiningDocEsignPending?: number | null;
+  joiningDocEsignOverdue?: number | null;
   resignationDiscussionPending?: number;
 }
 
@@ -62,7 +69,7 @@ export default function HrDashboard() {
 
     hrmsApi.get(`/api/dashboards/${DASHBOARD_CODE}/summary`)
       .then((json) => {
-        if (!cancelled) setSummary(normalizeDashboardSummary<HrSummary>(DASHBOARD_CODE, json as any));
+        if (!cancelled) setSummary(normalizeDashboardSummary<HrSummary>(DASHBOARD_CODE, json as DashboardPayload));
       })
       .catch((err) => {
         if (!cancelled) setFetchError(err.message ?? "Failed to load HR dashboard summary.");
@@ -102,14 +109,6 @@ export default function HrDashboard() {
   }
 
   const metrics: KpiMetric[] = [
-    {
-      id: "selected_candidates",
-      metric: "Selected Candidates",
-      value: summary?.selectedCandidates ?? null,
-      unit: "",
-      drilldownAvailable: true,
-      onClick: () => openDrilldown("selected_candidates", "Selected Candidates"),
-    },
     {
       id: "onboarding_submitted",
       metric: "Onboarding Submitted",
@@ -168,21 +167,6 @@ export default function HrDashboard() {
       onClick: () => openDrilldown("bgv_pending", "BGV Pending"),
     },
     {
-      id: "dpdp_withdrawals",
-      metric: "DPDP Withdrawal Requests",
-      value: summary?.dpdpWithdrawals ?? null,
-      unit: "",
-      status:
-        summary?.dpdpWithdrawals != null
-          ? summary.dpdpWithdrawals > 0
-            ? "bad"
-            : "good"
-          : undefined,
-      higherIsBetter: false,
-      drilldownAvailable: true,
-      onClick: () => openDrilldown("dpdp_withdrawals", "DPDP Withdrawal Requests"),
-    },
-    {
       id: "resignation_pending",
       metric: "Resignation Discussions Pending",
       value: summary?.resignationDiscussionPending ?? null,
@@ -198,7 +182,37 @@ export default function HrDashboard() {
       onClick: () =>
         openDrilldown("resignation_pending", "Resignation Discussions Pending"),
     },
-  ];
+    {
+      id: "dpdp_withdrawals",
+      metric: "DPDP Withdrawal Requests",
+      value: summary?.dpdpWithdrawals ?? null,
+      unit: "",
+      status:
+        summary?.dpdpOverdue != null && summary.dpdpOverdue > 0
+          ? "bad"
+          : summary?.dpdpWithdrawals != null && summary.dpdpWithdrawals > 0
+            ? "neutral"
+            : "good",
+      higherIsBetter: false,
+      drilldownAvailable: true,
+      onClick: () => openDrilldown("dpdp_withdrawal", "DPDP Withdrawal Requests"),
+    },
+    {
+      id: "appointment_esign_pending",
+      metric: "Appointment e-Sign Pending",
+      value: summary?.appointmentEsignPending ?? null,
+      unit: "",
+      status:
+        summary?.appointmentEsignPending != null
+          ? summary.appointmentEsignPending > 0
+            ? "neutral"
+            : "good"
+          : undefined,
+      higherIsBetter: false,
+      drilldownAvailable: true,
+      onClick: () => openDrilldown("appointment_esign_pending", "Appointment e-Sign Pending"),
+    },
+  ].filter((metric) => metric.value !== null && metric.value !== undefined);
 
   const loading = summaryLoading || roleLoading;
 
@@ -217,25 +231,76 @@ export default function HrDashboard() {
       )}
 
       <div className="space-y-6">
-        {/* KPI Metrics */}
+        <DashboardActionStrip
+          title="HR Operations - Immediate Actions"
+          items={[
+            {
+              label: "Onboarding Stuck",
+              value: summary?.onboarding?.stuck,
+              detail: "Candidate journeys need HR action",
+              tone: "red",
+              onClick: () => openDrilldown("onboarding_stuck", "Onboarding Stuck"),
+            },
+            {
+              label: "BGV Pending",
+              value: summary?.bgvPending,
+              detail: "Verification approvals pending",
+              tone: "amber",
+              onClick: () => openDrilldown("bgv_pending", "BGV Pending"),
+            },
+            {
+              label: "DPDP Requests",
+              value: summary?.dpdpWithdrawals,
+              detail: "Privacy withdrawals pending",
+              tone: summary?.dpdpOverdue ? "red" : "blue",
+              onClick: () => openDrilldown("dpdp_withdrawal", "DPDP Withdrawal Requests"),
+            },
+            {
+              label: "Resignation",
+              value: summary?.resignationDiscussionPending,
+              detail: "Discussions pending",
+              tone: "amber",
+              onClick: () => openDrilldown("resignation_pending", "Resignation Discussions Pending"),
+            },
+            {
+              label: "Appointment eSign",
+              value: summary?.appointmentEsignPending,
+              detail: "Letters pending signature",
+              tone: "blue",
+              onClick: () => openDrilldown("appointment_esign_pending", "Appointment e-Sign Pending"),
+            },
+            {
+              label: "Joining Doc eSign",
+              value: summary?.joiningDocEsignPending,
+              detail: summary?.joiningDocEsignOverdue ? `${summary.joiningDocEsignOverdue} overdue` : "Documents pending eSign",
+              tone: summary?.joiningDocEsignOverdue ? "red" : "amber",
+              onClick: () => openDrilldown("joining_doc_esign", "Joining Document eSign Pending"),
+            },
+          ]}
+        />
+
         <KpiMetricGrid metrics={metrics} columns={3} loading={summaryLoading} />
 
-        {/* AI HR Operations Briefing */}
-        <AIInsightPanel
-          contextType="hr_dashboard"
-          role="hr"
-          title="HR Operations AI Briefing"
-          enabled={!summaryLoading && summary !== null}
-          data={{
-            selected_candidates: summary?.selectedCandidates,
-            onboarding_submitted: summary?.onboarding?.submitted,
-            onboarding_pending: summary?.onboarding?.pending,
-            onboarding_stuck: summary?.onboarding?.stuck,
-            bgv_pending: summary?.bgvPending,
-            dpdp_withdrawals: summary?.dpdpWithdrawals,
-            resignation_pending: summary?.resignationDiscussionPending,
-          }}
-        />
+        <DashboardCard title="HR Operations AI Briefing">
+          <AIInsightPanel
+            contextType="hr_dashboard"
+            role="hr"
+            title="HR Operations AI Briefing"
+            enabled={!summaryLoading && summary !== null}
+            data={{
+              onboarding_submitted: summary?.onboarding?.submitted,
+              onboarding_pending: summary?.onboarding?.pending,
+              onboarding_stuck: summary?.onboarding?.stuck,
+              bgv_pending: summary?.bgvPending,
+              resignation_pending: summary?.resignationDiscussionPending,
+              dpdp_withdrawals: summary?.dpdpWithdrawals,
+              dpdp_overdue: summary?.dpdpOverdue,
+              appointment_esign_pending: summary?.appointmentEsignPending,
+              joining_doc_esign_pending: summary?.joiningDocEsignPending,
+              joining_doc_esign_overdue: summary?.joiningDocEsignOverdue,
+            }}
+          />
+        </DashboardCard>
 
         {/* Work Inbox */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

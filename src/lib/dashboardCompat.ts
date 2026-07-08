@@ -36,8 +36,11 @@ export function normalizeDashboardSummary<T>(dashboardCode: string, payload: Das
   const incentive = metric(metrics, "incentive");
   const tat = metric(metrics, "tat");
   const resign = metric(metrics, "resign");
+  const dpdp = metric(metrics, "dpdp");
+  const appointmentEsign = metric(metrics, "appointmentEsign");
   const bgv = metric(metrics, "bgv");
   const nm = metric(metrics, "nm");
+  const joiningDocEsign = metric(metrics, "joiningDocEsign");
 
   if (dashboardCode === "CEO_DASHBOARD") {
     return {
@@ -58,20 +61,33 @@ export function normalizeDashboardSummary<T>(dashboardCode: string, payload: Das
             : value(payroll),
       },
       resignation: { pendingDiscussion: detail(resign, "pendingDiscussion") },
+      dpdp: {
+        pending: detail(dpdp, "pending") ?? value(dpdp),
+        overdue: detail(dpdp, "overdue"),
+        holdsActive: detail(dpdp, "holdsActive"),
+      },
+      appointmentEsign: {
+        pending: detail(appointmentEsign, "pending") ?? value(appointmentEsign),
+        candidatePending: detail(appointmentEsign, "candidatePending"),
+        companyPending: detail(appointmentEsign, "companyPending"),
+      },
     } as T;
   }
 
   if (dashboardCode === "HR_DASHBOARD") {
     return {
-      selectedCandidates: 0,
       onboarding: {
         submitted: detail(onb, "submitted"),
         pending: detail(onb, "pending") ?? value(onb),
         stuck: detail(onb, "stuck"),
       },
       bgvPending: detail(bgv, "pending") ?? value(bgv),
-      dpdpWithdrawals: 0,
       resignationDiscussionPending: detail(resign, "pendingDiscussion") ?? value(resign),
+      dpdpWithdrawals: detail(dpdp, "pending") ?? value(dpdp),
+      dpdpOverdue: detail(dpdp, "overdue"),
+      appointmentEsignPending: detail(appointmentEsign, "pending") ?? value(appointmentEsign),
+      joiningDocEsignPending: detail(joiningDocEsign, "pending") ?? value(joiningDocEsign),
+      joiningDocEsignOverdue: detail(joiningDocEsign, "overdue"),
     } as T;
   }
 
@@ -94,7 +110,9 @@ export function normalizeDashboardSummary<T>(dashboardCode: string, payload: Das
       jclrPending: detail(onb, "pending") ?? 0,
       nameMismatchBlocking: detail(nm, "blocking") ?? 0,
       onboardingValidationPending: detail(onb, "pending") ?? 0,
-      appointmentEsignPending: 0,
+      appointmentEsignPending: detail(appointmentEsign, "pending") ?? value(appointmentEsign),
+      appointmentCandidatePending: detail(appointmentEsign, "candidatePending"),
+      appointmentCompanyPending: detail(appointmentEsign, "companyPending"),
     } as T;
   }
 
@@ -102,9 +120,23 @@ export function normalizeDashboardSummary<T>(dashboardCode: string, payload: Das
     return {
       requiredHc: detail(hc, "required"),
       availableHc: detail(hc, "available") ?? detail(hc, "active") ?? value(hc),
-      rosterAdherence: detail(att, "attendanceRate") ?? value(att),
+      attendanceRate: detail(att, "attendanceRate") ?? value(att),
       missingPunch: detail(att, "missedPunch"),
-      attendanceVarianceBuckets: [],
+    } as T;
+  }
+
+  if (dashboardCode === "MANAGEMENT_DASHBOARD") {
+    return {
+      teamMembers: detail(hc, "active") ?? value(hc),
+      attendanceRate: detail(att, "attendanceRate") ?? value(att),
+      presentToday: detail(att, "present"),
+      absentToday: detail(att, "absent"),
+      lateToday: detail(att, "late"),
+      missingPunch: detail(att, "missedPunch"),
+      onboardingPending: detail(onb, "pending") ?? value(onb),
+      resignationPending: detail(resign, "pendingDiscussion") ?? value(resign),
+      dpdpWithdrawals: detail(dpdp, "pending") ?? value(dpdp),
+      workItems: data.workItems,
     } as T;
   }
 
