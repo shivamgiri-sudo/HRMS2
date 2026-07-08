@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useAuth } from "@/contexts/AuthContext";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   Dialog,
@@ -82,6 +83,7 @@ interface EditFormData {
   department_id: string;
   manager_id: string;
   hire_date: string;
+  salary_start_date: string | null;
   employment_type: string;
   working_hours_start: string;
   working_hours_end: string;
@@ -109,6 +111,7 @@ const formatCurrency = (value: number) => {
 };
 
 export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEditDialogProps) {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [formData, setFormData] = useState<EditFormData>({
     employee_code: "",
@@ -128,6 +131,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     department_id: "",
     manager_id: "",
     hire_date: "",
+    salary_start_date: null,
     employment_type: "full-time",
     working_hours_start: "09:00",
     working_hours_end: "18:00",
@@ -320,6 +324,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         department_id: employeeDetails.department_id || "",
         manager_id: employeeDetails.reporting_manager_id || employeeDetails.manager_id || "",
         hire_date: employeeDetails.date_of_joining?.slice?.(0, 10) || employeeDetails.hire_date?.slice?.(0, 10) || "",
+        salary_start_date: employeeDetails.salary_start_date?.slice?.(0, 10) || null,
         employment_type: employeeDetails.employment_type || "full-time",
         working_hours_start: parseTime(employeeDetails.working_hours_start),
         working_hours_end: parseTime(employeeDetails.working_hours_end),
@@ -347,6 +352,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         departmentId: data.department_id || null,
         reportingManagerId: data.manager_id || null,
         dateOfJoining: data.hire_date,
+        salaryStartDate: data.salary_start_date || null,
         employmentType: data.employment_type,
         workingHoursStart: data.working_hours_start,
         workingHoursEnd: data.working_hours_end,
@@ -424,6 +430,15 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     if (formData.official_email && !/^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/.test(formData.official_email)) {
       toast.error("Official email must be @teammas.in or @teammas.co.in");
       return;
+    }
+    // Validate salary_start_date is not before hire_date
+    if (formData.salary_start_date && formData.hire_date) {
+      const salaryDate = new Date(formData.salary_start_date);
+      const hireDate = new Date(formData.hire_date);
+      if (salaryDate < hireDate) {
+        toast.error('Salary start date cannot be before date of joining');
+        return;
+      }
     }
     // Note: first_name, last_name, and employee_code are protected fields and cannot be updated
     if (!formData.email || !formData.designation_id) {
@@ -687,6 +702,45 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                     />
                   </div>
                 </div>
+
+                {/* Salary Start Date - HR/Admin only */}
+                {(user?.role === 'super_admin' || user?.role === 'admin' || user?.role === 'hr') && (
+                  <div className="space-y-2">
+                    <Label htmlFor="salary_start_date" className="text-sm font-semibold text-slate-700">
+                      Salary Start Date
+                      <span className="ml-2 text-xs font-normal text-slate-500">
+                        (Optional - defaults to Date of Joining)
+                      </span>
+                    </Label>
+                    <Input
+                      id="salary_start_date"
+                      type="date"
+                      value={formData.salary_start_date || ''}
+                      onChange={(e) => setFormData({ ...formData, salary_start_date: e.target.value || null })}
+                      className="w-full"
+                    />
+                    {formData.hire_date && formData.salary_start_date && formData.salary_start_date !== formData.hire_date && (
+                      <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs">
+                        <p className="font-semibold text-amber-800">Training Period</p>
+                        <p className="mt-1 text-amber-700">
+                          {(() => {
+                            const hire = new Date(formData.hire_date);
+                            const salary = new Date(formData.salary_start_date);
+                            const diffDays = Math.ceil((salary.getTime() - hire.getTime()) / (1000 * 60 * 60 * 24));
+                            return diffDays > 0
+                              ? `${diffDays} day(s) unpaid training period from joining to salary start.`
+                              : `Salary starts ${Math.abs(diffDays)} day(s) before joining (unusual - verify this is correct).`;
+                          })()}
+                        </p>
+                      </div>
+                    )}
+                    {formData.salary_start_date && formData.hire_date && new Date(formData.salary_start_date) < new Date(formData.hire_date) && (
+                      <p className="text-xs text-rose-600 font-medium">
+                        ⚠️ Salary start date cannot be before date of joining
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">

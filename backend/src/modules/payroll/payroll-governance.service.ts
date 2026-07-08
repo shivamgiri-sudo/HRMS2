@@ -35,7 +35,7 @@ function runEmployeeScopeSql(run: any) {
   const clauses = [
     "e.active_status = 1",
     "LOWER(COALESCE(e.employment_status, 'active')) = 'active'",
-    "(e.date_of_joining IS NULL OR e.date_of_joining <= ?)",
+    "(COALESCE(e.salary_start_date, e.date_of_joining) IS NULL OR COALESCE(e.salary_start_date, e.date_of_joining) <= ?)",
     "(COALESCE(e.date_of_exit, e.date_of_leaving, e.resignation_date) IS NULL OR COALESCE(e.date_of_exit, e.date_of_leaving, e.resignation_date) >= ?)",
   ];
   const params: unknown[] = [];
