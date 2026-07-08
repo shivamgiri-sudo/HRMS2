@@ -40,8 +40,7 @@ engagementIntelligenceRouter.get(
     const userId = req.authUser!.id;
     // Determine roles for scoping
     const [roleRows] = await db.execute<RowDataPacket[]>(
-      `SELECT r.role_key FROM user_roles ur
-         JOIN roles r ON r.id = ur.role_id
+      `SELECT ur.role_key FROM user_roles ur
         WHERE ur.user_id = ?`,
       [userId]
     );
@@ -90,7 +89,7 @@ engagementIntelligenceRouter.get(
   h(async (req, res) => {
     const userId = req.authUser!.id;
     const [roleRows] = await db.execute<RowDataPacket[]>(
-      `SELECT r.role_key FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ?`,
+      `SELECT ur.role_key FROM user_roles ur WHERE ur.user_id = ?`,
       [userId]
     );
     const roles = (roleRows as any[]).map(r => r.role_key as string);
@@ -166,7 +165,7 @@ engagementIntelligenceRouter.patch(
     // Owner can complete their own; admin/hr can update any
     const isAdminHr = await (async () => {
       const [rr] = await db.execute<RowDataPacket[]>(
-        `SELECT r.role_key FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ?`, [userId]
+        `SELECT ur.role_key FROM user_roles ur WHERE ur.user_id = ?`, [userId]
       );
       return (rr as any[]).some(r => ["admin", "hr", "super_admin"].includes(r.role_key));
     })();
