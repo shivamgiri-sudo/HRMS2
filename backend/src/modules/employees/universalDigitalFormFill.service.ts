@@ -553,6 +553,18 @@ async function buildSourceContext(employeeId: string, candidateId?: string | nul
     [employeeId],
   ).catch(() => [[null] as unknown as RowDataPacket[], []]);
 
+  const [[salary]] = await db.execute<RowDataPacket[]>(
+    `SELECT ctc_offered, basic, hra, conveyance, da, special_allowance,
+            other_allowance, bonus, gross, net_in_hand,
+            epf_employee, epf_employer, esic_employee, esic_employer,
+            professional_tax, gratuity, admin_charges
+       FROM employee_salary_snapshot
+      WHERE employee_id = ?
+      ORDER BY snapshot_date DESC
+      LIMIT 1`,
+    [employeeId],
+  ).catch(() => [[null] as unknown as RowDataPacket[], []]);
+
   return {
     employee: {
       full_name: employee?.full_name ?? null,
@@ -609,6 +621,25 @@ async function buildSourceContext(employeeId: string, candidateId?: string | nul
       bank_account_masked: maskBankAccount(bank?.bank_account_no ?? null),
       ifsc_code: bank?.bank_ifsc ?? bank?.ifsc_code ?? null,
       bank_verified: Number(bank?.bank_verified ?? 0) === 1,
+    },
+    salary: {
+      ctc_annual: salary?.ctc_offered ?? null,
+      basic: salary?.basic ?? null,
+      hra: salary?.hra ?? null,
+      conveyance: salary?.conveyance ?? null,
+      da: salary?.da ?? null,
+      special_allowance: salary?.special_allowance ?? null,
+      other_allowance: salary?.other_allowance ?? null,
+      bonus: salary?.bonus ?? null,
+      gross: salary?.gross ?? null,
+      net_in_hand: salary?.net_in_hand ?? null,
+      epf_employee: salary?.epf_employee ?? null,
+      epf_employer: salary?.epf_employer ?? null,
+      esic_employee: salary?.esic_employee ?? null,
+      esic_employer: salary?.esic_employer ?? null,
+      professional_tax: salary?.professional_tax ?? null,
+      gratuity: salary?.gratuity ?? null,
+      admin_charges: salary?.admin_charges ?? null,
     },
     system: {
       current_date: new Date().toISOString().slice(0, 10),
@@ -1077,10 +1108,7 @@ async function renderPlaceholderDocx(templatePath: string, replacements: Record<
   const zeroToleranceDate = escapeXml(replacements.zero_tolerance_signature_date ?? currentDate);
   const hrName = escapeXml(replacements.surveillance_hr_name ?? "");
   if (employeeName) {
-    // Legacy official DOCX samples sometimes contain a real employee name instead of a placeholder.
     nextXml = nextXml
-      .split("MOHD UZAIF")
-      .join(employeeName)
       .replace(/(I\s+)([A-Z][A-Z\s.]{2,80})(\s*,\s*agree)/g, `$1${employeeName}$3`);
   }
   nextXml = nextXml

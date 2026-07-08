@@ -524,8 +524,13 @@ async function generateAgreementPdf(checklist: ChecklistRow, target: EmployeeDoc
       if (generatedDraft && fs.existsSync(generatedDraft.storage_path)) {
         return generatedDraft;
       }
-    } catch {
-      // Fall back to a clearly labeled draft if the configured template cannot be rendered.
+    } catch (err: unknown) {
+      console.error('[generateAgreementPdf] Template rendering failed, falling back to placeholder draft:', {
+        checklistId: checklist.id,
+        documentCode: checklist.document_code,
+        employeeId: checklist.employee_id,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -1997,4 +2002,56 @@ export async function hardDeleteMissingGeneratedArtifacts() {
     }
   }
   return { deleted };
+}
+
+/**
+ * Auto-generates joining document checklist and prefilled drafts for a newly created employee.
+ * Called automatically after employee code generation in the ATS offer approval flow.
+ */
+export async function autoGenerateJoiningDocuments(
+  employeeId: string,
+  candidateId: string | null,
+  actorUserId: string,
+): Promise<void> {
+  const target = await getEmployeeDocumentTarget(employeeId);
+  if (!target) {
+    console.error('[autoGenerateJoiningDocuments] Employee not found:', employeeId);
+    return;
+  }
+
+  await ensureChecklistRows(target, actorUserId);
+
+  const [checklistRows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.id AS checklist_id, c.document_code, c.action_type, t.template_storage_path, t.fill_mode
+       FROM employee_joining_document_checklist c
+       JOIN employee_joining_document_template t ON t.id = c.template_id
+      WHERE c.employee_id = ?
+        AND t.template_storage_path IS NOT NULL
+        AND t.active_status = 1
+      ORDER BY t.is_mandatory DESC, c.document_name ASC`,
+    [employeeId],
+  );
+
+  let generated = 0;
+  for (const row of checklistRows as RowDataPacket[]) {
+    try {
+      await generateChecklistDraft(String(row.checklist_id), actorUserId);
+      generated++;
+    } catch (err: unknown) {
+      console.error('[autoGenerateJoiningDocuments] Failed to generate draft for checklist item:', {
+        employeeId,
+        checklistId: row.checklist_id,
+        documentCode: row.document_code,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  await recalculateDocumentProgress(employeeId);
+
+  console.log('[autoGenerateJoiningDocuments] Completed:', {
+    employeeId,
+    totalChecklist: checklistRows.length,
+    draftsGenerated: generated,
+  });
 }

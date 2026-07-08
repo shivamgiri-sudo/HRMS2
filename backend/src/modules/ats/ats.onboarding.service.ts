@@ -15,6 +15,7 @@ import { createTemporaryPasswordCredential } from '../auth/tempPassword.service.
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { providerFactory } from '../communication/providers/provider.factory.js';
 import { dispatchJoinProvisioningTasks } from '../it-provisioning/it-provisioning.service.js';
+import { autoGenerateJoiningDocuments } from '../employees/employeeJoiningDocuments.service.js';
 import { sendPayrollHrJoiningDocNotification } from './ats.email.service.js';
 
 // ── PII Helpers ───────────────────────────────────────────────────────────────
@@ -713,9 +714,9 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
 
     await conn.execute(
       `UPDATE ats_onboarding_bridge
-       SET status = 'joined', hr_approved_by = ?, hr_approved_at = NOW()
+       SET status = 'joined', employee_id = ?, hr_approved_by = ?, hr_approved_at = NOW()
        WHERE candidate_id = ?`,
-      [approverId, candidateId],
+      [employeeId, approverId, candidateId],
     );
 
     await conn.execute(
@@ -802,6 +803,15 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
     });
     // Don't throw - this is a non-blocking notification
   }
+
+  // Auto-generate joining document checklist and prefilled drafts
+  autoGenerateJoiningDocuments(employeeId, candidateId, approverId)
+    .catch((err: unknown) => {
+      console.error('[approveOffer] Auto joining document generation failed:', {
+        employeeCode,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
 
   // Send welcome email after transaction commits — email failure should not roll back employee creation
   const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';

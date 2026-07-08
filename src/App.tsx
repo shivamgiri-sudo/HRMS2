@@ -129,6 +129,7 @@ const NativeEmployeeStatCard        = lazy(() => import("./pages/NativeEmployeeS
 const NativeEmployee360             = lazy(() => import("./pages/NativeEmployee360"));
 const EmployeeJoiningDocumentsPage  = lazy(() => import("./pages/EmployeeJoiningDocumentsPage"));
 const JoiningDocumentsTrackerPage   = lazy(() => import("./pages/JoiningDocumentsTrackerPage"));
+const JoiningDocumentTemplateAdmin  = lazy(() => import("./pages/JoiningDocumentTemplateAdmin"));
 const ATSBulkImportPage             = lazy(() => import("./pages/ATSBulkImportPage"));
 const EmployeeEpfCompliancePage     = lazy(() => import("./pages/EmployeeEpfCompliancePage"));
 const PayrollEpfCompliancePage      = lazy(() => import("./pages/PayrollEpfCompliancePage"));
@@ -251,6 +252,7 @@ const PayrollHrDashboard    = lazy(() => import("./pages/dashboards/PayrollHrDas
 const WfmDashboard          = lazy(() => import("./pages/dashboards/WfmDashboard"));
 const HrDashboard           = lazy(() => import("./pages/dashboards/HrDashboard"));
 const EmployeeSelfDashboard = lazy(() => import("./pages/dashboards/EmployeeSelfDashboard"));
+const ManagerDashboard      = lazy(() => import("./pages/dashboards/ManagerDashboard"));
 
 // Expenses
 const MyExpenses = lazy(() => import("./pages/expenses/MyExpenses"));
@@ -499,6 +501,7 @@ const App = () => (
               {/* Communication */}
               <Route path="/communication/templates" element={<ProtectedRoute roles={['admin', 'hr']}><NativeTemplateManager /></ProtectedRoute>} />
               <Route path="/settings/email-templates/bulk-import" element={<ProtectedRoute roles={['admin', 'super_admin']}><Suspense fallback={<PageLoader />}><NativeEmailTemplateBulkImport /></Suspense></ProtectedRoute>} />
+              <Route path="/settings/document-templates" element={<ProtectedRoute roles={['admin', 'super_admin', 'hr']}><JoiningDocumentTemplateAdmin /></ProtectedRoute>} />
               <Route path="/communication/dispatch" element={<ProtectedRoute roles={['admin', 'hr']}><NativeDispatchCenter /></ProtectedRoute>} />
               <Route path="/communication/history" element={<ProtectedRoute roles={['admin', 'hr']}><NativeDispatchHistory /></ProtectedRoute>} />
               <Route path="/communication/preferences" element={<ProtectedRoute><NativeNotificationPreferences /></ProtectedRoute>} />
@@ -539,6 +542,7 @@ const App = () => (
               <Route path="/payroll-hr/dashboard" element={<ProtectedRoute><Gate pageCode="PAYROLL_HR_DASHBOARD"><PayrollHrDashboard /></Gate></ProtectedRoute>} />
               <Route path="/wfm/dashboard" element={<ProtectedRoute><Gate pageCode="WFM_DASHBOARD"><WfmDashboard /></Gate></ProtectedRoute>} />
               <Route path="/hr/dashboard" element={<ProtectedRoute><Gate pageCode="HR_DASHBOARD"><HrDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/manager/dashboard" element={<ProtectedRoute><Gate pageCode="MANAGEMENT_DASHBOARD"><ManagerDashboard /></Gate></ProtectedRoute>} />
               <Route path="/my-dashboard" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_SELF_DASHBOARD"><EmployeeSelfDashboard /></Gate></ProtectedRoute>} />
 
               {/* DPDP Withdrawal */}

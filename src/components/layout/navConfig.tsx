@@ -278,6 +278,7 @@ export const navGroups: NavGroup[] = [
           { label: "Page Access",      href: "/super-admin/page-access",    icon: ic(ShieldCheck),roles: ["admin"],            description: "Page access" },
           { label: "DPDP / Privacy",   href: "/compliance/dpdp",            icon: ic(ShieldCheck),roles: ["admin","hr"],       description: "DPDP" },
           { label: "Audit Log",        href: "/audit-log",                  icon: ic(FileText),   roles: ["admin","super_admin","payroll_head","hr","wfm"], description: "Audit trail" },
+          { label: "Document Templates", href: "/settings/document-templates", icon: ic(FileText), roles: ["admin","super_admin","hr"], description: "Joining document templates" },
         ],
       },
       {
