@@ -375,7 +375,7 @@ const App = () => (
               <Route path="/candidate-portal/dashboard" element={<CandidatePortalDashboard />} />
               <Route path="/super-admin/module-access" element={<ProtectedRoute roles={['admin']}><SuperAdminModuleAccess /></ProtectedRoute>} />
               <Route path="/super-admin/dashboard" element={<ProtectedRoute roles={['admin']}><SuperAdminDashboardV2 /></ProtectedRoute>} />
-              <Route path="/ats/command-centre" element={<ProtectedRoute roles={['admin', 'manager', 'hr']}><ATSCommandCentre /></ProtectedRoute>} />
+              <Route path="/ats/command-centre" element={<ProtectedRoute roles={['admin', 'manager', 'hr', 'recruiter', 'recruitment_hr']}><ATSCommandCentre /></ProtectedRoute>} />
               <Route path="/provisioning/wfm-alignment" element={<ProtectedRoute roles={['wfm', 'admin', 'super_admin']}><Gate pageCode="PROVISIONING_WFM_ALIGNMENT"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
               <Route path="/provisioning/it" element={<ProtectedRoute roles={['it', 'admin', 'super_admin']}><Gate pageCode="PROVISIONING_IT"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
               <Route path="/provisioning/admin" element={<ProtectedRoute roles={['branch_admin', 'hr', 'admin', 'super_admin']}><Gate pageCode="PROVISIONING_ADMIN"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
