@@ -541,4 +541,97 @@ router.post("/bgv/sync-report", requireAuth, requireRole("admin", "hr"), h(async
   res.json({ success: true, ...result });
 }));
 
+// ── Full BGV Report Data (for PDF generation) ─────────────────────────────────
+router.get("/report/full", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const candidateId = String(req.query.candidateId ?? "");
+  if (!candidateId) return res.status(400).json({ success: false, message: "candidateId required" });
+  await requireBgvCandidateScope(req, candidateId);
+
+  // Fetch all data in parallel
+  const [
+    [reportRows],
+    [profileRows],
+    [bankRows],
+    [qualificationRows],
+    [experienceRows],
+    [familyRows],
+    [documentRows],
+    [bgvCheckRows],
+    [candidateRows],
+  ] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT r.*, c.full_name AS candidate_name, c.candidate_code, c.mobile, c.email,
+              b.branch_name, p.process_name
+         FROM candidate_bgv_report r
+         JOIN ats_candidate c ON c.id = r.candidate_id
+         LEFT JOIN branch_master b ON b.id = c.applied_for_branch
+         LEFT JOIN process_master p ON p.id = c.applied_for_process
+        WHERE r.candidate_id = ? LIMIT 1`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY year_of_passing DESC`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? LIMIT 1`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_family WHERE candidate_id = ? LIMIT 1`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT doc_type, doc_name, uploaded_at, document_status, verification_method
+         FROM candidate_onboarding_document WHERE candidate_id = ? AND deleted_at IS NULL
+        ORDER BY uploaded_at DESC`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT check_type, status, provider_key, provider_reference_id, verified_at, result_summary
+         FROM candidate_bgv_check WHERE candidate_id = ? AND deleted_at IS NULL`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT id, full_name, candidate_code, mobile, email FROM ats_candidate WHERE id = ? LIMIT 1`,
+      [candidateId]
+    ),
+  ]);
+
+  // Fetch completed_by employee name
+  let completedByName: string | null = null;
+  const report = reportRows[0] as RowDataPacket | undefined;
+  if (report?.completed_by) {
+    const [userRows] = await db.execute<RowDataPacket[]>(
+      `SELECT full_name FROM employees WHERE user_id = ? LIMIT 1`,
+      [report.completed_by]
+    );
+    completedByName = (userRows[0] as RowDataPacket)?.full_name ?? null;
+  }
+
+  return res.json({
+    success: true,
+    data: {
+      report: report ?? null,
+      profile: profileRows[0] ?? null,
+      bank: bankRows[0] ?? null,
+      qualifications: qualificationRows,
+      experience: experienceRows[0] ?? null,
+      family: familyRows[0] ?? null,
+      documents: documentRows,
+      bgvChecks: bgvCheckRows,
+      candidate: candidateRows[0] ?? null,
+      completedByName,
+    },
+  });
+}));
+
 export default router;

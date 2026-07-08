@@ -13,6 +13,7 @@ import {
   Send, ExternalLink, RefreshCw,
 } from 'lucide-react';
 import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
+import { downloadBGVReportPDF } from '@/lib/bgvReportPdfGenerator';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -158,6 +159,7 @@ export default function NativeBGVReport() {
   const [report, setReport] = useState<BGVReport | null>(null);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [verifying, setVerifying] = useState('');
   const [initiatingPortal, setInitiatingPortal] = useState(false);
   const [search, setSearch] = useState('');
@@ -272,8 +274,17 @@ export default function NativeBGVReport() {
     }
   };
 
-  const exportPDF = () => {
-    window.print();
+  const exportPDF = async () => {
+    if (!selected) return;
+    setExporting(true);
+    try {
+      const fullData = await hrmsApi.get<any>(`/api/ats/bgv/report/full?candidateId=${selected.id}`);
+      await downloadBGVReportPDF(fullData.data);
+    } catch (e: any) {
+      alert(e?.message ?? 'PDF export failed');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const filtered = candidates.filter(c =>
@@ -345,7 +356,13 @@ export default function NativeBGVReport() {
                 : <><Send className="w-4 h-4 mr-1" /> Initiate BGV (InfinitiAI)</>}
             </Button>
           )}
-          <Button variant="outline" onClick={exportPDF}><Download className="w-4 h-4 mr-1" /> Export PDF</Button>
+          <Button variant="outline" onClick={() => void exportPDF()} disabled={exporting}>
+            <Download className="w-4 h-4 mr-1" /> {exporting ? 'Generating...' : 'Download PDF Report'}
+          </Button>
+          <Button variant="outline" onClick={() => window.open(`/bgv-report-view/${selected.id}`, '_blank')}
+            className="border-indigo-300 text-indigo-700 hover:bg-indigo-50">
+            <ExternalLink className="w-4 h-4 mr-1" /> View Report
+          </Button>
           {!report.locked && (
             <Button variant="outline" onClick={() => void syncFromApiResults()} disabled={syncing}
               className="border-teal-300 text-teal-700 hover:bg-teal-50" title="Pull real API check results into this report">
