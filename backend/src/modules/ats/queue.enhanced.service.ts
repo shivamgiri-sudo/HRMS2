@@ -165,6 +165,7 @@ export async function getQueueMetrics(branch?: string, date?: string): Promise<Q
       SUM(CASE WHEN COALESCE(qt.queue_status, IF(qt.status='active','waiting',qt.status)) = 'completed' THEN 1 ELSE 0 END) as total_completed_today,
       ROUND(AVG(
         CASE WHEN qt.called_at IS NOT NULL
+          AND COALESCE(qt.queue_status, IF(qt.status='active','waiting',qt.status)) IN ('called','in_interview','completed')
         THEN TIMESTAMPDIFF(MINUTE, COALESCE(qt.arrival_time, qt.created_at), qt.called_at)
         ELSE NULL END
       ), 2) as average_wait_time,
@@ -273,44 +274,33 @@ export async function updateQueueStatus(
 }
 
 /**
- * Update estimated wait times for all waiting candidates
+ * Update estimated wait times for all waiting candidates.
+ * Uses per-branch avg interview duration from today's completed interviews (fallback 15 min).
  */
 async function updateEstimatedWaitTimes(): Promise<void> {
-  // Calculate average interview duration from last 10 completed interviews
-  const [avgRows] = await db.execute<AvgDurationRow[]>(
-    `SELECT
-      branch_name,
-      ROUND(AVG(TIMESTAMPDIFF(MINUTE, interview_started_at, interview_completed_at))) as avg_duration
-    FROM ats_queue_token
-    WHERE queue_status = 'completed'
-      AND interview_completed_at IS NOT NULL
-      AND DATE(COALESCE(arrival_time, created_at)) = CURDATE()
-    GROUP BY branch_name`
-  );
-
-  const avgDurations: Record<string, number> = {};
-  for (const row of avgRows) {
-    avgDurations[String(row.branch_name ?? '')] = Number(row.avg_duration ?? 15); // Default 15 min
-  }
-
-  // Update estimated wait time for waiting candidates
-  // Must use JOIN-based UPDATE to avoid MySQL's restriction on
-  // referencing the target table in a subquery FROM clause.
   await db.execute(
     `UPDATE ats_queue_token qt
      JOIN (
        SELECT
          qt1.id,
-         COUNT(qt2.id) * 15 AS wait_time
-        FROM ats_queue_token qt1
-        LEFT JOIN ats_queue_token qt2
-          ON qt2.branch_name = qt1.branch_name
-          AND qt2.queue_status IN ('called', 'in_interview')
-          AND COALESCE(qt2.arrival_time, qt2.created_at) < COALESCE(qt1.arrival_time, qt1.created_at)
-          AND DATE(COALESCE(qt2.arrival_time, qt2.created_at)) = CURDATE()
-        WHERE qt1.queue_status = 'waiting'
-          AND DATE(COALESCE(qt1.arrival_time, qt1.created_at)) = CURDATE()
-        GROUP BY qt1.id
+         COUNT(qt2.id) * COALESCE(
+           (SELECT ROUND(AVG(TIMESTAMPDIFF(MINUTE, q3.interview_started_at, q3.interview_completed_at)))
+              FROM ats_queue_token q3
+             WHERE q3.branch_name = qt1.branch_name
+               AND q3.queue_status = 'completed'
+               AND q3.interview_completed_at IS NOT NULL
+               AND DATE(COALESCE(q3.arrival_time, q3.created_at)) = CURDATE()),
+           15
+         ) AS wait_time
+       FROM ats_queue_token qt1
+       LEFT JOIN ats_queue_token qt2
+         ON qt2.branch_name = qt1.branch_name
+         AND qt2.queue_status IN ('called', 'in_interview')
+         AND COALESCE(qt2.arrival_time, qt2.created_at) < COALESCE(qt1.arrival_time, qt1.created_at)
+         AND DATE(COALESCE(qt2.arrival_time, qt2.created_at)) = CURDATE()
+       WHERE qt1.queue_status = 'waiting'
+         AND DATE(COALESCE(qt1.arrival_time, qt1.created_at)) = CURDATE()
+       GROUP BY qt1.id, qt1.branch_name
      ) AS sub ON sub.id = qt.id
      SET qt.estimated_wait_time = sub.wait_time`
   );

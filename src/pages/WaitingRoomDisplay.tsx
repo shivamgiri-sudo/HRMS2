@@ -1078,7 +1078,7 @@ export default function WaitingRoomDisplay() {
                 <div className="wr-metric">
                   <div className="wr-metric-num-wrap">
                     <span className="wr-metric-number white">
-                      {metrics?.average_wait_time ? `${Math.round(metrics.average_wait_time)}m` : "--"}
+                      {metrics?.average_wait_time != null ? `${Math.round(metrics.average_wait_time)}m` : "--"}
                     </span>
                   </div>
                   <div className="wr-metric-label">Avg Wait</div>

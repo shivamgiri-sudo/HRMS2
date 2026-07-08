@@ -49,13 +49,23 @@ export const atsQueueService = {
       });
     }
 
+    // Resolve branch name from candidate → branch_master so BRANCH_EXPR filter works on the display
+    const [branchRows] = await db.execute<RowDataPacket[]>(
+      `SELECT bm.branch_name
+         FROM ats_candidate c
+         LEFT JOIN branch_master bm ON bm.id = c.applied_for_branch
+        WHERE c.id = ? LIMIT 1`,
+      [candidateId]
+    );
+    const resolvedBranchName: string | null = (branchRows[0] as any)?.branch_name ?? null;
+
     const id = randomUUID();
     const token = randomUUID();
     await db.execute(
       `INSERT INTO ats_queue_token
-         (id, candidate_id, token, arrival_time, current_stage, status)
-       VALUES (?, ?, ?, ?, 'Arrived', 'active')`,
-      [id, candidateId, token, arrivalTime]
+         (id, candidate_id, token, arrival_time, current_stage, status, branch_name)
+       VALUES (?, ?, ?, ?, 'Arrived', 'active', ?)`,
+      [id, candidateId, token, arrivalTime, resolvedBranchName]
     );
     return this.getTokenById(id);
   },
