@@ -7,7 +7,7 @@ import { sendRejectedEmail } from "../ats/ats.email.service.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const VALID_PROCESSES = ["Onfido", "Reginald", "BBB", "GS1", "GPI", "FF", "DRA"] as const;
+// Process list is managed in ats_form_config (hiringProcessOptions) — no hardcoded enum here.
 const VALID_DECISIONS = ["Selected", "Rejected", "Hold", "Client Round - Pending", "No Show"] as const;
 const VALID_STAGES = ["Arrival", "Round 1- HR Screening", "Interview - Skill Test", "Round 2- Op's", "Round 3- Client", "Selection Discussion"] as const;
 
@@ -569,7 +569,6 @@ function validateSubmission(input: SubmissionInput) {
   const clientRoundConducted = boolish(input.clientRoundConducted);
   const followupRequired = boolish(input.followupRequired) || finalDecision === "Client Round - Pending" || finalDecision === "Hold";
 
-  validateEnum(process, "Process", VALID_PROCESSES);
   validateEnum(finalDecision, "Final Decision", VALID_DECISIONS);
 
   if (!VALID_STAGES.includes(walkinEndStage as (typeof VALID_STAGES)[number]))

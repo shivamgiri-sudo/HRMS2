@@ -115,7 +115,7 @@ const EMPTY_FEEDBACK: FeedbackForm = {
   followupReason: "",
 };
 
-const VALID_PROCESSES = ["Onfido", "Reginald", "BBB", "GS1", "GPI", "FF", "DRA"];
+const VALID_PROCESSES = ["Onfido", "BBB", "Reginald", "Finnable", "GS1", "GPI", "FF", "DRA", "Bellavita", "AW", "Clovia", "Housing", "LP", "Neeman's", "Birlanu", "GNC", "Du Dugital", "Exicom", "Solveasy", "Dalmia"];
 const VALID_STAGES = [
   "Arrival",
   "Round 1- HR Screening",
@@ -184,6 +184,16 @@ function InterviewFeedbackModal({
 }) {
   const [form, setForm] = useState<FeedbackForm>(EMPTY_FEEDBACK);
   const [saving, setSaving] = useState(false);
+  const [processOptions, setProcessOptions] = useState<string[]>(VALID_PROCESSES);
+
+  useEffect(() => {
+    hrmsApi.get<{ success: boolean; data: any }>("/api/ats/form-config/bootstrap")
+      .then(res => {
+        const opts = res.data?.hiringProcessOptions;
+        if (Array.isArray(opts) && opts.length > 0) setProcessOptions(opts);
+      })
+      .catch(() => {});
+  }, []);
 
   const rank = STAGE_RANK[form.walkinEndStage] ?? -1;
   const isSelected = form.finalDecision === "Selected";
@@ -253,7 +263,7 @@ function InterviewFeedbackModal({
                 className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
               >
                 <option value="">Select</option>
-                {VALID_PROCESSES.map((p) => <option key={p}>{p}</option>)}
+                {processOptions.map((p) => <option key={p}>{p}</option>)}
               </select>
             </label>
 
