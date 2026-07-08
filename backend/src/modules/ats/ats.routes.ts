@@ -67,10 +67,12 @@ atsPublicRouter.post(
       return res.status(400).json({ success: false, message: "type must be 'resume' or 'selfie'" });
     }
 
-    // Verify candidate exists and was created recently (within 1 hour)
+    // Verify candidate exists and was registered recently (within 1 hour of walk-in)
+    // Use updated_at (not created_at) — pre-entered leads have old created_at but updated_at
+    // is always stamped NOW() by the registration route when a candidate walks in.
     const { db } = await import("../../db/mysql.js");
     const [rows] = await db.execute(
-      `SELECT id, created_at FROM ats_candidate WHERE id = ?`,
+      `SELECT id, updated_at FROM ats_candidate WHERE id = ?`,
       [id]
     );
 
@@ -79,11 +81,12 @@ atsPublicRouter.post(
     }
 
     const candidate = rows[0];
-    const createdAt = new Date(candidate.created_at);
+    // dateStrings:true returns bare "YYYY-MM-DD HH:mm:ss" — append T and Z for safe UTC parse
+    const registeredAt = new Date((candidate.updated_at as string).replace(" ", "T") + "Z");
     const now = new Date();
-    const hoursSinceCreation = (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60);
+    const hoursSinceRegistration = (now.getTime() - registeredAt.getTime()) / (1000 * 60 * 60);
 
-    if (hoursSinceCreation > 1) {
+    if (hoursSinceRegistration > 1) {
       return res.status(403).json({
         success: false,
         message: "Upload window expired (1 hour limit from registration)"
