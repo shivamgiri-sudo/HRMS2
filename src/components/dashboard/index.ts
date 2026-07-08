@@ -27,3 +27,6 @@ export type { AgingBucketCardProps, AgingBucket } from "./AgingBucketCard";
 
 export { ExportButton } from "./ExportButton";
 export type { ExportButtonProps } from "./ExportButton";
+
+export { DashboardActionStrip, DashboardCard } from "./DashboardPolish";
+export type { ActionStripItem } from "./DashboardPolish";

@@ -14,6 +14,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { DashboardActionStrip } from "@/components/dashboard";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -89,9 +90,9 @@ function MetricCard({ title, value, icon, trend, loading, color }: MetricCardPro
   }
 
   return (
-    <Card className="border-slate-200 hover:shadow-md transition-shadow cursor-pointer">
+    <Card className="overflow-hidden rounded-2xl border-slate-200/80 shadow-[0_10px_30px_rgba(15,23,42,0.04)] transition-all hover:-translate-y-0.5 hover:shadow-[0_18px_40px_rgba(15,23,42,0.08)] cursor-pointer">
       <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardDescription className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+        <CardDescription className="text-xs font-black uppercase tracking-wider text-slate-600">
           {title}
         </CardDescription>
         <div className={`rounded-xl p-2 ${colorClasses[color]}`}>{icon}</div>
@@ -124,7 +125,7 @@ function ModuleHealthCard({ module }: ModuleCardProps) {
   const Icon = config.icon;
 
   return (
-    <Card className="border-slate-200">
+    <Card className="rounded-2xl border-slate-200/80 shadow-[0_10px_30px_rgba(15,23,42,0.04)]">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base font-bold text-slate-900">{module.module}</CardTitle>
@@ -183,7 +184,7 @@ export default function SuperAdminDashboardV2() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
+      <div className="space-y-6 bg-[#f7f9fc]">
         {/* Header */}
         <div className="flex flex-col gap-2">
           <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">System Control</p>
@@ -192,6 +193,36 @@ export default function SuperAdminDashboardV2() {
             Real-time system monitoring, access control, and operational metrics
           </p>
         </div>
+
+        <DashboardActionStrip
+          title="System Operations - Immediate Actions"
+          items={[
+            {
+              label: "System Health",
+              value: metrics?.systemHealth ?? null,
+              detail: isHealthy ? "All monitored modules operational" : "One or more modules need attention",
+              tone: isHealthy ? "green" : "red",
+            },
+            {
+              label: "Module Errors",
+              value: modules.reduce((sum, module) => sum + Number(module.errorCount ?? 0), 0),
+              detail: "Errors across monitored modules",
+              tone: modules.some((module) => module.errorCount > 0) ? "red" : "green",
+            },
+            {
+              label: "Integrations",
+              value: metrics?.activeIntegrations,
+              detail: `${metrics?.configuredIntegrations ?? 0} configured`,
+              tone: "blue",
+            },
+            {
+              label: "System Pages",
+              value: metrics?.totalPages,
+              detail: "Page access catalog",
+              tone: "blue",
+            },
+          ]}
+        />
 
         {/* Tab Navigation */}
         <div className="flex border-b border-slate-200">
@@ -257,8 +288,8 @@ export default function SuperAdminDashboardV2() {
 
         {/* System Health Badge */}
         <Card className={isHealthy
-          ? "border-emerald-200 bg-gradient-to-br from-emerald-50 to-white"
-          : "border-amber-200 bg-gradient-to-br from-amber-50 to-white"
+          ? "rounded-2xl border-emerald-200 bg-gradient-to-br from-emerald-50 to-white shadow-[0_12px_35px_rgba(16,185,129,0.08)]"
+          : "rounded-2xl border-amber-200 bg-gradient-to-br from-amber-50 to-white shadow-[0_12px_35px_rgba(245,158,11,0.08)]"
         }>
           <CardHeader className="pb-3">
             <div className="flex items-center gap-3">

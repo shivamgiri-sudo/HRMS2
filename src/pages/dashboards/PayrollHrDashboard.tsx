@@ -1,21 +1,24 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { AlertCircle, ShieldX } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
-  RoleDashboardShell,
-  HealthScoreCard,
   DashboardDrilldownDrawer,
+  DashboardActionStrip,
+  DashboardCard,
+  HealthScoreCard,
+  RoleDashboardShell,
   WorkInboxPanel,
 } from "@/components/dashboard";
 import type { HealthBreakdownItem } from "@/components/dashboard";
+import { AIInsightPanel } from "@/components/ai";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUserRole } from "@/hooks/useUserRole";
-import { Button } from "@/components/ui/button";
-import { AIInsightPanel } from "@/components/ai";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { normalizeDashboardSummary } from "@/lib/dashboardCompat";
 
 const DASHBOARD_CODE = "PAYROLL_HR_DASHBOARD";
+type DashboardPayload = Parameters<typeof normalizeDashboardSummary>[1];
 
 interface BlockerCounts {
   missingBank: number;
@@ -27,24 +30,57 @@ interface BlockerCounts {
 interface PayrollSummary {
   readinessScore?: number;
   blockers?: BlockerCounts;
-  jclrPending?: number;
-  nameMismatchBlocking?: string | null;
-  onboardingValidationPending?: number;
-  appointmentEsignPending?: number;
+  jclrPending?: number | null;
+  nameMismatchBlocking?: number | null;
+  onboardingValidationPending?: number | null;
+  appointmentEsignPending?: number | null;
+  appointmentCandidatePending?: number | null;
+  appointmentCompanyPending?: number | null;
   breakdown?: HealthBreakdownItem[];
-}
-
-interface BlockerRow {
-  label: string;
-  count: number;
-  status: "good" | "bad" | "neutral";
-  metricCode: string;
 }
 
 interface DrilldownState {
   open: boolean;
   metricCode: string;
   metricName: string;
+}
+
+interface StatItem {
+  label: string;
+  value: number | string;
+  status: "good" | "bad" | "neutral";
+  metricCode: string;
+  metricName: string;
+}
+
+function SummaryStatCard({
+  item,
+  loading,
+  onDrilldown,
+}: {
+  item: StatItem;
+  loading: boolean;
+  onDrilldown: (code: string, name: string) => void;
+}) {
+  if (loading) return <Skeleton className="h-24 rounded-xl" />;
+
+  const colors: Record<StatItem["status"], string> = {
+    good: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    bad: "border-red-200 bg-red-50 text-red-700",
+    neutral: "border-slate-200 bg-white text-slate-900",
+  };
+
+  return (
+    <button
+      type="button"
+      className={`rounded-xl border p-4 text-left shadow-sm transition hover:shadow-md ${colors[item.status]}`}
+      onClick={() => onDrilldown(item.metricCode, item.metricName)}
+    >
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{item.label}</p>
+      <p className="mt-2 text-2xl font-bold leading-none">{item.value}</p>
+      <p className="mt-2 text-xs font-medium text-blue-600">View Details</p>
+    </button>
+  );
 }
 
 function BlockersTable({
@@ -60,79 +96,53 @@ function BlockersTable({
     return (
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
         <Skeleton className="h-4 w-40" />
-        {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+        {[...Array(4)].map((_, i) => (
+          <Skeleton key={i} className="h-10 w-full" />
+        ))}
       </div>
     );
   }
 
-  const rows: BlockerRow[] = [
-    {
-      label: "Missing Bank Account",
-      count: blockers?.missingBank ?? 0,
-      status: (blockers?.missingBank ?? 0) > 0 ? "bad" : "good",
-      metricCode: "missing_bank",
-    },
-    {
-      label: "Missing PAN",
-      count: blockers?.missingPan ?? 0,
-      status: (blockers?.missingPan ?? 0) > 0 ? "bad" : "good",
-      metricCode: "missing_pan",
-    },
-    {
-      label: "Missing UAN",
-      count: blockers?.missingUan ?? 0,
-      status: (blockers?.missingUan ?? 0) > 0 ? "bad" : "good",
-      metricCode: "missing_uan",
-    },
-    {
-      label: "Statutory Incomplete",
-      count: blockers?.statutoryIncomplete ?? 0,
-      status: (blockers?.statutoryIncomplete ?? 0) > 0 ? "bad" : "good",
-      metricCode: "statutory_incomplete",
-    },
+  const rows = [
+    { label: "Missing Bank Account", count: blockers?.missingBank ?? 0, metricCode: "missing_bank" },
+    { label: "Missing PAN", count: blockers?.missingPan ?? 0, metricCode: "missing_pan" },
+    { label: "Missing UAN", count: blockers?.missingUan ?? 0, metricCode: "missing_uan" },
+    { label: "Statutory Incomplete", count: blockers?.statutoryIncomplete ?? 0, metricCode: "statutory_incomplete" },
   ];
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-      <div className="px-4 py-3 border-b border-slate-100">
-        <h3 className="font-semibold text-slate-800 text-sm">Employee Blockers</h3>
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-100 px-4 py-3">
+        <h3 className="text-sm font-semibold text-slate-800">Employee Payroll Blockers</h3>
       </div>
       <table className="min-w-full text-sm">
-        <thead className="bg-slate-50 border-b border-slate-100">
+        <thead className="border-b border-slate-100 bg-slate-50">
           <tr>
-            <th className="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">
+            <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
               Blocker Type
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase tracking-wide">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
               Count
             </th>
-            <th className="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase tracking-wide">
+            <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
               Action
             </th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr
-              key={row.metricCode}
-              className="border-b last:border-0 hover:bg-slate-50 transition-colors"
-            >
+            <tr key={row.metricCode} className="border-b last:border-0 hover:bg-slate-50">
               <td className="px-4 py-2.5 text-slate-700">{row.label}</td>
               <td className="px-4 py-2.5 text-right">
-                <span
-                  className={
-                    row.status === "bad"
-                      ? "font-bold text-red-600"
-                      : "font-semibold text-emerald-600"
-                  }
-                >
+                <span className={row.count > 0 ? "font-bold text-red-600" : "font-semibold text-emerald-600"}>
                   {row.count}
                 </span>
               </td>
               <td className="px-4 py-2.5 text-right">
                 <button
+                  type="button"
                   onClick={() => onDrilldown(row.metricCode, row.label)}
-                  className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                  className="text-xs font-medium text-blue-600 hover:text-blue-800"
                 >
                   View
                 </button>
@@ -145,62 +155,15 @@ function BlockersTable({
   );
 }
 
-function SummaryStatCard({
-  label,
-  value,
-  loading,
-  status,
-  onDrilldown,
-  metricCode,
-}: {
-  label: string;
-  value: number | string | null;
-  loading: boolean;
-  status?: "good" | "bad" | "neutral";
-  onDrilldown?: () => void;
-  metricCode?: string;
-}) {
-  if (loading) {
-    return <Skeleton className="h-24 rounded-xl" />;
-  }
-
-  const colorMap: Record<string, string> = {
-    good: "border-emerald-200 bg-emerald-50",
-    bad: "border-red-200 bg-red-50",
-    neutral: "border-slate-200 bg-white",
-  };
-  const textMap: Record<string, string> = {
-    good: "text-emerald-700",
-    bad: "text-red-700",
-    neutral: "text-slate-900",
-  };
-
-  const containerClass = colorMap[status ?? "neutral"] ?? colorMap.neutral;
-  const valueClass = textMap[status ?? "neutral"] ?? textMap.neutral;
-
-  return (
-    <div
-      className={`rounded-xl border p-4 shadow-sm ${containerClass} ${onDrilldown ? "cursor-pointer hover:shadow-md transition-shadow" : ""}`}
-      onClick={onDrilldown}
-    >
-      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">{label}</p>
-      <p className={`text-2xl font-bold leading-none ${valueClass}`}>
-        {value !== null && value !== undefined ? value : "—"}
-      </p>
-      {onDrilldown && metricCode && (
-        <p className="text-xs text-blue-600 mt-2 font-medium">View Details</p>
-      )}
-    </div>
-  );
+function hasValue(value: unknown): value is number | string {
+  return value !== null && value !== undefined;
 }
 
 export default function PayrollHrDashboard() {
   const { data: roleData, isLoading: roleLoading } = useUserRole();
-
   const [summary, setSummary] = useState<PayrollSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
-
   const [drilldown, setDrilldown] = useState<DrilldownState>({
     open: false,
     metricCode: "",
@@ -220,12 +183,13 @@ export default function PayrollHrDashboard() {
     setSummaryLoading(true);
     setFetchError(null);
 
-    hrmsApi.get(`/api/dashboards/${DASHBOARD_CODE}/summary`)
+    hrmsApi
+      .get(`/api/dashboards/${DASHBOARD_CODE}/summary`)
       .then((json) => {
-        if (!cancelled) setSummary(normalizeDashboardSummary<PayrollSummary>(DASHBOARD_CODE, json as any));
+        if (!cancelled) setSummary(normalizeDashboardSummary<PayrollSummary>(DASHBOARD_CODE, json as DashboardPayload));
       })
       .catch((err) => {
-        if (!cancelled) setFetchError(err.message ?? "Failed to load dashboard summary.");
+        if (!cancelled) setFetchError(err.message ?? "Failed to load payroll dashboard summary.");
       })
       .finally(() => {
         if (!cancelled) setSummaryLoading(false);
@@ -236,14 +200,17 @@ export default function PayrollHrDashboard() {
     };
   }, []);
 
-  // Role check
   if (!roleLoading) {
     const roleKeys = roleData?.roleKeys ?? [];
     const allowed =
       roleKeys.includes("super_admin") ||
+      roleKeys.includes("admin") ||
       roleKeys.includes("hr") ||
       roleKeys.includes("payroll") ||
+      roleKeys.includes("payroll_hr") ||
+      roleKeys.includes("payroll_branch") ||
       roleKeys.includes("finance");
+
     if (!allowed) {
       return (
         <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
@@ -262,26 +229,90 @@ export default function PayrollHrDashboard() {
     }
   }
 
+  const statItems: StatItem[] = [
+    {
+      label: "JCLR Pending",
+      value: summary?.jclrPending ?? null,
+      status: summary?.jclrPending != null && summary.jclrPending > 0 ? "bad" : "good",
+      metricCode: "jclr_pending",
+      metricName: "JCLR Pending",
+    },
+    {
+      label: "Name Mismatch (Blocking)",
+      value: summary?.nameMismatchBlocking ?? null,
+      status: summary?.nameMismatchBlocking != null && summary.nameMismatchBlocking > 0 ? "bad" : "good",
+      metricCode: "name_mismatch_blocking",
+      metricName: "Name Mismatch - Blocking Employee Code",
+    },
+    {
+      label: "Onboarding Validation Pending",
+      value: summary?.onboardingValidationPending ?? null,
+      status:
+        summary?.onboardingValidationPending != null && summary.onboardingValidationPending > 0 ? "bad" : "good",
+      metricCode: "onboarding_validation_pending",
+      metricName: "Onboarding - Submitted but Validation Pending",
+    },
+    {
+      label: "Appointment e-Sign Pending",
+      value: summary?.appointmentEsignPending ?? null,
+      status: summary?.appointmentEsignPending != null && summary.appointmentEsignPending > 0 ? "neutral" : "good",
+      metricCode: "appointment_esign_pending",
+      metricName: "Appointment e-Sign Pending",
+    },
+  ].filter((item): item is StatItem => hasValue(item.value));
+
   const loading = summaryLoading || roleLoading;
 
   return (
     <RoleDashboardShell
-      title="Payroll & HR Dashboard"
-      subtitle="Payroll readiness, blockers and validation queue"
-      scopeLabel="Payroll HR View"
+      title="Finance / Payroll Dashboard"
+      subtitle="Read-only payroll readiness, blockers and validation queue"
+      scopeLabel="Payroll View"
       loading={loading}
     >
       {fetchError && (
-        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 mb-4">
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           <AlertCircle className="h-4 w-4 shrink-0" />
           {fetchError}
         </div>
       )}
 
       <div className="space-y-6">
-        {/* Top row: Health Score + Summary Stats */}
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/* Payroll Readiness Score */}
+        <DashboardActionStrip
+          title="Payroll Readiness - Immediate Actions"
+          items={[
+            {
+              label: "JCLR Pending",
+              value: summary?.jclrPending,
+              detail: "Joining confirmation validation",
+              tone: "amber",
+              onClick: () => openDrilldown("jclr_pending", "JCLR Pending"),
+            },
+            {
+              label: "Name Mismatch",
+              value: summary?.nameMismatchBlocking,
+              detail: "Blocking employee code",
+              tone: "red",
+              onClick: () => openDrilldown("name_mismatch_blocking", "Name Mismatch - Blocking Employee Code"),
+            },
+            {
+              label: "Validation Pending",
+              value: summary?.onboardingValidationPending,
+              detail: "Submitted but pending payroll validation",
+              tone: "amber",
+              onClick: () => openDrilldown("onboarding_validation_pending", "Onboarding Validation Pending"),
+            },
+            {
+              label: "Appointment eSign",
+              value: summary?.appointmentEsignPending,
+              detail: "Candidate/company sign pending",
+              tone: "blue",
+              onClick: () => openDrilldown("appointment_esign_pending", "Appointment e-Sign Pending"),
+            },
+          ]}
+        />
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
           <div className="lg:col-span-1">
             <HealthScoreCard
               score={summary?.readinessScore ?? 0}
@@ -291,100 +322,45 @@ export default function PayrollHrDashboard() {
             />
           </div>
 
-          {/* Summary stat cards */}
-          <div className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <SummaryStatCard
-              label="JCLR Pending"
-              value={summary?.jclrPending ?? null}
-              loading={summaryLoading}
-              status={
-                summary?.jclrPending != null
-                  ? summary.jclrPending > 0
-                    ? "bad"
-                    : "good"
-                  : "neutral"
-              }
-              onDrilldown={() => openDrilldown("jclr_pending", "JCLR Pending")}
-              metricCode="jclr_pending"
-            />
-            <SummaryStatCard
-              label="Name Mismatch (Blocking)"
-              value={summary?.nameMismatchBlocking ?? null}
-              loading={summaryLoading}
-              status={
-                summary?.nameMismatchBlocking
-                  ? "bad"
-                  : summary?.nameMismatchBlocking === null
-                  ? "neutral"
-                  : "good"
-              }
-              onDrilldown={() =>
-                openDrilldown("name_mismatch_blocking", "Name Mismatch — Blocking Employee Code")
-              }
-              metricCode="name_mismatch_blocking"
-            />
-            <SummaryStatCard
-              label="Onboarding Validation Pending"
-              value={summary?.onboardingValidationPending ?? null}
-              loading={summaryLoading}
-              status={
-                summary?.onboardingValidationPending != null
-                  ? summary.onboardingValidationPending > 0
-                    ? "bad"
-                    : "good"
-                  : "neutral"
-              }
-              onDrilldown={() =>
-                openDrilldown("onboarding_validation_pending", "Onboarding — Submitted but Validation Pending")
-              }
-              metricCode="onboarding_validation_pending"
-            />
-            <SummaryStatCard
-              label="Appointment e-Sign Pending"
-              value={summary?.appointmentEsignPending ?? null}
-              loading={summaryLoading}
-              status={
-                summary?.appointmentEsignPending != null
-                  ? summary.appointmentEsignPending > 0
-                    ? "neutral"
-                    : "good"
-                  : "neutral"
-              }
-              onDrilldown={() =>
-                openDrilldown("appointment_esign_pending", "Appointment e-Sign Pending")
-              }
-              metricCode="appointment_esign_pending"
-            />
-          </div>
+          {statItems.length > 0 && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:col-span-3">
+              {statItems.map((item) => (
+                <SummaryStatCard
+                  key={item.metricCode}
+                  item={item}
+                  loading={summaryLoading}
+                  onDrilldown={openDrilldown}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* AI Payroll Readiness Check */}
-        <AIInsightPanel
-          contextType="payroll_readiness"
-          role="payroll_hr"
-          title="Payroll AI Readiness Check"
-          enabled={!summaryLoading && summary !== null}
-          data={{
-            readiness_score: summary?.readinessScore,
-            missing_bank: summary?.blockers?.missingBank,
-            missing_pan: summary?.blockers?.missingPan,
-            missing_uan: summary?.blockers?.missingUan,
-            statutory_incomplete: summary?.blockers?.statutoryIncomplete,
-            jclr_pending: summary?.jclrPending,
-            name_mismatch_blocking: summary?.nameMismatchBlocking ? 1 : 0,
-            onboarding_validation_pending: summary?.onboardingValidationPending,
-            appointment_esign_pending: summary?.appointmentEsignPending,
-          }}
-        />
+        <DashboardCard title="Payroll AI Readiness Check">
+          <AIInsightPanel
+            contextType="payroll_readiness"
+            role="payroll_hr"
+            title="Payroll AI Readiness Check"
+            enabled={!summaryLoading && summary !== null}
+            data={{
+              readiness_score: summary?.readinessScore,
+              missing_bank: summary?.blockers?.missingBank,
+              missing_pan: summary?.blockers?.missingPan,
+              missing_uan: summary?.blockers?.missingUan,
+              statutory_incomplete: summary?.blockers?.statutoryIncomplete,
+              jclr_pending: summary?.jclrPending,
+              name_mismatch_blocking: summary?.nameMismatchBlocking,
+              onboarding_validation_pending: summary?.onboardingValidationPending,
+              appointment_esign_pending: summary?.appointmentEsignPending,
+              appointment_candidate_pending: summary?.appointmentCandidatePending,
+              appointment_company_pending: summary?.appointmentCompanyPending,
+            }}
+          />
+        </DashboardCard>
 
-        {/* Blockers table + Work Inbox */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div className="lg:col-span-2">
-            <BlockersTable
-              blockers={summary?.blockers}
-              loading={summaryLoading}
-              onDrilldown={openDrilldown}
-            />
+            <BlockersTable blockers={summary?.blockers} loading={summaryLoading} onDrilldown={openDrilldown} />
           </div>
           <div className="lg:col-span-1">
             <WorkInboxPanel maxItems={8} />

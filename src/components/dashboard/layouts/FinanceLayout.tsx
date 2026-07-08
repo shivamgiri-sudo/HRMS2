@@ -68,8 +68,10 @@ export function FinanceLayout() {
   const gross = payroll.total_gross ?? 0;
   const net = payroll.total_net ?? 0;
   const totalEmployees = latestRun.total_employees ?? metrics.active_headcount ?? 0;
-  const processedCount = Math.round(totalEmployees * 0.92);
-  const pendingCount = totalEmployees - processedCount;
+  // TODO: Backend should provide processed/pending counts from actual payroll run state
+  // Currently using 92% placeholder — should come from latestRun.processed_employees or status breakdown
+  const processedCount = latestRun.processed_employees ?? Math.round(totalEmployees * 0.92);
+  const pendingCount = latestRun.pending_employees ?? (totalEmployees - processedCount);
 
   const kpiTiles = [
     {
@@ -201,12 +203,13 @@ export function FinanceLayout() {
   const nextCycleLabel = nextMonth.toLocaleString("en-IN", { month: "long", year: "numeric" });
   const daysUntil = Math.ceil((nextMonth.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
-  // Payment summary rows derived from latest run
+  // TODO: Backend should provide actual payment status counts from payroll run
+  // Currently using fixed percentages (91% success, 0.9% failed, 0.4% cash) — these should come from payment_transactions or payout_summary
   const paymentRows = [
-    { label: "Bank Transfers Initiated", count: Math.round((latestRun.total_employees ?? 0) * 0.91), status: "Completed", color: "bg-emerald-100 text-emerald-700" },
-    { label: "Failed Transactions", count: Math.round((latestRun.total_employees ?? 0) * 0.009), status: "Needs Review", color: "bg-red-100 text-red-700" },
+    { label: "Bank Transfers Initiated", count: latestRun.bank_transfers_completed ?? Math.round((latestRun.total_employees ?? 0) * 0.91), status: "Completed", color: "bg-emerald-100 text-emerald-700" },
+    { label: "Failed Transactions", count: latestRun.failed_transactions ?? Math.round((latestRun.total_employees ?? 0) * 0.009), status: "Needs Review", color: "bg-red-100 text-red-700" },
     { label: "On-Hold Accounts", count: missingBank, status: "Blocked", color: "bg-amber-100 text-amber-700" },
-    { label: "Cash Payments", count: Math.round((latestRun.total_employees ?? 0) * 0.004), status: "Manual", color: "bg-slate-100 text-slate-600" },
+    { label: "Cash Payments", count: latestRun.cash_payments ?? Math.round((latestRun.total_employees ?? 0) * 0.004), status: "Manual", color: "bg-slate-100 text-slate-600" },
   ];
 
   return (

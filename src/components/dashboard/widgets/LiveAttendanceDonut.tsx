@@ -16,6 +16,8 @@ export function LiveAttendanceDonut() {
   const total = summary.active_headcount ?? 0;
   const attPct = summary.attendance_pct ?? 0;
   const present = Math.round((attPct / 100) * total);
+  // TODO: Use actual live attendance breakdown from /api/rta/live-summary or /api/wfm/attendance/today-live
+  // Current values use fixed percentages (1.8% leave, 18.9% absent, 2.8% WFH, 7.8% late) — these are placeholders
   const onLeave = Math.round(total * 0.018);
   const absent = Math.round(total * 0.189);
   const wfh = Math.round(total * 0.028);

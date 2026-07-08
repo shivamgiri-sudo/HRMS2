@@ -190,6 +190,8 @@ export const authService = {
     const trimmed = identifier.trim();
 
     try {
+      // SUCCESS PATH: All of the following code is inside this try block.
+      // If any step throws, execution jumps to the catch block below (line 376).
       const [rows] = await db.execute<AuthUserRow[]>(
         `SELECT au.id, au.email, au.password_hash, au.is_blocked,
                 COALESCE(au.must_change_password, 0) AS must_change_password,
@@ -374,7 +376,8 @@ export const authService = {
         },
       };
     } catch (error) {
-      // Log failed login attempt
+      // ERROR PATH: If any step above threw, we land here.
+      // Log the failure and re-throw to let the route handler return 401.
       if (req) {
         logSensitiveAction({
           actor_user_id: '00000000-0000-0000-0000-000000000000', // Unknown user (failed login)

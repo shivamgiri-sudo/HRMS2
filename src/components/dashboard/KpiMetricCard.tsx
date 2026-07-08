@@ -38,9 +38,9 @@ function TrendIcon({ trend }: { trend?: "up" | "down" | "flat" }) {
 }
 
 function statusBadgeVariant(status?: "good" | "bad" | "neutral") {
-  if (status === "good") return "bg-emerald-100 text-emerald-700 border-emerald-200";
-  if (status === "bad") return "bg-red-100 text-red-700 border-red-200";
-  return "bg-slate-100 text-slate-600 border-slate-200";
+  if (status === "good") return "bg-emerald-50 text-emerald-700 border-emerald-100";
+  if (status === "bad") return "bg-red-50 text-red-700 border-red-100";
+  return "bg-amber-50 text-amber-700 border-amber-100";
 }
 
 function statusLabel(status?: "good" | "bad" | "neutral") {
@@ -66,7 +66,7 @@ export function KpiMetricCard({
 
   if (loading) {
     return (
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
         <Skeleton className="h-4 w-3/4" />
         <Skeleton className="h-8 w-1/2" />
         <Skeleton className="h-3 w-1/3" />
@@ -77,8 +77,13 @@ export function KpiMetricCard({
   return (
     <div
       className={cn(
-        "rounded-xl border border-slate-200 bg-white p-4 shadow-sm flex flex-col gap-2 transition-shadow",
-        onClick && "cursor-pointer hover:shadow-md"
+        "group relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_10px_30px_rgba(15,23,42,0.04)] flex flex-col gap-2 transition-all duration-200",
+        "before:absolute before:inset-x-0 before:top-0 before:h-1",
+        status === "good" && "before:bg-emerald-400",
+        status === "bad" && "before:bg-red-400",
+        status === "neutral" && "before:bg-amber-400",
+        !status && "before:bg-blue-400",
+        onClick && "cursor-pointer hover:-translate-y-0.5 hover:shadow-[0_18px_40px_rgba(15,23,42,0.08)]"
       )}
       onClick={onClick}
       role={onClick ? "button" : undefined}
@@ -86,7 +91,7 @@ export function KpiMetricCard({
       onKeyDown={onClick ? (e) => e.key === "Enter" && onClick() : undefined}
     >
       <div className="flex items-start justify-between gap-2">
-        <span className="text-xs font-medium text-slate-500 uppercase tracking-wide leading-tight">
+        <span className="text-xs font-bold text-slate-600 uppercase tracking-wide leading-tight">
           {metric}
         </span>
         {status && (
@@ -101,12 +106,12 @@ export function KpiMetricCard({
         )}
       </div>
 
-      <div className="flex items-end gap-1.5">
-        <span className="text-3xl font-bold text-slate-900 leading-none">
+      <div className="flex items-end gap-1.5 pt-1">
+        <span className="text-3xl font-black tracking-tight text-slate-950 leading-none">
           {value !== null && value !== undefined ? value : "—"}
         </span>
         {unit && (
-          <span className="text-sm text-slate-500 mb-0.5">{unit}</span>
+          <span className="text-sm font-bold text-slate-400 mb-0.5">{unit}</span>
         )}
       </div>
 
@@ -132,7 +137,7 @@ export function KpiMetricCard({
 
       {drilldownAvailable && onClick && (
         <button
-          className="mt-1 flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium w-fit"
+          className="mt-1 flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-bold w-fit"
           onClick={(e) => {
             e.stopPropagation();
             onClick();

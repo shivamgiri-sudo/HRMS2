@@ -11,7 +11,7 @@ import {
   Clock,
   TrendingUp,
 } from "lucide-react";
-import { RoleDashboardShell } from "@/components/dashboard";
+import { DashboardActionStrip, DashboardCard, RoleDashboardShell } from "@/components/dashboard";
 import { WorkInboxPanel } from "@/components/dashboard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -65,13 +65,13 @@ function StatCard({
     return <Skeleton className="h-24 rounded-xl" />;
   }
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm flex items-start gap-3">
-      <div className="rounded-lg bg-slate-100 p-2 shrink-0">
+    <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_10px_30px_rgba(15,23,42,0.04)] flex items-start gap-3">
+      <div className="rounded-xl bg-slate-100 p-2.5 shrink-0">
         <Icon className="h-5 w-5 text-slate-600" />
       </div>
       <div className="min-w-0">
-        <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">{label}</p>
-        <p className={`text-2xl font-bold leading-none mt-1 ${colorClass}`}>
+        <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">{label}</p>
+        <p className={`text-2xl font-black leading-none mt-1 ${colorClass}`}>
           {value !== null && value !== undefined ? value : "—"}
           {unit && <span className="text-sm font-normal text-slate-500 ml-1">{unit}</span>}
         </p>
@@ -378,7 +378,36 @@ export default function EmployeeSelfDashboard() {
       loading={loading}
     >
       <div className="space-y-6">
-        {/* Attendance */}
+        <DashboardActionStrip
+          title="My Immediate Actions"
+          items={[
+            {
+              label: "Attendance",
+              value: attendance?.attendancePct != null ? `${attendance.attendancePct}%` : null,
+              detail: "Current month status",
+              tone: attendance?.attendancePct != null && attendance.attendancePct < 75 ? "red" : "green",
+            },
+            {
+              label: "Absent Days",
+              value: attendance?.absentDays,
+              detail: "This month",
+              tone: attendance?.absentDays != null && attendance.absentDays > 0 ? "amber" : "green",
+            },
+            {
+              label: "Late Days",
+              value: attendance?.lateDays,
+              detail: "This month",
+              tone: attendance?.lateDays != null && attendance.lateDays > 3 ? "amber" : "blue",
+            },
+            {
+              label: "Onboarding",
+              value: onboarding?.isCandidate ? `${onboarding.percentComplete ?? 0}%` : null,
+              detail: "Candidate step completion",
+              tone: "blue",
+            },
+          ]}
+        />
+
         <AttendanceCard
           data={attendance}
           loading={attendanceLoading}
@@ -431,20 +460,22 @@ export default function EmployeeSelfDashboard() {
         )}
 
         {/* AI Self Dashboard Brief */}
-        <AIInsightPanel
-          contextType="employee_self"
-          role="employee"
-          title="Your Attendance & Leave AI Brief"
-          enabled={!attendanceLoading && attendance !== null}
-          data={{
-            present_days: attendance?.presentDays,
-            absent_days: attendance?.absentDays,
-            late_days: attendance?.lateDays,
-            total_working_days: attendance?.totalWorkingDays,
-            attendance_pct: attendance?.attendancePct,
-            leave_balances: leaveBalances.map((b) => ({ type: b.leaveType, balance: b.balance })),
-          }}
-        />
+        <DashboardCard title="Your Attendance & Leave AI Brief">
+          <AIInsightPanel
+            contextType="employee_self"
+            role="employee"
+            title="Your Attendance & Leave AI Brief"
+            enabled={!attendanceLoading && attendance !== null}
+            data={{
+              present_days: attendance?.presentDays,
+              absent_days: attendance?.absentDays,
+              late_days: attendance?.lateDays,
+              total_working_days: attendance?.totalWorkingDays,
+              attendance_pct: attendance?.attendancePct,
+              leave_balances: leaveBalances.map((b) => ({ type: b.leaveType, balance: b.balance })),
+            }}
+          />
+        </DashboardCard>
 
         {/* Onboarding (only shown if candidate) */}
         <OnboardingStatusCard

@@ -38,10 +38,12 @@ export function OpsLayout() {
   const total = summary.active_headcount ?? 0;
   const attPct = summary.attendance_pct ?? 0;
   const presentCount = Math.round((attPct / 100) * total);
-  const lateCount = Math.round(total * 0.078);
-  const absentCount = Math.round(total * 0.189);
-  const onLeaveCount = Math.round(total * 0.018);
-  const wfhCount = Math.round(total * 0.028);
+  // TODO: Replace fixed percentages with real WFM live data from /api/rta/live-summary or /api/wfm/attendance/today-live
+  // Current values are derived from fixed assumptions; should reflect actual daily breakdown
+  const lateCount = Math.round(total * 0.078);      // Placeholder: 7.8% of headcount
+  const absentCount = Math.round(total * 0.189);    // Placeholder: 18.9% of headcount
+  const onLeaveCount = Math.round(total * 0.018);   // Placeholder: 1.8% of headcount
+  const wfhCount = Math.round(total * 0.028);       // Placeholder: 2.8% of headcount
 
   const kpiTiles = [
     {
@@ -133,14 +135,16 @@ export function OpsLayout() {
     },
   ];
 
-  // Shift summary data derived from WFM summary
+  // TODO: Shift summary should come from /api/wfm/shifts/summary or similar endpoint for real adherence data
+  // Current values use fixed percentages; need backend integration for actual scheduled vs actual coverage
   const shifts = [
     { name: "Morning (06:00–14:00)", scheduled: Math.round(total * 0.38), actual: Math.round(total * 0.36), adherence: 94.7 },
     { name: "Afternoon (14:00–22:00)", scheduled: Math.round(total * 0.41), actual: Math.round(total * 0.39), adherence: 95.1 },
     { name: "Night (22:00–06:00)", scheduled: Math.round(total * 0.21), actual: Math.round(total * 0.19), adherence: 90.5 },
   ];
 
-  // Regularization requests (static placeholder counts — no specific API for this)
+  // TODO: Regularization requests should come from /api/wfm/regularization/requests if endpoint exists
+  // Currently static placeholder — need real pending regularization counts from backend
   const regularizationRows = [
     { reason: "Missing Punch-In", count: 18, status: "Pending", color: "bg-red-100 text-red-700" },
     { reason: "Missing Punch-Out", count: 12, status: "Pending", color: "bg-amber-100 text-amber-700" },

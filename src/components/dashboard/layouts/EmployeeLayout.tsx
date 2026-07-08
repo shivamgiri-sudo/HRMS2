@@ -48,6 +48,8 @@ export function EmployeeLayout() {
     queryFn: () => hrmsApi.get("/api/work-inbox/my-actions"),
     staleTime: 1000 * 60 * 5,
   });
+  // TODO: Verify /api/dashboards/employee/summary endpoint exists and returns expected fields
+  // If different endpoint pattern exists, adjust queryFn accordingly
 
   // Attendance computed from WFM daily records — filter to current month
   const allRecords: any[] = Array.isArray(attData?.data) ? attData.data : [];

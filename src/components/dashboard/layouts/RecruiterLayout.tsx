@@ -23,8 +23,12 @@ export function RecruiterLayout() {
     staleTime: 1000 * 60 * 5,
   });
 
+  // TODO: Verify /api/ats/stats response structure for RecruiterLayout
+  // Currently expects pipeline as array, but ManagerLayout may expect by_stage object
+  // If structure changed, this will need adjustment: Object.values(atsData?.data?.by_stage ?? {})
   const pipeline: any[] = atsData?.data?.pipeline ?? [];
   const daily = myData?.data ?? {};
+  // TODO: Verify /api/ats/recruiter/daily-stats fields: joiners_mtd, submissions_today, conversion_pct, pending_count
   const inPipeline = pipeline.reduce((s: number, p: any) =>
     ["new", "screening", "interview", "assessment"].includes(p.stage) ? s + (p.value ?? 0) : s, 0);
   const offersPending = pipeline.find((p: any) => p.stage === "offer")?.value ?? 0;

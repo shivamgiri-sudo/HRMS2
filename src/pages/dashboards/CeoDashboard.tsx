@@ -8,6 +8,8 @@ import {
   DashboardDrilldownDrawer,
   WorkInboxPanel,
   ScopedFilterBar,
+  DashboardActionStrip,
+  DashboardCard,
 } from "@/components/dashboard";
 import { InterventionPanel } from "@/components/dashboard/InterventionPanel";
 import { MetricTileEnhanced } from "@/components/dashboard/MetricTileEnhanced";
@@ -32,6 +34,8 @@ interface CeoSummary {
   incentive?: { pendingAmount?: number };
   payroll?: { readyPct?: number };
   resignation?: { pendingDiscussion?: number };
+  dpdp?: { pending?: number; overdue?: number; holdsActive?: number };
+  appointmentEsign?: { pending?: number; candidatePending?: number; companyPending?: number };
 }
 
 interface InsightApiResponse {
@@ -298,6 +302,46 @@ export default function CeoDashboard() {
       )}
 
       <div className="space-y-6">
+        <DashboardActionStrip
+          items={[
+            {
+              label: "TAT Breached",
+              value: summary?.tat?.breached,
+              detail: "Tickets waiting beyond SLA",
+              tone: "red",
+              onClick: () => openDrilldown("tat_breached", "TAT Breached"),
+            },
+            {
+              label: "BGV Pending",
+              value: summary?.bgv?.pending,
+              detail: "Approvals pending",
+              tone: "red",
+              onClick: () => openDrilldown("bgv_pending", "BGV Pending"),
+            },
+            {
+              label: "Name Mismatch",
+              value: summary?.nameMismatch?.blocking,
+              detail: "Requires immediate review",
+              tone: "red",
+              onClick: () => openDrilldown("name_mismatch_blocking", "Name Mismatch"),
+            },
+            {
+              label: "DPDP Pending",
+              value: summary?.dpdp?.pending,
+              detail: "Withdrawal requests",
+              tone: summary?.dpdp?.overdue ? "red" : "amber",
+              onClick: () => openDrilldown("dpdp_withdrawal", "DPDP Withdrawal"),
+            },
+            {
+              label: "Appointment eSign",
+              value: summary?.appointmentEsign?.pending,
+              detail: "Letters pending sign",
+              tone: "amber",
+              onClick: () => openDrilldown("appointment_esign_pending", "Appointment eSign"),
+            },
+          ]}
+        />
+
         {/* Today's Operations Intervention Panel */}
         {opsPulse?.intervention_flags?.length > 0 && (
           <InterventionPanel flags={opsPulse.intervention_flags} title="Today's Operations — Immediate Actions" />
@@ -346,25 +390,28 @@ export default function CeoDashboard() {
         {/* KPI Metrics */}
         <KpiMetricGrid metrics={metrics} columns={3} loading={summaryLoading} />
 
-        {/* AI Executive Briefing */}
-        <AIInsightPanel
-          contextType="ceo_dashboard"
-          role="ceo"
-          title="Executive AI Briefing"
-          enabled={!summaryLoading && summary !== null}
-          data={{
-            headcount: summary?.headcount?.active,
-            onboarding_pending: summary?.onboarding?.pending,
-            bgv_pending: summary?.bgv?.pending,
-            name_mismatch_blocking: summary?.nameMismatch?.blocking,
-            tat_breached: summary?.tat?.breached,
-            payroll_readiness_pct: summary?.payroll?.readyPct,
-            resignation_pending: summary?.resignation?.pendingDiscussion,
-            quality_score: execQuality?.metrics?.overall_quality_score,
-            quality_status: execQuality?.metrics?.status,
-            org_avg_kpi: orgKpi?.orgAvgScore,
-          }}
-        />
+        <DashboardCard title="Executive AI Briefing">
+          <AIInsightPanel
+            contextType="ceo_dashboard"
+            role="ceo"
+            title="Executive AI Briefing"
+            enabled={!summaryLoading && summary !== null}
+            data={{
+              headcount: summary?.headcount?.active,
+              onboarding_pending: summary?.onboarding?.pending,
+              bgv_pending: summary?.bgv?.pending,
+              name_mismatch_blocking: summary?.nameMismatch?.blocking,
+              tat_breached: summary?.tat?.breached,
+              payroll_readiness_pct: summary?.payroll?.readyPct,
+              resignation_pending: summary?.resignation?.pendingDiscussion,
+              dpdp_pending: summary?.dpdp?.pending,
+              appointment_esign_pending: summary?.appointmentEsign?.pending,
+              quality_score: execQuality?.metrics?.overall_quality_score,
+              quality_status: execQuality?.metrics?.status,
+              org_avg_kpi: orgKpi?.orgAvgScore,
+            }}
+          />
+        </DashboardCard>
 
         {/* Good / Bad Insights + Work Inbox side by side on desktop */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -1,31 +1,32 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { AlertCircle, ShieldX } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
-  RoleDashboardShell,
-  KpiMetricGrid,
-  AgingBucketCard,
   DashboardDrilldownDrawer,
-  WorkInboxPanel,
+  KpiMetricGrid,
+  RoleDashboardShell,
   ScopedFilterBar,
+  WorkInboxPanel,
+  DashboardActionStrip,
+  DashboardCard,
 } from "@/components/dashboard";
 import type { KpiMetric } from "@/components/dashboard";
-import type { AgingBucket } from "@/components/dashboard";
-import { useUserRole } from "@/hooks/useUserRole";
-import { Button } from "@/components/ui/button";
-import { hrmsApi } from "@/lib/hrmsApi";
-import { normalizeDashboardSummary } from "@/lib/dashboardCompat";
-import { AIInsightPanel } from "@/components/ai";
 import { InterventionPanel } from "@/components/dashboard/InterventionPanel";
 import type { InterventionFlag } from "@/components/dashboard/InterventionPanel";
+import { AIInsightPanel } from "@/components/ai";
+import { Button } from "@/components/ui/button";
+import { useUserRole } from "@/hooks/useUserRole";
+import { hrmsApi } from "@/lib/hrmsApi";
+import { normalizeDashboardSummary } from "@/lib/dashboardCompat";
 
 const DASHBOARD_CODE = "WFM_DASHBOARD";
+type DashboardPayload = Parameters<typeof normalizeDashboardSummary>[1];
 
 interface WfmSummary {
-  requiredHc?: number;
-  availableHc?: number;
-  rosterAdherence?: number;
-  missingPunch?: number;
+  requiredHc?: number | null;
+  availableHc?: number | null;
+  attendanceRate?: number | null;
+  missingPunch?: number | null;
   attendanceVarianceBuckets?: Array<{
     label: string;
     count: number;
@@ -39,11 +40,9 @@ interface DrilldownState {
   metricName: string;
 }
 
-const DEFAULT_VARIANCE_BUCKETS: AgingBucket[] = [
-  { label: "0–1 hr", count: 0, color: "#16a34a" },
-  { label: "1–4 hr", count: 0, color: "#d97706" },
-  { label: "4+ hr", count: 0, color: "#dc2626" },
-];
+function hasValue(value: unknown): value is number | string {
+  return value !== null && value !== undefined;
+}
 
 export default function WfmDashboard() {
   const { data: roleData, isLoading: roleLoading } = useUserRole();
@@ -52,15 +51,13 @@ export default function WfmDashboard() {
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [opsPulseFlags, setOpsPulseFlags] = useState<InterventionFlag[]>([]);
-
+  const [branchId, setBranchId] = useState("");
+  const [processId, setProcessId] = useState("");
   const [drilldown, setDrilldown] = useState<DrilldownState>({
     open: false,
     metricCode: "",
     metricName: "",
   });
-
-  const [branchId, setBranchId] = useState<string>("");
-  const [processId, setProcessId] = useState<string>("");
 
   const openDrilldown = useCallback((metricCode: string, metricName: string) => {
     setDrilldown({ open: true, metricCode, metricName });
@@ -80,9 +77,10 @@ export default function WfmDashboard() {
     if (processId) params.set("processId", processId);
     const qs = params.toString() ? `?${params.toString()}` : "";
 
-    hrmsApi.get(`/api/dashboards/${DASHBOARD_CODE}/summary${qs}`)
+    hrmsApi
+      .get(`/api/dashboards/${DASHBOARD_CODE}/summary${qs}`)
       .then((json) => {
-        if (!cancelled) setSummary(normalizeDashboardSummary<WfmSummary>(DASHBOARD_CODE, json as any));
+        if (!cancelled) setSummary(normalizeDashboardSummary<WfmSummary>(DASHBOARD_CODE, json as DashboardPayload));
       })
       .catch((err) => {
         if (!cancelled) setFetchError(err.message ?? "Failed to load WFM dashboard summary.");
@@ -91,30 +89,31 @@ export default function WfmDashboard() {
         if (!cancelled) setSummaryLoading(false);
       });
 
+    hrmsApi
+      .get<{ success: boolean; data: { intervention_flags?: InterventionFlag[] } }>(
+        `/api/bi/daily-operations-pulse${qs}`,
+      )
+      .then((res) => {
+        if (!cancelled) setOpsPulseFlags(res?.data?.intervention_flags ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setOpsPulseFlags([]);
+      });
+
     return () => {
       cancelled = true;
     };
   }, [branchId, processId]);
 
-  useEffect(() => {
-    const params = new URLSearchParams();
-    if (branchId) params.set("branchId", branchId);
-    if (processId) params.set("processId", processId);
-    const qs = params.toString() ? `?${params.toString()}` : "";
-    hrmsApi.get<{ success: boolean; data: { intervention_flags?: InterventionFlag[] } }>(`/api/bi/daily-operations-pulse${qs}`)
-      .then((res) => setOpsPulseFlags((res as any)?.data?.intervention_flags ?? []))
-      .catch(() => setOpsPulseFlags([]));
-  }, [branchId, processId]);
-
-  // Role check
   if (!roleLoading) {
     const roleKeys = roleData?.roleKeys ?? [];
     const allowed =
       roleKeys.includes("super_admin") ||
-      roleKeys.includes("wfm") ||
       roleKeys.includes("admin") ||
+      roleKeys.includes("wfm") ||
       roleKeys.includes("branch_head") ||
       roleKeys.includes("process_manager");
+
     if (!allowed) {
       return (
         <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
@@ -157,28 +156,28 @@ export default function WfmDashboard() {
           ? hcGap <= 0
             ? "good"
             : hcGap <= 5
-            ? "neutral"
-            : "bad"
+              ? "neutral"
+              : "bad"
           : undefined,
       drilldownAvailable: true,
       onClick: () => openDrilldown("available_hc", "Available Headcount"),
     },
     {
-      id: "roster_adherence",
-      metric: "Roster Adherence",
-      value: summary?.rosterAdherence ?? null,
+      id: "attendance_rate",
+      metric: "Attendance Rate",
+      value: summary?.attendanceRate ?? null,
       unit: "%",
       status:
-        summary?.rosterAdherence != null
-          ? summary.rosterAdherence >= 90
+        summary?.attendanceRate != null
+          ? summary.attendanceRate >= 90
             ? "good"
-            : summary.rosterAdherence >= 75
-            ? "neutral"
-            : "bad"
+            : summary.attendanceRate >= 75
+              ? "neutral"
+              : "bad"
           : undefined,
       higherIsBetter: true,
       drilldownAvailable: true,
-      onClick: () => openDrilldown("roster_adherence", "Roster Adherence"),
+      onClick: () => openDrilldown("attendance_rate", "Attendance Rate"),
     },
     {
       id: "missing_punch",
@@ -190,26 +189,22 @@ export default function WfmDashboard() {
           ? summary.missingPunch === 0
             ? "good"
             : summary.missingPunch <= 5
-            ? "neutral"
-            : "bad"
+              ? "neutral"
+              : "bad"
           : undefined,
       higherIsBetter: false,
       drilldownAvailable: true,
       onClick: () => openDrilldown("missing_punch", "Missing Punch"),
     },
-  ];
+  ].filter((metric) => hasValue(metric.value));
 
-  const varianceBuckets: AgingBucket[] =
-    summary?.attendanceVarianceBuckets && summary.attendanceVarianceBuckets.length > 0
-      ? summary.attendanceVarianceBuckets
-      : DEFAULT_VARIANCE_BUCKETS;
-
+  const varianceBuckets = summary?.attendanceVarianceBuckets ?? [];
   const loading = summaryLoading || roleLoading;
 
   return (
     <RoleDashboardShell
-      title="WFM Dashboard"
-      subtitle="Workforce management — headcount, roster and attendance"
+      title="WFM / Attendance Dashboard"
+      subtitle="Read-only workforce attendance summary"
       scopeLabel="WFM View"
       loading={loading}
       headerActions={
@@ -230,44 +225,71 @@ export default function WfmDashboard() {
       )}
 
       <div className="space-y-6">
-        {/* KPI Metrics */}
-        <KpiMetricGrid metrics={metrics} columns={4} loading={summaryLoading} />
-
-        {/* Operations Pulse Interventions */}
-        {opsPulseFlags.length > 0 && (
-          <InterventionPanel
-            flags={opsPulseFlags}
-            title="Today's Operations Alerts"
-            collapsible
-          />
-        )}
-
-        {/* AI Workforce Analysis */}
-        <AIInsightPanel
-          contextType="wfm_roster"
-          role="wfm"
-          title="Workforce AI Analysis"
-          enabled={!summaryLoading && summary !== null}
-          data={{
-            required_hc: summary?.requiredHc,
-            available_hc: summary?.availableHc,
-            hc_gap: hcGap,
-            roster_adherence_pct: summary?.rosterAdherence,
-            missing_punch: summary?.missingPunch,
-            attendance_variance_buckets: summary?.attendanceVarianceBuckets,
-          }}
+        <DashboardActionStrip
+          title="WFM / Attendance - Immediate Actions"
+          items={[
+            {
+              label: "HC Gap",
+              value: hcGap,
+              detail: "Required vs available headcount",
+              tone: hcGap != null && hcGap > 5 ? "red" : "amber",
+              onClick: () => openDrilldown("available_hc", "Available Headcount"),
+            },
+            {
+              label: "Attendance",
+              value: summary?.attendanceRate != null ? `${summary.attendanceRate}%` : null,
+              detail: "Live attendance adherence",
+              tone: summary?.attendanceRate != null && summary.attendanceRate < 75 ? "red" : "green",
+              onClick: () => openDrilldown("attendance_rate", "Attendance Rate"),
+            },
+            {
+              label: "Missing Punch",
+              value: summary?.missingPunch,
+              detail: "Manual punch exceptions",
+              tone: summary?.missingPunch != null && summary.missingPunch > 5 ? "red" : "amber",
+              onClick: () => openDrilldown("missing_punch", "Missing Punch"),
+            },
+          ]}
         />
 
-        {/* Attendance Variance + Work Inbox */}
+        <KpiMetricGrid metrics={metrics} columns={4} loading={summaryLoading} />
+
+        {opsPulseFlags.length > 0 && (
+          <InterventionPanel flags={opsPulseFlags} title="Today's Operations Alerts" collapsible />
+        )}
+
+        <DashboardCard title="Workforce AI Analysis">
+          <AIInsightPanel
+            contextType="wfm_roster"
+            role="wfm"
+            title="Workforce AI Analysis"
+            enabled={!summaryLoading && summary !== null}
+            data={{
+              required_hc: summary?.requiredHc,
+              available_hc: summary?.availableHc,
+              hc_gap: hcGap,
+              attendance_rate_pct: summary?.attendanceRate,
+              missing_punch: summary?.missingPunch,
+              attendance_variance_buckets: varianceBuckets,
+            }}
+          />
+        </DashboardCard>
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2">
-            <AgingBucketCard
-              title="Attendance Variance Buckets"
-              buckets={varianceBuckets}
-              loading={summaryLoading}
-            />
-          </div>
-          <div className="lg:col-span-1">
+          {varianceBuckets.length > 0 && (
+            <div className="lg:col-span-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-800 mb-3">Attendance Variance Buckets</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {varianceBuckets.map((bucket) => (
+                  <div key={bucket.label} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                    <p className="text-xs font-medium text-slate-500">{bucket.label}</p>
+                    <p className="mt-1 text-2xl font-bold text-slate-900">{bucket.count}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className={varianceBuckets.length > 0 ? "lg:col-span-1" : "lg:col-span-3"}>
             <WorkInboxPanel maxItems={8} />
           </div>
         </div>
