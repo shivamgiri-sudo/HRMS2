@@ -4,7 +4,7 @@ import {
   CalendarDays, ClipboardList, Clock, CreditCard, FileCheck,
   FileText, GraduationCap, Heart, Home, Landmark,
   Network, Package, Server, Settings, Settings2, ShieldCheck, Sparkles,
-  Target, TrendingUp, User, UserMinus, UserPlus, Users, Wallet,
+  Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Wallet,
   Zap, DollarSign, ShoppingCart,
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
@@ -115,6 +115,7 @@ export const navGroups: NavGroup[] = [
           { label: "BGV Reports",         href: "/ats/bgv-report",           icon: ic(FileCheck),   roles: ["admin","hr","payroll_hr","payroll"],         description: "BGV" },
           { label: "Employee BGV Status", href: "/employees/bgv-status",     icon: ic(ShieldCheck), roles: ["admin","hr","payroll_hr","payroll","super_admin"], description: "Employee BGV status" },
           { label: "Bulk Upload",         href: "/bulk-upload",              icon: ic(Package),     roles: ["admin","hr","super_admin","wfm","payroll","payroll_hr"], description: "Bulk data import" },
+          { label: "Historical Import",   href: "/ats/bulk-import",          icon: ic(Upload),      roles: ["admin","super_admin"], description: "Import historical candidates" },
         ],
       },
       {

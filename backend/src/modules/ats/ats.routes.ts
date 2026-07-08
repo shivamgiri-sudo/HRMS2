@@ -18,6 +18,7 @@ import { atsQueueService } from "./ats.queue.service.js";
 import { verifyRecruiter, resolveRecruiterForActor, getMyPendingCandidates, getOtherRecruitersPendingCandidates, reassignCandidate, getSubmissionHistory, getRecruiterDailyStats } from "../ats-full-parity/recruiterInterview.service.js";
 import { persistCandidateFile } from "./candidate-file.service.js";
 import { joiningDocumentsTrackerRouter } from "./ats.joiningDocumentsTracker.routes.js";
+import { bulkImportRouter } from "./bulk-import.routes.js";
 
 export const atsRouter = Router();
 export const atsPublicRouter = Router(); // Public routes (no auth)
@@ -443,5 +444,8 @@ atsRouter.patch("/candidates/:id/reassign", requireRole("admin", "hr", "super_ad
 
 // Joining Documents Tracker routes
 atsRouter.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
+
+// Historical data bulk import
+atsRouter.use('/bulk-import', bulkImportRouter);
 
 export default atsRouter;
