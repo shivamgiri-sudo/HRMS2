@@ -55,7 +55,7 @@ export function ManagerLayout() {
     { label: "On Leave", value: pendingLeave + approvedLeave, helper: `${members.length > 0 ? (((pendingLeave + approvedLeave) / members.length) * 100).toFixed(1) : 0}%`, icon: <Umbrella className="w-4 h-4" />, accent: "#F59E0B" },
     { label: "Absent", value: absentCount > 0 ? absentCount : 0, helper: `${members.length > 0 ? ((absentCount / members.length) * 100).toFixed(1) : 0}%`, icon: <UserX className="w-4 h-4" />, accent: "#E8231A" },
     { label: "New Joiners", value: summary.new_joiners_30d ?? 0, helper: "+this month", icon: <UserPlus className="w-4 h-4" />, accent: "#22D3EE" },
-    { label: "Open Positions", value: (atsData?.data?.pipeline ?? []).reduce((s: number, p: any) => s + (p.value ?? 0), 0), helper: "View jobs", icon: <Briefcase className="w-4 h-4" />, accent: "#8B5CF6", href: "/ats/command-center" },
+    { label: "Open Positions", value: Object.values(atsData?.data?.by_stage ?? {}).reduce((s: number, p: any) => s + (p.value ?? 0), 0), helper: "View jobs", icon: <Briefcase className="w-4 h-4" />, accent: "#8B5CF6", href: "/ats/command-center" },
   ];
 
   const attDonut = [

@@ -351,7 +351,7 @@ export function HrAdminLayout() {
                 const conv =
                   prev > 0 ? Math.round((stage.value / prev) * 100) : 100;
                 return (
-                  <div key={stage.key} className="flex items-center gap-3">
+                  <div key={stage.label} className="flex items-center gap-3">
                     <span className="w-16 text-[11px] font-medium text-slate-500 text-right shrink-0">
                       {stage.label}
                     </span>

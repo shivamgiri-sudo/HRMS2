@@ -45,7 +45,7 @@ export function EmployeeLayout() {
 
   const { data: actionsData } = useQuery<any>({
     queryKey: ["my-actions"],
-    queryFn: () => hrmsApi.get("/api/engagement-intelligence/actions"),
+    queryFn: () => hrmsApi.get("/api/work-inbox/my-actions"),
     staleTime: 1000 * 60 * 5,
   });
 
