@@ -127,12 +127,18 @@ export const leaveService = {
       }
     }
     
-    // Handle rejection - restore leave balance if previously approved
+    // Restore balance when rejecting a previously approved leave
     if (input.status === 'rejected' && request.status === 'approved') {
-      // TODO: Handle state transition from approved to rejected - deduct used_days
-      // This requires tracking the previous status which is a more complex change
-      // For now, log a warning about this edge case
-      console.warn(`Request ${id} was rejected after approval - balance was already deducted and should be restored manually`);
+      const duration = request.total_days;
+      const employeeId = request.employee_id;
+      const leaveTypeId = request.leave_type_id;
+      const year = new Date(request.from_date).getFullYear();
+      await db.execute(
+        `UPDATE leave_balance_ledger
+            SET used_days = GREATEST(0, used_days - ?)
+          WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+        [duration, employeeId, leaveTypeId, year]
+      );
     }
     
     await db.execute(

@@ -553,14 +553,16 @@ export default function Index() {
   const { user } = useAuth();
   const layout = resolveLayout(user?.role);
 
+  let content: React.ReactNode;
   switch (layout) {
-    case "ceo":       return <CeoLayout />;
-    case "hr":        return <HrAdminLayout />;
-    case "recruiter": return <RecruiterLayout />;
-    case "ops":       return <OpsLayout />;
-    case "finance":   return <FinanceLayout />;
-    default:          return <EmployeeLayout />;
+    case "ceo":       content = <CeoLayout />; break;
+    case "hr":        content = <HrAdminLayout />; break;
+    case "recruiter": content = <RecruiterLayout />; break;
+    case "ops":       content = <OpsLayout />; break;
+    case "finance":   content = <FinanceLayout />; break;
+    default:          content = <EmployeeLayout />;
   }
+  return <DashboardLayout>{content}</DashboardLayout>;
 }
 
 // ── Legacy (unused, kept for reference) ──────────────────────────────────────

@@ -426,17 +426,33 @@ router.get("/weekoff/capacity", h(async (req: AuthenticatedRequest, res: Respons
 }));
 
 // POST /weekoff/run-allocation — trigger FCFS allocation engine for a cycle
+// Accepts either cycleId directly or weekStartDate (will look up the matching cycle)
 router.post("/weekoff/run-allocation", h(async (req: AuthenticatedRequest, res: Response) => {
-  const { processId, cycleId } = req.body;
-  if (!processId || !cycleId) {
-    return res.status(400).json({ error: "processId and cycleId are required" });
+  const { processId, cycleId, weekStartDate } = req.body;
+  if (!processId || (!cycleId && !weekStartDate)) {
+    return res.status(400).json({ error: "processId and either cycleId or weekStartDate are required" });
   }
   const userId = req.authUser!.id;
   if (!(await hasRole(userId, "admin", "wfm")) &&
       !(await hasProcessScope(userId, processId, null, "wfm"))) {
     return res.status(403).json({ success: false, message: "Forbidden: WFM or Admin role required" });
   }
-  const data = await weekoffAllocationService.runFcfsAllocation(processId, cycleId, userId, req);
+
+  let resolvedCycleId = cycleId;
+  if (!resolvedCycleId && weekStartDate) {
+    const [cycleRows] = await db.execute<import("mysql2").RowDataPacket[]>(
+      `SELECT id FROM weekly_roster_cycle
+        WHERE process_id = ? AND week_start_date = ?
+        ORDER BY created_at DESC LIMIT 1`,
+      [processId, weekStartDate]
+    );
+    if (cycleRows.length === 0) {
+      return res.status(404).json({ success: false, error: `No roster cycle found for process ${processId} on week starting ${weekStartDate}. Create a cycle first.` });
+    }
+    resolvedCycleId = cycleRows[0].id;
+  }
+
+  const data = await weekoffAllocationService.runFcfsAllocation(processId, resolvedCycleId, userId, req);
   return res.json({ data });
 }));
 

@@ -29,6 +29,9 @@ interface PendingPreference extends RowDataPacket {
 }
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DAY_NAME_TO_INT: Record<string, number> = {
+  Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6,
+};
 
 export const weekoffAllocationService = {
   async runFcfsAllocation(
@@ -60,6 +63,38 @@ export const weekoffAllocationService = {
         ORDER BY COALESCE(wop.submission_order, 999999) ASC, wop.created_at ASC`,
       [processId]
     );
+
+    // Also load approved preferences from the governance route table (employee_roster_preference)
+    // that correspond to this cycle's week, and merge them in as synthetic PendingPreference rows
+    const [govPrefs] = await db.execute<import("mysql2").RowDataPacket[]>(
+      `SELECT erp.id, erp.employee_id, erp.preferred_week_off, erp.created_at
+         FROM employee_roster_preference erp
+         JOIN employees e ON e.id = erp.employee_id
+        WHERE e.process_id = ?
+          AND e.active_status = 1
+          AND erp.status = 'approved'
+          AND (erp.week_start_date = ? OR erp.week_start_date IS NULL)`,
+      [processId, cycle.week_start_date]
+    );
+
+    // Convert governance rows to PendingPreference shape and skip duplicates already in prefs
+    const existingEmployeeIds = new Set(prefs.map((p: PendingPreference) => p.employee_id));
+    for (const gp of govPrefs) {
+      if (existingEmployeeIds.has(gp.employee_id)) continue;
+      const dayInt = DAY_NAME_TO_INT[gp.preferred_week_off as string] ?? -1;
+      if (dayInt < 0) continue;
+      (prefs as PendingPreference[]).push({
+        id: gp.id,
+        employee_id: gp.employee_id,
+        preferred_day: dayInt,
+        alternate_day: null,
+        approved: 0,
+        auto_approved: 0,
+        submission_order: null,
+        process_id: processId,
+        created_at: gp.created_at,
+      } as unknown as PendingPreference);
+    }
 
     const result: FcfsAllocationResult = {
       process_id: processId,

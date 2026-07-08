@@ -5,7 +5,7 @@ import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 type TrendType = "up" | "down" | "stable";
 type StatusType = "ok" | "warn" | "critical" | "unknown";
 
-interface KpiTile {
+export interface KpiTile {
   label: string;
   value: string | number;
   helper: string;
@@ -13,12 +13,14 @@ interface KpiTile {
   accent: string;
   trend?: TrendType;
   variancePct?: number | null;
+  varianceLabel?: string;
   status?: StatusType;
   href?: string;
 }
 
 interface KpiRowProps {
   tiles: KpiTile[];
+  cols?: 4 | 6 | 7;
 }
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -29,114 +31,88 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function StatusDot({ status }: { status?: StatusType }) {
-  if (!status || status === "unknown") return null;
+function DeltaBadge({ trend, variancePct, varianceLabel }: { trend?: TrendType; variancePct?: number | null; varianceLabel?: string }) {
+  if (!trend) return null;
+  if (trend === "stable") return (
+    <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-slate-400">
+      <Minus className="w-3 h-3" />
+      {variancePct != null ? `${Math.abs(variancePct)}%` : varianceLabel ?? "stable"}
+    </span>
+  );
+  const isUp = trend === "up";
+  const color = isUp ? "text-emerald-600" : "text-red-500";
+  const Icon = isUp ? TrendingUp : TrendingDown;
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-[11px] font-semibold ${color}`}>
+      <Icon className="w-3 h-3" />
+      {variancePct != null ? `${Math.abs(variancePct)}%` : varianceLabel}
+    </span>
+  );
+}
 
-  const classMap: Record<StatusType, string> = {
+function TileCard({ tile }: { tile: KpiTile }) {
+  const iconBg = hexToRgba(tile.accent, 0.12);
+  const statusDot: Record<StatusType, string> = {
     ok: "bg-emerald-500",
     warn: "bg-amber-400",
     critical: "bg-red-500 animate-pulse",
     unknown: "bg-slate-300",
   };
 
-  return (
-    <span
-      className={`absolute top-3 right-3 w-2 h-2 rounded-full ${classMap[status]}`}
-    />
-  );
-}
-
-function TrendBadge({
-  trend,
-  variancePct,
-}: {
-  trend?: TrendType;
-  variancePct?: number | null;
-}) {
-  if (!trend || variancePct == null) return null;
-
-  if (trend === "stable") {
-    return (
-      <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-slate-400">
-        <Minus className="w-3 h-3" />
-        {variancePct}%
-      </span>
-    );
-  }
-
-  const isUp = trend === "up";
-  return (
-    <span
-      className={`inline-flex items-center gap-0.5 text-[11px] font-semibold ${
-        isUp ? "text-emerald-600" : "text-red-500"
-      }`}
-    >
-      {isUp ? (
-        <TrendingUp className="w-3 h-3" />
-      ) : (
-        <TrendingDown className="w-3 h-3" />
-      )}
-      {variancePct}%
-    </span>
-  );
-}
-
-function TileCard({ tile }: { tile: KpiTile }) {
-  const iconBg = hexToRgba(tile.accent, 0.15);
-
   const inner = (
     <div
-      className="relative bg-white rounded-2xl border border-slate-200 shadow-sm px-4 py-4 flex flex-col gap-2 hover:-translate-y-0.5 hover:shadow-md transition-all duration-150 h-full"
-      style={{ borderLeft: `4px solid ${tile.accent}` }}
+      className="relative bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4 flex flex-col gap-3
+        hover:shadow-md hover:-translate-y-0.5 transition-all duration-150 cursor-pointer h-full"
+      style={{ borderLeft: `3px solid ${tile.accent}` }}
     >
-      <StatusDot status={tile.status} />
+      {/* Status dot */}
+      {tile.status && tile.status !== "unknown" && (
+        <span className={`absolute top-3.5 right-3.5 w-2 h-2 rounded-full ${statusDot[tile.status]}`} />
+      )}
 
-      {/* Icon badge */}
+      {/* Icon */}
       <div
-        className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+        className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
         style={{ backgroundColor: iconBg, color: tile.accent }}
       >
-        {tile.icon}
+        <span className="[&_svg]:w-4 [&_svg]:h-4">{tile.icon}</span>
       </div>
 
       {/* Label */}
-      <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider leading-tight">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 leading-none">
         {tile.label}
       </p>
 
       {/* Value */}
       <p
-        className="text-2xl font-black text-slate-900 leading-tight"
+        className="text-2xl font-bold text-slate-900 leading-none"
         style={{ fontFamily: "'Fira Code', monospace" }}
       >
         {tile.value}
       </p>
 
-      {/* Helper + Trend */}
-      <div className="flex items-center justify-between gap-1 mt-auto">
-        <span className="text-xs text-slate-500 leading-tight">{tile.helper}</span>
-        <TrendBadge trend={tile.trend} variancePct={tile.variancePct} />
+      {/* Helper + Delta */}
+      <div className="flex items-center justify-between gap-2 mt-auto">
+        <span className="text-xs text-slate-400 leading-none truncate">{tile.helper}</span>
+        <DeltaBadge trend={tile.trend} variancePct={tile.variancePct} varianceLabel={tile.varianceLabel} />
       </div>
     </div>
   );
 
-  if (tile.href) {
-    return (
-      <Link to={tile.href} className="block h-full">
-        {inner}
-      </Link>
-    );
-  }
-
+  if (tile.href) return <Link to={tile.href} className="block h-full">{inner}</Link>;
   return inner;
 }
 
-export function KpiRow({ tiles }: KpiRowProps) {
+export function KpiRow({ tiles, cols = 6 }: KpiRowProps) {
+  const colClass = cols === 4
+    ? "grid-cols-2 md:grid-cols-4"
+    : cols === 7
+    ? "grid-cols-2 sm:grid-cols-4 xl:grid-cols-7"
+    : "grid-cols-2 sm:grid-cols-3 xl:grid-cols-6";
+
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-      {tiles.map((tile, i) => (
-        <TileCard key={i} tile={tile} />
-      ))}
+    <div className={`grid ${colClass} gap-4`}>
+      {tiles.map((tile, i) => <TileCard key={i} tile={tile} />)}
     </div>
   );
 }

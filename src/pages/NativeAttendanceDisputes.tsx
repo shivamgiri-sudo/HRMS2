@@ -116,24 +116,24 @@ export default function NativeAttendanceDisputes() {
     setActionInProgress(disputeId);
     try {
       let endpoint = "";
-      let payload: any = {};
+      let payload: any = { action, reason: reason || "" };
 
       if (action === "approve" || action === "reject" || action === "escalate_to_hr") {
         endpoint = `/attendance/disputes/${disputeId}/manager-action`;
-        payload = { action, reason: reason || "" };
-      } else if (action === "escalate_to_payroll" || action === "send_back") {
+      } else if (action === "escalate_to_payroll") {
         endpoint = `/attendance/disputes/${disputeId}/hr-action`;
-        payload = { action: action === "escalate_to_payroll" ? "escalate_to_payroll" : "approve", reason };
+      } else if (action === "send_back") {
+        endpoint = `/attendance/disputes/${disputeId}/payroll-action`;
       }
 
-      const resp = await hrmsApi.post(endpoint, payload);
-      if (resp.data?.success) {
+      const resp = await hrmsApi.post<{success:boolean;error?:string}>(endpoint, payload);
+      if ((resp as any).success) {
         await fetchDisputes();
         setSelectedDispute(null);
         setActionReason("");
         setActionType(null);
       } else {
-        setError(resp.data?.error || "Action failed");
+        setError((resp as any).error || "Action failed");
       }
     } catch (err: any) {
       setError(err.response?.data?.error || "Error performing action");
@@ -248,7 +248,7 @@ export default function NativeAttendanceDisputes() {
                 </div>
               )}
 
-              {(dispute.status === "pending" || dispute.status === "escalated") && (
+              {(dispute.status === "pending" || dispute.status === "escalated" || dispute.status === "escalated_to_hr" || dispute.status === "escalated_to_payroll") && (
                 <div className="border-t pt-4 space-y-3">
                   {tab === "manager" && (
                     <>
@@ -278,7 +278,10 @@ export default function NativeAttendanceDisputes() {
                   {tab === "hr" && (
                     <>
                       {!dispute.payroll_impact && (
-                        <Button className="w-full" onClick={() => handleAction(dispute.id, "approve", "Approved by HR")}>
+                        <Button className="w-full" onClick={() => {
+                          setActionType("approve");
+                          setSelectedDispute(dispute);
+                        }}>
                           Approve
                         </Button>
                       )}
@@ -293,6 +296,31 @@ export default function NativeAttendanceDisputes() {
                         setSelectedDispute(dispute);
                       }}>
                         Escalate to Payroll
+                      </Button>
+                    </>
+                  )}
+                  {tab === "payroll" && (
+                    <>
+                      <Button
+                        className="w-full"
+                        onClick={() => {
+                          setActionType("approve");
+                          setSelectedDispute(dispute);
+                        }}
+                      >
+                        Approve
+                      </Button>
+                      <Button variant="outline" className="w-full" onClick={() => {
+                        setActionType("reject");
+                        setSelectedDispute(dispute);
+                      }}>
+                        Reject
+                      </Button>
+                      <Button variant="secondary" className="w-full" onClick={() => {
+                        setActionType("send_back");
+                        setSelectedDispute(dispute);
+                      }}>
+                        Send Back to HR
                       </Button>
                     </>
                   )}
@@ -375,6 +403,7 @@ export default function NativeAttendanceDisputes() {
                 {actionType === "reject" && "Reject Dispute"}
                 {actionType === "escalate_to_hr" && "Escalate to HR"}
                 {actionType === "escalate_to_payroll" && "Escalate to Payroll"}
+                {actionType === "send_back" && "Send Back to HR"}
               </DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
@@ -395,7 +424,7 @@ export default function NativeAttendanceDisputes() {
                 <Button
                   disabled={!actionReason.trim() || actionInProgress === selectedDispute.id}
                   onClick={() => {
-                    if (actionType === "escalate_to_hr" || actionType === "escalate_to_payroll" || actionType === "reject") {
+                    if (actionType && actionType !== "approve") {
                       handleAction(selectedDispute.id, actionType, actionReason);
                     } else {
                       handleAction(selectedDispute.id, "approve", actionReason);

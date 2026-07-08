@@ -256,6 +256,7 @@ const regularizationSchema = z
     currentLogoutTime: z.string().optional(),
     requestedLoginTime: z.string().optional(),
     requestedLogoutTime: z.string().optional(),
+    requestedStatus: z.enum(["present", "half_day", "absent"]).nullable().optional(),
     disputeType: z.string().nullable().optional(),
     reason: z.string().max(500, "Reason must be 500 characters or less").optional(),
   })
@@ -296,6 +297,7 @@ export default function AttendanceRegularization() {
       currentLogoutTime: "",
       requestedLoginTime: "09:30",
       requestedLogoutTime: "18:30",
+      requestedStatus: null,
       disputeType: null,
       reason: "",
     },
@@ -354,6 +356,7 @@ export default function AttendanceRegularization() {
         oldPunchOut: values.currentLogoutTime || null,
         newPunchIn: values.requestedLoginTime || null,
         newPunchOut: values.requestedLogoutTime || null,
+        requestedStatus: values.requestedStatus || null,
         disputeType: values.disputeType || null,
         reason:
           values.reason?.trim() ||
@@ -371,6 +374,7 @@ export default function AttendanceRegularization() {
         currentLogoutTime: "",
         requestedLoginTime: "09:30",
         requestedLogoutTime: "18:30",
+        requestedStatus: null,
         disputeType: null,
         reason: "",
       });
@@ -603,7 +607,34 @@ export default function AttendanceRegularization() {
               </div>
 
               {/* Requested Correction section */}
-              <div className="grid gap-3 md:grid-cols-2">
+              <div className="grid gap-3 md:grid-cols-3">
+                <FormField
+                  control={form.control}
+                  name="requestedStatus"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Requested Attendance Status</FormLabel>
+                      <Select
+                        value={field.value ?? "none"}
+                        onValueChange={(v) => field.onChange(v === "none" ? null : v)}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="h-9 bg-white !text-slate-900 text-sm [&>span]:!text-slate-900">
+                            <SelectValue placeholder="Select status" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent className="bg-white !text-slate-900">
+                          <SelectItem value="none">No change</SelectItem>
+                          <SelectItem value="present">Present</SelectItem>
+                          <SelectItem value="half_day">Half Day</SelectItem>
+                          <SelectItem value="absent">Absent</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription className="text-xs">Required for attendance record correction on approval.</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 <FormField
                   control={form.control}
                   name="requestedLoginTime"

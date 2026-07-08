@@ -325,7 +325,7 @@ export default function EmployeeSelfDashboard() {
 
     // Leave balances
     setLeaveLoading(true);
-    hrmsApi.get("/api/leaves/my-balance")
+    hrmsApi.get("/api/leave/balance")
       .then((json: any) => {
         if (!cancelled) {
           const list: LeaveBalance[] = Array.isArray(json)
