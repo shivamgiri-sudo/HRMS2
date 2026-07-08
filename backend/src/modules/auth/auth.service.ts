@@ -88,6 +88,46 @@ function normalizeEmail(value: string): string {
   return value.toLowerCase().trim();
 }
 
+/**
+ * Parse user agent string to extract device name in human-readable format
+ * Returns strings like "Chrome on Windows", "Safari on iPhone", "Firefox on macOS"
+ */
+function parseUserAgent(userAgent: string | undefined): string {
+  if (!userAgent) return 'Unknown Device';
+
+  const ua = userAgent.toLowerCase();
+
+  // Detect browser
+  let browser = 'Unknown Browser';
+  if (ua.includes('edg/')) browser = 'Edge';
+  else if (ua.includes('chrome/')) browser = 'Chrome';
+  else if (ua.includes('firefox/')) browser = 'Firefox';
+  else if (ua.includes('safari/') && !ua.includes('chrome')) browser = 'Safari';
+  else if (ua.includes('opera') || ua.includes('opr/')) browser = 'Opera';
+
+  // Detect OS
+  let os = 'Unknown OS';
+  if (ua.includes('windows')) os = 'Windows';
+  else if (ua.includes('mac os x') || ua.includes('macintosh')) os = 'macOS';
+  else if (ua.includes('linux')) os = 'Linux';
+  else if (ua.includes('iphone')) os = 'iPhone';
+  else if (ua.includes('ipad')) os = 'iPad';
+  else if (ua.includes('android')) os = 'Android';
+
+  return `${browser} on ${os}`;
+}
+
+/**
+ * Generate device fingerprint from user agent and IP address
+ * Used to identify same device across sessions
+ */
+function generateDeviceFingerprint(req: Request): string {
+  const userAgent = req.headers['user-agent'] || '';
+  const ip = req.ip || '';
+  const raw = `${userAgent}:${ip}`;
+  return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 64);
+}
+
 async function ensureEmployeeRole(userId: string): Promise<void> {
   try {
     const [roleRows] = await db.execute<RoleRow[]>(
@@ -196,6 +236,33 @@ export const authService = {
       [user.id, tokenHash, mysqlDateTime(expiresAt)]
     );
 
+    // Create device session record if request object available
+    if (req) {
+      const deviceName = parseUserAgent(req.headers['user-agent']);
+      const deviceFingerprint = generateDeviceFingerprint(req);
+
+      try {
+        await db.execute(
+          `INSERT INTO user_device_sessions
+             (user_id, refresh_token_hash, device_fingerprint, device_name,
+              ip_address, user_agent, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            user.id,
+            tokenHash,
+            deviceFingerprint,
+            deviceName,
+            req.ip || null,
+            req.headers['user-agent'] || null,
+            mysqlDateTime(expiresAt)
+          ]
+        );
+      } catch (error) {
+        // Non-blocking: device session tracking failure doesn't break login
+        console.error('[auth] Failed to create device session:', error);
+      }
+    }
+
     const mustChangePassword = Number(user.must_change_password ?? 0) === 1;
 
     // Log successful login
@@ -302,6 +369,17 @@ export const authService = {
     const userId = rows[0]?.user_id as string | undefined;
 
     await db.execute('UPDATE auth_refresh_token SET revoked = 1 WHERE token_hash = ?', [tokenHash]);
+
+    // Revoke device session
+    try {
+      await db.execute(
+        'UPDATE user_device_sessions SET revoked_at = NOW() WHERE refresh_token_hash = ? AND revoked_at IS NULL',
+        [tokenHash]
+      );
+    } catch (error) {
+      // Non-blocking: device session revocation failure doesn't break logout
+      console.error('[auth] Failed to revoke device session:', error);
+    }
 
     // Log logout event
     if (userId && req) {

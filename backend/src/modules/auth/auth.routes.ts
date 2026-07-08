@@ -2,7 +2,7 @@ import { Router, type NextFunction, type Request, type RequestHandler, type Resp
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import type { RowDataPacket } from "mysql2";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { authService } from "./auth.service.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
@@ -660,6 +660,162 @@ router.post("/admin-reset-password", requireAuth, h(async (req, res) => {
     success: true,
     mustChangePassword: true,
     message: "Temporary password set. Share it securely with the employee; they must change it after login."
+  });
+}));
+
+// ═══════════════════════════════════════════════════════════════
+// SESSION MANAGEMENT ENDPOINTS
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/auth/sessions — List active sessions for current user
+router.get("/sessions", requireAuth, h(async (req, res) => {
+  const userId = req.authUser!.id;
+  const currentRefreshToken = req.body.refreshToken || req.headers['x-refresh-token'];
+  const currentTokenHash = currentRefreshToken
+    ? crypto.createHash('sha256').update(String(currentRefreshToken)).digest('hex')
+    : null;
+
+  interface SessionRow extends RowDataPacket {
+    id: string;
+    device_name: string | null;
+    device_fingerprint: string | null;
+    ip_address: string | null;
+    location_city: string | null;
+    location_country: string | null;
+    created_at: string;
+    last_active_at: string;
+    expires_at: string;
+    refresh_token_hash: string;
+  }
+
+  const [rows] = await db.execute<SessionRow[]>(
+    `SELECT id, device_name, device_fingerprint, ip_address, location_city, location_country,
+            created_at, last_active_at, expires_at, refresh_token_hash
+       FROM user_device_sessions
+      WHERE user_id = ?
+        AND revoked_at IS NULL
+        AND expires_at > NOW()
+      ORDER BY last_active_at DESC`,
+    [userId]
+  );
+
+  const sessions = rows.map((row) => ({
+    id: row.id,
+    deviceName: row.device_name || 'Unknown Device',
+    deviceFingerprint: row.device_fingerprint,
+    ipAddress: row.ip_address,
+    locationCity: row.location_city,
+    locationCountry: row.location_country,
+    createdAt: row.created_at,
+    lastActiveAt: row.last_active_at,
+    expiresAt: row.expires_at,
+    isCurrent: currentTokenHash ? row.refresh_token_hash === currentTokenHash : false
+  }));
+
+  return res.json({ success: true, data: sessions });
+}));
+
+// DELETE /api/auth/sessions/:sessionId — Revoke specific session
+router.delete("/sessions/:sessionId", requireAuth, h(async (req, res) => {
+  const userId = req.authUser!.id;
+  const { sessionId } = req.params;
+
+  // Verify session belongs to current user
+  interface SessionOwnerRow extends RowDataPacket {
+    user_id: string;
+    refresh_token_hash: string;
+  }
+
+  const [rows] = await db.execute<SessionOwnerRow[]>(
+    'SELECT user_id, refresh_token_hash FROM user_device_sessions WHERE id = ? LIMIT 1',
+    [sessionId]
+  );
+
+  if (!rows[0]) {
+    return res.status(404).json({ success: false, message: "Session not found" });
+  }
+
+  if (rows[0].user_id !== userId) {
+    return res.status(403).json({ success: false, message: "Not your session" });
+  }
+
+  const tokenHash = rows[0].refresh_token_hash;
+
+  // Revoke refresh token
+  await db.execute(
+    'UPDATE auth_refresh_token SET revoked = 1 WHERE token_hash = ?',
+    [tokenHash]
+  );
+
+  // Revoke device session
+  await db.execute(
+    'UPDATE user_device_sessions SET revoked_at = NOW() WHERE id = ?',
+    [sessionId]
+  );
+
+  // Log revocation
+  await logSensitiveAction({
+    actor_user_id: userId,
+    action_type: "SESSION_REVOKED",
+    module_key: "AUTH",
+    entity_type: "user_device_session",
+    entity_id: sessionId,
+    change_summary: { reason: "User manually revoked session" },
+    req
+  }).catch(() => {});
+
+  return res.json({ success: true, message: "Session revoked successfully" });
+}));
+
+// DELETE /api/auth/sessions/all/others — Logout all other devices
+router.delete("/sessions/all/others", requireAuth, h(async (req, res) => {
+  const userId = req.authUser!.id;
+  const currentRefreshToken = req.body.refreshToken || req.headers['x-refresh-token'];
+
+  if (!currentRefreshToken) {
+    return res.status(400).json({
+      success: false,
+      message: "Current refresh token required to identify this session"
+    });
+  }
+
+  const currentTokenHash = crypto.createHash('sha256').update(String(currentRefreshToken)).digest('hex');
+
+  // Revoke all other refresh tokens
+  const [result] = await db.execute<ResultSetHeader>(
+    `UPDATE auth_refresh_token
+        SET revoked = 1
+      WHERE user_id = ?
+        AND token_hash != ?
+        AND revoked = 0`,
+    [userId, currentTokenHash]
+  );
+
+  // Revoke all other device sessions
+  await db.execute(
+    `UPDATE user_device_sessions
+        SET revoked_at = NOW()
+      WHERE user_id = ?
+        AND refresh_token_hash != ?
+        AND revoked_at IS NULL`,
+    [userId, currentTokenHash]
+  );
+
+  const revokedCount = result.affectedRows || 0;
+
+  // Log revocation
+  await logSensitiveAction({
+    actor_user_id: userId,
+    action_type: "ALL_OTHER_SESSIONS_REVOKED",
+    module_key: "AUTH",
+    change_summary: { revoked_count: revokedCount, reason: "User requested logout from all other devices" },
+    req
+  }).catch(() => {});
+
+  return res.json({
+    success: true,
+    message: `${revokedCount} other session(s) revoked successfully`,
+    revokedCount
   });
 }));
 
