@@ -253,6 +253,7 @@ const MIGRATION_MANIFEST: string[] = [
   "367_dpdp_compliance_role_access.sql",
   "368_core_master_upload_templates.sql",
   "369_fix_core_master_upload_templates.sql",
+  "370_pf_creation_automation.sql",
   ];
 
 export type MigrationHealth = {

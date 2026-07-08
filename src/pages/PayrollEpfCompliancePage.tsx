@@ -6,6 +6,8 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { hrmsApi } from "@/lib/hrmsApi";
 
+type ReadinessRow = { branch_name: string | null; process_name: string | null; total_employees: number; pf_ready: number; pf_pending: number; pf_not_applicable: number; pf_error: number };
+
 type Row = {
   employee_id: string;
   employee_code: string;
@@ -34,13 +36,18 @@ export default function PayrollEpfCompliancePage() {
   const [error, setError] = useState<string | null>(null);
   const [remarksByEmployee, setRemarksByEmployee] = useState<Record<string, string>>({});
   const [busyEmployeeId, setBusyEmployeeId] = useState<string | null>(null);
+  const [readiness, setReadiness] = useState<ReadinessRow[]>([]);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await hrmsApi.get<{ data: Row[] }>("/api/payroll/epf-compliance");
+      const [response, readinessRes] = await Promise.all([
+        hrmsApi.get<{ data: Row[] }>("/api/payroll/epf-compliance"),
+        hrmsApi.get<{ data: ReadinessRow[] }>("/api/payroll/pf/reports/readiness").catch(() => ({ data: [] })),
+      ]);
       setRows(response.data || []);
+      setReadiness(readinessRes.data || []);
     } catch (err: any) {
       setError(err?.message || "Unable to load payroll EPF compliance queue.");
     } finally {
@@ -76,11 +83,30 @@ export default function PayrollEpfCompliancePage() {
                 <h1 className="mt-2 text-2xl font-black text-slate-900">Review queue and ECR readiness</h1>
                 <p className="mt-1 text-sm text-slate-500">Payroll can see which packs are ready, which still need correction, and which are blocked for ECR.</p>
               </div>
-              <Button type="button" variant="outline" className="min-h-[44px] gap-2 self-start" onClick={() => void load()}>
-                <RefreshCw className="h-4 w-4" /> Refresh queue
-              </Button>
+              <div className="flex gap-2 self-start">
+                <Button type="button" variant="outline" className="min-h-[44px] gap-2" onClick={() => void load()}>
+                  <RefreshCw className="h-4 w-4" /> Refresh queue
+                </Button>
+                <Button asChild type="button" className="min-h-[44px] gap-2 bg-blue-600 text-white hover:bg-blue-700">
+                  <Link to="/payroll/pf-creation-queue">PF Creation Queue</Link>
+                </Button>
+              </div>
             </div>
           </div>
+
+          {/* PF Readiness Summary */}
+          {readiness.length > 0 && (() => {
+            const t = readiness.reduce((a, r) => ({ total: a.total + r.total_employees, ready: a.ready + r.pf_ready, pending: a.pending + r.pf_pending, na: a.na + r.pf_not_applicable, error: a.error + r.pf_error }), { total: 0, ready: 0, pending: 0, na: 0, error: 0 });
+            return (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                <div className="rounded-2xl border bg-white p-3 text-center"><p className="text-xl font-black text-slate-900">{t.total}</p><p className="text-[10px] uppercase text-slate-500">Total</p></div>
+                <div className="rounded-2xl border bg-emerald-50 p-3 text-center"><p className="text-xl font-black text-emerald-700">{t.ready}</p><p className="text-[10px] uppercase text-emerald-600">PF Ready</p></div>
+                <div className="rounded-2xl border bg-amber-50 p-3 text-center"><p className="text-xl font-black text-amber-700">{t.pending}</p><p className="text-[10px] uppercase text-amber-600">Pending</p></div>
+                <div className="rounded-2xl border bg-slate-50 p-3 text-center"><p className="text-xl font-black text-slate-600">{t.na}</p><p className="text-[10px] uppercase text-slate-500">N/A</p></div>
+                <div className="rounded-2xl border bg-red-50 p-3 text-center"><p className="text-xl font-black text-red-700">{t.error}</p><p className="text-[10px] uppercase text-red-600">Errors</p></div>
+              </div>
+            );
+          })()}
 
           {error && (
             <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

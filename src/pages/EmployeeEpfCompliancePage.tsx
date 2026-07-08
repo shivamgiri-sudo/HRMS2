@@ -51,15 +51,20 @@ export default function EmployeeEpfCompliancePage() {
   const [reviewLink, setReviewLink] = useState<string | null>(null);
   const [profileForm, setProfileForm] = useState<Record<string, any>>({});
   const [nominees, setNominees] = useState<Nominee[]>([{ nominee_name: "", relationship: "", share_percentage: 100, is_primary: true }]);
+  const [pfQueueStatus, setPfQueueStatus] = useState<Array<{ item_status: string; batch_number: string; epfo_uan_assigned: string | null; error_count: number }>>([]);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await hrmsApi.get<{ data: Pack }>(`/api/employees/${employeeId}/epf-compliance`);
+      const [response, pfRes] = await Promise.all([
+        hrmsApi.get<{ data: Pack }>(`/api/employees/${employeeId}/epf-compliance`),
+        hrmsApi.get<{ data: Array<{ item_status: string; batch_number: string; epfo_uan_assigned: string | null; error_count: number }> }>(`/api/payroll/pf/employee/${employeeId}`).catch(() => ({ data: [] })),
+      ]);
       setPack(response.data);
       setProfileForm(response.data.profile || {});
       setNominees(response.data.nominees?.length ? response.data.nominees : [{ nominee_name: "", relationship: "", share_percentage: 100, is_primary: true }]);
+      setPfQueueStatus(pfRes.data || []);
     } catch (err: any) {
       setError(err?.message || "Unable to load the EPF compliance pack.");
     } finally {
@@ -168,6 +173,17 @@ export default function EmployeeEpfCompliancePage() {
                   <p className="mt-2 text-lg font-black text-slate-900">{String(pack?.ecr?.ecr_status || "pending").replace(/_/g, " ")}</p>
                   <p className="mt-1 text-sm text-slate-500">{pack?.ecr?.blocked_reason || "No payroll block recorded."}</p>
                 </div>
+                {pfQueueStatus.length > 0 && (
+                  <div className="rounded-[24px] border bg-white p-5 shadow-sm">
+                    <p className="text-xs font-black uppercase tracking-wide text-slate-400">PF Creation Status</p>
+                    <p className="mt-2 text-lg font-black text-slate-900">{pfQueueStatus[0].item_status.replace(/_/g, " ")}</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Batch: {pfQueueStatus[0].batch_number}
+                      {pfQueueStatus[0].epfo_uan_assigned && <> &middot; UAN: <span className="font-mono font-bold text-emerald-700">{pfQueueStatus[0].epfo_uan_assigned}</span></>}
+                      {pfQueueStatus[0].error_count > 0 && <> &middot; <span className="text-red-600">{pfQueueStatus[0].error_count} errors</span></>}
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="grid gap-5 xl:grid-cols-[1.15fr,0.85fr]">

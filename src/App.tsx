@@ -133,6 +133,8 @@ const JoiningDocumentTemplateAdmin  = lazy(() => import("./pages/JoiningDocument
 const ATSBulkImportPage             = lazy(() => import("./pages/ATSBulkImportPage"));
 const EmployeeEpfCompliancePage     = lazy(() => import("./pages/EmployeeEpfCompliancePage"));
 const PayrollEpfCompliancePage      = lazy(() => import("./pages/PayrollEpfCompliancePage"));
+const PfCreationQueuePage           = lazy(() => import("./pages/payroll/PfCreationQueuePage"));
+const PfBatchesPage                 = lazy(() => import("./pages/payroll/PfBatchesPage"));
 const EmployeeDocumentEsignReviewPage = lazy(() => import("./pages/EmployeeDocumentEsignReviewPage"));
 const EmployeeEpfComplianceReviewPage = lazy(() => import("./pages/EmployeeEpfComplianceReviewPage"));
 const NativePeopleExperienceCommandCenter = lazy(() => import("./pages/NativePeopleExperienceCommandCenter"));
@@ -478,6 +480,8 @@ const App = () => (
               <Route path="/payroll/payslips" element={<ProtectedRoute><Gate pageCode="PAYROLL_PAYSLIPS"><NativePayslipCenter /></Gate></ProtectedRoute>} />
               <Route path="/payroll/readiness" element={<ProtectedRoute><Gate pageCode="PAYROLL"><NativePayrollReadiness /></Gate></ProtectedRoute>} />
               <Route path="/payroll/epf-compliance" element={<ProtectedRoute roles={['admin', 'super_admin', 'payroll_hr', 'payroll', 'hr', 'manager']}><PayrollEpfCompliancePage /></ProtectedRoute>} />
+              <Route path="/payroll/pf-creation-queue" element={<ProtectedRoute roles={['admin', 'super_admin', 'payroll_hr', 'payroll']}><PfCreationQueuePage /></ProtectedRoute>} />
+              <Route path="/payroll/pf-batches" element={<ProtectedRoute roles={['admin', 'super_admin', 'payroll_hr', 'payroll']}><PfBatchesPage /></ProtectedRoute>} />
               <Route path="/payroll/tax-declaration" element={<ProtectedRoute><Gate pageCode="TAX_DECLARATION"><NativeTaxDeclaration /></Gate></ProtectedRoute>} />
               <Route path="/payroll/full-final" element={<ProtectedRoute><Gate pageCode="FULL_FINAL"><NativeFullFinal /></Gate></ProtectedRoute>} />
               <Route path="/payroll/statutory-config" element={<ProtectedRoute><Gate pageCode="STATUTORY_CONFIG"><NativeStatutoryConfig /></Gate></ProtectedRoute>} />

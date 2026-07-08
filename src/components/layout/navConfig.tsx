@@ -233,6 +233,8 @@ export const navGroups: NavGroup[] = [
           { label: "Recalculation Queue",    href: "/payroll/recalculation-queue",  icon: ic(Settings2),  roles: ["admin","super_admin","payroll_head","payroll_branch"],  description: "Payroll recalc queue" },
           { label: "Config Flags",           href: "/payroll/config-flags",         icon: ic(Settings),   roles: ["admin","super_admin","payroll_head","payroll_branch"],  description: "Payroll configuration flags" },
           { label: "Payroll Masters",        href: "/payroll/masters",              icon: ic(Settings2),  roles: ["admin","super_admin","payroll","finance"],              description: "Salary slabs, bands, min wages" },
+          { label: "PF Creation Queue",     href: "/payroll/pf-creation-queue",    icon: ic(FileCheck),  roles: ["admin","super_admin","payroll_hr","payroll"],           description: "Bulk PF/EPFO creation workflow" },
+          { label: "PF Batches",            href: "/payroll/pf-batches",           icon: ic(FileCheck),  roles: ["admin","super_admin","payroll_hr","payroll"],           description: "PF creation batch management" },
         ],
       },
       {
