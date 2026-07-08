@@ -526,9 +526,45 @@ function QuickNavTile({ icon, title, desc, href, accent }: { icon: React.ReactNo
   );
 }
 
+// ── Role resolver ─────────────────────────────────────────────────────────────
+import { CeoLayout }      from "@/components/dashboard/layouts/CeoLayout";
+import { HrAdminLayout }  from "@/components/dashboard/layouts/HrAdminLayout";
+import { RecruiterLayout } from "@/components/dashboard/layouts/RecruiterLayout";
+import { OpsLayout }      from "@/components/dashboard/layouts/OpsLayout";
+import { FinanceLayout }  from "@/components/dashboard/layouts/FinanceLayout";
+import { EmployeeLayout } from "@/components/dashboard/layouts/EmployeeLayout";
+
+type RoleLayout = "ceo" | "hr" | "recruiter" | "ops" | "finance" | "employee";
+
+function resolveLayout(role?: string): RoleLayout {
+  if (!role) return "employee";
+  const r = role.toLowerCase().replace(/_/g, "");
+  if (r === "ceo" || r === "superadmin") return "ceo";
+  if (r === "hr" || r === "admin" || r === "hradmin") return "hr";
+  if (r === "recruiter" || r === "recruitment") return "recruiter";
+  if (r === "processmanager" || r === "branchhead" || r === "operationsmanager" || r === "ops") return "ops";
+  if (r === "finance" || r === "payroll") return "finance";
+  return "employee";
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export default function Index() {
+  const { user } = useAuth();
+  const layout = resolveLayout(user?.role);
+
+  switch (layout) {
+    case "ceo":       return <CeoLayout />;
+    case "hr":        return <HrAdminLayout />;
+    case "recruiter": return <RecruiterLayout />;
+    case "ops":       return <OpsLayout />;
+    case "finance":   return <FinanceLayout />;
+    default:          return <EmployeeLayout />;
+  }
+}
+
+// ── Legacy (unused, kept for reference) ──────────────────────────────────────
+function _LegacyIndex() {
   const { user } = useAuth();
   const { isAdminOrHR } = useIsAdminOrHR();
   const greeting = getHourGreeting();
