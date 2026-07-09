@@ -85,7 +85,11 @@ interface FieldMap {
   width?: number;
   height?: number;
   page_no?: number;
+  max_length?: number;
   is_mandatory?: boolean;
+  schema_field_tooltip?: string | null;
+  schema_suggested_path?: string | null;
+  mapping_confirmed?: boolean | number | null;
 }
 
 const CATEGORIES = [
@@ -176,8 +180,15 @@ const TRANSFORM_RULES = [
   { value: "date_year_2", label: "date_year_2" },
   { value: "date_year_3", label: "date_year_3" },
   { value: "date_year_4", label: "date_year_4" },
+  { value: "date_ddmmyyyy", label: "date_ddmmyyyy (comb 8-char)" },
   { value: "digits_only", label: "digits_only" },
   { value: "aadhaar_last4", label: "aadhaar_last4" },
+  { value: "slice_0_25", label: "slice_0_25" },
+  { value: "slice_25_50", label: "slice_25_50" },
+  { value: "slice_50_75", label: "slice_50_75" },
+  { value: "slice_0_14", label: "slice_0_14" },
+  { value: "slice_14_28", label: "slice_14_28" },
+  { value: "slice_28_42", label: "slice_28_42" },
 ];
 
 const MAPPING_MODES: FieldMap["mapping_mode"][] = [
@@ -211,6 +222,7 @@ export default function JoiningDocumentTemplateAdmin() {
   const [uploadTemplateId, setUploadTemplateId] = useState<string>("");
   const [uploadFillMode, setUploadFillMode] = useState("placeholder");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const schemaInputRef = useRef<HTMLInputElement>(null);
 
   const [fieldSheetOpen, setFieldSheetOpen] = useState(false);
   const [fieldTemplate, setFieldTemplate] = useState<Template | null>(null);
@@ -302,12 +314,14 @@ export default function JoiningDocumentTemplateAdmin() {
   const handleUploadSubmit = () => {
     const file = fileInputRef.current?.files?.[0];
     if (!file) {
-      toast.error("Please select a file");
+      toast.error("Please select a template file");
       return;
     }
+    const schemaFile = schemaInputRef.current?.files?.[0];
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("template", file);
     formData.append("fill_mode", uploadFillMode);
+    if (schemaFile) formData.append("schema", schemaFile);
     uploadMutation.mutate(formData);
   };
 
@@ -687,22 +701,37 @@ export default function JoiningDocumentTemplateAdmin() {
 
         {/* Upload File Dialog */}
         <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
-          <DialogContent className="max-w-sm">
+          <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle>Upload Template File</DialogTitle>
               <DialogDescription>
-                Upload a PDF or DOCX template file
+                Upload a PDF or DOCX template. Optionally attach a field-map JSON schema to auto-populate all field coordinates and source paths.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-2">
               <div className="grid gap-2">
-                <Label>File</Label>
+                <Label>Template File <span className="text-rose-500">*</span></Label>
                 <Input
                   ref={fileInputRef}
                   type="file"
                   accept=".pdf,.docx"
                   className="cursor-pointer"
                 />
+              </div>
+              <div className="grid gap-2">
+                <Label>
+                  Field Map JSON{" "}
+                  <span className="ml-1 text-xs font-normal text-slate-400">(optional — auto-seeds field coordinates &amp; source paths)</span>
+                </Label>
+                <Input
+                  ref={schemaInputRef}
+                  type="file"
+                  accept=".json"
+                  className="cursor-pointer"
+                />
+                <p className="text-xs text-slate-400">
+                  Upload the box-grid or overlay mapping JSON alongside the PDF to pre-fill all field rows. Admin can then confirm or adjust each mapping in the Fields drawer.
+                </p>
               </div>
               <div className="grid gap-2">
                 <Label>Fill Mode</Label>
@@ -749,16 +778,33 @@ export default function JoiningDocumentTemplateAdmin() {
             }
           }}
         >
-          <SheetContent side="right" className="w-[600px] max-w-full overflow-y-auto sm:max-w-[600px]">
-            <SheetHeader className="pb-4">
+          <SheetContent side="right" className="w-[640px] max-w-full overflow-y-auto sm:max-w-[640px]">
+            <SheetHeader className="pb-2">
               <SheetTitle>
                 Field Mappings — {fieldTemplate?.document_name}
               </SheetTitle>
-              <SheetDescription>
-                Fill mode:{" "}
+              <SheetDescription className="flex flex-wrap items-center gap-2">
+                <span>Fill mode:</span>
                 <Badge variant="outline" className={fillModeBadgeColor(fieldTemplate?.fill_mode ?? null)}>
                   {fieldTemplate?.fill_mode || "—"}
                 </Badge>
+                {fieldMaps.length > 0 && (
+                  <>
+                    <span className="ml-2 text-xs text-slate-500">
+                      {fieldMaps.filter((f) => f.mapping_confirmed).length}/{fieldMaps.length} confirmed
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                      onClick={() =>
+                        setFieldMaps((prev) => prev.map((f) => ({ ...f, mapping_confirmed: 1 })))
+                      }
+                    >
+                      Confirm All
+                    </Button>
+                  </>
+                )}
               </SheetDescription>
             </SheetHeader>
 
@@ -778,8 +824,40 @@ export default function JoiningDocumentTemplateAdmin() {
                 ) : (
                   <div className="space-y-3">
                     {fieldMaps.map((field, idx) => (
-                      <Card key={idx} className="relative">
+                      <Card key={idx} className={`relative ${field.mapping_confirmed ? "border-emerald-200" : field.schema_suggested_path ? "border-amber-200" : ""}`}>
                         <CardContent className="grid grid-cols-2 gap-3 p-3">
+                          {/* Status badge row */}
+                          <div className="col-span-2 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              {field.mapping_confirmed ? (
+                                <Badge className="h-5 px-1.5 text-[10px] bg-emerald-50 text-emerald-700 border-emerald-300" variant="outline">
+                                  Confirmed
+                                </Badge>
+                              ) : field.schema_suggested_path ? (
+                                <Badge className="h-5 px-1.5 text-[10px] bg-amber-50 text-amber-700 border-amber-300" variant="outline">
+                                  Suggested
+                                </Badge>
+                              ) : null}
+                              {field.schema_field_tooltip && (
+                                <span className="truncate text-xs text-slate-400" title={field.schema_field_tooltip}>
+                                  {field.schema_field_tooltip}
+                                </span>
+                              )}
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className={`h-6 px-2 text-[10px] ${field.mapping_confirmed ? "text-slate-400 hover:text-slate-600" : "text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50"}`}
+                              onClick={() => updateFieldRow(idx, { mapping_confirmed: field.mapping_confirmed ? 0 : 1 })}
+                            >
+                              {field.mapping_confirmed ? "Unconfirm" : "Confirm"}
+                            </Button>
+                          </div>
+                          {field.schema_suggested_path && !field.mapping_confirmed && (
+                            <div className="col-span-2 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700">
+                              Suggested: <span className="font-mono">{field.schema_suggested_path}</span>
+                            </div>
+                          )}
                           <div className="grid gap-1">
                             <Label className="text-xs text-slate-500">Field Key</Label>
                             <Input
@@ -796,7 +874,7 @@ export default function JoiningDocumentTemplateAdmin() {
                             <Select
                               value={field.source_path}
                               onValueChange={(v) =>
-                                updateFieldRow(idx, { source_path: v })
+                                updateFieldRow(idx, { source_path: v, mapping_confirmed: 1 })
                               }
                             >
                               <SelectTrigger className="h-9 text-sm">

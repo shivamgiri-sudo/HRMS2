@@ -88,6 +88,14 @@ export function applyTransformRule(value: unknown, transformRule?: unknown) {
   if (rule === "digits_only") return text.replace(/\D/g, "");
   if (rule === "aadhaar_last4") return text.replace(/\D/g, "").slice(-4);
   if (rule === "uppercase") return text.toUpperCase();
+  // slice_N_M — substring(N, M), used for multi-row name/email grid fields
+  const sliceMatch = rule.match(/^slice_(\d+)_(\d+)$/);
+  if (sliceMatch) return text.substring(Number(sliceMatch[1]), Number(sliceMatch[2]));
+  // date_ddmmyyyy — concatenates day+month+4-digit-year as 8 chars for comb date fields
+  if (rule === "date_ddmmyyyy") {
+    const d = splitIsoDate(text);
+    return `${d.day}${d.month}${d.year}`;
+  }
   return text;
 }
 

@@ -41,6 +41,7 @@ import {
   listTemplateFieldMaps,
   manualFillChecklistValues,
   replaceTemplateFieldMaps,
+  seedFieldMapsFromSchema,
   synchronizeChecklistFieldValues,
 } from "./universalDigitalFormFill.service.js";
 import { validateEpfCompliance } from "./epfComplianceValidation.service.js";
@@ -933,39 +934,70 @@ hrDocumentTemplatesRouter.put("/document-templates", h(async (req: Authenticated
   return res.json({ success: true, data });
 }));
 
-hrDocumentTemplatesRouter.post("/document-templates/:templateId/upload", upload.single("file"), h(async (req: AuthenticatedRequest, res) => {
-  if (!req.file) return res.status(400).json({ success: false, message: "file is required" });
-  const fillMode = String(req.body?.fill_mode ?? "placeholder");
-  fs.mkdirSync(TEMPLATE_STORAGE_ROOT, { recursive: true });
-  const ext = path.extname(req.file.originalname).toLowerCase() || ".bin";
-  const storedName = `${req.params.templateId}-${Date.now()}${ext}`;
-  const storagePath = path.join(TEMPLATE_STORAGE_ROOT, storedName);
-  fs.writeFileSync(storagePath, req.file.buffer);
-  await db.execute(
-    `UPDATE employee_joining_document_template
-        SET template_storage_path = ?,
-            template_mime_type = ?,
-            fill_mode = ?,
-            updated_at = NOW()
-      WHERE id = ?`,
-    [storagePath, templateMimeFromName(req.file.originalname), fillMode, req.params.templateId],
-  );
-  const [templateRows] = await db.execute<RowDataPacket[]>(
-    `SELECT document_code FROM employee_joining_document_template WHERE id = ? LIMIT 1`,
-    [req.params.templateId],
-  );
-  const documentCode = String(templateRows[0]?.document_code ?? "");
-  if (documentCode) {
-    await ensureDefaultTemplateFieldMaps({
-      templateId: req.params.templateId,
-      documentCode,
-      actorUserId: req.authUser!.id,
-      fileName: req.file.originalname,
-      fileBuffer: req.file.buffer,
-    });
-  }
-  return res.json({ success: true, data: await listJoiningDocumentTemplates() });
-}));
+hrDocumentTemplatesRouter.post(
+  "/document-templates/:templateId/upload",
+  upload.fields([{ name: "template", maxCount: 1 }, { name: "file", maxCount: 1 }, { name: "schema", maxCount: 1 }]),
+  h(async (req: AuthenticatedRequest, res) => {
+    const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+    const templateFile = files?.["template"]?.[0] ?? files?.["file"]?.[0];
+    const schemaFile = files?.["schema"]?.[0];
+    if (!templateFile) return res.status(400).json({ success: false, message: "template file is required" });
+
+    const fillMode = String(req.body?.fill_mode ?? "placeholder");
+    fs.mkdirSync(TEMPLATE_STORAGE_ROOT, { recursive: true });
+    const ext = path.extname(templateFile.originalname).toLowerCase() || ".bin";
+    const storedName = `${req.params.templateId}-${Date.now()}${ext}`;
+    const storagePath = path.join(TEMPLATE_STORAGE_ROOT, storedName);
+    fs.writeFileSync(storagePath, templateFile.buffer);
+
+    const schemaFilename = schemaFile?.originalname ?? null;
+    let parsedSchema: unknown = null;
+    if (schemaFile) {
+      try { parsedSchema = JSON.parse(schemaFile.buffer.toString("utf8")); } catch { /* ignore bad JSON */ }
+    }
+
+    await db.execute(
+      `UPDATE employee_joining_document_template
+          SET template_storage_path = ?,
+              template_mime_type = ?,
+              fill_mode = ?,
+              template_schema_json = COALESCE(?, template_schema_json),
+              template_schema_filename = COALESCE(?, template_schema_filename),
+              updated_at = NOW()
+        WHERE id = ?`,
+      [
+        storagePath,
+        templateMimeFromName(templateFile.originalname),
+        fillMode,
+        parsedSchema ? JSON.stringify(parsedSchema) : null,
+        schemaFilename,
+        req.params.templateId,
+      ],
+    );
+
+    const [templateRows] = await db.execute<RowDataPacket[]>(
+      `SELECT document_code FROM employee_joining_document_template WHERE id = ? LIMIT 1`,
+      [req.params.templateId],
+    );
+    const documentCode = String(templateRows[0]?.document_code ?? "");
+
+    if (documentCode) {
+      if (parsedSchema && typeof parsedSchema === "object" && Array.isArray((parsedSchema as any).fields)) {
+        await seedFieldMapsFromSchema(req.params.templateId, documentCode, parsedSchema as any, req.authUser!.id);
+      } else {
+        await ensureDefaultTemplateFieldMaps({
+          templateId: req.params.templateId,
+          documentCode,
+          actorUserId: req.authUser!.id,
+          fileName: templateFile.originalname,
+          fileBuffer: templateFile.buffer,
+        });
+      }
+    }
+
+    return res.json({ success: true, data: await listJoiningDocumentTemplates() });
+  }),
+);
 
 hrDocumentTemplatesRouter.get("/document-templates/:templateId/field-map", h(async (req: AuthenticatedRequest, res) => {
   const documentCode = String(req.query.documentCode ?? req.query.document_code ?? "");

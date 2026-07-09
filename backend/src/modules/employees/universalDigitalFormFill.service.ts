@@ -38,6 +38,9 @@ type FieldMapInput = {
   max_length?: number | null;
   validation_rule?: string | null;
   overflow_strategy?: "shrink" | "wrap" | "block" | null;
+  schema_field_tooltip?: string | null;
+  schema_suggested_path?: string | null;
+  mapping_confirmed?: boolean | number | null;
 };
 
 type FieldValueUpdate = {
@@ -835,8 +838,8 @@ export async function replaceTemplateFieldMaps(templateId: string, documentCode:
   for (const map of maps) {
     await db.execute(
       `INSERT INTO document_template_field_map
-         (id, template_id, document_code, field_key, field_label, source_path, page_no, x, y, width, height, font_size, font_weight, alignment, field_type, required, masking_rule, mapping_mode, placeholder_token, pdf_field_name, transform_rule, checked_when, min_font_size, max_font_size, max_length, validation_rule, overflow_strategy, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, template_id, document_code, field_key, field_label, source_path, page_no, x, y, width, height, font_size, font_weight, alignment, field_type, required, masking_rule, mapping_mode, placeholder_token, pdf_field_name, transform_rule, checked_when, min_font_size, max_font_size, max_length, validation_rule, overflow_strategy, schema_field_tooltip, schema_suggested_path, mapping_confirmed, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         map.id ?? randomUUID(),
         templateId,
@@ -865,6 +868,9 @@ export async function replaceTemplateFieldMaps(templateId: string, documentCode:
         map.max_length ?? null,
         map.validation_rule ?? null,
         map.overflow_strategy ?? "shrink",
+        map.schema_field_tooltip ?? null,
+        map.schema_suggested_path ?? null,
+        map.mapping_confirmed ? 1 : 0,
         actorUserId,
       ],
     );
@@ -884,6 +890,191 @@ export async function ensureDefaultTemplateFieldMaps(params: {
   const maps = defaultMapsForTemplate(params.documentCode, params.fileName, params.fileBuffer);
   if (maps.length === 0) return existing;
   return replaceTemplateFieldMaps(params.templateId, params.documentCode, params.actorUserId, maps);
+}
+
+// ─── Schema JSON seeding ────────────────────────────────────────────────────
+
+type SchemaJsonField = {
+  page: number;
+  name: string;
+  type: "comb_text" | "text" | "checkbox" | "signature_placeholder";
+  rect_pdf_pt: [number, number, number, number]; // [x, y, width, height]
+  db_source_suggestion: string;
+  tooltip?: string;
+  max_length?: number;
+};
+
+type SchemaJson = {
+  fields: SchemaJsonField[];
+};
+
+/** Parse a raw db_source_suggestion string into source_path, transform_rule, checked_when. */
+function parseDbSourceSuggestion(suggestion: string): {
+  source_path: string | null;
+  transform_rule: string | null;
+  checked_when: string | null;
+} {
+  if (!suggestion || suggestion.startsWith("esign.") || suggestion.startsWith("employer_kyc") || suggestion.startsWith("employer.")) {
+    return { source_path: null, transform_rule: null, checked_when: null };
+  }
+
+  // Checkbox pattern:  "some.path == VALUE"
+  const eqMatch = suggestion.match(/^([^\s=]+)\s*==\s*(.+)$/);
+  if (eqMatch) {
+    const rawPath = eqMatch[1].trim();
+    const checkedWhen = eqMatch[2].trim();
+    return { source_path: mapKycPath(rawPath), transform_rule: null, checked_when: checkedWhen };
+  }
+
+  // Slice pattern:  "some.path[N:M]"
+  const sliceMatch = suggestion.match(/^([^\[]+)\[(\d+):(\d+)\]/);
+  if (sliceMatch) {
+    const rawPath = sliceMatch[1].trim();
+    const n = sliceMatch[2];
+    const m = sliceMatch[3];
+    return { source_path: mapKycPath(rawPath), transform_rule: `slice_${n}_${m}`, checked_when: null };
+  }
+
+  // Date format pattern:  "... formatted DDMMYYYY"
+  const dateFmtMatch = suggestion.match(/^([^\s]+)\s+formatted\s+DDMMYYYY/i);
+  if (dateFmtMatch) {
+    return { source_path: mapKycPath(dateFmtMatch[1].trim()), transform_rule: "date_ddmmyyyy", checked_when: null };
+  }
+
+  // Digits-only fields (mobile, UAN, account numbers)
+  const digitsFields = ["employee.mobile_number", "epf.uan_number", "kyc.bank_account.number"];
+  const cleaned = suggestion.split(" ")[0].trim();
+  if (digitsFields.includes(cleaned)) {
+    return { source_path: mapKycPath(cleaned), transform_rule: "digits_only", checked_when: null };
+  }
+
+  // Plain path
+  return { source_path: mapKycPath(cleaned), transform_rule: null, checked_when: null };
+}
+
+/** Map kyc.* and employment.* paths to the HRMS source context paths. */
+function mapKycPath(raw: string): string {
+  const MAP: Record<string, string> = {
+    "kyc.aadhaar.name":            "statutory.aadhaar_name",
+    "kyc.aadhaar.number":          "statutory.aadhaar_number",
+    "kyc.aadhaar.remarks":         "statutory.aadhaar_remarks",
+    "kyc.pan.name":                "statutory.pan_name",
+    "kyc.pan.number":              "statutory.pan_number",
+    "kyc.pan.remarks":             "statutory.pan_remarks",
+    "kyc.bank_account.name":       "statutory.bank_account_name",
+    "kyc.bank_account.number":     "statutory.bank_account_number",
+    "kyc.bank_account.remarks":    "statutory.ifsc_code",
+    "kyc.passport.name":           "kyc.passport_name",
+    "kyc.passport.number":         "kyc.passport_number",
+    "kyc.passport.remarks":        "kyc.passport_remarks",
+    "kyc.driving_licence.name":    "kyc.driving_licence_name",
+    "kyc.driving_licence.number":  "kyc.driving_licence_number",
+    "kyc.driving_licence.remarks": "kyc.driving_licence_remarks",
+    "kyc.election_card.name":      "kyc.election_card_name",
+    "kyc.election_card.number":    "kyc.election_card_number",
+    "kyc.election_card.remarks":   "kyc.election_card_remarks",
+    "kyc.ration_card.name":        "kyc.ration_card_name",
+    "kyc.ration_card.number":      "kyc.ration_card_number",
+    "kyc.ration_card.remarks":     "kyc.ration_card_remarks",
+    "kyc.esic_card.name":          "kyc.esic_card_name",
+    "kyc.esic_card.number":        "kyc.esic_card_number",
+    "kyc.esic_card.remarks":       "kyc.esic_card_remarks",
+    "employment.joining_date":     "employee.date_of_joining",
+    "epf.declaration_date":        "system.current_date",
+    "employee.branch_or_city":     "employee.branch_name",
+  };
+  return MAP[raw] ?? raw;
+}
+
+/** Map JSON field type → fill engine mapping_mode and field_type. */
+function schemaTypeToMappingMode(type: SchemaJsonField["type"]): { mapping_mode: string; field_type: string } {
+  switch (type) {
+    case "comb_text":             return { mapping_mode: "pdf_box_grid",             field_type: "text" };
+    case "text":                  return { mapping_mode: "pdf_coordinate_overlay",   field_type: "text" };
+    case "checkbox":              return { mapping_mode: "pdf_coordinate_overlay",   field_type: "checkbox" };
+    case "signature_placeholder": return { mapping_mode: "pdf_coordinate_overlay",   field_type: "signature" };
+  }
+}
+
+/**
+ * Seed document_template_field_map rows from an uploaded JSON schema.
+ * Rows with mapping_confirmed = 1 are not overwritten.
+ * Returns the number of rows upserted.
+ */
+export async function seedFieldMapsFromSchema(
+  templateId: string,
+  documentCode: string,
+  schema: SchemaJson,
+  actorUserId: string,
+): Promise<number> {
+  if (!schema?.fields?.length) return 0;
+
+  // Fetch existing confirmed field keys so we don't overwrite them
+  const [confirmedRows] = await db.execute<RowDataPacket[]>(
+    `SELECT field_key FROM document_template_field_map
+      WHERE template_id = ? AND document_code = ? AND mapping_confirmed = 1`,
+    [templateId, documentCode],
+  );
+  const confirmedKeys = new Set(confirmedRows.map((r) => String(r.field_key)));
+
+  let upserted = 0;
+
+  for (const field of schema.fields) {
+    if (confirmedKeys.has(field.name)) continue; // admin already confirmed this one
+
+    const { mapping_mode, field_type } = schemaTypeToMappingMode(field.type);
+    const { source_path, transform_rule, checked_when } = parseDbSourceSuggestion(field.db_source_suggestion ?? "");
+    const [x, y, w, h] = field.rect_pdf_pt;
+
+    await db.execute(
+      `INSERT INTO document_template_field_map
+         (id, template_id, document_code, field_key, field_label, source_path,
+          page_no, x, y, width, height,
+          field_type, mapping_mode, placeholder_token, pdf_field_name,
+          transform_rule, checked_when, max_length,
+          schema_field_tooltip, schema_suggested_path,
+          mapping_confirmed, required, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
+       ON DUPLICATE KEY UPDATE
+         source_path          = IF(mapping_confirmed = 0, VALUES(source_path),          source_path),
+         page_no              = IF(mapping_confirmed = 0, VALUES(page_no),              page_no),
+         x                    = IF(mapping_confirmed = 0, VALUES(x),                    x),
+         y                    = IF(mapping_confirmed = 0, VALUES(y),                    y),
+         width                = IF(mapping_confirmed = 0, VALUES(width),                width),
+         height               = IF(mapping_confirmed = 0, VALUES(height),               height),
+         field_type           = IF(mapping_confirmed = 0, VALUES(field_type),           field_type),
+         mapping_mode         = IF(mapping_confirmed = 0, VALUES(mapping_mode),         mapping_mode),
+         transform_rule       = IF(mapping_confirmed = 0, VALUES(transform_rule),       transform_rule),
+         checked_when         = IF(mapping_confirmed = 0, VALUES(checked_when),         checked_when),
+         max_length           = IF(mapping_confirmed = 0, VALUES(max_length),           max_length),
+         schema_field_tooltip = VALUES(schema_field_tooltip),
+         schema_suggested_path = VALUES(schema_suggested_path),
+         updated_at           = NOW()`,
+      [
+        randomUUID(),
+        templateId,
+        documentCode,
+        field.name,
+        field.tooltip ?? field.name,
+        source_path,
+        field.page ?? 1,
+        x, y, w, h,
+        field_type,
+        mapping_mode,
+        `{{${field.name.toUpperCase()}}}`,
+        field.name,
+        transform_rule,
+        checked_when,
+        field.max_length ?? null,
+        field.tooltip ?? null,
+        field.db_source_suggestion ?? null,
+        actorUserId,
+      ],
+    );
+    upserted++;
+  }
+
+  return upserted;
 }
 
 export async function synchronizeChecklistFieldValues(checklistId: string, actorUserId?: string | null) {
