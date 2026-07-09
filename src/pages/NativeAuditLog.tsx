@@ -443,14 +443,20 @@ export default function NativeAuditLog() {
                             )}
                           </td>
                           <td className="px-4 py-3 text-sm text-gray-600 max-w-[200px]">
-                            {event.reason || event.change_summary ? (
-                              <span className="truncate block" title={event.reason || event.change_summary || ""}>
-                                {(event.reason || event.change_summary || "").substring(0, 60)}
-                                {(event.reason || event.change_summary || "").length > 60 ? "…" : ""}
-                              </span>
-                            ) : (
-                              <span className="text-gray-300">—</span>
-                            )}
+                            {(() => {
+                              const reasonText = event.reason || "";
+                              const summaryText = typeof event.change_summary === "string" ? event.change_summary :
+                                                  event.change_summary ? JSON.stringify(event.change_summary) : "";
+                              const displayText = reasonText || summaryText;
+                              return displayText ? (
+                                <span className="truncate block" title={displayText}>
+                                  {displayText.substring(0, 60)}
+                                  {displayText.length > 60 ? "…" : ""}
+                                </span>
+                              ) : (
+                                <span className="text-gray-300">—</span>
+                              );
+                            })()}
                           </td>
                           <td className="px-4 py-3">
                             {(event.old_value_json || event.new_value_json) && (
