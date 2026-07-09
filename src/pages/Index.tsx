@@ -554,10 +554,37 @@ function resolveLayout(role?: string): RoleLayout {
 export default function Index() {
   const { user } = useAuth();
   const { data: roleData } = useUserRole();
-  const layout = resolveLayout(roleData?.primaryRole || undefined);
+  const [selectedRole, setSelectedRole] = useState<RoleLayout | null>(null);
 
+  // Determine available layouts based on user's roles
+  const availableLayouts = useMemo(() => {
+    if (!roleData?.roles.length) return ["employee"];
+
+    const layouts = new Set<RoleLayout>();
+
+    // Always include employee view
+    layouts.add("employee");
+
+    // Map each role to its layout
+    for (const role of roleData.roles) {
+      const layout = resolveLayout(role);
+      if (layout !== "employee") {
+        layouts.add(layout);
+      }
+    }
+
+    return Array.from(layouts);
+  }, [roleData?.roles]);
+
+  // Default to primary role layout, or user's selection
+  const activeLayout = useMemo(() => {
+    if (selectedRole) return selectedRole;
+    return resolveLayout(roleData?.primaryRole || undefined);
+  }, [selectedRole, roleData?.primaryRole]);
+
+  // Render layout content
   let content: React.ReactNode;
-  switch (layout) {
+  switch (activeLayout) {
     case "ceo":       content = <CeoLayout />; break;
     case "hr":        content = <HrAdminLayout />; break;
     case "recruiter": content = <RecruiterLayout />; break;
@@ -566,7 +593,49 @@ export default function Index() {
     case "manager":   content = <ManagerLayout />; break;
     default:          content = <EmployeeLayout />;
   }
-  return <DashboardLayout>{content}</DashboardLayout>;
+
+  // Show role switcher only if user has multiple roles/views
+  const showSwitcher = availableLayouts.length > 1;
+
+  return (
+    <DashboardLayout>
+      {showSwitcher && (
+        <div className="mb-6 border-b border-slate-200 bg-white">
+          <div className="flex gap-1 px-6">
+            {availableLayouts.map((layout) => {
+              const isActive = layout === activeLayout;
+              const labels: Record<RoleLayout, string> = {
+                ceo: "Executive View",
+                hr: "HR View",
+                recruiter: "Recruiter View",
+                ops: "Operations View",
+                finance: "Finance View",
+                manager: "Manager View",
+                employee: "Employee View",
+              };
+
+              return (
+                <button
+                  key={layout}
+                  onClick={() => setSelectedRole(layout)}
+                  className={`
+                    px-4 py-3 text-sm font-semibold border-b-2 transition-colors
+                    ${isActive
+                      ? "border-[#1B6AB5] text-[#1B6AB5]"
+                      : "border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300"
+                    }
+                  `}
+                >
+                  {labels[layout]}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {content}
+    </DashboardLayout>
+  );
 }
 
 // ── Legacy (unused, kept for reference) ──────────────────────────────────────

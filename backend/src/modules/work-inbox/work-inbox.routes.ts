@@ -67,6 +67,12 @@ router.get("/my", h(async (req: ResolvedRequest, res: any) => {
   return res.json({ success: true, data: items });
 }));
 
+// GET /api/work-inbox/my-actions — same as /my but with different endpoint for dashboard compatibility
+router.get("/my-actions", h(async (req: ResolvedRequest, res: any) => {
+  const items = await svc.getMyWorkItems(req.authUser!.id, req.resolvedRole);
+  return res.json({ success: true, data: items });
+}));
+
 router.get("/team", h(async (req: AuthenticatedRequest, res: any) => {
   const items = await svc.getTeamWorkItems(req.authUser!.id);
   return res.json({ success: true, data: items });

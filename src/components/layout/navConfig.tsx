@@ -75,6 +75,8 @@ export const navGroups: NavGroup[] = [
           { label: "Comm. Preferences",  href: "/communication/preferences", icon: ic(Bell), description: "Comm preferences" },
         ],
       },
+      { label: "My Resignation",   href: "/exit/resignation",        icon: ic(UserMinus), pageCode: "RESIGNATION_MY_REQUEST", description: "Raise resignation request" },
+      { label: "DPDP Withdrawal",  href: "/privacy/dpdp-withdrawal", icon: ic(ShieldCheck), pageCode: "DPDP_WITHDRAWAL",       description: "Withdraw data consent" },
     ],
   },
 

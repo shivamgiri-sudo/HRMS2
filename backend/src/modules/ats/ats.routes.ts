@@ -451,4 +451,37 @@ atsRouter.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
 // Historical data bulk import
 atsRouter.use('/bulk-import', bulkImportRouter);
 
+// GET /api/ats/my-onboarding-status — employee's own onboarding progress (stub for dashboard)
+atsRouter.get("/my-onboarding-status", requireAuth, h(async (req: AuthenticatedRequest, res: Response) => {
+  const { getEmployeeForUser } = await import("../../shared/accessGuard.js");
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) {
+    return res.json({ success: true, data: { status: "not_applicable" } });
+  }
+
+  const { db } = await import("../../db/mysql.js");
+  // Check if employee has an onboarding record
+  const [rows] = await db.execute(
+    `SELECT onboarding_status, offer_accepted_at, documents_submitted_at, bgv_cleared_at, joining_date
+     FROM ats_onboarding WHERE employee_id = ? LIMIT 1`,
+    [emp.id]
+  );
+
+  const record = (rows as any[])[0];
+  if (!record) {
+    return res.json({ success: true, data: { status: "completed" } }); // No onboarding record = already onboarded
+  }
+
+  return res.json({
+    success: true,
+    data: {
+      status: record.onboarding_status,
+      offer_accepted: !!record.offer_accepted_at,
+      documents_submitted: !!record.documents_submitted_at,
+      bgv_cleared: !!record.bgv_cleared_at,
+      joining_date: record.joining_date
+    }
+  });
+}));
+
 export default atsRouter;

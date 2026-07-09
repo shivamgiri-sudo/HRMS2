@@ -993,3 +993,26 @@ wfmRouter.get(
     });
   })
 );
+
+// GET /api/wfm/my-attendance — employee's own attendance summary (stub for dashboard widget)
+wfmRouter.get("/my-attendance", h(async (req: any, res: any) => {
+  const { db } = await import("../../db/mysql.js");
+  const selfEmp = await getEmployeeForUser(req.authUser.id);
+  if (!selfEmp) {
+    return res.json({ success: true, data: {} });
+  }
+
+  // Return today's attendance if exists, otherwise empty
+  const today = new Date().toISOString().split('T')[0];
+  const [rows] = await db.execute(
+    `SELECT record_date, attendance_status, clock_in_time, clock_out_time, raw_minutes
+     FROM attendance_daily_record
+     WHERE employee_id = ? AND record_date = ?`,
+    [selfEmp.id, today]
+  );
+
+  return res.json({
+    success: true,
+    data: (rows as any[])[0] ?? {}
+  });
+}));
