@@ -189,22 +189,27 @@ export function useOnboardingFull(token: string) {
     if (!token) { setError("No onboarding token."); setLoading(false); return; }
     setLoading(true);
     try {
-      const statusRes = await hrmsApi.get<{ data: StatusData }>(`${API}/status?token=${encodeURIComponent(token)}`);
-      const s = statusRes.data;
+      const [statusRes, bgvRes] = await Promise.allSettled([
+        hrmsApi.get<{ data: StatusData }>(`${API}/status?token=${encodeURIComponent(token)}`),
+        hrmsApi.get<{ data: BgvStatus }>(`${BGV}/status?token=${encodeURIComponent(token)}`),
+      ]);
+
+      if (statusRes.status === "rejected") throw (statusRes as PromiseRejectedResult).reason;
+
+      const s = statusRes.value.data;
       const sp = s.saved_profile ?? (s.token as any).saved_profile ?? {};
       setStatus(s);
       setOtpVerified(Boolean(sp.otp_verified));
       setPrivacyConsentAccepted(Boolean(sp.dpdp_consent));
 
-      // Try BGV status separately — if it fails we note it and continue (non-blocking)
+      // BGV status is non-blocking — page still loads if it fails
       let bgvConsent = false;
-      try {
-        const bgvRes = await hrmsApi.get<{ data: BgvStatus }>(`${BGV}/status?token=${encodeURIComponent(token)}`);
-        setBgv(bgvRes.data);
-        bgvConsent = Boolean(bgvRes.data?.consent);
+      if (bgvRes.status === "fulfilled") {
+        setBgv(bgvRes.value.data);
+        bgvConsent = Boolean(bgvRes.value.data?.consent);
         setConsentAccepted(bgvConsent);
         setBgvApiAvailable(true);
-      } catch {
+      } else {
         setBgvApiAvailable(false);
       }
 
@@ -490,7 +495,7 @@ export function useOnboardingFull(token: string) {
 
   const verifyBank = async () => {
     // PAN must be saved in Step 3 before bank verification (Luckpay penny-drop requires PAN).
-    const panSaved = Boolean((status as any)?.saved_profile?.pan_number_masked);
+    const panSaved = Boolean((status as any)?.token?.saved_profile?.pan_number_masked);
     if (!panSaved) {
       setError("Please save your PAN number in Step 3 (KYC & Address) before verifying your bank account.");
       return;
@@ -531,6 +536,20 @@ export function useOnboardingFull(token: string) {
       if (!nextUrl) throw new Error("DigiLocker link was not returned by the server.");
       window.open(nextUrl, "_blank");
     } catch (e: any) { setError(e?.message || "DigiLocker link failed"); }
+    finally { setSaving(false); }
+  };
+
+  const startEsign = async (documentId: string) => {
+    setSaving(true);
+    try {
+      const res = await hrmsApi.post<{ data: { verification_url?: string | null; authUrl?: string | null; sign_url?: string | null } }>(
+        `${API}/esign/initiate`,
+        { token, documentId }
+      );
+      const nextUrl = res.data?.verification_url ?? res.data?.authUrl ?? res.data?.sign_url;
+      if (!nextUrl) throw new Error("eSign link was not returned by the server.");
+      window.open(nextUrl, "_blank");
+    } catch (e: any) { setError(e?.message || "eSign initiation failed"); }
     finally { setSaving(false); }
   };
 
@@ -636,7 +655,7 @@ export function useOnboardingFull(token: string) {
     load, autosave, advanceStep,
     saveEmployee, saveBank, addQualification, saveExperience, saveStatutory,
     sendOtp, verifyOtp, grantConsent, verifyPan, verifyBank, verifyAadhaar, verifyUan,
-    startDigilocker, lookupIfsc, uploadDoc, deleteDoc, submit,
+    startDigilocker, startEsign, lookupIfsc, uploadDoc, deleteDoc, submit,
     updateSectionStatus, getBlockers, saveFamily, saveNominees, recordPrivacyConsent,
     autosaveStatus, sectionComplete,
   };
