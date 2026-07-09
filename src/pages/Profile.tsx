@@ -278,11 +278,12 @@ const Profile = () => {
                   <PhotoUpload
                     currentUrl={avatarUrl}
                     displayName={`${employee.first_name} ${employee.last_name}`}
-                    onSuccess={(url) => {
+                    onSuccess={async (url) => {
                       setAvatarUrl(url || null);
-                      queryClient.invalidateQueries({ queryKey: ["my-profile"] });
-                      queryClient.invalidateQueries({ queryKey: ["employee-profile"] });
-                      refetch();
+                      // Hard remove queries to force fresh fetch
+                      queryClient.removeQueries({ queryKey: ["my-profile"] });
+                      queryClient.removeQueries({ queryKey: ["employee-profile"] });
+                      await refetch();
                     }}
                     size="2xl"
                   />

@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { useIsAdminOrHR } from "@/hooks/useUserRole";
+import { useCanSearchEmployees } from "@/hooks/useUserRole";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -202,7 +202,7 @@ function StarRating({ score, max = 5 }: { score: number; max?: number }) {
 export default function NativeEmployeeStatCard() {
   const { id: urlId } = useParams<{ id?: string }>();
   const navigate = useNavigate();
-  const { isAdminOrHR } = useIsAdminOrHR();
+  const { canSearchEmployees } = useCanSearchEmployees();
 
   const [searchInput, setSearchInput] = useState("");
   const [searchResults, setSearchResults] = useState<Array<{ id: string; name: string; code: string }>>([]);
@@ -224,7 +224,7 @@ export default function NativeEmployeeStatCard() {
   const { data: meData } = useQuery({
     queryKey: ["employee-me"],
     queryFn: () => hrmsApi.get<{ success: boolean; data: { id: string } }>("/api/employees/me"),
-    enabled: !isAdminOrHR && !targetId,
+    enabled: !targetId,
   });
 
   const resolvedId = targetId ?? meData?.data?.id ?? null;
@@ -288,7 +288,7 @@ export default function NativeEmployeeStatCard() {
             </div>
 
             {/* Search */}
-            {isAdminOrHR && (
+            {canSearchEmployees && (
               <div ref={searchRef} className="relative w-72">
                 <div className="relative">
                   <Input
@@ -329,7 +329,7 @@ export default function NativeEmployeeStatCard() {
                 <UserCircle className="h-10 w-10 text-white" />
               </div>
               <p className="text-slate-500 font-medium">
-                {isAdminOrHR ? "Search for an employee above to load their profile." : "Loading your profile…"}
+                {canSearchEmployees ? "Search for an employee above to load their profile." : "Loading your profile…"}
               </p>
             </div>
           )}

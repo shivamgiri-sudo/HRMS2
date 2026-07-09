@@ -196,3 +196,26 @@ export const useHasRole = (...roles: string[]) => {
   const { roleKeys } = useWorkforceAccess();
   return expandRoleKeys(roles).some((role) => roleKeys.includes(role));
 };
+
+export const useCanSearchEmployees = () => {
+  const { data, isLoading, error } = useUserRole();
+  const roleKeys = data?.roleKeys ?? [];
+
+  return {
+    canSearchEmployees:
+      roleKeys.includes("super_admin") ||
+      roleKeys.includes("admin") ||
+      roleKeys.includes("hr") ||
+      roleKeys.includes("payroll_head") ||
+      roleKeys.includes("payroll") ||
+      roleKeys.includes("manager") ||
+      roleKeys.includes("process_manager") ||
+      roleKeys.includes("ceo") ||
+      roleKeys.includes("branch_head"),
+    isLoading,
+    error,
+    role: data?.primaryRole ?? null,
+    roles: data?.roles ?? [],
+    roleKeys,
+  };
+};

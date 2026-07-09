@@ -526,12 +526,53 @@ router.post("/:id/journey", requireRole("admin", "hr"), async (req: any, res: an
 router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
   const { db } = await import("../../db/mysql.js");
   const targetId = req.params.id;
-  const isAdminOrHR = await hasRole(req.authUser!.id, "admin", "hr", "ceo");
   const selfEmp = await getEmployeeForUser(req.authUser!.id);
 
-  // Access check: admin/hr/ceo can view all; others can only view own
-  if (!isAdminOrHR && selfEmp?.id !== targetId) {
-    return res.status(403).json({ error: "Access denied" });
+  // Check if requesting own stat card
+  if (selfEmp?.id === targetId) {
+    // Always allowed
+  } else {
+    // Requesting someone else's card — check role + scope
+    const isSuperAdmin = await hasRole(req.authUser!.id, "super_admin");
+    const isPayroll = await hasRole(req.authUser!.id, "payroll_head", "payroll");
+    const isCEO = await hasRole(req.authUser!.id, "ceo");
+    const isAdmin = await hasRole(req.authUser!.id, "admin");
+    const isHR = await hasRole(req.authUser!.id, "hr");
+    const isBranchHead = await hasRole(req.authUser!.id, "branch_head");
+    const isManager = await hasRole(req.authUser!.id, "manager");
+
+    // Super Admin, Payroll, CEO see all
+    if (isSuperAdmin || isPayroll || isCEO) {
+      // Allowed
+    }
+    // Admin, HR, Branch Head — branch scope only
+    else if (isAdmin || isHR || isBranchHead) {
+      const [[myEmp]] = await db.execute<RowDataPacket[]>(
+        'SELECT branch_id FROM employees WHERE id = ? LIMIT 1',
+        [selfEmp?.id]
+      );
+      const [[targetEmp]] = await db.execute<RowDataPacket[]>(
+        'SELECT branch_id FROM employees WHERE id = ? LIMIT 1',
+        [targetId]
+      );
+      if (!myEmp || !targetEmp || myEmp.branch_id !== targetEmp.branch_id) {
+        return res.status(403).json({ error: "You can only view employees in your branch" });
+      }
+    }
+    // Manager — team scope only
+    else if (isManager) {
+      const [[targetEmp]] = await db.execute<RowDataPacket[]>(
+        'SELECT reporting_manager_id FROM employees WHERE id = ? LIMIT 1',
+        [targetId]
+      );
+      if (!targetEmp || targetEmp.reporting_manager_id !== selfEmp?.id) {
+        return res.status(403).json({ error: "You can only view your direct reports" });
+      }
+    }
+    // Regular employee — already denied by outer check
+    else {
+      return res.status(403).json({ error: "You can only view your own stat card" });
+    }
   }
 
   // Core employee with joined master data
