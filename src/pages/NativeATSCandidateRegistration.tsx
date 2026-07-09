@@ -136,7 +136,7 @@ const EMPTY_FORM: CandidateFormData = {
 };
 
 const DEFAULT_BOOTSTRAP: Bootstrap = {
-  companyName: "Mas Callnet India Pvt Ltd",
+  companyName: "",
   educationOptions: [],
   experienceOptions: [],
   genderOptions: [],
@@ -580,7 +580,7 @@ export default function NativeATSCandidateRegistration() {
         : data.branchOptions ?? [];
 
       setBootstrap({
-        companyName:             "Mas Callnet India Pvt Ltd",
+        companyName:             data.companyName ?? "",
         fields:                  data.fields              ?? undefined,
         educationOptions:        data.educationOptions    ?? ["10th Pass","12th Pass","Graduate","Post Graduate","Diploma"],
         experienceOptions:       data.experienceOptions   ?? ["Fresher","0-1 Year","1-2 Years","2-3 Years","3+ Years"],
@@ -598,7 +598,7 @@ export default function NativeATSCandidateRegistration() {
     } else {
       // API failed - show error, don't use hardcoded fallbacks
       setBootstrap({
-        companyName:              "Mas Callnet India Pvt Ltd",
+        companyName:              "",
         educationOptions:         ["10th Pass","12th Pass","Graduate","Post Graduate","Diploma"],
         experienceOptions:        ["Fresher","0-1 Year","1-2 Years","2-3 Years","3+ Years"],
         genderOptions:            ["Male","Female","Other"],

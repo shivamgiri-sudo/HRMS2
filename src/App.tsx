@@ -359,12 +359,16 @@ const App = () => (
               <Route path="/ats/command-center" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSFullParityCommandCenter /></Gate></ProtectedRoute>} />
               <Route path="/ats/onboarding-requests" element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><NativeHROnboardingRequests /></Gate></ProtectedRoute>} />
               <Route path="/hr-onboarding-requests" element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><NativeHROnboardingRequests /></Gate></ProtectedRoute>} />
+              {/* CANONICAL: /ats/offer-approvals is the primary branch-head approval page, wired to the offer submission flow in NativeHROnboardingRequests */}
               <Route path="/ats/offer-approvals" element={<ProtectedRoute><Gate pageCode="ATS_OFFER_APPROVALS"><NativeBranchHeadApproval /></Gate></ProtectedRoute>} />
+              {/* LEGACY: /ats/branch-head-approval uses a separate backend module (ats_branch_head_approval table). Keep alive while any pending approvals may exist there. */}
               <Route path="/ats/branch-head-approval" element={<ProtectedRoute><Gate pageCode="ATS_BRANCH_HEAD_APPROVAL"><BranchHeadApproval /></Gate></ProtectedRoute>} />
               <Route path="/ats/payroll-hr" element={<ProtectedRoute roles={['admin', 'hr', 'payroll_hr']}><Gate pageCode="ATS_PAYROLL_HR"><NativePayrollHRValidation /></Gate></ProtectedRoute>} />
               <Route path="/ats/payroll-hr-validation" element={<ProtectedRoute><Gate pageCode="ATS_PAYROLL_HR"><NativePayrollHRValidation /></Gate></ProtectedRoute>} />
+              {/* CANONICAL: /onboard-full is the active 10-step onboarding form. All new send-token links use this route. */}
               <Route path="/onboard-full" element={<CandidateOnboardingFullPage />} />
               <Route path="/candidate-onboarding-full" element={<CandidateOnboardingFullPage />} />
+              {/* DEPRECATED: /onboard-full-legacy (CandidateOnboardingV2). Kept for existing tokens. Do not generate new links to this route. */}
               <Route path="/onboard-full-legacy" element={<CandidateOnboardingV2 />} />
               <Route path="/ats/bgv" element={<ProtectedRoute><Gate pageCode="ATS_BGV"><NativeBGVVerificationCenter /></Gate></ProtectedRoute>} />
               <Route path="/ats/bgv-enhanced" element={<ProtectedRoute roles={['admin', 'hr']}><NativeBGVEnhanced /></ProtectedRoute>} />

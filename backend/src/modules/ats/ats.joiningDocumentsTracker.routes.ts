@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { Response, NextFunction } from 'express';
-import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireAuth, requireWriteAccess } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import {
@@ -50,7 +50,7 @@ joiningDocumentsTrackerRouter.get('/', h(async (req: AuthenticatedRequest, res: 
 }));
 
 // POST /api/ats/joining-documents-tracker/bulk-remind
-joiningDocumentsTrackerRouter.post('/bulk-remind', h(async (req: AuthenticatedRequest, res: Response) => {
+joiningDocumentsTrackerRouter.post('/bulk-remind', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { employee_ids, custom_message } = req.body as {
       employee_ids?: unknown;
@@ -75,7 +75,7 @@ joiningDocumentsTrackerRouter.post('/bulk-remind', h(async (req: AuthenticatedRe
 }));
 
 // POST /api/ats/joining-documents-tracker/bulk-generate-checklist
-joiningDocumentsTrackerRouter.post('/bulk-generate-checklist', h(async (req: AuthenticatedRequest, res: Response) => {
+joiningDocumentsTrackerRouter.post('/bulk-generate-checklist', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { employee_ids } = req.body as { employee_ids?: unknown };
 
@@ -93,7 +93,7 @@ joiningDocumentsTrackerRouter.post('/bulk-generate-checklist', h(async (req: Aut
 }));
 
 // POST /api/ats/joining-documents-tracker/bulk-assign
-joiningDocumentsTrackerRouter.post('/bulk-assign', h(async (req: AuthenticatedRequest, res: Response) => {
+joiningDocumentsTrackerRouter.post('/bulk-assign', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { employee_ids, assigned_hr_user_id } = req.body as {
       employee_ids?: unknown;
@@ -118,7 +118,7 @@ joiningDocumentsTrackerRouter.post('/bulk-assign', h(async (req: AuthenticatedRe
 }));
 
 // POST /api/ats/joining-documents-tracker/bulk-set-due-date
-joiningDocumentsTrackerRouter.post('/bulk-set-due-date', h(async (req: AuthenticatedRequest, res: Response) => {
+joiningDocumentsTrackerRouter.post('/bulk-set-due-date', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { employee_ids, due_date, document_codes } = req.body as {
       employee_ids?: unknown;
@@ -149,7 +149,7 @@ joiningDocumentsTrackerRouter.post('/bulk-set-due-date', h(async (req: Authentic
 }));
 
 // POST /api/ats/joining-documents-tracker/bulk-verify
-joiningDocumentsTrackerRouter.post('/bulk-verify', h(async (req: AuthenticatedRequest, res: Response) => {
+joiningDocumentsTrackerRouter.post('/bulk-verify', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { employee_ids } = req.body as { employee_ids?: unknown };
 
@@ -167,7 +167,7 @@ joiningDocumentsTrackerRouter.post('/bulk-verify', h(async (req: AuthenticatedRe
 }));
 
 // POST /api/ats/joining-documents-tracker/bulk-download
-joiningDocumentsTrackerRouter.post('/bulk-download', h(async (req: AuthenticatedRequest, res: Response) => {
+joiningDocumentsTrackerRouter.post('/bulk-download', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { employee_ids, document_codes } = req.body as {
       employee_ids?: unknown;

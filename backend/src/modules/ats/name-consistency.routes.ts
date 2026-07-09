@@ -38,7 +38,7 @@ function nameMatchScore(a: string, b: string): number {
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 // POST /:candidateId/recalculate — recalculate name match for a candidate
-router.post("/:candidateId/recalculate", h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/:candidateId/recalculate", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { candidateId } = req.params;
 
   const [profile] = await db.execute<RowDataPacket[]>(

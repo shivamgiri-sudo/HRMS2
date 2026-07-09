@@ -526,10 +526,10 @@ export function useOnboardingFull(token: string) {
   const startDigilocker = async () => {
     setSaving(true);
     try {
-      const res = await hrmsApi.post<{ data: { redirectUrl?: string | null; verificationUrl?: string | null } }>(`${API}/digilocker/initiate`, { token });
-      const nextUrl = res.data?.redirectUrl ?? res.data?.verificationUrl;
+      const res = await hrmsApi.post<{ data: { authUrl?: string | null; redirectUrl?: string | null; verificationUrl?: string | null } }>(`${BGV}/digilocker/start`, { token });
+      const nextUrl = res.data?.authUrl ?? res.data?.redirectUrl ?? res.data?.verificationUrl;
       if (!nextUrl) throw new Error("DigiLocker link was not returned by the server.");
-      window.location.href = nextUrl;
+      window.open(nextUrl, "_blank");
     } catch (e: any) { setError(e?.message || "DigiLocker link failed"); }
     finally { setSaving(false); }
   };
@@ -607,7 +607,7 @@ export function useOnboardingFull(token: string) {
   };
 
   const deleteDoc = async (docId: string) => {
-    await hrmsApi.delete(`${API}/documents/${docId}`, { data: { token } });
+    await hrmsApi.delete(`${API}/documents/${docId}`, { params: { token } });
     await load();
   };
 

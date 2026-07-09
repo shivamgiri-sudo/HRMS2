@@ -218,7 +218,10 @@ export default function CandidatePortalLogin() {
               <div className="flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-purple-600 flex-shrink-0 mt-0.5" />
                 <p>
-                  <strong>Need help?</strong> Call our support: +91-XXXXX-XXXXX
+                  <strong>Need help?</strong> Contact HR at{' '}
+                  <a href="mailto:hr@mascallnet.com" className="text-purple-600 hover:underline">
+                    hr@mascallnet.com
+                  </a>
                 </p>
               </div>
             </div>

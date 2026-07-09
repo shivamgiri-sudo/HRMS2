@@ -558,7 +558,11 @@ export async function validateOnboardingToken(token: string) {
        FROM ats_onboarding_bridge b
        JOIN ats_candidate c ON c.id = b.candidate_id
        LEFT JOIN branch_master br ON br.id = c.applied_for_branch
+                                  OR br.branch_name = c.applied_for_branch
+                                  OR br.branch_code = c.applied_for_branch
        LEFT JOIN process_master pm ON pm.id = c.applied_for_process
+                                   OR pm.process_name = c.applied_for_process
+                                   OR pm.process_code = c.applied_for_process
       WHERE b.onboarding_token = ?
       LIMIT 1`,
     [token]
@@ -584,9 +588,9 @@ export async function validateOnboardingToken(token: string) {
     gender: row.gender,
     date_of_birth: row.date_of_birth,
     branch_id: row.applied_for_branch,
-    branch_name: row.branch_name,
+    branch_name: row.branch_name ?? row.applied_for_branch ?? null,
     process_id: row.applied_for_process,
-    process_name: row.process_name,
+    process_name: row.process_name ?? row.applied_for_process ?? null,
     source_type: row.sourcing_channel ?? null,
     source: row.source_details ?? row.sourcing_channel ?? null,
     resume_url: row.resume_url,
@@ -685,8 +689,10 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
         permanent_pincode = VALUES(permanent_pincode), present_address = VALUES(present_address), present_state = VALUES(present_state),
         present_city = VALUES(present_city), present_pincode = VALUES(present_pincode), mobile_number = VALUES(mobile_number),
         alt_mobile_number = VALUES(alt_mobile_number), personal_email_id = VALUES(personal_email_id), official_email_id = VALUES(official_email_id),
-        pan_number_masked = VALUES(pan_number_masked), pan_number_hash = VALUES(pan_number_hash),
-        aadhaar_number_masked = VALUES(aadhaar_number_masked), aadhaar_number_hash = VALUES(aadhaar_number_hash),
+        pan_number_masked = COALESCE(VALUES(pan_number_masked), pan_number_masked),
+        pan_number_hash = COALESCE(VALUES(pan_number_hash), pan_number_hash),
+        aadhaar_number_masked = COALESCE(VALUES(aadhaar_number_masked), aadhaar_number_masked),
+        aadhaar_number_hash = COALESCE(VALUES(aadhaar_number_hash), aadhaar_number_hash),
         passport_no = VALUES(passport_no), driving_license_no = VALUES(driving_license_no),
         uan_number = VALUES(uan_number), epf_number = VALUES(epf_number), esic_number = VALUES(esic_number),
         source_type = VALUES(source_type), source = VALUES(source),

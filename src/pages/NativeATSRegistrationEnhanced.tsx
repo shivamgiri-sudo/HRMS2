@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { hrmsApi } from "@/lib/hrmsApi";
+import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
 import { apiUrl } from "@/lib/apiBase";
 import { Users, Building2, UserCheck, FileText, Camera, Upload, CheckCircle, AlertCircle } from "lucide-react";
 
@@ -170,8 +170,10 @@ export default function NativeATSRegistrationEnhanced() {
     body.append("file", file);
     body.append("type", type);
     body.append("mobile", form.mobile);
+    const token = getAuthToken();
     const response = await fetch(apiUrl(`/api/ats/candidates/${candidateId}/upload`), {
       method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
       body,
     });
     if (!response.ok) {

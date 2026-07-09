@@ -42,8 +42,11 @@ export function useOnboardingRequests() {
       const requests = requestsQuery.data ?? [];
       const request = requests.find((r) => r.id === requestId);
 
-      const approvalId = request?.offer_id || requestId;
-      await hrmsApi.post(`/api/ats/onboarding/offers/${approvalId}/approve`, {});
+      if (!request?.offer_id) {
+        throw new Error("Offer not yet created for this candidate — please build the offer first before approving.");
+      }
+
+      await hrmsApi.post(`/api/ats/onboarding/offers/${request.offer_id}/approve`, {});
 
       // Fire-and-forget notification
       if (request) {
@@ -84,8 +87,11 @@ export function useOnboardingRequests() {
       const requests = requestsQuery.data ?? [];
       const request = requests.find((r) => r.id === requestId);
 
-      const approvalId = request?.offer_id || requestId;
-      await hrmsApi.post(`/api/ats/onboarding/offers/${approvalId}/reject`, {
+      if (!request?.offer_id) {
+        throw new Error("Offer not yet created for this candidate — cannot reject.");
+      }
+
+      await hrmsApi.post(`/api/ats/onboarding/offers/${request.offer_id}/reject`, {
         remarks: rejectionReason,
       });
 

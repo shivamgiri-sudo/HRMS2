@@ -4,6 +4,7 @@ import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from '../.
 import { requireRole } from '../../middleware/requireRole.js';
 import {
   getPendingCandidates,
+  getValidatedCandidates,
   getCandidateForValidation,
   validateAndAssignSalary,
   getValidationRecord,
@@ -69,7 +70,7 @@ payrollHRRouter.get('/pending-candidates', h(async (_req: AuthenticatedRequest, 
 
 payrollHRRouter.get('/validated-candidates', h(async (_req: AuthenticatedRequest, res: Response) => {
   try {
-    const candidates = await getPendingCandidates();
+    const candidates = await getValidatedCandidates();
     return res.json({ success: true, data: candidates });
   } catch (error: unknown) {
     return res.status(500).json({ success: false, message: getErrorMessage(error) });

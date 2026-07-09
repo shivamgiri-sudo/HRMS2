@@ -346,7 +346,7 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       if (rosterRows.length > 0) {
         resolvedRecruiterId = rosterRows[0].id;
       } else {
-        const nameParts = input.recruiterName.trim().split(' ');
+        const fullName = input.recruiterName.trim();
         const [empRows] = await db.execute<RecruiterEmployeeRow[]>(
           `SELECT e.id, e.first_name, e.last_name, e.mobile,
                   COALESCE(e.office_email, e.official_email, e.email) AS email,
@@ -354,9 +354,9 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
            FROM employees e
            JOIN branch_master b ON b.id = e.branch_id
            WHERE e.active_status = 1
-             AND UPPER(e.first_name) = UPPER(?)
+             AND UPPER(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) = UPPER(?)
            LIMIT 1`,
-          [nameParts[0]]
+          [fullName]
         );
         if (empRows.length > 0) {
           const emp = empRows[0];
@@ -425,7 +425,12 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
           `INSERT INTO ats_queue_token (
             id, candidate_id, token, arrival_time, current_stage, status,
             branch_name, token_number, recruiter_id, queue_status
-          ) VALUES (UUID(), ?, UUID(), NOW(), 'Arrived', 'active', ?, ?, ?, 'waiting')`,
+          ) VALUES (UUID(), ?, UUID(), NOW(), 'Arrived', 'active', ?, ?, ?, 'waiting')
+          ON DUPLICATE KEY UPDATE
+            recruiter_id = VALUES(recruiter_id),
+            branch_name = VALUES(branch_name),
+            token_number = VALUES(token_number),
+            updated_at = NOW()`,
           [candidateId, branchName, tokenNumber, assignmentResult.assignedRecruiterId]
         );
       }

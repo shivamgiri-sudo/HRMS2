@@ -1,4 +1,5 @@
 import { Router, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import {
   candidateLogin,
   getCandidateProfile,
@@ -49,8 +50,16 @@ const candidateAuth: RequestHandler = (req: Request, res: Response, next: NextFu
   next();
 };
 
+const loginRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many login attempts. Please try again after 15 minutes.' },
+});
+
 // ── 1. Candidate Login ─────────────────────────────────────────────────────────
-candidatePortalRouter.post('/login', async (req: Request, res: Response) => {
+candidatePortalRouter.post('/login', loginRateLimit, async (req: Request, res: Response) => {
   try {
     const input: CandidateLoginInput = {
       candidate_id: req.body.candidate_id,

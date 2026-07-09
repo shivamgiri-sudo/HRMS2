@@ -924,7 +924,8 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
   }
 
   private apiKeyHeaders(key?: string): Record<string, string> {
-    return key ? { "x-api-key": key } : {};
+    const clean = String(key ?? "").replace(/\s+/g, "").trim();
+    return clean ? { "x-api-key": clean } : {};
   }
 
   private luckpayBaseUrl(): string {
@@ -943,10 +944,11 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     }
 
     const authUrl = `${this.luckpayBaseUrl()}/auth/token`;
+    const basicToken = String(this.cfg.luckpay_basic_token ?? "").replace(/\s+/g, "").trim();
     let res;
     try {
       res = await axios.post(authUrl, undefined, {
-        headers: { Authorization: `Basic ${this.cfg.luckpay_basic_token}` },
+        headers: { Authorization: `Basic ${basicToken}` },
         timeout: env.LUCKPAY_TIMEOUT_MS,
       });
     } catch (error) {
@@ -965,9 +967,10 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     const accessToken = await this.getLuckpayAccessToken();
     let res;
     try {
+      const clientId = String(this.cfg.luckpay_client_id ?? "").replace(/\s+/g, "").trim();
       res = await axios.post(`${this.luckpayBaseUrl()}${path}`, payload, {
         headers: {
-          Authorization: this.cfg.luckpay_client_id!,
+          Authorization: clientId,
           "X-Access-Token": `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
@@ -1108,6 +1111,20 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
 
   async verifyAadhaarOffline(input: AadhaarOfflineInput): Promise<VerificationResult> {
     const requestId = randomUUID();
+    if (!this.cfg.befisc_api_url) {
+      // Befisc not configured — mark for manual HR review instead of blocking onboarding
+      return {
+        status: "manual_review",
+        providerKey: this.providerKey,
+        providerRequestId: requestId,
+        providerReferenceId: requestId,
+        matchScore: null,
+        matchedName: input.candidateName ?? null,
+        resultSummary: "Aadhaar verification queued for manual review — Befisc API not configured. HR will verify the uploaded Aadhaar document.",
+        riskFlags: [],
+        raw: { mode: "manual_fallback" },
+      };
+    }
     const d = await this.post(this.cfg.befisc_api_url, "/aadhaar/offline-verify", {
       request_id: requestId,
       document_id: input.documentId ?? undefined,

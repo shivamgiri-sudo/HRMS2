@@ -1,6 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import {
   getAssignedCandidates,
@@ -69,7 +69,7 @@ const interviewResultSchema = z.object({
   recruiter_recommendation: z.string().optional(),
 });
 
-interviewRouter.post('/submit-result', h(async (req: AuthenticatedRequest, res: Response) => {
+interviewRouter.post('/submit-result', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const input = interviewResultSchema.parse(req.body);
 
@@ -122,7 +122,7 @@ const updateQueueStatusSchema = z.object({
   status: z.enum(['called', 'in_interview']),
 });
 
-interviewRouter.post('/update-queue-status', h(async (req: Request, res: Response) => {
+interviewRouter.post('/update-queue-status', requireWriteAccess, h(async (req: Request, res: Response) => {
   try {
     const { candidate_id, status } = updateQueueStatusSchema.parse(req.body);
 

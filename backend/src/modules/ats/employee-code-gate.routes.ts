@@ -13,9 +13,6 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
   void fn(req, res).catch(next);
 };
 
-interface CountRow extends RowDataPacket {
-  cnt: number | string;
-}
 
 // GET /api/ats/employee-code/:candidateId/gate-check
 router.get('/:candidateId/gate-check', requireAuth, requireRole('payroll_hr', 'payroll_head', 'admin', 'hr', 'ho_hr', 'branch_hr'), h(async (req, res) => {
@@ -37,20 +34,33 @@ router.post('/:candidateId/generate', requireAuth, requireWriteAccess, requireRo
     });
   }
 
-  // Generate code: MASCYYMM-NNNNN (sequential)
+  // Generate code using atomic sequence — prevents duplicate codes under concurrent requests
   const now = new Date();
   const yymm = String(now.getFullYear()).slice(2) + String(now.getMonth() + 1).padStart(2, '0');
-  let existingEmployeeCount = 0;
+  let empCode: string;
+  const conn = await db.getConnection();
   try {
-    const [countRows] = await db.execute<CountRow[]>(
-      'SELECT COUNT(*) as cnt FROM employees WHERE created_at >= DATE_FORMAT(NOW(),\'%Y-%m-01\')'
+    await conn.beginTransaction();
+    await conn.execute(
+      `UPDATE employee_code_sequence SET current_sequence = current_sequence + 1, last_generated_at = NOW()
+       WHERE company_prefix = 'MAS' AND is_offrole = 0`
     );
-    existingEmployeeCount = Number(countRows[0]?.cnt ?? 0);
-  } catch {
-    existingEmployeeCount = 0;
+    const [seqRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT current_sequence FROM employee_code_sequence WHERE company_prefix = 'MAS' AND is_offrole = 0 LIMIT 1`
+    );
+    const seq = String((seqRows as RowDataPacket[])[0]?.current_sequence ?? 1).padStart(5, '0');
+    empCode = `MAS${yymm}${seq}`;
+    await conn.execute(
+      `UPDATE employee_code_sequence SET last_generated_code = ? WHERE company_prefix = 'MAS' AND is_offrole = 0`,
+      [empCode]
+    );
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    conn.release();
+    throw err;
   }
-  const seq = String(existingEmployeeCount + 1).padStart(4, '0');
-  const empCode = `MAS${yymm}${seq}`;
+  conn.release();
 
   // Write employee_code back to ats_candidate and move to employee_code_generated stage
   await db.execute(

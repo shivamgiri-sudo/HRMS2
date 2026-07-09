@@ -196,7 +196,10 @@ export const hrmsApi = {
   post: <T>(path: string, body?: unknown, timeoutMs?: number) => request<T>("POST", path, body, timeoutMs),
   put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
-  delete: <T>(path: string) => request<T>("DELETE", path),
+  delete: <T>(path: string, opts?: { params?: Record<string, string> }) => {
+    const qs = opts?.params ? "?" + new URLSearchParams(opts.params).toString() : "";
+    return request<T>("DELETE", path + qs);
+  },
   getRaw: (path: string) => requestRaw("GET", path),
   postForm: <T>(path: string, body: FormData) => requestForm<T>(path, body),
   getBlob: (path: string) => requestBlob(path),

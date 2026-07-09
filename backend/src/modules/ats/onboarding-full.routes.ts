@@ -268,7 +268,7 @@ router.post("/documents", candidateWriteLimiter, upload.single("file"), h(async 
 }));
 
 router.delete("/documents/:documentId", candidateWriteLimiter, h(async (req, res) => {
-  const token = String(req.body.token ?? "");
+  const token = String(req.query.token ?? req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await deleteOnboardingDocument(token, req.params.documentId, meta(req)) });
 }));
@@ -375,11 +375,11 @@ router.post("/otp/verify", h(async (req, res) => {
   const record = rows[0] as OnboardingOtpRow | undefined;
   if (!record) return res.status(400).json({ success: false, message: "OTP expired or not found. Please request a new one." });
 
-  await db.execute(`UPDATE candidate_onboarding_otp SET attempts = attempts + 1 WHERE id = ?`, [record.id]);
-
   if (Number(record.attempts) >= Number(record.max_attempts)) {
     return res.status(429).json({ success: false, message: "Too many incorrect attempts. Please request a new OTP." });
   }
+
+  await db.execute(`UPDATE candidate_onboarding_otp SET attempts = attempts + 1 WHERE id = ?`, [record.id]);
 
   if (record.otp_hash !== otpHash) {
     return res.status(400).json({ success: false, message: "Incorrect OTP" });

@@ -83,9 +83,7 @@ export const atsController = {
       },
       { allowAdminBypass: true }
     );
-    // listOnboardingBridges not yet on atsService — safe runtime fallback
-    const onboardingBridgeService = atsService as { listOnboardingBridges?: (scope: unknown) => Promise<unknown[]> };
-    const data = await onboardingBridgeService.listOnboardingBridges?.(scopeFilter) ?? [];
+    const data = await atsService.listOnboardingBridges(scopeFilter);
     return res.json({ success: true, data });
   },
 

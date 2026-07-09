@@ -1,7 +1,7 @@
 import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { hrmsApi } from '@/lib/hrmsApi';
+import { candidateApi } from '@/lib/candidateApi';
 import {
   User, Mail, Phone, MapPin, Briefcase, Calendar, FileText,
   CheckCircle, Clock, AlertCircle, Upload, Download, LogOut,
@@ -62,19 +62,19 @@ export default function CandidatePortalDashboard() {
 
     try {
       // Load candidate info
-      const candidateRes = await hrmsApi.get<{ success: boolean; data: CandidateInfo }>(
+      const candidateRes = await candidateApi.get<{ success: boolean; data: CandidateInfo }>(
         '/api/ats/candidate-portal/profile'
       );
       setCandidate(candidateRes.data);
 
       // Load onboarding tasks
-      const tasksRes = await hrmsApi.get<{ success: boolean; data: OnboardingTask[] }>(
+      const tasksRes = await candidateApi.get<{ success: boolean; data: OnboardingTask[] }>(
         '/api/ats/candidate-portal/tasks'
       );
       setTasks(tasksRes.data || []);
 
       // Load uploaded documents
-      const docsRes = await hrmsApi.get<{ success: boolean; data: DocumentUpload[] }>(
+      const docsRes = await candidateApi.get<{ success: boolean; data: DocumentUpload[] }>(
         '/api/ats/candidate-portal/documents'
       );
       setDocuments(docsRes.data || []);

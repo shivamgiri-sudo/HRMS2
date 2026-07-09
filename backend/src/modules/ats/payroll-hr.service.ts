@@ -111,6 +111,31 @@ export async function getPendingCandidates(): Promise<PendingCandidate[]> {
 }
 
 /**
+ * Get candidates whose payroll HR validation has been approved/validated
+ */
+export async function getValidatedCandidates(): Promise<PendingCandidate[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+      c.id as candidate_id,
+      c.full_name,
+      c.mobile,
+      c.email,
+      COALESCE(c.role_applied, c.applied_for_process) AS applied_for_role,
+      c.applied_for_branch,
+      c.branch_display_name,
+      phr.validation_status,
+      phr.validated_at,
+      phr.joining_date,
+      phr.gross_salary
+    FROM ats_payroll_hr_validation phr
+    JOIN ats_candidate c ON c.id = phr.candidate_id
+    WHERE phr.validation_status IN ('validated', 'approved')
+    ORDER BY phr.validated_at DESC`
+  );
+  return rows as PendingCandidate[];
+}
+
+/**
  * Get candidate details for validation
  */
 export async function getCandidateForValidation(candidateId: string) {

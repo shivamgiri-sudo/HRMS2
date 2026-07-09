@@ -37,6 +37,10 @@ import { atsService } from "./ats.service.js";
 import { resolveRecruiterForActor } from "../ats-full-parity/recruiterInterview.service.js";
 
 const router = Router();
+if (!env.BGV_WEBHOOK_SECRET) {
+  console.warn("[BGV] WARNING: BGV_WEBHOOK_SECRET is not set. Webhook signature verification is disabled — set this variable in all environments to prevent unauthorized webhook calls.");
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
 const meta = (req: Request) => ({ ip: req.ip, userAgent: req.get("user-agent") ?? undefined });
@@ -534,7 +538,7 @@ router.put("/admin/provider-config", requireAuth, requireRole("admin"), h(async 
 }));
 
 // ── Sync API check results → BGV report ──────────────────────────────────────
-router.post("/bgv/sync-report", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/sync-report", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { candidate_id } = req.body;
   if (!candidate_id) return res.status(400).json({ success: false, message: "candidate_id required" });
   const result = await syncBgvChecksToReport(String(candidate_id));
