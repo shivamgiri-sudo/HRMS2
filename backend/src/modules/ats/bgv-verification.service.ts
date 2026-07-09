@@ -36,7 +36,7 @@ async function ensureConsent(candidateId: string) {
 
 async function getCandidateIdentity(candidateId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT c.id, c.full_name, c.email, c.mobile, c.date_of_birth,
+    `SELECT c.id, c.full_name, c.email, c.mobile, c.date_of_birth, c.pan_number, c.aadhar_number,
             p.employee_name, p.pan_number_hash, p.aadhaar_number_hash, p.pan_number_masked, p.aadhaar_number_masked
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
@@ -190,8 +190,8 @@ export async function verifyPanByToken(token: string, input: { panNumber?: strin
 export async function verifyPanForCandidate(candidateId: string, input: { panNumber?: string }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
   await ensureConsent(candidateId);
   const candidate = await getCandidateIdentity(candidateId);
-  const pan = String(input.panNumber ?? "").trim().toUpperCase();
-  if (!pan) throw Object.assign(new Error("PAN number is required"), { statusCode: 400 });
+  const pan = String(input.panNumber || candidate.pan_number || "").trim().toUpperCase();
+  if (!pan) throw Object.assign(new Error("PAN number is required — please save your PAN in the Personal details step first"), { statusCode: 400 });
   const adapter = await getConfiguredBgvProviderAdapter();
   const started = Date.now();
   const result = await adapter.verifyPan({
