@@ -43,17 +43,17 @@ export function RecruiterLayout() {
   ];
 
   const workItems = [
-    { icon: <Users className="w-4 h-4" />, title: "My Pending Candidates", subtitle: "Candidates assigned to me", count: daily.pending_count ?? 0, href: "/ats/recruiter-workspace", color: "bg-blue-100 text-blue-700", timestamp: "Now" },
+    { icon: <Users className="w-4 h-4" />, title: "My Pending Candidates", subtitle: "Candidates assigned to me", count: daily.pending_count ?? 0, href: "/ats/recruiter/workspace", color: "bg-blue-100 text-blue-700", timestamp: "Now" },
     { icon: <CheckCircle2 className="w-4 h-4" />, title: "Offers Pending", subtitle: "Awaiting candidate acceptance", count: offersPending, href: "/ats/command-center", color: "bg-amber-100 text-amber-700", timestamp: "1h ago" },
   ].filter((i) => i.count > 0);
 
   const quickLinks: QuickLink[] = [
     { label: "ATS Command Center", href: "/ats/command-center", icon: Briefcase, iconBg: "bg-cyan-100", iconColor: "text-cyan-600" },
-    { label: "Recruiter Workspace", href: "/ats/recruiter-workspace", icon: Users, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
-    { label: "Hiring Entry", href: "/ats/hiring-entry", icon: PlusCircle, iconBg: "bg-emerald-100", iconColor: "text-emerald-600" },
+    { label: "Recruiter Workspace", href: "/ats/recruiter/workspace", icon: Users, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
+    { label: "Hiring Entry", href: "/ats/recruiter/hiring-entry", icon: PlusCircle, iconBg: "bg-emerald-100", iconColor: "text-emerald-600" },
     { label: "Candidate Master", href: "/ats/candidate-master", icon: UserCheck, iconBg: "bg-violet-100", iconColor: "text-violet-600" },
-    { label: "Walk-in Queue", href: "/ats/recruiter-workspace", icon: Clock, iconBg: "bg-amber-100", iconColor: "text-amber-600" },
-    { label: "Submission History", href: "/ats/recruiter-workspace", icon: TrendingUp, iconBg: "bg-slate-100", iconColor: "text-slate-600" },
+    { label: "Walk-in Queue", href: "/ats/recruiter/workspace", icon: Clock, iconBg: "bg-amber-100", iconColor: "text-amber-600" },
+    { label: "Submission History", href: "/ats/recruiter/workspace", icon: TrendingUp, iconBg: "bg-slate-100", iconColor: "text-slate-600" },
   ];
 
   return (

@@ -167,7 +167,7 @@ function LeaveBalanceCard({
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
         <h3 className="font-semibold text-slate-800 text-sm">My Leave Balance</h3>
         <Button asChild size="sm" variant="outline" className="h-7 text-xs">
-          <Link to="/leaves/apply">Apply Leave</Link>
+          <Link to="/leaves">Apply Leave</Link>
         </Button>
       </div>
       {loading && (
@@ -260,10 +260,10 @@ function OnboardingStatusCard({
 
 function QuickLinks() {
   const links = [
-    { label: "Apply Leave", to: "/leaves/apply", icon: CalendarDays },
+    { label: "Apply Leave", to: "/leaves", icon: CalendarDays },
     { label: "View Payslip", to: "/payroll/payslips", icon: FileText },
-    { label: "Raise Helpdesk", to: "/helpdesk/new", icon: HelpCircle },
-    { label: "View Documents", to: "/documents/my", icon: FolderOpen },
+    { label: "Raise Helpdesk", to: "/helpdesk", icon: HelpCircle },
+    { label: "View Documents", to: "/profile", icon: FolderOpen },
   ];
 
   return (

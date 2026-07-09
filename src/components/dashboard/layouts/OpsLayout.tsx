@@ -129,7 +129,7 @@ export function OpsLayout() {
       title: "Staffing Gap Follow-ups",
       subtitle: "Open actions to close staffing gaps",
       count: 18,
-      href: "/wfm/live",
+      href: "/wfm/live-tracker",
       color: "bg-red-100 text-red-700",
       timestamp: "45m ago",
     },

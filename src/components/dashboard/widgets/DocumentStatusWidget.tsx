@@ -33,7 +33,7 @@ export function DocumentStatusWidget({ employeeId }: Props) {
           </div>
           <CardTitle className="text-sm font-bold text-slate-900">Documents Status</CardTitle>
         </div>
-        <Link to="/documents" className="text-xs font-semibold text-[#1B6AB5] hover:underline">View All →</Link>
+        <Link to="/profile" className="text-xs font-semibold text-[#1B6AB5] hover:underline">View All →</Link>
       </CardHeader>
       <CardContent className="p-5 space-y-3">
         {isLoading ? <Skeleton className="h-24 w-full rounded-xl" /> : (

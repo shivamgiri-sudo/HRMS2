@@ -19,7 +19,7 @@ export function RecentPayslipWidget() {
     <Card className="rounded-2xl border border-slate-200 shadow-sm bg-white">
       <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 pb-4 pt-5 px-5">
         <CardTitle className="text-sm font-bold text-slate-900">Recent Payslip</CardTitle>
-        <Link to="/payslip" className="text-xs font-semibold text-[#1B6AB5] hover:underline">View All →</Link>
+        <Link to="/payroll/payslips" className="text-xs font-semibold text-[#1B6AB5] hover:underline">View All →</Link>
       </CardHeader>
       <CardContent className="p-5">
         {isLoading ? <Skeleton className="h-20 w-full rounded-xl" /> : !latest ? (
@@ -39,7 +39,7 @@ export function RecentPayslipWidget() {
               </p>
               <p className="text-xs text-slate-500">Take Home</p>
             </div>
-            <Link to="/payslip" className="flex items-center gap-1.5 text-xs font-semibold text-[#1B6AB5] hover:underline flex-shrink-0">
+            <Link to="/payroll/payslips" className="flex items-center gap-1.5 text-xs font-semibold text-[#1B6AB5] hover:underline flex-shrink-0">
               <Download className="w-3.5 h-3.5" /> Download
             </Link>
           </div>

@@ -94,9 +94,9 @@ export function EmployeeLayout() {
 
   const quickLinks = [
     { label: "Apply Leave",    subtitle: "Request time off",       href: "/leaves",       icon: <Umbrella className="w-5 h-5 text-[#1B6AB5]" />,  bg: "bg-blue-50"   },
-    { label: "View Payslip",   subtitle: "Check your salary details", href: "/payslip",   icon: <FileText className="w-5 h-5 text-emerald-600" />,  bg: "bg-emerald-50"},
+    { label: "View Payslip",   subtitle: "Check your salary details", href: "/payroll/payslips",   icon: <FileText className="w-5 h-5 text-emerald-600" />,  bg: "bg-emerald-50"},
     { label: "Raise Helpdesk", subtitle: "Get support for issues",   href: "/helpdesk",   icon: <Clock className="w-5 h-5 text-amber-600" />,     bg: "bg-amber-50"  },
-    { label: "View Documents", subtitle: "Access your documents",    href: "/documents",  icon: <FileText className="w-5 h-5 text-violet-600" />,  bg: "bg-violet-50" },
+    { label: "View Documents", subtitle: "Access your documents",    href: "/profile",  icon: <FileText className="w-5 h-5 text-violet-600" />,  bg: "bg-violet-50" },
   ];
 
   return (

@@ -338,7 +338,7 @@ export function HrAdminLayout() {
               <CardTitle className="text-sm font-semibold text-slate-700">
                 Recruitment Funnel
               </CardTitle>
-              <Link to="/ats" className="text-xs font-semibold text-[#1B6AB5] hover:underline">
+              <Link to="/ats/command-center" className="text-xs font-semibold text-[#1B6AB5] hover:underline">
                 View Pipeline
               </Link>
             </div>
@@ -394,7 +394,7 @@ export function HrAdminLayout() {
               <CardTitle className="text-xs font-semibold text-slate-700 uppercase tracking-wide">
                 Onboarding Status
               </CardTitle>
-              <Link to="/employees/onboarding" className="text-xs font-semibold text-[#1B6AB5] hover:underline">
+              <Link to="/onboarding" className="text-xs font-semibold text-[#1B6AB5] hover:underline">
                 View
               </Link>
             </div>
@@ -513,7 +513,7 @@ export function HrAdminLayout() {
               <CardTitle className="text-xs font-semibold text-slate-700 uppercase tracking-wide">
                 Roster / WFM
               </CardTitle>
-              <Link to="/wfm" className="text-xs font-semibold text-[#1B6AB5] hover:underline">
+              <Link to="/wfm/dashboard" className="text-xs font-semibold text-[#1B6AB5] hover:underline">
                 View
               </Link>
             </div>
@@ -715,7 +715,7 @@ export function HrAdminLayout() {
               <CardTitle className="text-sm font-semibold text-slate-700">
                 Compliance & Alerts
               </CardTitle>
-              <Link to="/compliance" className="text-xs font-semibold text-[#1B6AB5] hover:underline">
+              <Link to="/compliance/statutory" className="text-xs font-semibold text-[#1B6AB5] hover:underline">
                 View All
               </Link>
             </div>
@@ -779,7 +779,7 @@ export function HrAdminLayout() {
               <CardTitle className="text-sm font-semibold text-slate-700">
                 Recent Activity
               </CardTitle>
-              <Link to="/leave" className="text-xs font-semibold text-[#1B6AB5] hover:underline">
+              <Link to="/leaves" className="text-xs font-semibold text-[#1B6AB5] hover:underline">
                 View All
               </Link>
             </div>
@@ -840,7 +840,7 @@ export function HrAdminLayout() {
                 {
                   label: "Add Employee",
                   icon: <UserPlus className="w-4 h-4" />,
-                  to: "/employees/new",
+                  to: "/employees",
                   color: "text-[#1B6AB5] bg-blue-50 hover:bg-blue-100",
                 },
                 {
@@ -852,13 +852,13 @@ export function HrAdminLayout() {
                 {
                   label: "Approve Leave",
                   icon: <CheckCircle2 className="w-4 h-4" />,
-                  to: "/leave",
+                  to: "/leaves",
                   color: "text-amber-700 bg-amber-50 hover:bg-amber-100",
                 },
                 {
                   label: "Create Vacancy",
                   icon: <Briefcase className="w-4 h-4" />,
-                  to: "/ats/jobs/new",
+                  to: "/ats/command-center",
                   color: "text-purple-700 bg-purple-50 hover:bg-purple-100",
                 },
                 {
@@ -870,13 +870,13 @@ export function HrAdminLayout() {
                 {
                   label: "Upload Document",
                   icon: <Upload className="w-4 h-4" />,
-                  to: "/documents",
+                  to: "/profile",
                   color: "text-cyan-700 bg-cyan-50 hover:bg-cyan-100",
                 },
                 {
                   label: "Bulk Attendance",
                   icon: <Clock className="w-4 h-4" />,
-                  to: "/attendance/bulk",
+                  to: "/bulk-upload",
                   color: "text-orange-700 bg-orange-50 hover:bg-orange-100",
                 },
                 {

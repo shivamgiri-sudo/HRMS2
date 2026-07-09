@@ -819,7 +819,7 @@ function _LegacyIndex() {
                   <CardTitle className="text-base font-bold text-slate-100">ATS Hiring Pipeline</CardTitle>
                   <p className="mt-0.5 text-xs text-slate-500">Candidates by stage</p>
                 </div>
-                <Link to="/ats" className="text-[11px] font-bold text-[#1B6AB5] hover:underline">View ATS →</Link>
+                <Link to="/ats/command-center" className="text-[11px] font-bold text-[#1B6AB5] hover:underline">View ATS →</Link>
               </CardHeader>
               <CardContent className="p-4">
                 {pipelineData.length === 0 ? (

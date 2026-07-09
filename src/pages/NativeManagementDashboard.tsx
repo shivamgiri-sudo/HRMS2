@@ -211,7 +211,7 @@ export default function NativeManagementDashboard() {
     "Coaching Open": "#",
     "Open Pipeline": "/ats/recruiter/hiring-entry",
     "Offers Pending Join": "/ats/onboarding-bridge",
-    "F&F Pending": "/exit/full-final",
+    "F&F Pending": "/payroll/full-final",
     "Low KPI": "#",
     "Headcount": "/employees",
   };
@@ -371,7 +371,7 @@ export default function NativeManagementDashboard() {
                   trendValue="+8% YoY"
                   insight={`Monthly gross payroll for ${ceoMetrics?.payroll_liability.employee_count ?? 0} employees. Includes statutory PF/ESIC of ${ceoMetrics ? inrFmt(ceoMetrics.payroll_liability.employer_statutory) : "—"}. Run: ${ceoMetrics?.payroll_liability.run_month ?? "Latest"}.`}
                   severity="info"
-                  onClick={() => navigate("/payroll/run")}
+                  onClick={() => navigate("/payroll")}
                 />
 
                 <InsightCard
