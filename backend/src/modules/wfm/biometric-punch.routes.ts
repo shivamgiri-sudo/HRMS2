@@ -53,7 +53,11 @@ router.post(
   '/',
   h(async (req: Request, res: Response) => {
     const secret = process.env.BIOMETRIC_WEBHOOK_SECRET;
-    if (secret && req.headers['x-biometric-token'] !== secret) {
+    if (!secret) {
+      console.error('[BIOMETRIC] BIOMETRIC_WEBHOOK_SECRET is not set — rejecting all webhook calls');
+      return res.status(503).json({ error: 'Webhook not configured — BIOMETRIC_WEBHOOK_SECRET missing' });
+    }
+    if (req.headers['x-biometric-token'] !== secret) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 

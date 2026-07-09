@@ -229,6 +229,7 @@ export const authService = {
       const [rows] = await db.execute<AuthUserRow[]>(
         `SELECT au.id, au.email, au.password_hash, au.is_blocked,
                 COALESCE(au.must_change_password, 0) AS must_change_password,
+                COALESCE(au.is_read_only, 0) AS is_read_only,
                 e.active_status
            FROM auth_user au
            LEFT JOIN employees e ON e.user_id = au.id
@@ -236,6 +237,7 @@ export const authService = {
           UNION
          SELECT au.id, au.email, au.password_hash, au.is_blocked,
                 COALESCE(au.must_change_password, 0) AS must_change_password,
+                COALESCE(au.is_read_only, 0) AS is_read_only,
                 e.active_status
            FROM auth_user au
            JOIN employees e ON e.user_id = au.id
@@ -258,7 +260,7 @@ export const authService = {
       await db.execute('UPDATE auth_user SET last_login_at = NOW() WHERE id = ?', [user.id]);
 
       const accessToken = jwt.sign(
-        { sub: user.id, email: user.email },
+        { sub: user.id, email: user.email, is_read_only: Boolean((user as any).is_read_only) },
         JWT_SECRET,
         { expiresIn: JWT_EXPIRES_IN }
       );
@@ -401,7 +403,7 @@ export const authService = {
             email: user.email,
             isBlocked: user.is_blocked === 1,
             mustChangePassword,
-            isReadOnly: false,
+            isReadOnly: Boolean((user as any).is_read_only),
             twoFactorRequired: true,
             twoFactorVerified: false,
           },
@@ -416,7 +418,7 @@ export const authService = {
           email: user.email,
           isBlocked: user.is_blocked === 1,
           mustChangePassword,
-          isReadOnly: false,
+          isReadOnly: Boolean((user as any).is_read_only),
           twoFactorRequired: false,
           twoFactorVerified: true,
         },

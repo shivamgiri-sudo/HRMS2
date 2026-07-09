@@ -42,6 +42,18 @@ wfmRouter.get("/attendance/daily", h(async (req: any, res: any) => {
     return res.status(400).json({ success: false, error: "employeeId is required" });
   }
 
+  // Ownership + role check: employees may only view their own attendance;
+  // admin/hr/wfm/manager/branch_head/process_manager may view any employee.
+  const PRIVILEGED_ROLES = new Set(['admin', 'hr', 'wfm', 'manager', 'branch_head', 'process_manager', 'super_admin', 'ceo']);
+  const { hasRole } = await import("../../shared/accessGuard.js");
+  const isPrivileged = await hasRole(req.authUser.id, ...PRIVILEGED_ROLES);
+  if (!isPrivileged) {
+    const selfEmp = await getEmployeeForUser(req.authUser.id);
+    if (!selfEmp || selfEmp.id !== employeeId) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+  }
+
   const { db } = await import("../../db/mysql.js");
   let sql = `SELECT record_date AS date,
                    attendance_status AS status,
@@ -74,6 +86,14 @@ wfmRouter.post("/sessions/clock-in",  h(wfmController.clockIn.bind(wfmController
 wfmRouter.post("/sessions/clock-out", h(wfmController.clockOut.bind(wfmController))); // Employee self-service
 wfmRouter.get("/sessions",            requireRole("admin", "wfm", "manager"), h(wfmController.listSessions.bind(wfmController)));
 wfmRouter.post("/sessions/break",     h(wfmController.logBreak.bind(wfmController))); // Employee self-service
+wfmRouter.get("/sessions/:sessionId/breaks", h(async (req: any, res: any) => {
+  const breaks = await wfmService.getBreaksForSession(req.params.sessionId);
+  return res.json({ success: true, data: breaks });
+}));
+wfmRouter.patch("/breaks/:breakId/end", h(async (req: any, res: any) => {
+  await wfmService.endBreak(req.params.breakId, req.authUser!.id);
+  return res.json({ success: true, message: "Break ended" });
+}));
 
 // Regularization routes moved to wfm.regularization.secure.routes.ts
 

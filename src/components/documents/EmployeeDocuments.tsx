@@ -55,11 +55,23 @@ export function EmployeeDocuments({ employeeId, canUpload = false, canDelete = f
   const deleteMutation = useDeleteDocument();
   const isReadOnly = useIsReadOnly();
 
+  const ALLOWED_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
+  const MAX_BYTES = 10 * 1024 * 1024;
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
+    if (!file) return;
+    if (!ALLOWED_TYPES.has(file.type)) {
+      alert("Only PDF, JPEG, PNG, or WebP files are allowed.");
+      e.target.value = "";
+      return;
     }
+    if (file.size > MAX_BYTES) {
+      alert("File size must not exceed 10 MB.");
+      e.target.value = "";
+      return;
+    }
+    setSelectedFile(file);
   };
 
   const handleUpload = async () => {

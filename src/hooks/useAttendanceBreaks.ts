@@ -21,7 +21,23 @@ export function useActiveBreak(attendanceRecordId?: string) {
     queryKey: ["active-break", attendanceRecordId],
     queryFn: async () => {
       if (!attendanceRecordId) return null;
-      return null as AttendanceBreak | null;
+      const res = await hrmsApi.get(`/api/wfm/sessions/${attendanceRecordId}/breaks`);
+      const rawBreaks: any[] = res.data?.data ?? [];
+      const active = rawBreaks.find(b => !b.break_end);
+      if (!active) return null;
+      return {
+        id: active.id,
+        attendance_record_id: active.session_id,
+        pause_time: active.break_start,
+        resume_time: null,
+        pause_latitude: null,
+        pause_longitude: null,
+        pause_location_name: null,
+        resume_latitude: null,
+        resume_longitude: null,
+        resume_location_name: null,
+        created_at: active.created_at,
+      } as AttendanceBreak;
     },
     enabled: !!attendanceRecordId,
   });
@@ -32,7 +48,21 @@ export function useBreaksForRecord(attendanceRecordId?: string) {
     queryKey: ["attendance-breaks", attendanceRecordId],
     queryFn: async () => {
       if (!attendanceRecordId) return [];
-      return [] as AttendanceBreak[];
+      const res = await hrmsApi.get(`/api/wfm/sessions/${attendanceRecordId}/breaks`);
+      const breaks = res.data?.data ?? [];
+      return breaks.map((b: any) => ({
+        id: b.id,
+        attendance_record_id: b.session_id,
+        pause_time: b.break_start,
+        resume_time: b.break_end ?? null,
+        pause_latitude: null,
+        pause_longitude: null,
+        pause_location_name: null,
+        resume_latitude: null,
+        resume_longitude: null,
+        resume_location_name: null,
+        created_at: b.created_at,
+      })) as AttendanceBreak[];
     },
     enabled: !!attendanceRecordId,
   });
@@ -55,6 +85,7 @@ export function useResume() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ breakId }: { breakId: string; location?: LocationData }) => {
+      await hrmsApi.patch(`/api/wfm/breaks/${breakId}/end`);
       return { id: breakId };
     },
     onSuccess: () => {

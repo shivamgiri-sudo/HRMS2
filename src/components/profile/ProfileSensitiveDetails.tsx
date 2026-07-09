@@ -28,6 +28,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 type VerificationStatus = "verified" | "pending" | "rejected" | "not_provided";
 
@@ -448,14 +459,43 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
         {statutoryError ? (
           <p className="mt-4 text-sm font-medium text-rose-700" role="alert">{statutoryError}</p>
         ) : null}
-        <Button
-          className="mt-5 bg-[#073f78] hover:bg-[#0b4f91]"
-          onClick={() => statutoryMutation.mutate()}
-          disabled={statutoryMutation.isPending}
-        >
-          {statutoryMutation.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : <ShieldCheck className="mr-2 size-4" />}
-          Submit Statutory Details
-        </Button>
+        {allowStatutoryEdit && statutoryForm.aadhaar_id ? (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                className="mt-5 bg-[#073f78] hover:bg-[#0b4f91]"
+                disabled={statutoryMutation.isPending}
+              >
+                {statutoryMutation.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : <ShieldCheck className="mr-2 size-4" />}
+                Submit Statutory Details
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Confirm Aadhaar Update</AlertDialogTitle>
+                <AlertDialogDescription>
+                  You are about to update the Aadhaar number for this employee. This action will be logged
+                  as a sensitive change and requires HR/payroll verification. Are you sure you want to proceed?
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={() => statutoryMutation.mutate()}>
+                  Confirm Update
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : (
+          <Button
+            className="mt-5 bg-[#073f78] hover:bg-[#0b4f91]"
+            onClick={() => statutoryMutation.mutate()}
+            disabled={statutoryMutation.isPending}
+          >
+            {statutoryMutation.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : <ShieldCheck className="mr-2 size-4" />}
+            Submit Statutory Details
+          </Button>
+        )}
       </SectionCard>
     </div>
   );

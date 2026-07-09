@@ -90,20 +90,19 @@ performanceDashboardRouter.get('/goals', h(async (req: AuthenticatedRequest, res
 
     const employeeId = (userEmps && userEmps[0]) ? (userEmps[0] as any).id : null
 
-    let query = `SELECT id, employee_id, title, description, goal_type, period,
-                        target_value, actual_value, weightage, status,
-                        created_by, created_at, updated_at
-                 FROM goal`
-    const params: any[] = []
-
-    if (employeeId) {
-      query += ` WHERE employee_id = ?`
-      params.push(employeeId)
+    // Guard: if the authenticated user has no employee record, return empty rather than exposing all goals.
+    if (!employeeId) {
+      return res.json({ success: true, data: [] })
     }
 
-    query += ` ORDER BY created_at DESC LIMIT 100`
+    const query = `SELECT id, employee_id, title, description, goal_type, period,
+                          target_value, actual_value, weightage, status,
+                          created_by, created_at, updated_at
+                   FROM goal
+                   WHERE employee_id = ?
+                   ORDER BY created_at DESC LIMIT 100`
 
-    const [goals] = await db.execute<RowDataPacket[]>(query, params)
+    const [goals] = await db.execute<RowDataPacket[]>(query, [employeeId])
     return res.json({ success: true, data: goals })
   } catch (err) {
     return res.status(500).json({ success: false, message: String(err) })

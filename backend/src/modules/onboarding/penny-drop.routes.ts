@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
+import { createHmac, timingSafeEqual } from "crypto";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { PennyDropService } from "./penny-drop.service.js";
@@ -101,11 +102,24 @@ router.get("/status", h(async (req: any, res: Response) => {
 router.post("/webhook", h(async (req: any, res: Response) => {
   const { requestId, transactionId, status, accountName, verificationCode, responseCode, message } = req.body;
 
-  // TODO: Verify HMAC signature from Integration Hub
-  // const signature = req.get("X-Penny-Drop-Signature");
-  // if (!verifySignature(JSON.stringify(req.body), signature, PENNY_DROP_SECRET)) {
-  //   return res.status(401).json({ success: false, error: "Invalid signature" });
-  // }
+  const webhookSecret = process.env.PENNY_DROP_WEBHOOK_SECRET;
+  if (!webhookSecret) {
+    console.error('[PENNY_DROP] PENNY_DROP_WEBHOOK_SECRET is not set — rejecting all webhook calls');
+    return res.status(503).json({ success: false, error: 'Webhook not configured — PENNY_DROP_WEBHOOK_SECRET missing' });
+  }
+  const signature = req.get('X-Penny-Drop-Signature') ?? '';
+  const bodyStr = JSON.stringify(req.body);
+  const expected = createHmac('sha256', webhookSecret).update(bodyStr).digest('hex');
+  let signaturesMatch = false;
+  try {
+    signaturesMatch = timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  } catch {
+    // timingSafeEqual throws if buffers are different lengths — treat as mismatch
+    signaturesMatch = false;
+  }
+  if (!signaturesMatch) {
+    return res.status(401).json({ success: false, error: 'Invalid signature' });
+  }
 
   if (!requestId || !transactionId || !status || !responseCode) {
     return res.status(400).json({

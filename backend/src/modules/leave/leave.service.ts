@@ -79,9 +79,21 @@ export const leaveService = {
     return rec;
   },
 
+  // Returns ISO date strings (YYYY-MM-DD) for every calendar day in [fromDate, toDate] inclusive.
+  _dateRange(fromDate: string, toDate: string): string[] {
+    const dates: string[] = [];
+    const cur = new Date(fromDate + 'T00:00:00Z');
+    const end = new Date(toDate + 'T00:00:00Z');
+    while (cur <= end) {
+      dates.push(cur.toISOString().slice(0, 10));
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    return dates;
+  },
+
   async reviewRequest(id: string, input: ReviewLeaveInput, reviewerId: string): Promise<LeaveRequest> {
     const request = await this.getRequest(id);
-    
+
     // Handle approval - deduct leave balance
     if (input.status === 'approved') {
       // Validate leave_type_id exists
@@ -94,15 +106,28 @@ export const leaveService = {
       const leaveTypeId = request.leave_type_id;
       const year = new Date(request.from_date).getFullYear();
       
+      // Fetch leave type master for max_days_per_year enforcement
+      const [typeRows] = await db.execute<RowDataPacket[]>(
+        `SELECT max_days_per_year FROM leave_type_master WHERE id = ? LIMIT 1`,
+        [leaveTypeId]
+      );
+      const maxDaysPerYear: number = Number((typeRows as RowDataPacket[])[0]?.max_days_per_year ?? 0);
+
       // Check current balance
       const [balanceRows] = await db.execute<RowDataPacket[]>(
-        `SELECT * FROM leave_balance_ledger 
+        `SELECT * FROM leave_balance_ledger
          WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
         [employeeId, leaveTypeId, year]
       );
-      
+
       if (balanceRows.length === 0) {
-        // No ledger row exists - create one with used_days = duration and allocated_days = 0
+        // No allocation exists — block approval if requested days exceed the type's annual cap.
+        if (maxDaysPerYear > 0 && duration > maxDaysPerYear) {
+          throw new Error(
+            `No leave allocation found for this employee. ` +
+            `Requested ${duration} day(s) exceeds the annual maximum of ${maxDaysPerYear} for this leave type.`
+          );
+        }
         await db.execute(
           `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
            VALUES (UUID(), ?, ?, ?, 0, ?, 0)`,
@@ -110,25 +135,36 @@ export const leaveService = {
         );
       } else {
         const balance = balanceRows[0];
-        const availableBalance = (balance.allocated_days || 0) + (balance.adjusted_days || 0) - (balance.used_days || 0);
-        
-        // Validate sufficient balance
+        const allocatedDays = Number(balance.allocated_days ?? 0);
+        const adjustedDays  = Number(balance.adjusted_days ?? 0);
+        const usedDays      = Number(balance.used_days ?? 0);
+        const availableBalance = allocatedDays + adjustedDays - usedDays;
+
+        // Block if exceeding allocated balance
         if (duration > availableBalance) {
           throw new Error(`Insufficient leave balance. Available: ${availableBalance}, Requested: ${duration}`);
         }
-        
+
+        // Also block if the total used this year would exceed the type's annual max
+        if (maxDaysPerYear > 0 && (usedDays + duration) > maxDaysPerYear) {
+          throw new Error(
+            `Approving this request would exceed the annual limit of ${maxDaysPerYear} day(s) ` +
+            `for this leave type. Already used: ${usedDays}.`
+          );
+        }
+
         // Update used_days
         await db.execute(
-          `UPDATE leave_balance_ledger 
-           SET used_days = used_days + ? 
+          `UPDATE leave_balance_ledger
+           SET used_days = used_days + ?
            WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
           [duration, employeeId, leaveTypeId, year]
         );
       }
     }
     
-    // Restore balance when rejecting a previously approved leave
-    if (input.status === 'rejected' && request.status === 'approved') {
+    // Restore balance when rejecting or cancelling a previously approved leave
+    if ((input.status === 'rejected' || input.status === 'cancelled') && request.status === 'approved') {
       const duration = request.total_days;
       const employeeId = request.employee_id;
       const leaveTypeId = request.leave_type_id;
@@ -139,8 +175,37 @@ export const leaveService = {
           WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
         [duration, employeeId, leaveTypeId, year]
       );
+
+      // Revert attendance_daily_record rows that were marked leave_approved by this request
+      const revDates = this._dateRange(request.from_date as string, request.to_date as string);
+      for (const d of revDates) {
+        await db.execute(
+          `UPDATE attendance_daily_record
+              SET attendance_status = 'absent', lwp_value = 1.00, override_reason = ?
+            WHERE employee_id = ? AND record_date = ?
+              AND attendance_status = 'leave_approved'
+              AND is_locked = 0`,
+          [`Leave ${input.status} — auto-reverted by leave service`, employeeId, d]
+        );
+      }
     }
-    
+
+    // Sync attendance_daily_record when a leave is approved
+    if (input.status === 'approved') {
+      const appDates = this._dateRange(request.from_date as string, request.to_date as string);
+      for (const d of appDates) {
+        await db.execute(
+          `INSERT INTO attendance_daily_record
+               (id, employee_id, record_date, attendance_status, lwp_value, created_by)
+             VALUES (UUID(), ?, ?, 'leave_approved', 0.00, 'leave_service')
+             ON DUPLICATE KEY UPDATE
+               attendance_status = IF(is_locked = 0, 'leave_approved', attendance_status),
+               lwp_value         = IF(is_locked = 0, 0.00, lwp_value)`,
+          [request.employee_id, d]
+        );
+      }
+    }
+
     await db.execute(
       "UPDATE leave_request SET status = ? WHERE id = ?",
       [input.status, id]

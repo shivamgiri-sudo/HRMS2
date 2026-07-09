@@ -82,7 +82,6 @@ employeeVerifyRouter.get("/payslip/:employeeCode/:monthYear", h(async (req, res)
             d.designation_name AS designation,
             b.branch_name,
             spr.run_month,
-            spl.net_salary AS net_pay,
             CASE WHEN sp.acknowledged_at IS NOT NULL THEN 'acknowledged'
                  WHEN sp.id IS NOT NULL THEN 'generated'
                  ELSE 'calculated'
@@ -114,7 +113,6 @@ employeeVerifyRouter.get("/payslip/:employeeCode/:monthYear", h(async (req, res)
       month,
       year,
       status: payslip.status,
-      net_pay: Number(payslip.net_pay ?? 0),
       verified_at: new Date().toISOString(),
     },
   });

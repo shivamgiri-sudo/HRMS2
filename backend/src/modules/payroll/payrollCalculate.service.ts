@@ -260,6 +260,12 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   // Per MBA 1961 s.5(1) these employees receive full pay — no LWP deduction.
   const maternityExemptIds = await maternityService.getActiveEmployeeIdsForMonth(run.run_month);
 
+  // All DB writes go through a single connection wrapped in a transaction so
+  // that a crash mid-loop leaves the run fully rolled back rather than partially written.
+  const conn = await db.getConnection();
+  await conn.beginTransaction();
+
+  try {
   for (const emp of employees) {
     const monthStart = `${run.run_month}-01`;
     const monthEnd   = `${run.run_month}-${String(daysInMonth).padStart(2, "0")}`;
@@ -518,7 +524,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
 
     // 6. Upsert prep line with extended columns
     const prepLineId = randomUUID();
-    await db.execute(
+    await conn.execute(
       `INSERT INTO salary_prep_line
          (id, run_id, employee_id, employee_code,
           working_days, present_days, leave_days, lwp_days, late_marks, dialer_hours,
@@ -529,8 +535,9 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
           paid_working_days, eligible_weekoff_days, eligible_holiday_days,
           final_payable_days, active_calendar_days, holiday_work_extra_payout,
           other_deductions,
+          attendance_data_source,
           status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
        ON DUPLICATE KEY UPDATE
          working_days = VALUES(working_days), present_days = VALUES(present_days),
          lwp_days = VALUES(lwp_days), gross_salary = VALUES(gross_salary),
@@ -549,6 +556,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
          active_calendar_days = VALUES(active_calendar_days),
          holiday_work_extra_payout = VALUES(holiday_work_extra_payout),
          other_deductions = VALUES(other_deductions),
+         attendance_data_source = VALUES(attendance_data_source),
          status = 'calculated'`,
       [
         prepLineId, runId, emp.employee_id, emp.employee_code,
@@ -559,6 +567,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         calc.professional_tax, tdsMonthly, tdsMonthly, lwpDeduction, advanceRecovery,
         effectivePaidBase, finalWeekoffs, finalHolidays, finalPayableDays, activeCals, holidayWorkExtraPayout,
         miscDeductions,
+        hasEngineData ? 'ADR' : 'SESSION_FALLBACK',
       ]
     );
 
@@ -572,7 +581,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       { code: "PA", name: "Personal Allowance", amount: pa },
     ];
     for (const comp of components) {
-      await db.execute(
+      await conn.execute(
         `INSERT INTO salary_prep_line_component
            (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
          VALUES (?, ?, ?, ?, ?, ?, 'earning', ?, 'structure', 1)
@@ -584,7 +593,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
 
     // Insert per-type deduction components for payslip breakdown
     for (const ded of miscComponents) {
-      await db.execute(
+      await conn.execute(
         `INSERT INTO salary_prep_line_component
            (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
          VALUES (?, ?, ?, ?, ?, ?, 'deduction', ?, 'custom_deduction', 0)
@@ -594,7 +603,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     }
 
     // Step 11: Audit log per employee
-    await db.execute(
+    await conn.execute(
       `INSERT INTO sensitive_action_log
          (id, actor_user_id, actor_role, action_type, module_key, entity_type, entity_id, old_value_json, new_value_json, ip_address, user_agent)
        VALUES (UUID(), 'system', 'payroll-engine', 'payroll_calculation', 'payroll', 'salary_prep_line', ?, NULL, ?, '127.0.0.1', 'payroll-engine')`,
@@ -618,8 +627,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   }
 
   // 7a. Apply manual TDS entries (only when tds_mode = 'manual')
-  // For each row in salary_run_manual_tds, update the salary_prep_line TDS fields
-  // and recalculate net_salary / total_deductions in-place.
+  // For each row in salary_run_manual_tds, SET tds to the manual amount (not additive)
+  // to avoid double-deduction if mode was switched after partial auto calculation.
   if (tdsMode === 'manual') {
     const [manualTdsRows] = await db.execute<RowDataPacket[]>(
       `SELECT employee_id, tds_amount FROM salary_run_manual_tds WHERE run_id = ?`,
@@ -627,23 +636,26 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     );
     for (const row of manualTdsRows as Array<{ employee_id: string; tds_amount: number }>) {
       const tdsAmt = Number(row.tds_amount) || 0;
-      await db.execute(
+      // First zero out any auto-TDS already in the line, then apply the manual amount.
+      // This prevents double-deduction when mode was switched after partial auto calculation.
+      await conn.execute(
         `UPDATE salary_prep_line
-            SET tds = ?, tds_amount = ?,
-                total_deductions = total_deductions + ?,
-                net_salary = GREATEST(0, net_salary - ?)
+            SET total_deductions = GREATEST(0, total_deductions - tds_amount) + ?,
+                net_salary       = GREATEST(0, net_salary + tds_amount - ?),
+                tds              = ?,
+                tds_amount       = ?
           WHERE run_id = ? AND employee_id = ?`,
         [tdsAmt, tdsAmt, tdsAmt, tdsAmt, runId, row.employee_id]
       );
     }
     // Recalculate run totals after TDS application
-    const [sumRows] = await db.execute<RowDataPacket[]>(
+    const [sumRows] = (await conn.execute(
       `SELECT COALESCE(SUM(gross_salary),0) AS tg,
               COALESCE(SUM(total_deductions),0) AS td,
               COALESCE(SUM(net_salary),0) AS tn
        FROM salary_prep_line WHERE run_id = ?`,
       [runId]
-    );
+    )) as [RowDataPacket[], unknown];
     const sums = (sumRows[0] as any);
     totalGross = Number(sums.tg);
     totalDed   = Number(sums.td);
@@ -651,13 +663,30 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   }
 
   // 7. Update run totals + status
-  await db.execute(
+  await conn.execute(
     `UPDATE salary_prep_run
         SET status = 'processing', total_employees = ?,
             total_gross = ?, total_deductions = ?, total_net = ?
       WHERE id = ?`,
     [processedCount, totalGross, totalDed, totalNet, runId]
   );
+
+  await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    // Reset run to draft so it can be retried cleanly
+    try {
+      await db.execute(
+        `UPDATE salary_prep_run SET status = 'draft' WHERE id = ? AND status NOT IN ('locked','disbursed')`,
+        [runId]
+      );
+    } catch {
+      // best-effort reset; don't mask the original error
+    }
+    throw err;
+  } finally {
+    conn.release();
+  }
 
   const [updated] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]

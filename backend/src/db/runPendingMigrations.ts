@@ -20,6 +20,8 @@ const SQL_DIR = resolveSqlDir();
 // Canonical migration order, derived from 000_run_all.sql.
 // 043_demo_data.sql is excluded unless SEED_DEMO_DATA=true.
 // Non-b duplicates (020, 021, 022) are excluded — only b-variants are sourced.
+// Duplicate numeric prefixes (010/010, 012/012, 198/198, 204/204, 271/271) are intentional —
+// tracking is by full filename in schema_migrations, so each file runs independently.
 const MIGRATION_MANIFEST: string[] = [
   "001_core_org.sql",
   "002_employees.sql",
@@ -254,6 +256,11 @@ const MIGRATION_MANIFEST: string[] = [
   "368_core_master_upload_templates.sql",
   "369_fix_core_master_upload_templates.sql",
   "370_pf_creation_automation.sql",
+  "371_user_device_sessions.sql",
+  "372_add_name_on_cheque.sql",
+  "373_create_candidate_onboarding_profile.sql",
+  "374_employees_missing_indexes.sql",
+  "375_salary_prep_line_attendance_source.sql",
   ];
 
 export type MigrationHealth = {

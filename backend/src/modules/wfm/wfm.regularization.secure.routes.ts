@@ -451,7 +451,12 @@ wfmRegularizationSecureRouter.patch("/regularizations/bulk-review", h(async (req
       status(code: number) { this.statusCode = code; return this; },
       json(payload: any) { this.payload = payload; return this; },
     };
-    await reviewRegularizationRequest(req, localRes, id);
+    try {
+      await reviewRegularizationRequest(req, localRes, id);
+    } catch (err: any) {
+      localRes.statusCode = 500;
+      localRes.payload = { success: false, message: err?.message ?? String(err) };
+    }
     results.push({
       id,
       success: localRes.statusCode >= 200 && localRes.statusCode < 300 && localRes.payload?.success !== false,
@@ -459,7 +464,17 @@ wfmRegularizationSecureRouter.patch("/regularizations/bulk-review", h(async (req
     });
   }
 
-  return res.json({ success: true, data: results });
+  const succeededCount = results.filter(r => r.success).length;
+  const failedCount    = results.length - succeededCount;
+  return res.json({
+    success: failedCount === 0,
+    succeeded: succeededCount,
+    failed: failedCount,
+    data: results,
+    message: failedCount > 0
+      ? `${succeededCount} approved, ${failedCount} failed — see data for details`
+      : `${succeededCount} approved successfully`,
+  });
 }));
 
 wfmRegularizationSecureRouter.patch("/regularizations/:id/review", h(async (req: any, res: any) => {

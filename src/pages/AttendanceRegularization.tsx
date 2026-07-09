@@ -408,8 +408,21 @@ export default function AttendanceRegularization() {
 
   const bulkApproveMutation = useMutation({
     mutationFn: async (ids: string[]) => hrmsApi.patch("/api/wfm/regularizations/bulk-review", { ids, status: "approved" }),
-    onSuccess: () => {
-      toast({ title: "Bulk approval completed", description: "Low-risk WFM-ready requests were processed." });
+    onSuccess: (response: any) => {
+      const data = response?.data;
+      const succeeded = data?.succeeded ?? 0;
+      const failed = data?.failed ?? 0;
+      if (failed > 0) {
+        const failedItems = (data?.data ?? []).filter((r: any) => !r.success);
+        const failedDetail = failedItems.slice(0, 3).map((r: any) => r.message ?? r.id).join("; ");
+        toast({
+          title: `${succeeded} approved, ${failed} failed`,
+          description: failedDetail || "Some requests could not be processed. Check individual items.",
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "Bulk approval completed", description: `${succeeded} request(s) approved successfully.` });
+      }
       setSelectedIds([]);
       loadRequests();
     },

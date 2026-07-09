@@ -32,11 +32,9 @@ const Onboarding = lazy(() => import("./pages/Onboarding"));
 const Leaves = lazy(() => import("./pages/Leaves"));
 const Assets = lazy(() => import("./pages/Assets"));
 const Payroll = lazy(() => import("./pages/Payroll"));
-const Reports = lazy(() => import("./pages/Reports"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Profile = lazy(() => import("./pages/Profile"));
 const Performance = lazy(() => import("./pages/Performance"));
-const ReviewsManagement = lazy(() => import("./pages/ReviewsManagement"));
 const Attendance = lazy(() => import("./pages/Attendance"));
 const AttendanceRegularization = lazy(() => import("./pages/AttendanceRegularization"));
 const BulkUploadHub = lazy(() => import("./pages/BulkUploadHub"));
@@ -103,12 +101,17 @@ const NativeWFMRoster = lazy(() => import("./pages/NativeWFMRoster"));
 const NativeWFMExtensions = lazy(() => import("./pages/NativeWFMExtensions"));
 const NativeWFMManagerApproval = lazy(() => import("./pages/NativeWFMManagerApproval"));
 const NativeBiometricCommandCenter = lazy(() => import("./pages/NativeBiometricCommandCenter"));
+const NativeWeekOffDayRuleConfig = lazy(() => import("./pages/NativeWeekOffDayRuleConfig"));
+const NativeWFMPlanningRules = lazy(() => import("./pages/NativeWFMPlanningRules"));
+const NativeSlotRequirementBuilder = lazy(() => import("./pages/NativeSlotRequirementBuilder"));
+const NativeAttendanceDisputes = lazy(() => import("./pages/NativeAttendanceDisputes"));
+const NativeBusinessCommandCenter = lazy(() => import("./pages/NativeBusinessCommandCenter"));
+const NativeBusinessActionQueue = lazy(() => import("./pages/NativeBusinessActionQueue"));
 
 const UnifiedPerformanceCommandCenter = lazy(() => import("./pages/UnifiedPerformanceCommandCenter"));
 const UnifiedAccessControl = lazy(() => import("./pages/UnifiedAccessControl"));
 const SuperAdminAccessControl = lazy(() => import("./pages/SuperAdminAccessControl"));
 const NativeManagementDashboard = lazy(() => import("./pages/NativeManagementDashboard"));
-const NativeCEOCommandCenter = lazy(() => import("./pages/NativeCEOCommandCenter"));
 const NativeCallMasterDashboard = lazy(() => import("./pages/NativeCallMasterDashboard"));
 const NativeInboundDashboard = lazy(() => import("./pages/NativeInboundDashboard"));
 const NativeSalesDashboard = lazy(() => import("./pages/NativeSalesDashboard"));
@@ -145,15 +148,12 @@ const NativeBadges                    = lazy(() => import("./pages/NativeBadges"
 const NativeKudos                     = lazy(() => import("./pages/NativeKudos"));
 const NativeSurveys                   = lazy(() => import("./pages/NativeSurveys"));
 const NativeLeaderboard               = lazy(() => import("./pages/NativeLeaderboard"));
-const NativeEngagementCommandCenter   = lazy(() => import("./pages/NativeEngagementCommandCenter"));
-
 // Exit
 const NativeExitCommandCenter         = lazy(() => import("./pages/NativeExitCommandCenter"));
 const NativeEmployeeReactivation      = lazy(() => import("./pages/NativeEmployeeReactivation"));
 
 // Offer Letters & Master Reports
 const NativeOfferLetterGeneration   = lazy(() => import("./pages/NativeOfferLetterGeneration"));
-const NativeMasterReports           = lazy(() => import("./pages/NativeMasterReports"));
 const NativeReportsCenter           = lazy(() => import("./pages/NativeReportsCenter"));
 
 // HR Ops
@@ -170,16 +170,11 @@ const NativeOrgMasters              = lazy(() => import("./pages/NativeOrgMaster
 const NativeWorkflowAdmin           = lazy(() => import("./pages/NativeWorkflowAdmin"));
 const NativeBenefitsClaims          = lazy(() => import("./pages/NativeBenefitsClaims"));
 const NativeCareerPlanning          = lazy(() => import("./pages/NativeCareerPlanning"));
-const NativePIPManagement           = lazy(() => import("./pages/NativePIPManagement"));
 const NativeERP                     = lazy(() => import("./pages/NativeERP"));
 const NativeVendorPaymentTracking   = lazy(() => import("./pages/NativeVendorPaymentTracking"));
-const NativeGoalsAppraisal          = lazy(() => import("./pages/NativeGoalsAppraisal"));
 const NativeWorkInbox               = lazy(() => import("./pages/NativeWorkInbox"));
 const NativeMobilityManagement      = lazy(() => import("./pages/NativeMobilityManagement"));
 const NativeSalaryIncrement         = lazy(() => import("./pages/NativeSalaryIncrement"));
-const NativeJobsPortal              = lazy(() => import("./pages/NativeJobsPortal"));
-const NativeAdvancedReports         = lazy(() => import("./pages/NativeAdvancedReports"));
-const NativeEnterpriseReports       = lazy(() => import("./pages/NativeEnterpriseReports"));
 const NativeStatutoryCompliance     = lazy(() => import("./pages/NativeStatutoryCompliance"));
 const NativeLabourCompliance        = lazy(() => import("./pages/NativeLabourCompliance"));
 const NativeDPDPCompliance          = lazy(() => import("./pages/NativeDPDPCompliance"));
@@ -240,7 +235,6 @@ const NativeCosecSyncMonitoring = lazy(() => import("./pages/NativeCosecSyncMoni
 const NativePayrollReadiness = lazy(() => import("./pages/NativePayrollReadiness"));
 const NativeWorkforcePlanning = lazy(() => import("./pages/NativeWorkforcePlanning"));
 const NativeITProvisioningTracker = lazy(() => import("./pages/NativeITProvisioningTracker"));
-const NativeControlTower = lazy(() => import("./pages/NativeControlTower"));
 const NativeRTABoard = lazy(() => import("./pages/NativeRTABoard"));
 const NativeWalkinQueue = lazy(() => import("./pages/NativeWalkinQueueEnhanced"));
 const NativeAttendanceRulesMaster = lazy(() => import("./pages/NativeAttendanceRulesMaster"));
@@ -410,6 +404,12 @@ const App = () => (
               <Route path="/wfm/extensions" element={<ProtectedRoute><Gate pageCode="WFM_EXTENSIONS"><NativeWFMExtensions /></Gate></ProtectedRoute>} />
               <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />
               <Route path="/roster-preference" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeRosterPreference /></Gate></ProtectedRoute>} />
+              <Route path="/wfm/weekoff-day-rules" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><NativeWeekOffDayRuleConfig /></ProtectedRoute>} />
+              <Route path="/wfm/planning-rules" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><NativeWFMPlanningRules /></ProtectedRoute>} />
+              <Route path="/wfm/slot-requirements" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><NativeSlotRequirementBuilder /></ProtectedRoute>} />
+              <Route path="/attendance/disputes" element={<ProtectedRoute><NativeAttendanceDisputes /></ProtectedRoute>} />
+              <Route path="/business-command-center" element={<ProtectedRoute roles={['super_admin','admin','branch_head','operations_manager']}><NativeBusinessCommandCenter /></ProtectedRoute>} />
+              <Route path="/business-actions" element={<ProtectedRoute roles={['super_admin','admin','branch_head','operations_manager']}><NativeBusinessActionQueue /></ProtectedRoute>} />
               <Route path="/quality/dashboard" element={<ProtectedRoute><Gate pageCode="QUALITY_DASHBOARD"><NativeQualityDashboard /></Gate></ProtectedRoute>} />
               <Route path="/quality/executive" element={<ProtectedRoute roles={['super_admin','admin','ceo']}><ExecutiveQualityDashboard /></ProtectedRoute>} />
               <Route path="/quality/team" element={<ProtectedRoute roles={['super_admin','admin','manager','process_manager','branch_head','team_leader']}><ManagerQualityDashboard /></ProtectedRoute>} />

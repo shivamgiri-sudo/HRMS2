@@ -185,6 +185,24 @@ export const wfmService = {
     );
   },
 
+  async getBreaksForSession(sessionId: string): Promise<any[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, session_id, employee_id, break_start, break_end, duration_minutes, break_type, created_at
+       FROM wfm_break_log WHERE session_id = ? ORDER BY break_start DESC`,
+      [sessionId]
+    );
+    return rows as any[];
+  },
+
+  async endBreak(breakId: string, employeeId: string): Promise<void> {
+    await db.execute(
+      `UPDATE wfm_break_log
+       SET break_end = NOW(), duration_minutes = TIMESTAMPDIFF(MINUTE, break_start, NOW())
+       WHERE id = ? AND employee_id = ? AND break_end IS NULL`,
+      [breakId, employeeId]
+    );
+  },
+
   // ─── Regularization ───────────────────────────────────────────────────────
 
   async listReasons(allowedFor?: 'employee' | 'manager'): Promise<{ code: string; label: string; allowed_for: string }[]> {
@@ -201,15 +219,20 @@ export const wfmService = {
     input: RegularizationInput & { employeeId: string; requestedByType?: 'employee' | 'manager' },
     _userId: string
   ): Promise<AttendanceRegularization> {
-    // Duplicate check — block if a pending regularization already exists for this date
+    // Duplicate check — block if any active (non-terminal) regularization exists for this date
     const [dupRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM attendance_regularization
-        WHERE employee_id = ? AND session_date = ? AND status = 'pending'
+      `SELECT id, status FROM attendance_regularization
+        WHERE employee_id = ? AND session_date = ?
+          AND status NOT IN ('rejected', 'cancelled')
         LIMIT 1`,
       [input.employeeId, input.sessionDate]
     );
     if ((dupRows as RowDataPacket[]).length > 0) {
-      throw new Error('A pending regularization request already exists for this date');
+      const existingStatus = (dupRows[0] as any).status;
+      throw new Error(
+        `A regularization request for this date already exists with status: ${existingStatus}. ` +
+        `It must be rejected or cancelled before a new request can be submitted.`
+      );
     }
 
     // Validate reason_code if provided
@@ -317,45 +340,69 @@ export const wfmService = {
     reviewerId: string
   ): Promise<AttendanceRegularization> {
     const reg = await this.getRegularization(id);
-    await db.execute(
-      `UPDATE attendance_regularization
-          SET status = ?, reviewed_by = ?, reviewed_at = NOW(), reviewer_note = ?
-        WHERE id = ?`,
-      [input.status, reviewerId, input.reviewerNote ?? null, id]
-    );
-
-    // If approved AND requested_status is set, apply it to attendance_daily_record
-    if (input.status === 'approved' && reg.requested_status) {
-      const lwpMap: Record<string, number> = { present: 0, half_day: 0.5, absent: 1.0 };
-
-      // Capture before-state for audit trail before overwriting
-      const [existingRows] = await db.execute<RowDataPacket[]>(
-        `SELECT attendance_status, lwp_value
-           FROM attendance_daily_record
-          WHERE employee_id = ? AND record_date = ? LIMIT 1`,
-        [reg.employee_id, reg.session_date]
+    const conn = await db.getConnection();
+    await conn.beginTransaction();
+    try {
+      await conn.execute(
+        `UPDATE attendance_regularization
+            SET status = ?, reviewed_by = ?, reviewed_at = NOW(), reviewer_note = ?
+          WHERE id = ?`,
+        [input.status, reviewerId, input.reviewerNote ?? null, id]
       );
-      const existing = (existingRows as RowDataPacket[])[0] as any;
 
-      await db.execute(
-        `UPDATE attendance_daily_record
-            SET attendance_status = ?, lwp_value = ?,
-                override_by = ?, override_reason = ?,
-                regularization_id = ?, is_locked = 1, processed_at = NOW(),
-                old_attendance_status = ?, old_lwp_value = ?,
-                status_change_reason = ?, status_changed_by = ?, status_changed_at = NOW()
-          WHERE employee_id = ? AND record_date = ?`,
-        [reg.requested_status, lwpMap[reg.requested_status] ?? 0,
-         reviewerId, `Regularization approved: ${reg.reason_code ?? reg.reason}`,
-         id,
-         existing?.attendance_status ?? null,
-         existing?.lwp_value ?? null,
-         `Regularization approved: ${reg.reason_code ?? reg.reason}`,
-         reviewerId,
-         reg.employee_id, reg.session_date]
-      );
+      // If approved AND requested_status is set, apply it to attendance_daily_record atomically
+      if (input.status === 'approved' && reg.requested_status) {
+        const lwpMap: Record<string, number> = { present: 0, half_day: 0.5, absent: 1.0 };
+
+        // Capture before-state for audit trail
+        const [existingRows] = (await conn.execute(
+          `SELECT attendance_status, lwp_value
+             FROM attendance_daily_record
+            WHERE employee_id = ? AND record_date = ? LIMIT 1`,
+          [reg.employee_id, reg.session_date]
+        )) as [RowDataPacket[], unknown];
+        const existing = (existingRows as RowDataPacket[])[0] as any;
+
+        const [adrResult] = await conn.execute(
+          `UPDATE attendance_daily_record
+              SET attendance_status = ?, lwp_value = ?,
+                  override_by = ?, override_reason = ?,
+                  regularization_id = ?, is_locked = 1, processed_at = NOW(),
+                  old_attendance_status = ?, old_lwp_value = ?,
+                  status_change_reason = ?, status_changed_by = ?, status_changed_at = NOW(),
+                  clock_in_time  = IF(? IS NOT NULL, TIMESTAMP(record_date, ?), clock_in_time),
+                  clock_out_time = IF(? IS NOT NULL, TIMESTAMP(record_date, ?), clock_out_time)
+            WHERE employee_id = ? AND record_date = ?`,
+          [reg.requested_status, lwpMap[reg.requested_status] ?? 0,
+           reviewerId, `Regularization approved: ${reg.reason_code ?? reg.reason}`,
+           id,
+           existing?.attendance_status ?? null,
+           existing?.lwp_value ?? null,
+           `Regularization approved: ${reg.reason_code ?? reg.reason}`,
+           reviewerId,
+           reg.new_punch_in ?? null, reg.new_punch_in ?? null,
+           reg.new_punch_out ?? null, reg.new_punch_out ?? null,
+           reg.employee_id, reg.session_date]
+        ) as any;
+
+        if ((adrResult as any).affectedRows === 0) {
+          // No ADR row exists — rollback so regularization status is NOT changed without attendance correction
+          await conn.rollback();
+          conn.release();
+          throw new Error(
+            `No attendance_daily_record found for employee ${reg.employee_id} on ${reg.session_date}. ` +
+            `Create the attendance record first before approving this regularization.`
+          );
+        }
+      }
+
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      conn.release();
+      throw err;
     }
-
+    conn.release();
     return this.getRegularization(id);
   },
 

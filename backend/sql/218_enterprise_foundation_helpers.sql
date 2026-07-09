@@ -1,6 +1,15 @@
 -- 218_enterprise_foundation_helpers.sql
 -- Phase 1 shared enterprise foundations: general audit log and optional client scope.
 -- Safe additive migration only.
+--
+-- AUDIT TABLE ARCHITECTURE (3-table split):
+--   audit_action_log  — primary general-purpose audit trail used by shared/auditLog.ts writeAuditLog().
+--                       Captures: module, action, entity, actor, IP, user-agent, metadata.
+--   audit_log         — legacy alias (structurally identical). Used only in incentives.routes.ts.
+--                       Retained for backward-compat; new code should use audit_action_log.
+--   sensitive_action_log (015_platform_foundation.sql + migration 237) — HIGH-SECURITY audit.
+--                       Adds: old_value_json, new_value_json, actor_role, employee_id, reason.
+--                       Used for: salary changes, statutory edits, access control changes, PII updates.
 
 CREATE TABLE IF NOT EXISTS audit_action_log (
   id              CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,

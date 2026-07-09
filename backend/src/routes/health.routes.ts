@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { pingDb } from "../db/mysql.js";
 import { getMigrationHealth } from "../db/runPendingMigrations.js";
+import { requireAuth } from "../middleware/authMiddleware.js";
+import { requireRole } from "../middleware/requireRole.js";
 
 export const healthRouter = Router();
 
@@ -84,7 +86,7 @@ healthRouter.get("/", async (_req, res) => {
   });
 });
 
-healthRouter.get("/readiness", async (_req, res) => {
+healthRouter.get("/readiness", requireAuth, requireRole("admin", "super_admin"), async (_req, res) => {
   const dbStatus = await getDatabaseStatus();
   const migrations = getMigrationHealth();
   const checks = buildReadinessChecks(dbStatus);

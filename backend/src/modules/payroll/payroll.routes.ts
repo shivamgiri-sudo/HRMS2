@@ -201,8 +201,9 @@ router.post("/runs/:id/calculate", requireRole("admin", "super_admin", "finance"
   try {
     await assertRunEditable(req.params.id);
     const actorId = req.authUser?.id ?? "system";
-    // Readiness is enforced by default; set PAYROLL_SKIP_READINESS=true only in dev/migration
-    if (process.env.PAYROLL_SKIP_READINESS !== "true") {
+    // Readiness gate: always enforced in production; skippable only in non-production with explicit flag.
+    const skipReadiness = process.env.PAYROLL_SKIP_READINESS === "true" && process.env.NODE_ENV !== "production";
+    if (!skipReadiness) {
       const readiness = await payrollGovernanceService.readiness(req.params.id);
 
       if (!readiness.canCalculate || !readiness.attendanceSnapshotLocked) {

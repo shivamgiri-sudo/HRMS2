@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   RefreshCw,
   FileCheck2,
+  Lock,
 } from "lucide-react";
 
 import { DashboardLayout } from "../../components/layout/DashboardLayout";
@@ -37,6 +38,7 @@ import {
 import { Textarea } from "../../components/ui/textarea";
 import { useWorkforceAccess } from "../../hooks/useUserRole";
 import { hrmsApi } from "../../lib/hrmsApi";
+import { useFreezeAttendance } from "../../hooks/usePayroll";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,6 +47,7 @@ interface PayrollRun {
   run_month: string;
   status: string;
   validation_status: string;
+  attendance_snapshot_locked?: number | boolean;
 }
 
 interface PayrollLine {
@@ -54,6 +57,7 @@ interface PayrollLine {
   department?: string;
   designation?: string;
   attendance_source?: string;
+  attendance_data_source?: string | null;
   paid_base?: number | null;
   week_off_days?: number | null;
   holiday_days?: number | null;
@@ -99,10 +103,19 @@ function ValidationBadge({ status }: { status: string }) {
   );
 }
 
-function AttSourceBadge({ source }: { source?: string | null }) {
-  if (!source) return <span className="text-slate-400">—</span>;
-  const isDialler =
-    /apr|dialler|dial/i.test(source);
+function AttSourceBadge({ source, dataSource }: { source?: string | null; dataSource?: string | null }) {
+  const isFallback = dataSource === 'SESSION_FALLBACK';
+  const isNoData   = dataSource === 'NO_DATA';
+  if (isFallback || isNoData) {
+    return (
+      <Badge variant="outline" className="border-amber-400 text-amber-700 bg-amber-50" title="Attendance engine data unavailable — legacy session fallback used. Verify before disbursement.">
+        <AlertTriangle className="w-3 h-3 mr-1" />
+        {isNoData ? 'No Data' : 'Fallback'}
+      </Badge>
+    );
+  }
+  if (!source && !dataSource) return <span className="text-slate-400">—</span>;
+  const isDialler = /apr|dialler|dial/i.test(source ?? '');
   return (
     <Badge
       variant="outline"
@@ -155,6 +168,8 @@ export default function PayrollValidationScreen() {
   const [rejectReason, setRejectReason] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
 
+  const freezeAttendance = useFreezeAttendance();
+
   // ── Fetch runs list ──────────────────────────────────────────────────────────
   const fetchRuns = useCallback(async () => {
     setRunsLoading(true);
@@ -204,6 +219,21 @@ export default function PayrollValidationScreen() {
   const selectedRun = runs.find(
     (r) => String(r.id) === String(selectedRunId),
   );
+
+  // ── Freeze attendance ────────────────────────────────────────────────────────
+  const handleFreezeAttendance = async () => {
+    if (!selectedRunId) return;
+    setActionLoading(true);
+    try {
+      await freezeAttendance.mutateAsync(selectedRunId);
+      toast.success("Attendance frozen — payroll can now be calculated");
+      await fetchRuns();
+    } catch (err: any) {
+      toast.error(err?.message ?? "Failed to freeze attendance");
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   // ── Validate ─────────────────────────────────────────────────────────────────
   const handleValidate = async () => {
@@ -269,10 +299,13 @@ export default function PayrollValidationScreen() {
   }
 
   const validationStatus = selectedRun?.validation_status ?? "";
+  const isAttendanceFrozen = Boolean(selectedRun?.attendance_snapshot_locked);
   const validateDisabled =
     validationStatus === "validated" || lines.length === 0 || actionLoading;
   const rejectDisabled =
     validationStatus === "rejected" || lines.length === 0 || actionLoading;
+  const freezeDisabled =
+    !selectedRunId || isAttendanceFrozen || actionLoading;
 
   return (
     <DashboardLayout>
@@ -310,6 +343,18 @@ export default function PayrollValidationScreen() {
           {selectedRun && (
             <ValidationBadge status={validationStatus} />
           )}
+          {selectedRun && (
+            <Badge
+              variant="outline"
+              className={isAttendanceFrozen
+                ? "border-blue-300 text-blue-700 bg-blue-50"
+                : "border-amber-300 text-amber-700 bg-amber-50"
+              }
+            >
+              <Lock className="w-3 h-3 mr-1" />
+              {isAttendanceFrozen ? "Attendance Frozen" : "Attendance Not Frozen"}
+            </Badge>
+          )}
 
           <div className="ml-auto flex gap-2">
             <Button
@@ -323,6 +368,16 @@ export default function PayrollValidationScreen() {
                 className={`w-4 h-4 mr-1 ${runsLoading ? "animate-spin" : ""}`}
               />
               Refresh
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleFreezeAttendance}
+              disabled={freezeDisabled}
+              className="border-blue-300 text-blue-700 hover:bg-blue-50"
+              title={isAttendanceFrozen ? "Attendance already frozen" : "Lock attendance before calculating payroll"}
+            >
+              <Lock className="w-4 h-4 mr-1" />
+              {isAttendanceFrozen ? "Frozen" : "Freeze Attendance"}
             </Button>
             <Button
               variant="outline"
@@ -467,7 +522,7 @@ export default function PayrollValidationScreen() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            <AttSourceBadge source={line.attendance_source} />
+                            <AttSourceBadge source={line.attendance_source} dataSource={line.attendance_data_source} />
                           </TableCell>
                           <TableCell className="text-right font-mono text-sm">
                             {fmt(line.paid_base)}

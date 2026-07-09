@@ -230,6 +230,30 @@ export function useGeneratePayroll() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["payroll-records"] });
       queryClient.invalidateQueries({ queryKey: ["payroll-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-analytics"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-trends"] });
+    },
+  });
+}
+
+export function useFreezeAttendance() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (runId: string) => {
+      const result = await hrmsApi.post<{ success: boolean; message?: string; data?: any }>(
+        `/api/payroll/runs/${runId}/freeze-attendance`,
+        undefined
+      );
+      return result;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["payroll-records"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-analytics"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-trends"] });
     },
   });
 }
@@ -248,6 +272,9 @@ export function useUpdatePayrollStatus() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["payroll-records"] });
       queryClient.invalidateQueries({ queryKey: ["payroll-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-analytics"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-trends"] });
     },
   });
 }
@@ -268,6 +295,9 @@ export function useBulkUpdatePayrollStatus() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["payroll-records"] });
       queryClient.invalidateQueries({ queryKey: ["payroll-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-analytics"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-trends"] });
     },
   });
 }

@@ -8,6 +8,7 @@ import { useInactivityTimeout } from "@/hooks/useInactivityTimeout";
 export interface HrmsUser {
   id: string;
   email: string;
+  isReadOnly?: boolean;
 }
 
 interface AuthContextType {
@@ -74,7 +75,11 @@ function decodeJwtUser(token: string): HrmsUser | null {
     const [, b64] = token.split('.');
     const payload = JSON.parse(atob(b64.replace(/-/g, '+').replace(/_/g, '/')));
     if (payload?.sub && payload?.exp && payload.exp * 1000 > Date.now()) {
-      return { id: payload.sub, email: payload.email ?? '' };
+      return {
+        id: payload.sub,
+        email: payload.email ?? '',
+        isReadOnly: payload.is_read_only === true || payload.isReadOnly === true,
+      };
     }
     return null;
   } catch {

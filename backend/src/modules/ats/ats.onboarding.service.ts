@@ -573,9 +573,9 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
               COALESCE(p.personal_email_id, c.email) AS personal_email,
               c.mobile AS personal_phone,
               p.alt_mobile_number AS alternate_mobile,
-              NULL AS pan_number,
-              NULL AS aadhar_number,
-              NULL AS uan_number,
+              COALESCE(p.pan_number, c.pan_number) AS pan_number,
+              COALESCE(p.aadhar_number, c.aadhar_number) AS aadhar_number,
+              COALESCE(p.uan_number, c.uan_number) AS uan_number,
               p.present_address AS current_address,
               p.personal_email_id
        FROM ats_candidate c
@@ -590,6 +590,9 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
       gender?: string | null;
       date_of_birth?: string | null;
       current_address?: string | null;
+      pan_number?: string | null;
+      aadhar_number?: string | null;
+      uan_number?: string | null;
     };
     passwordRecipientEmail = String(candRow?.personal_email ?? '').trim();
 
@@ -615,6 +618,24 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
       ],
     );
 
+    // Migrate statutory identifiers collected during onboarding into employee_statutory_info.
+    const panNumber = String(candRow?.pan_number ?? '').trim() || null;
+    const aadhaarNumber = String(candRow?.aadhar_number ?? '').trim() || null;
+    const uanNumber = String(candRow?.uan_number ?? '').trim() || null;
+    if (panNumber || aadhaarNumber || uanNumber) {
+      await conn.execute(
+        `INSERT INTO employee_statutory_info
+           (id, employee_id, pan_number, aadhaar_id, uan_number, pf_eligible, esi_eligible)
+         VALUES (UUID(), ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           pan_number  = COALESCE(VALUES(pan_number),  pan_number),
+           aadhaar_id  = COALESCE(VALUES(aadhaar_id),  aadhaar_id),
+           uan_number  = COALESCE(VALUES(uan_number),  uan_number)`,
+        [employeeId, panNumber, aadhaarNumber, uanNumber,
+          offer.pf_eligible ?? 1, offer.esi_eligible ?? 1],
+      );
+    }
+
     await conn.execute(
       `INSERT INTO employee_salary_snapshot
          (id, employee_id, snapshot_date, ctc_offered, basic, hra, conveyance,
@@ -632,17 +653,25 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
     );
 
     // Create payroll salary assignment so monthly payroll can run immediately.
-    // Requires a valid structure_id — use the first available structure as default.
+    // Prefer a structure whose basic_pct matches the offer breakdown; fall back to first-available.
+    const offerCtc = Number(offer.offered_ctc ?? 0);
+    const offerBasic = Number(offer.basic ?? 0);
+    const computedBasicPct = offerCtc > 0 ? Math.round((offerBasic / offerCtc) * 100) : 0;
     const [structRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT id FROM salary_structure_master ORDER BY created_at ASC LIMIT 1`,
+      `SELECT id, basic_pct
+       FROM salary_structure_master
+       WHERE active_status = 1
+       ORDER BY ABS(basic_pct - ?) ASC, created_at ASC
+       LIMIT 1`,
+      [computedBasicPct],
     );
     if ((structRows as RowDataPacket[]).length > 0) {
-      const defaultStructureId = (structRows as RowDataPacket[])[0].id;
+      const resolvedStructureId = (structRows as RowDataPacket[])[0].id;
       await conn.execute(
         `INSERT IGNORE INTO employee_salary_assignment
            (id, employee_id, structure_id, ctc_annual, effective_from, active_status)
          VALUES (UUID(), ?, ?, ?, ?, 1)`,
-        [employeeId, defaultStructureId, offer.offered_ctc ?? 0, salaryStartDate ?? new Date().toISOString().slice(0, 10)],
+        [employeeId, resolvedStructureId, offerCtc, salaryStartDate ?? new Date().toISOString().slice(0, 10)],
       );
     }
 
@@ -680,19 +709,28 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
       );
     }
 
-    // Initialize leave balance ledger for the joining year (allocated_days = 0; HR can top-up later)
-    const joiningYear = offer.date_of_joining
-      ? new Date(offer.date_of_joining as string).getFullYear()
-      : new Date().getFullYear();
-    const [leaveTypes] = await conn.execute<RowDataPacket[]>(
-      `SELECT id FROM leave_type_master WHERE active_status = 1`,
-    );
+    // Initialize leave balance ledger with prorated allocation for the joining year.
+    // Proration: floor((remainingMonths / 12) * annual_max), where remainingMonths = 13 - join_month (1-based).
+    const joiningDate = offer.date_of_joining
+      ? new Date(offer.date_of_joining as string)
+      : new Date();
+    const joiningYear  = joiningDate.getFullYear();
+    const joiningMonth = joiningDate.getMonth() + 1; // 1 = January
+    const remainingMonths = Math.max(1, 13 - joiningMonth); // at least 1 month
+
+    const [leaveTypes] = (await conn.execute(
+      `SELECT id, max_days_per_year FROM leave_type_master WHERE active_status = 1`,
+    )) as [RowDataPacket[], unknown];
     for (const lt of leaveTypes as RowDataPacket[]) {
+      const annualMax = Number(lt.max_days_per_year ?? 0);
+      const proratedDays = annualMax > 0
+        ? Math.floor((remainingMonths / 12) * annualMax)
+        : 0;
       await conn.execute(
         `INSERT IGNORE INTO leave_balance_ledger
            (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
-         VALUES (UUID(), ?, ?, ?, 0, 0, 0)`,
-        [employeeId, lt.id, joiningYear],
+         VALUES (UUID(), ?, ?, ?, ?, 0, 0)`,
+        [employeeId, lt.id, joiningYear, proratedDays],
       );
     }
 

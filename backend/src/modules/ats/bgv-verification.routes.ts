@@ -142,8 +142,8 @@ router.post("/digilocker/start", bgvSensitiveLimiter, h(async (req, res) => {
 router.post("/provider/callback", h(async (req: Request & { rawBody?: Buffer }, res) => {
   const secret = env.BGV_WEBHOOK_SECRET;
   if (!secret) {
-    if (env.NODE_ENV === "production") return res.status(503).json({ success: false, message: "Webhook not configured" });
-    console.warn("[BGV] BGV_WEBHOOK_SECRET not set — skipping signature check in non-production mode");
+    console.error("[BGV] BGV_WEBHOOK_SECRET is not set — rejecting all webhook calls");
+    return res.status(503).json({ success: false, message: "Webhook not configured — BGV_WEBHOOK_SECRET missing" });
   } else {
     const sigHeader = req.get("x-bgv-signature") ?? "";
     if (!sigHeader) return res.status(401).json({ success: false, message: "Missing x-bgv-signature header" });

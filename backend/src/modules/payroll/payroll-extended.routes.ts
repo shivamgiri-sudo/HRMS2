@@ -2,79 +2,14 @@ import { Router } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
-import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
-import { payslipService } from "./payslip.service.js";
-import { taxDeclarationService } from "./taxDeclaration.service.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 
 export const payrollExtendedRouter = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 payrollExtendedRouter.use(requireAuth);
-
-payrollExtendedRouter.get("/payslip/:runId/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
-  const { runId, employeeId } = req.params;
-  const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
-  if (!isPayrollRole) {
-    const callerEmp = await getEmployeeForUser(req.authUser!.id);
-    if (!callerEmp || callerEmp.id !== employeeId) return res.status(403).json({ success: false, message: "Forbidden" });
-  }
-  const raw = await payslipService.getPayslip(employeeId, runId);
-  const [runYear, runMon] = (raw.run_month ?? "").split("-").map(Number);
-  return res.json({ success: true, data: { ...raw, month: runMon || 0, year: runYear || 0 } });
-}));
-
-payrollExtendedRouter.post("/payslip/:runId/generate", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { employeeId } = req.body as { employeeId?: string };
-  if (!employeeId) return res.status(400).json({ success: false, message: "employeeId is required" });
-  const data = await payslipService.generatePayslip(req.params.runId, employeeId, req.authUser!.id, req);
-  return res.status(201).json({ success: true, data, message: "Payslip generated" });
-}));
-
-payrollExtendedRouter.post("/payslip/:payslipId/acknowledge", h(async (req: AuthenticatedRequest, res: Response) => {
-  const callerEmp = await getEmployeeForUser(req.authUser!.id);
-  if (!callerEmp) return res.status(403).json({ success: false, message: "No employee record" });
-  const data = await payslipService.acknowledgePayslip(req.params.payslipId, callerEmp.id);
-  return res.json({ success: true, data, message: "Payslip acknowledged" });
-}));
-
-payrollExtendedRouter.get("/tax-declaration/:employeeId/:year", h(async (req: AuthenticatedRequest, res: Response) => {
-  let { employeeId } = req.params;
-  const { year } = req.params;
-  if (employeeId === "me") {
-    const callerEmp = await getEmployeeForUser(req.authUser!.id);
-    if (!callerEmp) return res.status(403).json({ success: false, message: "No employee record for authenticated user" });
-    employeeId = callerEmp.id;
-  }
-  const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
-  if (!isPayrollRole) {
-    const callerEmp = await getEmployeeForUser(req.authUser!.id);
-    if (!callerEmp || callerEmp.id !== employeeId) return res.status(403).json({ success: false, message: "Forbidden: you may only view your own tax declaration" });
-  }
-  const [data, history] = await Promise.all([taxDeclarationService.find(employeeId, year), taxDeclarationService.listHistory(employeeId)]);
-  return res.json({ success: true, data, history });
-}));
-
-payrollExtendedRouter.post("/tax-declaration/:employeeId/:year", h(async (req: AuthenticatedRequest, res: Response) => {
-  let { employeeId } = req.params;
-  const { year } = req.params;
-  if (employeeId === "me") {
-    const callerEmp = await getEmployeeForUser(req.authUser!.id);
-    if (!callerEmp) return res.status(403).json({ success: false, message: "No employee record" });
-    employeeId = callerEmp.id;
-  }
-  const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
-  if (!isPayrollRole) {
-    const callerEmp = await getEmployeeForUser(req.authUser!.id);
-    if (!callerEmp || callerEmp.id !== employeeId) return res.status(403).json({ success: false, message: "Forbidden: you may only submit your own tax declaration" });
-    const data = await taxDeclarationService.upsert(callerEmp.id, year, req.body, req.authUser!.id);
-    return res.json({ success: true, data, message: "Tax declaration saved" });
-  }
-  const data = await taxDeclarationService.upsert(employeeId, year, req.body, req.authUser!.id);
-  return res.json({ success: true, data, message: "Tax declaration saved" });
-}));
 
 payrollExtendedRouter.get("/uan/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
   const { employeeId } = req.params;

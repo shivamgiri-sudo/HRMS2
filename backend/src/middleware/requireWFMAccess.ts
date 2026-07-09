@@ -39,7 +39,7 @@ export async function requireWFMAccess(req: Request, res: Response, next: NextFu
 
     // Check if user is admin (has full access)
     const [adminRows] = await db.execute<RowDataPacket[]>(
-      `SELECT role FROM user_roles WHERE user_id = ? AND role = 'admin' LIMIT 1`,
+      `SELECT role_key FROM user_roles WHERE user_id = ? AND role_key IN ('admin','super_admin') AND active_status = 1 LIMIT 1`,
       [userId]
     );
 
@@ -49,11 +49,11 @@ export async function requireWFMAccess(req: Request, res: Response, next: NextFu
 
     // Check if user has WFM role for this branch
     const [wfmRows] = await db.execute<RowDataPacket[]>(
-      `SELECT ur.role, sa.branch_id
+      `SELECT ur.role_key, sa.branch_id
        FROM user_roles ur
        LEFT JOIN scope_assignments sa ON ur.user_id = sa.user_id
        WHERE ur.user_id = ?
-         AND ur.role = 'wfm'
+         AND ur.role_key = 'wfm'
          AND (sa.branch_id = ? OR sa.branch_id IS NULL)
        LIMIT 1`,
       [userId, line.branch_id]

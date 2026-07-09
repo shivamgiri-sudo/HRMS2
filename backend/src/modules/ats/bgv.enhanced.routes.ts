@@ -38,7 +38,7 @@ bgvEnhancedRouter.get('/stats/overview', requireRole('admin', 'hr'), async (_req
   }
 });
 
-bgvEnhancedRouter.get('/:candidateId', async (req, res) => {
+bgvEnhancedRouter.get('/:candidateId', requireRole('admin', 'hr', 'recruiter', 'manager', 'super_admin'), async (req, res) => {
   try {
     const { candidateId } = req.params;
     const details = await getBGVDetails(candidateId);

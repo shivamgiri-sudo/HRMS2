@@ -235,6 +235,13 @@ leaveRouter.post("/balance/seed", requireRole("admin", "hr", "super_admin"), h(a
 // GET /eligibility/:employeeId — returns leave types eligible for this employee (gender-filtered)
 leaveRouter.get("/eligibility/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
   const { employeeId } = req.params;
+  const isPrivileged = await hasRole(req.authUser!.id, "admin", "super_admin", "hr", "hr_admin", "wfm", "branch_head");
+  if (!isPrivileged) {
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (!callerEmp || callerEmp.id !== employeeId) {
+      return res.status(403).json({ success: false, message: "Forbidden: you may only view your own leave eligibility" });
+    }
+  }
   const [empRows] = await db.execute<RowDataPacket[]>(
     "SELECT gender FROM employees WHERE id = ? LIMIT 1", [employeeId]
   );
