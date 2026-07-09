@@ -257,7 +257,7 @@ export function PhotoUpload({
 
       {/* Format hint */}
       <p className="text-center text-[11px] text-slate-400">
-        JPG, PNG or WebP · max 3 MB
+        JPG, PNG or WebP · max 15 MB
       </p>
     </div>
   );

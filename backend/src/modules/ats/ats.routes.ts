@@ -43,7 +43,7 @@ atsRouter.use(recruiterHiringRouter);
 // Configure multer for candidate uploads
 const candidateUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB
   fileFilter: (_req, file, cb) => {
     const allowed = [".pdf", ".jpg", ".jpeg", ".png"];
     const ext = path.extname(file.originalname).toLowerCase();
