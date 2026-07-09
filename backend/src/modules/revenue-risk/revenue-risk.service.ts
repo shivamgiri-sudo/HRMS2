@@ -239,7 +239,7 @@ export const revenueRiskService = {
       getAllPlannedHc(date),
     ]);
 
-    const rows = [];
+    const rows: Array<{ revenue_date: string; client_id: unknown; client_name: unknown; process_id: unknown; process_name: unknown; contract_id: unknown; billing_type: unknown; billing_rate: number; required_hc: number; planned_hc: number; available_hc: number; shortage_hc: number; productive_hours: number; billable_hours: number; expected_revenue: number; actual_revenue_estimate: number; revenue_at_risk: number; risk_level: string; reason_json: string[]; data_confidence_score: number }> = [];
     for (const process of processes) {
       const pid = String(process.process_id);
       const clientKey = `client:${process.client_id}`;
@@ -252,7 +252,7 @@ export const revenueRiskService = {
       const finalRequired = required || planned;
       const calc = calculateRevenue(contract, finalRequired, available);
       const conf = confidence({ contract: !!contract && contractAvailable, mandate: mandateAvailable && required > 0, attendance: attendanceAvailable });
-      const reasons = [];
+      const reasons: string[] = [];
       if (!contract) reasons.push("No active client contract/rate configured");
       if (!required) reasons.push("No workforce mandate found; using planned HC as fallback");
       if (calc.shortageHc > 0) reasons.push(`Short by ${calc.shortageHc} HC`);

@@ -198,7 +198,7 @@ export async function getCeoCommandCenter(actor: Actor, filters: QueryFilters) {
          ORDER BY exits DESC
          LIMIT 20`,
         [from, ...scoped.params],
-      ).catch(() => []),
+      ).catch((): RowDataPacket[] => []),
     ]);
 
   const required = ["employees", "attendance_daily_record", "helpdesk_ticket", "grievance", "payroll_readiness_snapshot"];

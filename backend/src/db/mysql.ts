@@ -1,4 +1,4 @@
-import mysql, { type RowDataPacket, type FieldPacket, type QueryResult, type Pool } from "mysql2/promise";
+import mysql, { type RowDataPacket, type FieldPacket, type QueryResult, type Pool, type PoolConnection } from "mysql2/promise";
 import { env } from "../config/env.js";
 
 const _pool: Pool = mysql.createPool({
@@ -28,8 +28,13 @@ export const db = {
   executeRun(sql: string, params?: unknown[]): Promise<[QueryResult, FieldPacket[]]> {
     return _pool.execute(sql, params as ExecuteParams);
   },
-  getConnection: _pool.getConnection.bind(_pool),
-  query: _pool.query.bind(_pool),
+  async getConnection(): Promise<PoolConnection & { execute<T extends QueryResult = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, FieldPacket[]]> }> {
+    const conn = await _pool.getConnection();
+    return conn as unknown as PoolConnection & { execute<T extends QueryResult = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, FieldPacket[]]> };
+  },
+  query<T extends QueryResult = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, FieldPacket[]]> {
+    return _pool.query<T>(sql, params as ExecuteParams);
+  },
   end: _pool.end.bind(_pool),
 };
 

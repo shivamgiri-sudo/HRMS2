@@ -25,6 +25,7 @@ import {
   initiateCandidateDigilocker,
   initiateCandidateDigilockerByToken,
   initiateCandidateEsign,
+  initiateCandidateESignByToken,
   getOnboardingCandidateScope,
   getFullOnboardingStatus,
   getOnboardingBlockers,
@@ -273,8 +274,8 @@ router.delete("/documents/:documentId", candidateWriteLimiter, h(async (req, res
   return res.json({ success: true, data: await deleteOnboardingDocument(token, req.params.documentId, meta(req)) });
 }));
 
-router.get("/documents/preview/:documentId", h(async (req, res) => streamOnboardingDocument(req, res, "preview")));
-router.get("/documents/:documentId/download", h(async (req, res) => streamOnboardingDocument(req, res, "download")));
+router.get("/documents/preview/:documentId", h(async (req, res) => streamOnboardingDocument(req as Request & Partial<AuthenticatedRequest>, res, "preview")));
+router.get("/documents/:documentId/download", h(async (req, res) => streamOnboardingDocument(req as Request & Partial<AuthenticatedRequest>, res, "download")));
 
 router.post("/progress", candidateWriteLimiter, h(async (req, res) => {
   const token = String(req.body.token ?? "");
@@ -437,7 +438,7 @@ router.post("/esign/initiate", candidateWriteLimiter, h(async (req, res) => {
   const documentId = String(req.body.documentId ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   if (!documentId) return res.status(400).json({ success: false, message: "documentId required" });
-  return res.json({ success: true, data: await initiateCandidateEsign(token, documentId) });
+  return res.json({ success: true, data: await initiateCandidateESignByToken(token, documentId) });
 }));
 
 // ── Language proficiency route ────────────────────────────────────────────────

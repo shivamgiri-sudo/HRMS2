@@ -471,7 +471,7 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       activityDate: walkInDate,
     });
 
-    let recruiterDetails = null;
+    let recruiterDetails: { name: string | null; mobile: string | null; email: string | null; employee_code: string | null } | null = null;
     if (assignmentResult.assignedRecruiterId) {
       const [recRows] = await db.execute<RecruiterContactRow[]>(
         `SELECT r.name, r.mobile, r.email, e.employee_code

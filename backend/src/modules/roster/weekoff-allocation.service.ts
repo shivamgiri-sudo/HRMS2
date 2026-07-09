@@ -250,7 +250,7 @@ export const weekoffAllocationService = {
     processId: string,
     weekStartDate: string
   ): Promise<Array<{ day_of_week: number; day_name: string; allocated: number; max_count: number; max_percentage: number | null; slots_remaining: number }>> {
-    const summary = [];
+    const summary: Array<{ day_of_week: number; day_name: string; allocated: number; max_count: number; max_percentage: number | null; slots_remaining: number }> = [];
     for (let day = 0; day <= 6; day++) {
       const config = await rosterCapacityService.getCapacityConfig(processId, day);
       const allocationDate = getDateForDayOfWeek(weekStartDate, day);

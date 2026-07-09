@@ -435,7 +435,7 @@ async function recomputeCoverage(planId: string): Promise<{ rows: AnyRow[]; scor
 
 export const autoRosterSyncedService = {
   async introspect() {
-    const tables = [];
+    const tables: Array<{ table: string; exists: boolean; mode: string; columns: string[] }> = [];
     for (const table of CORE_TABLES) {
       const exists = await schema.hasTable(table);
       tables.push({

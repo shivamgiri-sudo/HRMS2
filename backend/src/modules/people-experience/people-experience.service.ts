@@ -188,7 +188,7 @@ async function calculateEmployeeSnapshot(employee: any) {
 
 export async function scanPeopleExperience(scope: PeopleExperienceScope, filters: FilterMap = {}, limit = 500) {
   const employees = (await scopedEmployees(scope, filters)).slice(0, Math.min(limit, 2000));
-  const results = [];
+  const results: Awaited<ReturnType<typeof calculateEmployeeSnapshot>>[] = [];
   for (const employee of employees) {
     const snapshot = await calculateEmployeeSnapshot(employee);
     await db.execute(

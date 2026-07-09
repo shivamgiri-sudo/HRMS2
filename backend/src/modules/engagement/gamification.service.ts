@@ -325,7 +325,7 @@ export async function getEmployeeTier(employeeId: string): Promise<{
     const currentTier = tierRows[0] ? (tierRows[0] as GamificationTierMaster) : null;
 
     // Find next tier
-    let pointsToNext = null;
+    let pointsToNext: number | null = null;
     let progressPercentage = 0;
 
     if (currentTier) {
@@ -377,7 +377,7 @@ export async function getEmployeeTier(employeeId: string): Promise<{
     [currentTier.tier_level]
   );
 
-  let pointsToNext = null;
+  let pointsToNext: number | null = null;
   let progressPercentage = 0;
 
   if (nextTierRows.length > 0) {

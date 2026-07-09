@@ -36,7 +36,7 @@ export class SimpleAnalyticsService {
       { stage: "Joined", count: joined, percentage: registered > 0 ? Math.round((joined / registered) * 100) : 0 },
     ];
 
-    const dropOffAnalysis = [];
+    const dropOffAnalysis: Array<{ fromStage: string; toStage: string; dropOff: number; dropOffRate: number }> = [];
     for (let i = 0; i < funnel.length - 1; i++) {
       const current = funnel[i];
       const next = funnel[i + 1];

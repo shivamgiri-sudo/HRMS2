@@ -155,7 +155,7 @@ export async function validateAcroFormTemplate(templatePath: string, fieldMaps: 
   };
 }
 
-function setFieldFontSize(textField: PDFTextField, text: string, maxFontSize: number, minFontSize: number) {
+function setFieldFontSize(textField: { acroField: { getWidgets(): Array<{ getRectangle(): { width: number; height: number } | undefined }> }; setFontSize(size: number): void }, text: string, maxFontSize: number, minFontSize: number) {
   const widgets = textField.acroField.getWidgets();
   const rect = widgets[0]?.getRectangle();
   if (!rect) {

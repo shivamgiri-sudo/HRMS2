@@ -462,7 +462,7 @@ export const attendanceEngineService = {
         : await this.getDiallerMinutes(employeeId, date);
       sourceSystem = aprMinutes > 0 ? 'apr.ReportDate' : 'dialer_session_log.session_date';
       sourceReference = emp.employee_code;
-      rawMinutes = diallerMinutes;
+      rawMinutes = diallerMinutes ?? 0;
       rule = { ...rule, attendance_source: 'dialler', full_day_minutes: 480, half_day_minutes: 240 };
     } else {
       rule = { ...rule, attendance_source: 'biometric', full_day_minutes: 540, half_day_minutes: 240 };
