@@ -180,7 +180,10 @@ export async function getAuditLogExtended(req: RequiredAuthRequest, res: Respons
   );
   const total = countRows[0]?.total ?? 0;
 
-  // Fetch rows
+  // LIMIT/OFFSET are safe integer interpolations — mysql2 prepared statements
+  // reject ? placeholders for LIMIT/OFFSET ("Incorrect arguments to mysqld_stmt_execute").
+  const safeLimit  = Math.min(Math.max(1, limit),  500);
+  const safeOffset = Math.max(0, offset);
   const [rows] = await db.execute<AuditLogRow[]>(
     `SELECT sal.id, sal.actor_user_id, sal.action_type, sal.module_key,
             sal.entity_type, sal.entity_id, sal.employee_id,
@@ -193,7 +196,7 @@ export async function getAuditLogExtended(req: RequiredAuthRequest, res: Respons
        LEFT JOIN auth_user au ON au.id = sal.actor_user_id
        ${where}
       ORDER BY sal.acted_at DESC
-      LIMIT ${limit} OFFSET ${offset}`,
+      LIMIT ${safeLimit} OFFSET ${safeOffset}`,
     params,
   );
 

@@ -6,6 +6,40 @@ import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { env } from '../../config/env.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import type { Request } from 'express';
+import https from 'https';
+
+async function getUserPrimaryRole(userId: string): Promise<string | null> {
+  try {
+    const [rows] = await db.execute<RoleRow[]>(
+      `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1
+       ORDER BY FIELD(role_key,'super_admin','admin','payroll_head','hr','wfm','manager','employee') LIMIT 1`,
+      [userId]
+    );
+    return rows[0]?.role_key ?? null;
+  } catch { return null; }
+}
+
+async function geoLookupIp(ip: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    if (!ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.')) {
+      return resolve('Local Network');
+    }
+    const timeout = setTimeout(() => resolve(null), 2000);
+    https.get(`https://ipapi.co/${ip}/json/`, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        clearTimeout(timeout);
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.error) return resolve(null);
+          const parts = [parsed.city, parsed.region, parsed.country_name].filter(Boolean);
+          resolve(parts.length ? parts.join(', ') : null);
+        } catch { resolve(null); }
+      });
+    }).on('error', () => { clearTimeout(timeout); resolve(null); });
+  });
+}
 
 const JWT_SECRET = env.JWT_SECRET;
 const JWT_EXPIRES_IN = '15m';
@@ -318,17 +352,29 @@ export const authService = {
         console.error('[auth] Failed to enforce single device mode:', error);
       }
 
-      // Log successful login
+      // Log successful login with role and geo location (non-blocking)
       if (req) {
-        logSensitiveAction({
-          actor_user_id: user.id,
-          action_type: "LOGIN_SUCCESS",
-          module_key: "AUTH",
-          entity_type: "auth_user",
-          entity_id: user.id,
-          change_summary: { email: user.email, identifier: trimmed },
-          req
-        }).catch(() => {}); // Non-blocking
+        const loginIp = req.ip ?? null;
+        Promise.all([
+          getUserPrimaryRole(user.id),
+          loginIp ? geoLookupIp(loginIp) : Promise.resolve(null),
+        ]).then(([role, location]) => {
+          logSensitiveAction({
+            actor_user_id: user.id,
+            action_type: "LOGIN_SUCCESS",
+            module_key: "AUTH",
+            entity_type: "auth_user",
+            entity_id: user.id,
+            actor_role: role ?? undefined,
+            change_summary: {
+              email: user.email,
+              identifier: trimmed,
+              ip: loginIp,
+              location: location ?? undefined,
+            },
+            req,
+          }).catch(() => {});
+        }).catch(() => {});
       }
 
       // Check global 2FA toggle in org_settings
@@ -435,16 +481,27 @@ export const authService = {
       console.error('[auth] Failed to revoke device session:', error);
     }
 
-    // Log logout event
+    // Log logout event with role and geo location (non-blocking)
     if (userId && req) {
-      logSensitiveAction({
-        actor_user_id: userId,
-        action_type: "LOGOUT",
-        module_key: "AUTH",
-        entity_type: "auth_user",
-        entity_id: userId,
-        req
-      }).catch(() => {}); // Non-blocking
+      const logoutIp = req.ip ?? null;
+      Promise.all([
+        getUserPrimaryRole(userId),
+        logoutIp ? geoLookupIp(logoutIp) : Promise.resolve(null),
+      ]).then(([role, location]) => {
+        logSensitiveAction({
+          actor_user_id: userId!,
+          action_type: "LOGOUT",
+          module_key: "AUTH",
+          entity_type: "auth_user",
+          entity_id: userId!,
+          actor_role: role ?? undefined,
+          change_summary: {
+            ip: logoutIp,
+            location: location ?? undefined,
+          },
+          req,
+        }).catch(() => {});
+      }).catch(() => {});
     }
   },
 
