@@ -49,8 +49,8 @@ const meta = (req: Request) => ({ ip: req.ip, userAgent: req.get("user-agent") ?
 const bgvReadLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false, message: { success: false, message: "Too many requests, please slow down" } });
 /** 10 req/min per IP — BGV verification endpoints (hits third-party APIs with cost) */
 const bgvVerifyLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, message: { success: false, message: "Too many verification requests, please slow down" } });
-/** 5 req/min per IP — BGV consent and DigiLocker start */
-const bgvSensitiveLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { success: false, message: "Too many requests, please slow down" } });
+/** 15 req/min per IP — BGV consent and DigiLocker start (raised from 5 to allow retries during onboarding) */
+const bgvSensitiveLimiter = rateLimit({ windowMs: 60 * 1000, max: 15, standardHeaders: true, legacyHeaders: false, message: { success: false, message: "Too many requests, please slow down" } });
 
 async function requireBgvCandidateScope(req: AuthenticatedRequest, candidateId: string): Promise<void> {
   const candidate = await atsService.getCandidate(candidateId);
