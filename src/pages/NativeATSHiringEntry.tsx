@@ -19,6 +19,7 @@ import {
   Save,
   Search,
   Target,
+  Upload,
   UserRound,
   Users,
   X,
@@ -33,6 +34,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SkeletonCard } from "@/components/ui/skeletons";
 import { SessionContextPanel } from "@/components/ats/SessionContextPanel";
+import { BulkCallingUpload } from "@/components/ats/BulkCallingUpload";
 import {
   loadSessionContext,
   saveSessionContext,
@@ -272,7 +274,7 @@ export default function NativeATSHiringEntry() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [sessionLocked, setSessionLocked] = useState(false);
   const [showOptionalFields, setShowOptionalFields] = useState(false);
-  const [activeTab, setActiveTab] = useState<"entry" | "progress" | "analytics">("entry");
+  const [activeTab, setActiveTab] = useState<"entry" | "bulk" | "progress" | "analytics">("entry");
 
   // Analytics tab state
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
@@ -780,6 +782,18 @@ export default function NativeATSHiringEntry() {
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab("bulk")}
+            className={`flex items-center gap-2 px-5 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+              activeTab === "bulk"
+                ? "border-emerald-600 text-emerald-700"
+                : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            <Upload className="h-3.5 w-3.5" />
+            Bulk Upload
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab("progress")}
             className={`flex items-center gap-2 px-5 py-2.5 text-sm font-bold border-b-2 transition-colors ${
               activeTab === "progress"
@@ -806,6 +820,19 @@ export default function NativeATSHiringEntry() {
             Branch Analytics
           </button>
         </div>
+
+        {/* ── TAB: Bulk Upload ── */}
+        {activeTab === "bulk" && bootstrap && (
+          <BulkCallingUpload
+            bootstrap={bootstrap}
+            sessionLocked={sessionLocked}
+            sessionContext={{
+              process_name: form.process_name,
+              hiring_source: form.hiring_source,
+              position_name: form.position_name,
+            }}
+          />
+        )}
 
         {/* ── TAB 1: Rapid Entry (horizontal spreadsheet row) ── */}
         {activeTab === "entry" && (
