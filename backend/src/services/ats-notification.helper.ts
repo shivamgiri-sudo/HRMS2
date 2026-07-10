@@ -45,7 +45,15 @@ export async function notifyRecruiterNewAssignment(input: {
 
     // Also notify HR
     const [hrRows]: any = await db.execute(
-      "SELECT email FROM employees WHERE role_key IN ('hr', 'admin') AND active_status = 1 LIMIT 3"
+      `SELECT DISTINCT e.email
+       FROM employees e
+       JOIN auth_user au ON au.id = e.user_id
+       JOIN user_role ur ON ur.user_id = au.id
+       JOIN role r ON r.id = ur.role_id
+       WHERE r.role_key IN ('hr', 'admin', 'super_admin')
+       AND e.active_status = 1
+       AND e.email IS NOT NULL
+       LIMIT 3`
     );
 
     if (hrRows) {
@@ -262,7 +270,15 @@ export async function notifySLABreach(input: {
 
     // Also notify HR
     const [hrRows]: any = await db.execute(
-      "SELECT email FROM employees WHERE role_key IN ('hr', 'admin') AND active_status = 1 LIMIT 3"
+      `SELECT DISTINCT e.email
+       FROM employees e
+       JOIN auth_user au ON au.id = e.user_id
+       JOIN user_role ur ON ur.user_id = au.id
+       JOIN role r ON r.id = ur.role_id
+       WHERE r.role_key IN ('hr', 'admin', 'super_admin')
+       AND e.active_status = 1
+       AND e.email IS NOT NULL
+       LIMIT 3`
     );
 
     if (hrRows) {
