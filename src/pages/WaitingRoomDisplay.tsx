@@ -14,6 +14,7 @@ interface SafeQueueEntry {
   position_in_queue: number;
   applied_role: string | null;
   branch_name: string | null;
+  arrival_time: string | null;
   called_at: string | null;
   interview_started_at: string | null;
   candidate_name: string | null;
@@ -143,12 +144,23 @@ function formatDate(date: Date): string {
   return date.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 }
 
-function formatWait(minutes: number | null): string {
-  if (minutes == null || minutes <= 0) return "< 1 min";
-  if (minutes < 60) return `${minutes} min`;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
+function formatElapsedWait(arrivalIso: string | null, nowMs: number): string {
+  if (!arrivalIso) return "--";
+  const arrival = new Date(arrivalIso);
+  if (isNaN(arrival.getTime())) return "--";
+  const elapsed = Math.floor((nowMs - arrival.getTime()) / 60_000);
+  if (elapsed < 1) return "< 1 min";
+  if (elapsed < 60) return `${elapsed} min`;
+  const h = Math.floor(elapsed / 60);
+  const m = elapsed % 60;
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function formatArrivalIST(arrivalIso: string | null): string {
+  if (!arrivalIso) return "--";
+  const d = new Date(arrivalIso);
+  if (isNaN(d.getTime())) return "--";
+  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
 }
 
 function last3(token: string): string {
@@ -1043,7 +1055,10 @@ export default function WaitingRoomDisplay() {
                       )}
                     </div>
                     <div className="wr-row-right">
-                      <div className="wr-row-wait">{formatWait(entry.estimated_wait_time)}</div>
+                      <div className="wr-row-wait">{formatElapsedWait(entry.arrival_time, clock.getTime())}</div>
+                      <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.55)", marginTop: "2px" }}>
+                        In: {formatArrivalIST(entry.arrival_time)}
+                      </div>
                       <span className={`wr-row-status ${entry.queue_status}`}>
                         {statusLabel(entry.queue_status)}
                       </span>

@@ -21,6 +21,7 @@ export interface QueueEntry {
   recruiter_name: string;
   recruiter_employee_code: string;
   created_at: string;
+  arrival_time: string;
   called_at: string | null;
   interview_started_at: string | null;
   interview_completed_at: string | null;
@@ -112,6 +113,7 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
       COALESCE(e.full_name, 'Unassigned') as recruiter_name,
       COALESCE(e.employee_code, 'N/A') as recruiter_employee_code,
       qt.created_at,
+      COALESCE(qt.arrival_time, qt.created_at) AS arrival_time,
       qt.called_at,
       qt.interview_started_at,
       qt.interview_completed_at,
