@@ -1559,7 +1559,12 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
       GROUP BY label ORDER BY total DESC LIMIT 10`,
     params
   );
-  const bySource = (sourceRows as any[]).map((r) => ({ label: r.label, total: Number(r.total), selected: Number(r.selected), joined: Number(r.joined) }));
+  const bySource = (sourceRows as any[]).map((r) => ({
+    label: String(r.label || 'Unknown'),
+    total: Number(r.total) || 0,
+    selected: Number(r.selected) || 0,
+    joined: Number(r.joined) || 0
+  }));
 
   // ── By process ────────────────────────────────────────────────────────────
   const [processRows] = await db.execute<RowDataPacket[]>(
@@ -1570,7 +1575,12 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
       GROUP BY label ORDER BY total DESC LIMIT 10`,
     params
   );
-  const byProcess = (processRows as any[]).map((r) => ({ label: r.label, total: Number(r.total), selected: Number(r.selected), joined: Number(r.joined) }));
+  const byProcess = (processRows as any[]).map((r) => ({
+    label: String(r.label || 'Unknown'),
+    total: Number(r.total) || 0,
+    selected: Number(r.selected) || 0,
+    joined: Number(r.joined) || 0
+  }));
 
   // ── By recruiter ──────────────────────────────────────────────────────────
   const [recruiterRows] = await db.execute<RowDataPacket[]>(
@@ -1582,9 +1592,17 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     params
   );
   const byRecruiter = (recruiterRows as any[]).map((r) => {
-    const total = Number(r.total);
-    const sel = Number(r.selected);
-    return { label: r.label, total, selected: sel, joined: Number(r.joined), selRate: total ? Math.round(sel / total * 1000) / 10 : 0 };
+    const total = Number(r.total) || 0;
+    const sel = Number(r.selected) || 0;
+    const joined = Number(r.joined) || 0;
+    const selRate = total ? Math.round((sel / total) * 1000) / 10 : 0;
+    return {
+      label: String(r.label || 'Unknown'),
+      total,
+      selected: sel,
+      joined,
+      selRate: Number.isFinite(selRate) ? selRate : 0
+    };
   });
 
   // ── 30-day daily trend ────────────────────────────────────────────────────

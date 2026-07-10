@@ -1162,11 +1162,11 @@ export default function NativeATSHiringEntry() {
                             <td className="px-3 py-2 text-right tabular-nums text-sky-600">{(analytics.byRecruiter as any)[i]?.walkins ?? "—"}</td>
                             <td className="px-3 py-2 text-right tabular-nums text-emerald-700 font-bold">{r.selected}</td>
                             <td className="px-3 py-2 text-right">
-                              <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${r.selRate >= 30 ? "bg-emerald-50 text-emerald-700" : r.selRate >= 15 ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"}`}>
-                                {r.selRate}%
+                              <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${(r.selRate || 0) >= 30 ? "bg-emerald-50 text-emerald-700" : (r.selRate || 0) >= 15 ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"}`}>
+                                {r.selRate ?? 0}%
                               </span>
                             </td>
-                            <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.joined}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.joined ?? 0}</td>
                           </tr>
                         ))}
                       </tbody>
