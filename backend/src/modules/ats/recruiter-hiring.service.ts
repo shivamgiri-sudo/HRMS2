@@ -69,6 +69,7 @@ export type NormalizedHiringActivity = {
   queue_token_id: string | null;
   onboarding_bridge_id: string | null;
   employee_id: string | null;
+  followup_required: number;
   duplicate_warning: number;
   duplicate_of_activity_id: string | null;
   duplicate_override_reason: string | null;
@@ -692,6 +693,7 @@ export function mapSheetRow(row: HiringSheetRow): { normalized: NormalizedHiring
     referral_relationship: text(pick(row, "referral_relationship")),
     referral_remarks: text(pick(row, "referral_remarks")),
     referral_validation_status: text(pick(row, "referral_validation_status")),
+    followup_required: parseBool(pick(row, "followup_required")),
     walkin_flag: walkinFlag,
     final_selection_flag: finalSelectionFlag,
     joined_flag: joinedFlag || (joiningStatusAuto?.toLowerCase() === "joined" ? 1 : 0),
@@ -912,15 +914,10 @@ async function persistActivity(
   }
 
   if (duplicate && duplicateMode === "update_existing") {
-    const keys = Object.keys(normalized).filter((key) => key !== "raw_sheet_payload");
-    const sets = keys.map((key) => `${key} = ?`);
-    const params = keys.map((key) => normalized[key as keyof NormalizedHiringActivity]);
-    params.push(actorUserId, duplicate.id);
-    await db.execute(
-      `UPDATE ats_recruiter_hiring_activity SET ${sets.join(", ")}, updated_by = ?, updated_at = NOW() WHERE id = ?`,
-      params
-    );
-    return { action: "updated" as const, id: duplicate.id, duplicateOf: duplicate.id };
+    // Insert as a follow-up call instead of overwriting — preserves history
+    normalized.followup_required = 1;
+    (normalized as any).is_followup_attempt = 1;
+    (normalized as any).followup_of_activity_id = duplicate.id;
   }
 
   const insertValues = [
@@ -972,6 +969,7 @@ async function persistActivity(
     normalized.referral_relationship,
     normalized.referral_remarks,
     normalized.referral_validation_status,
+    normalized.followup_required,
     normalized.walkin_flag,
     normalized.final_selection_flag,
     normalized.joined_flag,
@@ -986,6 +984,8 @@ async function persistActivity(
     normalized.import_batch_id,
     normalized.source_system,
     JSON.stringify(normalized.raw_sheet_payload ?? {}),
+    (normalized as any).is_followup_attempt ?? 0,
+    (normalized as any).followup_of_activity_id ?? null,
     actorUserId,
     actorUserId,
   ];
@@ -1000,14 +1000,16 @@ async function persistActivity(
        ops_interviewer_branch_snapshot, ops_interview_status, ops_rejection_reason, salary_package_inr,
        offer_letter_status, joining_status, batch_no, current_status, joined_candidate_emp_code, emp_referral_details,
        referee_employee_id, referee_employee_code, referee_name, referee_branch, referee_process, referral_relationship,
-       referral_remarks, referral_validation_status, walkin_flag, final_selection_flag, joined_flag, contacted_flag,
+       referral_remarks, referral_validation_status, followup_required, walkin_flag, final_selection_flag, joined_flag, contacted_flag,
        linked_candidate_id, queue_token_id, onboarding_bridge_id, employee_id, duplicate_warning, duplicate_of_activity_id,
-       duplicate_override_reason, import_batch_id, source_system, raw_sheet_payload, created_by, updated_by)
+       duplicate_override_reason, import_batch_id, source_system, raw_sheet_payload,
+       is_followup_attempt, followup_of_activity_id, created_by, updated_by)
      VALUES (${insertValues.map(() => "?").join(", ")})`,
     insertValues
   );
 
-  return { action: "inserted" as const, id: insertId, duplicateOf: duplicate?.id ?? null };
+  const action = (normalized as any).is_followup_attempt ? "followup" as const : "inserted" as const;
+  return { action, id: insertId, duplicateOf: duplicate?.id ?? null };
 }
 
 export async function upsertHiringActivity(
@@ -1113,7 +1115,7 @@ export async function importHiringActivityRows(
       normalized.raw_sheet_payload = row;
       const persisted = await persistActivity(normalized, actorUserId, duplicateMode);
       if (persisted.action === "inserted") insertedRows += 1;
-      if (persisted.action === "updated") updatedRows += 1;
+      if (persisted.action === "followup") { insertedRows += 1; duplicateRows += 1; }
       if (persisted.duplicateOf) duplicateRows += 1;
     } catch (err: unknown) {
       failedRows += 1;
@@ -1440,7 +1442,7 @@ export async function getHiringDashboard(userId: string, role: string | undefine
         COUNT(DISTINCT recruiter_name_snapshot) AS active_recruiters,
         COUNT(DISTINCT CASE WHEN updated_at < DATE_SUB(NOW(), INTERVAL 2 DAY) THEN recruiter_name_snapshot END) AS recruiter_inactive_count
       FROM ats_recruiter_hiring_activity
-      WHERE ${sql}`,
+      WHERE COALESCE(is_followup_attempt, 0) = 0 AND ${sql}`,
     params
   );
 
@@ -1525,7 +1527,7 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
        SUM(CASE WHEN final_selection_flag = 1 THEN 1 ELSE 0 END)     AS selected,
        SUM(CASE WHEN joined_flag = 1 THEN 1 ELSE 0 END)              AS joined
      FROM ats_recruiter_hiring_activity
-    WHERE ${sql}`,
+    WHERE COALESCE(is_followup_attempt, 0) = 0 AND ${sql}`,
     params
   );
   const s = summaryRows[0] ?? {};
@@ -1582,12 +1584,12 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     joined: Number(r.joined) || 0
   }));
 
-  // ── By recruiter ──────────────────────────────────────────────────────────
+  // ── By recruiter (exclude follow-up attempts from unique counts) ─────────
   const [recruiterRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(recruiter_name_snapshot,'Unknown') AS label, COUNT(*) AS total,
             SUM(CASE WHEN final_selection_flag=1 THEN 1 ELSE 0 END) AS selected,
             SUM(CASE WHEN joined_flag=1 THEN 1 ELSE 0 END) AS joined
-       FROM ats_recruiter_hiring_activity WHERE ${sql}
+       FROM ats_recruiter_hiring_activity WHERE COALESCE(is_followup_attempt, 0) = 0 AND ${sql}
       GROUP BY label ORDER BY selected DESC LIMIT 10`,
     params
   );
@@ -1605,14 +1607,15 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     };
   });
 
-  // ── 30-day daily trend ────────────────────────────────────────────────────
+  // ── 30-day daily trend (exclude follow-up attempts) ────────────────────────
   const [trendRows] = await db.execute<RowDataPacket[]>(
     `SELECT activity_date AS date,
             COUNT(*) AS logged,
             SUM(CASE WHEN walkin_flag=1 THEN 1 ELSE 0 END) AS walkins,
             SUM(CASE WHEN final_selection_flag=1 THEN 1 ELSE 0 END) AS selected
        FROM ats_recruiter_hiring_activity
-      WHERE activity_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+      WHERE COALESCE(is_followup_attempt, 0) = 0
+        AND activity_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
         AND ${sql}
       GROUP BY activity_date ORDER BY activity_date ASC`,
     params

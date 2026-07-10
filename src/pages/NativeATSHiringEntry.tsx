@@ -658,7 +658,11 @@ export default function NativeATSHiringEntry() {
         }
       }
 
-      setSuccessMsg(action === "updated" ? "Existing entry updated for this candidate." : "Entry saved successfully.");
+      setSuccessMsg(
+        action === "followup" ? "Follow-up call logged (not counted as unique attempt)."
+        : action === "updated" ? "Existing entry updated for this candidate."
+        : "Entry saved successfully."
+      );
       clearCandidateFields();
       await reloadRowsAfterSave();
     } catch (error: unknown) {
@@ -878,7 +882,7 @@ export default function NativeATSHiringEntry() {
                 </div>
               </div>
               <span className="rounded-full bg-sky-50 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-sky-700">
-                Auto-update duplicates
+                Duplicates → Follow-up calls
               </span>
             </div>
 
@@ -1463,7 +1467,10 @@ export default function NativeATSHiringEntry() {
                         <tr key={row.id} className="hover:bg-slate-50">
                           <td className="px-3 py-2.5 text-xs text-slate-400">{idx + 1}</td>
                           <td className="px-3 py-2.5">
-                            <div className="font-bold text-slate-900">{row.candidate_name || "—"}</div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-slate-900">{row.candidate_name || "—"}</span>
+                              {row.is_followup_attempt === 1 && <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[9px] font-bold text-violet-700">Follow-up</span>}
+                            </div>
                           </td>
                           <td className="px-3 py-2.5 text-slate-600 tabular-nums">{row.mobile || "—"}</td>
                           <td className="px-3 py-2.5 text-slate-700">{row.process_name || "—"}</td>
