@@ -34,6 +34,26 @@ businessActionsRouter.post("/sync-signals/grievance", h(async (req, res) => {
   res.json({ success: true, data });
 }));
 
+businessActionsRouter.post("/sync-signals/payroll", h(async (req, res) => {
+  const data = await businessActionSignalSync.syncPayrollReadiness(req.authUser!.id);
+  res.json({ success: true, data: { count: data.created, message: `${data.created} payroll actions synced`, details: data } });
+}));
+
+businessActionsRouter.post("/sync-signals/attendance", h(async (req, res) => {
+  const data = await businessActionSignalSync.syncAttendanceGaps(req.authUser!.id);
+  res.json({ success: true, data: { count: data.created, message: `${data.created} attendance actions synced`, details: data } });
+}));
+
+businessActionsRouter.post("/sync-signals/onboarding", h(async (req, res) => {
+  const data = await businessActionSignalSync.syncOnboardingStuck(req.authUser!.id);
+  res.json({ success: true, data: { count: data.created, message: `${data.created} onboarding actions synced`, details: data } });
+}));
+
+businessActionsRouter.post("/sync-signals/roster", h(async (req, res) => {
+  const data = await businessActionSignalSync.syncRosterShortages(req.authUser!.id);
+  res.json({ success: true, data: { count: data.created, message: `${data.created} roster actions synced`, details: data } });
+}));
+
 businessActionsRouter.get("/", h(async (req, res) => {
   res.json({ success: true, data: await businessActionsService.list(req.query as Record<string, unknown>) });
 }));

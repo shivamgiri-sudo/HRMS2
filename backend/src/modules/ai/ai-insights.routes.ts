@@ -374,5 +374,127 @@ aiInsightsRouter.post('/feedback', h(async (req, res) => {
   return res.json(apiSuccess({ message: 'Feedback recorded' }));
 }));
 
+/**
+ * POST /api/ai/explain-action - Explain business action with AI
+ * Phase 2: Smart Work Inbox Enhancement
+ */
+aiInsightsRouter.post('/explain-action', h(async (req, res) => {
+  const { action_id } = req.body;
+
+  if (!action_id) {
+    return res.status(400).json(apiError('VALIDATION_ERROR', 'action_id is required', 400));
+  }
+
+  const userId = req.authUser!.id;
+  const roleKeys = (req as any).userRoles || ['employee'];
+
+  // Fetch business action
+  const { db } = await import('../../db/mysql.js');
+  const [actions] = await db.execute<any[]>(
+    'SELECT * FROM business_action_queue WHERE id = ? LIMIT 1',
+    [action_id]
+  );
+
+  if (actions.length === 0) {
+    return res.status(404).json(apiError('NOT_FOUND', 'Action not found', 404));
+  }
+
+  const action = actions[0];
+
+  // Build sanitized context based on source module (no PII)
+  let sanitizedContext: any = {
+    risk_type: action.risk_type,
+    severity: action.severity,
+    source_module: action.source_module,
+    title: action.title,
+    status: action.status,
+    escalation_level: action.escalation_level || 0,
+  };
+
+  // Module-specific context (safe data only - counts, not names)
+  if (action.source_module === 'payroll') {
+    const match = action.title?.match(/\((\d+) employees\)/);
+    sanitizedContext.blocked_count = match ? parseInt(match[1]) : 0;
+    sanitizedContext.blocker_type = action.title?.split(' (')[0] || 'Unknown';
+  } else if (action.source_module === 'attendance') {
+    const match = action.title?.match(/\((\d+) days\)/);
+    sanitizedContext.unreconciled_days = match ? parseInt(match[1]) : 0;
+  } else if (action.source_module === 'onboarding') {
+    const match = action.description?.match(/Age: (\d+) days/);
+    sanitizedContext.stuck_days = match ? parseInt(match[1]) : 0;
+    sanitizedContext.stage = action.title?.split(' at ')[1]?.split(' (')[0] || 'unknown';
+  } else if (action.source_module === 'roster') {
+    const match = action.title?.match(/\((\d+) HC\)/);
+    sanitizedContext.shortage = match ? parseInt(match[1]) : 0;
+  }
+
+  // Get active provider
+  const provider = await aiProviderRegistry.getDefault();
+  const config = await aiProviderConfigService.getByKey(provider.key, true);
+
+  // Build system instruction for action explanation
+  const systemInstruction = `You are a PeopleOS Assistant explaining business action items.
+
+Explain concisely (2-3 sentences):
+1. Why this action exists (what triggered it)
+2. What the business risk is if not resolved
+3. What the recommended next steps are (be specific)
+
+Use clear, business-friendly language.
+Do not mention employee names or codes. Use aggregates only.
+Always label this as an AI recommendation.`;
+
+  // Build AI request
+  const request: AiGenerateRequest = {
+    userId,
+    roleKeys,
+    providerKey: provider.key,
+    model: config?.modelName,
+    systemInstruction,
+    userQuestion: 'Explain this action and recommend next steps',
+    sanitizedContext,
+    temperature: 0.3,
+    maxOutputTokens: 512,
+    requestSource: 'explain_action',
+    entityType: 'business_action',
+    entityId: action_id,
+  };
+
+  // Generate response
+  let response;
+  let fallbackUsed = false;
+
+  try {
+    response = await provider.generateText(request);
+  } catch (error) {
+    console.warn('[AI Explain Action] Provider failed, using rule-based fallback:', error);
+    const fallbackProvider = ruleBasedProvider;
+    request.providerKey = fallbackProvider.key;
+    response = await fallbackProvider.generateText(request);
+    fallbackUsed = true;
+  }
+
+  // Log usage and audit
+  await aiAuditService.logUsage(request, response);
+  await aiAuditService.logPromptAudit(
+    request,
+    false, // No PII in context
+    [],
+    response.answer.slice(0, 200)
+  );
+
+  return res.json(apiSuccess({
+    explanation: response.answer,
+    insights: response.insights || [],
+    actions: response.actions || [],
+    provider: response.provider,
+    model: response.model,
+    safe_mode: true, // Always true for explain-action (no PII sent)
+    fallback_used: fallbackUsed,
+    data_confidence: response.dataConfidence || {},
+    generated_at: response.generatedAt,
+  }));
+}));
+
 // Import rule-based provider for fallback
 import { ruleBasedProvider } from './providers/ruleBased.provider.js';

@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { revenueRiskService } from "../revenue-risk/revenue-risk.service.js";
+import { payrollGovernanceService } from "../payroll/payroll-governance.service.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 
 interface PeopleRiskRow extends RowDataPacket {
@@ -47,6 +48,39 @@ interface RevenueRiskRow {
   client_name?: string | null;
   data_confidence_score?: number | string | null;
   reason_json?: unknown[] | null;
+}
+
+interface PayrollRunRow extends RowDataPacket {
+  id: string;
+  run_period: string | null;
+  run_date: string | null;
+  status: string | null;
+}
+
+interface AttendanceGapRow extends RowDataPacket {
+  employee_id: string;
+  employee_code: string | null;
+  full_name: string | null;
+  reporting_manager_user_id: string | null;
+  unreconciled_count: number;
+  max_age: number;
+}
+
+interface OnboardingStuckRow extends RowDataPacket {
+  id: string;
+  candidate_code: string | null;
+  full_name: string | null;
+  current_stage: string | null;
+  age_hours: number;
+}
+
+interface RosterShortageRow extends RowDataPacket {
+  requirement_date: string;
+  process_id: string;
+  process_name: string | null;
+  required_hc: number;
+  planned_hc: number;
+  shortage: number;
 }
 
 function dueDate(days: number) {
@@ -111,6 +145,10 @@ export const businessActionSignalSync = {
       support: await this.syncSupportSla(actorUserId),
       grievance: await this.syncGrievances(actorUserId),
       revenue_risk: await this.syncRevenueRisk(actorUserId),
+      payroll: await this.syncPayrollReadiness(actorUserId),
+      attendance: await this.syncAttendanceGaps(actorUserId),
+      onboarding: await this.syncOnboardingStuck(actorUserId),
+      roster: await this.syncRosterShortages(actorUserId),
       generated_at: new Date().toISOString(),
     };
     return results;
@@ -260,5 +298,180 @@ export const businessActionSignalSync = {
       if (result.created) created += 1;
     }
     return { scanned: riskRows.length, created, skipped: riskRows.length - created };
+  },
+
+  async syncPayrollReadiness(actorUserId: string) {
+    if (!(await tableExists("payroll_run"))) return { scanned: 0, created: 0, skipped: 0, reason: "payroll_run missing" };
+
+    // Query active payroll runs
+    const [runs] = await db.execute<PayrollRunRow[]>(
+      `SELECT id, run_period, run_date, status
+       FROM payroll_run
+       WHERE status IN ('draft', 'pending_approval') AND is_locked = 0
+       ORDER BY run_date DESC
+       LIMIT 10`
+    );
+
+    let created = 0;
+    let scanned = 0;
+
+    for (const run of runs) {
+      try {
+        // Call existing payroll governance service
+        const readinessResult = await payrollGovernanceService.readiness(run.id);
+
+        if (readinessResult.issues && Array.isArray(readinessResult.issues)) {
+          for (const issue of readinessResult.issues) {
+            scanned += 1;
+            const severity = issue.severity === 'blocker' ? 'critical' : 'high';
+            const sampleCodes = issue.sample?.slice(0, 3).map((s: any) => s.employee_code).join(', ') ?? '';
+
+            const result = await ensureAction({
+              source_module: 'payroll',
+              source_id: `${run.id}_${issue.code}`,
+              risk_type: 'payroll_readiness',
+              severity,
+              title: `${issue.message} (${issue.count} employees)`,
+              description: `Period: ${run.run_period ?? 'N/A'}\nSample: ${sampleCodes}`,
+              owner_role: 'payroll_hr',
+              due_date: run.run_date ?? dueDate(severity === 'critical' ? 1 : 2),
+            }, actorUserId);
+
+            if (result.created) created += 1;
+          }
+        }
+      } catch (error) {
+        console.error(`[PayrollReadiness] Error processing run ${run.id}:`, error);
+      }
+    }
+
+    return { scanned, created, skipped: scanned - created };
+  },
+
+  async syncAttendanceGaps(actorUserId: string) {
+    if (!(await tableExists("attendance_daily_record"))) return { scanned: 0, created: 0, skipped: 0, reason: "attendance_daily_record missing" };
+
+    // Query unreconciled attendance > 3 days old
+    const [gaps] = await db.execute<AttendanceGapRow[]>(
+      `SELECT adr.employee_id,
+              e.employee_code,
+              e.full_name,
+              e.reporting_manager_user_id,
+              COUNT(*) as unreconciled_count,
+              MAX(DATEDIFF(CURDATE(), adr.record_date)) as max_age
+       FROM attendance_daily_record adr
+       JOIN employees e ON e.id = adr.employee_id
+       WHERE adr.attendance_status = 'unreconciled'
+         AND adr.record_date < DATE_SUB(CURDATE(), INTERVAL 3 DAY)
+         AND adr.is_locked = 0
+         AND e.active_status = 1
+       GROUP BY adr.employee_id, e.employee_code, e.full_name, e.reporting_manager_user_id
+       ORDER BY max_age DESC
+       LIMIT 200`
+    );
+
+    let created = 0;
+    for (const gap of gaps) {
+      const severity = gap.max_age > 7 ? 'high' : 'medium';
+      const result = await ensureAction({
+        source_module: 'attendance',
+        source_id: String(gap.employee_id),
+        risk_type: 'attendance_gap',
+        severity,
+        title: `Unreconciled attendance: ${gap.employee_code ?? 'Unknown'} (${gap.unreconciled_count} days)`,
+        description: `Employee: ${gap.full_name ?? 'Unknown'}\nOldest gap: ${gap.max_age} days`,
+        owner_user_id: gap.reporting_manager_user_id ?? null,
+        owner_role: gap.reporting_manager_user_id ? null : 'hr',
+        due_date: dueDate(severity === 'high' ? 2 : 3),
+      }, actorUserId);
+
+      if (result.created) created += 1;
+    }
+
+    return { scanned: gaps.length, created, skipped: gaps.length - created };
+  },
+
+  async syncOnboardingStuck(actorUserId: string) {
+    if (!(await tableExists("ats_candidate"))) return { scanned: 0, created: 0, skipped: 0, reason: "ats_candidate missing" };
+
+    // Query candidates stuck > 48 hours
+    const [stuck] = await db.execute<OnboardingStuckRow[]>(
+      `SELECT c.id,
+              c.candidate_code,
+              c.full_name,
+              c.current_stage,
+              TIMESTAMPDIFF(HOUR, c.created_at, NOW()) as age_hours
+       FROM ats_candidate c
+       WHERE c.current_stage IN ('bgv_pending', 'onboarding_pending', 'document_pending')
+         AND c.active_status = 1
+         AND TIMESTAMPDIFF(HOUR, c.created_at, NOW()) > 48
+       ORDER BY age_hours DESC
+       LIMIT 150`
+    );
+
+    let created = 0;
+    for (const candidate of stuck) {
+      const ageDays = Math.floor(candidate.age_hours / 24);
+      const severity = candidate.age_hours > 168 ? 'high' : 'medium'; // 168h = 7 days
+
+      const result = await ensureAction({
+        source_module: 'onboarding',
+        source_id: String(candidate.id),
+        risk_type: 'manual_follow_up',
+        severity,
+        title: `Onboarding stuck: ${candidate.candidate_code ?? 'Unknown'} at ${candidate.current_stage ?? 'unknown stage'}`,
+        description: `Candidate: ${candidate.full_name ?? 'Unknown'}\nAge: ${ageDays} days (${candidate.age_hours}h)`,
+        owner_role: 'hr',
+        due_date: dueDate(severity === 'high' ? 1 : 2),
+      }, actorUserId);
+
+      if (result.created) created += 1;
+    }
+
+    return { scanned: stuck.length, created, skipped: stuck.length - created };
+  },
+
+  async syncRosterShortages(actorUserId: string) {
+    if (!(await tableExists("wfm_slot_requirement"))) return { scanned: 0, created: 0, skipped: 0, reason: "wfm_slot_requirement missing" };
+
+    // Query roster shortages in next 7 days
+    const [shortages] = await db.execute<RosterShortageRow[]>(
+      `SELECT wsr.requirement_date,
+              wsr.process_id,
+              p.process_name,
+              wsr.required_hc,
+              COUNT(DISTINCT ra.employee_id) AS planned_hc,
+              wsr.required_hc - COUNT(DISTINCT ra.employee_id) AS shortage
+       FROM wfm_slot_requirement wsr
+       JOIN process p ON p.id = wsr.process_id
+       LEFT JOIN roster_assignment ra
+         ON ra.roster_date = wsr.requirement_date
+         AND ra.process_id = wsr.process_id
+       WHERE wsr.requirement_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+       GROUP BY wsr.requirement_date, wsr.process_id, p.process_name, wsr.required_hc
+       HAVING shortage > 0
+       ORDER BY shortage DESC, wsr.requirement_date ASC
+       LIMIT 100`
+    );
+
+    let created = 0;
+    for (const shortage of shortages) {
+      const severity = shortage.shortage > 10 ? 'critical' : shortage.shortage > 5 ? 'high' : 'medium';
+
+      const result = await ensureAction({
+        source_module: 'roster',
+        source_id: `${shortage.requirement_date}_${shortage.process_id}`,
+        risk_type: 'roster_shortage',
+        severity,
+        title: `Roster shortage: ${shortage.process_name ?? 'Unknown'} on ${shortage.requirement_date} (${shortage.shortage} HC)`,
+        description: `Required: ${shortage.required_hc}, Planned: ${shortage.planned_hc}, Shortage: ${shortage.shortage}`,
+        owner_role: 'operations',
+        due_date: shortage.requirement_date,
+      }, actorUserId);
+
+      if (result.created) created += 1;
+    }
+
+    return { scanned: shortages.length, created, skipped: shortages.length - created };
   },
 };

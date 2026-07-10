@@ -23,6 +23,8 @@ import { startPayrollNightlyRecalcWorker } from "./workers/payroll-nightly-recal
 import { startKpiDailySyncWorker } from "./workers/kpi-daily-sync.worker.js";
 import { startSLABreachWorker } from "./workers/sla-breach-worker.js";
 import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
+// Phase 2: Business Action Signal Sync
+import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js";
 
 // Single-instance guard: if server.ts is the sole entry point, run all workers here.
 // If all-workers.ts is also running (separate process), set WORKERS_PROCESS=external
@@ -64,7 +66,8 @@ function startServer() {
       startLeaveMonthlyWorker();
       startAnnualLeaveWorker();
       startPayrollWindowClosureScheduler();
-      console.log("[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window started");
+      initBusinessActionSyncJobs(); // Phase 2: Business Action Signal Sync
+      console.log("[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, business-action-sync started");
 
       if (!WORKERS_EXTERNAL) {
         // Attendance data sync: APR/dialler → apr table (daily at 01:30 IST)
