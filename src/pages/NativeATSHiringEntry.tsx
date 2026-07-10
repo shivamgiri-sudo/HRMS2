@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock3,
+  Download,
   Mail,
   PhoneCall,
   PhoneIcon,
@@ -19,6 +20,7 @@ import {
   Save,
   Search,
   Target,
+  TrendingUp,
   Upload,
   UserRound,
   Users,
@@ -283,6 +285,7 @@ export default function NativeATSHiringEntry() {
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const analyticsLoadedRef = useRef(false);
+  const [trendPeriod, setTrendPeriod] = useState<"daily" | "weekly" | "monthly">("daily");
 
   // Followup modal state
   const [followupModal, setFollowupModal] = useState<{ id: string; candidateName: string } | null>(null);
@@ -552,6 +555,31 @@ export default function NativeATSHiringEntry() {
   const genderOptions = bootstrap?.options.genderOptions ?? [];
   const educationOptions = bootstrap?.options.educationOptions ?? [];
   const experienceOptions = bootstrap?.options.experienceOptions ?? [];
+
+  const aggregatedTrend = useMemo(() => {
+    if (!analytics?.trend?.length) return [];
+    if (trendPeriod === "daily") return analytics.trend;
+
+    const buckets = new Map<string, { logged: number; walkins: number; selected: number }>();
+    for (const d of analytics.trend) {
+      let key: string;
+      if (trendPeriod === "weekly") {
+        const dt = new Date(d.date);
+        const dayOfWeek = dt.getDay();
+        const monday = new Date(dt);
+        monday.setDate(dt.getDate() - ((dayOfWeek + 6) % 7));
+        key = `W ${monday.toISOString().slice(5, 10)}`;
+      } else {
+        key = d.date.slice(0, 7);
+      }
+      const b = buckets.get(key) ?? { logged: 0, walkins: 0, selected: 0 };
+      b.logged += d.logged;
+      b.walkins += d.walkins;
+      b.selected += d.selected;
+      buckets.set(key, b);
+    }
+    return Array.from(buckets.entries()).map(([date, v]) => ({ date, ...v }));
+  }, [analytics?.trend, trendPeriod]);
 
   const isRejectionRequired =
     form.recruiter_remarks.toLowerCase() === "rejected" ||
@@ -1105,18 +1133,48 @@ export default function NativeATSHiringEntry() {
                 {/* Trend + Outcome pie */}
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <div className="mb-3 text-sm font-black text-slate-900">Daily Trend (Last 30 Days)</div>
+                    <div className="mb-3 flex items-center justify-between">
+                      <div className="text-sm font-black text-slate-900 flex items-center gap-2">
+                        <TrendingUp className="h-4 w-4 text-slate-500" />
+                        Activity Trend
+                      </div>
+                      <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+                        {(["daily", "weekly", "monthly"] as const).map((p) => (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => setTrendPeriod(p)}
+                            className={`px-2.5 py-1 text-[10px] font-bold uppercase ${trendPeriod === p ? "bg-slate-900 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}
+                          >
+                            {p}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <ResponsiveContainer width="100%" height={220}>
-                      <LineChart data={analytics.trend} margin={{ left: -10, right: 10 }}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(v: string) => v.slice(5)} />
-                        <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
-                        <Tooltip />
-                        <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                        <Line type="monotone" dataKey="logged" stroke="#64748b" dot={false} name="Logged" strokeWidth={2} />
-                        <Line type="monotone" dataKey="walkins" stroke="#0ea5e9" dot={false} name="Walk-ins" strokeWidth={2} />
-                        <Line type="monotone" dataKey="selected" stroke="#10b981" dot={false} name="Selected" strokeWidth={2} />
-                      </LineChart>
+                      {trendPeriod === "daily" ? (
+                        <LineChart data={aggregatedTrend} margin={{ left: -10, right: 10 }}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(v: string) => v.slice(5)} />
+                          <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+                          <Tooltip />
+                          <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+                          <Line type="monotone" dataKey="logged" stroke="#64748b" dot={false} name="Logged" strokeWidth={2} />
+                          <Line type="monotone" dataKey="walkins" stroke="#0ea5e9" dot={false} name="Walk-ins" strokeWidth={2} />
+                          <Line type="monotone" dataKey="selected" stroke="#10b981" dot={false} name="Selected" strokeWidth={2} />
+                        </LineChart>
+                      ) : (
+                        <BarChart data={aggregatedTrend} margin={{ left: -10, right: 10 }}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                          <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+                          <Tooltip />
+                          <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+                          <Bar dataKey="logged" fill="#64748b" name="Logged" radius={[2, 2, 0, 0]} />
+                          <Bar dataKey="walkins" fill="#0ea5e9" name="Walk-ins" radius={[2, 2, 0, 0]} />
+                          <Bar dataKey="selected" fill="#10b981" name="Selected" radius={[2, 2, 0, 0]} />
+                        </BarChart>
+                      )}
                     </ResponsiveContainer>
                   </div>
 
@@ -1127,7 +1185,7 @@ export default function NativeATSHiringEntry() {
                     ) : (
                       <ResponsiveContainer width="100%" height={220}>
                         <PieChart>
-                          <Pie data={analytics.byOutcome} dataKey="count" nameKey="label" cx="50%" cy="50%" outerRadius={80} label={({ label, pct }: any) => `${label}`}>
+                          <Pie data={analytics.byOutcome} dataKey="count" nameKey="label" cx="50%" cy="50%" outerRadius={80} label={({ label }: any) => `${label}`}>
                             {analytics.byOutcome.map((_, i) => (
                               <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
                             ))}
@@ -1139,6 +1197,25 @@ export default function NativeATSHiringEntry() {
                     )}
                   </div>
                 </div>
+
+                {/* Recruiter Conversion Comparison */}
+                {analytics.byRecruiter.length > 1 && (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                    <div className="mb-3 text-sm font-black text-slate-900">Recruiter Conversion Comparison</div>
+                    <ResponsiveContainer width="100%" height={Math.max(180, analytics.byRecruiter.length * 36)}>
+                      <BarChart data={analytics.byRecruiter} layout="vertical" margin={{ left: 10, right: 40 }}>
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                        <XAxis type="number" tick={{ fontSize: 10 }} />
+                        <YAxis dataKey="label" type="category" tick={{ fontSize: 10 }} width={100} />
+                        <Tooltip formatter={(v: number, name: string) => [v, name]} />
+                        <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+                        <Bar dataKey="total" fill="#94a3b8" name="Logged" radius={[0, 2, 2, 0]} />
+                        <Bar dataKey="selected" fill="#10b981" name="Selected" radius={[0, 2, 2, 0]} />
+                        <Bar dataKey="joined" fill="#6366f1" name="Joined" radius={[0, 2, 2, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
 
                 {/* Recruiter leaderboard */}
                 <div className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -1310,6 +1387,47 @@ export default function NativeATSHiringEntry() {
                   Clear
                 </button>
               )}
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const XLSX = await import("xlsx");
+                    const exportData = filteredRows.map((r: any) => ({
+                      "Date": r.activity_date?.slice(0, 10) ?? "",
+                      "Recruiter": r.recruiter_name_snapshot ?? "",
+                      "Branch": r.branch_name ?? "",
+                      "Process": r.process_name ?? "",
+                      "Source": r.hiring_source ?? "",
+                      "WP Group": r.wp_group ?? "",
+                      "Candidate Name": r.candidate_name ?? "",
+                      "Mobile": r.mobile ?? "",
+                      "Gender": r.gender ?? "",
+                      "Email": r.candidate_email ?? "",
+                      "Education": r.education_qualification ?? "",
+                      "Experience": r.experience_level ?? "",
+                      "Location": r.candidate_location ?? "",
+                      "Calling Outcome": r.recruiter_remarks ?? "",
+                      "Rejection Reason": r.recruiter_rejection_reason ?? "",
+                      "HR Interview Status": r.hr_interview_status ?? "",
+                      "Ops Interview Status": r.ops_interview_status ?? "",
+                      "Current Status": r.current_status ?? "",
+                      "Walk-in Date": r.walkin_date ?? "",
+                      "Contacted": r.contacted_flag ? "Yes" : "No",
+                      "Selected": r.final_selection_flag ? "Yes" : "No",
+                      "Joined": r.joined_flag ? "Yes" : "No",
+                    }));
+                    const ws = XLSX.utils.json_to_sheet(exportData);
+                    const wb = XLSX.utils.book_new();
+                    XLSX.utils.book_append_sheet(wb, ws, "Hiring Activity");
+                    XLSX.writeFile(wb, `hiring_activity_report_${new Date().toISOString().slice(0, 10)}.xlsx`);
+                    toast.success("Report exported");
+                  } catch { toast.error("Export failed"); }
+                }}
+                className="h-9 rounded-xl border border-emerald-200 bg-emerald-50 px-3 text-sm font-bold text-emerald-700 hover:bg-emerald-100 flex items-center gap-1.5"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Export
+              </button>
             </div>
 
             {rows.length === 0 ? (
