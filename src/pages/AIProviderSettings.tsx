@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, Check, X, Shield, Activity, AlertTriangle, Eye, EyeOff } from 'lucide-react';
-import axios from 'axios';
+import { hrmsApi } from '@/lib/hrmsApi';
 
 interface ProviderConfig {
   id: string;
@@ -83,12 +83,10 @@ export default function AIProviderSettings() {
 
   const loadProviders = async () => {
     try {
-      const response = await axios.get('/api/ai/providers');
-      if (response.data.success) {
-        setProviders(response.data.data);
-
-        // Load Gemini config if exists
-        const gemini = response.data.data.find((p: ProviderConfig) => p.providerKey === 'gemini');
+      const res = await hrmsApi.get<{ success: boolean; data: ProviderConfig[] }>('/api/ai/providers');
+      if (res.success) {
+        setProviders(res.data);
+        const gemini = res.data.find((p: ProviderConfig) => p.providerKey === 'gemini');
         if (gemini) {
           setGeminiConfig((prev) => ({
             ...prev,
@@ -105,11 +103,7 @@ export default function AIProviderSettings() {
         }
       }
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.message || 'Failed to load providers',
-        variant: 'destructive',
-      });
+      toast({ title: 'Error', description: error.message || 'Failed to load providers', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
@@ -117,12 +111,10 @@ export default function AIProviderSettings() {
 
   const loadUsageLogs = async () => {
     try {
-      const response = await axios.get('/api/ai/providers/usage', {
-        params: { limit: 50 },
-      });
-      if (response.data.success) {
-        setUsageLogs(response.data.data.logs || []);
-        setUsageTotal(response.data.data.total || 0);
+      const res = await hrmsApi.get<{ success: boolean; data: { logs: UsageLog[]; total: number } }>('/api/ai/providers/usage?limit=50');
+      if (res.success) {
+        setUsageLogs(res.data.logs || []);
+        setUsageTotal(res.data.total || 0);
       }
     } catch (error) {
       console.error('Failed to load usage logs:', error);
@@ -132,25 +124,14 @@ export default function AIProviderSettings() {
   const testProvider = async (providerId: string) => {
     setTesting(providerId);
     try {
-      const response = await axios.post(`/api/ai/providers/${providerId}/test`);
-      if (response.data.success && response.data.data.success) {
-        toast({
-          title: 'Success',
-          description: `Provider test successful (${response.data.data.latencyMs}ms)`,
-        });
+      const res = await hrmsApi.post<{ success: boolean; data: { success: boolean; latencyMs: number; error?: string } }>(`/api/ai/providers/${providerId}/test`, {});
+      if (res.success && res.data.success) {
+        toast({ title: 'Success', description: `Provider test successful (${res.data.latencyMs}ms)` });
       } else {
-        toast({
-          title: 'Test Failed',
-          description: response.data.data.error || 'Provider test failed',
-          variant: 'destructive',
-        });
+        toast({ title: 'Test Failed', description: res.data.error || 'Provider test failed', variant: 'destructive' });
       }
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.message || 'Failed to test provider',
-        variant: 'destructive',
-      });
+      toast({ title: 'Error', description: error.message || 'Failed to test provider', variant: 'destructive' });
     } finally {
       setTesting(null);
     }
@@ -160,44 +141,28 @@ export default function AIProviderSettings() {
     setSaving(true);
     try {
       const gemini = providers.find((p) => p.providerKey === 'gemini');
-
       const payload = {
         providerName: 'Google Gemini AI',
         activeStatus: geminiConfig.activeStatus,
         isDefault: geminiConfig.isDefault,
         modelName: geminiConfig.modelName,
         baseUrl: geminiConfig.baseUrl,
-        apiKey: geminiConfig.apiKey || undefined, // Only send if changed
+        apiKey: geminiConfig.apiKey || undefined,
         timeout: geminiConfig.timeout,
         dailyRequestLimit: geminiConfig.dailyRequestLimit,
         monthlyRequestLimit: geminiConfig.monthlyRequestLimit,
         dailyTokenLimit: geminiConfig.dailyTokenLimit,
         monthlyTokenLimit: geminiConfig.monthlyTokenLimit,
       };
-
       if (gemini) {
-        // Update existing
-        await axios.put(`/api/ai/providers/${gemini.id}`, payload);
+        await hrmsApi.put(`/api/ai/providers/${gemini.id}`, payload);
       } else {
-        // Create new
-        await axios.post('/api/ai/providers', {
-          providerKey: 'gemini',
-          ...payload,
-        });
+        await hrmsApi.post('/api/ai/providers', { providerKey: 'gemini', ...payload });
       }
-
-      toast({
-        title: 'Success',
-        description: 'Gemini configuration saved',
-      });
-
+      toast({ title: 'Success', description: 'Gemini configuration saved' });
       await loadProviders();
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.message || 'Failed to save configuration',
-        variant: 'destructive',
-      });
+      toast({ title: 'Error', description: error.message || 'Failed to save configuration', variant: 'destructive' });
     } finally {
       setSaving(false);
     }
@@ -205,35 +170,21 @@ export default function AIProviderSettings() {
 
   const setAsDefault = async (providerId: string) => {
     try {
-      await axios.post(`/api/ai/providers/${providerId}/set-default`);
-      toast({
-        title: 'Success',
-        description: 'Provider set as default',
-      });
+      await hrmsApi.post(`/api/ai/providers/${providerId}/set-default`, {});
+      toast({ title: 'Success', description: 'Provider set as default' });
       await loadProviders();
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.message || 'Failed to set default provider',
-        variant: 'destructive',
-      });
+      toast({ title: 'Error', description: error.message || 'Failed to set default provider', variant: 'destructive' });
     }
   };
 
   const disableProvider = async (providerId: string) => {
     try {
-      await axios.post(`/api/ai/providers/${providerId}/disable`);
-      toast({
-        title: 'Success',
-        description: 'Provider disabled',
-      });
+      await hrmsApi.post(`/api/ai/providers/${providerId}/disable`, {});
+      toast({ title: 'Success', description: 'Provider disabled' });
       await loadProviders();
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.message || 'Failed to disable provider',
-        variant: 'destructive',
-      });
+      toast({ title: 'Error', description: error.message || 'Failed to disable provider', variant: 'destructive' });
     }
   };
 
