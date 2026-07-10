@@ -69,12 +69,21 @@ async function ensureRowAccess(req: AuthenticatedRequest, id: string) {
   const { role, id: userId } = getRequester(req);
   const privileged = ["admin", "hr", "super_admin"].includes(role);
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, created_by FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
+    `SELECT id, created_by, recruiter_id, branch_name FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
     [id]
   );
   const row = rows[0];
   if (!row) return { allowed: false, row: null };
-  if (privileged || row.created_by === userId) return { allowed: true, row };
+  if (privileged || row.created_by === userId || row.recruiter_id === userId) return { allowed: true, row };
+  // Branch-scoped access: same branch as the actor
+  const [branchRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(bm.branch_name, bm.branch_code) AS branch_name
+       FROM employees e LEFT JOIN branch_master bm ON bm.id = e.branch_id
+      WHERE e.user_id = ? LIMIT 1`,
+    [userId]
+  );
+  const actorBranch = branchRows[0]?.branch_name;
+  if (actorBranch && row.branch_name === actorBranch) return { allowed: true, row };
   return { allowed: false, row };
 }
 

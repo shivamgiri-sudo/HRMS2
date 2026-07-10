@@ -184,6 +184,11 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
   const handleSubmit = useCallback(async () => {
     const validRows = mappedRows.filter((r) => r._valid);
     if (!validRows.length) { toast.error("No valid rows to import"); return; }
+    const missingFeedback = validRows.filter((r) => !r.recruiter_remarks);
+    if (missingFeedback.length) {
+      toast.error(`${missingFeedback.length} row(s) still need a Calling Feedback outcome`);
+      return;
+    }
 
     setStep("submitting");
     try {
@@ -438,7 +443,9 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
                       value={row.recruiter_remarks}
                       onChange={(e) => updateRowFeedback(idx, e.target.value)}
                       disabled={!row._valid}
-                      className="h-6 w-full rounded border border-slate-200 bg-white px-1.5 text-xs font-medium text-slate-700 disabled:opacity-40"
+                      className={`h-6 w-full rounded border px-1.5 text-xs font-medium text-slate-700 disabled:opacity-40 ${
+                        row._valid && !row.recruiter_remarks ? "border-rose-400 bg-rose-50" : "border-slate-200 bg-white"
+                      }`}
                     >
                       <option value="">— Select —</option>
                       {bootstrap.options.callingOutcomeOptions.map((opt) => (
@@ -464,23 +471,31 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
           <Button variant="ghost" size="sm" onClick={reset} className="text-slate-500">
             <RefreshCw className="h-3.5 w-3.5 mr-1" /> Start Over
           </Button>
-          <Button
-            onClick={() => void handleSubmit()}
-            disabled={step === "submitting" || validCount === 0}
-            className="gap-1.5"
-          >
-            {step === "submitting" ? (
-              <>
-                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                Importing…
-              </>
-            ) : (
-              <>
-                <Upload className="h-3.5 w-3.5" />
-                Import {validCount} Rows
-              </>
+          <div className="flex items-center gap-3">
+            {noFeedbackCount > 0 && (
+              <p className="text-xs font-bold text-rose-600">
+                <AlertTriangle className="inline h-3 w-3 mr-1" />
+                {noFeedbackCount} row(s) need Calling Feedback before import
+              </p>
             )}
-          </Button>
+            <Button
+              onClick={() => void handleSubmit()}
+              disabled={step === "submitting" || validCount === 0 || noFeedbackCount > 0}
+              className="gap-1.5"
+            >
+              {step === "submitting" ? (
+                <>
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  Importing…
+                </>
+              ) : (
+                <>
+                  <Upload className="h-3.5 w-3.5" />
+                  Import {validCount} Rows
+                </>
+              )}
+            </Button>
+          </div>
         </div>
       </section>
     );
