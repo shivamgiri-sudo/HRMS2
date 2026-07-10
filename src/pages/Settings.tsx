@@ -161,9 +161,10 @@ type LuckpayRuntimeStatus = {
 
 const PROVIDER_REQUIRED_FIELDS: Record<string, { key: string; label: string }[]> = {
   befisc_luckpay: [
-    { key: "luckpay_api_url", label: "Luckpay API Base URL" },
-    { key: "luckpay_basic_token", label: "Luckpay Basic Token" },
-    { key: "luckpay_client_id", label: "Luckpay Client ID" },
+    { key: "luckpay_digilocker_base_url", label: "DigiLocker/eSign Base URL" },
+    { key: "luckpay_api_url", label: "PAN/Bank/UAN Base URL" },
+    { key: "luckpay_basic_token", label: "PAN/Bank/UAN Basic Token" },
+    { key: "luckpay_client_id", label: "PAN/Bank/UAN Client ID" },
   ],
   infinity_ai: [
     { key: "infinity_ai_api_url", label: "API Base URL" },
@@ -285,14 +286,15 @@ const BgvProviderSettings = () => {
 
   const serviceCards = [
     {
-      title: "DigiLocker",
-      desc: "Candidate document authorization for Aadhaar and PAN before fallback manual upload.",
+      title: "DigiLocker + eSign (Luckpay)",
+      desc: "DigiLocker document fetch and eSign. Uses a separate Luckpay URL/credentials from PAN/Bank — currently staging, swap to production URL when Luckpay provides it.",
       fields: [
-        { key: "digilocker_session_url", label: "DigiLocker Session/Create URL" },
-        { key: "digilocker_api_key", label: "DigiLocker API Key", type: "password" },
-        { key: "digilocker_client_id", label: "DigiLocker Client ID" },
+        { key: "luckpay_digilocker_base_url", label: "DigiLocker/eSign Base URL", placeholder: "https://staging-api-banking.luckpay.in/apibanking/api/v1" },
+        { key: "luckpay_digilocker_basic_token", label: "DigiLocker/eSign Basic Token", type: "password" },
+        { key: "luckpay_digilocker_client_id", label: "DigiLocker/eSign Client ID" },
       ],
       callback: "/api/onboarding/digilocker/callback",
+      note: "Leave blank to use same credentials as PAN/Bank/UAN below.",
     },
     {
       title: "Aadhaar API (Befisc)",
@@ -305,11 +307,11 @@ const BgvProviderSettings = () => {
     },
     {
       title: "PAN, Bank & UAN (Luckpay)",
-      desc: "Luckpay PAN verification, bank penny-less verification, and UAN/employment history.",
+      desc: "Luckpay PAN verification, bank penny-less check, UAN/employment history. Production URL — update when Luckpay activates.",
       fields: [
-        { key: "luckpay_api_url", label: "Luckpay API Base URL", placeholder: "https://api-banking.luckpay.in/apibanking/api/v1" },
-        { key: "luckpay_basic_token", label: "Luckpay Basic Token", type: "password" },
-        { key: "luckpay_client_id", label: "Luckpay Client ID" },
+        { key: "luckpay_api_url", label: "PAN/Bank/UAN Base URL", placeholder: "https://api-banking.luckpay.in/apibanking/api/v1" },
+        { key: "luckpay_basic_token", label: "PAN/Bank/UAN Basic Token", type: "password" },
+        { key: "luckpay_client_id", label: "PAN/Bank/UAN Client ID" },
       ],
       callback: "/api/onboarding/penny-drop/webhook",
     },

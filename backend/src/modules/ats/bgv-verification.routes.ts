@@ -460,9 +460,11 @@ const BGV_CONFIG_KEYS = [
   "bgv_provider",
   "infinity_ai_api_url", "infinity_ai_api_key", "infinity_ai_client_id", "infinity_ai_portal_url",
   "digio_api_url", "digio_client_id", "digio_client_secret",
-  "digilocker_session_url", "digilocker_api_key", "digilocker_client_id",
   "befisc_api_url", "befisc_api_key",
+  // Luckpay PAN / Bank / UAN (production account)
   "luckpay_api_url", "luckpay_basic_token", "luckpay_client_id",
+  // Luckpay DigiLocker + eSign — may use different base URL and/or credentials (e.g. staging vs prod)
+  "luckpay_digilocker_base_url", "luckpay_digilocker_basic_token", "luckpay_digilocker_client_id",
   "crimescan_api_url", "crimescan_api_key",
 ];
 
@@ -475,16 +477,16 @@ const BGV_CONFIG_DEFAULTS: Record<string, { value: string | null; label: string 
   digio_api_url: { value: "https://api.digio.in", label: "Digio API Base URL" },
   digio_client_id: { value: null, label: "Digio Client ID" },
   digio_client_secret: { value: null, label: "Digio Client Secret" },
-  digilocker_session_url: { value: null, label: "DigiLocker session/initiate URL" },
-  digilocker_api_key: { value: null, label: "DigiLocker API Key" },
-  digilocker_client_id: { value: null, label: "DigiLocker Client ID" },
-  befisc_api_url: { value: null, label: "Befisc Aadhaar API Base URL" },
-  befisc_api_key: { value: null, label: "Befisc Aadhaar API Key" },
-  luckpay_api_url: { value: null, label: "Luckpay API Base URL" },
-  luckpay_basic_token: { value: null, label: "Luckpay Basic Token" },
-  luckpay_client_id: { value: null, label: "Luckpay Client ID" },
-  crimescan_api_url: { value: null, label: "Crimescan API Base URL" },
-  crimescan_api_key: { value: null, label: "Crimescan API Key" },
+  befisc_api_url: { value: null, label: "Befisc Aadhaar Endpoint URL" },
+  befisc_api_key: { value: null, label: "Befisc authkey" },
+  luckpay_api_url: { value: null, label: "Luckpay PAN/Bank/UAN Base URL" },
+  luckpay_basic_token: { value: null, label: "Luckpay PAN/Bank/UAN Basic Token" },
+  luckpay_client_id: { value: null, label: "Luckpay PAN/Bank/UAN Client ID" },
+  luckpay_digilocker_base_url: { value: null, label: "Luckpay DigiLocker/eSign Base URL" },
+  luckpay_digilocker_basic_token: { value: null, label: "Luckpay DigiLocker/eSign Basic Token" },
+  luckpay_digilocker_client_id: { value: null, label: "Luckpay DigiLocker/eSign Client ID" },
+  crimescan_api_url: { value: null, label: "Crimescan Exact Search URL" },
+  crimescan_api_key: { value: null, label: "Crimescan Bearer Token" },
 };
 
 router.get("/admin/provider-config", requireAuth, requireRole("admin"), h(async (_req: AuthenticatedRequest, res: Response) => {

@@ -814,7 +814,10 @@ export interface BgvDbConfig {
   digilocker_client_id?: string;
   befisc_api_url?: string;
   befisc_api_key?: string;
-  luckpay_api_url?: string;
+  luckpay_api_url?: string;              // PAN / Bank / UAN base URL
+  luckpay_digilocker_base_url?: string;  // DigiLocker + eSign base URL (may differ from PAN URL)
+  luckpay_digilocker_basic_token?: string; // separate token for DigiLocker/eSign if different account
+  luckpay_digilocker_client_id?: string;   // separate client ID for DigiLocker/eSign if different account
   luckpay_basic_token?: string;
   luckpay_client_id?: string;
   crimescan_api_url?: string;
@@ -875,9 +878,9 @@ async function loadBgvDbConfig(): Promise<BgvDbConfig | null> {
     "bgv_provider",
     "infinity_ai_api_url", "infinity_ai_api_key", "infinity_ai_client_id", "infinity_ai_portal_url",
     "digio_api_url", "digio_client_id", "digio_client_secret",
-    "digilocker_session_url", "digilocker_api_key", "digilocker_client_id",
     "befisc_api_url", "befisc_api_key",
     "luckpay_api_url", "luckpay_basic_token", "luckpay_client_id",
+    "luckpay_digilocker_base_url", "luckpay_digilocker_basic_token", "luckpay_digilocker_client_id",
     "crimescan_api_url", "crimescan_api_key",
   ];
   const placeholders = keys.map(() => "?").join(",");
@@ -946,6 +949,38 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     const baseUrl = this.cfg.luckpay_api_url?.trim();
     if (!baseUrl) throw new Error("Luckpay API Base URL is not configured in BGV settings");
     return baseUrl.replace(/\/$/, "");
+  }
+
+  // DigiLocker + eSign may use a different base URL (e.g. staging vs production)
+  // Falls back to luckpay_api_url if luckpay_digilocker_base_url is not set
+  private digilockerBaseUrl(): string {
+    const url = (this.cfg.luckpay_digilocker_base_url ?? this.cfg.luckpay_api_url ?? "").trim();
+    if (!url) throw new Error("Luckpay DigiLocker Base URL is not configured in BGV settings");
+    return url.replace(/\/$/, "");
+  }
+
+  // DigiLocker/eSign auth uses its own token when separate credentials are configured
+  private async getDigilockerAccessToken(): Promise<string> {
+    const basicToken = (this.cfg.luckpay_digilocker_basic_token ?? this.cfg.luckpay_basic_token ?? "").replace(/\s+/g, "").trim();
+    const clientId = (this.cfg.luckpay_digilocker_client_id ?? this.cfg.luckpay_client_id ?? "").replace(/\s+/g, "").trim();
+    if (!basicToken || !clientId) throw new Error("Luckpay DigiLocker credentials are not configured in BGV settings.");
+    // Use digilocker base URL for auth if separate
+    const authUrl = `${this.digilockerBaseUrl()}/auth/token`;
+    let res;
+    try {
+      res = await axios.post(authUrl, undefined, {
+        headers: { Authorization: `Basic ${basicToken}` },
+        timeout: env.LUCKPAY_TIMEOUT_MS,
+      });
+    } catch (error) { throw this.toLuckpayError(error); }
+    const payload = res.data?.data ?? res.data ?? {};
+    const token = String(payload.accessToken ?? payload.access_token ?? payload.token ?? "");
+    if (!token) throw new Error("Luckpay DigiLocker auth response did not include a token.");
+    return token;
+  }
+
+  private digilockerClientId(): string {
+    return (this.cfg.luckpay_digilocker_client_id ?? this.cfg.luckpay_client_id ?? "").replace(/\s+/g, "").trim();
   }
 
   private async getLuckpayAccessToken(): Promise<string> {
@@ -1305,11 +1340,24 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
   async startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession> {
     const state = randomUUID();
     const candidate = await this.getCandidateContact(candidateId);
-    const d = await this.postLuckpay("/verifyDigilockerWithURL", {
-      clientTransactionId: state,
-      customerName: candidate.fullName,
-      mobileNumber: candidate.mobile,
-    });
+    // DigiLocker uses its own base URL + credentials (staging vs production may differ)
+    const accessToken = await this.getDigilockerAccessToken();
+    let dlRes;
+    try {
+      dlRes = await axios.post(
+        `${this.digilockerBaseUrl()}/verifyDigilockerWithURL`,
+        { clientTransactionId: state, customerName: candidate.fullName, mobileNumber: candidate.mobile },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: this.digilockerClientId(),
+            "X-Access-Token": `Bearer ${accessToken}`,
+          },
+          timeout: env.LUCKPAY_TIMEOUT_MS,
+        },
+      );
+    } catch (error) { throw this.toLuckpayError(error); }
+    const d = dlRes.data?.data ?? dlRes.data ?? {};
     return {
       state: String(d.state ?? state),
       authUrl: String(d.auth_url ?? d.redirect_url ?? d.access_link ?? d.redirectUrl ?? d.verificationUrl ?? d.verification_url ?? ""),
@@ -1319,19 +1367,18 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
 
   async initiateESign(input: ESignInput): Promise<ESignSession> {
     const state = randomUUID();
-    const accessToken = await this.getLuckpayAccessToken();
+    // eSign uses digilocker credentials (same staging/prod split as DigiLocker)
+    const accessToken = await this.getDigilockerAccessToken();
 
     // Luckpay eSignWithURL uses multipart/form-data
     const FormData = (await import("form-data")).default;
     const formData = new FormData();
 
-    // File part
     formData.append("file", input.documentBuffer, {
       filename: input.documentName,
       contentType: "application/pdf",
     });
 
-    // Request metadata as JSON string
     const requestMetadata = {
       clientTransactionId: state,
       signedBy: input.signedBy,
@@ -1344,10 +1391,10 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
 
     let res;
     try {
-      res = await axios.post(`${this.luckpayBaseUrl()}/eSignWithURL`, formData, {
+      res = await axios.post(`${this.digilockerBaseUrl()}/eSignWithURL`, formData, {
         headers: {
           ...formData.getHeaders(),
-          Authorization: this.cfg.luckpay_client_id!,
+          Authorization: this.digilockerClientId(),
           "X-Access-Token": `Bearer ${accessToken}`,
         },
         timeout: env.LUCKPAY_TIMEOUT_MS,
