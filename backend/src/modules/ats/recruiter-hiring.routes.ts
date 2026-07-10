@@ -12,6 +12,7 @@ import {
   getHiringActivityBootstrap,
   getCallingDashboard,
   getHiringDashboard,
+  getHiringActivityAnalytics,
   importHiringActivityRows,
   listHiringActivity,
   mapSheetRow,
@@ -347,6 +348,84 @@ recruiterHiringRouter.post("/recruiter/hiring-activity/:id/send-onboarding", asy
   try {
     const data = await sendOnboardingFromActivity(req.params.id, req.authUser!.id);
     return res.status(201).json({ success: true, data });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
+  }
+});
+
+// ── Analytics endpoint ────────────────────────────────────────────────────────
+recruiterHiringRouter.get("/recruiter/hiring-activity/analytics", async (req: AuthenticatedRequest, res) => {
+  try {
+    const data = await getHiringActivityAnalytics(req.authUser!.id, req.authUser?.role, {
+      fromDate: parseQueryBool(req.query.fromDate),
+      toDate: parseQueryBool(req.query.toDate),
+      month: parseQueryBool(req.query.month),
+      branch: parseQueryBool(req.query.branch),
+      process: parseQueryBool(req.query.process),
+      hiringSource: parseQueryBool(req.query.hiringSource),
+    });
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
+  }
+});
+
+// ── Set followup reminder ─────────────────────────────────────────────────────
+recruiterHiringRouter.post("/recruiter/hiring-activity/:id/set-followup", async (req: AuthenticatedRequest, res) => {
+  try {
+    const { id } = req.params;
+    const { followup_date, followup_reason } = req.body as { followup_date?: string; followup_reason?: string };
+
+    if (!followup_date) {
+      return res.status(400).json({ success: false, message: "followup_date is required" });
+    }
+
+    const { allowed, row } = await ensureRowAccess(req as AuthenticatedRequest, id);
+    if (!allowed || !row) {
+      return res.status(403).json({ success: false, message: "Access denied or record not found" });
+    }
+
+    await db.execute(
+      `UPDATE ats_recruiter_hiring_activity
+          SET followup_required = 1,
+              followup_date = ?,
+              followup_reason = ?,
+              updated_by = ?,
+              updated_at = NOW()
+        WHERE id = ?`,
+      [followup_date, followup_reason ?? null, req.authUser!.id, id]
+    );
+
+    // Create inbox reminder for the recruiter
+    const candidateName = String((row as RowDataPacket).candidate_name ?? "Candidate");
+    const [existing] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM work_inbox_item WHERE entity_type='hiring_activity' AND entity_id=? AND type='ats_followup_reminder' LIMIT 1`,
+      [id]
+    );
+    if ((existing as RowDataPacket[]).length === 0) {
+      await db.execute(
+        `INSERT INTO work_inbox_item (id, user_id, type, title, description, entity_type, entity_id, action_url, priority, is_read, is_actioned, created_at)
+         VALUES (UUID(), ?, 'ats_followup_reminder', ?, ?, 'hiring_activity', ?, '/ats/recruiter/hiring-entry', 'normal', 0, 0, NOW())`,
+        [
+          req.authUser!.id,
+          `Follow-up: ${candidateName}`,
+          `Scheduled for ${followup_date}${followup_reason ? ` — ${followup_reason}` : ""}`,
+          id,
+        ]
+      );
+    } else {
+      await db.execute(
+        `UPDATE work_inbox_item SET title=?, description=?, is_read=0, is_actioned=0, created_at=NOW()
+          WHERE entity_type='hiring_activity' AND entity_id=? AND type='ats_followup_reminder'`,
+        [
+          `Follow-up: ${candidateName}`,
+          `Scheduled for ${followup_date}${followup_reason ? ` — ${followup_reason}` : ""}`,
+          id,
+        ]
+      );
+    }
+
+    return res.json({ success: true, message: "Follow-up reminder set" });
   } catch (error: unknown) {
     return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }

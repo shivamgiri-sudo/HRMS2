@@ -826,7 +826,7 @@ function buildFilterSql(filters: HiringFilters, scopedOnly: boolean) {
   }
 
   if (scopedOnly) {
-    clauses.push("(created_by = ? OR recruiter_id = ?)");
+    clauses.push("(branch_name = ? OR created_by = ? OR recruiter_id = ?)");
   }
 
   return { sql: clauses.join(" AND "), params };
@@ -836,7 +836,8 @@ export async function listHiringActivity(userId: string, role: string | undefine
   const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
   const { sql, params } = buildFilterSql(filters, scopedOnly);
   if (scopedOnly) {
-    params.push(userId, userId);
+    const branch = await getActorBranch(userId);
+    params.push(branch ?? "", userId, userId);
   }
 
   const page = Math.max(1, Math.trunc(Number(filters.page) || 1));
@@ -1375,10 +1376,23 @@ export async function sendOnboardingFromActivity(activityId: string, actorUserId
   return { candidate, ...result };
 }
 
+async function getActorBranch(userId: string): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(e.branch_display_name,''), bm.branch_name) AS branch_name
+       FROM employees e
+       LEFT JOIN branch_master bm ON bm.id = e.branch_id
+      WHERE e.user_id = ?
+      LIMIT 1`,
+    [userId]
+  );
+  return (rows[0]?.branch_name as string | null) ?? null;
+}
+
 async function applyActivityFilters(filters: HiringFilters, scopedOnly: boolean, userId?: string) {
   const { sql, params } = buildFilterSql(filters, scopedOnly);
   if (scopedOnly && userId) {
-    params.push(userId, userId);
+    const branch = await getActorBranch(userId);
+    params.push(branch ?? "", userId, userId);
   }
   return { sql, params };
 }
@@ -1482,6 +1496,140 @@ export async function getCallingDashboard(userId: string, role: string | undefin
     byProcess: dashboard.byProcess,
     byBranch: dashboard.byBranch,
   };
+}
+
+export interface HiringActivityAnalytics {
+  funnel: { stage: string; count: number; pct: number }[];
+  byOutcome: { label: string; count: number }[];
+  bySource: { label: string; total: number; selected: number; joined: number }[];
+  byProcess: { label: string; total: number; selected: number; joined: number }[];
+  byRecruiter: { label: string; total: number; selected: number; joined: number; selRate: number }[];
+  trend: { date: string; logged: number; walkins: number; selected: number }[];
+  followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];
+}
+
+export async function getHiringActivityAnalytics(userId: string, role: string | undefined, filters: HiringFilters): Promise<HiringActivityAnalytics> {
+  const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
+  const { sql, params } = buildFilterSql(filters, scopedOnly);
+  if (scopedOnly) {
+    const branch = await getActorBranch(userId);
+    params.push(branch ?? "", userId, userId);
+  }
+
+  // ── Funnel summary ────────────────────────────────────────────────────────
+  const [summaryRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COUNT(*)                                                       AS logged,
+       SUM(CASE WHEN contacted_flag = 1 THEN 1 ELSE 0 END)           AS contacted,
+       SUM(CASE WHEN walkin_flag = 1 THEN 1 ELSE 0 END)              AS walkins,
+       SUM(CASE WHEN final_selection_flag = 1 THEN 1 ELSE 0 END)     AS selected,
+       SUM(CASE WHEN joined_flag = 1 THEN 1 ELSE 0 END)              AS joined
+     FROM ats_recruiter_hiring_activity
+    WHERE ${sql}`,
+    params
+  );
+  const s = summaryRows[0] ?? {};
+  const logged = Number(s.logged ?? 0);
+  const funnel = [
+    { stage: "Logged",     count: logged,               pct: 100 },
+    { stage: "Contacted",  count: Number(s.contacted ?? 0), pct: logged ? Math.round(Number(s.contacted ?? 0) / logged * 1000) / 10 : 0 },
+    { stage: "Walked In",  count: Number(s.walkins ?? 0),   pct: logged ? Math.round(Number(s.walkins ?? 0) / logged * 1000) / 10 : 0 },
+    { stage: "Selected",   count: Number(s.selected ?? 0),  pct: logged ? Math.round(Number(s.selected ?? 0) / logged * 1000) / 10 : 0 },
+    { stage: "Joined",     count: Number(s.joined ?? 0),    pct: logged ? Math.round(Number(s.joined ?? 0) / logged * 1000) / 10 : 0 },
+  ];
+
+  // ── Outcome distribution (pie) ────────────────────────────────────────────
+  const [outcomeRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(recruiter_remarks,''), 'Pending') AS label, COUNT(*) AS count
+       FROM ats_recruiter_hiring_activity
+      WHERE ${sql}
+      GROUP BY label ORDER BY count DESC LIMIT 8`,
+    params
+  );
+  const byOutcome = (outcomeRows as { label: string; count: number }[]).map((r) => ({
+    label: r.label, count: Number(r.count),
+  }));
+
+  // ── By source ─────────────────────────────────────────────────────────────
+  const [sourceRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(hiring_source,'Unknown') AS label, COUNT(*) AS total,
+            SUM(CASE WHEN final_selection_flag=1 THEN 1 ELSE 0 END) AS selected,
+            SUM(CASE WHEN joined_flag=1 THEN 1 ELSE 0 END) AS joined
+       FROM ats_recruiter_hiring_activity WHERE ${sql}
+      GROUP BY label ORDER BY total DESC LIMIT 10`,
+    params
+  );
+  const bySource = (sourceRows as any[]).map((r) => ({ label: r.label, total: Number(r.total), selected: Number(r.selected), joined: Number(r.joined) }));
+
+  // ── By process ────────────────────────────────────────────────────────────
+  const [processRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(process_name,'Unknown') AS label, COUNT(*) AS total,
+            SUM(CASE WHEN final_selection_flag=1 THEN 1 ELSE 0 END) AS selected,
+            SUM(CASE WHEN joined_flag=1 THEN 1 ELSE 0 END) AS joined
+       FROM ats_recruiter_hiring_activity WHERE ${sql}
+      GROUP BY label ORDER BY total DESC LIMIT 10`,
+    params
+  );
+  const byProcess = (processRows as any[]).map((r) => ({ label: r.label, total: Number(r.total), selected: Number(r.selected), joined: Number(r.joined) }));
+
+  // ── By recruiter ──────────────────────────────────────────────────────────
+  const [recruiterRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(recruiter_name_snapshot,'Unknown') AS label, COUNT(*) AS total,
+            SUM(CASE WHEN final_selection_flag=1 THEN 1 ELSE 0 END) AS selected,
+            SUM(CASE WHEN joined_flag=1 THEN 1 ELSE 0 END) AS joined
+       FROM ats_recruiter_hiring_activity WHERE ${sql}
+      GROUP BY label ORDER BY selected DESC LIMIT 10`,
+    params
+  );
+  const byRecruiter = (recruiterRows as any[]).map((r) => {
+    const total = Number(r.total);
+    const sel = Number(r.selected);
+    return { label: r.label, total, selected: sel, joined: Number(r.joined), selRate: total ? Math.round(sel / total * 1000) / 10 : 0 };
+  });
+
+  // ── 30-day daily trend ────────────────────────────────────────────────────
+  const [trendRows] = await db.execute<RowDataPacket[]>(
+    `SELECT activity_date AS date,
+            COUNT(*) AS logged,
+            SUM(CASE WHEN walkin_flag=1 THEN 1 ELSE 0 END) AS walkins,
+            SUM(CASE WHEN final_selection_flag=1 THEN 1 ELSE 0 END) AS selected
+       FROM ats_recruiter_hiring_activity
+      WHERE activity_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        AND ${sql}
+      GROUP BY activity_date ORDER BY activity_date ASC`,
+    params
+  );
+  const trend = (trendRows as any[]).map((r) => ({
+    date: String(r.date ?? "").slice(0, 10),
+    logged: Number(r.logged), walkins: Number(r.walkins), selected: Number(r.selected),
+  }));
+
+  // ── Followup due (today + next 7 days) ───────────────────────────────────
+  const scopedClause = scopedOnly ? `AND (branch_name = ? OR created_by = ? OR recruiter_id = ?)` : "";
+  const followupParams: unknown[] = [userId];
+  if (scopedOnly) {
+    const branch = await getActorBranch(userId);
+    followupParams.push(branch ?? "", userId, userId);
+  }
+  const [followupRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, candidate_name, mobile,
+            DATE_FORMAT(followup_date, '%Y-%m-%d') AS followup_date,
+            followup_reason
+       FROM ats_recruiter_hiring_activity
+      WHERE followup_required = 1
+        AND followup_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+        ${scopedClause}
+      ORDER BY followup_date ASC
+      LIMIT 50`,
+    followupParams
+  );
+  const followupDue = (followupRows as any[]).map((r) => ({
+    id: String(r.id), candidate_name: String(r.candidate_name ?? ""),
+    mobile: String(r.mobile ?? ""), followup_date: String(r.followup_date ?? ""),
+    followup_reason: String(r.followup_reason ?? ""),
+  }));
+
+  return { funnel, byOutcome, bySource, byProcess, byRecruiter, trend, followupDue };
 }
 
 export async function searchInterviewers(branchName: string | null, query: string | null, roundType: string, limit = 20, userId?: string) {
