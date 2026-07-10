@@ -1436,50 +1436,105 @@ export default function NativeATSCandidateRegistration() {
       setScanStatus('Mapping fields...');
       const lines = text.split('\n').map((l: string) => l.trim()).filter(Boolean);
       const extracted: Partial<CandidateFormData> = {};
-      const mobileMatch = text.match(/\b[6-9]\d{9}\b/);
-      if (mobileMatch) extracted.mobile = mobileMatch[0];
+      const mobileMatch = text.match(/(?:mobile|phone|ph|contact)[^\d]*([6-9]\d{9})/i) ?? text.match(/\b([6-9]\d{9})\b/);
+      if (mobileMatch) extracted.mobile = mobileMatch[1] ?? mobileMatch[0];
       const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
       if (emailMatch) extracted.email = emailMatch[0];
-      const nameLabel = text.match(/(?:Name|Full Name)\s*[:-]\s*(.+)/i);
-      if (nameLabel) {
-        extracted.name = nameLabel[1].trim().split('\n')[0].trim();
-      } else if (lines.length > 0) {
-        const firstLine = lines[0].replace(/[^a-zA-Z\s]/g, '').trim();
-        if (firstLine.length >= 3 && firstLine.length <= 60) extracted.name = firstLine;
-      }
-      const addressMatch = text.match(/(?:Address|Addr)\s*[:-]\s*([\s\S]{5,100}?)(?=\n\n|\b(?:Mobile|Phone|Email|Education|Experience)\b|$)/i);
-      if (addressMatch) extracted.address = addressMatch[1].replace(/\n/g, ', ').trim();
-      const eduOptions = bootstrap.educationOptions;
-      const textLower = text.toLowerCase();
-      for (const opt of eduOptions) {
-        if (textLower.includes(opt.toLowerCase())) { extracted.education = opt; break; }
-      }
-      if (!extracted.education) {
-        if (textLower.includes('post graduate') || textLower.includes('postgraduate')) extracted.education = eduOptions.find(o => o.toLowerCase().includes('post')) ?? '';
-        else if (textLower.includes('graduate') || textLower.includes('b.tech') || textLower.includes('bsc') || textLower.includes('bcom')) extracted.education = eduOptions.find(o => o.toLowerCase() === 'graduate') ?? '';
-        else if (textLower.includes('diploma')) extracted.education = eduOptions.find(o => o.toLowerCase().includes('diploma')) ?? '';
-        else if (textLower.includes('12th') || textLower.includes('hsc') || textLower.includes('intermediate')) extracted.education = eduOptions.find(o => o.includes('12th')) ?? '';
-        else if (textLower.includes('10th') || textLower.includes('ssc') || textLower.includes('matric')) extracted.education = eduOptions.find(o => o.includes('10th')) ?? '';
-      }
-      const expOptions = bootstrap.experienceOptions;
-      for (const opt of expOptions) {
-        if (textLower.includes(opt.toLowerCase())) { extracted.experience = opt; break; }
-      }
-      if (!extracted.experience) {
-        if (textLower.includes('fresher') || textLower.includes('no experience')) extracted.experience = expOptions[0];
-        else {
-          const yearMatch = textLower.match(/(\d+)\s*(?:\+\s*)?year/);
-          if (yearMatch) {
-            const yrs = parseInt(yearMatch[1]);
-            if (yrs === 0)      extracted.experience = expOptions.find(o => o.includes('0-1')) ?? '';
-            else if (yrs === 1) extracted.experience = expOptions.find(o => o.includes('1-2')) ?? '';
-            else if (yrs === 2) extracted.experience = expOptions.find(o => o.includes('2-3')) ?? '';
-            else if (yrs >= 3)  extracted.experience = expOptions.find(o => o.includes('3+')) ?? '';
-          }
+      // Name extraction: anchor on the phone/email line, scan backwards.
+      // This mirrors open-resume's strategy and correctly handles:
+      // single-word names, all-caps, job titles between name and contact block.
+      const HEADER_RE = /^(curriculum\s*vitae|resume|cv|profile|objective|summary|education|experience|skills?|projects?|address|contact|declaration|references?|personal\s*details?|information|bio\s*data|biodata|achievements?|certifications?|languages?|hobbies|interests?)\b/i;
+      const DESIG_RE = /\b(executive|manager|officer|analyst|associate|specialist|lead|developer|engineer|consultant|supervisor|coordinator|representative|agent|trainee|intern|fresher|director|advisor|caller|telecaller|accountant|assistant|technician|operator|recruiter|hr|admin|tl|team\s*lead|process\s*associate|quality\s*analyst)\b/i;
+      const isNameToken = (w: string) => /^[A-Za-z][a-zA-Z.']*$/.test(w);
+      const tryNameLine = (raw: string): string => {
+        const labelled = raw.match(/(?:full\s+)?name\s*[:\-]\s*([A-Za-z][A-Za-z .'\\-]{1,50})/i);
+        if (labelled) return labelled[1].trim();
+        const clean = raw.replace(/[^A-Za-z\s.\-']/g, '').trim();
+        const words = clean.split(/\s+/).filter(Boolean);
+        if (!clean || words.length === 0 || words.length > 5) return '';
+        if (HEADER_RE.test(clean) || DESIG_RE.test(clean)) return '';
+        if (!words.every(isNameToken)) return '';
+        if (clean.replace(/\s/g, '').length < 3) return '';
+        return clean;
+      };
+      const phoneLine = extracted.mobile ? lines.findIndex((l: string) => l.includes(extracted.mobile!)) : -1;
+      const emailLine = extracted.email ? lines.findIndex((l: string) => l.toLowerCase().includes((extracted.email ?? '').toLowerCase())) : -1;
+      const anchor = phoneLine >= 0 && emailLine >= 0 ? Math.min(phoneLine, emailLine) : phoneLine >= 0 ? phoneLine : emailLine;
+      const nameWindow = anchor > 0 ? lines.slice(Math.max(0, anchor - 10), anchor) : lines.slice(0, 15);
+      if (anchor > 0) {
+        // Scan backwards — line closest to contact info is highest confidence
+        for (let i = nameWindow.length - 1; i >= 0; i--) {
+          const result = tryNameLine(nameWindow[i]);
+          if (result) { extracted.name = result; break; }
         }
       }
-      if (textLower.includes(' female') || textLower.includes('gender: f')) extracted.gender = 'Female';
-      else if (textLower.includes(' male') || textLower.includes('gender: m')) extracted.gender = 'Male';
+      if (!extracted.name) {
+        for (const line of nameWindow) {
+          const result = tryNameLine(line);
+          if (result) { extracted.name = result; break; }
+        }
+      }
+      // ── Address ──────────────────────────────────────────────────────────────
+      const addressLabelled = text.match(/(?:address|addr|location|residence)\s*[:-]\s*([\s\S]{5,200}?)(?=\n{2,}|\b(?:mobile|phone|email|education|experience|skills?|objective|declaration)\b|$)/i);
+      if (addressLabelled) {
+        extracted.address = addressLabelled[1].replace(/\n/g, ', ').trim();
+      } else {
+        // Unlabelled: PIN code line is almost always the address
+        const pinIdx = lines.findIndex((l: string) => /\b[1-9]\d{5}\b/.test(l));
+        if (pinIdx >= 0) {
+          const addrLines = pinIdx > 0 ? [lines[pinIdx - 1], lines[pinIdx]] : [lines[pinIdx]];
+          extracted.address = addrLines.join(', ').trim();
+        }
+      }
+
+      const eduOptions = bootstrap.educationOptions;
+      const textLower = text.toLowerCase();
+      const matchEdu = (re: RegExp) => eduOptions.find((o: string) => re.test(o)) ?? '';
+
+      // Most-specific first to avoid "Graduate" matching inside "Post Graduate"
+      if (/post.?grad|m\.?tech\b|m\.?sc\b|mba\b|mca\b|m\.?com\b|master/i.test(textLower))
+        extracted.education = matchEdu(/post.?grad/i);
+      else if (/\bdiploma\b/i.test(textLower))
+        extracted.education = matchEdu(/diploma/i);
+      else if (/\bb\.?tech\b|\bb\.?e\b|\bb\.?sc\b|\bb\.?com\b|\bb\.?a\b|\bgraduate\b|\bdegree\b/i.test(textLower))
+        extracted.education = matchEdu(/^graduate$/i);
+      else if (/\b12th\b|\bhsc\b|\bintermediate\b|\bpuc\b|\bplus\s*two\b/i.test(textLower))
+        extracted.education = matchEdu(/12th/i);
+      else if (/\b10th\b|\bssc\b|\bmatric|\bsslc\b/i.test(textLower))
+        extracted.education = matchEdu(/10th/i);
+      if (!extracted.education) {
+        const sorted = [...eduOptions].sort((a: string, b: string) => b.length - a.length);
+        for (const opt of sorted) {
+          if (textLower.includes(opt.toLowerCase())) { extracted.education = opt; break; }
+        }
+      }
+
+      const expOptions = bootstrap.experienceOptions;
+      const matchExp = (re: RegExp) => expOptions.find((o: string) => re.test(o)) ?? '';
+
+      if (/\bfresher\b|no.?experience|0\s*year/i.test(textLower)) {
+        extracted.experience = expOptions[0];
+      } else {
+        // Use highest year count found — avoids being fooled by "10th" containing "1"
+        const allYears = [...textLower.matchAll(/(\d+)\s*(?:\+\s*)?years?\b/g)].map(m => parseInt(m[1], 10));
+        if (allYears.length > 0) {
+          const yrs = Math.max(...allYears);
+          if (yrs === 0)      extracted.experience = matchExp(/fresher|0.?1|0-1/i);
+          else if (yrs === 1) extracted.experience = matchExp(/0.?1|0-1/i);
+          else if (yrs === 2) extracted.experience = matchExp(/1.?2|1-2/i);
+          else if (yrs === 3) extracted.experience = matchExp(/2.?3|2-3/i);
+          else                extracted.experience = matchExp(/3\+|3 and above/i);
+        }
+      }
+      if (!extracted.experience) {
+        const sorted = [...expOptions].sort((a: string, b: string) => b.length - a.length);
+        for (const opt of sorted) {
+          if (textLower.includes(opt.toLowerCase())) { extracted.experience = opt; break; }
+        }
+      }
+
+      if (/\bfemale\b|gender\s*[:\-]\s*f\b/i.test(text)) extracted.gender = 'Female';
+      else if (/\bmale\b|gender\s*[:\-]\s*m\b/i.test(text)) extracted.gender = 'Male';
       setForm(prev => ({
         ...prev,
         ...Object.fromEntries(Object.entries(extracted).filter(([, v]) => v && String(v).trim())),
@@ -1537,10 +1592,18 @@ export default function NativeATSCandidateRegistration() {
         method: 'POST',
         body: fd,
       });
+
+      // Server error or unreachable → fall back to Tesseract for images
+      if (!resp.ok) {
+        if (scanImage) { await extractFromOCR(scanImage); return; }
+        setScanStatus(`❌ Server error (${resp.status}) — please fill manually`);
+        setScanMode('done');
+        return;
+      }
+
       const data = await resp.json();
 
       if (data.needsClientOcr && scanImage) {
-        // No Gemini key on backend for images — fall back to Tesseract
         await extractFromOCR(scanImage);
         return;
       }

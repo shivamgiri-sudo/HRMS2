@@ -1,4 +1,5 @@
 import { Router } from "express";
+import multer from "multer";
 import { z } from "zod";
 import { db } from "../../db/mysql.js";
 import { RowDataPacket } from "mysql2/promise";
@@ -560,73 +561,275 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
   }
 });
 
-// ── 4. Parse resume (placeholder - integrate with actual parser) ──────────────
-registrationEnhancedRouter.post("/parse-resume", async (req, res) => {
-  try {
-    const { fileUrl } = req.body;
-
-    if (!fileUrl) {
-      return res.status(400).json({ success: false, message: "fileUrl required" });
-    }
-
-    // Extract metadata from the URL itself — no parsing library required
-    const urlParts = fileUrl.split('/');
-    const filename = decodeURIComponent(urlParts[urlParts.length - 1] ?? '');
-    const lower = filename.toLowerCase();
-    const isPdf = lower.endsWith('.pdf');
-    const isDoc = lower.endsWith('.docx') || lower.endsWith('.doc');
-
-    // For plain-text files, attempt a fetch and read
-    let extractedText = '';
-    if (lower.endsWith('.txt')) {
-      try {
-        const response = await fetch(fileUrl);
-        if (response.ok) {
-          extractedText = await response.text();
-        }
-      } catch {
-        // Silently ignore fetch failures — fallback data is returned below
-      }
-    }
-
-    const parsed = {
-      name: '',
-      mobile: '',
-      email: '',
-      education: '',
-      experience: '',
-      skills: [] as string[],
-      company: '',
-      designation: '',
-      address: extractedText ? extractedText.slice(0, 500) : '',
-      source_url: fileUrl,
-      filename,
-      parse_status: isPdf || isDoc
-        ? 'manual_review_required'
-        : lower.endsWith('.txt') && extractedText
-          ? 'text_extracted'
-          : 'unsupported_format',
-      parse_message: isPdf || isDoc
-        ? 'Resume uploaded successfully. Please fill in the details manually or use the preview to copy information.'
-        : lower.endsWith('.txt') && extractedText
-          ? 'Plain-text content extracted. Please review and fill in the structured fields.'
-          : 'Unsupported file format. Please upload a PDF or Word document.',
-    };
-
-    return res.json({ success: true, data: parsed });
-  } catch (error: unknown) {
-    return res.status(500).json({ success: false, message: getErrorMessage(error) });
-  }
+// ── 4. Parse resume — accepts multipart file upload ──────────────────────────
+const resumeParseUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
 });
+
+registrationEnhancedRouter.post(
+  "/parse-resume",
+  resumeParseUpload.single("file"),
+  async (req, res) => {
+    try {
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ success: false, message: "file required" });
+      }
+
+      const lower = file.originalname.toLowerCase();
+      const isImage =
+        file.mimetype.startsWith("image/") ||
+        lower.endsWith(".jpg") ||
+        lower.endsWith(".jpeg") ||
+        lower.endsWith(".png") ||
+        lower.endsWith(".webp");
+
+      // Images: tell client to run Tesseract OCR — we can't do image→text without an ML service
+      if (isImage) {
+        return res.json({ success: true, needsClientOcr: true });
+      }
+
+      // PDF: extract text with pdf-parse then map fields
+      const isPdf =
+        file.mimetype === "application/pdf" || lower.endsWith(".pdf");
+      if (isPdf) {
+        try {
+          // Dynamic import keeps startup fast when pdf-parse isn't needed
+          // pdf-parse is CommonJS — use require() to avoid .default ambiguity
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const pdfParse: (buf: Buffer) => Promise<{ text: string }> = require("pdf-parse");
+          const data = await pdfParse(file.buffer);
+          const text = data.text ?? "";
+          const fields = extractFieldsFromText(text, req.body?.options);
+          return res.json({ success: true, fields });
+        } catch {
+          // pdf-parse failed (encrypted / corrupt) — let client fall back to manual
+          return res.json({
+            success: true,
+            fields: {},
+            warning: "Could not extract text from this PDF. Please fill the form manually.",
+          });
+        }
+      }
+
+      // Unsupported format
+      return res.json({ success: true, fields: {}, warning: "Unsupported file type." });
+    } catch (error: unknown) {
+      return res.status(500).json({ success: false, message: getErrorMessage(error) });
+    }
+  }
+);
+
+// Words that indicate a line is a section header, not a name
+const RESUME_HEADER_RE =
+  /^(curriculum\s*vitae|resume|cv|profile|objective|summary|education|experience|skills?|projects?|address|contact|declaration|references?|personal\s*details?|information|bio\s*data|biodata|achievements?|certifications?|languages?|hobbies|interests?|activities)\b/i;
+
+// Words that indicate a line is a job title / designation, not a name
+const DESIGNATION_RE =
+  /\b(executive|manager|officer|analyst|associate|specialist|lead|leader|developer|engineer|consultant|supervisor|coordinator|representative|agent|trainee|intern|fresher|director|advisor|caller|telecaller|accountant|assistant|technician|operator|recruiter|hr|admin|tl|team\s*lead|process\s*associate|quality\s*analyst)\b/i;
+
+/**
+ * Mirrors the open-resume name-extraction strategy:
+ * 1. Prefer a line explicitly labelled "Name: ..."
+ * 2. Otherwise anchor on the phone / email line and scan backwards —
+ *    the closest name-like line above the contact block is almost always
+ *    the candidate name, regardless of headers or designations above it.
+ * 3. Fall back to a top-down scan when no contact info is present.
+ *
+ * This correctly handles: single-word names, all-caps names, job titles
+ * between the name and contact info, and company / college headers.
+ */
+function extractName(lines: string[], phone: string, email: string): string {
+  // Find line indices for phone and email
+  const phoneLine = phone ? lines.findIndex((l) => l.includes(phone)) : -1;
+  const emailLine = email
+    ? lines.findIndex((l) => l.toLowerCase().includes(email.toLowerCase()))
+    : -1;
+
+  const contactAnchor =
+    phoneLine >= 0 && emailLine >= 0
+      ? Math.min(phoneLine, emailLine)
+      : phoneLine >= 0
+        ? phoneLine
+        : emailLine;
+
+  // The candidate name lives in the window of lines above the contact block
+  const windowLines =
+    contactAnchor > 0
+      ? lines.slice(Math.max(0, contactAnchor - 10), contactAnchor)
+      : lines.slice(0, 15);
+
+  const isNameToken = (word: string) => /^[A-Za-z][a-zA-Z.']*$/.test(word);
+
+  const tryLine = (raw: string): string => {
+    // Labelled form: "Name: Rahul Sharma" anywhere in the line
+    const labelled = raw.match(
+      /(?:full\s+)?name\s*[:\-]\s*([A-Za-z][A-Za-z .'\-]{1,50})/i
+    );
+    if (labelled) return labelled[1].trim();
+
+    const clean = raw.replace(/[^A-Za-z\s.\-']/g, "").trim();
+    const words = clean.split(/\s+/).filter(Boolean);
+    if (!clean || words.length === 0 || words.length > 5) return "";
+    if (RESUME_HEADER_RE.test(clean)) return "";
+    if (DESIGNATION_RE.test(clean)) return "";
+    if (!words.every(isNameToken)) return "";
+    if (clean.replace(/\s/g, "").length < 3) return ""; // skip bare initials
+    return clean;
+  };
+
+  // Anchor strategy: scan backwards through window (line closest to contact = highest priority)
+  if (contactAnchor > 0) {
+    for (let i = windowLines.length - 1; i >= 0; i--) {
+      const result = tryLine(windowLines[i]);
+      if (result) return result;
+    }
+  }
+
+  // Fallback (no contact found): scan top lines forwards — name is usually first clean line
+  for (const line of windowLines) {
+    const result = tryLine(line);
+    if (result) return result;
+  }
+
+  return "";
+}
+
+/**
+ * Extract structured candidate fields from plain text pulled out of a PDF.
+ * Uses regex heuristics ordered by confidence: labelled fields first,
+ * then positional fallbacks. Normalises against the dropdown options
+ * supplied by the client so the frontend doesn't have to do a second
+ * normalisation pass.
+ */
+function extractFieldsFromText(
+  text: string,
+  optionsJson?: string
+): Record<string, string> {
+  let options: {
+    roleOptions?: string[];
+    educationOptions?: string[];
+    experienceOptions?: string[];
+    preferredShiftOptions?: string[];
+    nightShiftComfortOptions?: string[];
+  } = {};
+  try {
+    if (optionsJson) options = JSON.parse(optionsJson);
+  } catch { /* ignore */ }
+
+  const fields: Record<string, string> = {};
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  // ── Mobile ────────────────────────────────────────────────────────────────
+  const mobileMatch =
+    text.match(/(?:mobile|phone|ph|contact)[^\d]*([6-9]\d{9})/i) ??
+    text.match(/\b([6-9]\d{9})\b/);
+  if (mobileMatch) fields.mobile = mobileMatch[1];
+
+  // ── Email ─────────────────────────────────────────────────────────────────
+  const emailMatch = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+  if (emailMatch) fields.email = emailMatch[0];
+
+  // ── Name — contact-anchor strategy (mirrors open-resume) ─────────────────
+  fields.name = extractName(lines, fields.mobile ?? "", fields.email ?? "");
+
+  // ── Address ───────────────────────────────────────────────────────────────
+  // 1. Labelled "Address: ..." block
+  const addrLabelled = text.match(
+    /(?:address|addr|location|residence)\s*[:\-]\s*([\s\S]{5,200}?)(?=\n{2,}|\b(?:mobile|phone|email|education|experience|skills?|objective|declaration)\b|$)/i
+  );
+  if (addrLabelled) {
+    fields.address = addrLabelled[1].replace(/\n/g, ", ").trim();
+  } else {
+    // 2. Unlabelled: a line containing a PIN code is almost always an address line.
+    //    Grab that line + the one before it as the address.
+    const pinIdx = lines.findIndex((l) => /\b[1-9]\d{5}\b/.test(l));
+    if (pinIdx >= 0) {
+      const addrLines = pinIdx > 0
+        ? [lines[pinIdx - 1], lines[pinIdx]]
+        : [lines[pinIdx]];
+      fields.address = addrLines.join(", ").trim();
+    }
+  }
+
+  const textLower = text.toLowerCase();
+
+  // ── Education ─────────────────────────────────────────────────────────────
+  // Match from most-specific to least-specific so "Post Graduate" always wins
+  // over "Graduate" (avoids substring collision in the options array loop).
+  const eduOpts: string[] = options.educationOptions ?? [];
+
+  const matchEdu = (re: RegExp) => eduOpts.find((o) => re.test(o)) ?? "";
+
+  if (/post.?grad|m\.?tech\b|m\.?sc\b|mba\b|mca\b|m\.?com\b|master/i.test(textLower))
+    fields.education = matchEdu(/post.?grad/i);
+  else if (/\bdiploma\b/i.test(textLower))
+    fields.education = matchEdu(/diploma/i);
+  else if (/\bb\.?tech\b|\bb\.?e\b|\bb\.?sc\b|\bb\.?com\b|\bb\.?a\b|\bgraduate\b|\bdegree\b/i.test(textLower))
+    fields.education = matchEdu(/^graduate$/i);
+  else if (/\b12th\b|\bhsc\b|\bintermediate\b|\bpuc\b|\bplus\s*two\b/i.test(textLower))
+    fields.education = matchEdu(/12th/i);
+  else if (/\b10th\b|\bssc\b|\bmatric|\bsslc\b/i.test(textLower))
+    fields.education = matchEdu(/10th/i);
+
+  // Still nothing — try the options list as a last resort (exact substring, longest-first to avoid partial collision)
+  if (!fields.education) {
+    const sorted = [...eduOpts].sort((a, b) => b.length - a.length);
+    for (const opt of sorted) {
+      if (textLower.includes(opt.toLowerCase())) { fields.education = opt; break; }
+    }
+  }
+
+  // ── Experience ────────────────────────────────────────────────────────────
+  const expOpts: string[] = options.experienceOptions ?? [];
+
+  const matchExp = (re: RegExp) => expOpts.find((o) => re.test(o)) ?? "";
+
+  if (/\bfresher\b|no.?experience|0\s*year/i.test(textLower))
+    fields.experience = expOpts[0] ?? "";
+  else {
+    // Grab every year number mentioned; use the highest to represent total experience
+    const allYears = [...textLower.matchAll(/(\d+)\s*(?:\+\s*)?years?\b/g)].map(
+      (m) => parseInt(m[1], 10)
+    );
+    if (allYears.length > 0) {
+      const yrs = Math.max(...allYears);
+      if (yrs === 0)     fields.experience = matchExp(/fresher|0.?1|0-1/i);
+      else if (yrs === 1) fields.experience = matchExp(/0.?1|0-1/i);
+      else if (yrs === 2) fields.experience = matchExp(/1.?2|1-2/i);
+      else if (yrs === 3) fields.experience = matchExp(/2.?3|2-3/i);
+      else               fields.experience = matchExp(/3\+|3 and above/i);
+    }
+  }
+
+  // Still nothing — try options list (longest-first)
+  if (!fields.experience) {
+    const sorted = [...expOpts].sort((a, b) => b.length - a.length);
+    for (const opt of sorted) {
+      if (textLower.includes(opt.toLowerCase())) { fields.experience = opt; break; }
+    }
+  }
+
+  // ── Gender ────────────────────────────────────────────────────────────────
+  if (/\bfemale\b|gender\s*[:\-]\s*f\b/i.test(text)) fields.gender = "Female";
+  else if (/\bmale\b|gender\s*[:\-]\s*m\b/i.test(text)) fields.gender = "Male";
+
+  // Strip empty strings so frontend normalise() doesn't try to map blanks
+  return Object.fromEntries(Object.entries(fields).filter(([, v]) => v && v.trim()));
+}
 
 // ── 5. Parse-resume capability status ────────────────────────────────────────
 registrationEnhancedRouter.get('/parse-resume/status', (_req, res) => {
   res.json({
     success: true,
     data: {
-      parsing_available: false,
-      supported_formats: ['pdf', 'docx', 'doc'],
-      message: 'Automatic parsing not available. Manual entry required.',
+      parsing_available: true,
+      supported_formats: ['pdf', 'jpg', 'jpeg', 'png'],
+      message: 'PDF text extraction available. Images use client-side OCR.',
     },
   });
 });
