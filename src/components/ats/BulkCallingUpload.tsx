@@ -254,6 +254,25 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
     setBatchFeedback("");
   }, []);
 
+  // ── Step Progress ────────────────────────────────────────────────────────────
+
+  const stepIndex = step === "upload" ? 0 : step === "mapping" ? 1 : step === "preview" || step === "submitting" ? 2 : 3;
+  const STEPS = ["Upload File", "Map Columns", "Review & Edit", "Done"];
+
+  const StepBar = () => stepIndex > 0 ? (
+    <div className="mb-4 flex items-center gap-1">
+      {STEPS.map((label, i) => (
+        <div key={label} className="flex items-center gap-1 flex-1">
+          <div className={`flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-bold transition-colors ${
+            i < stepIndex ? "bg-emerald-500 text-white" : i === stepIndex ? "bg-slate-900 text-white" : "bg-slate-200 text-slate-400"
+          }`}>{i < stepIndex ? "✓" : i + 1}</div>
+          <span className={`text-[10px] font-bold ${i === stepIndex ? "text-slate-900" : "text-slate-400"}`}>{label}</span>
+          {i < STEPS.length - 1 && <div className={`ml-1 h-px flex-1 ${i < stepIndex ? "bg-emerald-300" : "bg-slate-200"}`} />}
+        </div>
+      ))}
+    </div>
+  ) : null;
+
   // ── Session Lock Guard ──────────────────────────────────────────────────────
 
   if (!sessionLocked) {
@@ -287,11 +306,13 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
           onDragLeave={() => setDragOver(false)}
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
-          className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed p-12 transition-colors ${
-            dragOver ? "border-sky-400 bg-sky-50" : "border-slate-300 bg-slate-50 hover:border-slate-400 hover:bg-slate-100"
+          className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed p-12 transition-all duration-200 ${
+            dragOver ? "border-sky-400 bg-sky-50 scale-[1.01] shadow-lg" : "border-slate-300 bg-slate-50 hover:border-slate-400 hover:bg-slate-100 hover:shadow-sm"
           }`}
         >
-          <Upload className="h-10 w-10 text-slate-400 mb-3" />
+          <div className={`mb-3 rounded-full p-3 transition-colors ${dragOver ? "bg-sky-100" : "bg-slate-100"}`}>
+            <Upload className={`h-8 w-8 transition-colors ${dragOver ? "text-sky-500" : "text-slate-400"}`} />
+          </div>
           <p className="text-sm font-bold text-slate-700">Drop your file here or click to browse</p>
           <p className="mt-1 text-xs text-slate-500">Supports .csv, .xlsx, .xls — any column order</p>
         </div>
@@ -311,6 +332,7 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
   if (step === "mapping" || (step === "preview" && !mappingCollapsed)) {
     return (
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+        <StepBar />
         <div className="flex items-center justify-between">
           <div>
             <div className="text-base font-black text-slate-950">Map Your Columns</div>
@@ -379,6 +401,7 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
 
     return (
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+        <StepBar />
         {/* Collapsed mapping toggle */}
         <button
           type="button"
@@ -430,7 +453,7 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
             </thead>
             <tbody className="divide-y divide-slate-100">
               {mappedRows.map((row, idx) => (
-                <tr key={idx} className={!row._valid ? "bg-rose-50/50" : row.recruiter_remarks ? "" : "bg-amber-50/30"}>
+                <tr key={idx} className={`transition-colors ${!row._valid ? "bg-rose-50/50" : row.recruiter_remarks ? "hover:bg-slate-50" : "bg-amber-50/30 hover:bg-amber-50/50"}`}>
                   <td className="px-2 py-1.5 text-slate-400 font-mono">{idx + 1}</td>
                   <td className="px-2 py-1.5 font-medium text-slate-900 max-w-[140px] truncate">{row.candidate_name || <span className="text-rose-400 italic">missing</span>}</td>
                   <td className="px-2 py-1.5 font-mono text-slate-700">{row.mobile || <span className="text-rose-400 italic">invalid</span>}</td>
@@ -506,6 +529,7 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
   if (step === "done" && importResult) {
     return (
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+        <StepBar />
         <div className="flex items-center gap-3">
           <CheckCircle2 className="h-6 w-6 text-green-500" />
           <div>
