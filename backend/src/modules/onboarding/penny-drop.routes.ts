@@ -5,6 +5,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { PennyDropService } from "./penny-drop.service.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { env } from "../../config/env.js";
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
@@ -102,7 +103,7 @@ router.get("/status", h(async (req: any, res: Response) => {
 router.post("/webhook", h(async (req: any, res: Response) => {
   const { requestId, transactionId, status, accountName, verificationCode, responseCode, message } = req.body;
 
-  const webhookSecret = process.env.PENNY_DROP_WEBHOOK_SECRET;
+  const webhookSecret = env.PENNY_DROP_WEBHOOK_SECRET;
   if (!webhookSecret) {
     console.error('[PENNY_DROP] PENNY_DROP_WEBHOOK_SECRET is not set — rejecting all webhook calls');
     return res.status(503).json({ success: false, error: 'Webhook not configured — PENNY_DROP_WEBHOOK_SECRET missing' });

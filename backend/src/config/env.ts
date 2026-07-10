@@ -117,6 +117,7 @@ const envSchema = z.object({
   ATS_FORM_API_KEY: z.string().optional(),
   COURT_CHECK_API_URL: z.string().url().default("https://api.infinityai.in"),
   COURT_CHECK_API_KEY: z.string().optional(),
+  PENNY_DROP_WEBHOOK_SECRET: z.string().optional(),
 
   // Billing DB (db_bill) — optional, only needed when billing features are used
   BILL_DB_HOST:     z.string().default(""),

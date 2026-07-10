@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Shield, UserPlus, Search, CheckCircle2, XCircle, Info } from "lucide-react";
 import { toast } from "sonner";
@@ -37,6 +37,27 @@ interface PageCatalogEntry {
   description?: string;
   active_status: number;
 }
+
+interface RoleCatalogEntry {
+  role_key: string;
+  role_name: string;
+  description?: string;
+}
+
+interface RolePagePermission {
+  page_code: string;
+  page_name: string;
+  module?: string;
+  permissions: {
+    can_view: boolean;
+    can_create: boolean;
+    can_edit: boolean;
+    can_delete: boolean;
+    can_export: boolean;
+  };
+}
+
+type PermissionSet = { can_view: boolean; can_create: boolean; can_edit: boolean; can_delete: boolean; can_export: boolean };
 
 interface UserForAccess {
   id: string;
@@ -86,6 +107,10 @@ export default function SuperAdminAccessControl() {
     can_delete: false,
     can_export: false,
   });
+
+  const [selectedRoleKey, setSelectedRoleKey] = useState<string>("");
+  const [permissionDraft, setPermissionDraft] = useState<Record<string, PermissionSet>>({});
+  const [dirtyPages, setDirtyPages] = useState<Set<string>>(new Set());
 
   const queryClient = useQueryClient();
 
@@ -187,6 +212,75 @@ export default function SuperAdminAccessControl() {
     },
   });
 
+  // Fetch role catalog
+  const { data: roles = [] } = useQuery<RoleCatalogEntry[]>({
+    queryKey: ["role-catalog"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: RoleCatalogEntry[] }>("/api/access/roles/catalog");
+      return res.data ?? [];
+    },
+  });
+
+  // Fetch permissions for selected role
+  const { data: rolePermissions = [], isLoading: rolePermsLoading } = useQuery<RolePagePermission[]>({
+    queryKey: ["role-page-permissions", selectedRoleKey],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: RolePagePermission[] }>(
+        `/api/access/roles/${encodeURIComponent(selectedRoleKey)}/permissions`
+      );
+      return res.data ?? [];
+    },
+    enabled: !!selectedRoleKey,
+  });
+
+  // Sync draft when role permissions load
+  useEffect(() => {
+    if (!selectedRoleKey) return;
+    const draft: Record<string, PermissionSet> = {};
+    for (const rp of rolePermissions) {
+      draft[rp.page_code] = { ...rp.permissions };
+    }
+    setPermissionDraft(draft);
+    setDirtyPages(new Set());
+  }, [selectedRoleKey, rolePermissions]);
+
+  const updateRolePermissions = useMutation({
+    mutationFn: async (data: { role_key: string; updates: Array<{ page_code: string; permissions: PermissionSet }> }) => {
+      return hrmsApi.put(`/api/access/roles/${encodeURIComponent(data.role_key)}/permissions`, { updates: data.updates });
+    },
+    onSuccess: () => {
+      toast.success("Role permissions saved");
+      queryClient.invalidateQueries({ queryKey: ["role-page-permissions", selectedRoleKey] });
+      setDirtyPages(new Set());
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.error || error?.response?.data?.message || "Failed to save role permissions");
+    },
+  });
+
+  const removeRolePageAccess = useMutation({
+    mutationFn: async (data: { role_key: string; page_code: string }) => {
+      return hrmsApi.delete(`/api/access/role-page-access/${encodeURIComponent(data.role_key)}/${encodeURIComponent(data.page_code)}`);
+    },
+    onSuccess: (_, variables) => {
+      toast.success("Page removed from role");
+      queryClient.invalidateQueries({ queryKey: ["role-page-permissions", selectedRoleKey] });
+      setPermissionDraft(prev => {
+        const next = { ...prev };
+        delete next[variables.page_code];
+        return next;
+      });
+      setDirtyPages(prev => {
+        const next = new Set(prev);
+        next.delete(variables.page_code);
+        return next;
+      });
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.error || error?.response?.data?.message || "Failed to remove page from role");
+    },
+  });
+
   const togglePageStatus = useMutation({
     mutationFn: async (data: { page_code: string; active_status: boolean }) => {
       return hrmsApi.patch(
@@ -201,9 +295,26 @@ export default function SuperAdminAccessControl() {
       queryClient.invalidateQueries({ queryKey: ["user-role-workforce-os"] });
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.error || "Failed to update page status");
+      toast.error(error?.response?.data?.error || error?.response?.data?.message || "Failed to update page status");
     },
   });
+
+  const handlePermissionToggle = (pageCode: string, field: keyof PermissionSet, value: boolean) => {
+    setPermissionDraft(prev => ({
+      ...prev,
+      [pageCode]: { ...(prev[pageCode] ?? { can_view: false, can_create: false, can_edit: false, can_delete: false, can_export: false }), [field]: value },
+    }));
+    setDirtyPages(prev => new Set(prev).add(pageCode));
+  };
+
+  const handleSaveRolePermissions = () => {
+    if (!selectedRoleKey || dirtyPages.size === 0) return;
+    const updates = Array.from(dirtyPages).map(page_code => ({
+      page_code,
+      permissions: permissionDraft[page_code] ?? { can_view: false, can_create: false, can_edit: false, can_delete: false, can_export: false },
+    }));
+    updateRolePermissions.mutate({ role_key: selectedRoleKey, updates });
+  };
 
   const handleBulkAssign = () => {
     if (!selectedUserId) {
@@ -288,6 +399,7 @@ export default function SuperAdminAccessControl() {
             <TabsTrigger value="assign">Assign Access</TabsTrigger>
             <TabsTrigger value="overview">All Assignments</TabsTrigger>
             <TabsTrigger value="global">Global Page Control</TabsTrigger>
+            <TabsTrigger value="role-access">Role Access</TabsTrigger>
           </TabsList>
 
           <TabsContent value="assign" className="space-y-6">
@@ -639,6 +751,133 @@ export default function SuperAdminAccessControl() {
                     })}
                   </TableBody>
                 </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+          <TabsContent value="role-access" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Role-wise Page Access</CardTitle>
+                <CardDescription>
+                  Configure which pages each role can access and what permissions they have. Changes apply to all users with that role.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Role selector */}
+                <div className="flex items-center gap-3">
+                  <Select
+                    value={selectedRoleKey}
+                    onValueChange={(v) => {
+                      setSelectedRoleKey(v);
+                      setPermissionDraft({});
+                      setDirtyPages(new Set());
+                    }}
+                  >
+                    <SelectTrigger className="w-72">
+                      <SelectValue placeholder="Select a role..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {roles.map(role => (
+                        <SelectItem key={role.role_key} value={role.role_key}>
+                          {role.role_name} <span className="text-xs text-muted-foreground ml-1">({role.role_key})</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {selectedRoleKey && dirtyPages.size > 0 && (
+                    <Button
+                      onClick={handleSaveRolePermissions}
+                      disabled={updateRolePermissions.isPending}
+                    >
+                      Save {dirtyPages.size} change{dirtyPages.size !== 1 ? "s" : ""}
+                    </Button>
+                  )}
+                </div>
+
+                {selectedRoleKey && (
+                  rolePermsLoading ? (
+                    <p className="text-sm text-muted-foreground py-4">Loading permissions...</p>
+                  ) : (
+                    <>
+                      {/* Group pages by module — merge catalog (all pages) with current grants */}
+                      {(() => {
+                        const grantedCodes = new Set(rolePermissions.map(r => r.page_code));
+                        // Build unified rows: granted pages first, then catalog pages not yet granted
+                        const allRows: Array<{ page_code: string; page_name: string; module: string; granted: boolean }> = [
+                          ...rolePermissions.map(r => ({ page_code: r.page_code, page_name: r.page_name, module: r.module || "Other", granted: true })),
+                          ...pages
+                            .filter(p => !grantedCodes.has(p.page_code))
+                            .map(p => ({ page_code: p.page_code, page_name: p.page_name, module: p.module || "Other", granted: false })),
+                        ];
+                        const byModule = allRows.reduce((acc, row) => {
+                          if (!acc[row.module]) acc[row.module] = [];
+                          acc[row.module].push(row);
+                          return acc;
+                        }, {} as Record<string, typeof allRows>);
+
+                        return Object.entries(byModule).map(([mod, modRows]) => (
+                          <div key={mod} className="space-y-2">
+                            <h3 className="font-semibold text-sm text-muted-foreground border-b pb-1">{mod}</h3>
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead className="w-64">Page</TableHead>
+                                  <TableHead className="text-center w-16">View</TableHead>
+                                  <TableHead className="text-center w-16">Create</TableHead>
+                                  <TableHead className="text-center w-16">Edit</TableHead>
+                                  <TableHead className="text-center w-16">Delete</TableHead>
+                                  <TableHead className="text-center w-16">Export</TableHead>
+                                  <TableHead className="w-20">Action</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {modRows.map(row => {
+                                  const draft = permissionDraft[row.page_code];
+                                  const isDirty = dirtyPages.has(row.page_code);
+                                  return (
+                                    <TableRow key={row.page_code} className={isDirty ? "bg-amber-50" : row.granted ? "" : "opacity-60"}>
+                                      <TableCell>
+                                        <div>
+                                          <p className="font-medium text-sm">{row.page_name}</p>
+                                          <p className="text-xs text-muted-foreground">{row.page_code}</p>
+                                        </div>
+                                      </TableCell>
+                                      {(["can_view", "can_create", "can_edit", "can_delete", "can_export"] as (keyof PermissionSet)[]).map(field => (
+                                        <TableCell key={field} className="text-center">
+                                          <Checkbox
+                                            checked={draft?.[field] ?? false}
+                                            onCheckedChange={(checked) => handlePermissionToggle(row.page_code, field, Boolean(checked))}
+                                          />
+                                        </TableCell>
+                                      ))}
+                                      <TableCell>
+                                        {row.granted && (
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="text-destructive hover:text-destructive"
+                                            onClick={() => removeRolePageAccess.mutate({ role_key: selectedRoleKey, page_code: row.page_code })}
+                                            disabled={removeRolePageAccess.isPending}
+                                          >
+                                            Remove
+                                          </Button>
+                                        )}
+                                      </TableCell>
+                                    </TableRow>
+                                  );
+                                })}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        ));
+                      })()}
+                    </>
+                  )
+                )}
+
+                {!selectedRoleKey && (
+                  <p className="text-sm text-muted-foreground text-center py-8">Select a role above to view and edit its page permissions.</p>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

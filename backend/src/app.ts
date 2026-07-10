@@ -162,7 +162,6 @@ import { bgvEnhancedRouter } from "./modules/ats/bgv.enhanced.routes.js";
 import bgvVerificationRouter from "./modules/ats/bgv-verification.routes.js";
 import { candidatePortalRouter } from "./modules/ats/candidate-portal.routes.js";
 import { superAdminRouter } from "./modules/ats/super-admin.routes.js";
-import onboardingFullRouter from "./modules/ats/onboarding-full.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
 import { onboardingDataRouter } from "./modules/onboarding/onboarding-data.routes.js";
@@ -397,7 +396,6 @@ app.use("/api/ats/interview", interviewRouter);
 app.use("/api/ats/bgv-enhanced", bgvEnhancedRouter);
 app.use("/api/ats/candidate-portal", candidatePortalRouter);
 app.use("/api/ats/super-admin", superAdminRouter);
-app.use("/api/ats/onboarding", onboardingFullRouter);
 
 // ── AI Insights (Gemini-powered, role-aware, sanitized) ────────────────────
 import { aiInsightsRouter } from "./modules/ai/ai-insights.routes.js";

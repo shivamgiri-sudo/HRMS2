@@ -17,81 +17,84 @@ export function PennyDropButton({
   disabled?: boolean;
 }) {
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
+  const [bankStatus, setBankStatus] = useState<string | null>(null);
+  const [resultSummary, setResultSummary] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Check existing status on mount
+  // Check existing BGV bank check status on mount
   useEffect(() => {
-    async function checkStatus() {
+    async function checkExisting() {
       if (!token) return;
       try {
-        const res = await hrmsApi.get(`/api/onboarding/penny-drop/status?token=${token}`);
-        if (res.data.data?.status) {
-          setStatus(res.data.data.status);
+        const res = await hrmsApi.get(`/api/ats/bgv/status?token=${encodeURIComponent(token)}`);
+        const checks: any[] = res.data?.data?.checks ?? [];
+        const bankCheck = checks.find((c: any) => c.check_type === "bank");
+        if (bankCheck) {
+          setBankStatus(bankCheck.status);
+          setResultSummary(bankCheck.result_summary ?? null);
         }
       } catch {
-        // Ignore - no existing penny drop
+        // No existing BGV record — ignore
       }
     }
-    checkStatus();
+    checkExisting();
   }, [token]);
 
   async function handleVerify() {
     setLoading(true);
     setError(null);
     try {
-      const res = await hrmsApi.post("/api/onboarding/penny-drop/initiate", {
+      const res = await hrmsApi.post("/api/ats/bgv/verify/bank", {
         token,
         accountNo,
         ifscCode,
         accountHolderName,
       });
 
-      if (res.data.success) {
-        setStatus("initiated");
-        // Poll status every 3 seconds
-        const interval = setInterval(async () => {
-          try {
-            const statusRes = await hrmsApi.get(`/api/onboarding/penny-drop/status?token=${token}`);
-            if (statusRes.data.data?.status && statusRes.data.data.status !== "initiated") {
-              setStatus(statusRes.data.data.status);
-              clearInterval(interval);
-              setLoading(false);
-            }
-          } catch {
-            clearInterval(interval);
-            setLoading(false);
-          }
-        }, 3000);
-
-        // Stop polling after 2 minutes
-        setTimeout(() => {
-          clearInterval(interval);
-          setLoading(false);
-        }, 120000);
+      const checks: any[] = res.data?.data?.checks ?? [];
+      const bankCheck = checks.find((c: any) => c.check_type === "bank");
+      if (bankCheck) {
+        setBankStatus(bankCheck.status);
+        setResultSummary(bankCheck.result_summary ?? null);
+      } else {
+        // Response succeeded but no bank check record yet — treat as queued
+        setBankStatus("queued");
+        setResultSummary("Bank verification queued for review.");
       }
     } catch (err: any) {
-      setError(err.response?.data?.message || "Verification failed");
+      const status = err.response?.status;
+      const msg = err.response?.data?.message ?? err.response?.data?.error ?? err.message;
+
+      if (status === 403) {
+        setError("BGV consent is required before bank verification. Please complete Step 5 first.");
+      } else if (status === 503) {
+        setError("Bank verification service is not configured — please contact HR.");
+      } else {
+        setError(msg || "Verification failed. Please try again.");
+      }
+    } finally {
       setLoading(false);
     }
   }
 
   const statusColors: Record<string, string> = {
     verified: "text-emerald-700",
-    name_mismatch: "text-amber-700",
+    mismatch: "text-amber-700",
     failed: "text-red-700",
-    initiated: "text-blue-700",
+    queued: "text-blue-700",
+    manual_review: "text-amber-700",
   };
 
   const statusMessages: Record<string, string> = {
     verified: "✓ Account Verified",
-    name_mismatch: "Name Mismatch - Under HR Review",
+    mismatch: "Name Mismatch — Under HR Review",
     failed: "Verification Failed",
-    initiated: "Verification in progress...",
+    queued: "Queued for Review",
+    manual_review: "Flagged for Manual Review",
   };
 
-  const isVerified = status === "verified";
-  const canVerify = !disabled && !loading && accountNo && ifscCode && !isVerified;
+  const isVerified = bankStatus === "verified";
+  const canVerify = !disabled && !loading && !!accountNo && !!ifscCode && !isVerified;
 
   return (
     <div className="space-y-2">
@@ -109,17 +112,21 @@ export function PennyDropButton({
         ) : isVerified ? (
           <>
             <CheckCircle2 className="h-4 w-4 mr-2" />
-            {statusMessages[status!] || status}
+            {statusMessages[bankStatus!] || bankStatus}
           </>
         ) : (
-          <>🏦 Verify Bank Account (₹1 Drop)</>
+          <>🏦 Verify Bank Account</>
         )}
       </Button>
 
-      {status && !loading && (
-        <p className={`text-xs font-bold ${statusColors[status] || "text-slate-600"}`}>
-          Status: {statusMessages[status] || status}
+      {bankStatus && !loading && (
+        <p className={`text-xs font-bold ${statusColors[bankStatus] || "text-slate-600"}`}>
+          Status: {statusMessages[bankStatus] || bankStatus}
         </p>
+      )}
+
+      {resultSummary && !loading && (
+        <p className="text-xs text-slate-500">{resultSummary}</p>
       )}
 
       {error && (
@@ -128,11 +135,11 @@ export function PennyDropButton({
         </p>
       )}
 
-      {!accountNo || !ifscCode ? (
+      {(!accountNo || !ifscCode) && (
         <p className="text-xs text-slate-500">
           Enter account number and IFSC code above to enable verification
         </p>
-      ) : null}
+      )}
     </div>
   );
 }

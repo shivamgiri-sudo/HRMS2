@@ -175,8 +175,10 @@ export const useWorkforceAccess = () => {
     const isSuperAdmin = roleKeys.includes("super_admin");
 
     return {
-      canViewPage: (pageCode: string) => !disabledPageSet.has(pageCode) && (isSuperAdmin || pageSet.has(pageCode)),
-      visiblePageCodes: Array.from(pageSet).filter((pageCode) => !disabledPageSet.has(pageCode)),
+      canViewPage: (pageCode: string) => isSuperAdmin || (!disabledPageSet.has(pageCode) && pageSet.has(pageCode)),
+      visiblePageCodes: isSuperAdmin
+        ? Array.from(pageSet)
+        : Array.from(pageSet).filter((pageCode) => !disabledPageSet.has(pageCode)),
       roleKeys,
       scopes: roleQuery.data?.scopes ?? [],
       employeeId: roleQuery.data?.employeeId ?? null,

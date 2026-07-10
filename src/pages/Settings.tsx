@@ -159,12 +159,32 @@ type LuckpayRuntimeStatus = {
   services: Record<string, boolean>;
 };
 
+const PROVIDER_REQUIRED_FIELDS: Record<string, { key: string; label: string }[]> = {
+  befisc_luckpay: [
+    { key: "luckpay_api_url", label: "Luckpay API Base URL" },
+    { key: "luckpay_basic_token", label: "Luckpay Basic Token" },
+    { key: "luckpay_client_id", label: "Luckpay Client ID" },
+  ],
+  infinity_ai: [
+    { key: "infinity_ai_api_url", label: "API Base URL" },
+    { key: "infinity_ai_api_key", label: "API Key" },
+  ],
+  digio: [
+    { key: "digio_api_url", label: "API Base URL" },
+    { key: "digio_client_id", label: "Client ID" },
+    { key: "digio_client_secret", label: "Client Secret" },
+  ],
+};
+
 const BgvProviderSettings = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<Record<string, string>>({});
   const [initialized, setInitialized] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [testing, setTesting] = useState(false);
 
+  // hrmsApi returns parsed JSON directly (not Axios), so res IS { success, data: [...] }
   const { data: rows = [], isLoading } = useQuery<BgvConfigRow[]>({
     queryKey: ['bgv-provider-config'],
     queryFn: async () => {
@@ -173,6 +193,7 @@ const BgvProviderSettings = () => {
     },
   });
 
+  // hrmsApi returns parsed JSON directly; res.data is the status object
   const { data: runtimeStatus } = useQuery<LuckpayRuntimeStatus | null>({
     queryKey: ['luckpay-runtime-status'],
     queryFn: async () => {
@@ -192,31 +213,75 @@ const BgvProviderSettings = () => {
     setInitialized(true);
   }
 
+  const provider = form.bgv_provider ?? "befisc_luckpay";
+
+  const handleSave = () => {
+    const required = PROVIDER_REQUIRED_FIELDS[provider] ?? [];
+    const missing = required.filter(({ key }) => {
+      const val = form[key] ?? "";
+      return val === "" || val === null;
+    });
+    if (missing.length > 0) {
+      toast({
+        title: "Missing required fields",
+        description: `Please fill in: ${missing.map((f) => f.label).join(", ")}`,
+        variant: "destructive",
+      });
+      return;
+    }
+    setTestResult(null);
+    saveMutation.mutate();
+  };
+
+  const handleTestConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await hrmsApi.post<{ success: boolean; message: string }>('/api/ats/bgv/test-connection', {});
+      setTestResult({ ok: true, message: (res as any).message ?? "Connection test passed." });
+    } catch (e: any) {
+      const msg = e.response?.data?.message ?? e.message ?? "Connection test failed.";
+      setTestResult({ ok: false, message: msg });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       await hrmsApi.put('/api/ats/bgv/admin/provider-config', form);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bgv-provider-config'] });
+      queryClient.invalidateQueries({ queryKey: ['luckpay-runtime-status'] });
       setInitialized(false);
       toast({ title: "BGV config saved", description: "Provider adapter reinitialized." });
     },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({
+      title: "Save failed",
+      description: e.response?.data?.message ?? e.message ?? "Unknown error",
+      variant: "destructive",
+    }),
   });
 
-  const provider = form.bgv_provider ?? "befisc_luckpay";
-  const renderField = ({ key, label, type = "text", placeholder }: { key: string; label: string; type?: string; placeholder?: string }) => (
-    <div key={key}>
-      <Label>{label}</Label>
-      <Input
-        type={type}
-        value={form[key] ?? ""}
-        onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))}
-        placeholder={placeholder ?? (type === "password" ? "Enter to update" : undefined)}
-        className="mt-1"
-      />
-    </div>
-  );
+  // Renders a labeled input. Password fields show a "✓ Saved" badge when the backend returned a masked value.
+  const renderField = ({ key, label, type = "text", placeholder }: { key: string; label: string; type?: string; placeholder?: string }) => {
+    const isSaved = type === "password" && form[key] === "••••••••";
+    return (
+      <div key={key}>
+        <div className="flex items-center gap-2 mb-1">
+          <Label>{label}</Label>
+          {isSaved && <span className="text-xs font-semibold text-emerald-600">✓ Saved</span>}
+        </div>
+        <Input
+          type={type}
+          value={form[key] ?? ""}
+          onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))}
+          placeholder={placeholder ?? (type === "password" ? "Enter to update" : undefined)}
+        />
+      </div>
+    );
+  };
 
   const serviceCards = [
     {
@@ -230,7 +295,7 @@ const BgvProviderSettings = () => {
       callback: "/api/onboarding/digilocker/callback",
     },
     {
-      title: "Aadhaar API",
+      title: "Aadhaar API (Befisc)",
       desc: "Befisc Aadhaar offline/OTP identity verification.",
       fields: [
         { key: "befisc_api_url", label: "Befisc Aadhaar API Base URL" },
@@ -239,8 +304,8 @@ const BgvProviderSettings = () => {
       callback: "/api/ats/bgv/verify/aadhaar-offline",
     },
     {
-      title: "PAN, Bank & UAN",
-      desc: "Luckpay PAN verification, bank penny-drop/penny-less verification, and UAN/employment history.",
+      title: "PAN, Bank & UAN (Luckpay)",
+      desc: "Luckpay PAN verification, bank penny-less verification, and UAN/employment history.",
       fields: [
         { key: "luckpay_api_url", label: "Luckpay API Base URL" },
         { key: "luckpay_basic_token", label: "Luckpay Basic Token", type: "password" },
@@ -249,7 +314,7 @@ const BgvProviderSettings = () => {
       callback: "/api/onboarding/penny-drop/webhook",
     },
     {
-      title: "Criminal / Court Check",
+      title: "Criminal / Court Check (Crimescan)",
       desc: "Crimescan court and criminal background verification.",
       fields: [
         { key: "crimescan_api_url", label: "Crimescan API Base URL" },
@@ -266,15 +331,17 @@ const BgvProviderSettings = () => {
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><ShieldQuestion className="h-5 w-5" /> BGV Provider Configuration</CardTitle>
         <CardDescription>
-          Configure the live APIs used in candidate onboarding. Mock verification is not available from this production UI.
+          Configure the live APIs used in candidate onboarding. Changes take effect immediately after saving.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {runtimeStatus && (
+
+        {/* Runtime status — only meaningful for befisc_luckpay which has a token-based auth cycle */}
+        {provider === "befisc_luckpay" && runtimeStatus && (
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant={runtimeStatus.enabled ? "default" : "secondary"}>
-                {runtimeStatus.enabled ? "Luckpay Enabled" : "Luckpay Disabled"}
+                {runtimeStatus.enabled ? "Runtime Active" : "Runtime Inactive"}
               </Badge>
               <Badge variant="outline">{runtimeStatus.environment}</Badge>
             </div>
@@ -292,8 +359,8 @@ const BgvProviderSettings = () => {
                 <p>{runtimeStatus.lastApiFailureAt ?? "None recorded"}</p>
               </div>
               <div className="text-sm text-slate-600">
-                <p className="font-medium text-slate-900">Services</p>
-                <p>{Object.entries(runtimeStatus.services).filter(([, enabled]) => enabled).map(([key]) => key).join(", ")}</p>
+                <p className="font-medium text-slate-900">Active Services</p>
+                <p>{Object.entries(runtimeStatus.services).filter(([, enabled]) => enabled).map(([key]) => key).join(", ") || "None"}</p>
               </div>
             </div>
             {runtimeStatus.lastApiFailureMessage && (
@@ -323,18 +390,7 @@ const BgvProviderSettings = () => {
               { key: "infinity_ai_api_key", label: "API Key", type: "password" },
               { key: "infinity_ai_client_id", label: "Client ID", type: "text" },
               { key: "infinity_ai_portal_url", label: "Candidate Portal URL", type: "text" },
-            ].map(({ key, label, type }) => (
-              <div key={key}>
-                <Label>{label}</Label>
-                <Input
-                  type={type}
-                  value={form[key] ?? ""}
-                  onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))}
-                  placeholder={type === "password" ? "Enter to update" : undefined}
-                  className="mt-1"
-                />
-              </div>
-            ))}
+            ].map(renderField)}
           </div>
         )}
 
@@ -345,18 +401,7 @@ const BgvProviderSettings = () => {
               { key: "digio_api_url", label: "API Base URL", type: "text" },
               { key: "digio_client_id", label: "Client ID", type: "text" },
               { key: "digio_client_secret", label: "Client Secret", type: "password" },
-            ].map(({ key, label, type }) => (
-              <div key={key}>
-                <Label>{label}</Label>
-                <Input
-                  type={type}
-                  value={form[key] ?? ""}
-                  onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))}
-                  placeholder={type === "password" ? "Enter to update" : undefined}
-                  className="mt-1"
-                />
-              </div>
-            ))}
+            ].map(renderField)}
           </div>
         )}
 
@@ -378,10 +423,22 @@ const BgvProviderSettings = () => {
           </div>
         )}
 
-        <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
-          {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-          Save BGV Configuration
-        </Button>
+        <div className="flex flex-wrap items-center gap-3 pt-1">
+          <Button onClick={handleSave} disabled={saveMutation.isPending}>
+            {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+            Save BGV Configuration
+          </Button>
+          <Button variant="outline" onClick={handleTestConnection} disabled={testing}>
+            {testing && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+            Test Connection
+          </Button>
+        </div>
+
+        {testResult && (
+          <p className={`text-sm font-medium ${testResult.ok ? "text-emerald-700" : "text-red-600"}`}>
+            {testResult.ok ? "✓ " : "✗ "}{testResult.message}
+          </p>
+        )}
 
         {/* Webhook / Callback Endpoint Reference */}
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3 mt-2">
@@ -403,7 +460,7 @@ const BgvProviderSettings = () => {
             {
               label: "BGV Result Webhook",
               desc: "General BGV check result callback",
-              path: "/api/ats/bgv/webhook",
+              path: "/api/ats/bgv/provider/callback",
               method: "POST",
             },
           ].map(({ label, desc, path, method }) => (

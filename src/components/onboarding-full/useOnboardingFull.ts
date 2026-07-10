@@ -109,6 +109,16 @@ export type StatutoryForm = {
   internationalWorker: boolean; declarationAccepted: boolean;
 };
 
+// Extract the most useful message from a BGV API error response
+function extractBgvError(e: any, fallback: string): string {
+  const status = e?.response?.status;
+  const serverMsg = e?.response?.data?.error ?? e?.response?.data?.message ?? null;
+  if (status === 503) return serverMsg ?? "Verification service is not configured — please contact HR.";
+  if (status === 403) return serverMsg ?? "BGV consent required — please complete the consent step first.";
+  if (status === 400) return serverMsg ?? fallback;
+  return serverMsg ?? e?.message ?? fallback;
+}
+
 export const EMPTY_EMPLOYEE: EmployeeForm = {
   title: "Mr", employeeName: "", relation: "Father", fatherHusbandName: "", motherName: "",
   gender: "", maritalStatus: "", dateOfBirth: "", bloodGroup: "",
@@ -489,7 +499,7 @@ export function useOnboardingFull(token: string) {
   const verifyPan = async () => {
     setSaving(true);
     try { await hrmsApi.post(`${BGV}/verify/pan`, { token, panNumber: employee.panNumber }); await load(); }
-    catch (e: any) { setError(e?.message || "PAN verification failed"); }
+    catch (e: any) { setError(extractBgvError(e, "PAN verification failed")); }
     finally { setSaving(false); }
   };
 
@@ -502,7 +512,7 @@ export function useOnboardingFull(token: string) {
     }
     setSaving(true);
     try { await hrmsApi.post(`${BGV}/verify/bank`, { token, accountNo: bank.accountNo, ifscCode: bank.ifscCode, accountHolderName: bank.accountHolderName }); await load(); }
-    catch (e: any) { setError(e?.message || "Bank verification failed"); }
+    catch (e: any) { setError(extractBgvError(e, "Bank verification failed")); }
     finally { setSaving(false); }
   };
 
@@ -510,7 +520,7 @@ export function useOnboardingFull(token: string) {
     const doc = status?.documents.find((d) => d.doc_type.toLowerCase().includes("aadhaar"));
     setSaving(true);
     try { await hrmsApi.post(`${BGV}/verify/aadhaar-offline`, { token, documentId: doc?.id, aadhaarLast4: employee.aadhaarNumber.slice(-4) }); await load(); }
-    catch (e: any) { setError(e?.message || "Aadhaar verification failed"); }
+    catch (e: any) { setError(extractBgvError(e, "Aadhaar verification failed")); }
     finally { setSaving(false); }
   };
 
@@ -524,7 +534,7 @@ export function useOnboardingFull(token: string) {
       const count = res.data?.data?.employment_history?.length ?? 0;
       if (count > 0) setError(""); // clear any prior error; employment history fetched
     }
-    catch (e: any) { setError(e?.message || "UAN verification failed"); }
+    catch (e: any) { setError(extractBgvError(e, "UAN verification failed")); }
     finally { setSaving(false); }
   };
 
@@ -532,10 +542,12 @@ export function useOnboardingFull(token: string) {
     setSaving(true);
     try {
       const res = await hrmsApi.post<{ data: { authUrl?: string | null; redirectUrl?: string | null; verificationUrl?: string | null } }>(`${BGV}/digilocker/start`, { token });
-      const nextUrl = res.data?.authUrl ?? res.data?.redirectUrl ?? res.data?.verificationUrl;
-      if (!nextUrl) throw new Error("DigiLocker link was not returned by the server.");
+      // data is nested under res.data.data from the API envelope
+      const payload = (res.data as any)?.data ?? res.data;
+      const nextUrl = payload?.authUrl ?? payload?.redirectUrl ?? payload?.verificationUrl;
+      if (!nextUrl) throw new Error("DigiLocker link was not returned by the server. Please try again or contact HR.");
       window.open(nextUrl, "_blank");
-    } catch (e: any) { setError(e?.message || "DigiLocker link failed"); }
+    } catch (e: any) { setError(extractBgvError(e, "DigiLocker verification unavailable — please contact HR")); }
     finally { setSaving(false); }
   };
 
@@ -546,10 +558,11 @@ export function useOnboardingFull(token: string) {
         `${API}/esign/initiate`,
         { token, documentId }
       );
-      const nextUrl = res.data?.verification_url ?? res.data?.authUrl ?? res.data?.sign_url;
+      const payload = (res.data as any)?.data ?? res.data;
+      const nextUrl = payload?.verification_url ?? payload?.authUrl ?? payload?.sign_url;
       if (!nextUrl) throw new Error("eSign link was not returned by the server.");
       window.open(nextUrl, "_blank");
-    } catch (e: any) { setError(e?.message || "eSign initiation failed"); }
+    } catch (e: any) { setError(extractBgvError(e, "eSign initiation failed")); }
     finally { setSaving(false); }
   };
 
