@@ -7,7 +7,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, Send, Sparkles, Shield, TrendingUp, AlertTriangle, Clock, CheckCircle2 } from 'lucide-react';
-import axios from 'axios';
+import { hrmsApi } from '@/lib/hrmsApi';
 
 interface Message {
   id: string;
@@ -96,9 +96,9 @@ export default function PeopleOSCopilot() {
 
   const loadActiveProvider = async () => {
     try {
-      const response = await axios.get('/api/ai/providers/active');
-      if (response.data.success && response.data.data) {
-        setActiveProvider(response.data.data.providerKey);
+      const res = await hrmsApi.get<{ success: boolean; data: { providerKey: string } }>('/api/ai/providers/active');
+      if (res.success && res.data) {
+        setActiveProvider(res.data.providerKey);
       }
     } catch (error) {
       console.error('Failed to load active provider:', error);
@@ -126,13 +126,13 @@ export default function PeopleOSCopilot() {
     setLoading(true);
 
     try {
-      const response = await axios.post('/api/ai/ask', {
+      const res = await hrmsApi.post<{ success: boolean; data: any }>('/api/ai/ask', {
         question: userMessage.content,
         context_type: 'generic',
       });
 
-      if (response.data.success && response.data.data) {
-        const data = response.data.data;
+      if (res.success && res.data) {
+        const data = res.data;
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
@@ -154,7 +154,7 @@ export default function PeopleOSCopilot() {
     } catch (error: any) {
       toast({
         title: 'Error',
-        description: error.response?.data?.message || 'Failed to get AI response',
+        description: error.message || 'Failed to get AI response',
         variant: 'destructive',
       });
 
