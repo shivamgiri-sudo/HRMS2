@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock, Filter, RefreshCcw, ShieldAlert, Sparkles, TrendingUp, Users } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Filter, RefreshCcw, ShieldAlert, Sparkles, TrendingUp, Users, Loader2, DollarSign, Calendar, UserPlus, ClipboardList } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { toast } from "sonner";
 
 type ActionRow = {
   id: string;
@@ -46,6 +47,9 @@ export default function NativeBusinessActionQueue() {
   const [rows, setRows] = useState<ActionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [syncLoading, setSyncLoading] = useState<string | null>(null);
+  const [explainLoading, setExplainLoading] = useState<string | null>(null);
+  const [explanations, setExplanations] = useState<Record<string, any>>({});
   const [message, setMessage] = useState("");
   const [filters, setFilters] = useState({ source_module: "all", severity: "all", status: "all", due: "all", search: "" });
 
@@ -85,6 +89,42 @@ export default function NativeBusinessActionQueue() {
     }
   };
 
+  const handleIndividualSync = async (signalType: string) => {
+    setSyncLoading(signalType);
+    try {
+      const res = await hrmsApi.post<{ success: boolean; data: { count: number; message: string } }>(`/api/business-actions/sync-signals/${signalType}`, {});
+      if (res.success) {
+        toast.success(res.data.message || `${signalType} sync completed`);
+        await load();
+      } else {
+        toast.error(`${signalType} sync failed`);
+      }
+    } catch (error: any) {
+      console.error(`[${signalType} Sync] Error:`, error);
+      toast.error(error?.message || `${signalType} sync failed`);
+    } finally {
+      setSyncLoading(null);
+    }
+  };
+
+  const handleExplain = async (actionId: string) => {
+    setExplainLoading(actionId);
+    try {
+      const res = await hrmsApi.post<{ success: boolean; data: any }>("/api/ai/explain-action", { action_id: actionId });
+      if (res.success && res.data) {
+        setExplanations((prev) => ({ ...prev, [actionId]: res.data }));
+        toast.success("AI explanation generated");
+      } else {
+        toast.error("Failed to explain action");
+      }
+    } catch (error: any) {
+      console.error("[Explain Action] Error:", error);
+      toast.error(error?.message || "Failed to explain action");
+    } finally {
+      setExplainLoading(null);
+    }
+  };
+
   useEffect(() => { void load(); }, []);
 
   const visibleRows = useMemo(() => {
@@ -116,7 +156,23 @@ export default function NativeBusinessActionQueue() {
             <div className="flex flex-wrap gap-2">
               <Button onClick={syncSignals} disabled={syncing || loading} className="bg-white/15 text-white hover:bg-white/25">
                 <Sparkles className={`mr-2 h-4 w-4 ${syncing ? "animate-pulse" : ""}`} />
-                Sync Risk Signals
+                Sync All Signals
+              </Button>
+              <Button onClick={() => handleIndividualSync("payroll")} disabled={syncLoading !== null || loading} size="sm" variant="outline" className="bg-white/10 text-white border-white/20 hover:bg-white/20">
+                {syncLoading === "payroll" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <DollarSign className="mr-2 h-4 w-4" />}
+                Payroll
+              </Button>
+              <Button onClick={() => handleIndividualSync("attendance")} disabled={syncLoading !== null || loading} size="sm" variant="outline" className="bg-white/10 text-white border-white/20 hover:bg-white/20">
+                {syncLoading === "attendance" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Calendar className="mr-2 h-4 w-4" />}
+                Attendance
+              </Button>
+              <Button onClick={() => handleIndividualSync("onboarding")} disabled={syncLoading !== null || loading} size="sm" variant="outline" className="bg-white/10 text-white border-white/20 hover:bg-white/20">
+                {syncLoading === "onboarding" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UserPlus className="mr-2 h-4 w-4" />}
+                Onboarding
+              </Button>
+              <Button onClick={() => handleIndividualSync("roster")} disabled={syncLoading !== null || loading} size="sm" variant="outline" className="bg-white/10 text-white border-white/20 hover:bg-white/20">
+                {syncLoading === "roster" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardList className="mr-2 h-4 w-4" />}
+                Roster
               </Button>
               <Button onClick={load} disabled={loading} className="bg-white text-slate-950 hover:bg-blue-50">
                 <RefreshCcw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
@@ -176,27 +232,57 @@ export default function NativeBusinessActionQueue() {
             <div className="max-h-[640px] overflow-auto">
               <table className="w-full min-w-[1100px] text-sm">
                 <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                  <tr>{["Risk", "Title", "Source", "Owner", "Due", "Status", "Esc"].map((h) => <th key={h} className="px-4 py-3 font-black">{h}</th>)}</tr>
+                  <tr>{["Risk", "Title", "Source", "Owner", "Due", "Status", "Esc", "Actions"].map((h) => <th key={h} className="px-4 py-3 font-black">{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {visibleRows.map((row) => (
-                    <tr key={row.id} className="border-t hover:bg-slate-50">
-                      <td className="px-4 py-3"><Pill label={row.severity} /></td>
-                      <td className="px-4 py-3">
-                        <div className="font-black text-slate-950">{row.title}</div>
-                        <div className="mt-1 max-w-[360px] truncate text-xs text-slate-500">{row.description || row.risk_type?.replace(/_/g, " ")}</div>
-                      </td>
-                      <td className="px-4 py-3 text-xs font-semibold text-slate-600">
-                        <div>{row.source_module?.replace(/_/g, " ")}</div>
-                        <div className="text-slate-400">{row.risk_type?.replace(/_/g, " ")}</div>
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">{row.owner_name || row.owner_role || "Unassigned"}</td>
-                      <td className="px-4 py-3 text-xs font-semibold">
-                        <span className={row.is_overdue ? "text-red-700" : "text-slate-600"}>{row.due_date || "No due date"}</span>
-                      </td>
-                      <td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-700">{row.status?.replace(/_/g, " ")}</span></td>
-                      <td className="px-4 py-3 text-center font-black text-slate-500">{row.escalation_level ?? 0}</td>
-                    </tr>
+                    <>
+                      <tr key={row.id} className="border-t hover:bg-slate-50">
+                        <td className="px-4 py-3"><Pill label={row.severity} /></td>
+                        <td className="px-4 py-3">
+                          <div className="font-black text-slate-950">{row.title}</div>
+                          <div className="mt-1 max-w-[360px] truncate text-xs text-slate-500">{row.description || row.risk_type?.replace(/_/g, " ")}</div>
+                        </td>
+                        <td className="px-4 py-3 text-xs font-semibold text-slate-600">
+                          <div>{row.source_module?.replace(/_/g, " ")}</div>
+                          <div className="text-slate-400">{row.risk_type?.replace(/_/g, " ")}</div>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">{row.owner_name || row.owner_role || "Unassigned"}</td>
+                        <td className="px-4 py-3 text-xs font-semibold">
+                          <span className={row.is_overdue ? "text-red-700" : "text-slate-600"}>{row.due_date || "No due date"}</span>
+                        </td>
+                        <td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-700">{row.status?.replace(/_/g, " ")}</span></td>
+                        <td className="px-4 py-3 text-center font-black text-slate-500">{row.escalation_level ?? 0}</td>
+                        <td className="px-4 py-3">
+                          <Button size="sm" variant="ghost" onClick={() => handleExplain(row.id)} disabled={explainLoading === row.id}>
+                            {explainLoading === row.id ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+                            Explain
+                          </Button>
+                        </td>
+                      </tr>
+                      {explanations[row.id] && (
+                        <tr key={`${row.id}-explain`} className="border-t bg-blue-50/50">
+                          <td colSpan={8} className="px-4 py-4">
+                            <div className="rounded-xl border border-blue-200 bg-white p-4 shadow-sm">
+                              <div className="flex items-start gap-3">
+                                <Sparkles className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                                <div className="flex-1 space-y-2">
+                                  <p className="text-sm text-slate-700 leading-relaxed">{explanations[row.id].explanation}</p>
+                                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                                    <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 font-semibold text-blue-700">
+                                      {explanations[row.id].provider || "AI"}
+                                    </span>
+                                    {explanations[row.id].safe_mode && <span className="inline-flex items-center gap-1">🔒 Safe Mode</span>}
+                                    {explanations[row.id].fallback_used && <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">Fallback</span>}
+                                    {explanations[row.id].generated_at && <span className="text-slate-400">Generated: {new Date(explanations[row.id].generated_at).toLocaleTimeString()}</span>}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
                   ))}
                 </tbody>
               </table>

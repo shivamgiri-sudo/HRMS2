@@ -122,6 +122,7 @@ type FormState = {
   candidate_location: string;
   recruiter_remarks: string;
   recruiter_rejection_reason: string;
+  walkin_date: string;
 };
 
 const EMPTY_FORM: FormState = {
@@ -138,6 +139,7 @@ const EMPTY_FORM: FormState = {
   candidate_location: "",
   recruiter_remarks: "",
   recruiter_rejection_reason: "",
+  walkin_date: "",
 };
 
 const CHART_COLORS = ["#8b5cf6", "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#14b8a6", "#f97316"];
@@ -299,6 +301,11 @@ export default function NativeATSHiringEntry() {
   // Progress tab filters
   const [entrySearch, setEntrySearch] = useState("");
   const [filterOutcome, setFilterOutcome] = useState("");
+  const [filterRecruiter, setFilterRecruiter] = useState("");
+  const [filterBranch, setFilterBranch] = useState("");
+  const [filterProcess, setFilterProcess] = useState("");
+  const [filterSource, setFilterSource] = useState("");
+  const [filterWpGroup, setFilterWpGroup] = useState("");
   const [filterFrom, setFilterFrom] = useState("");
   const [filterTo, setFilterTo] = useState("");
 
@@ -334,7 +341,7 @@ export default function NativeATSHiringEntry() {
       ...prev,
       candidate_name: "", mobile: "", candidate_email: "", gender: "",
       education_qualification: "", experience_level: "", candidate_location: "",
-      recruiter_remarks: "", recruiter_rejection_reason: "",
+      recruiter_remarks: "", recruiter_rejection_reason: "", walkin_date: "",
     }));
     setValidationErrors([]);
     window.setTimeout(() => focusField("candidate_name"), 0);
@@ -410,9 +417,18 @@ export default function NativeATSHiringEntry() {
     setAnalyticsLoading(true);
     try {
       const res = await hrmsApi.get<AnalyticsResponse>("/api/ats/recruiter/hiring-activity/analytics");
-      setAnalytics(res.data ?? null);
-      analyticsLoadedRef.current = true;
-    } catch (_e) { /* non-critical */ } finally {
+      if (res.success && res.data) {
+        setAnalytics(res.data);
+        analyticsLoadedRef.current = true;
+      } else {
+        setAnalytics(null);
+        toast.error("Analytics data could not be loaded. Please try again.");
+      }
+    } catch (err: unknown) {
+      console.error("[Analytics] Load failed:", err);
+      setAnalytics(null);
+      toast.error((err as { message?: string })?.message ?? "Failed to load analytics data");
+    } finally {
       setAnalyticsLoading(false);
     }
   };
@@ -492,12 +508,27 @@ export default function NativeATSHiringEntry() {
     const q = entrySearch.toLowerCase().trim();
     if (q) {
       result = result.filter((r) =>
-        [r.candidate_name, r.mobile, r.process_name, r.position_name, r.activity_date, r.recruiter_remarks, r.wp_group]
+        [r.candidate_name, r.mobile, r.process_name, r.position_name, r.activity_date, r.recruiter_remarks, r.wp_group, r.recruiter_name_snapshot, r.branch_name, r.hiring_source]
           .join(" ").toLowerCase().includes(q)
       );
     }
     if (filterOutcome) {
       result = result.filter((r) => String(r.recruiter_remarks ?? "").toLowerCase() === filterOutcome.toLowerCase());
+    }
+    if (filterRecruiter) {
+      result = result.filter((r) => String(r.recruiter_name_snapshot ?? "").toLowerCase().includes(filterRecruiter.toLowerCase()));
+    }
+    if (filterBranch) {
+      result = result.filter((r) => String(r.branch_name ?? "").toLowerCase().includes(filterBranch.toLowerCase()));
+    }
+    if (filterProcess) {
+      result = result.filter((r) => String(r.process_name ?? "").toLowerCase().includes(filterProcess.toLowerCase()));
+    }
+    if (filterSource) {
+      result = result.filter((r) => String(r.hiring_source ?? "").toLowerCase().includes(filterSource.toLowerCase()));
+    }
+    if (filterWpGroup) {
+      result = result.filter((r) => String(r.wp_group ?? "").toLowerCase().includes(filterWpGroup.toLowerCase()));
     }
     if (filterFrom) {
       result = result.filter((r) => r.activity_date >= filterFrom);
@@ -506,7 +537,7 @@ export default function NativeATSHiringEntry() {
       result = result.filter((r) => r.activity_date <= filterTo);
     }
     return result;
-  }, [rows, entrySearch, filterOutcome, filterFrom, filterTo]);
+  }, [rows, entrySearch, filterOutcome, filterRecruiter, filterBranch, filterProcess, filterSource, filterWpGroup, filterFrom, filterTo]);
 
   const sourceOptions = bootstrap?.options.sourceOptions ?? [];
   const processOptions = bootstrap?.options.processOptions ?? [];
@@ -521,6 +552,8 @@ export default function NativeATSHiringEntry() {
     form.recruiter_remarks.toLowerCase() === "rejected" ||
     form.recruiter_remarks.toLowerCase() === "not contacted";
 
+  const isInterestedOutcome = form.recruiter_remarks.toLowerCase() === "if interested";
+
   const validate = () => {
     const errors: string[] = [];
     if (!normalizeText(form.process_name)) errors.push("Process name is required.");
@@ -531,6 +564,9 @@ export default function NativeATSHiringEntry() {
     if (!normalizeText(form.recruiter_remarks)) errors.push("Calling outcome is required.");
     if (isRejectionRequired && !normalizeText(form.recruiter_rejection_reason)) {
       errors.push("Reason is required when outcome is Rejected or Not Contacted.");
+    }
+    if (isInterestedOutcome && !normalizeText(form.walkin_date)) {
+      errors.push("Walk-in date is required when outcome is If Interested.");
     }
     const email = normalizeText(form.candidate_email);
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -563,6 +599,7 @@ export default function NativeATSHiringEntry() {
         candidate_location: normalizeText(form.candidate_location),
         recruiter_remarks: normalizeText(form.recruiter_remarks),
         recruiter_rejection_reason: normalizeText(form.recruiter_rejection_reason),
+        walkin_date: normalizeText(form.walkin_date),
         source_system: "HRMS",
         duplicateMode: "update_existing",
       };
@@ -573,6 +610,21 @@ export default function NativeATSHiringEntry() {
       );
 
       const action = res.data?.action ?? "saved";
+      const savedRow = res.data?.row;
+
+      // If "If Interested" outcome with walk-in date, create followup reminder
+      if (isInterestedOutcome && form.walkin_date && savedRow?.id) {
+        try {
+          await hrmsApi.post(`/api/ats/recruiter/hiring-activity/${savedRow.id}/set-followup`, {
+            followup_date: form.walkin_date,
+            followup_reason: `Walk-in scheduled for ${form.walkin_date}`,
+          });
+        } catch (followupError) {
+          console.error("[Followup Creation] Error:", followupError);
+          // Don't fail the main save if followup fails
+        }
+      }
+
       setSuccessMsg(action === "updated" ? "Existing entry updated for this candidate." : "Entry saved successfully.");
       clearCandidateFields();
       await reloadRowsAfterSave();
@@ -866,6 +918,21 @@ export default function NativeATSHiringEntry() {
                 </div>
               )}
 
+              {/* Conditional walk-in date for "If Interested" */}
+              {isInterestedOutcome && (
+                <div className="space-y-1.5">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-600">Walk-in Date *</div>
+                  <input
+                    type="date"
+                    ref={assignFieldRef("walkin_date") as any}
+                    value={form.walkin_date}
+                    onChange={(e) => updateForm("walkin_date", e.target.value)}
+                    className="h-12 w-full rounded-xl border-2 border-emerald-300 bg-white px-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                    min={new Date().toISOString().split('T')[0]}
+                  />
+                </div>
+              )}
+
               {/* Save button */}
               <div className="space-y-1.5">
                 <div className="text-[10px] text-transparent select-none">save</div>
@@ -1148,6 +1215,48 @@ export default function NativeATSHiringEntry() {
                 <option value="">All outcomes</option>
                 {outcomeOptions.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
+              <select
+                value={filterRecruiter}
+                onChange={(e) => setFilterRecruiter(e.target.value)}
+                className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
+              >
+                <option value="">All recruiters</option>
+                {Array.from(new Set(rows.map(r => String(r.recruiter_name_snapshot || "")).filter(Boolean))).sort().map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+              {roleKeys.includes("super_admin") && (
+                <select
+                  value={filterBranch}
+                  onChange={(e) => setFilterBranch(e.target.value)}
+                  className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
+                >
+                  <option value="">All branches</option>
+                  {Array.from(new Set(rows.map(r => String(r.branch_name || "")).filter(Boolean))).sort().map((branch) => <option key={branch} value={branch}>{branch}</option>)}
+                </select>
+              )}
+              <select
+                value={filterProcess}
+                onChange={(e) => setFilterProcess(e.target.value)}
+                className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
+              >
+                <option value="">All processes</option>
+                {Array.from(new Set(rows.map(r => String(r.process_name || "")).filter(Boolean))).sort().map((proc) => <option key={proc} value={proc}>{proc}</option>)}
+              </select>
+              <select
+                value={filterSource}
+                onChange={(e) => setFilterSource(e.target.value)}
+                className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
+              >
+                <option value="">All sources</option>
+                {Array.from(new Set(rows.map(r => String(r.hiring_source || "")).filter(Boolean))).sort().map((src) => <option key={src} value={src}>{src}</option>)}
+              </select>
+              <select
+                value={filterWpGroup}
+                onChange={(e) => setFilterWpGroup(e.target.value)}
+                className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
+              >
+                <option value="">All WP groups</option>
+                {Array.from(new Set(rows.map(r => String(r.wp_group || "")).filter(Boolean))).sort().map((wp) => <option key={wp} value={wp}>{wp}</option>)}
+              </select>
               <input
                 type="date"
                 value={filterFrom}
@@ -1162,10 +1271,10 @@ export default function NativeATSHiringEntry() {
                 className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
                 title="To date"
               />
-              {(entrySearch || filterOutcome || filterFrom || filterTo) && (
+              {(entrySearch || filterOutcome || filterRecruiter || filterBranch || filterProcess || filterSource || filterWpGroup || filterFrom || filterTo) && (
                 <button
                   type="button"
-                  onClick={() => { setEntrySearch(""); setFilterOutcome(""); setFilterFrom(""); setFilterTo(""); }}
+                  onClick={() => { setEntrySearch(""); setFilterOutcome(""); setFilterRecruiter(""); setFilterBranch(""); setFilterProcess(""); setFilterSource(""); setFilterWpGroup(""); setFilterFrom(""); setFilterTo(""); }}
                   className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-500 hover:bg-slate-50"
                 >
                   Clear
@@ -1189,6 +1298,8 @@ export default function NativeATSHiringEntry() {
                         <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Process</th>
                         <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Source</th>
                         <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">WP Group</th>
+                        <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Recruiter</th>
+                        {roleKeys.includes("super_admin") && <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Branch</th>}
                         <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Outcome</th>
                         <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Walk-in</th>
                         <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Selected</th>
@@ -1210,6 +1321,8 @@ export default function NativeATSHiringEntry() {
                           <td className="px-3 py-2.5 text-slate-700">{row.process_name || "—"}</td>
                           <td className="px-3 py-2.5 text-slate-600">{row.hiring_source || "—"}</td>
                           <td className="px-3 py-2.5 text-slate-600">{row.wp_group || "—"}</td>
+                          <td className="px-3 py-2.5 text-slate-600">{row.recruiter_name_snapshot || "—"}</td>
+                          {roleKeys.includes("super_admin") && <td className="px-3 py-2.5 text-slate-600">{row.branch_name || "—"}</td>}
                           <td className="px-3 py-2.5">
                             <OutcomeBadge outcome={row.recruiter_remarks || ""} />
                           </td>
