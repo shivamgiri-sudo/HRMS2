@@ -321,7 +321,7 @@ const App = () => (
               <Route path="/reports" element={<ProtectedRoute><NativeReportsCenter /></ProtectedRoute>} />
               <Route path="/reports/enterprise" element={<Navigate to="/reports" replace />} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-              <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+              <Route path="/profile" element={<ProtectedRoute><Gate pageCode="MY_PROFILE"><Profile /></Gate></ProtectedRoute>} />
               <Route path="/employee-journey" element={<ProtectedRoute><EmployeeJourney /></ProtectedRoute>} />
               <Route path="/performance" element={<ProtectedRoute><Performance /></ProtectedRoute>} />
               <Route path="/reviews-management" element={<Navigate to="/dashboard" replace />} />

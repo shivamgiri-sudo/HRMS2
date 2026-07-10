@@ -29,7 +29,7 @@ export const navGroups: NavGroup[] = [
   {
     title: "My Space",
     items: [
-      { label: "Profile",    href: "/profile",    icon: ic(User),         description: "Profile" },
+      { label: "Profile",    href: "/profile",    icon: ic(User),         description: "Profile",    pageCode: "MY_PROFILE" },
       { label: "Calendar",   href: "/calendar",   icon: ic(Calendar),     description: "Company calendar" },
       {
         label: "Attendance", href: "/attendance", icon: ic(Clock), description: "Attendance & roster",
