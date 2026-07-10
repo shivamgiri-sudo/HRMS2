@@ -16,7 +16,7 @@ export function EmployeeLayout() {
   const now = new Date();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const dataTimestamp = now.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) +
-    ", " + now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " AM";
+    ", " + now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) + " AM";
 
   const { data: attData } = useQuery<any>({
     queryKey: ["attendance-monthly", employeeId, currentMonth],

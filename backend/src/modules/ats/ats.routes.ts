@@ -18,6 +18,7 @@ import { atsQueueService } from "./ats.queue.service.js";
 import { verifyRecruiter, resolveRecruiterForActor, getMyPendingCandidates, getOtherRecruitersPendingCandidates, reassignCandidate, getSubmissionHistory, getRecruiterDailyStats } from "../ats-full-parity/recruiterInterview.service.js";
 import { persistCandidateFile } from "./candidate-file.service.js";
 import { joiningDocumentsTrackerRouter } from "./ats.joiningDocumentsTracker.routes.js";
+import { getIstDateString } from '../../utils/dateUtils.js';
 import { bulkImportRouter } from "./bulk-import.routes.js";
 
 export const atsRouter = Router();
@@ -249,7 +250,7 @@ atsRouter.post("/queue-tokens", requireRole("admin", "hr", "super_admin", "recru
   if (!candidateId || typeof candidateId !== 'string') {
     return res.status(400).json({ success: false, message: "candidateId is required" });
   }
-  const arrival = arrivalTime ?? new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const arrival = arrivalTime ?? `${getIstDateString()} 00:00:00`;
   const data = await atsQueueService.createToken(candidateId, arrival);
   return res.status(201).json({ success: true, data });
 }));
@@ -272,7 +273,7 @@ atsRouter.post("/queue-tokens/re-entry", requireRole("admin", "hr", "super_admin
   if (!candidateId || typeof candidateId !== 'string') {
     return res.status(400).json({ success: false, message: "candidateId is required" });
   }
-  const arrival = arrivalTime ?? new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const arrival = arrivalTime ?? `${getIstDateString()} 00:00:00`;
   const data = await atsQueueService.reEntry(candidateId, arrival);
   return res.status(201).json({ success: true, data });
 }));

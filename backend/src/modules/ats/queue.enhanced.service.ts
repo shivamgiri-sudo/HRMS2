@@ -1,5 +1,6 @@
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
+import { getIstDateString } from '../../utils/dateUtils.js';
 
 /**
  * Enhanced Queue Service
@@ -63,7 +64,7 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
   const params: unknown[] = [];
 
   // Date filter (default to today)
-  const targetDate = filters.date || new Date().toISOString().split('T')[0];
+  const targetDate = filters.date || getIstDateString();
   conditions.push(`DATE(${queueTimeExpr('qt')}) = ?`);
   params.push(targetDate);
 
@@ -156,7 +157,7 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
  * Get queue metrics for dashboard
  */
 export async function getQueueMetrics(branch?: string, date?: string): Promise<QueueMetrics> {
-  const targetDate = date || new Date().toISOString().split('T')[0];
+  const targetDate = date || getIstDateString();
   const branchCondition = branch ? `AND ${BRANCH_EXPR} = ?` : '';
   const params: unknown[] = branch ? [targetDate, branch] : [targetDate];
 

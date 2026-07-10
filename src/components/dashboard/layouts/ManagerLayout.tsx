@@ -231,7 +231,7 @@ export function ManagerLayout() {
                       </p>
                       {a.due_date && (
                         <p className="text-[10px] text-slate-400">
-                          {new Date(a.due_date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                          {new Date(a.due_date).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" })}
                         </p>
                       )}
                     </div>
@@ -293,7 +293,7 @@ export function ManagerLayout() {
                     <p className="text-[11px] text-slate-500 truncate">{c.notes ?? c.session_type ?? "Session"}</p>
                   </div>
                   <span className="text-[10px] text-slate-400 flex-shrink-0">
-                    {c.session_date ? new Date(c.session_date).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""}
+                    {c.session_date ? new Date(c.session_date).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" }) : ""}
                   </span>
                 </div>
               ))

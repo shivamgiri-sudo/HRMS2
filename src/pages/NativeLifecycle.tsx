@@ -7,6 +7,7 @@ import {
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
+import { formatISTDate } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -367,7 +368,7 @@ export default function NativeLifecycle() {
                             </div>
                             {ev.created_by && (
                               <p className="mt-1.5 text-xs text-slate-400">
-                                Recorded by {ev.created_by} · {ev.created_at?.slice(0, 10)}
+                                Recorded by {ev.created_by} · {formatISTDate(ev.created_at)}
                               </p>
                             )}
                           </div>

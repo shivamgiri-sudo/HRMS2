@@ -429,6 +429,7 @@ export default function SuperAdminModuleAccess() {
                               {new Date(access.granted_at).toLocaleTimeString('en-IN', {
                                 hour: '2-digit',
                                 minute: '2-digit',
+                                timeZone: 'Asia/Kolkata',
                               })}
                             </p>
                           </td>

@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatISTDate } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -447,7 +448,7 @@ export default function NativeClientMaster() {
                             <Badge active={u.is_active} />
                           </td>
                           <td className="p-4 font-mono text-xs text-slate-400">
-                            {u.created_at?.slice(0, 10)}
+                            {formatISTDate(u.created_at)}
                           </td>
                         </tr>
                       ))}
@@ -529,7 +530,7 @@ export default function NativeClientMaster() {
                             <Badge active={p.is_active} />
                           </td>
                           <td className="p-4 font-mono text-xs text-slate-400">
-                            {p.created_at?.slice(0, 10)}
+                            {formatISTDate(p.created_at)}
                           </td>
                           <td className="p-4">
                             <div className="flex items-center gap-2">

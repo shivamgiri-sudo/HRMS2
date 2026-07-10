@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { Request } from "express";
+import { getIstDateString } from '../../utils/dateUtils.js';
 
 const OFFER_TOKEN_SALT = "offer-salt";
 
@@ -156,7 +157,7 @@ export const bgvService = {
       `INSERT INTO ats_bgv_record (id, candidate_id, bgv_vendor, initiated_date, initiated_by, overall_status)
        VALUES (?, ?, ?, ?, ?, 'in_progress')
        ON DUPLICATE KEY UPDATE bgv_vendor = VALUES(bgv_vendor), initiated_date = VALUES(initiated_date), overall_status = 'in_progress', updated_at = NOW()`,
-      [id, candidateId, data.bgv_vendor ?? data.vendor_name ?? null, data.initiated_date ?? new Date().toISOString().slice(0, 10), initiatedBy],
+      [id, candidateId, data.bgv_vendor ?? data.vendor_name ?? null, data.initiated_date ?? getIstDateString(), initiatedBy],
     );
     await db.execute("UPDATE ats_candidate SET bgv_status = 'in_progress' WHERE id = ?", [candidateId]);
     await logSensitiveAction({ actor_user_id: initiatedBy, action_type: "BGV_INITIATED", module_key: "ATS", entity_type: "candidate", entity_id: candidateId, req });
@@ -226,7 +227,7 @@ export const offerService = {
     await db.execute(
       `INSERT INTO ats_offer (id, candidate_id, requisition_id, offered_ctc, offered_designation, offered_process, offered_branch, offer_date, offer_expiry_date, joining_date, prepared_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, data.candidate_id, data.requisition_id ?? null, data.offered_ctc ?? data.ctc_annual ?? null, data.offered_designation ?? data.role_title ?? null, data.offered_process ?? candRows[0].applied_for_process ?? null, data.offered_branch ?? candRows[0].applied_for_branch ?? null, data.offer_date ?? new Date().toISOString().slice(0, 10), data.offer_expiry_date ?? data.offer_expiry ?? null, data.joining_date ?? null, preparedBy],
+      [id, data.candidate_id, data.requisition_id ?? null, data.offered_ctc ?? data.ctc_annual ?? null, data.offered_designation ?? data.role_title ?? null, data.offered_process ?? candRows[0].applied_for_process ?? null, data.offered_branch ?? candRows[0].applied_for_branch ?? null, data.offer_date ?? getIstDateString(), data.offer_expiry_date ?? data.offer_expiry ?? null, data.joining_date ?? null, preparedBy],
     );
     await db.execute("UPDATE ats_candidate SET offer_status = 'draft' WHERE id = ?", [data.candidate_id]);
     await logSensitiveAction({ actor_user_id: preparedBy, action_type: "OFFER_CREATED", module_key: "ATS", entity_type: "candidate", entity_id: data.candidate_id as string, req });

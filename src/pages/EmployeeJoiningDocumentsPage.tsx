@@ -9,6 +9,7 @@ import {
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatISTDate } from "@/lib/utils";
 
 type ChecklistItem = {
   id: string;
@@ -629,7 +630,7 @@ export default function EmployeeJoiningDocumentsPage() {
                             <p className="text-sm font-semibold capitalize text-slate-800">{statusText(entry.action_type)}</p>
                             {entry.remarks && <p className="text-xs text-slate-500">{entry.remarks}</p>}
                             <p className="text-[11px] text-slate-400">
-                              {entry.document_code ?? "—"} · {entry.created_at}
+                              {entry.document_code ?? "—"} · {formatISTDate(entry.created_at)}
                             </p>
                           </div>
                         </div>

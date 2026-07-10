@@ -78,10 +78,11 @@ export function NonEmployeeDashboard() {
                 </div>
                 <p className="mt-2 text-sm">
                   Submitted on{" "}
-                  {new Date(request.created_at).toLocaleDateString("en-US", {
+                  {new Date(request.created_at).toLocaleDateString("en-IN", {
                     year: "numeric",
                     month: "long",
                     day: "numeric",
+                    timeZone: "Asia/Kolkata",
                   })}
                 </p>
                 {request.message && (

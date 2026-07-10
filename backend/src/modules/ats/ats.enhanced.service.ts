@@ -1,6 +1,7 @@
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'crypto';
+import { getIstDateString } from '../../utils/dateUtils.js';
 
 type RecruiterRow = RowDataPacket & {
   employee_id: string;
@@ -74,7 +75,7 @@ export async function ensureRecruiterInRoster(
 
 // ── Recruiter Assignment Logic ────────────────────────────────────────────────
 export async function getAvailableRecruiters(branchName: string) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getIstDateString();
 
   // Fetch HR/Executive employees at this branch (department = Human Resource, designation = Executive)
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -271,7 +272,7 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
 
 // ── Token Generation ───────────────────────────────────────────────────────────
 export async function generateTokenNumber(branchName: string): Promise<string> {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getIstDateString();
 
   // Get count of tokens issued today for this branch
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -282,7 +283,7 @@ export async function generateTokenNumber(branchName: string): Promise<string> {
 
   const todayCount = rows[0].count + 1;
   const branchPrefix = branchName.substring(0, 3).toUpperCase();
-  const dateStr = new Date().toISOString().split('T')[0].replace(/-/g, '');
+  const dateStr = getIstDateString().replace(/-/g, '');
 
   return `${branchPrefix}-${dateStr}-${String(todayCount).padStart(3, '0')}`;
 }

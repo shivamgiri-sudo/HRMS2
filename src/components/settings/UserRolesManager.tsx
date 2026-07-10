@@ -97,7 +97,7 @@ function formatLastLogin(dt: string | null) {
   if (days === 0) return "Today";
   if (days === 1) return "Yesterday";
   if (days < 30) return `${days}d ago`;
-  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
 }
 
 const PAGE_SIZE = 50;

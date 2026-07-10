@@ -231,7 +231,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
        recruiter_assigned_name,
        TIMESTAMPDIFF(MINUTE,
          CONCAT(COALESCE(created_date, DATE(created_at)), ' ', COALESCE(created_time, TIME(created_at))),
-         CONVERT_TZ(NOW(), @@session.time_zone, '+05:30')
+         CONVERT_TZ(NOW(), '+00:00', '+05:30')
        ) AS pending_minutes
      FROM ats_candidate
      WHERE active_status = 1
@@ -335,7 +335,7 @@ export async function getOtherRecruitersPendingCandidates(
        recruiter_assigned_name,
        TIMESTAMPDIFF(MINUTE,
          CONCAT(COALESCE(created_date, DATE(created_at)), ' ', COALESCE(created_time, TIME(created_at))),
-         CONVERT_TZ(NOW(), @@session.time_zone, '+05:30')
+         CONVERT_TZ(NOW(), '+00:00', '+05:30')
        ) AS pending_minutes
      FROM ats_candidate
      WHERE active_status = 1

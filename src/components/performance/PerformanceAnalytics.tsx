@@ -113,9 +113,10 @@ export function PerformanceAnalytics({ employeeId }: PerformanceAnalyticsProps) 
   // Process KPIs for monthly completion trend
   const monthlyGoalsTrend = filteredGoals.reduce((acc, goal) => {
     if (goal.completed_at && filterByDateRange(goal.completed_at)) {
-      const month = new Date(goal.completed_at).toLocaleDateString("en-US", {
+      const month = new Date(goal.completed_at).toLocaleDateString("en-IN", {
         month: "short",
         year: "2-digit",
+        timeZone: "Asia/Kolkata",
       });
       const existing = acc.find((item) => item.month === month);
       if (existing) {
@@ -131,9 +132,10 @@ export function PerformanceAnalytics({ employeeId }: PerformanceAnalyticsProps) 
   const ratingTrend = filteredReviews.map((review) => ({
     period: review.review_period,
     rating: review.overall_rating || 0,
-    date: new Date(normalizeDate(review.review_date)).toLocaleDateString("en-US", {
+    date: new Date(normalizeDate(review.review_date)).toLocaleDateString("en-IN", {
       month: "short",
       year: "2-digit",
+      timeZone: "Asia/Kolkata",
     }),
   }));
 

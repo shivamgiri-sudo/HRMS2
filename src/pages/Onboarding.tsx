@@ -37,6 +37,7 @@ import { useOnboardingRequests, OnboardingRequest } from "@/hooks/useOnboardingR
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import { format } from "date-fns";
+import { formatISTDate, formatIST } from "@/lib/utils";
 import {
   Table,
   TableBody,
@@ -1208,7 +1209,7 @@ const Onboarding = () => {
                             <div>
                               <h3 className="font-semibold text-foreground">{request.full_name}</h3>
                               <p className="text-sm text-muted-foreground">
-                                {request.email} · Approved on {(request.reviewed_at || request.updated_at) ? format(new Date(request.reviewed_at || request.updated_at), "MMM d, yyyy") : "—"}
+                                {request.email} · Approved on {(request.reviewed_at || request.updated_at) ? formatISTDate(request.reviewed_at || request.updated_at) : "—"}
                               </p>
                               {request.message && (
                                 <p className="text-xs text-muted-foreground mt-1 italic">"{request.message}"</p>
@@ -1240,7 +1241,7 @@ const Onboarding = () => {
                     const name = `${employee.first_name} ${employee.last_name}`;
                     const departmentName = employee.departments?.name || 'Unassigned';
                     const hireDate = employee.hire_date
-                      ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(employee.hire_date) ? `${employee.hire_date}T00:00:00` : employee.hire_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                      ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(employee.hire_date) ? `${employee.hire_date}T00:00:00` : employee.hire_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Kolkata' })
                       : 'TBD';
                     
                     return (
@@ -1399,7 +1400,7 @@ const Onboarding = () => {
                               {request.message || "-"}
                             </TableCell>
                             <TableCell className="hidden sm:table-cell text-muted-foreground">
-                              {request.created_at ? format(new Date(request.created_at), "MMM d, yyyy") : "—"}
+                              {request.created_at ? formatISTDate(request.created_at) : "—"}
                             </TableCell>
                             <TableCell>{getRequestStatusBadge(request.status)}</TableCell>
                             <TableCell className="text-right">
@@ -1513,7 +1514,7 @@ const Onboarding = () => {
                       <p className="text-xs text-muted-foreground">Start Date</p>
                       <p className="text-sm font-medium">
                         {selectedEmployee.hire_date
-                          ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(selectedEmployee.hire_date) ? `${selectedEmployee.hire_date}T00:00:00` : selectedEmployee.hire_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+                          ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(selectedEmployee.hire_date) ? `${selectedEmployee.hire_date}T00:00:00` : selectedEmployee.hire_date).toLocaleDateString('en-IN', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Kolkata' })
                           : 'TBD'}
                       </p>
                     </div>
@@ -1938,7 +1939,7 @@ const Onboarding = () => {
                 <div>
                   <h4 className="text-sm font-medium text-muted-foreground">Submitted</h4>
                   <p className="mt-1 text-foreground">
-                    {format(new Date(selectedRequest.created_at), "MMMM d, yyyy 'at' h:mm a")}
+                    {formatIST(selectedRequest.created_at)}
                   </p>
                 </div>
                 {selectedRequest.reviewed_at && (

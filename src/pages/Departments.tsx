@@ -17,7 +17,7 @@ import { Building2, Plus, Pencil, Trash2, Users, Loader2, ShieldAlert } from "lu
 import { useDepartments, useCreateDepartment, useUpdateDepartment, useDeleteDepartment, Department } from "@/hooks/useDepartments";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import { toast } from "sonner";
-import { format } from "date-fns";
+import { formatISTDate } from "@/lib/utils";
 
 const Departments = () => {
   const { data: departments, isLoading } = useDepartments();
@@ -270,7 +270,7 @@ const Departments = () => {
                         </TableCell>
                         <TableCell>
                           {department.created_at && !isNaN(new Date(department.created_at).getTime())
-                            ? format(new Date(department.created_at), "MMM d, yyyy")
+                            ? formatISTDate(department.created_at)
                             : "-"}
                         </TableCell>
                         <TableCell className="text-right">

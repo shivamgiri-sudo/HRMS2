@@ -219,7 +219,7 @@ export default function PfBatchesPage() {
                 <p>Total: <strong>{detail.batch.total_items}</strong></p>
                 <p>Valid: <strong className="text-emerald-700">{detail.batch.valid_items}</strong></p>
                 <p>Errors: <strong className="text-red-600">{detail.batch.error_items}</strong></p>
-                <p>Created: {new Date(detail.batch.created_at).toLocaleDateString("en-IN")}</p>
+                <p>Created: {new Date(detail.batch.created_at).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}</p>
               </div>
             </div>
 
@@ -309,7 +309,7 @@ export default function PfBatchesPage() {
                         </Link>
                         <p className="text-xs text-slate-500">{item.employee_code}</p>
                       </td>
-                      <td className="px-4 py-3 text-xs">{item.date_of_joining ? new Date(item.date_of_joining).toLocaleDateString("en-IN") : "—"}</td>
+                      <td className="px-4 py-3 text-xs">{item.date_of_joining ? new Date(item.date_of_joining).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }) : "—"}</td>
                       <td className="px-4 py-3 text-xs font-mono">{item.uan_masked ?? "—"}</td>
                       <td className="px-4 py-3">
                         {item.error_count > 0 ? <span className="font-bold text-red-600">{item.error_count}</span> : <span className="text-emerald-600">0</span>}
@@ -382,7 +382,7 @@ export default function PfBatchesPage() {
                         <span>Errors: <strong className="text-red-600">{batch.error_items}</strong></span>
                         {batch.branch_name && <span>Branch: {batch.branch_name}</span>}
                         {batch.establishment_name && <span>Est: {batch.establishment_name}</span>}
-                        <span>Created: {new Date(batch.created_at).toLocaleDateString("en-IN")}</span>
+                        <span>Created: {new Date(batch.created_at).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}</span>
                       </div>
                     </div>
                     <Button type="button" variant="outline" size="sm" className="gap-1 self-start" onClick={() => openDetail(batch.id)} disabled={busy === "detail"}>

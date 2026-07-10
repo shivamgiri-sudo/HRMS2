@@ -329,7 +329,7 @@ export default function PfCreationQueuePage() {
                       <td className="px-4 py-3 text-xs text-slate-600">
                         {item.branch_name ?? "—"}<br />{item.process_name ?? "—"}
                       </td>
-                      <td className="px-4 py-3 text-xs">{item.date_of_joining ? new Date(item.date_of_joining).toLocaleDateString("en-IN") : "—"}</td>
+                      <td className="px-4 py-3 text-xs">{item.date_of_joining ? new Date(item.date_of_joining).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }) : "—"}</td>
                       <td className="px-4 py-3 text-xs font-mono">
                         {item.epfo_uan_assigned ?? item.uan_masked ?? <span className="text-amber-600">Pending</span>}
                       </td>

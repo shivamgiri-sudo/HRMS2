@@ -354,7 +354,7 @@ function UploadPanel() {
                       <td className="py-1.5 text-slate-600">{log.month_label}</td>
                       <td className="py-1.5 text-right text-slate-600">{log.row_count.toLocaleString()}</td>
                       <td className="py-1.5 text-slate-500">{log.uploaded_by}</td>
-                      <td className="py-1.5 text-slate-400">{new Date(log.created_at).toLocaleDateString()}</td>
+                      <td className="py-1.5 text-slate-400">{new Date(log.created_at).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}</td>
                       <td className="py-1.5 text-right">
                         <button onClick={() => handleDelete(log.batch_id)} disabled={deleting === log.batch_id}
                           className="rounded p-1 text-red-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40">

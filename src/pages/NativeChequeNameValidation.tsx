@@ -28,7 +28,7 @@ interface MismatchCase {
 
 function formatDate(s: string) {
   if (!s) return "—";
-  return new Date(s).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return new Date(s).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────

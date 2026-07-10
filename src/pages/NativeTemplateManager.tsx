@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatISTDate } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -240,7 +241,7 @@ export default function NativeTemplateManager() {
                           {t.is_active ? "Active" : "Inactive"}
                         </span>
                       </td>
-                      <td className="p-4 font-mono text-xs text-slate-400">{t.created_at?.slice(0, 10)}</td>
+                      <td className="p-4 font-mono text-xs text-slate-400">{formatISTDate(t.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>

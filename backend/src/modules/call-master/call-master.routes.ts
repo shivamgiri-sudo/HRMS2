@@ -5,6 +5,7 @@ import * as svc from "./call-master.service.js";
 import * as obSvc from "./outbound-sales.service.js";
 import * as oiSvc from "./opening-intelligence.service.js";
 import * as ciSvc from "./customer-intelligence.service.js";
+import { getIstDateString } from '../../utils/dateUtils.js';
 
 const router = Router();
 const h = (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -18,7 +19,7 @@ router.use(
 // ── Helpers ────────────────────────────────────────────────────────────────
 function parseFilters(q: Record<string, unknown>): svc.CallMasterFilters {
   const now = new Date();
-  const endDate   = q.endDate   ? String(q.endDate)   : now.toISOString().slice(0, 10);
+  const endDate   = q.endDate   ? String(q.endDate)   : getIstDateString();
   const startDate = q.startDate ? String(q.startDate) : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
   const clientIds = q.clientIds
     ? String(q.clientIds).split(",").map(Number).filter((n) => !isNaN(n))

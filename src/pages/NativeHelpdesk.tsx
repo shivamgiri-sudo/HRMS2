@@ -6,6 +6,7 @@ import {
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
+import { formatISTDate, formatIST } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -348,7 +349,7 @@ export default function NativeHelpdesk() {
                       </div>
                       <h2 className="text-xl font-black text-slate-950">{selectedTicket.subject}</h2>
                       <p className="text-sm text-slate-500 mt-1">
-                        {selectedTicket.category} · {selectedTicket.created_at?.slice(0, 10)}
+                        {selectedTicket.category} · {formatISTDate(selectedTicket.created_at)}
                         {selectedTicket.assigned_name && ` · Assigned to: ${selectedTicket.assigned_name}`}
                       </p>
                     </div>
@@ -373,7 +374,7 @@ export default function NativeHelpdesk() {
                                   <EyeOff className="h-3 w-3" /> Internal
                                 </span>
                               )}
-                              <span className="text-xs text-slate-400 font-mono">{c.created_at?.slice(0, 16)}</span>
+                              <span className="text-xs text-slate-400 font-mono">{formatIST(c.created_at)}</span>
                             </div>
                           </div>
                           <p className="text-slate-700">{c.text}</p>
@@ -457,7 +458,7 @@ export default function NativeHelpdesk() {
                           <td className="p-4"><PriorityBadge priority={t.priority} /></td>
                           <td className="p-4"><StatusBadge status={t.status} /></td>
                           <td className="p-4 text-slate-500">{t.assigned_name ?? "–"}</td>
-                          <td className="p-4 font-mono text-xs text-slate-400">{t.created_at?.slice(0, 10)}</td>
+                          <td className="p-4 font-mono text-xs text-slate-400">{formatISTDate(t.created_at)}</td>
                           <td className="p-4 text-blue-600 text-xs font-bold">View →</td>
                         </tr>
                       ))}
@@ -512,7 +513,7 @@ export default function NativeHelpdesk() {
                             <span className="text-slate-400 text-xs">Named</span>
                           )}
                         </td>
-                        <td className="p-4 font-mono text-xs text-slate-400">{g.created_at?.slice(0, 10)}</td>
+                        <td className="p-4 font-mono text-xs text-slate-400">{formatISTDate(g.created_at)}</td>
                       </tr>
                     ))}
                   </tbody>

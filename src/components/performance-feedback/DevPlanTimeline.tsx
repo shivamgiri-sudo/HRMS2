@@ -65,10 +65,11 @@ export function DevPlanTimeline({ goals, className }: DevPlanTimelineProps) {
 
   const formatDate = (dateString: string) => {
     const date = new Date(normalizeDate(dateString));
-    return date.toLocaleDateString("en-US", {
+    return date.toLocaleDateString("en-IN", {
       month: "short",
       day: "numeric",
       year: "numeric",
+      timeZone: "Asia/Kolkata",
     });
   };
 

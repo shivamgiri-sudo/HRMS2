@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatISTDate } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -665,7 +666,7 @@ function DataRightsTab({ showMsg }: { showMsg: (t: string, type?: "info" | "erro
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="font-semibold text-slate-950">{REQUEST_TYPE_LABELS[r.request_type]}</p>
-                    <p className="mt-0.5 text-xs text-slate-400">Submitted {r.created_at?.slice(0, 10)}</p>
+                    <p className="mt-0.5 text-xs text-slate-400">Submitted {formatISTDate(r.created_at)}</p>
                     {r.description && <p className="mt-1 text-sm text-slate-600">{r.description}</p>}
                   </div>
                   <StatusBadge status={r.status} />
@@ -720,7 +721,7 @@ function DataRightsTab({ showMsg }: { showMsg: (t: string, type?: "info" | "erro
                     <td className="p-4 font-semibold text-slate-800">{REQUEST_TYPE_LABELS[r.request_type]}</td>
                     <td className="p-4"><StatusBadge status={r.status} /></td>
                     <td className="p-4 font-mono text-xs text-slate-500">{r.assigned_to ? r.assigned_to.slice(0, 12) + "…" : "—"}</td>
-                    <td className="p-4 font-mono text-xs text-slate-400">{r.created_at?.slice(0, 10)}</td>
+                    <td className="p-4 font-mono text-xs text-slate-400">{formatISTDate(r.created_at)}</td>
                     <td className="p-4">
                       {r.status !== "resolved" && r.status !== "rejected" && (
                         <button

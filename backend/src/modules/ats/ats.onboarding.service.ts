@@ -13,6 +13,7 @@ import {
 } from './ats.email.service.js';
 import { createTemporaryPasswordCredential } from '../auth/tempPassword.service.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
+import { getIstDateString } from '../../utils/dateUtils.js';
 import { providerFactory } from '../communication/providers/provider.factory.js';
 import { dispatchJoinProvisioningTasks } from '../it-provisioning/it-provisioning.service.js';
 import { autoGenerateJoiningDocuments } from '../employees/employeeJoiningDocuments.service.js';
@@ -671,7 +672,7 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
         `INSERT IGNORE INTO employee_salary_assignment
            (id, employee_id, structure_id, ctc_annual, effective_from, active_status)
          VALUES (UUID(), ?, ?, ?, ?, 1)`,
-        [employeeId, resolvedStructureId, offerCtc, salaryStartDate ?? new Date().toISOString().slice(0, 10)],
+        [employeeId, resolvedStructureId, offerCtc, salaryStartDate ?? getIstDateString()],
       );
     }
 

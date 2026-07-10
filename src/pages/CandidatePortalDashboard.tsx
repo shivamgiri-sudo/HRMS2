@@ -388,6 +388,7 @@ export default function CandidatePortalDashboard() {
                         day: 'numeric',
                         month: 'long',
                         year: 'numeric',
+                        timeZone: 'Asia/Kolkata',
                       })}
                     </p>
                   </div>
@@ -400,6 +401,7 @@ export default function CandidatePortalDashboard() {
                         day: 'numeric',
                         month: 'long',
                         year: 'numeric',
+                        timeZone: 'Asia/Kolkata',
                       })}
                     </p>
                   </div>

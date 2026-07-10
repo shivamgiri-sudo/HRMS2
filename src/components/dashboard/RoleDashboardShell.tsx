@@ -24,6 +24,7 @@ export function RoleDashboardShell({
     day: "2-digit",
     month: "short",
     year: "numeric",
+    timeZone: "Asia/Kolkata",
   }).format(new Date());
 
   return (

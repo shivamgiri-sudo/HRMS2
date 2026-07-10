@@ -31,6 +31,7 @@ import {
 } from "./bgv-verification.service.js";
 import { overrideNameMatchReview, runNameMatchCheck } from "./bgv.enhanced.service.js";
 import { getConfiguredBgvProviderAdapter, resetBgvProviderAdapterCache } from "./bgv-provider.adapter.js";
+import { getLuckpayProviderRuntimeStatus } from "./onboarding-full.service.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { atsService } from "./ats.service.js";
@@ -716,14 +717,16 @@ router.get("/api-stats", requireAuth, requireRole("admin", "hr"), h(async (_req:
 router.post("/test-connection", requireAuth, requireRole("admin", "hr"), h(async (_req: Request, res: Response) => {
   try {
     const adapter = await getConfiguredBgvProviderAdapter();
-    // Attempt a lightweight test (e.g., check runtime status)
-    const runtime = (adapter as any).getRuntimeStatus?.();
-    if (!runtime || runtime.enabled === false) {
-      throw new Error("BGV provider is not enabled or configured");
-    }
-    return res.json({ success: true, message: "BGV provider connection test passed", data: runtime });
+    // getRuntimeStatus exists on LuckpayClient; for composite adapter use getLuckpayProviderRuntimeStatus()
+    const runtime = (adapter as any).getRuntimeStatus?.() ?? getLuckpayProviderRuntimeStatus();
+    return res.json({
+      success: true,
+      message: `BGV provider "${adapter.providerKey}" is configured and reachable`,
+      data: runtime,
+    });
   } catch (error: any) {
-    return res.status(502).json({ success: false, message: error.message || "Connection test failed" });
+    const statusCode = error.statusCode === 503 ? 503 : 502;
+    return res.status(statusCode).json({ success: false, message: error.message || "Connection test failed" });
   }
 }));
 

@@ -83,6 +83,7 @@ function fmtDate(raw: string | undefined): string {
       day: "2-digit",
       month: "short",
       year: "numeric",
+      timeZone: "Asia/Kolkata",
     });
   } catch {
     return raw;
@@ -1034,7 +1035,7 @@ function RawConfigRow({
 
   const fmtDate = (raw: string) => {
     if (!raw) return "—";
-    try { return new Date(raw).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
+    try { return new Date(raw).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" }); }
     catch { return raw; }
   };
 

@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatISTDate } from "@/lib/utils";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -130,7 +131,7 @@ function ActModal({ request, onClose, onSubmit, defaultAction }: ActModalProps) 
             )}
             {request.requested_by_name && (
               <p className="mt-2 text-xs text-slate-400">
-                Requested by {request.requested_by_name} · {request.created_at?.slice(0, 10)}
+                Requested by {request.requested_by_name} · {formatISTDate(request.created_at)}
               </p>
             )}
           </div>
@@ -300,7 +301,7 @@ function PendingInbox() {
                     {req.created_at && (
                       <span className="flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
-                        {req.created_at.slice(0, 10)}
+                        {formatISTDate(req.created_at)}
                       </span>
                     )}
                   </div>
@@ -421,7 +422,7 @@ function WorkflowDefinitions() {
                       )}
                     </td>
                     <td className="p-4 font-mono text-xs text-slate-400">
-                      {wf.created_at?.slice(0, 10) ?? "–"}
+                      {wf.created_at ? formatISTDate(wf.created_at) : "–"}
                     </td>
                   </tr>
                 ))}

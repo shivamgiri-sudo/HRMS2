@@ -157,6 +157,7 @@ export const CallsTable: React.FC<CallsTableProps> = ({
                         {new Date(call.date).toLocaleTimeString([], {
                           hour: '2-digit',
                           minute: '2-digit',
+                          timeZone: 'Asia/Kolkata',
                         })}
                       </p>
                     </div>

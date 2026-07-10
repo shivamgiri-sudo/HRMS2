@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { getIstDateString } from '../../utils/dateUtils.js';
 
 function interpolate(template: string, vars: Record<string, string | null>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`);
@@ -56,7 +57,7 @@ export const lettersService = {
       date_of_joining: emp.date_of_joining ?? "",
       date_of_exit: emp.date_of_exit ?? "",
       ctc_annual: emp.ctc_annual ? String(emp.ctc_annual) : "",
-      effective_date: data.issued_date ?? new Date().toISOString().slice(0, 10),
+      effective_date: data.issued_date ?? getIstDateString(),
       ...data.override_vars,
     };
 

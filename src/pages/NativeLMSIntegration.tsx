@@ -19,6 +19,7 @@ import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useIsAdminOrHR, useWorkforceAccess } from "@/hooks/useUserRole";
+import { formatIST } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -780,7 +781,7 @@ export default function NativeLMSIntegration() {
                             {log.initiated_by ? log.initiated_by.slice(0, 8) + "…" : "system"}
                           </td>
                           <td className="p-4 font-mono text-xs text-slate-400">
-                            {log.created_at?.slice(0, 16).replace("T", " ")}
+                            {formatIST(log.created_at)}
                           </td>
                         </tr>
                       ))}

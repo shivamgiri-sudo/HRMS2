@@ -50,7 +50,7 @@ function isOverdue(dueDateStr?: string): boolean {
 function formatDueDate(dueDateStr?: string): string {
   if (!dueDateStr) return "";
   const d = new Date(dueDateStr);
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return d.toLocaleDateString("en-IN", { month: "short", day: "numeric", timeZone: "Asia/Kolkata" });
 }
 
 export function WorkInboxPanel({ maxItems = 5 }: WorkInboxPanelProps) {

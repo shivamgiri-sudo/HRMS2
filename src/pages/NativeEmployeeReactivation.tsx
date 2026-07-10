@@ -111,7 +111,7 @@ function addDays(dateStr: string, days: number): string {
 
 function fmtDate(d: string | undefined | null) {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
 }
 
 // ── Initiate Dialog ───────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatISTDate } from "@/lib/utils";
 
 type AnyRow = Record<string, any>;
 
@@ -724,7 +725,7 @@ export default function NativeWFMAutoRoster() {
             <div className="rounded-3xl border bg-white p-5 shadow-sm">
               <h2 className="font-black text-slate-950">Change request audit</h2>
               <div className="mt-4 max-h-[520px] space-y-2 overflow-auto">
-                {changeRequests.map((c) => <div key={c.id} className="rounded-2xl border p-3"><div className="flex justify-between gap-3"><b>{c.change_category}</b><Pill tone="red">notification locked</Pill></div><p className="mt-1 text-sm text-slate-600">{c.change_reason}</p><p className="mt-1 text-xs text-slate-400">{c.created_at}</p></div>)}
+                {changeRequests.map((c) => <div key={c.id} className="rounded-2xl border p-3"><div className="flex justify-between gap-3"><b>{c.change_category}</b><Pill tone="red">notification locked</Pill></div><p className="mt-1 text-sm text-slate-600">{c.change_reason}</p><p className="mt-1 text-xs text-slate-400">{formatISTDate(c.created_at)}</p></div>)}
               </div>
             </div>
           </div>
@@ -734,11 +735,11 @@ export default function NativeWFMAutoRoster() {
           <div className="grid gap-5 xl:grid-cols-2">
             <div className="rounded-3xl border bg-white p-5 shadow-sm">
               <h2 className="font-black text-slate-950">Real-time event feed</h2>
-              <div className="mt-4 max-h-[520px] space-y-2 overflow-auto">{events.map((e) => <div key={e.id} className="rounded-2xl border p-3"><div className="flex justify-between gap-3"><b>{e.event_title}</b><Pill tone={e.severity === "critical" ? "red" : e.severity === "high" ? "amber" : "blue"}>{e.severity}</Pill></div><p className="mt-1 text-sm text-slate-600">{e.event_message}</p><p className="mt-1 text-xs text-slate-400">{e.created_at}</p></div>)}</div>
+              <div className="mt-4 max-h-[520px] space-y-2 overflow-auto">{events.map((e) => <div key={e.id} className="rounded-2xl border p-3"><div className="flex justify-between gap-3"><b>{e.event_title}</b><Pill tone={e.severity === "critical" ? "red" : e.severity === "high" ? "amber" : "blue"}>{e.severity}</Pill></div><p className="mt-1 text-sm text-slate-600">{e.event_message}</p><p className="mt-1 text-xs text-slate-400">{formatISTDate(e.created_at)}</p></div>)}</div>
             </div>
             <div className="rounded-3xl border bg-white p-5 shadow-sm">
               <h2 className="font-black text-slate-950">Approval log</h2>
-              <div className="mt-4 max-h-[520px] space-y-2 overflow-auto">{approvalLog.map((a) => <div key={a.id} className="rounded-2xl border p-3"><b>{a.action}</b><p className="mt-1 text-sm text-slate-600">{a.remarks}</p><p className="mt-1 text-xs text-slate-400">{a.created_at}</p></div>)}</div>
+              <div className="mt-4 max-h-[520px] space-y-2 overflow-auto">{approvalLog.map((a) => <div key={a.id} className="rounded-2xl border p-3"><b>{a.action}</b><p className="mt-1 text-sm text-slate-600">{a.remarks}</p><p className="mt-1 text-xs text-slate-400">{formatISTDate(a.created_at)}</p></div>)}</div>
             </div>
           </div>
         )}

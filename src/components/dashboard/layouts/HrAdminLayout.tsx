@@ -799,6 +799,7 @@ export function HrAdminLayout() {
                           ? new Date(r.from_date).toLocaleDateString("en-IN", {
                               day: "numeric",
                               month: "short",
+                              timeZone: "Asia/Kolkata",
                             })
                           : "—"}
                       </div>

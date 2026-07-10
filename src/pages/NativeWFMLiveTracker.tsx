@@ -15,7 +15,7 @@ const fmtTime = (value?: string) => {
   if (!value) return "–";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
 };
 
 function Stat({ title, value, sub, icon, tone }: {

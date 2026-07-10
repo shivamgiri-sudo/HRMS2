@@ -11,6 +11,7 @@ import {
   generateTokenNumber,
 } from "./ats.enhanced.service.js";
 import { atsService } from "./ats.service.js";
+import { getIstDateString } from '../../utils/dateUtils.js';
 import { syncHiringActivityFromCandidateRegistration } from "./recruiter-hiring.service.js";
 import {
   sendCandidateSuccessEmail,
@@ -179,7 +180,7 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
     const branchName = branchData.canonical_key;
     const sourceChannel = normalizeSourceChannel(input.sourcingChannel);
     const autoAssign = sourceChannel === "Walk-In" || sourceChannel === "Reference";
-    const walkInDate = new Date().toISOString().slice(0, 10);
+    const walkInDate = getIstDateString();
 
     // 2. Reuse the ATS candidate when hiring-entry/calling created the lead first.
     // Candidate registration is the walk-in continuation of that same person, not a brand-new record.

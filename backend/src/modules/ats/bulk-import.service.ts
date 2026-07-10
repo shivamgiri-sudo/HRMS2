@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import * as XLSX from "xlsx";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { getIstDateString } from '../../utils/dateUtils.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -320,7 +321,7 @@ async function importOneCandidate(
   const email = row.Email?.trim().toLowerCase() || undefined;
 
   const existing = await findExistingCandidate(mobile, email);
-  const createdAt = parseHistoricalDate(row.CreatedDate, row.CreatedTime) ?? new Date().toISOString().slice(0, 19).replace("T", " ");
+  const createdAt = parseHistoricalDate(row.CreatedDate, row.CreatedTime) ?? getIstDateString();
 
   const branchId = await lookupBranch(row.Branch);
   const processId = await lookupProcess(row.Process || row.RoleApplied);

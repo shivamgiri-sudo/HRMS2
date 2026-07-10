@@ -5,6 +5,7 @@ import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMid
 import { db } from '../../db/mysql.js';
 import { getAprData } from './apr.service.js';
 import type { RowDataPacket } from 'mysql2';
+import { getIstDateString } from '../../utils/dateUtils.js';
 
 const router = Router();
 type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
@@ -19,7 +20,7 @@ router.use(requireAuth);
 
 // GET /api/apr/data?date=YYYY-MM-DD
 router.get('/data', h(async (req: AuthenticatedRequest, res) => {
-  const date = (req.query.date as string) || new Date().toISOString().slice(0, 10);
+  const date = (req.query.date as string) || getIstDateString();
   const userId = req.authUser!.id;
 
   const [roleRows] = await db.execute<RowDataPacket[]>(

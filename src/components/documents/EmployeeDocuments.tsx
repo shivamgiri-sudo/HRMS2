@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Upload, FileText, Trash2, Download, Loader2, Eye } from "lucide-react";
 import { useEmployeeDocuments, useUploadDocument, useDeleteDocument } from "@/hooks/useEmployeeDocuments";
-import { format } from "date-fns";
+import { formatISTDate } from "@/lib/utils";
 import { DocumentViewerDialog } from "./DocumentViewerDialog";
 import { useIsReadOnly } from "@/contexts/AuthContext";
 import { apiBaseUrl } from "@/lib/apiBase";
@@ -206,7 +206,7 @@ export function EmployeeDocuments({ employeeId, canUpload = false, canDelete = f
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    {format(new Date(doc.uploaded_at), "MMM d, yyyy")}
+                    {formatISTDate(doc.uploaded_at)}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">

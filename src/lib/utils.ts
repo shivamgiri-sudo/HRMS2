@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { format, parseISO, isValid } from "date-fns";
+import { parseISO, isValid } from "date-fns";
 
 /**
  * Normalize a date string before JS Date/parseISO parsing.
@@ -30,24 +30,23 @@ export function cn(...inputs: ClassValue[]) {
  * @param formatString - date-fns format string (default: "MMM d, yyyy")
  * @returns Formatted date string (e.g., "May 9, 2026")
  */
-export function formatDate(dateString: string | null | undefined, formatString: string = "MMM d, yyyy"): string {
+export function formatDate(dateString: string | null | undefined, _formatString: string = "MMM d, yyyy"): string {
   if (!dateString) return "";
 
   try {
-    // For date-only strings (YYYY-MM-DD), parseISO treats them as UTC midnight
-    // which shifts the date backward in IST (+5:30) and similar timezones.
-    // Appending T00:00:00 (no Z) forces local-time parsing and keeps the correct date.
-    const normalized = /^\d{4}-\d{2}-\d{2}$/.test(dateString.trim())
-      ? `${dateString.trim()}T00:00:00`
-      : dateString;
-
-    const date = parseISO(normalized);
+    const normalised = normaliseToIST(dateString);
+    const date = typeof normalised === "string" ? parseISO(normalised) : normalised;
 
     if (!isValid(date)) {
       return dateString;
     }
 
-    return format(date, formatString);
+    return date.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
   } catch (error) {
     console.error("Date formatting error:", error);
     return dateString;
@@ -63,13 +62,22 @@ export function formatDateTime(dateString: string | null | undefined): string {
   if (!dateString) return "";
 
   try {
-    const date = parseISO(dateString);
+    const normalised = normaliseToIST(dateString);
+    const date = typeof normalised === "string" ? parseISO(normalised) : normalised;
 
     if (!isValid(date)) {
       return dateString;
     }
 
-    return format(date, "MMM d, yyyy 'at' h:mm a");
+    return date.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
   } catch (error) {
     console.error("DateTime formatting error:", error);
     return dateString;

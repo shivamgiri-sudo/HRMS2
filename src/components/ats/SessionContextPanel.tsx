@@ -5,12 +5,10 @@ interface SessionContextPanelProps {
   process_name: string;
   hiring_source: string;
   position_name: string;
-  wp_group: string;
   locked: boolean;
   processOptions: string[];
   sourceOptions: string[];
   positionOptions: string[];
-  wpGroupOptions: string[];
   onUpdate: (field: string, value: string) => void;
   onToggleLock: () => void;
   onKeyAdvance?: (field: string) => (e: KeyboardEvent<HTMLElement>) => void;
@@ -20,24 +18,19 @@ export function SessionContextPanel({
   process_name,
   hiring_source,
   position_name,
-  wp_group,
   locked,
   processOptions,
   sourceOptions,
   positionOptions,
-  wpGroupOptions,
   onUpdate,
   onToggleLock,
   onKeyAdvance,
 }: SessionContextPanelProps) {
-  // Compact badge text for locked state
   const badgeText = locked
-    ? [process_name || "Process", hiring_source || "Source", position_name || "Position", wp_group || "WP Group"]
-        .join(" • ")
+    ? [process_name || "Process", hiring_source || "Source", position_name || "Position"].join(" • ")
     : "";
 
-  // Check if all required fields are filled
-  const canLock = Boolean(process_name && hiring_source && position_name && wp_group);
+  const canLock = Boolean(process_name && hiring_source && position_name);
 
   if (locked) {
     return (
@@ -76,7 +69,7 @@ export function SessionContextPanel({
             Session Context (set once per batch)
           </div>
           <div className="mt-1 text-sm text-slate-600">
-            Fill these four fields and lock to reuse for all candidates in this calling session.
+            Fill these three fields and lock to reuse for all candidates in this calling session.
           </div>
         </div>
         <button
@@ -88,14 +81,14 @@ export function SessionContextPanel({
               ? "bg-emerald-600 text-white hover:bg-emerald-700"
               : "cursor-not-allowed bg-slate-200 text-slate-500"
           }`}
-          title={canLock ? "Lock context and start rapid entry" : "Fill all four fields first"}
+          title={canLock ? "Lock context and start rapid entry" : "Fill all three fields first"}
         >
           <Lock className="h-4 w-4" />
           Lock Context
         </button>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-3">
         <label className="space-y-2">
           <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
             <span>Process Name</span>
@@ -109,9 +102,7 @@ export function SessionContextPanel({
           >
             <option value="">Select process</option>
             {processOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
+              <option key={option} value={option}>{option}</option>
             ))}
           </select>
         </label>
@@ -129,9 +120,7 @@ export function SessionContextPanel({
           >
             <option value="">Walk-in, portal, reference...</option>
             {sourceOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
+              <option key={option} value={option}>{option}</option>
             ))}
           </select>
         </label>
@@ -149,29 +138,7 @@ export function SessionContextPanel({
           >
             <option value="">Select position</option>
             {positionOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
-            <span>WP Group</span>
-            <span className="text-rose-500">*</span>
-          </div>
-          <select
-            value={wp_group}
-            onChange={(e) => onUpdate("wp_group", e.target.value)}
-            onKeyDown={onKeyAdvance?.("wp_group")}
-            className="h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-200"
-          >
-            <option value="">Select WP group</option>
-            {wpGroupOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
+              <option key={option} value={option}>{option}</option>
             ))}
           </select>
         </label>
@@ -180,7 +147,7 @@ export function SessionContextPanel({
       {!canLock && (
         <div className="mt-3 flex items-center gap-2 rounded-xl bg-amber-100 px-3 py-2 text-xs font-medium text-amber-800">
           <ChevronUp className="h-3 w-3" />
-          Fill all four fields above to enable context locking
+          Fill all three fields above to enable context locking
         </div>
       )}
     </section>

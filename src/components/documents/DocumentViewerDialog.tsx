@@ -9,7 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Download, Loader2, FileText, ExternalLink } from "lucide-react";
-import { format } from "date-fns";
+import { formatISTDate } from "@/lib/utils";
 import { apiBaseUrl } from "@/lib/apiBase";
 
 interface DocumentInfo {
@@ -154,7 +154,7 @@ export function DocumentViewerDialog({
                   {DOCUMENT_TYPE_LABELS[documentInfo.document_type] || documentInfo.document_type}
                 </Badge>
                 <span>•</span>
-                <span>Uploaded {format(new Date(documentInfo.uploaded_at), "MMM d, yyyy")}</span>
+                <span>Uploaded {formatISTDate(documentInfo.uploaded_at)}</span>
               </div>
             </div>
             <div className="flex gap-2">

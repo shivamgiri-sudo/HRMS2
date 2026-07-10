@@ -149,6 +149,7 @@ function fmtDate(raw: string | undefined): string {
       day: "2-digit",
       month: "short",
       year: "numeric",
+      timeZone: "Asia/Kolkata",
     });
   } catch {
     return raw;

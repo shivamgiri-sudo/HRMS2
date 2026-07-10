@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST } from "@/lib/utils";
 import {
   DatabaseConnectorCard,
   type DbConnectorConfig,
@@ -973,7 +974,7 @@ export default function NativeIntegrationHub() {
                           </span>
                         </td>
                         <td className="p-4 font-mono text-xs text-slate-400">
-                          {r.created_at?.slice(0, 16).replace("T", " ")}
+                          {formatIST(r.created_at)}
                         </td>
                       </tr>
                     ))}

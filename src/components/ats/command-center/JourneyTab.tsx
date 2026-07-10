@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { formatISTDate } from "@/lib/utils";
 
 interface JourneyTabProps {
   onSearch?: (query: string) => void;
@@ -319,7 +320,7 @@ export function JourneyTab({ onSearch }: JourneyTabProps) {
                           )}
                         </div>
                         <p className="text-xs text-slate-500">
-                          {conf.created_at ? format(new Date(conf.created_at), "MMM dd, yyyy") : "N/A"}
+                          {conf.created_at ? formatISTDate(conf.created_at) : "N/A"}
                         </p>
                       </div>
                     </div>

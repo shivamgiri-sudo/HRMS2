@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/card";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { formatIST, formatISTDate } from "@/lib/utils";
 import { PlusCircle, RefreshCw, History, TrendingUp } from "lucide-react";
 import { fetchAllEmployeeRows } from "@/hooks/useEmployees";
 
@@ -80,7 +81,7 @@ function AuditTimeline({ requestId }: { requestId: string }) {
       {trail.map((e: any, i: number) => (
         <div key={i} className="flex gap-3 text-sm border-l-2 border-muted pl-3 py-1">
           <div className="min-w-[120px] text-muted-foreground">
-            {e.created_at ? format(new Date(e.created_at), "dd MMM yyyy HH:mm") : "—"}
+            {e.created_at ? formatIST(e.created_at) : "—"}
           </div>
           <div>
             <span className="font-medium">{e.event_type.replace(/_/g, " ")}</span>
@@ -263,7 +264,7 @@ export default function NativeSalaryIncrement() {
                     </span>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {r.created_at ? format(new Date(r.created_at), "dd MMM yy") : "—"}
+                    {r.created_at ? formatISTDate(r.created_at) : "—"}
                   </TableCell>
                   <TableCell>
                     <Button

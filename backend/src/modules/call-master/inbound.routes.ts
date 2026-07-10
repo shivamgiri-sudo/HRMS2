@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./inbound.service.js";
+import { getIstDateString } from '../../utils/dateUtils.js';
 
 const router = Router();
 const h = (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -14,8 +15,8 @@ router.use(
 
 function parseFilters(q: Record<string, unknown>) {
   const now = new Date();
-  const endDate   = q.endDate   ? String(q.endDate)   : now.toISOString().slice(0, 10);
-  const startDate = q.startDate ? String(q.startDate) : now.toISOString().slice(0, 10);
+  const endDate   = q.endDate   ? String(q.endDate)   : getIstDateString();
+  const startDate = q.startDate ? String(q.startDate) : getIstDateString();
   return { startDate, endDate };
 }
 
@@ -25,7 +26,7 @@ router.get("/summary",             h(async (req, res) => {
   res.json({ data: await svc.getProjectSummary(f) });
 }));
 router.get("/today",               h(async (_req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getIstDateString();
   res.json({ data: await svc.getProjectSummary({ startDate: today, endDate: today }) });
 }));
 router.get("/trend",               h(async (req, res) => {

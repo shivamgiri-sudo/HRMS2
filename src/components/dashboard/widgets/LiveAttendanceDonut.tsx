@@ -33,7 +33,7 @@ export function LiveAttendanceDonut() {
     { name: "Not Marked", value: notMarked, fill: "#cbd5e1", pct: total > 0 ? ((notMarked / total) * 100).toFixed(1) : "0.0" },
   ].filter((d) => d.value > 0 && total > 0);
 
-  const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
 
   return (
     <Card className="rounded-2xl border border-slate-200 shadow-sm bg-white">

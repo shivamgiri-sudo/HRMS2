@@ -10,7 +10,7 @@ export interface SessionContext {
   process_name: string;
   hiring_source: string;
   position_name: string;
-  wp_group: string;
+  wp_group?: string;
   locked: boolean;
   timestamp: number;
 }
@@ -46,7 +46,6 @@ export function loadSessionContext(): SessionContext | null {
       typeof parsed.process_name !== "string" ||
       typeof parsed.hiring_source !== "string" ||
       typeof parsed.position_name !== "string" ||
-      typeof parsed.wp_group !== "string" ||
       typeof parsed.locked !== "boolean" ||
       typeof parsed.timestamp !== "number"
     ) {

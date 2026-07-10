@@ -65,6 +65,7 @@ const fmtDate = (d?: string | null) =>
         day: "2-digit",
         month: "short",
         year: "numeric",
+        timeZone: "Asia/Kolkata",
       })
     : "—";
 
@@ -1468,7 +1469,7 @@ function RunWindowTab() {
                     </TD>
                     <TD className="font-mono">
                       {closeDate
-                        ? closeDate.toLocaleDateString("en-IN")
+                        ? closeDate.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })
                         : "—"}
                     </TD>
                     <TD>

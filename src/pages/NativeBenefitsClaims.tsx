@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatISTDate } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -352,7 +353,7 @@ function MyClaimsTab() {
                       )}
                     </td>
                     <td className="p-4 font-mono text-xs text-slate-400">
-                      {c.created_at?.slice(0, 10)}
+                      {formatISTDate(c.created_at)}
                     </td>
                   </tr>
                 ))}

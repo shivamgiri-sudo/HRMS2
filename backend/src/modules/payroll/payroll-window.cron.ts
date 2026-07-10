@@ -1,6 +1,7 @@
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
+import { getIstDateString } from '../../utils/dateUtils.js';
 
 let _timer: ReturnType<typeof setInterval> | null = null;
 
@@ -10,7 +11,7 @@ let _timer: ReturnType<typeof setInterval> | null = null;
  */
 export async function runPayrollWindowClosure(): Promise<void> {
   // Find runs past their closure date that haven't been auto-locked yet
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getIstDateString();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, run_month FROM salary_prep_run
      WHERE window_close_date IS NOT NULL
