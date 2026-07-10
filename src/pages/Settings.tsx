@@ -296,10 +296,10 @@ const BgvProviderSettings = () => {
     },
     {
       title: "Aadhaar API (Befisc)",
-      desc: "Befisc Aadhaar offline/OTP identity verification.",
+      desc: "Befisc Aadhaar verification. URL: full endpoint e.g. https://aadhaar-xml-download.befisc.com. Key: authkey value from Befisc portal.",
       fields: [
-        { key: "befisc_api_url", label: "Befisc Aadhaar API Base URL" },
-        { key: "befisc_api_key", label: "Befisc API Key", type: "password" },
+        { key: "befisc_api_url", label: "Befisc Aadhaar Endpoint URL", placeholder: "https://aadhaar-xml-download.befisc.com" },
+        { key: "befisc_api_key", label: "Befisc authkey", type: "password" },
       ],
       callback: "/api/ats/bgv/verify/aadhaar-offline",
     },
@@ -307,7 +307,7 @@ const BgvProviderSettings = () => {
       title: "PAN, Bank & UAN (Luckpay)",
       desc: "Luckpay PAN verification, bank penny-less verification, and UAN/employment history.",
       fields: [
-        { key: "luckpay_api_url", label: "Luckpay API Base URL" },
+        { key: "luckpay_api_url", label: "Luckpay API Base URL", placeholder: "https://api-banking.luckpay.in/apibanking/api/v1" },
         { key: "luckpay_basic_token", label: "Luckpay Basic Token", type: "password" },
         { key: "luckpay_client_id", label: "Luckpay Client ID" },
       ],
@@ -315,10 +315,10 @@ const BgvProviderSettings = () => {
     },
     {
       title: "Criminal / Court Check (Crimescan)",
-      desc: "Crimescan court and criminal background verification.",
+      desc: "Crimescan 2-step court check. URL: exact search endpoint. Bearer Token: the JWT token from Crimescan portal.",
       fields: [
-        { key: "crimescan_api_url", label: "Crimescan API Base URL" },
-        { key: "crimescan_api_key", label: "Crimescan API Key", type: "password" },
+        { key: "crimescan_api_url", label: "Crimescan Exact Search URL", placeholder: "https://prod.crimescan.ai/v1/crime_search/risk/exact/search" },
+        { key: "crimescan_api_key", label: "Crimescan Bearer Token", type: "password" },
       ],
       callback: "/api/ats/bgv/provider/callback",
     },

@@ -901,6 +901,7 @@ export function Step5Bgv({
                 : label.toLowerCase().includes("uan") ? "employment" : null;
               const check = bgv?.checks.find((c) => checkType && c.check_type?.toLowerCase() === checkType);
               const verified = check?.status === "verified";
+              const verifiedViaDigilocker = verified && check?.provider_key === "digilocker";
               return (
                 <Button
                   key={label}
@@ -908,13 +909,16 @@ export function Step5Bgv({
                   onClick={onClick}
                   disabled={!consentAccepted || saving || verified}
                   size="lg"
+                  title={verifiedViaDigilocker ? "Already verified via DigiLocker — no API charge needed" : undefined}
                   className={`min-h-[52px] text-sm font-bold rounded-xl border-2 flex items-center gap-2 justify-start px-4 ${
                     verified ? "border-emerald-200 bg-emerald-50 text-emerald-700 opacity-80 cursor-default" : "border-slate-200 hover:border-indigo-300"
                   }`}
                 >
                   <span>{icon}</span>
                   <span className="flex-1 text-left">{label}</span>
-                  {verified && <CheckCircle2 className="h-4 w-4 flex-shrink-0" />}
+                  {verifiedViaDigilocker
+                    ? <span className="text-[10px] font-black bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full">DigiLocker ✓</span>
+                    : verified && <CheckCircle2 className="h-4 w-4 flex-shrink-0" />}
                 </Button>
               );
             })}

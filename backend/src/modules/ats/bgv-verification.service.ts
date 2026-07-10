@@ -26,6 +26,19 @@ async function logEvent(candidateId: string, eventType: string, payload?: unknow
   );
 }
 
+// Returns the most recent verified check row, or null. Used to skip live API calls when DigiLocker already verified.
+async function getVerifiedCheck(candidateId: string, checkType: string): Promise<RowDataPacket | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, check_type, status, provider_key, provider_request_id, provider_reference_id,
+            match_score, matched_name, result_summary, risk_flags_json, verified_at
+       FROM candidate_bgv_check
+      WHERE candidate_id = ? AND check_type = ? AND status = 'verified'
+      ORDER BY updated_at DESC LIMIT 1`,
+    [candidateId, checkType]
+  );
+  return (rows as RowDataPacket[])[0] ?? null;
+}
+
 async function ensureConsent(candidateId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM candidate_bgv_consent WHERE candidate_id = ? AND consent_status = 'granted' ORDER BY granted_at DESC LIMIT 1`,
@@ -189,6 +202,12 @@ export async function verifyPanByToken(token: string, input: { panNumber?: strin
 
 export async function verifyPanForCandidate(candidateId: string, input: { panNumber?: string }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
   await ensureConsent(candidateId);
+  // Skip live API call if DigiLocker already verified PAN — prevents double billing
+  const existingPan = await getVerifiedCheck(candidateId, "pan");
+  if (existingPan && String(existingPan.provider_key) === "digilocker") {
+    await logEvent(candidateId, "PAN_VERIFICATION_SKIPPED_DIGILOCKER", { reason: "DigiLocker already verified PAN", check_id: existingPan.id }, existingPan.id as string, meta);
+    return getBgvStatusForCandidate(candidateId);
+  }
   const candidate = await getCandidateIdentity(candidateId);
   const pan = String(input.panNumber || candidate.pan_number || "").trim().toUpperCase();
   if (!pan) throw Object.assign(new Error("PAN number is required — please save your PAN in the Personal details step first"), { statusCode: 400 });
@@ -345,6 +364,12 @@ export async function verifyAadhaarOfflineByToken(token: string, input: { docume
 
 export async function verifyAadhaarOfflineForCandidate(candidateId: string, input: { documentId?: string; aadhaarLast4?: string }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
   await ensureConsent(candidateId);
+  // Skip live API call if DigiLocker already verified Aadhaar — prevents double billing
+  const existingAadhaar = await getVerifiedCheck(candidateId, "aadhaar");
+  if (existingAadhaar && String(existingAadhaar.provider_key) === "digilocker") {
+    await logEvent(candidateId, "AADHAAR_VERIFICATION_SKIPPED_DIGILOCKER", { reason: "DigiLocker already verified Aadhaar", check_id: existingAadhaar.id }, existingAadhaar.id as string, meta);
+    return getBgvStatusForCandidate(candidateId);
+  }
   const candidate = await getCandidateIdentity(candidateId);
   const adapter = await getConfiguredBgvProviderAdapter();
   const result = await adapter.verifyAadhaarOffline({ candidateName: candidate.employee_name ?? candidate.full_name, aadhaarLast4: input.aadhaarLast4, documentId: input.documentId });

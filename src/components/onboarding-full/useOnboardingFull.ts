@@ -497,6 +497,11 @@ export function useOnboardingFull(token: string) {
   };
 
   const verifyPan = async () => {
+    const panCheck = bgv?.checks?.find((c: any) => c.check_type === "pan");
+    if (panCheck?.status === "verified" && panCheck?.provider_key === "digilocker") {
+      setError("PAN already verified via DigiLocker — no additional verification needed.");
+      return;
+    }
     setSaving(true);
     try { await hrmsApi.post(`${BGV}/verify/pan`, { token, panNumber: employee.panNumber }); await load(); }
     catch (e: any) { setError(extractBgvError(e, "PAN verification failed")); }
@@ -517,6 +522,11 @@ export function useOnboardingFull(token: string) {
   };
 
   const verifyAadhaar = async () => {
+    const aadhaarCheck = bgv?.checks?.find((c: any) => c.check_type === "aadhaar");
+    if (aadhaarCheck?.status === "verified" && aadhaarCheck?.provider_key === "digilocker") {
+      setError("Aadhaar already verified via DigiLocker — no additional verification needed.");
+      return;
+    }
     const doc = status?.documents.find((d) => d.doc_type.toLowerCase().includes("aadhaar"));
     setSaving(true);
     try { await hrmsApi.post(`${BGV}/verify/aadhaar-offline`, { token, documentId: doc?.id, aadhaarLast4: employee.aadhaarNumber.slice(-4) }); await load(); }
@@ -629,9 +639,11 @@ export function useOnboardingFull(token: string) {
 
     if (consentAccepted) {
       try {
-        if (docType.toLowerCase().includes("aadhaar") && employee.aadhaarNumber)
+        const aadhaarAlreadyVerified = bgv?.checks?.some((c: any) => c.check_type === "aadhaar" && c.status === "verified" && c.provider_key === "digilocker");
+        const panAlreadyVerified = bgv?.checks?.some((c: any) => c.check_type === "pan" && c.status === "verified" && c.provider_key === "digilocker");
+        if (docType.toLowerCase().includes("aadhaar") && employee.aadhaarNumber && !aadhaarAlreadyVerified)
           await hrmsApi.post(`${BGV}/verify/aadhaar-offline`, { token, documentId: docId, aadhaarLast4: employee.aadhaarNumber.slice(-4) });
-        else if (docType.toLowerCase().includes("pan") && employee.panNumber)
+        else if (docType.toLowerCase().includes("pan") && employee.panNumber && !panAlreadyVerified)
           await hrmsApi.post(`${BGV}/verify/pan`, { token, panNumber: employee.panNumber });
       } catch { /* BGV auto-trigger non-fatal */ }
     }

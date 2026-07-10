@@ -928,6 +928,20 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     return clean ? { "x-api-key": clean } : {};
   }
 
+  // Befisc uses "authkey" header, not "x-api-key"
+  private befiscHeaders(key?: string): Record<string, string> {
+    const clean = String(key ?? "").replace(/\s+/g, "").trim();
+    return clean ? { authkey: clean, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
+  }
+
+  // Crimescan uses Bearer token
+  private crimescanHeaders(key?: string): Record<string, string> {
+    const clean = String(key ?? "").replace(/\s+/g, "").trim();
+    return clean
+      ? { Authorization: `Bearer ${clean}`, "Content-Type": "application/json" }
+      : { "Content-Type": "application/json" };
+  }
+
   private luckpayBaseUrl(): string {
     const baseUrl = this.cfg.luckpay_api_url?.trim();
     if (!baseUrl) throw new Error("Luckpay API Base URL is not configured in BGV settings");
@@ -1060,20 +1074,27 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       customerIfscCode: input.ifscCode.trim().toUpperCase(),
       verificationMode: "PENNY_DROP",
     });
+    // Luckpay penny-drop wraps name in data.details.beneficiaryNameWithBank
+    const details = (d.details && typeof d.details === "object" ? d.details : {}) as Record<string, unknown>;
     const apiStatus = String(d.status ?? d.result ?? "").toLowerCase();
-    const matchedName = this.providerString(d.registered_name ?? d.account_holder_name ?? d.name);
+    const detailsVerified = Boolean(details.verified ?? details.status);
+    const matchedName = this.providerString(
+      details.beneficiaryNameWithBank ?? details.beneficiaryName ??
+      d.registered_name ?? d.account_holder_name ?? d.name
+    );
     const score = roughNameMatchScore(input.accountHolderName ?? input.candidateName, matchedName);
+    const fuzzyScore = Number(details.fuzzyMatchScore ?? score);
     const message = this.providerString(d.message);
     const failureReason = this.providerString(d.failure_reason);
-    const status: VerificationStatus = ["valid", "verified", "success", "active"].includes(apiStatus)
+    const status: VerificationStatus = (detailsVerified || ["valid", "verified", "success", "active"].includes(apiStatus))
       ? "verified"
-      : apiStatus.includes("mismatch") || score < 60 ? "mismatch" : "failed";
+      : apiStatus.includes("mismatch") || fuzzyScore < 60 ? "mismatch" : "failed";
     return {
       status,
       providerKey: this.providerKey,
       providerRequestId: requestId,
       providerReferenceId: String(d.reference_id ?? d.utr ?? d.transaction_id ?? requestId),
-      matchScore: score,
+      matchScore: fuzzyScore,
       matchedName,
       resultSummary: message ?? `Bank check: ${status}`,
       riskFlags: status === "verified" ? [] : [String(failureReason ?? "BANK_CHECK_FAILED").toUpperCase()],
@@ -1111,8 +1132,7 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
 
   async verifyAadhaarOffline(input: AadhaarOfflineInput): Promise<VerificationResult> {
     const requestId = randomUUID();
-    if (!this.cfg.befisc_api_url) {
-      // Befisc not configured — mark for manual HR review instead of blocking onboarding
+    if (!this.cfg.befisc_api_url || !this.cfg.befisc_api_key) {
       return {
         status: "manual_review",
         providerKey: this.providerKey,
@@ -1125,27 +1145,43 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
         raw: { mode: "manual_fallback" },
       };
     }
-    const d = await this.post(this.cfg.befisc_api_url, "/aadhaar/offline-verify", {
-      request_id: requestId,
-      document_id: input.documentId ?? undefined,
-      aadhaar_last4: input.aadhaarLast4 ?? undefined,
-      name: input.candidateName ?? undefined,
-    }, this.apiKeyHeaders(this.cfg.befisc_api_key));
-    const apiStatus = String(d.status ?? d.result ?? "").toLowerCase();
+    // Befisc uses the full standalone URL (e.g. https://aadhaar-xml-download.befisc.com/)
+    // and requires "authkey" header (NOT "x-api-key")
+    let res;
+    try {
+      res = await axios.post(
+        this.cfg.befisc_api_url.replace(/\/$/, "") + "/",
+        {
+          aadharNo: input.aadhaarLast4 ? undefined : undefined,
+          aadhaar_last4: input.aadhaarLast4 ?? undefined,
+          document_id: input.documentId ?? undefined,
+          name: input.candidateName ?? undefined,
+        },
+        {
+          headers: this.befiscHeaders(this.cfg.befisc_api_key),
+          timeout: 30_000,
+        },
+      );
+    } catch (error: any) {
+      const msg = error?.response?.data?.message ?? error?.message ?? "Befisc Aadhaar check failed";
+      throw new Error(msg);
+    }
+    const raw = res.data?.data ?? res.data ?? {};
+    const apiStatus = String(raw.status ?? raw.result ?? "").toLowerCase();
     const status: VerificationStatus = ["valid", "verified", "success"].includes(apiStatus)
       ? "verified"
       : ["pending", "manual_review", "review"].includes(apiStatus) ? "manual_review" : "failed";
-    const matchedName = d.name ?? d.matched_name ?? null;
+    const matchedName = this.providerString(raw.name ?? raw.matched_name) ?? null;
     return {
       status,
       providerKey: this.providerKey,
       providerRequestId: requestId,
-      providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
+      providerReferenceId: String(raw.reference_id ?? raw.transaction_id ?? requestId),
       matchScore: roughNameMatchScore(input.candidateName, matchedName),
       matchedName,
-      resultSummary: d.message ?? `Aadhaar check: ${status}`,
-      riskFlags: status === "verified" ? [] : [String(d.failure_reason ?? "AADHAAR_CHECK_FAILED").toUpperCase()],
-      raw: d,
+      resultSummary: this.providerString(raw.message) ?? `Aadhaar check: ${status}`,
+      riskFlags: status === "verified" ? [] : [String(raw.failure_reason ?? "AADHAAR_CHECK_FAILED").toUpperCase()],
+      raw: raw,
     };
   }
 
@@ -1179,34 +1215,87 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
 
   async verifyCourt(input: CourtVerificationInput): Promise<CourtVerificationResult> {
     const requestId = randomUUID();
-    const d = await this.post(this.cfg.crimescan_api_url, "/court/verify", {
-      request_id: requestId,
+    // Crimescan uses exact search URL + poll pattern with Bearer auth (NOT x-api-key)
+    // Step 1: exact search → get cs_id
+    // Step 2: poll results endpoint with cs_id until status=1 (max 6 attempts, 10s apart)
+    const searchUrl = this.cfg.crimescan_api_url?.trim();
+    if (!searchUrl || !this.cfg.crimescan_api_key) {
+      return {
+        status: "manual_review",
+        providerKey: this.providerKey,
+        providerRequestId: requestId,
+        providerReferenceId: requestId,
+        matchScore: null,
+        matchedName: input.candidateName,
+        resultSummary: "Criminal/court check queued for manual HR review — Crimescan API not configured.",
+        riskFlags: [],
+        courtCases: null,
+        raw: { mode: "manual_fallback" },
+      };
+    }
+
+    const crimescanHeaders = this.crimescanHeaders(this.cfg.crimescan_api_key);
+    const searchPayload: Record<string, unknown> = {
       name: input.candidateName,
-      dob: input.dateOfBirth,
       father_name: input.fatherName ?? undefined,
       address: input.address ?? undefined,
-      state: input.state ?? undefined,
-      pincode: input.pincode ?? undefined,
-    }, this.apiKeyHeaders(this.cfg.crimescan_api_key));
-    const apiStatus = String(d.status ?? d.result ?? "").toLowerCase();
-    const status: VerificationStatus = ["clear", "no_records", "verified", "success"].includes(apiStatus)
-      ? "verified"
-      : ["positive", "records_found", "failed"].includes(apiStatus) ? "failed" : "manual_review";
-    const cases = Array.isArray(d.court_cases ?? d.cases) ? (d.court_cases ?? d.cases).map((c: Record<string, unknown>) => ({
-      caseType: String(c.case_type ?? c.type ?? ""),
-      caseNumber: String(c.case_number ?? c.number ?? ""),
-      court: String(c.court_name ?? c.court ?? ""),
-      year: Number(c.year ?? 0),
-      status: String(c.status ?? ""),
-    })) : null;
+    };
+    if (input.dateOfBirth) searchPayload.dob = input.dateOfBirth;
+
+    let csId: string;
+    try {
+      const searchRes = await axios.post(searchUrl, searchPayload, { headers: crimescanHeaders, timeout: 120_000 });
+      const searchData = searchRes.data ?? {};
+      csId = String(searchData.cs_id ?? searchData?.data?.cs_id ?? "");
+      if (!csId) {
+        return {
+          status: "manual_review", providerKey: this.providerKey,
+          providerRequestId: requestId, providerReferenceId: requestId,
+          matchScore: null, matchedName: input.candidateName,
+          resultSummary: "Crimescan search returned no cs_id — manual review required.",
+          riskFlags: [], courtCases: [], raw: searchData,
+        };
+      }
+    } catch (error: any) {
+      const msg = error?.response?.data?.message ?? error?.message ?? "Crimescan search failed";
+      throw new Error(`Court check failed: ${msg}`);
+    }
+
+    // Step 2: derive results URL from search URL (replace /exact/search with /results)
+    const historyUrl = searchUrl.replace(/\/exact\/search\/?$/, "/results").replace(/\/exact\/search\//, "/results/");
+    let d: Record<string, unknown> = { status: 0, message: "Processing" };
+    for (let attempt = 0; attempt < 6; attempt++) {
+      await new Promise((r) => setTimeout(r, 10_000));
+      try {
+        const histRes = await axios.post(historyUrl, { cs_id: csId }, { headers: crimescanHeaders, timeout: 120_000 });
+        d = histRes.data ?? {};
+        if (Number(d.status) === 1) break;
+      } catch { /* keep polling */ }
+    }
+
+    const rawCases = d.court_cases ?? d.cases;
+    const cases = Array.isArray(rawCases)
+      ? (rawCases as unknown[]).map((c: unknown) => {
+          const row = c as Record<string, unknown>;
+          return {
+            caseType: String(row.case_type ?? row.type ?? ""),
+            caseNumber: String(row.case_number ?? row.number ?? ""),
+            court: String(row.court_name ?? row.court ?? ""),
+            year: Number(row.year ?? 0),
+            status: String(row.status ?? ""),
+          };
+        })
+      : null;
+
+    const resultStatus: VerificationStatus = cases && cases.length > 0 ? "failed" : "verified";
     return {
-      status,
+      status: resultStatus,
       providerKey: this.providerKey,
       providerRequestId: requestId,
-      providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
+      providerReferenceId: csId,
       matchScore: null,
       matchedName: input.candidateName,
-      resultSummary: d.message ?? `Criminal/court check: ${status}`,
+      resultSummary: this.providerString(d.message) ?? `Criminal/court check: ${resultStatus}`,
       riskFlags: cases?.length ? ["COURT_RECORDS_FOUND"] : [],
       courtCases: cases,
       raw: d,
