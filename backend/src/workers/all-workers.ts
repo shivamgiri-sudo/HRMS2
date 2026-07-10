@@ -11,6 +11,14 @@ import { startLmsSyncWorker } from './lms-sync.worker.js';
 import { startPayrollNightlyRecalcWorker } from './payroll-nightly-recalc.worker.js';
 import { startAprVicidialSyncWorker } from './apr-vicidial-sync.worker.js';
 import { startEsignComplianceWorker, stopEsignComplianceWorker } from './esign-compliance.worker.js';
+import { legacySyncWorker } from './legacy-sync-worker.js';
+import { startTenureBadgeScheduler, stopTenureBadgeScheduler } from '../modules/engagement/tenure.cron.js';
+import { startCommunicationCleanup, stopCommunicationCleanup } from '../modules/communication/cleanup.cron.js';
+import { startAttendanceEngineScheduler, stopAttendanceEngineScheduler } from '../modules/wfm/attendance-engine.cron.js';
+import { startITProvisioningLockScheduler } from '../modules/it-provisioning/it-provisioning.cron.js';
+import { startPayrollWindowClosureScheduler } from '../modules/payroll/payroll-window.cron.js';
+import { startBreachSlaCron } from '../modules/privacy/dpdp-breach-sla.cron.js';
+import { startCosecSyncWorker, stopCosecSyncWorker } from '../modules/wfm/cosec-sync.worker.js';
 import { runNcosecBiometricSync } from '../../scripts/migrate-ncosec-biometric.js';
 
 const BIOMETRIC_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
@@ -31,53 +39,88 @@ async function startBiometricCosecWorker(): Promise<void> {
 }
 
 const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
-  {
-    name: 'access-expiry',
-    start: () => { startAccessExpiryScheduler(); return Promise.resolve(); },
-  },
-  {
-    name: 'integration-scheduler',
-    start: () => { startIntegrationScheduler(); return Promise.resolve(); },
-  },
-  {
-    name: 'kpi-daily-sync',
-    start: startKpiDailySyncWorker,
-  },
-  {
-    name: 'leave-annual-el-credit',
-    start: startAnnualLeaveWorker,
-  },
-  {
-    name: 'leave-monthly-credit',
-    start: startLeaveMonthlyWorker,
-  },
+  // ── Always-on (no ENABLE_SCHEDULERS guard needed) ──────────────────────────
   {
     name: 'official-email-compliance',
     start: () => { startOfficialEmailComplianceScheduler(); return Promise.resolve(); },
   },
   {
-    name: 'sla-breach',
-    start: startSLABreachWorker,
+    name: 'integration-scheduler',
+    start: () => { startIntegrationScheduler(); return Promise.resolve(); },
+  },
+
+  // ── Scheduled workers ──────────────────────────────────────────────────────
+  {
+    name: 'access-expiry',            // 2:00 AM daily
+    start: () => { startAccessExpiryScheduler(); return Promise.resolve(); },
   },
   {
-    name: 'lms-sync',
-    start: startLmsSyncWorker,
+    name: 'tenure-badge',             // 2:00 AM daily
+    start: () => { startTenureBadgeScheduler(); return Promise.resolve(); },
   },
   {
-    name: 'biometric-cosec-sync',
-    start: startBiometricCosecWorker,
+    name: 'communication-cleanup',    // 2:00 AM daily
+    start: () => { startCommunicationCleanup(); return Promise.resolve(); },
   },
   {
-    name: 'payroll-nightly-recalc',
+    name: 'attendance-engine',        // 11:00 PM daily
+    start: () => { startAttendanceEngineScheduler(); return Promise.resolve(); },
+  },
+  {
+    name: 'legacy-sync',              // interval: LEGACY_SYNC_INTERVAL_MS (disabled unless LEGACY_SYNC_ENABLED=true)
+    start: () => { legacySyncWorker.start(); return Promise.resolve(); },
+  },
+  {
+    name: 'it-provisioning-lock',     // hourly
+    start: () => { startITProvisioningLockScheduler(); return Promise.resolve(); },
+  },
+  {
+    name: 'leave-monthly-credit',     // every 6h, runs on 1st of month
+    start: startLeaveMonthlyWorker,
+  },
+  {
+    name: 'leave-annual-el-credit',   // every 12h, runs on Jan 1
+    start: startAnnualLeaveWorker,
+  },
+  {
+    name: 'payroll-window-closure',   // startup + every 24h
+    start: () => { startPayrollWindowClosureScheduler(); return Promise.resolve(); },
+  },
+  {
+    name: 'payroll-nightly-recalc',   // 23:45 IST daily
     start: startPayrollNightlyRecalcWorker,
   },
   {
-    name: 'apr-vicidial-sync',
+    name: 'kpi-daily-sync',           // 1:00 AM daily
+    start: startKpiDailySyncWorker,
+  },
+  {
+    name: 'sla-breach',               // every 5 min
+    start: startSLABreachWorker,
+  },
+  {
+    name: 'lms-sync',                 // hourly at :05
+    start: startLmsSyncWorker,
+  },
+  {
+    name: 'biometric-cosec-sync',     // every 6h — migrate-ncosec → biometric_attendance_log + attendance_daily_record
+    start: startBiometricCosecWorker,
+  },
+  {
+    name: 'cosec-sync',               // every 5 min (NCOSEC_SYNC_INTERVAL_MS) — cosec-sync.service → integration_biometric_daily
+    start: () => { startCosecSyncWorker(); return Promise.resolve(); },
+  },
+  {
+    name: 'apr-vicidial-sync',        // startup + 01:30 IST daily
     start: startAprVicidialSyncWorker,
   },
   {
-    name: 'esign-compliance',
+    name: 'esign-compliance',         // every 4h
     start: startEsignComplianceWorker,
+  },
+  {
+    name: 'dpdp-breach-sla',          // every 30 min
+    start: () => { startBreachSlaCron(); return Promise.resolve(); },
   },
 ];
 
@@ -104,6 +147,11 @@ function shutdown(): void {
   stopAccessExpiryScheduler();
   stopIntegrationScheduler();
   stopEsignComplianceWorker();
+  stopTenureBadgeScheduler();
+  stopCommunicationCleanup();
+  stopAttendanceEngineScheduler();
+  stopCosecSyncWorker();
+  legacySyncWorker.stop();
   console.log('[workers] Clean shutdown complete.');
   process.exit(0);
 }

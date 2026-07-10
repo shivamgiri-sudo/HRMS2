@@ -66,19 +66,22 @@ function quoteColumn(columnName: string): string {
   return `[${assertIdentifier(columnName, "COSEC column name")}]`;
 }
 
-function toIsoDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
+// Always derive calendar dates in IST — COSEC stores wall-clock IST times, so
+// using UTC dates here would shift the sync window by up to ±5h30m.
+function toISTDateString(date: Date): string {
+  return new Date(date.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
 
 function defaultFromDate(): string {
   const date = new Date();
   date.setDate(date.getDate() - 1);
-  return toIsoDate(date);
+  return toISTDateString(date);
 }
 
 function defaultToDate(): string {
-  return toIsoDate(new Date());
+  return toISTDateString(new Date());
 }
 
 function normalizeDateInput(value: unknown, fallback: string): string {
@@ -272,11 +275,25 @@ async function resolveEmployee(cosecUserId: string) {
   return rows[0] as any | undefined;
 }
 
+// mysql2 pool uses timezone:"+05:30". Inserting a bare "YYYY-MM-DD HH:mm:ss"
+// string makes mysql2 shift it by +05:30 before storing, producing wrong times.
+// Tagging the string with +05:30 tells mysql2 the value is already IST, so it
+// stores the exact wall-clock time that came from the COSEC server.
+function tagIST(val: string): string {
+  if (!val) return val;
+  // Already tagged or not a bare datetime string — leave untouched
+  if (/[Z+\-]\d{2}:\d{2}$/.test(val) || val.endsWith('Z')) return val;
+  // "YYYY-MM-DD HH:mm:ss" → "YYYY-MM-DD HH:mm:ss+05:30"
+  return val + '+05:30';
+}
+
 async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmapped"> {
   const employee = await resolveEmployee(group.cosecUserId);
   if (!employee) return "unmapped";
 
   const rawMinutes = Math.round(group.workingMinutes);
+  const firstPunchIST = tagIST(group.firstPunch);
+  const lastPunchIST  = tagIST(group.lastPunch);
   await db.execute(
     `INSERT INTO employee_biometric_enrollment
        (id, employee_id, cosec_user_id, is_active, last_sync_at)
@@ -297,7 +314,7 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
        total_punches = VALUES(total_punches),
        raw_minutes = VALUES(raw_minutes),
        migrated_at = NOW()`,
-    [employee.employee_id, group.cosecUserId, group.punchDate, group.firstPunch, group.lastPunch, group.totalPunches, rawMinutes, group.sourceSystem],
+    [employee.employee_id, group.cosecUserId, group.punchDate, firstPunchIST, lastPunchIST, group.totalPunches, rawMinutes, group.sourceSystem],
   );
 
   await db.execute(
@@ -311,7 +328,7 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
        total_punches = VALUES(total_punches),
        biometric_minutes = VALUES(biometric_minutes),
        updated_at = NOW()`,
-    [group.sourceSystem, group.sourceTable, employee.employee_code, group.punchDate, group.firstPunch, group.lastPunch, group.totalPunches, rawMinutes],
+    [group.sourceSystem, group.sourceTable, employee.employee_code, group.punchDate, firstPunchIST, lastPunchIST, group.totalPunches, rawMinutes],
   );
 
   await db.execute(
@@ -328,8 +345,8 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
     [
       employee.employee_id,
       group.punchDate,
-      group.firstPunch,
-      group.lastPunch,
+      firstPunchIST,
+      lastPunchIST,
       rawMinutes,
       rawMinutes >= 540 ? "Logged Out" : "Partial",
       employee.branch_name ?? null,
@@ -348,7 +365,7 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
     `UPDATE attendance_daily_record
         SET clock_in_time = ?, clock_out_time = ?
       WHERE employee_id = ? AND record_date = ? AND is_locked = 0`,
-    [group.firstPunch, group.lastPunch, employee.employee_id, group.punchDate],
+    [firstPunchIST, lastPunchIST, employee.employee_id, group.punchDate],
   );
   await attendanceEngineService.checkAndNotifyBiometricMismatch(employee.employee_id, group.punchDate, attendance);
 

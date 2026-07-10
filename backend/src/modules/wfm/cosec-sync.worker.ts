@@ -8,7 +8,10 @@ function positiveNumber(name: string, fallback: number): number {
 }
 
 function dateOnly(value: Date): string {
-  return value.toISOString().slice(0, 10);
+  // IST = UTC + 5:30 — must use IST date so the sync window aligns with the
+  // calendar day on the COSEC server (which stores wall-clock IST times).
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  return new Date(value.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
 }
 
 export function startCosecSyncWorker() {
