@@ -237,6 +237,10 @@ const NativeWorkforcePlanning = lazy(() => import("./pages/NativeWorkforcePlanni
 const NativeITProvisioningTracker = lazy(() => import("./pages/NativeITProvisioningTracker"));
 const NativeRTABoard = lazy(() => import("./pages/NativeRTABoard"));
 const NativeWalkinQueue = lazy(() => import("./pages/NativeWalkinQueueEnhanced"));
+
+// AI & PeopleOS
+const AIProviderSettings = lazy(() => import("./pages/AIProviderSettings"));
+const PeopleOSCopilot = lazy(() => import("./pages/PeopleOSCopilot"));
 const NativeAttendanceRulesMaster = lazy(() => import("./pages/NativeAttendanceRulesMaster"));
 const NativeCustomizationManager = lazy(() => import("./pages/customization/NativeCustomizationManager"));
 const NativeCustomizationRuleEditor = lazy(() => import("./pages/customization/NativeCustomizationRuleEditor"));
@@ -469,6 +473,8 @@ const App = () => (
               <Route path="/finance/grn" element={<ProtectedRoute><NativeGRNManagement /></ProtectedRoute>} />
               <Route path="/goals" element={<Navigate to="/dashboard" replace />} />
               <Route path="/work-inbox" element={<ProtectedRoute><Gate pageCode="WORK_INBOX"><NativeWorkInbox /></Gate></ProtectedRoute>} />
+              <Route path="/settings/ai-providers" element={<ProtectedRoute roles={['super_admin']}><AIProviderSettings /></ProtectedRoute>} />
+              <Route path="/peopleos/copilot" element={<ProtectedRoute><PeopleOSCopilot /></ProtectedRoute>} />
               <Route path="/mobility" element={<ProtectedRoute><Gate pageCode="MOBILITY"><NativeMobilityManagement /></Gate></ProtectedRoute>} />
               <Route path="/salary-increment" element={<ProtectedRoute><Gate pageCode="SALARY_INCREMENT"><NativeSalaryIncrement /></Gate></ProtectedRoute>} />
               <Route path="/jobs" element={<Navigate to="/dashboard" replace />} />
