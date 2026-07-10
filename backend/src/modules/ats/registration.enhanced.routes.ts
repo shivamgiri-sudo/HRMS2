@@ -315,7 +315,7 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       // Resolve employee UUID → roster UUID (idempotent upsert)
       const [empRows] = await db.execute<RecruiterEmployeeRow[]>(
         `SELECT e.id, e.first_name, e.last_name, e.mobile,
-                COALESCE(e.office_email, e.official_email, e.email) AS email,
+                e.email, e.official_email, e.office_email,
                 b.branch_name
          FROM employees e
          JOIN branch_master b ON b.id = e.branch_id
@@ -331,6 +331,8 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
           last_name: emp.last_name,
           mobile: emp.mobile,
           email: emp.email,
+          official_email: (emp as any).official_email,
+          office_email: (emp as any).office_email,
           branch_name: emp.branch_name,
         });
       }
@@ -351,7 +353,7 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
         const fullName = input.recruiterName.trim();
         const [empRows] = await db.execute<RecruiterEmployeeRow[]>(
           `SELECT e.id, e.first_name, e.last_name, e.mobile,
-                  COALESCE(e.office_email, e.official_email, e.email) AS email,
+                  e.email, e.official_email, e.office_email,
                   b.branch_name
            FROM employees e
            JOIN branch_master b ON b.id = e.branch_id
@@ -368,6 +370,8 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
             last_name: emp.last_name,
             mobile: emp.mobile,
             email: emp.email,
+            official_email: (emp as any).official_email,
+            office_email: (emp as any).office_email,
             branch_name: emp.branch_name,
           });
         }

@@ -48,9 +48,24 @@ export async function resolveBranchFromAlias(displayName: string) {
 // and returns their roster id. Uses INSERT … ON DUPLICATE KEY UPDATE so it's
 // idempotent — safe to call on every walk-in registration.
 export async function ensureRecruiterInRoster(
-  employee: { id: string; first_name: string | null; last_name: string | null; mobile: string | null; email: string | null; branch_name: string | null }
+  employee: {
+    id: string;
+    first_name: string | null;
+    last_name: string | null;
+    mobile: string | null;
+    official_mobile?: string | null;
+    email: string | null;
+    official_email?: string | null;
+    office_email?: string | null;
+    branch_name: string | null;
+  }
 ): Promise<string> {
   const fullName = `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() || "Recruiter";
+  // Official email takes priority over personal email — never show personal email to candidates
+  const officialEmail = employee.official_email || employee.office_email || null;
+  const contactEmail = officialEmail ?? employee.email ?? null;
+  // Official mobile takes priority over personal mobile
+  const contactMobile = employee.official_mobile || employee.mobile || null;
 
   // Check if already in roster (keyed by employee_id)
   const [existing] = await db.execute<RowDataPacket[]>(
@@ -58,7 +73,13 @@ export async function ensureRecruiterInRoster(
     [employee.id]
   );
   if ((existing as RowDataPacket[]).length > 0) {
-    return (existing as RowDataPacket[])[0].id as string;
+    const rosterId = (existing as RowDataPacket[])[0].id as string;
+    // Always refresh email/mobile with official values in case they were seeded with personal email before
+    await db.execute(
+      `UPDATE ats_recruiter_roster SET email = ?, mobile = ?, name = ? WHERE id = ?`,
+      [contactEmail, contactMobile, fullName, rosterId]
+    );
+    return rosterId;
   }
 
   // Insert new roster entry
@@ -68,7 +89,7 @@ export async function ensureRecruiterInRoster(
        (id, name, email, mobile, branch, employee_id, active_status, active_flag,
         available_today, daily_capacity, assigned_today)
      VALUES (?, ?, ?, ?, ?, ?, 1, 'Y', 'Y', 999, 0)`,
-    [rosterId, fullName, employee.email ?? null, employee.mobile ?? null, employee.branch_name ?? "Unmapped", employee.id]
+    [rosterId, fullName, contactEmail, contactMobile, employee.branch_name ?? "Unmapped", employee.id]
   );
   return rosterId;
 }
@@ -86,6 +107,8 @@ export async function getAvailableRecruiters(branchName: string) {
        e.last_name,
        e.mobile,
        e.email,
+       e.official_email,
+       e.office_email,
        b.branch_name,
        d.dept_name AS department_name,
        des.designation_name,
@@ -121,6 +144,8 @@ export async function getAvailableRecruiters(branchName: string) {
       first_name: row.first_name,
       last_name: row.last_name,
       mobile: row.mobile,
+      official_email: row.official_email,
+      office_email: row.office_email,
       email: row.email,
       branch_name: row.branch_name,
     });
