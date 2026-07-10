@@ -29,6 +29,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import { toast } from "sonner";
+import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -269,6 +270,8 @@ function MetricCard({
 export default function NativeATSHiringEntry() {
   const location = useLocation();
   const isCalling = location.pathname.includes("/calling-entry");
+  const { user } = useAuth();
+  const roleKeys = user?.roles?.map((r: any) => r.role_key) || [];
 
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
