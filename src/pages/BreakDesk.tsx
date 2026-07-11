@@ -1,7 +1,7 @@
 import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Clock3, Coffee, Filter, LogIn, LogOut, RefreshCw, Search, ShieldCheck, TimerReset, UserRound } from "lucide-react";
+import { Coffee, Filter, LogIn, LogOut, RefreshCw, Search, ShieldCheck, TimerReset, UserRound } from "lucide-react";
 import mcnLogo from "@/assets/brand/mcn-logo.png";
 import { apiUrl } from "@/lib/apiBase";
 import { cn } from "@/lib/utils";
@@ -55,9 +55,13 @@ type DeskEmployee = {
   roster_status: string | null;
   leave_name: string | null;
   total_break_minutes: number;
+  total_break_minutes_overall?: number;
   mini_break_count: number;
   long_break_count: number;
   total_break_count: number;
+  remaining_daily_break_minutes?: number;
+  daily_break_limit_minutes?: number;
+  per_break_limit_minutes?: number;
   last_break_reason: string | null;
   active_break_id: string | null;
   active_break_start_time: string | null;
@@ -88,7 +92,10 @@ type BreakDeskBootstrap = {
   last_sync_time: string | null;
   counters: Record<string, number>;
   settings: {
+    mini_break_max_minutes: number;
+    long_break_min_minutes: number;
     active_break_alert_minutes: number;
+    daily_total_allowed_minutes: number;
     allow_break_without_biometric: number;
     require_exception_reason: number;
   };
@@ -200,16 +207,6 @@ function statusTone(status: string) {
   }
 }
 
-function metricTone(index: number) {
-  return [
-    "from-[#145da0] to-[#1b6ab5]",
-    "from-[#2a8f4d] to-[#43a047]",
-    "from-[#ef8f2f] to-[#f59e0b]",
-    "from-[#e75149] to-[#ef5350]",
-    "from-[#0a2c60] to-[#145da0]",
-  ][index % 5];
-}
-
 function buildQuery(access: { kiosk: string; token: string }) {
   const params = new URLSearchParams({
     kiosk: access.kiosk,
@@ -270,12 +267,16 @@ function buildCounters(employees: DeskEmployee[]) {
     breakExceeded: employees.filter((row) => row.current_status === "Break Exceeded").length,
     miniBreaksToday: employees.reduce((sum, row) => sum + Number(row.mini_break_count ?? 0), 0),
     longBreaksToday: employees.reduce((sum, row) => sum + Number(row.long_break_count ?? 0), 0),
+    totalBreaksToday: employees.reduce((sum, row) => sum + Number(row.total_break_count ?? 0), 0),
+    totalBreakMinutesToday: employees.reduce((sum, row) => sum + totalBreakMinutesForDisplay(row), 0),
+    totalShiftMinutesToday: employees.reduce((sum, row) => sum + Number(row.shift_duration_minutes ?? 0), 0),
     noPunchFound: employees.filter((row) => row.current_status === "No Punch Found").length,
     shiftCompleted: employees.filter((row) => row.current_status === "Shift Completed").length,
   };
 }
 
 function totalBreakMinutesForDisplay(employee: DeskEmployee) {
+  if (typeof employee.total_break_minutes_overall === "number") return Number(employee.total_break_minutes_overall ?? 0);
   return Number(employee.total_break_minutes ?? 0) + (employee.active_break_id ? liveMinutes(employee.active_break_start_time) : 0);
 }
 
@@ -437,12 +438,21 @@ export default function BreakDesk() {
       : (deskData?.counters ?? bootstrap?.counters ?? {})),
     [bootstrap?.counters, deferredSearch, deskData?.counters, employees, filters],
   );
-  const metrics = [
+  const statusMetrics = [
     { label: "Entered", value: counters.entered ?? 0, icon: LogIn },
     { label: "On Duty", value: counters.onDuty ?? 0, icon: ShieldCheck },
     { label: "On Break", value: counters.onBreak ?? 0, icon: Coffee },
     { label: "Exceeded", value: counters.breakExceeded ?? 0, icon: TimerReset },
     { label: "No Punch", value: counters.noPunchFound ?? 0, icon: UserRound },
+  ];
+  const summaryMetrics = [
+    { label: "Total Breaks", value: String(counters.totalBreaksToday ?? 0) },
+    { label: "Mini", value: String(counters.miniBreaksToday ?? 0) },
+    { label: "Long", value: String(counters.longBreaksToday ?? 0) },
+    { label: "Break Min", value: formatMinutes(Number(counters.totalBreakMinutesToday ?? 0)) },
+    { label: "Shift Time", value: formatMinutes(Number(counters.totalShiftMinutesToday ?? 0)) },
+    { label: "Daily Max", value: formatMinutes(Number(bootstrap?.settings.daily_total_allowed_minutes ?? 60)) },
+    { label: "Per Break", value: formatMinutes(Number(bootstrap?.settings.active_break_alert_minutes ?? 30)) },
   ];
 
   const activeDeskName = bootstrap?.kiosk.kiosk_name ?? "Break Management Desk";
@@ -604,22 +614,29 @@ export default function BreakDesk() {
               </div>
 
               <div className="space-y-3 p-3 sm:p-4">
-                <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-5">
-                  {metrics.map((metric, index) => {
-                    const Icon = metric.icon;
-                    return (
-                      <div key={metric.label} className="overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
-                        <div className={cn("h-1.5 w-full bg-gradient-to-r", metricTone(index))} />
-                        <div className="flex items-center justify-between gap-2 px-3 py-3">
-                          <div>
-                            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{metric.label}</div>
-                            <div className="mt-1 text-2xl font-bold tracking-[-0.04em]" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{metric.value}</div>
+                <div className="rounded-[24px] border border-slate-200 bg-white px-3 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
+                  <div className="flex flex-wrap gap-2">
+                    {statusMetrics.map((metric) => {
+                      const Icon = metric.icon;
+                      return (
+                        <div key={metric.label} className="inline-flex min-w-[132px] flex-1 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                          <div className="rounded-xl bg-white p-2 text-slate-600 shadow-sm"><Icon className="h-4 w-4" /></div>
+                          <div className="min-w-0">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{metric.label}</div>
+                            <div className="text-lg font-bold text-slate-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{metric.value}</div>
                           </div>
-                          <div className="rounded-2xl bg-slate-100 p-2.5 text-slate-600"><Icon className="h-4 w-4" /></div>
                         </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {summaryMetrics.map((metric) => (
+                      <div key={metric.label} className="inline-flex min-w-[120px] flex-1 items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{metric.label}</span>
+                        <span className="font-bold text-slate-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{metric.value}</span>
                       </div>
-                    );
-                  })}
+                    ))}
+                  </div>
                 </div>
 
                 <div className="rounded-[24px] border border-slate-200 bg-white px-3 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
@@ -715,7 +732,7 @@ export default function BreakDesk() {
                                 <div className="space-y-1 text-xs text-slate-600">
                                   <div className="font-semibold text-slate-800">{employee.active_break_id ? `Active ${formatLiveDuration(employee.active_break_start_time, null, employee.active_break_minutes)}` : "No active break"}</div>
                                   <div>Last: {employee.last_break_reason ?? "-"}</div>
-                                  <div>{employee.exceeded_minutes > 0 ? `Exceeded by ${employee.exceeded_minutes} min` : "Within policy"}</div>
+                                  <div>{employee.exceeded_minutes > 0 ? `Exceeded by ${employee.exceeded_minutes} min` : Number(employee.remaining_daily_break_minutes ?? 1) <= 0 ? "Daily break limit reached" : `Remaining today ${formatMinutes(Number(employee.remaining_daily_break_minutes ?? 0))}`}</div>
                                 </div>
                               </td>
                               <td className="px-3 py-3 text-center font-semibold text-slate-800">{employee.total_break_count}</td>

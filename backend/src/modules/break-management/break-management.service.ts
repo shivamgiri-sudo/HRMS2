@@ -96,6 +96,8 @@ const STATUS_OPTIONS = [
 
 const AUTO_CLOSE_CHECK_INTERVAL_MS = 15_000;
 const autoCloseState = new Map<string, { lastRunAt: number; promise: Promise<void> | null }>();
+const HARD_MAX_DAILY_BREAK_MINUTES = 60;
+const HARD_MAX_SINGLE_BREAK_MINUTES = 30;
 
 function normalizeJsonArray(value: unknown): string[] {
   if (!value) return [];
@@ -234,6 +236,33 @@ function kioskProcessIds(kiosk: Pick<KioskDevice, "allowed_process_ids" | "proce
   return mapped.length > 0 ? mapped : [kiosk.process_id].filter(Boolean).map(String);
 }
 
+function normalizeBreakSettings(settings: BreakSettingsRow) {
+  const perBreakLimit = Math.min(
+    HARD_MAX_SINGLE_BREAK_MINUTES,
+    Math.max(1, Number(settings.active_break_alert_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES)),
+  );
+  const dailyLimit = Math.min(
+    HARD_MAX_DAILY_BREAK_MINUTES,
+    Math.max(1, Number(settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES)),
+  );
+  const longBreakThreshold = Math.min(
+    perBreakLimit,
+    Math.max(1, Number(settings.long_break_min_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES)),
+  );
+  const miniBreakMax = Math.min(
+    Math.max(1, perBreakLimit - 1),
+    Math.max(1, Number(settings.mini_break_max_minutes ?? Math.max(1, perBreakLimit - 1))),
+  );
+
+  return {
+    ...settings,
+    mini_break_max_minutes: miniBreakMax,
+    long_break_min_minutes: longBreakThreshold,
+    active_break_alert_minutes: perBreakLimit,
+    daily_total_allowed_minutes: dailyLimit,
+  } as BreakSettingsRow;
+}
+
 function assertEmployeeWithinKioskScope(kiosk: KioskDevice, employee: EmployeeContext) {
   if (kiosk.branch_id && employee.branch_id && kiosk.branch_id !== employee.branch_id) {
     throw new Error("This kiosk cannot act on employees from another branch");
@@ -305,10 +334,10 @@ async function getSettings(branchId: string | null, processId: string | null) {
       LIMIT 1`,
     [branchId, processId],
   );
-  return ((rows as unknown[]) as BreakSettingsRow[])[0] ?? {
+  const raw = ((rows as unknown[]) as BreakSettingsRow[])[0] ?? {
     mini_break_max_minutes: 10,
-    long_break_min_minutes: 10,
-    active_break_alert_minutes: 10,
+    long_break_min_minutes: 30,
+    active_break_alert_minutes: 30,
     daily_total_allowed_minutes: 60,
     max_long_break_count: 2,
     escalation_after_minutes: 10,
@@ -319,6 +348,25 @@ async function getSettings(branchId: string | null, processId: string | null) {
     alert_hr: 0,
     alert_wfm: 0,
     alert_cc_list_json: null,
+  };
+  return normalizeBreakSettings(raw as BreakSettingsRow);
+}
+
+async function getBreakUsageSummary(employeeId: string, shiftDate: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        SUM(COALESCE(duration_minutes, 0)) AS total_break_minutes,
+        SUM(CASE WHEN break_type = 'LONG' THEN 1 ELSE 0 END) AS long_break_count
+       FROM break_sessions
+      WHERE employee_id = ?
+        AND shift_date = ?
+        AND status IN ('COMPLETED', 'AUTO_CLOSED', 'EXCEPTION')`,
+    [employeeId, shiftDate],
+  );
+  const row = (rows as any[])[0] ?? {};
+  return {
+    totalBreakMinutes: Number(row.total_break_minutes ?? 0),
+    longBreakCount: Number(row.long_break_count ?? 0),
   };
 }
 
@@ -447,6 +495,18 @@ async function getRealtimeNcosecPunchMap(
 
 function classifyBreak(durationMinutes: number, settings: BreakSettingsRow) {
   return durationMinutes >= Number(settings.long_break_min_minutes ?? 10) ? "LONG" : "MINI";
+}
+
+function resolveCompletedBreakStatus(input: {
+  durationMinutes: number;
+  totalBreakMinutesAfterClose: number;
+  noBiometricPunchFlag: boolean;
+  settings: BreakSettingsRow;
+}) {
+  if (input.noBiometricPunchFlag) return "EXCEPTION" as const;
+  if (input.durationMinutes > Number(input.settings.active_break_alert_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES)) return "EXCEPTION" as const;
+  if (input.totalBreakMinutesAfterClose > Number(input.settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES)) return "EXCEPTION" as const;
+  return "COMPLETED" as const;
 }
 
 function deriveStatus(row: any, settings: BreakSettingsRow) {
@@ -733,13 +793,20 @@ async function autoCloseEligibleBreaks(shiftDate: string, force = false) {
       const settings = await getSettings(row.branch_id ?? null, row.process_id ?? null);
       if (!Number(settings.auto_close_on_biometric_punch_out ?? 1)) continue;
       const duration = minutesBetween(String(row.break_start_time), String(row.punch_out));
+      const usage = await getBreakUsageSummary(String(row.employee_id), shiftDate);
+      const completedStatus = resolveCompletedBreakStatus({
+        durationMinutes: duration.minutes,
+        totalBreakMinutesAfterClose: usage.totalBreakMinutes + duration.minutes,
+        noBiometricPunchFlag: false,
+        settings,
+      });
       await db.execute(
         `UPDATE break_sessions
             SET break_end_time = ?,
                 duration_seconds = ?,
                 duration_minutes = ?,
                 break_type = ?,
-                status = 'AUTO_CLOSED',
+                status = ?,
                 end_source = 'AUTO_BIOMETRIC_PUNCH_OUT',
                 biometric_punch_out_time = ?,
                 updated_at = CURRENT_TIMESTAMP
@@ -750,6 +817,7 @@ async function autoCloseEligibleBreaks(shiftDate: string, force = false) {
           duration.seconds,
           duration.minutes,
           classifyBreak(duration.minutes, settings),
+          completedStatus === "EXCEPTION" ? "EXCEPTION" : "AUTO_CLOSED",
           row.punch_out,
           row.id,
         ],
@@ -1142,6 +1210,11 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
       biometric_punch_out_time: punchOut,
       biometric_minutes: biometricMinutes,
     }, settings);
+    const completedBreakMinutes = Number(row.total_break_minutes ?? 0);
+    const currentBreakMinutes = row.active_break_id ? status.activeMinutes : 0;
+    const totalBreakMinutesOverall = completedBreakMinutes + currentBreakMinutes;
+    const dailyBreakLimitMinutes = Number(settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES);
+    const remainingDailyBreakMinutes = Math.max(0, dailyBreakLimitMinutes - totalBreakMinutesOverall);
     const shiftDurationMinutes = punchIn
       ? minutesBetween(String(punchIn), String(punchOut ?? currentIstDateTime().dateTime)).minutes
       : 0;
@@ -1172,10 +1245,14 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
       shift_duration_minutes: shiftDurationMinutes,
       roster_status: row.roster_status,
       leave_name: row.leave_name,
-      total_break_minutes: Number(row.total_break_minutes ?? 0),
+      total_break_minutes: completedBreakMinutes,
       mini_break_count: Number(row.mini_break_count ?? 0),
       long_break_count: Number(row.long_break_count ?? 0),
       total_break_count: todaySessions.filter((session) => session?.status !== "CANCELLED").length,
+      total_break_minutes_overall: totalBreakMinutesOverall,
+      remaining_daily_break_minutes: remainingDailyBreakMinutes,
+      daily_break_limit_minutes: dailyBreakLimitMinutes,
+      per_break_limit_minutes: Number(settings.active_break_alert_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES),
       last_break_reason: row.active_break_reason ?? row.last_break_reason ?? null,
       active_break_id: row.active_break_id ?? null,
       active_break_start_time: row.active_break_start_time ?? null,
@@ -1191,7 +1268,7 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
       safe_actions: {
         can_punch_in: !punchIn,
         can_punch_out: Boolean(punchIn) && !Boolean(punchOut),
-        can_start_break: status.label === "On Duty",
+        can_start_break: status.label === "On Duty" && remainingDailyBreakMinutes > 0,
         can_end_break: Boolean(row.active_break_id),
         exception_start_allowed: !punchIn && Boolean(settings.allow_break_without_biometric),
       },
@@ -1205,6 +1282,9 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
     breakExceeded: mapped.filter((row) => row.current_status === "Break Exceeded").length,
     miniBreaksToday: mapped.reduce((sum, row) => sum + Number(row.mini_break_count ?? 0), 0),
     longBreaksToday: mapped.reduce((sum, row) => sum + Number(row.long_break_count ?? 0), 0),
+    totalBreaksToday: mapped.reduce((sum, row) => sum + Number(row.total_break_count ?? 0), 0),
+    totalBreakMinutesToday: mapped.reduce((sum, row) => sum + Number((row as any).total_break_minutes_overall ?? row.total_break_minutes ?? 0), 0),
+    totalShiftMinutesToday: mapped.reduce((sum, row) => sum + Number(row.shift_duration_minutes ?? 0), 0),
     noPunchFound: mapped.filter((row) => row.current_status === "No Punch Found").length,
     shiftCompleted: mapped.filter((row) => row.current_status === "Shift Completed").length,
   };
@@ -1395,11 +1475,15 @@ export const breakManagementService = {
     if ((existingRows as any[]).length > 0) throw new Error("This employee already has an active break");
 
     const biometric = await getBiometricSnapshot(employee.id, employee.employee_code, shiftDate);
+    const usage = await getBreakUsageSummary(employee.id, shiftDate);
     if (!biometric.punchIn && !Number(settings.allow_break_without_biometric ?? 0)) {
       throw new Error("No biometric punch found. Exception start is disabled for this kiosk.");
     }
     if (!biometric.punchIn && Number(settings.require_exception_reason ?? 1) && !String(payload.exception_reason ?? "").trim()) {
       throw new Error("Exception reason is required when biometric punch is missing");
+    }
+    if (usage.totalBreakMinutes >= Number(settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES)) {
+      throw new Error(`Daily break limit of ${settings.daily_total_allowed_minutes} minutes has already been used`);
     }
 
     const now = currentIstDateTime().dateTime;
@@ -1494,6 +1578,13 @@ export const breakManagementService = {
     const duration = minutesBetween(String(session.break_start_time), endedAt);
     const breakType = classifyBreak(duration.minutes, settings);
     const biometric = await getBiometricSnapshot(employee.id, employee.employee_code, shiftDate);
+    const usage = await getBreakUsageSummary(employee.id, shiftDate);
+    const completedStatus = resolveCompletedBreakStatus({
+      durationMinutes: duration.minutes,
+      totalBreakMinutesAfterClose: usage.totalBreakMinutes + duration.minutes,
+      noBiometricPunchFlag: Boolean(session.no_biometric_punch_flag),
+      settings,
+    });
 
     await db.execute(
       `UPDATE break_sessions
@@ -1511,7 +1602,7 @@ export const breakManagementService = {
         duration.seconds,
         duration.minutes,
         breakType,
-        session.no_biometric_punch_flag ? "EXCEPTION" : "COMPLETED",
+        completedStatus,
         biometric.punchOut,
         session.id,
       ],
@@ -2009,6 +2100,24 @@ export const breakManagementService = {
     const id = String(input.id ?? randomUUID());
     const branchId = String(input.branch_id ?? "") || null;
     const processId = String(input.process_id ?? "") || null;
+    const normalizedInput = normalizeBreakSettings({
+      id,
+      branch_id: branchId,
+      process_id: processId,
+      mini_break_max_minutes: Number(input.mini_break_max_minutes ?? 10),
+      long_break_min_minutes: Number(input.long_break_min_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES),
+      active_break_alert_minutes: Number(input.active_break_alert_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES),
+      daily_total_allowed_minutes: Number(input.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES),
+      max_long_break_count: Number(input.max_long_break_count ?? 2),
+      escalation_after_minutes: Number(input.escalation_after_minutes ?? 10),
+      auto_close_on_biometric_punch_out: input.auto_close_on_biometric_punch_out ? 1 : 0,
+      allow_break_without_biometric: input.allow_break_without_biometric ? 1 : 0,
+      require_exception_reason: input.require_exception_reason !== false ? 1 : 0,
+      alert_reporting_manager: input.alert_reporting_manager !== false ? 1 : 0,
+      alert_hr: input.alert_hr ? 1 : 0,
+      alert_wfm: input.alert_wfm ? 1 : 0,
+      alert_cc_list_json: JSON.stringify(Array.isArray(input.alert_cc_list) ? input.alert_cc_list : []),
+    } as BreakSettingsRow);
     await db.execute(
       `INSERT INTO break_settings
          (id, branch_id, process_id, mini_break_max_minutes, long_break_min_minutes,
@@ -2035,19 +2144,19 @@ export const breakManagementService = {
         id,
         branchId,
         processId,
-        Number(input.mini_break_max_minutes ?? 10),
-        Number(input.long_break_min_minutes ?? 10),
-        Number(input.active_break_alert_minutes ?? 10),
-        Number(input.daily_total_allowed_minutes ?? 60),
-        Number(input.max_long_break_count ?? 2),
-        Number(input.escalation_after_minutes ?? 10),
-        input.auto_close_on_biometric_punch_out ? 1 : 0,
-        input.allow_break_without_biometric ? 1 : 0,
-        input.require_exception_reason !== false ? 1 : 0,
-        input.alert_reporting_manager !== false ? 1 : 0,
-        input.alert_hr ? 1 : 0,
-        input.alert_wfm ? 1 : 0,
-        JSON.stringify(Array.isArray(input.alert_cc_list) ? input.alert_cc_list : []),
+        normalizedInput.mini_break_max_minutes,
+        normalizedInput.long_break_min_minutes,
+        normalizedInput.active_break_alert_minutes,
+        normalizedInput.daily_total_allowed_minutes,
+        normalizedInput.max_long_break_count,
+        normalizedInput.escalation_after_minutes,
+        normalizedInput.auto_close_on_biometric_punch_out,
+        normalizedInput.allow_break_without_biometric,
+        normalizedInput.require_exception_reason,
+        normalizedInput.alert_reporting_manager,
+        normalizedInput.alert_hr,
+        normalizedInput.alert_wfm,
+        normalizedInput.alert_cc_list_json,
       ],
     );
 
@@ -2057,7 +2166,7 @@ export const breakManagementService = {
       action: "UPSERT_BREAK_SETTINGS",
       performedByType: "ADMIN",
       performedById,
-      newValue: input,
+      newValue: normalizedInput,
       req,
     });
 
