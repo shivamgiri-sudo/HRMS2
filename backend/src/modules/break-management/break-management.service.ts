@@ -6,6 +6,7 @@ import { env } from "../../config/env.js";
 import { getNcosecPool } from "../../db/ncosecDb.js";
 import { emailService } from "../communication/email.service.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
+import { assessAggregatePunches } from "../wfm/cosec-punch-interpretation.service.js";
 import { getRealTimePunchesToday } from "../wfm/attendance-realtime-ncosec.service.js";
 
 type KioskDevice = {
@@ -61,6 +62,13 @@ type EmployeeContext = {
   department_id: string | null;
   manager_id: string | null;
   employee_name: string;
+};
+
+type LivePunchSnapshot = {
+  punchIn: string | null;
+  punchOut: string | null;
+  biometricMinutes: number;
+  sourceSystem: "ncosec_realtime";
 };
 
 const BREAK_REASONS = [
@@ -138,6 +146,40 @@ function resolveShiftDate(explicitDate?: string | null) {
   previous.setUTCDate(previous.getUTCDate() - 1);
   const parts = getIstParts(previous);
   return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function shiftDateByDays(dateText: string, days: number) {
+  const date = new Date(`${dateText}T00:00:00+05:30`);
+  date.setUTCDate(date.getUTCDate() + days);
+  const parts = getIstParts(date);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function normalizePunchStamp(value: unknown) {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  return raw.replace("T", " ").replace(/\+05:30$/, "").slice(0, 19);
+}
+
+function resolveRealtimePunchWindow(shiftDate: string) {
+  const now = currentIstDateTime();
+  if (shiftDate === now.date) {
+    return {
+      dateStart: `${shiftDate} 00:00:00`,
+      dateEnd: `${shiftDate} 23:59:59`,
+    };
+  }
+
+  const previousShiftDate = shiftDateByDays(now.date, -1);
+  if (now.hour < 5 && shiftDate === previousShiftDate) {
+    return {
+      dateStart: `${shiftDate} 00:00:00`,
+      dateEnd: `${now.date} 23:59:59`,
+    };
+  }
+
+  return null;
 }
 
 function hashToken(token: string) {
@@ -278,11 +320,109 @@ async function getBiometricSnapshot(employeeId: string, employeeCode: string, sh
     [employeeCode, shiftDate, employeeId, shiftDate, employeeId],
   );
   const row = (rows as any[])[0] ?? {};
-  return {
-    punchIn: row.punch_in ?? null,
-    punchOut: row.punch_out ?? null,
+  const fallback = {
+    punchIn: normalizePunchStamp(row.punch_in),
+    punchOut: normalizePunchStamp(row.punch_out),
     biometricMinutes: Number(row.biometric_minutes ?? 0),
   };
+
+  if (shiftDate === currentIstDateTime().date && env.NCOSEC_DB_HOST) {
+    try {
+      const realtime = await getRealTimePunchesToday(employeeId);
+      if (realtime?.first_punch_in) {
+        return {
+          punchIn: normalizePunchStamp(realtime.first_punch_in),
+          punchOut: normalizePunchStamp(realtime.last_punch_out),
+          biometricMinutes: Number(realtime.raw_minutes ?? fallback.biometricMinutes ?? 0),
+        };
+      }
+    } catch (error) {
+      console.error("[break-management] realtime biometric snapshot fallback:", error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  return fallback;
+}
+
+async function getRealtimeNcosecPunchMap(
+  employees: Array<{ employeeId: string; employeeCode: string; cosecUserId?: string | null }>,
+  shiftDate: string,
+) {
+  const window = resolveRealtimePunchWindow(shiftDate);
+  if (!window || !env.NCOSEC_DB_HOST) return new Map<string, LivePunchSnapshot>();
+
+  const employeeIdsByUserId = new Map<string, string[]>();
+  for (const employee of employees) {
+    const rawUserId = String(employee.cosecUserId ?? employee.employeeCode ?? "").trim();
+    if (!rawUserId) continue;
+    const bucket = employeeIdsByUserId.get(rawUserId) ?? [];
+    bucket.push(employee.employeeId);
+    employeeIdsByUserId.set(rawUserId, bucket);
+  }
+
+  const userIds = Array.from(employeeIdsByUserId.keys());
+  if (userIds.length === 0) return new Map<string, LivePunchSnapshot>();
+
+  const userIdColumn = env.NCOSEC_USER_ID_COLUMN || "UserID";
+  const dateTimeColumn = env.NCOSEC_DATETIME_COLUMN || "Edatetime";
+  const eventTable = env.NCOSEC_EVENT_TABLE || "dbo.Mx_ATDEventTrn";
+
+  try {
+    const pool = await getNcosecPool();
+    const request = pool.request();
+    request.input("dateStart", window.dateStart);
+    request.input("dateEnd", window.dateEnd);
+
+    const idParams: string[] = [];
+    userIds.forEach((userId, index) => {
+      const key = `userId${index}`;
+      request.input(key, userId);
+      idParams.push(`@${key}`);
+    });
+
+    const result = await request.query(`
+      SELECT
+        CAST(${userIdColumn} AS NVARCHAR(100)) AS user_id,
+        CONVERT(CHAR(19), MIN(${dateTimeColumn}), 120) AS first_punch,
+        CONVERT(CHAR(19), MAX(${dateTimeColumn}), 120) AS last_punch,
+        COUNT(*) AS total_punches,
+        DATEDIFF(MINUTE, MIN(${dateTimeColumn}), MAX(${dateTimeColumn})) AS raw_minutes
+      FROM ${eventTable}
+      WHERE ${dateTimeColumn} >= @dateStart
+        AND ${dateTimeColumn} <= @dateEnd
+        AND CAST(${userIdColumn} AS NVARCHAR(100)) IN (${idParams.join(", ")})
+      GROUP BY CAST(${userIdColumn} AS NVARCHAR(100))
+    `);
+
+    const livePunches = new Map<string, LivePunchSnapshot>();
+    for (const row of result.recordset ?? []) {
+      const userId = String((row as any).user_id ?? "").trim();
+      if (!userId) continue;
+
+      const assessed = assessAggregatePunches({
+        firstPunch: String((row as any).first_punch ?? ""),
+        lastPunch: String((row as any).last_punch ?? ""),
+        totalPunches: Number((row as any).total_punches ?? 0),
+        workingMinutes: Number((row as any).raw_minutes ?? 0),
+      });
+
+      const snapshot: LivePunchSnapshot = {
+        punchIn: normalizePunchStamp(assessed.effectivePunchIn),
+        punchOut: normalizePunchStamp(assessed.effectivePunchOut),
+        biometricMinutes: assessed.effectiveWorkingMinutes,
+        sourceSystem: "ncosec_realtime",
+      };
+
+      for (const employeeId of employeeIdsByUserId.get(userId) ?? []) {
+        livePunches.set(employeeId, snapshot);
+      }
+    }
+
+    return livePunches;
+  } catch (error) {
+    console.error("[break-management] realtime NCOSEC overlay failed:", error instanceof Error ? error.message : String(error));
+    return new Map<string, LivePunchSnapshot>();
+  }
 }
 
 function classifyBreak(durationMinutes: number, settings: BreakSettingsRow) {
@@ -697,7 +837,7 @@ async function validateKiosk(kioskCode: string, token: string, req: Request) {
   return device;
 }
 
-async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAll = false) {
+async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAll = false, includeRealtime = false) {
   const shiftDate = resolveShiftDate(filters.date ?? null);
   await autoCloseEligibleBreaks(shiftDate);
 
@@ -762,7 +902,7 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
         COALESCE(ibd.first_punch, bal.first_punch_in) AS biometric_punch_in_time,
         COALESCE(ibd.last_punch, bal.last_punch_out) AS biometric_punch_out_time,
         COALESCE(ibd.biometric_minutes, bal.raw_minutes, 0) AS biometric_minutes,
-        bal.source_system AS attendance_source_system,
+        COALESCE(NULLIF(bal.source_system, ''), CASE WHEN ibd.first_punch IS NOT NULL THEN 'biometric_sync' ELSE NULL END) AS attendance_source_system,
         ra.shift_start_time,
         ra.shift_end_time,
         COALESCE(NULLIF(sm.shift_name, ''), NULLIF(CONCAT(COALESCE(ra.shift_start_time, ''), CASE WHEN ra.shift_end_time IS NOT NULL AND ra.shift_end_time <> '' THEN CONCAT(' - ', ra.shift_end_time) ELSE '' END), '')) AS shift_name,
@@ -824,6 +964,17 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
     params,
   );
 
+  const realtimePunches = includeRealtime
+    ? await getRealtimeNcosecPunchMap(
+        (rows as any[]).map((row) => ({
+          employeeId: String(row.id),
+          employeeCode: String(row.employee_code ?? ""),
+          cosecUserId: row.cosec_user_id ?? row.employee_code ?? null,
+        })),
+        shiftDate,
+      )
+    : new Map<string, LivePunchSnapshot>();
+
   const employeeIds = (rows as any[]).map((row) => row.id).filter(Boolean);
   const sessionsByEmployee = new Map<string, any[]>();
   if (employeeIds.length > 0) {
@@ -855,9 +1006,21 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
 
   const settings = await getSettings(kiosk.branch_id, kiosk.process_id);
   const mapped = (rows as any[]).map((row) => {
-    const status = deriveStatus(row, settings);
-    const shiftDurationMinutes = row.biometric_punch_in_time
-      ? minutesBetween(String(row.biometric_punch_in_time), String(row.biometric_punch_out_time ?? currentIstDateTime().dateTime)).minutes
+    const livePunch = realtimePunches.get(String(row.id));
+    const punchIn = livePunch?.punchIn ?? normalizePunchStamp(row.biometric_punch_in_time);
+    const punchOut = livePunch?.punchOut ?? normalizePunchStamp(row.biometric_punch_out_time);
+    const biometricMinutes = livePunch?.biometricMinutes ?? Number(row.biometric_minutes ?? 0);
+    const attendanceSourceSystem = livePunch?.sourceSystem
+      ?? row.attendance_source_system
+      ?? (punchIn ? "biometric_sync" : null);
+    const status = deriveStatus({
+      ...row,
+      biometric_punch_in_time: punchIn,
+      biometric_punch_out_time: punchOut,
+      biometric_minutes: biometricMinutes,
+    }, settings);
+    const shiftDurationMinutes = punchIn
+      ? minutesBetween(String(punchIn), String(punchOut ?? currentIstDateTime().dateTime)).minutes
       : 0;
     const todaySessions = sessionsByEmployee.get(String(row.id)) ?? [];
     return {
@@ -872,10 +1035,10 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
       manager_name: row.manager_name,
       manager_email: row.manager_email,
       biometric_id: row.cosec_user_id ?? row.employee_code,
-      biometric_punch_in_time: row.biometric_punch_in_time,
-      biometric_punch_out_time: row.biometric_punch_out_time,
-      biometric_minutes: Number(row.biometric_minutes ?? 0),
-      attendance_source_system: row.attendance_source_system ?? null,
+      biometric_punch_in_time: punchIn,
+      biometric_punch_out_time: punchOut,
+      biometric_minutes: biometricMinutes,
+      attendance_source_system: attendanceSourceSystem,
       shift_name: row.shift_name,
       shift_start_time: row.shift_start_time ?? null,
       shift_end_time: row.shift_end_time ?? null,
@@ -899,11 +1062,11 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
         : 0,
       today_sessions: todaySessions,
       safe_actions: {
-        can_punch_in: !row.biometric_punch_in_time,
-        can_punch_out: Boolean(row.biometric_punch_in_time) && !Boolean(row.biometric_punch_out_time),
+        can_punch_in: !punchIn,
+        can_punch_out: Boolean(punchIn) && !Boolean(punchOut),
         can_start_break: status.label === "On Duty",
         can_end_break: Boolean(row.active_break_id),
-        exception_start_allowed: !row.biometric_punch_in_time && Boolean(settings.allow_break_without_biometric),
+        exception_start_allowed: !punchIn && Boolean(settings.allow_break_without_biometric),
       },
     };
   });
@@ -1061,7 +1224,7 @@ export const breakManagementService = {
 
   async listDeskEmployees(kioskCode: string, token: string, req: Request, filters: DeskFilters) {
     const kiosk = await validateKiosk(kioskCode, token, req);
-    const data = await fetchDeskRows(kiosk, filters, false);
+    const data = await fetchDeskRows(kiosk, filters, false, false);
     return {
       shift_date: data.shiftDate,
       last_sync_time: data.lastSyncTime,
@@ -1322,7 +1485,14 @@ export const breakManagementService = {
   },
 
   async getLiveStatus(kioskCode: string, token: string, req: Request, filters: DeskFilters) {
-    return this.listDeskEmployees(kioskCode, token, req, filters);
+    const kiosk = await validateKiosk(kioskCode, token, req);
+    const data = await fetchDeskRows(kiosk, filters, false, true);
+    return {
+      shift_date: data.shiftDate,
+      last_sync_time: data.lastSyncTime,
+      counters: data.counters,
+      employees: data.employees,
+    };
   },
 
   async getDashboard(filters: { date?: string; branch_id?: string; process_id?: string }) {

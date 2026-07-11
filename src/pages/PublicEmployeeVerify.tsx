@@ -18,13 +18,16 @@ interface VerifyData {
 interface PayslipVerifyData {
   employee_code: string;
   full_name: string;
-  designation: string | null;
-  branch_name: string | null;
+  designation?: string | null;
+  branch_name?: string | null;
   month: number;
   year: number;
-  status: string;
-  net_pay: number;
-  verified_at: string;
+  status?: string;
+  net_pay?: number;
+  net_salary?: number;
+  payslip_ref?: string;
+  generated_at?: string;
+  verified_at?: string;
 }
 
 const MONTH_NAMES = ["", "January", "February", "March", "April", "May", "June",
@@ -184,11 +187,23 @@ export function PublicPayslipVerify() {
 
   useEffect(() => {
     if (!employeeCode || !monthYear) { setError("Invalid parameters."); setLoading(false); return; }
-    fetch(`/api/public/verify/payslip/${encodeURIComponent(employeeCode)}/${encodeURIComponent(monthYear)}`)
+    fetch(`/api/payroll/verify/payslip/${encodeURIComponent(employeeCode)}/${encodeURIComponent(monthYear)}`)
       .then((r) => r.json())
       .then((json) => {
-        if (json.success) setData(json.data);
-        else setError(json.message ?? "Payslip not found.");
+        if (json.verified) {
+          // Map new flat response shape to the existing PayslipVerifyData shape
+          setData({
+            full_name: json.employee_name ?? "",
+            employee_code: json.employee_code ?? "",
+            month: Number((json.run_month ?? "").split("-")[1] ?? 0),
+            year: Number((json.run_month ?? "").split("-")[0] ?? 0),
+            net_salary: json.net_salary ?? 0,
+            payslip_ref: json.payslip_ref ?? "",
+            generated_at: json.generated_at ?? "",
+          } as PayslipVerifyData);
+        } else {
+          setError(json.message ?? "Payslip not found.");
+        }
       })
       .catch(() => setError("Unable to reach verification server."))
       .finally(() => setLoading(false));
@@ -239,7 +254,7 @@ export function PublicPayslipVerify() {
               <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4 flex justify-between items-center">
                 <div>
                   <p className="text-xs text-slate-400 font-medium uppercase tracking-wide">Net Pay</p>
-                  <p className="text-2xl font-black text-slate-900 mt-0.5">{INR(data.net_pay)}</p>
+                  <p className="text-2xl font-black text-slate-900 mt-0.5">{INR(data.net_pay ?? data.net_salary ?? 0)}</p>
                 </div>
                 <span className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase ${
                   data.status === "acknowledged" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"

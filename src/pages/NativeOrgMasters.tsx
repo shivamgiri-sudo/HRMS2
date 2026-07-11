@@ -55,10 +55,12 @@ const TABS: TabConfig[] = [
     icon: <Building2 className="h-4 w-4" />,
     apiPath: "/api/org/branches",
     fields: [
-      { key: "branch_name", label: "Name", type: "text", required: true },
-      { key: "branch_code", label: "Code", type: "text", required: true },
+      { key: "branch_name", label: "Branch Name", type: "text", required: true },
+      { key: "branch_code", label: "Branch Code", type: "text", required: true },
+      { key: "address", label: "Full Address", type: "textarea" },
       { key: "city", label: "City", type: "text" },
       { key: "state", label: "State", type: "text" },
+      { key: "hr_contact", label: "HR Contact (Email / Phone)", type: "text" },
     ],
   },
   {

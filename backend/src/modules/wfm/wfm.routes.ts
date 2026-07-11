@@ -983,6 +983,33 @@ wfmRouter.get(
       // Table doesn't exist in this environment — return null safely
     }
 
+    if (!cosecAgg) {
+      try {
+        const nextDate = new Date(`${date}T00:00:00+05:30`);
+        nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+        const nextDateText = nextDate.toISOString().slice(0, 10);
+        const {
+          getBulkCosecMappings,
+          getMonthlyAttendanceFromNcosec,
+        } = await import("./attendance-realtime-ncosec.service.js");
+        const mappings = await getBulkCosecMappings([employeeId]);
+        const monthly = await getMonthlyAttendanceFromNcosec(mappings, date, nextDateText);
+        const matched = monthly.find((row) => row.record_date === date) ?? null;
+        if (matched) {
+          cosecAgg = {
+            user_id: matched.employee_code,
+            shift_date: matched.record_date,
+            first_punch_in: matched.clock_in_time ? matched.clock_in_time.replace("T", " ").replace("+05:30", "") : null,
+            last_punch_out: matched.clock_out_time ? matched.clock_out_time.replace("T", " ").replace("+05:30", "") : null,
+            work_minutes: matched.raw_minutes ?? matched.biometric_minutes ?? 0,
+            synced_at: null,
+          };
+        }
+      } catch {
+        // Direct COSEC fallback is best-effort only.
+      }
+    }
+
     return res.json({
       success: true,
       data: {

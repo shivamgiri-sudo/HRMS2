@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { format, startOfMonth, endOfMonth } from "date-fns";
+import type { AttendanceRecord } from "@/hooks/useAttendance";
 
 interface AttendanceReportRecord {
   employeeId: string;
@@ -30,6 +31,76 @@ interface AttendanceReportSummary {
 
 const EMPLOYEE_PAGE_SIZE = 500;
 const ATTENDANCE_PAGE_SIZE = 500;
+const NCOSEC_ENDPOINT = "/api/wfm/attendance/ncosec-monthly";
+
+function safeNumber(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getExpectedHours(workStart: string | null, workEnd: string | null): number {
+  if (!workStart || !workEnd) return 9;
+  const [sh, sm] = workStart.split(":").map(Number);
+  const [eh, em] = workEnd.split(":").map(Number);
+  if (![sh, sm, eh, em].every(Number.isFinite)) return 9;
+  return Math.max(0, (eh * 60 + em - (sh * 60 + sm)) / 60);
+}
+
+function getLateMinutes(record: AttendanceRecord): number {
+  const clockIn = record.clock_in_time ?? record.clock_in;
+  const workStart = record.employee?.working_hours_start ?? null;
+  if (!clockIn || !workStart) return 0;
+  const [startHour, startMinute] = workStart.split(":").map(Number);
+  if (![startHour, startMinute].every(Number.isFinite)) return 0;
+  const isoClockIn = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(clockIn)
+    ? clockIn.replace(" ", "T") + "+05:30"
+    : clockIn;
+  const inDate = new Date(isoClockIn);
+  if (Number.isNaN(inDate.getTime())) return 0;
+  const istTime = inDate.toLocaleString("en-US", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const [hourText, minuteText] = istTime.split(":");
+  const actualMinutes = safeNumber(hourText) * 60 + safeNumber(minuteText);
+  const scheduledMinutes = startHour * 60 + startMinute;
+  return Math.max(0, actualMinutes - scheduledMinutes);
+}
+
+function getOvertimeHours(record: AttendanceRecord): number {
+  const totalHours = safeNumber(record.total_hours ?? (record.raw_minutes != null ? safeNumber(record.raw_minutes) / 60 : 0));
+  if (!record.clock_out && !record.clock_out_time) return 0;
+  const expectedHours = getExpectedHours(
+    record.employee?.working_hours_start ?? null,
+    record.employee?.working_hours_end ?? null,
+  );
+  return Math.max(0, totalHours - expectedHours);
+}
+
+async function fetchAttendancePages(params: URLSearchParams): Promise<AttendanceRecord[]> {
+  const allRecords: AttendanceRecord[] = [];
+  let page = 1;
+  let total = Number.POSITIVE_INFINITY;
+
+  while (allRecords.length < total) {
+    const paged = new URLSearchParams(params);
+    paged.set("limit", String(ATTENDANCE_PAGE_SIZE));
+    paged.set("page", String(page));
+    const res = await hrmsApi.get<{ success: boolean; data: AttendanceRecord[]; total?: number }>(
+      `${NCOSEC_ENDPOINT}?${paged}`
+    );
+    if (!res.success) throw new Error((res as any).message || "Failed to fetch attendance records");
+    const batch = res.data ?? [];
+    allRecords.push(...batch);
+    total = typeof res.total === "number" ? res.total : allRecords.length;
+    if (batch.length < ATTENDANCE_PAGE_SIZE) break;
+    page += 1;
+  }
+
+  return allRecords;
+}
 
 export function useAttendanceReportData(month: number, year: number, branchId?: string, processId?: string, costCentreId?: string) {
   const startDate = startOfMonth(new Date(year, month - 1));
@@ -62,29 +133,18 @@ export function useAttendanceReportData(month: number, year: number, branchId?: 
         empPage++;
       }
 
-      let page = 1;
-      const allSessions: any[] = [];
       const attFilters = [
         `fromDate=${start}`,
         `toDate=${end}`,
-        `limit=${ATTENDANCE_PAGE_SIZE}`,
         branchId ? `branchId=${branchId}` : "",
         processId ? `processId=${processId}` : "",
         costCentreId ? `costCentreId=${costCentreId}` : "",
       ].filter(Boolean).join("&");
-      while (true) {
-        const res = await hrmsApi.get<{ success: boolean; data: any[]; total: number; limit: number }>(
-          `/api/wfm/attendance/daily?${attFilters}&page=${page}`
-        );
-        const batch = res.data ?? [];
-        allSessions.push(...batch);
-        const total = Number((res as any).total ?? batch.length);
-        if (allSessions.length >= total || batch.length < ATTENDANCE_PAGE_SIZE) break;
-        page++;
-      }
+      const allSessions = await fetchAttendancePages(new URLSearchParams(attFilters));
 
       const attMap = new Map<string, {
         totalDays: number; totalHours: number; lateArrivals: number; totalLateMinutes: number;
+        totalOvertimeHours: number;
         employeeName: string; employeeCode: string; department: string; branch: string; process: string; costCentre: string;
       }>();
 
@@ -93,22 +153,29 @@ export function useAttendanceReportData(month: number, year: number, branchId?: 
         if (!employeeId) continue;
         if (!attMap.has(employeeId)) {
           attMap.set(employeeId, {
-            totalDays: 0, totalHours: 0, lateArrivals: 0, totalLateMinutes: 0,
-            employeeName: s.employee_name ?? `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim(),
-            employeeCode: s.employee_code ?? "",
-            department: s.department_name ?? s.dept_name ?? "-",
+            totalDays: 0,
+            totalHours: 0,
+            lateArrivals: 0,
+            totalLateMinutes: 0,
+            totalOvertimeHours: 0,
+            employeeName: s.employee_name ?? `${s.employee?.first_name ?? ""} ${s.employee?.last_name ?? ""}`.trim(),
+            employeeCode: s.employee_code ?? s.employee?.employee_code ?? "",
+            department: s.department_name ?? "-",
             branch: s.branch_name ?? "-",
             process: s.process_name ?? "-",
             costCentre: s.cost_centre_name ?? "-",
           });
         }
         const r = attMap.get(employeeId)!;
-        if (["present", "half_day"].includes(String(s.attendance_status ?? "").toLowerCase())) r.totalDays++;
-        r.totalHours += Number(s.raw_minutes ?? s.biometric_minutes ?? 0) / 60;
-        if (s.late_mark) {
+        const status = String(s.attendance_status ?? s.status ?? "").toLowerCase();
+        if (["present", "half_day"].includes(status)) r.totalDays++;
+        r.totalHours += safeNumber(s.raw_minutes ?? s.biometric_minutes ?? 0) / 60;
+        const lateMinutes = getLateMinutes(s);
+        if (lateMinutes > 0) {
           r.lateArrivals++;
-          r.totalLateMinutes += Number(s.late_by_minutes ?? 0);
+          r.totalLateMinutes += lateMinutes;
         }
+        r.totalOvertimeHours += getOvertimeHours(s);
       }
 
       const records: AttendanceReportRecord[] = allEmployees.map((emp: any) => {
@@ -126,7 +193,7 @@ export function useAttendanceReportData(month: number, year: number, branchId?: 
           totalHours: att?.totalHours ?? 0,
           lateArrivals: att?.lateArrivals ?? 0,
           totalLateMinutes: att?.totalLateMinutes ?? 0,
-          totalOvertimeHours: 0,
+          totalOvertimeHours: att?.totalOvertimeHours ?? 0,
           workingHoursStart: emp.working_hours_start ?? null,
           workingHoursEnd: emp.working_hours_end ?? null,
         };

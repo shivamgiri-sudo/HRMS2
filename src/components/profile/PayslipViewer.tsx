@@ -92,6 +92,9 @@ interface PayslipRecord {
   epf_number?: string | null;
   esi_number?: string | null;
   payslip_ref?: string | null;
+  cheque_no?: string | null;
+  payment_mode?: string | null;
+  payment_date?: string | null;
   earnings?: PayslipComponent[];
   deductions?: PayslipComponent[];
 }
@@ -347,8 +350,10 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       taxPayableEduCess: 0,
       incomeTax: getDeduction('TDS'),
 
-      // Payment details
-      chequeNo: record.payslip_ref || "N/A",
+      // Payment details — from disbursal upload (real cheque/UTR number)
+      chequeNo: record.cheque_no || "",
+      paymentMode: record.payment_mode || "",
+      paymentDate: record.payment_date || "",
       netSalary: Number(record.net_salary ?? 0),
       netSalaryWords: numberToWords(Math.floor(Number(record.net_salary ?? 0))),
     }, `Payslip_${employeeCode}_${monthName}_${recYear}.pdf`);

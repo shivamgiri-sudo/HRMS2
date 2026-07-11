@@ -14,6 +14,7 @@ import { getNcosecPool } from '../../db/ncosecDb.js';
 import { env } from '../../config/env.js';
 import { nowIST } from '../../shared/timezone.js';
 import { classifyCosecMinutes } from './attendance-engine.service.js';
+import { assessAggregatePunches } from './cosec-punch-interpretation.service.js';
 import { type PunchGroup, mergeNightShiftRollover } from './cosec-sync.service.js';
 
 interface RealTimePunch {
@@ -105,12 +106,19 @@ export async function getRealTimePunchesToday(employeeId: string): Promise<RealT
     // Just tag with +05:30, no arithmetic needed.
     const tagIST = (str: string | null) => str ? str.replace(' ', 'T') + '+05:30' : null;
 
+    const assessed = assessAggregatePunches({
+      firstPunch: row.first_punch,
+      lastPunch: row.last_punch,
+      totalPunches: row.total_punches,
+      workingMinutes: row.raw_minutes,
+    });
+
     return {
       punch_date: todayStr,
-      first_punch_in: tagIST(row.first_punch),
-      last_punch_out: row.total_punches > 1 ? tagIST(row.last_punch) : null,
-      total_punches: row.total_punches || 0,
-      raw_minutes: row.raw_minutes || 0,
+      first_punch_in: tagIST(assessed.effectivePunchIn),
+      last_punch_out: tagIST(assessed.effectivePunchOut),
+      total_punches: assessed.effectivePunchCount,
+      raw_minutes: assessed.effectiveWorkingMinutes,
       source: 'ncosec_realtime',
     };
   } catch (error) {
@@ -164,14 +172,22 @@ export async function getRealTimePunchesRange(
 
     const tagIST = (str: string | null) => str ? str.replace(' ', 'T') + '+05:30' : null;
 
-    return result.recordset.map(row => ({
-      punch_date: String(row.punch_date),
-      first_punch_in: tagIST(row.first_punch),
-      last_punch_out: row.total_punches > 1 ? tagIST(row.last_punch) : null,
-      total_punches: row.total_punches || 0,
-      raw_minutes: row.raw_minutes || 0,
-      source: 'ncosec_realtime',
-    }));
+    return result.recordset.map(row => {
+      const assessed = assessAggregatePunches({
+        firstPunch: row.first_punch,
+        lastPunch: row.last_punch,
+        totalPunches: row.total_punches,
+        workingMinutes: row.raw_minutes,
+      });
+      return {
+        punch_date: String(row.punch_date),
+        first_punch_in: tagIST(assessed.effectivePunchIn),
+        last_punch_out: tagIST(assessed.effectivePunchOut),
+        total_punches: assessed.effectivePunchCount,
+        raw_minutes: assessed.effectiveWorkingMinutes,
+        source: 'ncosec_realtime' as const,
+      };
+    });
   } catch (error) {
     console.error('[realtime-ncosec] Range query failed:', error instanceof Error ? error.message : String(error));
     throw error;
@@ -187,6 +203,7 @@ export interface NcosecMonthlyRecord {
   department_name: string | null;
   branch_name: string | null;
   process_name: string | null;
+  cost_centre_name: string | null;
   record_date: string;
   date: string;
   clock_in_time: string | null;
@@ -218,9 +235,14 @@ interface CosecMapping {
   employee_code: string;
   employee_name: string;
   cosec_user_id: string;
+  branch_id: string | null;
+  process_id: string | null;
+  department_id: string | null;
+  cost_centre_id: string | null;
   department_name: string | null;
   branch_name: string | null;
   process_name: string | null;
+  cost_centre_name: string | null;
   working_hours_start: string | null;
   working_hours_end: string | null;
   first_name: string;
@@ -249,9 +271,14 @@ export async function getBulkCosecMappings(employeeIds: string[]): Promise<Cosec
        COALESCE(e.first_name, '') AS first_name,
        COALESCE(e.last_name, '') AS last_name,
        COALESCE(em.external_id, e.employee_code) AS cosec_user_id,
+       e.branch_id,
+       e.process_id,
+       e.department_id,
+       e.cost_centre_id,
        dm.dept_name AS department_name,
        bm.branch_name,
        pm.process_name,
+       ccm.cost_centre_name,
        e.working_hours_start,
        e.working_hours_end
      FROM employees e
@@ -260,6 +287,7 @@ export async function getBulkCosecMappings(employeeIds: string[]): Promise<Cosec
      LEFT JOIN department_master dm ON dm.id = e.department_id
      LEFT JOIN branch_master bm ON bm.id = e.branch_id
      LEFT JOIN process_master pm ON pm.id = e.process_id
+     LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
      WHERE e.id IN (${placeholders})`,
     employeeIds,
   );
@@ -308,9 +336,9 @@ async function getAttendanceOverrides(
   const [leaves] = await db.execute<RowDataPacket[]>(
     `WITH RECURSIVE cal AS (
        SELECT lr.employee_id, lr.from_date AS d, lr.to_date,
-              lt.leave_type_name AS leave_name
+              lt.leave_name
        FROM leave_request lr
-       JOIN leave_type lt ON lt.id = lr.leave_type_id
+       JOIN leave_type_master lt ON lt.id = lr.leave_type_id
        WHERE lr.employee_id IN (${ph})
          AND lr.status = 'approved'
          AND lr.from_date <= ? AND lr.to_date >= ?
@@ -503,6 +531,12 @@ export async function getMonthlyAttendanceFromNcosec(
       finalLocked = override.is_locked;
       finalSource = override.is_locked ? 'regularization' : 'ncosec_with_override';
       finalNote = override.override_note;
+    } else if (!clockOut && clockIn) {
+      finalStatus = 'present';
+      finalLwp = 0;
+      finalLocked = 0;
+      finalSource = 'ncosec_direct_live_open';
+      finalNote = null;
     } else {
       const cls = classifyCosecMinutes(group.workingMinutes);
       finalStatus = cls.status;
@@ -519,6 +553,7 @@ export async function getMonthlyAttendanceFromNcosec(
       department_name: mapping.department_name,
       branch_name: mapping.branch_name,
       process_name: mapping.process_name,
+      cost_centre_name: mapping.cost_centre_name,
       record_date: group.punchDate,
       date: group.punchDate,
       clock_in_time: clockIn,
@@ -562,6 +597,7 @@ export async function getMonthlyAttendanceFromNcosec(
       department_name: mapping.department_name,
       branch_name: mapping.branch_name,
       process_name: mapping.process_name,
+      cost_centre_name: mapping.cost_centre_name,
       record_date: recDate,
       date: recDate,
       clock_in_time: null,

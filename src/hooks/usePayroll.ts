@@ -88,13 +88,13 @@ const mapPayrollRecord = (row: any): PayrollRecord => {
   };
 };
 
-async function fetchPayrollRecordPage(
+export async function fetchPayrollRecordPage(
   f: PayrollRecordFilters
 ): Promise<{ records: PayrollRecord[]; total: number; page: number; limit: number }> {
   const p = new URLSearchParams();
   if (f.month !== undefined && f.year !== undefined)
     p.set("runMonth", toRunMonth(f.month, f.year)!);
-  if (f.search)       p.set("search",       f.search);
+  if (f.search?.trim()) p.set("search", f.search.trim());
   if (f.branchId)     p.set("branchId",     f.branchId);
   if (f.departmentId) p.set("departmentId", f.departmentId);
   if (f.processId)    p.set("processId",    f.processId);

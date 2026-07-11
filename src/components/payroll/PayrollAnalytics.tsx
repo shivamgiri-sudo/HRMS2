@@ -1,356 +1,501 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  LineChart, Line,
-  PieChart, Pie, Cell,
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
   ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from "recharts";
 import {
-  Users, IndianRupee, TrendingUp, ShieldCheck, Building2, BarChart2,
+  Building2,
+  IndianRupee,
+  ShieldCheck,
+  TrendingUp,
+  Users,
+  Wallet,
 } from "lucide-react";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
-import {
-  usePayrollAnalytics,
-  usePayrollTrends,
-} from "@/hooks/usePayroll";
+import { usePayrollAnalytics, usePayrollTrends } from "@/hooks/usePayroll";
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-const fmt = (n: number) =>
+const fmt = (value: number) =>
   new Intl.NumberFormat("en-IN", {
-    style: "currency", currency: "INR",
-    minimumFractionDigits: 0, maximumFractionDigits: 0,
-  }).format(n);
+    style: "currency",
+    currency: "INR",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(value);
 
-const fmtShort = (n: number) => {
-  if (n >= 1_00_00_000) return `₹${(n / 1_00_00_000).toFixed(1)}Cr`;
-  if (n >= 1_00_000)    return `₹${(n / 1_00_000).toFixed(1)}L`;
-  if (n >= 1_000)       return `₹${(n / 1_000).toFixed(0)}K`;
-  return `₹${n}`;
+const fmtShort = (value: number) => {
+  if (value >= 10_000_000) return `Rs${(value / 10_000_000).toFixed(1)}Cr`;
+  if (value >= 100_000) return `Rs${(value / 100_000).toFixed(1)}L`;
+  if (value >= 1_000) return `Rs${(value / 1_000).toFixed(0)}K`;
+  return `Rs${Math.round(value)}`;
 };
 
-const CHART_COLORS = [
-  "#1B6AB5", "#3BAD49", "#F59E0B", "#E11D48",
-  "#0891B2", "#4F46E5", "#10B981", "#F97316",
-];
-
-const TONE_MAP: Record<string, { card: string; icon: string }> = {
-  sky:     { card: "border-sky-100 bg-gradient-to-br from-white to-sky-50",         icon: "bg-sky-50 text-sky-700 ring-sky-100"           },
-  emerald: { card: "border-emerald-100 bg-gradient-to-br from-white to-emerald-50", icon: "bg-emerald-50 text-emerald-700 ring-emerald-100" },
-  indigo:  { card: "border-indigo-100 bg-gradient-to-br from-white to-indigo-50",   icon: "bg-indigo-50 text-indigo-700 ring-indigo-100"   },
-  amber:   { card: "border-amber-100 bg-gradient-to-br from-white to-amber-50",     icon: "bg-amber-50 text-amber-700 ring-amber-100"       },
-  rose:    { card: "border-rose-100 bg-gradient-to-br from-white to-rose-50",       icon: "bg-rose-50 text-rose-700 ring-rose-100"           },
-  slate:   { card: "border-slate-100 bg-gradient-to-br from-white to-slate-50",     icon: "bg-slate-50 text-slate-700 ring-slate-100"       },
+const formatRunMonth = (value?: string | null) => {
+  if (!value) return "Latest run";
+  const [year, month] = String(value).split("-").map(Number);
+  if (!year || !month) return String(value);
+  return new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(
+    new Date(year, month - 1, 1)
+  );
 };
 
-// ── Props ─────────────────────────────────────────────────────────────────────
+const COLORS = ["#0f766e", "#0891b2", "#2563eb", "#16a34a", "#f59e0b", "#ea580c", "#db2777", "#7c3aed"];
+
+const KPI_TONES = {
+  teal: "border-teal-100 bg-[linear-gradient(135deg,#f0fdfa_0%,#ccfbf1_100%)] text-teal-700",
+  blue: "border-sky-100 bg-[linear-gradient(135deg,#f0f9ff_0%,#dbeafe_100%)] text-sky-700",
+  green: "border-emerald-100 bg-[linear-gradient(135deg,#ecfdf5_0%,#d1fae5_100%)] text-emerald-700",
+  amber: "border-amber-100 bg-[linear-gradient(135deg,#fffbeb_0%,#fde68a_100%)] text-amber-700",
+  slate: "border-slate-200 bg-[linear-gradient(135deg,#f8fafc_0%,#e2e8f0_100%)] text-slate-700",
+} as const;
 
 interface PayrollAnalyticsProps {
   availableMonths?: string[];
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
-
 export function PayrollAnalytics({ availableMonths = [] }: PayrollAnalyticsProps) {
-  const [runMonth, setRunMonth]   = useState<string | undefined>(availableMonths[0]);
+  const [runMonth, setRunMonth] = useState<string | undefined>(availableMonths[0]);
   const [dimension, setDimension] = useState<"department" | "branch" | "process">("department");
 
   const analyticsQuery = usePayrollAnalytics(runMonth, dimension);
-  const trendsQuery    = usePayrollTrends(6);
+  const trendsQuery = usePayrollTrends(6);
 
-  const kpi  = analyticsQuery.data?.kpi;
-  const data = analyticsQuery.data?.data ?? [];
+  const kpi = analyticsQuery.data?.kpi;
+  const data = useMemo(() => analyticsQuery.data?.data ?? [], [analyticsQuery.data?.data]);
+  const trendData = useMemo(() => trendsQuery.data ?? [], [trendsQuery.data]);
   const resolvedRunMonth = analyticsQuery.data?.runMonth ?? runMonth;
+  const dimensionLabel = dimension.charAt(0).toUpperCase() + dimension.slice(1);
+  const formattedRunMonth = formatRunMonth(resolvedRunMonth);
 
-  const dimLabel = dimension.charAt(0).toUpperCase() + dimension.slice(1);
+  const chartRows = useMemo(() => data.slice(0, 8), [data]);
+  const distributionRows = useMemo(() => data.slice(0, 6), [data]);
+  const topContributor = data[0] ?? null;
+  const latestTrend = trendData[trendData.length - 1] ?? null;
 
   const kpiCards = [
-    { label: "Total Net Payroll", value: fmt(kpi?.total_net ?? 0),          icon: <IndianRupee className="h-5 w-5" />, tone: "sky"     },
-    { label: "Headcount",         value: String(kpi?.headcount ?? 0),       icon: <Users className="h-5 w-5" />,      tone: "emerald" },
-    { label: "Avg Net Salary",    value: fmt(kpi?.avg_net ?? 0),            icon: <TrendingUp className="h-5 w-5" />, tone: "indigo"  },
-    { label: "PF Employer",       value: fmt(kpi?.total_pf_employer ?? 0),  icon: <ShieldCheck className="h-5 w-5" />,tone: "amber"   },
-    { label: "ESIC Employer",     value: fmt(kpi?.total_esic_employer ?? 0),icon: <Building2 className="h-5 w-5" />,  tone: "rose"    },
     {
-      label: "Gross-to-Net",
-      value: kpi?.total_gross
-        ? `${((kpi.total_net / kpi.total_gross) * 100).toFixed(1)}%`
-        : "—",
-      icon: <BarChart2 className="h-5 w-5" />,
-      tone: "slate",
+      label: "Total Net",
+      value: fmt(kpi?.total_net ?? 0),
+      meta: formattedRunMonth,
+      tone: KPI_TONES.teal,
+      icon: <Wallet className="h-4 w-4" />,
+    },
+    {
+      label: "Headcount",
+      value: String(kpi?.headcount ?? 0),
+      meta: `${data.length || 0} ${dimension} groups`,
+      tone: KPI_TONES.blue,
+      icon: <Users className="h-4 w-4" />,
+    },
+    {
+      label: "Average Net",
+      value: fmt(kpi?.avg_net ?? 0),
+      meta: "Per employee payout",
+      tone: KPI_TONES.green,
+      icon: <TrendingUp className="h-4 w-4" />,
+    },
+    {
+      label: "Gross Payroll",
+      value: fmt(kpi?.total_gross ?? 0),
+      meta: "Before deductions",
+      tone: KPI_TONES.slate,
+      icon: <IndianRupee className="h-4 w-4" />,
+    },
+    {
+      label: "Employer PF",
+      value: fmt(kpi?.total_pf_employer ?? 0),
+      meta: "Employer statutory load",
+      tone: KPI_TONES.amber,
+      icon: <ShieldCheck className="h-4 w-4" />,
+    },
+    {
+      label: "Employer ESIC",
+      value: fmt(kpi?.total_esic_employer ?? 0),
+      meta: "Employer statutory load",
+      tone: KPI_TONES.slate,
+      icon: <Building2 className="h-4 w-4" />,
     },
   ];
 
   if (analyticsQuery.isLoading) {
     return (
       <div className="space-y-4">
+        <Skeleton className="h-24 rounded-3xl" />
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-24 rounded-2xl" />
+          {Array.from({ length: 6 }).map((_, index) => (
+            <Skeleton key={index} className="h-24 rounded-2xl" />
           ))}
         </div>
-        <div className="grid gap-5 xl:grid-cols-2">
-          <Skeleton className="h-72 rounded-2xl" />
-          <Skeleton className="h-72 rounded-2xl" />
+        <div className="grid gap-4 xl:grid-cols-2">
+          <Skeleton className="h-[360px] rounded-2xl" />
+          <Skeleton className="h-[360px] rounded-2xl" />
         </div>
-        <Skeleton className="h-64 rounded-2xl" />
-        <Skeleton className="h-64 rounded-2xl" />
+        <Skeleton className="h-[320px] rounded-2xl" />
+        <Skeleton className="h-[320px] rounded-2xl" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
+      <Card className="overflow-hidden rounded-3xl border-slate-200 bg-[linear-gradient(135deg,#f8fafc_0%,#ecfeff_42%,#f0fdf4_100%)] shadow-sm">
+        <CardContent className="flex flex-col gap-4 p-5 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+              Payroll Analytics
+            </p>
+            <h2 className="mt-1 text-xl font-bold text-slate-950">
+              Payroll mix for {formattedRunMonth}
+            </h2>
+            <p className="mt-1 max-w-2xl text-sm text-slate-600">
+              Same payroll logic, clearer readout. This view shows where payout volume sits, how gross converts to net, and how the last six runs are trending.
+            </p>
+          </div>
 
-      {/* Controls */}
-      <div className="flex flex-wrap items-center gap-3">
-        {availableMonths.length > 0 && (
-          <Select
-            value={resolvedRunMonth ?? ""}
-            onValueChange={(v) => setRunMonth(v || undefined)}
-          >
-            <SelectTrigger className="h-10 w-[180px] rounded-xl border-slate-200 bg-white text-sm shadow-sm">
-              <SelectValue placeholder="Select month" />
-            </SelectTrigger>
-            <SelectContent>
-              {availableMonths.map((m) => (
-                <SelectItem key={m} value={m}>{m}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
+          <div className="flex flex-col gap-2 sm:flex-row">
+            {availableMonths.length > 0 && (
+              <Select
+                value={resolvedRunMonth ?? ""}
+                onValueChange={(value) => setRunMonth(value || undefined)}
+              >
+                <SelectTrigger className="h-10 min-w-[180px] rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+                  <SelectValue placeholder="Select month" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableMonths.map((month) => (
+                    <SelectItem key={month} value={month}>
+                      {formatRunMonth(month)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
 
-        <Select
-          value={dimension}
-          onValueChange={(v) => setDimension(v as typeof dimension)}
-        >
-          <SelectTrigger className="h-10 w-[160px] rounded-xl border-slate-200 bg-white text-sm shadow-sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="department">By Department</SelectItem>
-            <SelectItem value="branch">By Branch</SelectItem>
-            <SelectItem value="process">By Process</SelectItem>
-          </SelectContent>
-        </Select>
+            <Select
+              value={dimension}
+              onValueChange={(value) => setDimension(value as typeof dimension)}
+            >
+              <SelectTrigger className="h-10 min-w-[160px] rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="department">By Department</SelectItem>
+                <SelectItem value="branch">By Branch</SelectItem>
+                <SelectItem value="process">By Process</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </CardContent>
+      </Card>
 
-        {resolvedRunMonth && (
-          <Badge variant="outline" className="h-10 px-3 text-xs font-semibold">
-            Run: {resolvedRunMonth}
-          </Badge>
-        )}
-      </div>
-
-      {/* KPI Strip */}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-        {kpiCards.map((c) => {
-          const style = TONE_MAP[c.tone] ?? TONE_MAP.slate;
-          return (
-            <div key={c.label} className={`rounded-2xl border p-4 shadow-sm ${style.card}`}>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
-                    {c.label}
-                  </p>
-                  <h3 className="mt-2 text-xl font-bold text-slate-950">{c.value}</h3>
-                </div>
-                <div className={`rounded-xl p-2.5 ring-1 ${style.icon}`}>{c.icon}</div>
+        {kpiCards.map((card) => (
+          <div key={card.label} className={`rounded-2xl border p-4 shadow-sm ${card.tone}`}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  {card.label}
+                </p>
+                <p className="mt-2 text-lg font-bold text-slate-950">{card.value}</p>
+                <p className="mt-1 text-xs text-slate-600">{card.meta}</p>
               </div>
+              <div className="rounded-xl bg-white/80 p-2 shadow-sm text-slate-700">{card.icon}</div>
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
 
-      {/* Charts row */}
-      <div className="grid gap-5 xl:grid-cols-2">
-
-        {/* Horizontal bar — dimension breakdown */}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
         <Card className="rounded-2xl border-slate-200 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-bold text-slate-950">
-              Net Salary by {dimLabel}
-            </CardTitle>
-            <p className="text-xs text-slate-500">Sorted descending · {resolvedRunMonth}</p>
+          <CardHeader className="pb-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <CardTitle className="text-base font-bold text-slate-950">
+                  Net Salary by {dimensionLabel}
+                </CardTitle>
+                <p className="mt-1 text-xs text-slate-500">
+                  Highest payout groups first. The chart is capped to the top eight for faster scanning.
+                </p>
+              </div>
+              {topContributor && (
+                <Badge variant="outline" className="w-fit text-xs font-semibold">
+                  Top contributor: {topContributor.dimension_name}
+                </Badge>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
-            {data.length === 0 ? (
-              <div className="flex h-64 items-center justify-center text-sm text-slate-400">
+            {chartRows.length === 0 ? (
+              <div className="flex h-[320px] items-center justify-center text-sm text-slate-400">
                 No data for this period
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height={Math.max(220, data.length * 40)}>
-                <BarChart
-                  data={data}
-                  layout="vertical"
-                  margin={{ left: 8, right: 48, top: 4, bottom: 4 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                  <XAxis
-                    type="number"
-                    tickFormatter={fmtShort}
-                    tick={{ fontSize: 11 }}
-                  />
-                  <YAxis
-                    type="category"
-                    dataKey="dimension_name"
-                    width={130}
-                    tick={{ fontSize: 11 }}
-                  />
-                  <Tooltip
-                    formatter={(value: number) => [fmt(value), "Net Salary"]}
-                    contentStyle={{ borderRadius: 12, fontSize: 12 }}
-                  />
-                  <Bar dataKey="total_net" radius={[0, 4, 4, 0]}>
-                    {data.map((_, index) => (
-                      <Cell key={index} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <>
+                <ResponsiveContainer width="100%" height={Math.max(280, chartRows.length * 42)}>
+                  <BarChart
+                    data={chartRows}
+                    layout="vertical"
+                    margin={{ top: 4, right: 20, bottom: 4, left: 4 }}
+                  >
+                    <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={fmtShort} />
+                    <YAxis type="category" dataKey="dimension_name" width={120} tick={{ fontSize: 11 }} />
+                    <Tooltip
+                      formatter={(value: number) => [fmt(value), "Net salary"]}
+                      contentStyle={{ borderRadius: 14, borderColor: "#cbd5e1", fontSize: 12 }}
+                    />
+                    <Bar dataKey="total_net" radius={[0, 10, 10, 0]}>
+                      {chartRows.map((row, index) => (
+                        <Cell key={`${row.dimension_name}-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+
+                <div className="mt-4 grid gap-2 md:grid-cols-3">
+                  {chartRows.slice(0, 3).map((row, index) => (
+                    <div key={`${row.dimension_name}-summary`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-semibold text-slate-900">{row.dimension_name}</p>
+                          <p className="mt-1 text-xs text-slate-500">{row.headcount} employees</p>
+                        </div>
+                        <span
+                          className="h-2.5 w-2.5 rounded-full"
+                          style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                        />
+                      </div>
+                      <p className="mt-2 text-sm font-semibold text-slate-950">{fmt(row.total_net)}</p>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
 
-        {/* Donut — share of total */}
         <Card className="rounded-2xl border-slate-200 shadow-sm">
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-3">
             <CardTitle className="text-base font-bold text-slate-950">
-              Payroll Distribution
+              Distribution Snapshot
             </CardTitle>
-            <p className="text-xs text-slate-500">Share of total net · {resolvedRunMonth}</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Share of total net payroll across the top visible {dimension} groups.
+            </p>
           </CardHeader>
-          <CardContent className="flex items-center justify-center">
-            {data.length === 0 ? (
-              <div className="flex h-64 items-center justify-center text-sm text-slate-400">
+          <CardContent>
+            {distributionRows.length === 0 ? (
+              <div className="flex h-[320px] items-center justify-center text-sm text-slate-400">
                 No data for this period
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <PieChart>
-                  <Pie
-                    data={data}
-                    dataKey="total_net"
-                    nameKey="dimension_name"
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={70}
-                    outerRadius={110}
-                    paddingAngle={3}
-                  >
-                    {data.map((_, index) => (
-                      <Cell key={index} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    formatter={(value: number, name: string) => [fmt(value), name]}
-                    contentStyle={{ borderRadius: 12, fontSize: 12 }}
-                  />
-                  <Legend
-                    iconSize={10}
-                    wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
+              <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-center">
+                <div className="relative mx-auto h-[220px] w-full max-w-[220px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={distributionRows}
+                        dataKey="total_net"
+                        nameKey="dimension_name"
+                        innerRadius={62}
+                        outerRadius={92}
+                        paddingAngle={3}
+                      >
+                        {distributionRows.map((row, index) => (
+                          <Cell key={`${row.dimension_name}-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(value: number, name: string) => [fmt(value), name]}
+                        contentStyle={{ borderRadius: 14, borderColor: "#cbd5e1", fontSize: 12 }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      Total Net
+                    </p>
+                    <p className="mt-1 text-center text-lg font-bold text-slate-950">
+                      {fmtShort(kpi?.total_net ?? 0)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {distributionRows.map((row, index) => (
+                    <div key={`${row.dimension_name}-share`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                          />
+                          <p className="text-sm font-semibold text-slate-900">{row.dimension_name}</p>
+                        </div>
+                        <Badge variant="outline" className="text-xs">
+                          {(row.pct_of_total ?? 0).toFixed(1)}%
+                        </Badge>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                        <span>{row.headcount} employees</span>
+                        <span>{fmt(row.total_net)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Month-over-month trend */}
       <Card className="rounded-2xl border-slate-200 shadow-sm">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base font-bold text-slate-950">
-            Month-over-Month Trend (Last 6 Months)
-          </CardTitle>
-          <p className="text-xs text-slate-500">Gross vs Net salary across all active runs</p>
+        <CardHeader className="pb-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <CardTitle className="text-base font-bold text-slate-950">
+                Six-Month Trend
+              </CardTitle>
+              <p className="mt-1 text-xs text-slate-500">
+                Gross versus net payroll movement across the last six active runs.
+              </p>
+            </div>
+            {latestTrend && (
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="outline" className="text-xs">Latest gross {fmtShort(latestTrend.total_gross)}</Badge>
+                <Badge variant="outline" className="text-xs">Latest net {fmtShort(latestTrend.total_net)}</Badge>
+              </div>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           {trendsQuery.isLoading ? (
-            <Skeleton className="h-56 rounded-xl" />
-          ) : !trendsQuery.data?.length ? (
-            <div className="flex h-56 items-center justify-center text-sm text-slate-400">
-              No trend data available yet — run payroll for at least one month
+            <Skeleton className="h-[260px] rounded-xl" />
+          ) : trendData.length === 0 ? (
+            <div className="flex h-[260px] items-center justify-center text-sm text-slate-400">
+              No trend data available yet
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={240}>
-              <LineChart
-                data={trendsQuery.data}
-                margin={{ left: 10, right: 20, top: 8, bottom: 4 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
+            <ResponsiveContainer width="100%" height={260}>
+              <AreaChart data={trendData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+                <defs>
+                  <linearGradient id="grossArea" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.26} />
+                    <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0.04} />
+                  </linearGradient>
+                  <linearGradient id="netArea" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.05} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
                 <XAxis dataKey="month_label" tick={{ fontSize: 11 }} />
-                <YAxis tickFormatter={fmtShort} tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} tickFormatter={fmtShort} />
                 <Tooltip
-                  formatter={(value: number, name: string) => [fmt(value), name]}
-                  contentStyle={{ borderRadius: 12, fontSize: 12 }}
+                  formatter={(value: number, name: string) => [fmt(value), name === "total_gross" ? "Gross salary" : "Net salary"]}
+                  contentStyle={{ borderRadius: 14, borderColor: "#cbd5e1", fontSize: 12 }}
                 />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Line
+                <Area
                   type="monotone"
                   dataKey="total_gross"
-                  name="Gross Salary"
-                  stroke="#1B6AB5"
-                  strokeWidth={2}
-                  dot={{ r: 4 }}
-                  activeDot={{ r: 6 }}
+                  stroke="#0ea5e9"
+                  strokeWidth={2.5}
+                  fill="url(#grossArea)"
                 />
-                <Line
+                <Area
                   type="monotone"
                   dataKey="total_net"
-                  name="Net Salary"
-                  stroke="#3BAD49"
-                  strokeWidth={2}
-                  dot={{ r: 4 }}
-                  activeDot={{ r: 6 }}
+                  stroke="#10b981"
+                  strokeWidth={2.5}
+                  fill="url(#netArea)"
                 />
-              </LineChart>
+              </AreaChart>
             </ResponsiveContainer>
           )}
         </CardContent>
       </Card>
 
-      {/* Summary table */}
       <Card className="rounded-2xl border-slate-200 shadow-sm">
-        <CardHeader className="pb-2">
+        <CardHeader className="pb-3">
           <CardTitle className="text-base font-bold text-slate-950">
-            {dimLabel} Summary
+            {dimensionLabel} Summary
           </CardTitle>
+          <p className="mt-1 text-xs text-slate-500">
+            Compact ledger view for audit and quick comparisons.
+          </p>
         </CardHeader>
         <CardContent>
           {data.length === 0 ? (
-            <div className="py-8 text-center text-sm text-slate-400">No data for this period</div>
+            <div className="py-10 text-center text-sm text-slate-400">No data for this period</div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow className="border-slate-200 bg-slate-50">
-                    <TableHead className="text-xs font-semibold">{dimLabel}</TableHead>
+                    <TableHead className="text-xs font-semibold">{dimensionLabel}</TableHead>
                     <TableHead className="text-right text-xs font-semibold">Headcount</TableHead>
-                    <TableHead className="text-right text-xs font-semibold">Avg Net</TableHead>
+                    <TableHead className="text-right text-xs font-semibold">Average Net</TableHead>
                     <TableHead className="text-right text-xs font-semibold">Total Net</TableHead>
-                    <TableHead className="text-right text-xs font-semibold">% of Total</TableHead>
+                    <TableHead className="text-right text-xs font-semibold">Share</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data.map((row, i) => (
-                    <TableRow key={`${row.dimension_name}-${i}`} className="border-slate-100 text-sm">
-                      <TableCell className="font-medium text-slate-800">
-                        {row.dimension_name}
+                  {data.map((row, index) => (
+                    <TableRow key={`${row.dimension_name}-${index}`} className="border-slate-100">
+                      <TableCell className="font-medium text-slate-900">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                          />
+                          {row.dimension_name}
+                        </div>
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{row.headcount}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmt(row.avg_net ?? 0)}</TableCell>
-                      <TableCell className="text-right tabular-nums font-semibold">{fmt(row.total_net)}</TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        <Badge variant="outline" className="font-mono text-xs">
-                          {(row.pct_of_total ?? 0).toFixed(1)}%
-                        </Badge>
+                      <TableCell className="text-right text-sm tabular-nums">{row.headcount}</TableCell>
+                      <TableCell className="text-right text-sm tabular-nums">{fmt(row.avg_net ?? 0)}</TableCell>
+                      <TableCell className="text-right text-sm font-semibold tabular-nums">{fmt(row.total_net)}</TableCell>
+                      <TableCell className="min-w-[180px]">
+                        <div className="flex items-center justify-end gap-3">
+                          <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-100">
+                            <div
+                              className="h-full rounded-full"
+                              style={{
+                                width: `${Math.min(100, row.pct_of_total ?? 0)}%`,
+                                backgroundColor: COLORS[index % COLORS.length],
+                              }}
+                            />
+                          </div>
+                          <span className="w-12 text-right text-xs font-semibold text-slate-600">
+                            {(row.pct_of_total ?? 0).toFixed(1)}%
+                          </span>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

@@ -118,6 +118,44 @@ function nextRegularizationStatus(role: "super_admin" | "manager" | "wfm", curre
   return requestedStatus === "manager_approved" ? null : requestedStatus;
 }
 
+function formatPreviewTime(value: unknown): string | null {
+  if (!value) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const match = text.match(/(\d{2}):(\d{2})/);
+  if (match) return `${match[1]}:${match[2]}`;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(11, 16);
+}
+
+function normalizePreviewStatus(status: unknown, totalPunches: number): string {
+  const raw = String(status ?? "").trim().toLowerCase();
+  const mapped: Record<string, string> = {
+    present: "Present",
+    absent: "Absent",
+    half_day: "Half Day",
+    "half day": "Half Day",
+    missing_punch: "Missing Punch",
+    "missing punch": "Missing Punch",
+    late_in: "Late In",
+    "late in": "Late In",
+    early_out: "Early Out",
+    "early out": "Early Out",
+  };
+  if (mapped[raw]) return mapped[raw];
+  if (!raw) {
+    if (totalPunches === 0) return "Absent";
+    if (totalPunches === 1) return "Missing Punch";
+    return "Present";
+  }
+  return raw
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 async function buildRegularizationDecisionSupport(row: RowDataPacket) {
   const sessionDate = String(row.session_date ?? "").slice(0, 10);
   const employeeId = String(row.employee_id ?? "");
@@ -372,6 +410,106 @@ wfmRegularizationSecureRouter.post("/regularizations", h(async (req: any, res: a
   });
 
   return res.status(201).json({ success: true, data, message: "Regularization submitted" });
+}));
+
+wfmRegularizationSecureRouter.get("/regularizations/attendance-preview", h(async (req: any, res: any) => {
+  const date = String(req.query.date ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ success: false, message: "date must be YYYY-MM-DD" });
+  }
+
+  const callerEmp = await getEmployeeForUser(req.authUser.id);
+  const requestedEmployeeId = String(req.query.employeeId ?? callerEmp?.id ?? "").trim();
+  if (!requestedEmployeeId) {
+    return res.status(403).json({ success: false, message: "No employee record" });
+  }
+
+  if (!(await canAccessEmployee(req.authUser.id, requestedEmployeeId, true))) {
+    return res.status(403).json({ success: false, message: "Forbidden: employee is outside your WFM scope" });
+  }
+
+  const [[attendanceRows], [punchRows]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT e.id,
+              e.employee_code,
+              COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name,
+              e.working_hours_start,
+              e.working_hours_end,
+              adr.attendance_status,
+              adr.clock_in_time,
+              adr.clock_out_time,
+              adr.biometric_minutes,
+              adr.raw_minutes,
+              adr.attendance_source,
+              adr.lwp_value,
+              COALESCE(ibd.total_punches, CASE
+                WHEN adr.clock_in_time IS NULL AND adr.clock_out_time IS NULL THEN 0
+                WHEN adr.clock_in_time IS NOT NULL AND adr.clock_out_time IS NULL THEN 1
+                WHEN adr.clock_in_time IS NULL AND adr.clock_out_time IS NOT NULL THEN 1
+                ELSE 2
+              END) AS total_punches
+         FROM employees e
+         LEFT JOIN attendance_daily_record adr
+                ON adr.employee_id = e.id AND adr.record_date = ?
+         LEFT JOIN integration_biometric_daily ibd
+                ON ibd.employee_code = e.employee_code AND ibd.activity_date = ?
+        WHERE e.id = ?
+        LIMIT 1`,
+      [date, date, requestedEmployeeId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(cps.punch_time, '%Y-%m-%d %H:%i:%s') AS punch_time,
+              cps.io_type,
+              CASE cps.io_type WHEN 1 THEN 'In' WHEN 2 THEN 'Out' ELSE CAST(cps.io_type AS CHAR) END AS io_label,
+              cps.device_id
+         FROM cosec_punch_sync cps
+         JOIN employees e ON (e.employee_code = cps.user_id OR e.biometric_code = cps.user_id)
+        WHERE e.id = ?
+          AND (
+            DATE(cps.punch_time) = ?
+            OR (DATE(cps.punch_time) = DATE_ADD(?, INTERVAL 1 DAY) AND TIME(cps.punch_time) < '06:00:00')
+          )
+        ORDER BY cps.punch_time ASC`,
+      [requestedEmployeeId, date, date],
+    ),
+  ]);
+
+  const row = attendanceRows[0] as RowDataPacket | undefined;
+  if (!row) {
+    return res.status(404).json({ success: false, message: "Employee not found" });
+  }
+
+  const punches = (punchRows as RowDataPacket[]).map((punch) => ({
+    punchTime: String(punch.punch_time ?? ""),
+    ioLabel: String(punch.io_label ?? ""),
+    deviceId: punch.device_id ? String(punch.device_id) : null,
+  }));
+  const totalPunches = Math.max(Number(row.total_punches ?? 0), punches.length);
+  const firstPunchTime = formatPreviewTime(row.clock_in_time ?? punches[0]?.punchTime ?? null);
+  const lastPunchTime = formatPreviewTime(
+    row.clock_out_time ?? (punches.length > 1 ? punches[punches.length - 1]?.punchTime : null),
+  );
+
+  return res.json({
+    success: true,
+    data: {
+      employeeId: String(row.id),
+      employeeCode: row.employee_code ? String(row.employee_code) : null,
+      employeeName: row.employee_name ? String(row.employee_name) : null,
+      attendanceDate: date,
+      currentStatus: normalizePreviewStatus(row.attendance_status, totalPunches),
+      currentLoginTime: firstPunchTime,
+      currentLogoutTime: lastPunchTime,
+      suggestedLoginTime: formatPreviewTime(row.working_hours_start),
+      suggestedLogoutTime: formatPreviewTime(row.working_hours_end),
+      attendanceSource: row.attendance_source ? String(row.attendance_source) : "attendance_daily_record",
+      biometricMinutes: Number(row.biometric_minutes ?? 0),
+      rawMinutes: Number(row.raw_minutes ?? 0),
+      lwpValue: Number(row.lwp_value ?? 0),
+      totalPunches,
+      punches,
+    },
+  });
 }));
 
 wfmRegularizationSecureRouter.get("/regularizations/mine", h(async (req: any, res: any) => {

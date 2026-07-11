@@ -13,6 +13,47 @@ import type { Response } from "express";
 export const runningSalaryRouter = Router();
 
 /**
+ * GET /api/payroll/running-summary/me?month=YYYY-MM
+ * Employee self-service: returns own running salary estimate.
+ * Registered before /:employeeId so the literal "me" is not captured as a param.
+ */
+runningSalaryRouter.get(
+  "/running-summary/me",
+  requireAuth,
+  async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+
+    const { db } = await import("../../db/mysql.js");
+
+    const [empRows] = await (db as any).execute(
+      "SELECT id FROM employees WHERE auth_user_id = ? AND employment_status = 'active' LIMIT 1",
+      [userId]
+    );
+    if (!(empRows as any[]).length) {
+      return res.status(404).json({ success: false, message: "No active employee record found for this user" });
+    }
+    const employeeId = (empRows[0] as any).id;
+
+    const rawMonth = (req.query.month as string) || (req.query.runMonth as string) || "";
+    let runMonth: string;
+    if (rawMonth && /^\d{4}-\d{2}$/.test(rawMonth)) {
+      runMonth = `${rawMonth}-01`;
+    } else {
+      const now = new Date();
+      runMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    }
+
+    const asOf = req.query.as_of as string | undefined;
+    try {
+      const result = await computeRunningSalary(employeeId, runMonth, asOf);
+      return res.json({ success: true, data: result, run_month: runMonth });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  }
+);
+
+/**
  * GET /api/payroll/running-summary/:employeeId?month=YYYY-MM
  * Returns earned salary till today + end-of-month projection.
  * Accessible to payroll, HR, branch head, management, super_admin.

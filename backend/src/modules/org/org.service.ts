@@ -163,18 +163,18 @@ export const branchService = {
   list: (options?: ListOptions) => listActive("branch_master", "branch_name", { entityType: "branch", ...options }),
   getById: (id: string) => getById("branch_master", id),
   setStatus: (id: string, status: number) => setStatus("branch_master", id, status),
-  async create(data: { branch_code: string; branch_name: string; city?: string; state?: string }) {
+  async create(data: { branch_code: string; branch_name: string; city?: string; state?: string; address?: string; hr_contact?: string }) {
     const id = randomUUID();
     await db.execute(
-      "INSERT INTO branch_master (id, branch_code, branch_name, city, state) VALUES (?, ?, ?, ?, ?)",
-      [id, data.branch_code, data.branch_name, data.city ?? null, data.state ?? null]
+      "INSERT INTO branch_master (id, branch_code, branch_name, city, state, address, hr_contact) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [id, data.branch_code, data.branch_name, data.city ?? null, data.state ?? null, data.address ?? null, data.hr_contact ?? null]
     );
     return getById("branch_master", id);
   },
-  async update(id: string, data: { branch_name?: string; city?: string; state?: string }) {
+  async update(id: string, data: { branch_name?: string; city?: string; state?: string; address?: string; hr_contact?: string }) {
     await db.execute(
-      "UPDATE branch_master SET branch_name = COALESCE(?, branch_name), city = COALESCE(?, city), state = COALESCE(?, state), updated_at = NOW() WHERE id = ?",
-      [data.branch_name ?? null, data.city ?? null, data.state ?? null, id]
+      "UPDATE branch_master SET branch_name = COALESCE(?, branch_name), city = COALESCE(?, city), state = COALESCE(?, state), address = COALESCE(?, address), hr_contact = COALESCE(?, hr_contact), updated_at = NOW() WHERE id = ?",
+      [data.branch_name ?? null, data.city ?? null, data.state ?? null, data.address ?? null, data.hr_contact ?? null, id]
     );
     return getById("branch_master", id);
   },

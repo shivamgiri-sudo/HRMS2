@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useGeoCapture } from "@/hooks/useGeoCapture";
+import { useDebounce } from "@/hooks/useDebounce";
 import { useSearchParams } from "react-router-dom";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -132,6 +133,50 @@ type WfmRegularizationRow = {
   decision_support?: RegularizationDecisionSupport;
 };
 
+type AttendancePreview = {
+  employeeId: string;
+  employeeCode: string | null;
+  employeeName: string | null;
+  attendanceDate: string;
+  currentStatus: string;
+  currentLoginTime: string | null;
+  currentLogoutTime: string | null;
+  suggestedLoginTime: string | null;
+  suggestedLogoutTime: string | null;
+  attendanceSource: string;
+  biometricMinutes: number;
+  rawMinutes: number;
+  lwpValue: number;
+  totalPunches: number;
+  punches: Array<{
+    punchTime: string;
+    ioLabel: string;
+    deviceId: string | null;
+  }>;
+};
+
+type ApiErrorLike = {
+  response?: {
+    data?: {
+      error?: string;
+      message?: string;
+    };
+  };
+  message?: string;
+};
+
+type BulkReviewResponse = {
+  data?: {
+    succeeded?: number;
+    failed?: number;
+    data?: Array<{
+      success?: boolean;
+      message?: string;
+      id?: string;
+    }>;
+  };
+};
+
 // ── Constants ─────────────────────────────────────────────────────────────
 
 const statusLabel: Record<string, string> = {
@@ -216,14 +261,39 @@ function normalizeRegularizationRow(row: WfmRegularizationRow): EmployeeRequest 
   };
 }
 
-const CURRENT_STATUS_OPTIONS = [
-  { value: "Absent", label: "Absent" },
-  { value: "Present", label: "Present" },
-  { value: "Half Day", label: "Half Day" },
-  { value: "Missing Punch", label: "Missing Punch" },
-  { value: "Late In", label: "Late In" },
-  { value: "Early Out", label: "Early Out" },
-];
+function shouldReplaceSuggestedTime(currentValue: string | undefined, defaultValue: string) {
+  return !currentValue || currentValue === defaultValue;
+}
+
+function formatMinutesLabel(minutes?: number | null) {
+  const safeMinutes = Math.max(0, Number(minutes ?? 0));
+  if (!safeMinutes) return "0m";
+  const hours = Math.floor(safeMinutes / 60);
+  const remainder = safeMinutes % 60;
+  if (!hours) return `${remainder}m`;
+  if (!remainder) return `${hours}h`;
+  return `${hours}h ${remainder}m`;
+}
+
+function humanizeSource(value?: string | null) {
+  const text = String(value ?? "").trim();
+  if (!text) return "Attendance record";
+  return text
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getApiErrorMessage(error: unknown, fallback: string) {
+  const typedError = error as ApiErrorLike;
+  return (
+    typedError?.response?.data?.error ??
+    typedError?.response?.data?.message ??
+    typedError?.message ??
+    fallback
+  );
+}
 
 const DISPUTE_TYPES = [
   { value: "missing_punch", label: "Missing Punch" },
@@ -302,6 +372,8 @@ export default function AttendanceRegularization() {
       reason: "",
     },
   });
+  const attendanceDate = form.watch("attendanceDate");
+  const debouncedAttendanceDate = useDebounce(attendanceDate, 180);
 
   const filteredRequests = useMemo(() => {
     if (filterStatus === "all") return requests;
@@ -321,6 +393,20 @@ export default function AttendanceRegularization() {
     () => selectedIds.filter((id) => requests.find((r) => r.id === id)?.decision_support?.canBulkApprove),
     [requests, selectedIds]
   );
+
+  const attendancePreviewQuery = useQuery({
+    queryKey: ["regularization-attendance-preview", debouncedAttendanceDate, linkedEmployeeId],
+    enabled: /^\d{4}-\d{2}-\d{2}$/.test(debouncedAttendanceDate ?? ""),
+    queryFn: async () => {
+      const params = new URLSearchParams({ date: debouncedAttendanceDate });
+      if (linkedEmployeeId) params.set("employeeId", linkedEmployeeId);
+      const res = await hrmsApi.get<{ success: boolean; data: AttendancePreview }>(
+        `/api/wfm/regularizations/attendance-preview?${params.toString()}`
+      );
+      return res.data;
+    },
+    retry: false,
+  });
 
   async function loadRequests() {
     setIsLoading(true);
@@ -346,6 +432,23 @@ export default function AttendanceRegularization() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const preview = attendancePreviewQuery.data;
+    if (!preview) return;
+
+    form.setValue("currentStatus", preview.currentStatus || "Absent", { shouldDirty: false, shouldValidate: false });
+    form.setValue("currentLoginTime", preview.currentLoginTime || "", { shouldDirty: false, shouldValidate: false });
+    form.setValue("currentLogoutTime", preview.currentLogoutTime || "", { shouldDirty: false, shouldValidate: false });
+
+    const dirtyFields = form.formState.dirtyFields;
+    if (!dirtyFields.requestedLoginTime && preview.suggestedLoginTime && shouldReplaceSuggestedTime(form.getValues("requestedLoginTime"), "09:30")) {
+      form.setValue("requestedLoginTime", preview.suggestedLoginTime, { shouldDirty: false, shouldValidate: false });
+    }
+    if (!dirtyFields.requestedLogoutTime && preview.suggestedLogoutTime && shouldReplaceSuggestedTime(form.getValues("requestedLogoutTime"), "18:30")) {
+      form.setValue("requestedLogoutTime", preview.suggestedLogoutTime, { shouldDirty: false, shouldValidate: false });
+    }
+  }, [attendancePreviewQuery.data, form]);
+
   const submitMutation = useMutation({
     mutationFn: async (values: FormValues) => {
       const geo = await geoCapture();
@@ -367,13 +470,14 @@ export default function AttendanceRegularization() {
       });
     },
     onSuccess: () => {
+      const preview = attendancePreviewQuery.data;
       form.reset({
         attendanceDate: new Date().toISOString().slice(0, 10),
-        currentStatus: "Absent",
-        currentLoginTime: "",
-        currentLogoutTime: "",
-        requestedLoginTime: "09:30",
-        requestedLogoutTime: "18:30",
+        currentStatus: preview?.currentStatus || "Absent",
+        currentLoginTime: preview?.currentLoginTime || "",
+        currentLogoutTime: preview?.currentLogoutTime || "",
+        requestedLoginTime: preview?.suggestedLoginTime || "09:30",
+        requestedLogoutTime: preview?.suggestedLogoutTime || "18:30",
         requestedStatus: null,
         disputeType: null,
         reason: "",
@@ -381,10 +485,10 @@ export default function AttendanceRegularization() {
       toast({ title: "Request submitted", description: "Your regularization request has been recorded." });
       loadRequests();
     },
-    onError: (err: any) =>
+    onError: (err: unknown) =>
       toast({
         title: "Submission failed",
-        description: err?.response?.data?.error ?? err?.message ?? "Failed to submit.",
+        description: getApiErrorMessage(err, "Failed to submit."),
         variant: "destructive",
       }),
   });
@@ -398,23 +502,23 @@ export default function AttendanceRegularization() {
       setSelectedIds([]);
       loadRequests();
     },
-    onError: (err: any) =>
+    onError: (err: unknown) =>
       toast({
         title: "Review failed",
-        description: err?.response?.data?.message ?? err?.message ?? "Failed to review request.",
+        description: getApiErrorMessage(err, "Failed to review request."),
         variant: "destructive",
       }),
   });
 
   const bulkApproveMutation = useMutation({
     mutationFn: async (ids: string[]) => hrmsApi.patch("/api/wfm/regularizations/bulk-review", { ids, status: "approved" }),
-    onSuccess: (response: any) => {
+    onSuccess: (response: BulkReviewResponse) => {
       const data = response?.data;
       const succeeded = data?.succeeded ?? 0;
       const failed = data?.failed ?? 0;
       if (failed > 0) {
-        const failedItems = (data?.data ?? []).filter((r: any) => !r.success);
-        const failedDetail = failedItems.slice(0, 3).map((r: any) => r.message ?? r.id).join("; ");
+        const failedItems = (data?.data ?? []).filter((row) => !row.success);
+        const failedDetail = failedItems.slice(0, 3).map((row) => row.message ?? row.id ?? "Unknown").join("; ");
         toast({
           title: `${succeeded} approved, ${failed} failed`,
           description: failedDetail || "Some requests could not be processed. Check individual items.",
@@ -426,10 +530,10 @@ export default function AttendanceRegularization() {
       setSelectedIds([]);
       loadRequests();
     },
-    onError: (err: any) =>
+    onError: (err: unknown) =>
       toast({
         title: "Bulk approval failed",
-        description: err?.response?.data?.message ?? err?.message ?? "Failed to bulk approve.",
+        description: getApiErrorMessage(err, "Failed to bulk approve."),
         variant: "destructive",
       }),
   });
@@ -442,20 +546,22 @@ export default function AttendanceRegularization() {
     <DashboardLayout>
       <div className="space-y-4">
         {/* Header */}
-        <div className="rounded-lg bg-gradient-to-r from-green-600 to-teal-600 p-4 text-white">
-          <div className="flex items-center justify-between gap-4">
+        <div className="rounded-xl border border-emerald-200 bg-[linear-gradient(135deg,#ecfdf5_0%,#d1fae5_45%,#f0fdf4_100%)] p-4 shadow-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-3">
-              <CalendarCheck className="h-7 w-7" />
+              <div className="rounded-xl bg-emerald-600 p-2 text-white shadow-sm">
+                <CalendarCheck className="h-5 w-5" />
+              </div>
               <div>
-                <h1 className="text-2xl font-black">Attendance Regularization</h1>
-                <p className="mt-0.5 text-xs opacity-90">
-                  Submit attendance correction requests and track their approval status.
+                <h1 className="text-xl font-black text-slate-950">Attendance Regularization</h1>
+                <p className="mt-0.5 text-xs text-slate-600">
+                  Pull the exact record for the selected date, submit the correction, and track approval in one place.
                 </p>
               </div>
             </div>
             <button
               onClick={loadRequests}
-              className="flex items-center gap-2 rounded-lg border border-white/30 bg-white/15 px-3 py-1.5 text-sm font-semibold text-white hover:bg-white/25 transition-colors"
+              className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-50"
             >
               <RefreshCw className="h-4 w-4" />
               Refresh
@@ -472,7 +578,7 @@ export default function AttendanceRegularization() {
         )}
 
         {/* Stats */}
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
           <StatCard label="Total Requests" value={stats.total} />
           <StatCard label="Pending Manager" value={stats.pendingManager} accent="amber" />
           <StatCard label="Pending Admin" value={stats.pendingAdmin} accent="sky" />
@@ -481,17 +587,18 @@ export default function AttendanceRegularization() {
         </div>
 
         {/* Submission Form */}
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="text-sm font-semibold text-slate-950">New Regularization Request</h2>
-          <p className="mt-0.5 text-xs text-slate-500">
-            Use this form when your attendance is wrong, missing, or needs correction.
-          </p>
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="text-sm font-semibold text-slate-950">New Regularization Request</h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Select the date first. The system record loads automatically, and you only enter the correction.
+            </p>
 
-          <Form {...form}>
-            <form
-              onSubmit={form.handleSubmit((v) => submitMutation.mutate(v))}
-              className="mt-3 space-y-4"
-            >
+            <Form {...form}>
+              <form
+                onSubmit={form.handleSubmit((v) => submitMutation.mutate(v))}
+                className="mt-3 space-y-4"
+              >
               {/* Row 1: Date + Dispute Type */}
               <div className="grid gap-3 md:grid-cols-2">
                 <FormField
@@ -544,68 +651,76 @@ export default function AttendanceRegularization() {
                 />
               </div>
 
-              {/* Current Attendance section */}
-              <div>
-                <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-2">
-                  Current Attendance (as recorded)
-                </p>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <FormField
-                    control={form.control}
-                    name="currentStatus"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-xs">Current Status</FormLabel>
-                        <Select value={field.value ?? ""} onValueChange={field.onChange}>
+                <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+                        System Record
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        This section is auto-filled from the attendance record for the selected date.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {attendancePreviewQuery.isFetching && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-semibold text-sky-700">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Syncing record
+                        </span>
+                      )}
+                      {attendancePreviewQuery.data && !attendancePreviewQuery.isFetching && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          Record loaded
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                    <FormField
+                      control={form.control}
+                      name="currentStatus"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-xs">Current Status</FormLabel>
                           <FormControl>
-                            <SelectTrigger className="h-9 bg-white !text-slate-900 text-sm [&>span]:!text-slate-900">
-                              <SelectValue placeholder="Select status" />
-                            </SelectTrigger>
+                            <Input {...field} readOnly className="h-9 border-slate-200 bg-white text-sm font-medium" />
                           </FormControl>
-                          <SelectContent className="bg-white !text-slate-900">
-                            {CURRENT_STATUS_OPTIONS.map((o) => (
-                              <SelectItem key={o.value} value={o.value}>
-                                {o.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
 
-                  <FormField
-                    control={form.control}
-                    name="currentLoginTime"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-xs">Current Login Time</FormLabel>
-                        <FormControl>
-                          <Input type="time" {...field} className="h-9 text-sm" />
-                        </FormControl>
-                        <FormDescription className="text-xs">24-hour format</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                    <FormField
+                      control={form.control}
+                      name="currentLoginTime"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-xs">Current Login Time</FormLabel>
+                          <FormControl>
+                            <Input type="time" {...field} readOnly className="h-9 border-slate-200 bg-white text-sm" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
 
-                  <FormField
-                    control={form.control}
-                    name="currentLogoutTime"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-xs">Current Logout Time</FormLabel>
-                        <FormControl>
-                          <Input type="time" {...field} className="h-9 text-sm" />
-                        </FormControl>
-                        <FormDescription className="text-xs">24-hour format</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                    <FormField
+                      control={form.control}
+                      name="currentLogoutTime"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-xs">Current Logout Time</FormLabel>
+                          <FormControl>
+                            <Input type="time" {...field} readOnly className="h-9 border-slate-200 bg-white text-sm" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
                 </div>
-              </div>
 
               {/* Divider */}
               <div className="relative">
@@ -613,7 +728,7 @@ export default function AttendanceRegularization() {
                   <div className="w-full border-t border-dashed border-slate-200" />
                 </div>
                 <div className="relative flex justify-center">
-                  <span className="bg-white px-3 text-xs font-bold uppercase tracking-widest text-teal-600">
+                  <span className="bg-white px-3 text-xs font-bold uppercase tracking-[0.18em] text-emerald-600">
                     Requested Correction
                   </span>
                 </div>
@@ -643,7 +758,7 @@ export default function AttendanceRegularization() {
                           <SelectItem value="absent">Absent</SelectItem>
                         </SelectContent>
                       </Select>
-                      <FormDescription className="text-xs">Required for attendance record correction on approval.</FormDescription>
+                      <FormDescription className="text-xs">Use this if the attendance status itself is wrong.</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -659,7 +774,7 @@ export default function AttendanceRegularization() {
                       <FormControl>
                         <Input type="time" {...field} className="h-9 text-sm" />
                       </FormControl>
-                      <FormDescription className="text-xs">At least one of login/logout is required.</FormDescription>
+                      <FormDescription className="text-xs">At least one of login or logout is required.</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -697,14 +812,14 @@ export default function AttendanceRegularization() {
                       </FormLabel>
                       <FormControl>
                         <Textarea
-                          placeholder="E.g. Forgot to punch out due to system issue."
-                          className="min-h-[60px] text-sm"
+                          placeholder="Example: forgot to punch out because the device was not responding."
+                          className="min-h-[64px] text-sm"
                           {...field}
                         />
                       </FormControl>
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-3">
                         <FormDescription className="text-xs">
-                          If left blank, the requested times will be used as the reason.
+                          If left blank, the requested punch times will be used as the reason text.
                         </FormDescription>
                         <span
                           className={cn(
@@ -738,6 +853,73 @@ export default function AttendanceRegularization() {
               </div>
             </form>
           </Form>
+          </div>
+
+          <div className="space-y-3">
+            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-950">Selected Date Snapshot</h3>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    Auto-validation preview for the date currently selected in the form.
+                  </p>
+                </div>
+                {attendancePreviewQuery.data && (
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-600">
+                    {humanizeSource(attendancePreviewQuery.data.attendanceSource)}
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-3">
+                {attendancePreviewQuery.isLoading || attendancePreviewQuery.isFetching ? (
+                  <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-4 text-xs text-slate-500">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Pulling the attendance record for this date...
+                  </div>
+                ) : attendancePreviewQuery.isError ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-800">
+                    The system record could not be loaded for this date. You can still submit the request, but the preview needs attention.
+                  </div>
+                ) : attendancePreviewQuery.data ? (
+                  <div className="space-y-3">
+                    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+                      <PreviewMetric label="Status" value={attendancePreviewQuery.data.currentStatus} />
+                      <PreviewMetric label="Punch Count" value={String(attendancePreviewQuery.data.totalPunches)} />
+                      <PreviewMetric label="Biometric Minutes" value={formatMinutesLabel(attendancePreviewQuery.data.biometricMinutes)} />
+                      <PreviewMetric label="Raw Minutes" value={formatMinutesLabel(attendancePreviewQuery.data.rawMinutes)} />
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
+                      <p className="font-semibold text-slate-900">Detected Punches</p>
+                      <p className="mt-2 text-slate-600">
+                        {attendancePreviewQuery.data.punches.length > 0
+                          ? attendancePreviewQuery.data.punches.map((punch) => `${punch.ioLabel} ${formatDateTime(punch.punchTime)}`).join(" | ")
+                          : "No punch events were found for this date."}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                      <p className="font-semibold text-slate-900">Suggested Shift Window</p>
+                      <p className="mt-1">
+                        {attendancePreviewQuery.data.suggestedLoginTime || "--:--"} to{" "}
+                        {attendancePreviewQuery.data.suggestedLogoutTime || "--:--"}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-4 text-xs text-slate-500">
+                    Choose a date to load the recorded attendance snapshot.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-xs text-slate-600">
+              <p className="font-semibold text-slate-900">Quick note</p>
+              <p className="mt-1">
+                The system record is pulled automatically so the correction request only contains the actual change, not a manually copied attendance snapshot.
+              </p>
+            </div>
+          </div>
         </div>
 
         {/* Requests List */}
@@ -914,11 +1096,20 @@ function StatCard({
     rose: "text-rose-600",
   };
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-2.5 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">{label}</p>
-      <p className={cn("mt-1 text-xl font-semibold", accent ? accentClass[accent] : "text-slate-950")}>
+      <p className={cn("mt-1 text-lg font-semibold", accent ? accentClass[accent] : "text-slate-950")}>
         {value}
       </p>
+    </div>
+  );
+}
+
+function PreviewMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-slate-950">{value}</p>
     </div>
   );
 }

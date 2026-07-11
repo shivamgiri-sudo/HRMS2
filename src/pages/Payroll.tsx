@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   CreditCard,
   FileText,
@@ -30,6 +30,7 @@ import { DateRangeExportDialog } from "@/components/export/DateRangeExportDialog
 
 import {
   useBulkUpdatePayrollStatus,
+  fetchPayrollRecordPage,
   useGeneratePayroll,
   usePayrollRecords,
   usePayrollRunSummaries,
@@ -38,7 +39,7 @@ import {
   type PayrollRecord,
 } from "@/hooks/usePayroll";
 import { useCanAccessPayroll } from "@/hooks/useUserRole";
-import { usePagination } from "@/hooks/usePagination";
+import { useDebounce } from "@/hooks/useDebounce";
 import { useToast } from "@/hooks/use-toast";
 
 import { Button } from "@/components/ui/button";
@@ -114,6 +115,10 @@ const Payroll = () => {
   const [historyMonth, setHistoryMonth] = useState("all");
   const [historyYear, setHistoryYear] = useState("all");
   const [historyStatus, setHistoryStatus] = useState("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [currentPageSize, setCurrentPageSize] = useState(10);
+  const [historyPageSize, setHistoryPageSize] = useState(10);
 
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<PayrollRecord | null>(
@@ -126,13 +131,20 @@ const Payroll = () => {
   const currentDate = new Date();
   const currentMonth = currentDate.getMonth() + 1;
   const currentYear = currentDate.getFullYear();
+  const debouncedSearchQuery = useDebounce(searchQuery.trim(), 250);
+  const debouncedHistorySearchQuery = useDebounce(historySearchQuery.trim(), 250);
 
   const currentMonthFilters = useMemo(() => ({
     month: monthFilter === "current" ? currentMonth : undefined,
     year:  monthFilter === "current" ? currentYear  : undefined,
-  }), [monthFilter, currentMonth, currentYear]);
+    search: debouncedSearchQuery || undefined,
+    page: currentPage,
+    limit: currentPageSize,
+  }), [monthFilter, currentMonth, currentYear, debouncedSearchQuery, currentPage, currentPageSize]);
   const { data: recordsPage, isLoading } = usePayrollRecords(currentMonthFilters);
-  const records = recordsPage?.records ?? [];
+  const currentRecords = recordsPage?.records ?? [];
+  const currentTotalItems = recordsPage?.total ?? 0;
+  const currentTotalPages = Math.max(1, Math.ceil(currentTotalItems / currentPageSize));
 
   // Lightweight run summaries — used for availableYears/Months without fetching all 19k lines
   const { data: runSummaries = [], isLoading: isLoadingHistory } = usePayrollRunSummaries();
@@ -141,16 +153,29 @@ const Payroll = () => {
   const historyFilters = useMemo(() => ({
     month: historyMonth !== "all" ? parseInt(historyMonth) : undefined,
     year:  historyYear  !== "all" ? parseInt(historyYear)  : undefined,
-    limit: 200,
-  }), [historyMonth, historyYear]);
-  const { data: historyPage } = usePayrollRecords(historyFilters);
-  const allRecords = useMemo(() => historyPage?.records ?? [], [historyPage?.records]);
+    status: historyStatus !== "all" ? historyStatus : undefined,
+    search: debouncedHistorySearchQuery || undefined,
+    page: historyPage,
+    limit: historyPageSize,
+  }), [historyMonth, historyYear, historyStatus, debouncedHistorySearchQuery, historyPage, historyPageSize]);
+  const { data: historyRecordsPage, isLoading: isLoadingHistoryRecords } = usePayrollRecords(historyFilters);
+  const historyRecords = historyRecordsPage?.records ?? [];
+  const historyTotalItems = historyRecordsPage?.total ?? 0;
+  const historyTotalPages = Math.max(1, Math.ceil(historyTotalItems / historyPageSize));
 
   const { data: stats } = usePayrollStats();
 
   const generatePayroll = useGeneratePayroll();
   const updateStatus = useUpdatePayrollStatus();
   const bulkUpdateStatus = useBulkUpdatePayrollStatus();
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedSearchQuery, monthFilter, currentPageSize]);
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [debouncedHistorySearchQuery, historyMonth, historyYear, historyStatus, historyPageSize]);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("en-IN", {
@@ -178,92 +203,51 @@ const Payroll = () => {
       .reverse();
   }, [runSummaries]);
 
-  const filteredRecords = records.filter((record) => {
-    const search = searchQuery.trim().toLowerCase();
-
-    if (!search) return true;
-
-    return (
-      record.employee.name.toLowerCase().includes(search) ||
-      record.employee.email.toLowerCase().includes(search) ||
-      record.employeeCode.toLowerCase().includes(search) ||
-      record.month.toLowerCase().includes(search) ||
-      record.status.toLowerCase().includes(search)
-    );
-  });
-
-  const filteredHistoryRecords = useMemo(() => {
-    return allRecords.filter((record) => {
-      const search = historySearchQuery.trim().toLowerCase();
-
-      const matchesSearch =
-        !search ||
-        record.employee.name.toLowerCase().includes(search) ||
-        record.employee.email.toLowerCase().includes(search) ||
-        record.employeeCode.toLowerCase().includes(search) ||
-        record.month.toLowerCase().includes(search) ||
-        record.status.toLowerCase().includes(search);
-
-      const matchesMonth =
-        historyMonth === "all" || record.monthNum === parseInt(historyMonth);
-
-      const matchesYear =
-        historyYear === "all" || record.year === parseInt(historyYear);
-
-      const matchesStatus =
-        historyStatus === "all" || record.status === historyStatus;
-
-      return matchesSearch && matchesMonth && matchesYear && matchesStatus;
-    });
-  }, [allRecords, historySearchQuery, historyMonth, historyYear, historyStatus]);
-
-  const {
-    currentPage,
-    pageSize,
-    totalPages,
-    totalItems,
-    paginatedItems: paginatedHistoryRecords,
-    setPage,
-    setPageSize,
-    canGoNext,
-    canGoPrevious,
-  } = usePagination(filteredHistoryRecords, { initialPageSize: 10 });
-
-  const getFilteredByDateRange = (
-    startDate: Date | undefined,
-    endDate: Date | undefined
+  const loadHistoryExportRecords = async (
+    startDate?: Date,
+    endDate?: Date
   ) => {
-    const baseData =
-      filteredHistoryRecords.length > 0 ? filteredHistoryRecords : allRecords;
+    const baseFilters = {
+      month: historyMonth !== "all" ? parseInt(historyMonth) : undefined,
+      year: historyYear !== "all" ? parseInt(historyYear) : undefined,
+      status: historyStatus !== "all" ? historyStatus : undefined,
+      search: debouncedHistorySearchQuery || undefined,
+    };
+    const firstPage = await fetchPayrollRecordPage({
+      ...baseFilters,
+      page: 1,
+      limit: 500,
+    });
+    const combined = [...firstPage.records];
+    const totalPages = Math.max(1, Math.ceil(firstPage.total / firstPage.limit));
 
-    if (!startDate && !endDate) {
-      return baseData;
+    for (let page = 2; page <= totalPages; page += 1) {
+      const pageResult = await fetchPayrollRecordPage({
+        ...baseFilters,
+        page,
+        limit: firstPage.limit,
+      });
+      combined.push(...pageResult.records);
     }
 
-    return baseData.filter((record) => {
+    if (!startDate && !endDate) {
+      return combined;
+    }
+
+    return combined.filter((record) => {
       const recordDate = new Date(record.year, record.monthNum - 1, 1);
-
-      if (startDate && endDate) {
-        return recordDate >= startDate && recordDate <= endDate;
-      }
-
-      if (startDate) {
-        return recordDate >= startDate;
-      }
-
-      if (endDate) {
-        return recordDate <= endDate;
-      }
-
+      if (startDate && endDate) return recordDate >= startDate && recordDate <= endDate;
+      if (startDate) return recordDate >= startDate;
+      if (endDate) return recordDate <= endDate;
       return true;
     });
   };
 
-  const exportToCSV = (
+  const exportToCSV = async (
     startDate: Date | undefined,
     endDate: Date | undefined
   ) => {
-    const dataToExport = getFilteredByDateRange(startDate, endDate);
+    const dataToExport = await loadHistoryExportRecords(startDate, endDate);
 
     if (dataToExport.length === 0) {
       toast({
@@ -319,11 +303,11 @@ const Payroll = () => {
     });
   };
 
-  const exportToPDF = (
+  const exportToPDF = async (
     startDate: Date | undefined,
     endDate: Date | undefined
   ) => {
-    const dataToExport = getFilteredByDateRange(startDate, endDate);
+    const dataToExport = await loadHistoryExportRecords(startDate, endDate);
 
     if (dataToExport.length === 0) {
       toast({
@@ -430,7 +414,7 @@ const Payroll = () => {
 
   const handleMarkProcessed = (record: PayrollRecord) => {
     updateStatus.mutate(
-      { id: record.id, status: "processed" },
+      { id: record.runId, status: "processed" },
       {
         onSuccess: () => {
           toast({
@@ -451,7 +435,7 @@ const Payroll = () => {
 
   const handleMarkPaid = (record: PayrollRecord) => {
     updateStatus.mutate(
-      { id: record.id, status: "paid" },
+      { id: record.runId, status: "paid" },
       {
         onSuccess: () => {
           toast({
@@ -472,7 +456,7 @@ const Payroll = () => {
 
   const handleRevertToPending = (record: PayrollRecord) => {
     updateStatus.mutate(
-      { id: record.id, status: "draft" },
+      { id: record.runId, status: "draft" },
       {
         onSuccess: () => {
           toast({
@@ -554,16 +538,16 @@ const Payroll = () => {
     );
   };
 
-  const currentPayrollNet = records.reduce(
+  const currentPayrollNet = currentRecords.reduce(
     (sum, record) => sum + record.netSalary,
     0
   );
 
-  const currentPaid = records.filter((record) => record.status === "paid").length;
-  const currentProcessing = records.filter(
+  const currentPaid = currentRecords.filter((record) => record.status === "paid").length;
+  const currentProcessing = currentRecords.filter(
     (record) => record.status === "processing"
   ).length;
-  const currentPending = records.filter(
+  const currentPending = currentRecords.filter(
     (record) => record.status === "pending"
   ).length;
 
@@ -608,8 +592,22 @@ const Payroll = () => {
     },
   ];
 
-  const renderHistoryPagination = () => {
-    if (totalPages <= 1) return null;
+  const renderPagination = ({
+    page,
+    totalPages,
+    totalItems,
+    pageSize,
+    onPageChange,
+    onPageSizeChange,
+  }: {
+    page: number;
+    totalPages: number;
+    totalItems: number;
+    pageSize: number;
+    onPageChange: (nextPage: number) => void;
+    onPageSizeChange: (nextPageSize: number) => void;
+  }) => {
+    if (totalPages <= 1 && totalItems <= pageSize) return null;
 
     const pages: (number | "ellipsis")[] = [];
 
@@ -618,32 +616,35 @@ const Payroll = () => {
     } else {
       pages.push(1);
 
-      if (currentPage > 3) pages.push("ellipsis");
+      if (page > 3) pages.push("ellipsis");
 
       for (
-        let i = Math.max(2, currentPage - 1);
-        i <= Math.min(totalPages - 1, currentPage + 1);
+        let i = Math.max(2, page - 1);
+        i <= Math.min(totalPages - 1, page + 1);
         i++
       ) {
         pages.push(i);
       }
 
-      if (currentPage < totalPages - 2) pages.push("ellipsis");
+      if (page < totalPages - 2) pages.push("ellipsis");
 
       pages.push(totalPages);
     }
+
+    const canGoPrevious = page > 1;
+    const canGoNext = page < totalPages;
 
     return (
       <div className="mt-4 flex flex-col items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row">
         <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-slate-500 sm:justify-start">
           <span>
-            Showing {(currentPage - 1) * pageSize + 1} to{" "}
-            {Math.min(currentPage * pageSize, totalItems)} of {totalItems}
+            Showing {Math.min((page - 1) * pageSize + 1, totalItems || 1)} to{" "}
+            {Math.min(page * pageSize, totalItems)} of {totalItems}
           </span>
 
           <Select
             value={pageSize.toString()}
-            onValueChange={(value) => setPageSize(Number(value))}
+            onValueChange={(value) => onPageSizeChange(Number(value))}
           >
             <SelectTrigger className="h-8 w-[88px] rounded-lg bg-white text-xs">
               <SelectValue />
@@ -662,7 +663,7 @@ const Payroll = () => {
           <PaginationContent>
             <PaginationItem>
               <PaginationPrevious
-                onClick={() => canGoPrevious && setPage(currentPage - 1)}
+                onClick={() => canGoPrevious && onPageChange(page - 1)}
                 className={
                   !canGoPrevious
                     ? "pointer-events-none opacity-50"
@@ -671,19 +672,19 @@ const Payroll = () => {
               />
             </PaginationItem>
 
-            {pages.map((page, index) =>
-              page === "ellipsis" ? (
+            {pages.map((pageNumber, index) =>
+              pageNumber === "ellipsis" ? (
                 <PaginationItem key={`ellipsis-${index}`}>
                   <PaginationEllipsis />
                 </PaginationItem>
               ) : (
-                <PaginationItem key={page}>
+                <PaginationItem key={pageNumber}>
                   <PaginationLink
-                    onClick={() => setPage(page)}
-                    isActive={currentPage === page}
+                    onClick={() => onPageChange(pageNumber)}
+                    isActive={page === pageNumber}
                     className="cursor-pointer"
                   >
-                    {page}
+                    {pageNumber}
                   </PaginationLink>
                 </PaginationItem>
               )
@@ -691,7 +692,7 @@ const Payroll = () => {
 
             <PaginationItem>
               <PaginationNext
-                onClick={() => canGoNext && setPage(currentPage + 1)}
+                onClick={() => canGoNext && onPageChange(page + 1)}
                 className={
                   !canGoNext
                     ? "pointer-events-none opacity-50"
@@ -878,6 +879,7 @@ const Payroll = () => {
                       onClick={() => {
                         setSearchQuery("");
                         setMonthFilter("current");
+                        setCurrentPage(1);
                       }}
                     >
                       <X className="h-3.5 w-3.5" />
@@ -893,16 +895,16 @@ const Payroll = () => {
                     <Skeleton key={item} className="h-16 rounded-xl" />
                   ))}
                 </div>
-              ) : filteredRecords.length === 0 ? (
+              ) : currentRecords.length === 0 ? (
                 <EmptyState
                   title="No Payroll Records"
                   description={
-                    records.length === 0
+                    !hasCurrentFilters
                       ? "Generate payroll to see records here."
                       : "No records match your current search criteria."
                   }
                   action={
-                    records.length === 0 ? (
+                    !hasCurrentFilters ? (
                       <Button
                         className="h-10 rounded-xl bg-slate-950 px-4 text-xs font-semibold text-white hover:bg-slate-800"
                         onClick={handleGeneratePayroll}
@@ -919,19 +921,29 @@ const Payroll = () => {
                   }
                 />
               ) : (
-                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-                  <PayrollTable
-                    records={filteredRecords}
-                    onView={handleView}
-                    onMarkProcessed={handleMarkProcessed}
-                    onMarkPaid={handleMarkPaid}
-                    onRevertToPending={handleRevertToPending}
-                    onBulkMarkProcessed={handleBulkMarkProcessed}
-                    onBulkMarkPaid={handleBulkMarkPaid}
-                    onBulkRevertToPending={handleBulkRevertToPending}
-                    isBulkUpdating={bulkUpdateStatus.isPending}
-                  />
-                </div>
+                <>
+                  <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                    <PayrollTable
+                      records={currentRecords}
+                      onView={handleView}
+                      onMarkProcessed={handleMarkProcessed}
+                      onMarkPaid={handleMarkPaid}
+                      onRevertToPending={handleRevertToPending}
+                      onBulkMarkProcessed={handleBulkMarkProcessed}
+                      onBulkMarkPaid={handleBulkMarkPaid}
+                      onBulkRevertToPending={handleBulkRevertToPending}
+                      isBulkUpdating={bulkUpdateStatus.isPending}
+                    />
+                  </div>
+                  {renderPagination({
+                    page: currentPage,
+                    totalPages: currentTotalPages,
+                    totalItems: currentTotalItems,
+                    pageSize: currentPageSize,
+                    onPageChange: setCurrentPage,
+                    onPageSizeChange: setCurrentPageSize,
+                  })}
+                </>
               )}
             </TabsContent>
 
@@ -1003,6 +1015,7 @@ const Payroll = () => {
                         setHistoryMonth("all");
                         setHistoryYear("all");
                         setHistoryStatus("all");
+                        setHistoryPage(1);
                       }}
                     >
                       <X className="h-3.5 w-3.5" />
@@ -1012,17 +1025,17 @@ const Payroll = () => {
                 </div>
               </div>
 
-              {isLoadingHistory ? (
+              {isLoadingHistory || isLoadingHistoryRecords ? (
                 <div className="space-y-3">
                   {[1, 2, 3, 4, 5].map((item) => (
                     <Skeleton key={item} className="h-16 rounded-xl" />
                   ))}
                 </div>
-              ) : filteredHistoryRecords.length === 0 ? (
+              ) : historyRecords.length === 0 ? (
                 <EmptyState
                   title="No Records Found"
                   description={
-                    allRecords.length === 0
+                    !hasHistoryFilters
                       ? "No payroll history is available yet."
                       : "No payroll records match your filter criteria."
                   }
@@ -1031,7 +1044,7 @@ const Payroll = () => {
                 <>
                   <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
                     <PayrollTable
-                      records={paginatedHistoryRecords}
+                      records={historyRecords}
                       onView={handleView}
                       onMarkProcessed={handleMarkProcessed}
                       onMarkPaid={handleMarkPaid}
@@ -1043,7 +1056,14 @@ const Payroll = () => {
                     />
                   </div>
 
-                  {renderHistoryPagination()}
+                  {renderPagination({
+                    page: historyPage,
+                    totalPages: historyTotalPages,
+                    totalItems: historyTotalItems,
+                    pageSize: historyPageSize,
+                    onPageChange: setHistoryPage,
+                    onPageSizeChange: setHistoryPageSize,
+                  })}
                 </>
               )}
             </TabsContent>

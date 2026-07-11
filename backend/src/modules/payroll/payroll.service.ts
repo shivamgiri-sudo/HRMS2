@@ -525,7 +525,19 @@ export const payrollService = {
     const innerConds: string[] = [];
 
     if (filters.runMonth) { innerConds.push("spr.run_month = ?"); innerParams.push(filters.runMonth); }
-    if (filters.status)   { innerConds.push("spl.status = ?");    innerParams.push(filters.status); }
+    if (filters.status) {
+      const normalizedStatus = String(filters.status).trim().toLowerCase();
+      if (normalizedStatus === "paid") {
+        innerConds.push("LOWER(COALESCE(spr.status, '')) IN ('disbursed', 'finalized', 'finalised', 'paid')");
+      } else if (normalizedStatus === "processing") {
+        innerConds.push("(LOWER(COALESCE(spr.status, '')) IN ('processing', 'reviewed', 'approved', 'locked') OR LOWER(COALESCE(spl.status, '')) = 'calculated')");
+      } else if (normalizedStatus === "pending") {
+        innerConds.push("(LOWER(COALESCE(spr.status, '')) NOT IN ('disbursed', 'finalized', 'finalised', 'paid', 'processing', 'reviewed', 'approved', 'locked') AND LOWER(COALESCE(spl.status, '')) <> 'calculated')");
+      } else {
+        innerConds.push("(LOWER(COALESCE(spr.status, '')) = ? OR LOWER(COALESCE(spl.status, '')) = ?)");
+        innerParams.push(normalizedStatus, normalizedStatus);
+      }
+    }
     if (filters.branchId) { innerConds.push("e.branch_id = ?");   innerParams.push(filters.branchId); }
     if (filters.processId){ innerConds.push("e.process_id = ?");  innerParams.push(filters.processId); }
     if (filters.departmentId) { innerConds.push("e.department_id = ?"); innerParams.push(filters.departmentId); }

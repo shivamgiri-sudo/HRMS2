@@ -115,6 +115,7 @@ export type HiringActivityBootstrap = {
     positionOptions: string[];
     wpGroupOptions: string[];
     callingOutcomeOptions: string[];
+    rejectionReasonOptions: string[];
     genderOptions: string[];
     educationOptions: string[];
     experienceOptions: string[];
@@ -234,10 +235,26 @@ const DEFAULT_HIRING_OPTION_LISTS = {
   callingOutcomeOptions: [
     "Interested - Will Visit",
     "Callback Requested",
-    "Not Contacted",
-    "No Response",
-    "Not Interested",
+    "Not Contacted (No Attempt)",
+    "No Response (No Answer)",
     "Wrong Number / Invalid",
+    "Not Interested (Candidate Declined)",
+    "Shortlisted",
+    "Selected",
+    "Rejected (Recruiter Decision)",
+  ],
+  rejectionReasonOptions: [
+    "Shift Issue",
+    "Not Interested",
+    "Location Issue",
+    "Salary Expectation",
+    "Already Placed",
+    "Over-Qualified",
+    "Under-Qualified",
+    "Communication Issue",
+    "Document Missing",
+    "No Show",
+    "Other",
   ],
   genderOptions: ["Male", "Female", "Other"],
   educationOptions: ["10th Pass", "12th Pass", "Graduate", "Post Graduate", "Diploma"],
@@ -623,8 +640,11 @@ export function mapSheetRow(row: HiringSheetRow): { normalized: NormalizedHiring
   const joiningStatusAuto = joiningStatus?.toLowerCase() === "joined" ? "Joined" : joiningStatus;
   const currentStatusAuto = currentStatus || (finalSelectionFlag ? "Selected" : joiningStatusAuto || null);
 
-  if (recruiterRemarks?.toLowerCase() === "rejected" && !recruiterRejectionReason) {
-    errors.push("HR Recruiter_Rejection Reasons is mandatory when HR Recruiter Remarks = Rejected");
+  const isRejectedOutcome = (r: string | undefined) =>
+    ["rejected", "rejected (recruiter decision)", "not interested", "not interested (candidate declined)"]
+      .includes(r?.toLowerCase() ?? "");
+  if (isRejectedOutcome(recruiterRemarks) && !recruiterRejectionReason) {
+    errors.push("HR Recruiter_Rejection Reasons is mandatory when outcome is a rejection");
   }
   if (hrInterviewStatus?.toLowerCase() === "rejected" && !hrRejectionReason) {
     errors.push("HR Rejection Reason is mandatory when HR Interview Status = Rejected");
@@ -1503,9 +1523,12 @@ export async function getCallingDashboard(userId: string, role: string | undefin
 export interface HiringActivityAnalytics {
   funnel: { stage: string; count: number; pct: number }[];
   byOutcome: { label: string; count: number }[];
-  bySource: { label: string; total: number; selected: number; joined: number }[];
+  bySource: { label: string; total: number; walkins: number; selected: number; joined: number }[];
   byProcess: { label: string; total: number; selected: number; joined: number }[];
-  byRecruiter: { label: string; total: number; selected: number; joined: number; selRate: number }[];
+  byRecruiter: { label: string; total: number; walkins: number; selected: number; joined: number; selRate: number }[];
+  byBranch: { label: string; total: number; selected: number; joined: number }[];
+  byGender: { label: string; count: number; joined: number }[];
+  byDayOfWeek: { label: string; count: number }[];
   trend: { date: string; logged: number; walkins: number; selected: number }[];
   followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];
 }
@@ -1555,6 +1578,7 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   // ── By source ─────────────────────────────────────────────────────────────
   const [sourceRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(hiring_source,'Unknown') AS label, COUNT(*) AS total,
+            SUM(CASE WHEN walkin_flag=1 THEN 1 ELSE 0 END) AS walkins,
             SUM(CASE WHEN final_selection_flag=1 THEN 1 ELSE 0 END) AS selected,
             SUM(CASE WHEN joined_flag=1 THEN 1 ELSE 0 END) AS joined
        FROM ats_recruiter_hiring_activity WHERE ${sql}
@@ -1564,6 +1588,7 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   const bySource = (sourceRows as any[]).map((r) => ({
     label: String(r.label || 'Unknown'),
     total: Number(r.total) || 0,
+    walkins: Number(r.walkins) || 0,
     selected: Number(r.selected) || 0,
     joined: Number(r.joined) || 0
   }));
@@ -1587,6 +1612,7 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   // ── By recruiter (exclude follow-up attempts from unique counts) ─────────
   const [recruiterRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(recruiter_name_snapshot,'Unknown') AS label, COUNT(*) AS total,
+            SUM(CASE WHEN walkin_flag=1 THEN 1 ELSE 0 END) AS walkins,
             SUM(CASE WHEN final_selection_flag=1 THEN 1 ELSE 0 END) AS selected,
             SUM(CASE WHEN joined_flag=1 THEN 1 ELSE 0 END) AS joined
        FROM ats_recruiter_hiring_activity WHERE COALESCE(is_followup_attempt, 0) = 0 AND ${sql}
@@ -1601,11 +1627,59 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     return {
       label: String(r.label || 'Unknown'),
       total,
+      walkins: Number(r.walkins) || 0,
       selected: sel,
       joined,
       selRate: Number.isFinite(selRate) ? selRate : 0
     };
   });
+
+  // ── By branch ─────────────────────────────────────────────────────────────
+  const [branchRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(branch_name,'Unknown') AS label, COUNT(*) AS total,
+            SUM(CASE WHEN final_selection_flag=1 THEN 1 ELSE 0 END) AS selected,
+            SUM(CASE WHEN joined_flag=1 THEN 1 ELSE 0 END) AS joined
+       FROM ats_recruiter_hiring_activity WHERE ${sql}
+      GROUP BY label ORDER BY total DESC LIMIT 20`,
+    params
+  );
+  const byBranch = (branchRows as any[]).map((r) => ({
+    label: String(r.label || 'Unknown'),
+    total: Number(r.total) || 0,
+    selected: Number(r.selected) || 0,
+    joined: Number(r.joined) || 0,
+  }));
+
+  // ── By gender ─────────────────────────────────────────────────────────────
+  const [genderRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(gender,''),'Unknown') AS label,
+            COUNT(*) AS count,
+            SUM(CASE WHEN joined_flag=1 THEN 1 ELSE 0 END) AS joined
+       FROM ats_recruiter_hiring_activity WHERE ${sql}
+      GROUP BY label ORDER BY count DESC LIMIT 10`,
+    params
+  );
+  const byGender = (genderRows as any[]).map((r) => ({
+    label: String(r.label || 'Unknown'),
+    count: Number(r.count) || 0,
+    joined: Number(r.joined) || 0,
+  }));
+
+  // ── By day of week (DAYOFWEEK: 1=Sun...7=Sat) ────────────────────────────
+  const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const [dowRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DAYOFWEEK(activity_date) AS dow, COUNT(*) AS count
+       FROM ats_recruiter_hiring_activity
+      WHERE COALESCE(is_followup_attempt, 0) = 0 AND ${sql}
+      GROUP BY dow ORDER BY dow ASC`,
+    params
+  );
+  const dowMap = new Map<number, number>();
+  for (const r of dowRows as any[]) dowMap.set(Number(r.dow), Number(r.count) || 0);
+  const byDayOfWeek = [1, 2, 3, 4, 5, 6, 7].map((d) => ({
+    label: DOW_LABELS[d - 1],
+    count: dowMap.get(d) ?? 0,
+  }));
 
   // ── 30-day daily trend (exclude follow-up attempts) ────────────────────────
   const [trendRows] = await db.execute<RowDataPacket[]>(
@@ -1650,7 +1724,7 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     followup_reason: String(r.followup_reason ?? ""),
   }));
 
-  return { funnel, byOutcome, bySource, byProcess, byRecruiter, trend, followupDue };
+  return { funnel, byOutcome, bySource, byProcess, byRecruiter, byBranch, byGender, byDayOfWeek, trend, followupDue };
 }
 
 export async function searchInterviewers(branchName: string | null, query: string | null, roundType: string, limit = 20, userId?: string) {

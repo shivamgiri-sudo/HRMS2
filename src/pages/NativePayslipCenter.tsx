@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Download, Eye, FileText, Loader, RefreshCcw, Users, X, BookOpen, Search, ShieldAlert } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, CheckCircle2, Download, Eye, FileText, Loader, RefreshCcw, Users, X, BookOpen, Search, ShieldAlert, Upload } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
@@ -9,7 +9,7 @@ import { numberToWords } from "@/lib/numberToWords";
 
 type PayrollRun = { id: string; month: number; year: number; status: string; total_employees?: number; total_gross?: number; total_net?: number; };
 type PayrollLine = { employee_id: string; employee_name: string; employee_code?: string; gross_pay: number; net_pay: number; pf_employee: number; esic_employee: number; pt_amount: number; total_deductions: number; payslip_id?: string; payslip_status?: string; };
-type Payslip = { id: string; employee_id: string; employee_name: string; employee_code?: string; designation?: string; department?: string; month: number; year: number; basic: number; hra: number; other_allowances: number; gross_pay: number; ctc?: number; ctc_annual?: number; pf_employee: number; esic_employee: number; pt_amount: number; lwp_deduction?: number; advance_recovery?: number; tds_amount?: number; total_deductions: number; net_pay: number; working_days?: number; present_days?: number; epf_number?: string; esi_number?: string; branch_name?: string; location_name?: string; payslip_ref?: string; earnings?: PayslipComponent[]; deductions?: PayslipComponent[]; acknowledged_at?: string | null; status?: string; };
+type Payslip = { id: string; employee_id: string; employee_name: string; employee_code?: string; designation?: string; department?: string; month: number; year: number; basic: number; hra: number; other_allowances: number; gross_pay: number; ctc?: number; ctc_annual?: number; pf_employee: number; esic_employee: number; pt_amount: number; lwp_deduction?: number; advance_recovery?: number; tds_amount?: number; total_deductions: number; net_pay: number; working_days?: number; present_days?: number; epf_number?: string; esi_number?: string; branch_name?: string; location_name?: string; payslip_ref?: string; cheque_no?: string | null; payment_mode?: string | null; payment_date?: string | null; earnings?: PayslipComponent[]; deductions?: PayslipComponent[]; acknowledged_at?: string | null; status?: string; };
 type PayslipComponent = { component_code: string; component_name: string; component_type: string; amount: number | string; };
 type NeftSummary = { total: number; with_bank: number; missing_bank: number; total_net: number; };
 type Form16Data = { financial_year: string; period: string; employee: { name: string; pan: string | null; designation: string | null; period: string }; gross_salary: number; standard_deduction: number; tds_deducted: number; net_taxable_income: number; declaration: { hra: number; "80c": number; "80d": number; regime: string; } | null; };
@@ -41,7 +41,7 @@ async function downloadPayslipPdf(payslip: Payslip): Promise<void> {
   const loan = deduction("LOAN") || deduction("LOAN_RECOVERY");
   const adDed = deduction("ADVANCE") || deduction("ADVANCE_RECOVERY") || Number(payslip.advance_recovery ?? 0);
   const otherDed = Math.max(Number(payslip.total_deductions ?? 0) - pf - esic - loan - adDed, 0);
-  await downloadMasCallnetPayslip({ companyName: "Mas Callnet India Pvt Ltd", monthYear: `${MONTH_NAMES[payslip.month]} - ${payslip.year}`, empName: payslip.employee_name, empCode: payslip.employee_code ?? payslip.employee_id, designation: payslip.designation || "N/A", department: payslip.department || "N/A", epfNo: payslip.epf_number || "", esiNo: payslip.esi_number || "", location: payslip.branch_name || payslip.location_name || "N/A", wDays: Number(payslip.working_days ?? 0), earnedDays: Number(payslip.present_days ?? 0), basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive, pf, esic, loan, adDed, otherDed, grossSalary: Number(payslip.gross_pay ?? 0), exemptionUs10: 0, balance: 0, deductionUs24: 0, grossTotalIncome: 0, aggOffChapVi: 0, totalIncome: 0, taxOnTotal: 0, taxPayableEduCess: 0, incomeTax: Number(payslip.tds_amount ?? 0), chequeNo: payslip.payslip_ref || "N/A", netSalary: Number(payslip.net_pay ?? 0), netSalaryWords: numberToWords(Math.floor(Number(payslip.net_pay ?? 0))) }, `Payslip_${payslip.employee_code ?? payslip.employee_id}_${MONTH_NAMES[payslip.month]}_${payslip.year}.pdf`);
+  await downloadMasCallnetPayslip({ companyName: "Mas Callnet India Pvt Ltd", monthYear: `${MONTH_NAMES[payslip.month]} - ${payslip.year}`, empName: payslip.employee_name, empCode: payslip.employee_code ?? payslip.employee_id, designation: payslip.designation || "N/A", department: payslip.department || "N/A", epfNo: payslip.epf_number || "", esiNo: payslip.esi_number || "", location: payslip.branch_name || payslip.location_name || "N/A", wDays: Number(payslip.working_days ?? 0), earnedDays: Number(payslip.present_days ?? 0), basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive, pf, esic, loan, adDed, otherDed, grossSalary: Number(payslip.gross_pay ?? 0), exemptionUs10: 0, balance: 0, deductionUs24: 0, grossTotalIncome: 0, aggOffChapVi: 0, totalIncome: 0, taxOnTotal: 0, taxPayableEduCess: 0, incomeTax: Number(payslip.tds_amount ?? 0), chequeNo: payslip.cheque_no || "", paymentMode: payslip.payment_mode || "", paymentDate: payslip.payment_date || "", netSalary: Number(payslip.net_pay ?? 0), netSalaryWords: numberToWords(Math.floor(Number(payslip.net_pay ?? 0))) }, `Payslip_${payslip.employee_code ?? payslip.employee_id}_${MONTH_NAMES[payslip.month]}_${payslip.year}.pdf`);
 }
 
 function Form16Modal({ data, onClose }: { data: Form16Data; onClose: () => void }) {
@@ -80,6 +80,11 @@ export default function NativePayslipCenter() {
   const [neftSummary, setNeftSummary] = useState<NeftSummary | null>(null);
   const [loadingNeft, setLoadingNeft] = useState(false);
   const [downloadingNeft, setDownloadingNeft] = useState(false);
+  const [showDisbursalModal, setShowDisbursalModal] = useState(false);
+  const [disbursalFile, setDisbursalFile] = useState<File | null>(null);
+  const [uploadingDisbursal, setUploadingDisbursal] = useState(false);
+  const [disbursalResult, setDisbursalResult] = useState<{ inserted: number; updated: number; unmatched: string[] } | null>(null);
+  const disbursalFileRef = useRef<HTMLInputElement>(null);
 
   const loadRuns = async () => { setLoadingRuns(true); setMessage(""); try { const res = await hrmsApi.get<{ success: boolean; data: PayrollRun[] }>("/api/payroll/runs"); const list = res.data ?? []; setRuns(list); if (list.length > 0 && !selectedRunId) { setSelectedRunId(list[0].id); setSelectedRun(list[0]); } } catch (err: unknown) { setMessage((err as Error).message || "Failed to load payroll runs."); } finally { setLoadingRuns(false); } };
   const loadLines = async (runId: string) => { if (!runId) return; setLoadingLines(true); setMessage(""); try { const res = await hrmsApi.get<{ success: boolean; data: PayrollLine[] }>(`/api/payroll/runs/${runId}/lines`); setLines(res.data ?? []); } catch (err: unknown) { setMessage((err as Error).message || "Failed to load payroll lines."); } finally { setLoadingLines(false); } };
@@ -91,6 +96,25 @@ export default function NativePayslipCenter() {
   const loadNeftSummary = async (runId: string) => { setLoadingNeft(true); setNeftSummary(null); try { const res = await hrmsApi.get<{ success: boolean; data: NeftSummary }>(`/api/payroll/runs/${runId}/neft-summary`); setNeftSummary(res.data ?? null); } catch { setNeftSummary(null); } finally { setLoadingNeft(false); } };
   const downloadNeftCsv = async () => { if (!selectedRunId || !selectedRun) return; setDownloadingNeft(true); try { const csvText = await hrmsApi.getRaw(`/api/payroll/runs/${selectedRunId}/neft-export`); const blob = new Blob([csvText], { type: "text/csv" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `NEFT_${selectedRun.year}-${String(selectedRun.month).padStart(2, "0")}.csv`; a.click(); URL.revokeObjectURL(url); } catch (err: unknown) { setMessage((err as Error).message || "Failed to download NEFT file."); } finally { setDownloadingNeft(false); } };
 
+  const uploadDisbursalCsv = async () => {
+    if (!disbursalFile || !selectedRunId) return;
+    setUploadingDisbursal(true);
+    setDisbursalResult(null);
+    try {
+      const text = await disbursalFile.text();
+      const res = await hrmsApi.post<{ success: boolean; inserted: number; updated: number; unmatched: string[]; message: string }>(
+        `/api/payroll/runs/${selectedRunId}/disbursal-upload`,
+        text,
+        { headers: { "Content-Type": "text/csv" } }
+      );
+      setDisbursalResult({ inserted: res.inserted ?? 0, updated: res.updated ?? 0, unmatched: res.unmatched ?? [] });
+    } catch (err: unknown) {
+      setMessage((err as Error).message || "Disbursal upload failed.");
+    } finally {
+      setUploadingDisbursal(false);
+    }
+  };
+
   const filteredLines = useMemo(() => lines.filter((line) => { const q = search.trim().toLowerCase(); const matches = !q || [line.employee_name, line.employee_code, line.employee_id].join(" ").toLowerCase().includes(q); const hasRisk = lineRisks(line).length > 0; return matches && (!riskOnly || hasRisk); }), [lines, search, riskOnly]);
   const totalEmployees = lines.length;
   const totalGross = lines.reduce((s, l) => s + Number(l.gross_pay ?? 0), 0);
@@ -101,7 +125,43 @@ export default function NativePayslipCenter() {
   const canGenerate = selectedRun ? ["locked", "disbursed"].includes(selectedRun.status) : false;
 
   return <DashboardLayout><div className="space-y-6"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">Payroll</p><h1 className="mt-2 text-3xl font-black text-slate-950">Payslip Center</h1><p className="mt-2 max-w-4xl text-slate-600">Generate, validate, view and distribute payslips with payroll risk checks.</p></div><button onClick={() => { void loadRuns(); if (selectedRunId) void loadLines(selectedRunId); }} disabled={loadingRuns} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-50"><RefreshCcw className="h-4 w-4" />Refresh</button></div><RoleInsightsPanel roles={roleKeys} title="Payslip control insights" />{message && <div className={`flex items-center justify-between gap-3 rounded-2xl border p-4 text-sm font-bold ${message.includes("Failed") || message.includes("Error") ? "border-red-200 bg-red-50 text-red-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}><div className="flex items-center gap-3"><AlertTriangle className="h-4 w-4 flex-shrink-0" />{message}</div></div>}
-    <div className="flex items-center gap-4 rounded-3xl border bg-white p-5 shadow-sm"><label className="whitespace-nowrap text-sm font-black text-slate-700">Payroll Run</label>{loadingRuns ? <Loader className="h-5 w-5 animate-spin text-slate-400" /> : <select value={selectedRunId} onChange={(e) => setSelectedRunId(e.target.value)} className="max-w-sm flex-1 rounded-2xl border bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 outline-none transition-colors focus:border-blue-400">{runs.length === 0 && <option value="">No runs available</option>}{runs.map((r) => <option key={r.id} value={r.id}>{MONTH_NAMES[r.month]} {r.year} — {r.status}</option>)}</select>}{selectedRun && <Badge label={selectedRun.status} cls={selectedRun.status === "disbursed" ? "bg-emerald-50 text-emerald-700" : selectedRun.status === "locked" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"} />}</div>
+    <div className="flex flex-wrap items-center gap-4 rounded-3xl border bg-white p-5 shadow-sm"><label className="whitespace-nowrap text-sm font-black text-slate-700">Payroll Run</label>{loadingRuns ? <Loader className="h-5 w-5 animate-spin text-slate-400" /> : <select value={selectedRunId} onChange={(e) => setSelectedRunId(e.target.value)} className="max-w-sm flex-1 rounded-2xl border bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 outline-none transition-colors focus:border-blue-400">{runs.length === 0 && <option value="">No runs available</option>}{runs.map((r) => <option key={r.id} value={r.id}>{MONTH_NAMES[r.month]} {r.year} — {r.status}</option>)}</select>}{selectedRun && <Badge label={selectedRun.status} cls={selectedRun.status === "disbursed" ? "bg-emerald-50 text-emerald-700" : selectedRun.status === "locked" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"} />}<div className="ml-auto"><button onClick={() => { setShowDisbursalModal(true); setDisbursalResult(null); setDisbursalFile(null); }} disabled={!selectedRunId} className="inline-flex items-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-800 hover:bg-blue-100 disabled:opacity-40"><Upload className="h-4 w-4" />Upload Disbursal Data</button></div></div>
+    {showDisbursalModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4" onClick={() => setShowDisbursalModal(false)}>
+        <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between border-b p-6">
+            <div>
+              <h2 className="text-lg font-black text-slate-950">Upload Disbursal Data</h2>
+              <p className="text-sm text-slate-500 mt-1">CSV: employee_code, cheque_no, payment_mode, payment_date, bank_ref, notes</p>
+            </div>
+            <button onClick={() => setShowDisbursalModal(false)} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button>
+          </div>
+          <div className="p-6 space-y-4">
+            <div className="rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center">
+              <Upload className="mx-auto mb-2 h-8 w-8 text-slate-400" />
+              <p className="text-sm font-semibold text-slate-600 mb-3">{disbursalFile ? disbursalFile.name : "Select CSV file"}</p>
+              <button onClick={() => disbursalFileRef.current?.click()} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-700">Choose File</button>
+              <input ref={disbursalFileRef} type="file" accept=".csv,text/csv,text/plain" className="hidden" onChange={(e) => { setDisbursalFile(e.target.files?.[0] ?? null); setDisbursalResult(null); }} />
+            </div>
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              <strong>CSV format:</strong> Header row required with columns: <code>employee_code, cheque_no, payment_mode, payment_date, bank_ref, notes</code>. Payment mode: NEFT, IMPS, Cheque, Cash, UPI, RTGS.
+            </div>
+            {disbursalResult && (
+              <div className={`rounded-2xl border p-4 text-sm font-semibold ${disbursalResult.unmatched.length > 0 ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+                <p>✓ {disbursalResult.inserted} new records inserted, {disbursalResult.updated} updated.</p>
+                {disbursalResult.unmatched.length > 0 && <p className="mt-1 text-amber-700">⚠ Unmatched codes: {disbursalResult.unmatched.join(", ")}</p>}
+              </div>
+            )}
+          </div>
+          <div className="border-t p-6 flex gap-3 justify-end">
+            <button onClick={() => setShowDisbursalModal(false)} className="rounded-2xl border px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">Close</button>
+            <button onClick={() => void uploadDisbursalCsv()} disabled={!disbursalFile || uploadingDisbursal} className="inline-flex items-center gap-2 rounded-2xl bg-[#073f78] px-5 py-2.5 text-sm font-bold text-white hover:bg-[#0a4d90] disabled:opacity-50">
+              {uploadingDisbursal ? <Loader className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}Upload & Save
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     {lines.length > 0 && <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5"><StatCard title="Total Employees" value={totalEmployees} icon={<Users className="h-5 w-5" />} tone="bg-slate-100 text-slate-700" /><StatCard title="Total Gross" value={INR(totalGross)} icon={<FileText className="h-5 w-5" />} tone="bg-blue-50 text-blue-700" /><StatCard title="Total Net" value={INR(totalNet)} icon={<Download className="h-5 w-5" />} tone="bg-emerald-50 text-emerald-700" /><StatCard title="Acknowledged" value={`${acknowledgedCount} / ${totalEmployees}`} icon={<CheckCircle2 className="h-5 w-5" />} tone="bg-violet-50 text-violet-700" /><StatCard title="Risks" value={riskCount} icon={<ShieldAlert className="h-5 w-5" />} tone={riskCount ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"} /></div>}
     {netMismatchCount > 0 && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800">{netMismatchCount} payroll line(s) have net mismatch. Review before generating/downloading payslips.</div>}
     {canGenerate && <div className="space-y-4 rounded-3xl border bg-white p-5 shadow-sm"><div className="flex items-center justify-between gap-4"><div><h2 className="font-black text-slate-950">NEFT Disbursement</h2><p className="text-sm text-slate-500">Download the bank transfer file for this payroll run.</p></div><button onClick={() => void downloadNeftCsv()} disabled={downloadingNeft || loadingNeft || riskCount > 0} className="inline-flex items-center gap-2 whitespace-nowrap rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-slate-700 disabled:opacity-50">{downloadingNeft ? <Loader className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}Download NEFT CSV</button></div>{loadingNeft && <div className="flex items-center gap-2 text-sm text-slate-500"><Loader className="h-4 w-4 animate-spin" />Loading bank details summary…</div>}{!loadingNeft && neftSummary && <div className="grid gap-3 text-sm sm:grid-cols-3"><div className="rounded-2xl bg-emerald-50 p-4"><p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">Ready</p><p className="mt-1 text-xl font-black text-emerald-800">{neftSummary.with_bank} employees</p></div><div className={`rounded-2xl p-4 ${neftSummary.missing_bank > 0 ? "bg-amber-50" : "bg-slate-50"}`}><p className={`text-xs font-semibold uppercase tracking-wide ${neftSummary.missing_bank > 0 ? "text-amber-600" : "text-slate-500"}`}>Missing Bank Details</p><p className={`mt-1 text-xl font-black ${neftSummary.missing_bank > 0 ? "text-amber-800" : "text-slate-400"}`}>{neftSummary.missing_bank} employees</p></div><div className="rounded-2xl bg-blue-50 p-4"><p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Total Net</p><p className="mt-1 text-xl font-black text-blue-800">{INR(Number(neftSummary.total_net))}</p></div></div>}{riskCount > 0 && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800"><AlertTriangle className="mr-2 inline h-4 w-4" />NEFT download is blocked until payroll line risks are resolved.</div>}</div>}

@@ -15,6 +15,9 @@ export interface PayslipData {
   generated_by: string | null;
   file_url: string | null;
   acknowledged_at: string | null;
+  cheque_no?: string | null;
+  payment_mode?: string | null;
+  payment_date?: string | null;
   // From salary_prep_line + employees join
   employee_code?: string;
   employee_name?: string;
@@ -158,7 +161,10 @@ export const payslipService = {
               dept.dept_name      AS department,
               br.branch_name,
               loc.location_name,
-              spr.run_month
+              spr.run_month,
+              srd.cheque_no,
+              srd.payment_mode,
+              srd.payment_date
          FROM salary_payslip sp
          JOIN salary_prep_line spl
            ON CONVERT(spl.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
@@ -185,6 +191,11 @@ export const payslipService = {
          LEFT JOIN location_master loc
            ON CONVERT(loc.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
             = CONVERT(e.location_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+         LEFT JOIN salary_run_disbursal srd
+           ON CONVERT(srd.run_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            = CONVERT(spl.run_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+          AND CONVERT(srd.employee_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            = CONVERT(sp.employee_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
         WHERE sp.employee_id = ? AND spl.run_id = ?
         LIMIT 1`,
       [employeeId, runId]

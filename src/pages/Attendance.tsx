@@ -30,11 +30,6 @@ import {
   useTodayAttendance,
   useTodayLivePunch,
 } from "@/hooks/useAttendance";
-import {
-  calculateTotalBreakHours,
-  useActiveBreak,
-  useBreaksForRecord,
-} from "@/hooks/useAttendanceBreaks";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { usePagination } from "@/hooks/usePagination";
 import { useSorting } from "@/hooks/useSorting";
@@ -113,6 +108,15 @@ function safeNumber(value: unknown, fallback = 0): number {
 
 function formatHours(value: unknown, digits = 1): string {
   return `${safeNumber(value).toFixed(digits)}h`;
+}
+
+function formatBreakMinutes(value: unknown): string {
+  const minutes = safeNumber(value);
+  if (minutes <= 0) return "0m";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remaining = minutes % 60;
+  return remaining > 0 ? `${hours}h ${remaining}m` : `${hours}h`;
 }
 
 interface EmployeeSchedule {
@@ -276,9 +280,6 @@ const Attendance = () => {
   const { data: summaryData, isLoading: reportLoading, error: summaryError } =
     useMyAttendanceSummary(currentEmployee?.id, targetDate);
 
-  const { data: activeBreak } = useActiveBreak(todayRecord?.id);
-  const { data: todayBreaks } = useBreaksForRecord(todayRecord?.id);
-
   const attendanceList = (attendanceRecords || []) as AttendanceRecord[];
   const historySorting = useSorting<AttendanceRecord>(attendanceList);
   const historyPagination = usePagination(historySorting.sortedItems, {
@@ -286,7 +287,23 @@ const Attendance = () => {
   });
 
   const currentTime = new Date();
-  const totalBreakHours = todayBreaks ? calculateTotalBreakHours(todayBreaks) : 0;
+  const breakSummary = livePunch?.break_summary ?? null;
+  const totalBreakMinutes = safeNumber(
+    breakSummary?.total_break_minutes ?? todayRecord?.total_break_minutes ?? 0
+  );
+  const totalBreakCount = safeNumber(
+    breakSummary?.total_break_count ?? todayRecord?.total_break_count ?? 0
+  );
+  const miniBreakCount = safeNumber(
+    breakSummary?.mini_break_count ?? todayRecord?.mini_break_count ?? 0
+  );
+  const longBreakCount = safeNumber(
+    breakSummary?.long_break_count ?? todayRecord?.long_break_count ?? 0
+  );
+  const todayBreakStatus =
+    breakSummary?.final_status ??
+    todayRecord?.break_status ??
+    (displayClockOut ? "Shift Completed" : displayClockIn ? "On Duty" : "No Punch");
 
   const formatTimeDisplay = (time: string | null): string => {
     if (!time) return "--:--";
@@ -649,17 +666,55 @@ const Attendance = () => {
                           : "--"}
                       </p>
 
-                      {todayBreaks && todayBreaks.length > 0 && (
+                      {totalBreakCount > 0 && (
                         <p className="mt-2 text-xs text-slate-500">
-                          {todayBreaks.length} break
-                          {todayBreaks.length > 1 ? "s" : ""} ·{" "}
-                          {totalBreakHours.toFixed(1)}h total
+                          {totalBreakCount} break
+                          {totalBreakCount > 1 ? "s" : ""} ·{" "}
+                          {formatBreakMinutes(totalBreakMinutes)}
                         </p>
                       )}
                     </div>
                   </div>
 
-                  {todayRecord?.clock_out && (
+                  {(totalBreakCount > 0 || breakSummary?.active_break || displayClockIn) && (
+                    <div className="mt-4 rounded-2xl border border-[#d9e9f9] bg-gradient-to-r from-[#f4f9ff] via-white to-[#eef8f1] p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#1B6AB5]">
+                            Break Summary
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Live shift totals from biometric and break desk.
+                          </p>
+                        </div>
+
+                        <Badge className="w-fit border border-[#c9def3] bg-white text-[#073f78] hover:bg-white">
+                          {todayBreakStatus}
+                        </Badge>
+                      </div>
+
+                      <div className="mt-3 grid gap-2 sm:grid-cols-4 xl:grid-cols-5">
+                        {[
+                          { label: "Total Breaks", value: String(totalBreakCount), tone: "text-[#073f78] bg-white" },
+                          { label: "Mini", value: String(miniBreakCount), tone: "text-[#1B6AB5] bg-[#eef6ff]" },
+                          { label: "Long", value: String(longBreakCount), tone: "text-[#3BAD49] bg-[#eef9f0]" },
+                          { label: "Break Time", value: formatBreakMinutes(totalBreakMinutes), tone: "text-[#d97706] bg-[#fff6e8]" },
+                          { label: "Live State", value: breakSummary?.active_break ? "On Break" : displayClockOut ? "Closed" : displayClockIn ? "On Duty" : "Waiting", tone: "text-slate-700 bg-slate-100" },
+                        ].map((item) => (
+                          <div key={item.label} className={`rounded-xl border border-white/70 px-3 py-3 ${item.tone}`}>
+                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] opacity-70">
+                              {item.label}
+                            </p>
+                            <p className="mt-1 text-base font-black tracking-tight">
+                              {item.value}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {displayClockOut && (
                     <div className="mt-5 flex items-center gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-700">
                       <CheckCircle2 className="h-4 w-4" />
                       Completed for today

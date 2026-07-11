@@ -165,7 +165,7 @@ payrollMoreRouter.put("/config-flags", requireRole("admin", "super_admin", "fina
 
 // ─── Recalculation Queue ─────────────────────────────────────────────────────
 
-payrollMoreRouter.get("/recalculation-queue", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.get("/recalculation-queue", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { status, payrollMonth, page: rawPage, limit: rawLimit } = req.query as {
     status?: string; payrollMonth?: string; page?: string; limit?: string;
   };
@@ -195,10 +195,43 @@ payrollMoreRouter.get("/recalculation-queue", requireRole("admin", "super_admin"
   return res.json({ success: true, data: rows, total: (countRow[0] as any).total, page, limit });
 }));
 
+payrollMoreRouter.post("/recalculation-queue", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employee_id, payroll_month, reason } = req.body as {
+    employee_id: string; payroll_month: string; reason?: string;
+  };
+  if (!employee_id || !payroll_month) {
+    return res.status(400).json({ success: false, message: "employee_id and payroll_month (YYYY-MM) are required" });
+  }
+  if (!/^\d{4}-\d{2}$/.test(payroll_month)) {
+    return res.status(400).json({ success: false, message: "payroll_month must be YYYY-MM format" });
+  }
+  const monthDate = `${payroll_month}-01`;
+  const [empRows] = await db.execute<RowDataPacket[]>("SELECT id FROM employees WHERE id = ? LIMIT 1", [employee_id]);
+  if (!(empRows as any[]).length) return res.status(404).json({ success: false, message: "Employee not found" });
+  const { v4: uuidv4 } = await import("uuid");
+  const id = uuidv4();
+  await db.execute(
+    `INSERT INTO payroll_recalculation_queue
+       (id, employee_id, payroll_month, source_event_type, reason, status, requested_by, requested_at)
+     VALUES (?, ?, ?, 'manual_override', ?, 'pending', ?, NOW())`,
+    [id, employee_id, monthDate, reason ?? "Manual recalculation request", req.authUser!.id]
+  );
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT rq.*,
+            COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+            e.employee_code
+       FROM payroll_recalculation_queue rq
+       LEFT JOIN employees e ON e.id = rq.employee_id
+      WHERE rq.id = ? LIMIT 1`,
+    [id]
+  );
+  return res.status(201).json({ success: true, data: rows[0] });
+}));
+
 // ─── Holiday Master ───────────────────────────────────────────────────────────
 
 payrollMoreRouter.get("/holiday-master", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { year } = req.query as { year?: string };
+  const { year, includeInactive } = req.query as { year?: string; includeInactive?: string };
   const params: unknown[] = [];
   let sql = `SELECT lhm.*,
                     hcc.cost_centre_ids,
@@ -212,20 +245,78 @@ payrollMoreRouter.get("/holiday-master", requireRole("admin", "super_admin", "fi
                  SELECT holiday_id, JSON_ARRAYAGG(designation_id) AS designation_ids
                    FROM holiday_designation_mapping GROUP BY holiday_id
                ) hdm ON hdm.holiday_id = lhm.id
-              WHERE lhm.active_status = 1`;
+              WHERE 1=1`;
+  if (!includeInactive || includeInactive === "0" || includeInactive === "false") {
+    sql += " AND lhm.active_status = 1";
+  }
   if (year) { sql += " AND YEAR(lhm.holiday_date) = ?"; params.push(year); }
   sql += " ORDER BY lhm.holiday_date ASC";
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   return res.json({ success: true, data: rows });
 }));
 
+payrollMoreRouter.post("/holiday-master", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { holiday_name, holiday_date, holiday_type, branch_id, active_status } = req.body as {
+    holiday_name: string; holiday_date: string; holiday_type: string;
+    branch_id?: string; active_status?: number;
+  };
+  if (!holiday_name || !holiday_date || !holiday_type) {
+    return res.status(400).json({ success: false, message: "holiday_name, holiday_date and holiday_type are required" });
+  }
+  const { v4: uuidv4 } = await import("uuid");
+  const id = uuidv4();
+  await db.execute(
+    `INSERT INTO leave_holiday_master (id, holiday_name, holiday_date, holiday_type, branch_id, active_status)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [id, holiday_name, holiday_date, holiday_type, branch_id ?? null, active_status ?? 1]
+  );
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM leave_holiday_master WHERE id = ? LIMIT 1", [id]);
+  return res.status(201).json({ success: true, data: rows[0] });
+}));
+
+payrollMoreRouter.put("/holiday-master/:id", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const { holiday_name, holiday_date, holiday_type, branch_id, active_status } = req.body as {
+    holiday_name?: string; holiday_date?: string; holiday_type?: string;
+    branch_id?: string | null; active_status?: number;
+  };
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  if (holiday_name !== undefined)  { sets.push("holiday_name = ?");  params.push(holiday_name); }
+  if (holiday_date !== undefined)  { sets.push("holiday_date = ?");  params.push(holiday_date); }
+  if (holiday_type !== undefined)  { sets.push("holiday_type = ?");  params.push(holiday_type); }
+  if (branch_id !== undefined)     { sets.push("branch_id = ?");     params.push(branch_id); }
+  if (active_status !== undefined) { sets.push("active_status = ?"); params.push(active_status); }
+  if (sets.length === 0) return res.status(400).json({ success: false, message: "No fields to update" });
+  params.push(id);
+  await db.execute(`UPDATE leave_holiday_master SET ${sets.join(", ")} WHERE id = ?`, params);
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM leave_holiday_master WHERE id = ? LIMIT 1", [id]);
+  if (!(rows as any[]).length) return res.status(404).json({ success: false, message: "Holiday not found" });
+  return res.json({ success: true, data: rows[0] });
+}));
+
+payrollMoreRouter.patch("/holiday-master/:id/toggle", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT active_status FROM leave_holiday_master WHERE id = ? LIMIT 1", [id]);
+  if (!(rows as any[]).length) return res.status(404).json({ success: false, message: "Holiday not found" });
+  const newStatus = (rows[0] as any).active_status ? 0 : 1;
+  await db.execute("UPDATE leave_holiday_master SET active_status = ? WHERE id = ?", [newStatus, id]);
+  return res.json({ success: true, active_status: newStatus });
+}));
+
 payrollMoreRouter.post("/holiday-master/cc-mapping", requireRole("admin", "super_admin", "payroll", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { holiday_id, cost_centre_ids } = req.body as { holiday_id: string; cost_centre_ids: string[] };
+  const { holiday_id, cost_centre_ids, branch_id, process_id, department_id } = req.body as {
+    holiday_id: string; cost_centre_ids: string[];
+    branch_id?: string; process_id?: string; department_id?: string;
+  };
   if (!holiday_id || !Array.isArray(cost_centre_ids)) return res.status(400).json({ success: false, message: "holiday_id and cost_centre_ids required" });
   await db.execute("DELETE FROM holiday_cost_centre_mapping WHERE holiday_id = ?", [holiday_id]);
+  const { v4: uuidv4 } = await import("uuid");
   for (const cc of cost_centre_ids) {
-    const { v4: uuidv4 } = await import("uuid");
-    await db.execute("INSERT INTO holiday_cost_centre_mapping (id, holiday_id, cost_centre_id) VALUES (?, ?, ?)", [uuidv4(), holiday_id, cc]);
+    await db.execute(
+      "INSERT INTO holiday_cost_centre_mapping (id, holiday_id, cost_centre_id, branch_id, process_id, department_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [uuidv4(), holiday_id, cc, branch_id ?? null, process_id ?? null, department_id ?? null]
+    );
   }
   return res.json({ success: true });
 }));

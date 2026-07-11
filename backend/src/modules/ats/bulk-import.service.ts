@@ -242,11 +242,22 @@ async function lookupRecruiter(name: string | undefined, email: string | undefin
     if ((rows as RowDataPacket[]).length) userId = (rows as RowDataPacket[])[0].user_id;
   }
   if (!userId && name) {
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [exact] = await db.execute<RowDataPacket[]>(
       `SELECT user_id FROM employees WHERE LOWER(full_name) = LOWER(?) AND active_status = 1 LIMIT 1`,
       [name.trim()]
     );
-    if ((rows as RowDataPacket[]).length) userId = (rows as RowDataPacket[])[0].user_id;
+    if ((exact as RowDataPacket[]).length) {
+      userId = (exact as RowDataPacket[])[0].user_id;
+    } else {
+      // Partial match fallback — only assign if unambiguous (exactly 1 result)
+      const [partial] = await db.execute<RowDataPacket[]>(
+        `SELECT user_id FROM employees WHERE LOWER(full_name) LIKE LOWER(?) AND active_status = 1 LIMIT 2`,
+        [`%${name.trim()}%`]
+      );
+      if ((partial as RowDataPacket[]).length === 1) {
+        userId = (partial as RowDataPacket[])[0].user_id;
+      }
+    }
   }
   recruiterCache.set(key, userId);
   return userId;
@@ -416,7 +427,7 @@ async function importOneCandidate(
 
   const recruiterUserId = await lookupRecruiter(row.RecruiterAssignedName, row.RecruiterEmail);
   if ((row.RecruiterAssignedName || row.RecruiterEmail) && !recruiterUserId) {
-    warnings.push({ row: rowIdx, candidateId: cid, message: `Recruiter '${row.RecruiterAssignedName}' not found, assignment skipped` });
+    warnings.push({ row: rowIdx, candidateId: cid, message: `Recruiter '${row.RecruiterAssignedName}' not found or ambiguous, assignment skipped (name saved as text)` });
   }
 
   for (const round of interviewRounds) {
@@ -435,6 +446,14 @@ async function importOneCandidate(
         createdAt,
       ]
     );
+  }
+
+  // Always store the raw recruiter name from the sheet, even if ID lookup failed
+  if (row.RecruiterAssignedName?.trim()) {
+    await db.execute(
+      `UPDATE ats_candidate SET recruiter_assigned_name = ? WHERE id = ?`,
+      [row.RecruiterAssignedName.trim(), candidateDbId]
+    ).catch(() => {});
   }
 
   // Recruiter assignment

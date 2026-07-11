@@ -27,6 +27,11 @@ async function getLegacyPool(): Promise<sql.ConnectionPool> {
 }
 
 export async function getNcosecPool(): Promise<sql.ConnectionPool> {
+  const hasDirectEnvConfig = Boolean(env.NCOSEC_DB_HOST && env.NCOSEC_DB_USER && env.NCOSEC_DB_PASSWORD);
+  if (hasDirectEnvConfig) {
+    return getLegacyPool();
+  }
+
   try {
     return (await getPoolForKey('cosec_biometric')) as sql.ConnectionPool;
   } catch {

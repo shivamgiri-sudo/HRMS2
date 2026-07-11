@@ -32,6 +32,23 @@ export interface AttendanceRecord {
   status: string;
   clock_in_location_name: string | null;
   clock_out_location_name: string | null;
+  employee_name?: string;
+  employee_code?: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  source_system?: string;
+  total_break_minutes?: number | null;
+  total_break_count?: number | null;
+  mini_break_count?: number | null;
+  long_break_count?: number | null;
+  exceeded_break_count?: number | null;
+  exception_count?: number | null;
+  active_break_count?: number | null;
+  break_status?: string | null;
+  department_name?: string | null;
+  branch_name?: string | null;
+  process_name?: string | null;
+  cost_centre_name?: string | null;
   employee?: {
     first_name: string;
     last_name: string;
@@ -238,6 +255,17 @@ export interface LivePunchData {
   raw_minutes: number;
   total_punches: number;
   source: "biometric_live";
+  break_summary?: {
+    shift_date: string;
+    total_break_minutes: number;
+    total_break_count: number;
+    mini_break_count: number;
+    long_break_count: number;
+    exceeded_break_count: number;
+    exception_count: number;
+    active_break: boolean;
+    final_status: string | null;
+  } | null;
 }
 
 export function useTodayLivePunch(employeeId?: string) {

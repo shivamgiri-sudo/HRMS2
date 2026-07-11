@@ -302,7 +302,7 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
     return res.status(400).json({ success: false, message: "Invalid payslip year" });
   }
 
-  // Fetch main payroll lines with employee profile data
+  // Fetch main payroll lines with employee profile data + disbursal payment info
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT spl.id, spl.run_id, spl.employee_id, spl.employee_code,
             spl.gross_salary, spl.total_deductions, spl.net_salary,
@@ -318,7 +318,10 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
             des.designation_name,
             dept.dept_name,
             br.branch_name,
-            loc.location_name
+            loc.location_name,
+            srd.cheque_no,
+            srd.payment_mode,
+            srd.payment_date
        FROM salary_prep_line spl
        JOIN salary_prep_run spr ON spr.id = spl.run_id
        LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
@@ -328,6 +331,9 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
        LEFT JOIN department_master dept ON CAST(dept.id AS CHAR) = CAST(e.department_id AS CHAR)
        LEFT JOIN branch_master br ON CAST(br.id AS CHAR) = CAST(e.branch_id AS CHAR)
        LEFT JOIN location_master loc ON CAST(loc.id AS CHAR) = CAST(e.location_id AS CHAR)
+       LEFT JOIN salary_run_disbursal srd
+         ON CAST(srd.run_id AS CHAR) = CAST(spl.run_id AS CHAR)
+        AND CAST(srd.employee_id AS CHAR) = CAST(spl.employee_id AS CHAR)
       WHERE spl.employee_id = ?
         AND spr.run_month LIKE ?
         AND spl.status NOT IN ('draft')
@@ -382,6 +388,65 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
   });
 
   return res.json({ success: true, data: rows });
+}));
+
+// GET /api/payroll/verify/payslip/:empCode/:monthYear — PUBLIC (no auth) — QR code verify
+// monthYear is encoded as "May - 2025" (URL-encoded). Parse to YYYY-MM for DB lookup.
+router.get("/verify/payslip/:empCode/:monthYear", h(async (req: any, res: Response) => {
+  const empCode = req.params.empCode ?? "";
+  const monthYearRaw = decodeURIComponent(req.params.monthYear ?? "");
+
+  // Parse "May - 2025" → "2025-05"
+  const MONTH_MAP: Record<string, string> = {
+    january: "01", february: "02", march: "03", april: "04",
+    may: "05", june: "06", july: "07", august: "08",
+    september: "09", october: "10", november: "11", december: "12",
+  };
+  let runMonth = "";
+  const parts = monthYearRaw.split(/\s*-\s*/);
+  if (parts.length === 2) {
+    const monthNum = MONTH_MAP[parts[0].trim().toLowerCase()];
+    const year = parts[1].trim();
+    if (monthNum && /^\d{4}$/.test(year)) {
+      runMonth = `${year}-${monthNum}`;
+    }
+  }
+
+  if (!empCode || !runMonth) {
+    return res.json({ verified: false, message: "Invalid or missing payslip reference" });
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT sp.payslip_ref, sp.generated_at,
+            spl.net_salary, spl.gross_salary,
+            spr.run_month,
+            CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+            e.employee_code
+       FROM salary_payslip sp
+       JOIN salary_prep_line spl ON CAST(spl.id AS CHAR) = CAST(sp.prep_line_id AS CHAR)
+       JOIN salary_prep_run spr  ON CAST(spr.id AS CHAR) = CAST(spl.run_id AS CHAR)
+       JOIN employees e          ON CAST(e.id AS CHAR)   = CAST(sp.employee_id AS CHAR)
+      WHERE e.employee_code = ?
+        AND spr.run_month   = ?
+      LIMIT 1`,
+    [empCode, runMonth]
+  );
+
+  const rec = (rows as any[])[0];
+  if (!rec) {
+    return res.json({ verified: false, message: "Payslip not found for this employee and period" });
+  }
+
+  return res.json({
+    verified: true,
+    employee_name: rec.employee_name,
+    employee_code: rec.employee_code,
+    run_month: rec.run_month,
+    net_salary: Number(rec.net_salary ?? 0),
+    gross_salary: Number(rec.gross_salary ?? 0),
+    payslip_ref: rec.payslip_ref,
+    generated_at: rec.generated_at,
+  });
 }));
 
 // GET /api/payroll/payslip/:runId/:employeeId — admin/hr/finance/payroll or employee own

@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getNcosecPool } from "../../db/ncosecDb.js";
 import { attendanceEngineService } from "./attendance-engine.service.js";
+import { assessAggregatePunches } from "./cosec-punch-interpretation.service.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 
 export type PunchGroup = {
@@ -291,9 +292,15 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
   const employee = await resolveEmployee(group.cosecUserId);
   if (!employee) return "unmapped";
 
-  const rawMinutes = Math.round(group.workingMinutes);
-  const firstPunchIST = tagIST(group.firstPunch);
-  const lastPunchIST  = tagIST(group.lastPunch);
+  const assessed = assessAggregatePunches({
+    firstPunch: group.firstPunch,
+    lastPunch: group.lastPunch,
+    totalPunches: group.totalPunches,
+    workingMinutes: group.workingMinutes,
+  });
+  const rawMinutes = Math.round(assessed.effectiveWorkingMinutes);
+  const firstPunchIST = tagIST(assessed.effectivePunchIn ?? group.firstPunch);
+  const lastPunchIST  = assessed.effectivePunchOut ? tagIST(assessed.effectivePunchOut) : null;
   await db.execute(
     `INSERT INTO employee_biometric_enrollment
        (id, employee_id, cosec_user_id, is_active, last_sync_at)
@@ -314,7 +321,7 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
        total_punches = VALUES(total_punches),
        raw_minutes = VALUES(raw_minutes),
        migrated_at = NOW()`,
-    [employee.employee_id, group.cosecUserId, group.punchDate, firstPunchIST, lastPunchIST, group.totalPunches, rawMinutes, group.sourceSystem],
+    [employee.employee_id, group.cosecUserId, group.punchDate, firstPunchIST, lastPunchIST, assessed.effectivePunchCount, rawMinutes, group.sourceSystem],
   );
 
   await db.execute(
@@ -328,7 +335,7 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
        total_punches = VALUES(total_punches),
        biometric_minutes = VALUES(biometric_minutes),
        updated_at = NOW()`,
-    [group.sourceSystem, group.sourceTable, employee.employee_code, group.punchDate, firstPunchIST, lastPunchIST, group.totalPunches, rawMinutes],
+    [group.sourceSystem, group.sourceTable, employee.employee_code, group.punchDate, firstPunchIST, lastPunchIST, assessed.effectivePunchCount, rawMinutes],
   );
 
   await db.execute(
@@ -348,7 +355,7 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
       firstPunchIST,
       lastPunchIST,
       rawMinutes,
-      rawMinutes >= 540 ? "Logged Out" : "Partial",
+      assessed.effectivePunchOut ? (rawMinutes >= 540 ? "Logged Out" : "Partial") : "Logged In",
       employee.branch_name ?? null,
       employee.process_name ?? null,
     ],

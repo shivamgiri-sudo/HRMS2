@@ -58,6 +58,10 @@ interface Employee {
   blood_group: string | null;
   avatar_url: string | null;
   photo_url: string | null;
+  branch_address?: string | null;
+  branch_city?: string | null;
+  branch_state?: string | null;
+  branch_hr_contact?: string | null;
 }
 
 interface EmergencyContact {
@@ -714,6 +718,12 @@ export default function NativeEmployeeStatCard() {
               employeeCode={card.employee.employee_code}
               fullName={card.employee.full_name}
               designation={card.employee.designation_name ?? "—"}
+              department={card.employee.dept_name ?? undefined}
+              branchName={card.employee.branch_name ?? undefined}
+              branchAddress={card.employee.branch_address ?? undefined}
+              branchCity={card.employee.branch_city ?? undefined}
+              branchState={card.employee.branch_state ?? undefined}
+              hrContact={card.employee.branch_hr_contact ?? "hr@teammas.in"}
               photoUrl={card.employee.avatar_url ?? card.employee.photo_url ?? undefined}
               emergencyContact={card.employee.emergency_contact?.mobile ?? "Contact HR"}
               bloodGroup={card.employee.blood_group ?? "—"}

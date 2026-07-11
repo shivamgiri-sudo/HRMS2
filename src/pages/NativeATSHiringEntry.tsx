@@ -28,9 +28,11 @@ import {
   X,
 } from "lucide-react";
 import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
+import ReactApexChart from "react-apexcharts";
+import type { ApexOptions } from "apexcharts";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -64,6 +66,7 @@ type BootstrapResponse = {
     positionOptions: string[];
     wpGroupOptions: string[];
     callingOutcomeOptions: string[];
+    rejectionReasonOptions: string[];
     genderOptions: string[];
     educationOptions: string[];
     experienceOptions: string[];
@@ -95,9 +98,12 @@ type HiringListResponse = {
 type AnalyticsData = {
   funnel: { stage: string; count: number; pct: number }[];
   byOutcome: { label: string; count: number }[];
-  bySource: { label: string; total: number; selected: number; joined: number }[];
+  bySource: { label: string; total: number; walkins: number; selected: number; joined: number }[];
   byProcess: { label: string; total: number; selected: number; joined: number }[];
-  byRecruiter: { label: string; total: number; selected: number; joined: number; selRate: number }[];
+  byRecruiter: { label: string; total: number; walkins: number; selected: number; joined: number; selRate: number }[];
+  byBranch: { label: string; total: number; selected: number; joined: number }[];
+  byGender: { label: string; count: number; joined: number }[];
+  byDayOfWeek: { label: string; count: number }[];
   trend: { date: string; logged: number; walkins: number; selected: number }[];
   followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];
 };
@@ -268,6 +274,24 @@ function MetricCard({
   );
 }
 
+function KpiTile({ label, value, sub, color }: {
+  label: string; value: string | number; sub?: string; color: string;
+}) {
+  return (
+    <div className={`rounded-2xl border ${color} bg-white p-4 shadow-sm`}>
+      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">{label}</div>
+      <div className="mt-1 text-2xl font-black text-slate-900">{value}</div>
+      {sub && <div className="text-xs text-slate-500 mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
+function AnalyticsEmptyState({ label }: { label: string }) {
+  return (
+    <div className="flex h-[180px] items-center justify-center text-sm text-slate-400">{label}</div>
+  );
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function NativeATSHiringEntry() {
@@ -287,6 +311,14 @@ export default function NativeATSHiringEntry() {
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const analyticsLoadedRef = useRef(false);
   const [trendPeriod, setTrendPeriod] = useState<"daily" | "weekly" | "monthly">("daily");
+
+  // Analytics filter bar state
+  const [aFromDate,  setAFromDate]  = useState("");
+  const [aToDate,    setAToDate]    = useState("");
+  const [aBranch,    setABranch]    = useState("");
+  const [aProcess,   setAProcess]   = useState("");
+  const [aSource,    setASource]    = useState("");
+  const [aRecruiter, setARecruiter] = useState("");
 
   const tabBarRef = useRef<HTMLDivElement>(null);
 
@@ -427,7 +459,15 @@ export default function NativeATSHiringEntry() {
     if (analyticsLoading) return;
     setAnalyticsLoading(true);
     try {
-      const res = await hrmsApi.get<AnalyticsResponse>("/api/ats/recruiter/hiring-activity/analytics");
+      const qs = new URLSearchParams();
+      if (aFromDate)  qs.set("fromDate",     aFromDate);
+      if (aToDate)    qs.set("toDate",        aToDate);
+      if (aBranch)    qs.set("branch",        aBranch);
+      if (aProcess)   qs.set("process",       aProcess);
+      if (aSource)    qs.set("hiringSource",  aSource);
+      if (aRecruiter) qs.set("recruiter",     aRecruiter);
+      const query = qs.toString() ? `?${qs.toString()}` : "";
+      const res = await hrmsApi.get<AnalyticsResponse>(`/api/ats/recruiter/hiring-activity/analytics${query}`);
       if (res.success && res.data) {
         setAnalytics(res.data);
         analyticsLoadedRef.current = true;
@@ -572,6 +612,7 @@ export default function NativeATSHiringEntry() {
   const positionOptions = bootstrap?.options.positionOptions ?? [];
   const wpGroupOptions = bootstrap?.options.wpGroupOptions ?? [];
   const outcomeOptions = bootstrap?.options.callingOutcomeOptions ?? [];
+  const rejectionReasonOptions = bootstrap?.options.rejectionReasonOptions ?? [];
   const genderOptions = bootstrap?.options.genderOptions ?? [];
   const educationOptions = bootstrap?.options.educationOptions ?? [];
   const experienceOptions = bootstrap?.options.experienceOptions ?? [];
@@ -602,8 +643,9 @@ export default function NativeATSHiringEntry() {
   }, [analytics?.trend, trendPeriod]);
 
   const isRejectionRequired =
-    form.recruiter_remarks.toLowerCase() === "rejected" ||
-    form.recruiter_remarks.toLowerCase() === "not contacted";
+    form.recruiter_remarks.toLowerCase().includes("rejected") ||
+    form.recruiter_remarks.toLowerCase().includes("not interested") ||
+    form.recruiter_remarks.toLowerCase() === "not contacted (no attempt)";
 
   const isInterestedOutcome = form.recruiter_remarks.toLowerCase() === "if interested";
 
@@ -990,13 +1032,17 @@ export default function NativeATSHiringEntry() {
               {isRejectionRequired && (
                 <div className="space-y-1.5">
                   <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-rose-500">Reason *</div>
-                  <textarea
+                  <select
                     ref={assignFieldRef("recruiter_rejection_reason") as any}
                     value={form.recruiter_rejection_reason}
                     onChange={(e) => updateForm("recruiter_rejection_reason", e.target.value)}
-                    className="h-12 w-full resize-none rounded-xl border-2 border-rose-300 bg-white px-3 py-2 text-sm outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100"
-                    placeholder="Reason for rejection…"
-                  />
+                    className="h-12 w-full rounded-xl border-2 border-rose-300 bg-white px-3 text-sm outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100"
+                  >
+                    <option value="">Select reason…</option>
+                    {rejectionReasonOptions.map((r) => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                  </select>
                 </div>
               )}
 
@@ -1122,8 +1168,72 @@ export default function NativeATSHiringEntry() {
         {/* ── TAB 3: Branch Analytics ── */}
         {activeTab === "analytics" && (
           <section className="space-y-5">
+
+            {/* ── Analytics header + filter bar ── */}
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="text-sm font-black text-slate-900 flex items-center gap-2">
+                  <BarChart2 className="h-4 w-4 text-violet-600" />
+                  Hiring Analytics
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void loadAnalytics()}
+                  disabled={analyticsLoading}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3 w-3 ${analyticsLoading ? "animate-spin" : ""}`} />
+                  Refresh
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
+                <div className="space-y-1">
+                  <div className="text-[10px] font-bold uppercase text-slate-400">From</div>
+                  <input type="date" value={aFromDate} onChange={(e) => setAFromDate(e.target.value)}
+                    className="h-8 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs outline-none focus:border-violet-400 focus:bg-white" />
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[10px] font-bold uppercase text-slate-400">To</div>
+                  <input type="date" value={aToDate} onChange={(e) => setAToDate(e.target.value)}
+                    className="h-8 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs outline-none focus:border-violet-400 focus:bg-white" />
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[10px] font-bold uppercase text-slate-400">Branch</div>
+                  <input type="text" placeholder="All branches" value={aBranch} onChange={(e) => setABranch(e.target.value)}
+                    className="h-8 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs outline-none focus:border-violet-400 focus:bg-white" />
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[10px] font-bold uppercase text-slate-400">Process</div>
+                  <select value={aProcess} onChange={(e) => setAProcess(e.target.value)}
+                    className="h-8 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs outline-none focus:border-violet-400 focus:bg-white">
+                    <option value="">All</option>
+                    {processOptions.map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[10px] font-bold uppercase text-slate-400">Source</div>
+                  <select value={aSource} onChange={(e) => setASource(e.target.value)}
+                    className="h-8 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs outline-none focus:border-violet-400 focus:bg-white">
+                    <option value="">All</option>
+                    {sourceOptions.map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[10px] font-bold uppercase text-slate-400">Recruiter</div>
+                  <input type="text" placeholder="Exact name" value={aRecruiter} onChange={(e) => setARecruiter(e.target.value)}
+                    className="h-8 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs outline-none focus:border-violet-400 focus:bg-white" />
+                </div>
+                <div className="flex items-end">
+                  <button type="button" onClick={() => void loadAnalytics()} disabled={analyticsLoading}
+                    className="h-8 w-full rounded-lg bg-violet-600 text-xs font-bold text-white hover:bg-violet-700 disabled:opacity-50">
+                    Apply
+                  </button>
+                </div>
+              </div>
+            </div>
+
             {analyticsLoading && (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
                 {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
               </div>
             )}
@@ -1133,194 +1243,372 @@ export default function NativeATSHiringEntry() {
                 <button type="button" onClick={() => void loadAnalytics()} className="ml-2 underline text-slate-600">Retry</button>
               </div>
             )}
-            {analytics && (
-              <>
-                {/* Funnel */}
-                <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                  <div className="mb-3 text-sm font-black text-slate-900">Hiring Funnel</div>
-                  <ResponsiveContainer width="100%" height={180}>
-                    <BarChart data={analytics.funnel} layout="vertical" margin={{ left: 20, right: 40 }}>
-                      <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 11 }} />
-                      <YAxis dataKey="stage" type="category" tick={{ fontSize: 11 }} width={80} />
-                      <Tooltip formatter={(v: number) => [v, "Count"]} />
-                      {analytics.funnel.map((_, i) => null)}
-                      <Bar dataKey="count" radius={[0, 4, 4, 0]} label={{ position: "right", fontSize: 11, formatter: (v: number, entry: any) => `${v} (${entry?.pct ?? 0}%)` }}>
-                        {analytics.funnel.map((_, i) => (
-                          <Cell key={i} fill={FUNNEL_COLORS[i] ?? "#64748b"} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
 
-                {/* Trend + Outcome pie */}
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <div className="mb-3 flex items-center justify-between">
-                      <div className="text-sm font-black text-slate-900 flex items-center gap-2">
-                        <TrendingUp className="h-4 w-4 text-slate-500" />
-                        Activity Trend
-                      </div>
-                      <div className="flex rounded-lg border border-slate-200 overflow-hidden">
-                        {(["daily", "weekly", "monthly"] as const).map((p) => (
-                          <button
-                            key={p}
-                            type="button"
-                            onClick={() => setTrendPeriod(p)}
-                            className={`px-2.5 py-1 text-[10px] font-bold uppercase ${trendPeriod === p ? "bg-slate-900 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}
-                          >
-                            {p}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <ResponsiveContainer width="100%" height={220}>
-                      {trendPeriod === "daily" ? (
-                        <LineChart data={aggregatedTrend} margin={{ left: -10, right: 10 }}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(v: string) => v.slice(5)} />
-                          <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
-                          <Tooltip />
-                          <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                          <Line type="monotone" dataKey="logged" stroke="#64748b" dot={false} name="Logged" strokeWidth={2} />
-                          <Line type="monotone" dataKey="walkins" stroke="#0ea5e9" dot={false} name="Walk-ins" strokeWidth={2} />
-                          <Line type="monotone" dataKey="selected" stroke="#10b981" dot={false} name="Selected" strokeWidth={2} />
-                        </LineChart>
-                      ) : (
-                        <BarChart data={aggregatedTrend} margin={{ left: -10, right: 10 }}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                          <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
-                          <Tooltip />
-                          <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                          <Bar dataKey="logged" fill="#64748b" name="Logged" radius={[2, 2, 0, 0]} />
-                          <Bar dataKey="walkins" fill="#0ea5e9" name="Walk-ins" radius={[2, 2, 0, 0]} />
-                          <Bar dataKey="selected" fill="#10b981" name="Selected" radius={[2, 2, 0, 0]} />
-                        </BarChart>
-                      )}
-                    </ResponsiveContainer>
+            {analytics && (() => {
+              const totalLogged = analytics.funnel[0]?.count ?? 0;
+              const selPct      = analytics.funnel[3]?.pct ?? 0;
+              const joinPct     = analytics.funnel[4]?.pct ?? 0;
+              const selCount    = analytics.funnel[3]?.count ?? 0;
+              const joinCount   = analytics.funnel[4]?.count ?? 0;
+
+              // ApexCharts: outcome donut
+              const donutTotal   = analytics.byOutcome.reduce((a, b) => a + b.count, 0);
+              const donutSeries  = analytics.byOutcome.map((o) => o.count);
+              const donutLabels  = analytics.byOutcome.map((o) => o.label);
+              const donutOptions: ApexOptions = {
+                chart: { type: "donut", toolbar: { show: false }, animations: { enabled: true, speed: 600 } },
+                labels: donutLabels,
+                colors: CHART_COLORS,
+                plotOptions: {
+                  pie: { donut: { size: "62%", labels: { show: true,
+                    value: { fontSize: "20px", fontWeight: 800, color: "#1e293b" },
+                    total: { show: true, label: "Total", fontSize: "11px", fontWeight: 700, color: "#64748b",
+                      formatter: () => String(donutTotal) } } } },
+                },
+                legend: { position: "bottom", fontSize: "11px", itemMargin: { horizontal: 6, vertical: 4 } },
+                dataLabels: { enabled: false },
+                tooltip: { y: { formatter: (v: number) => `${v} (${donutTotal ? Math.round(v / donutTotal * 1000) / 10 : 0}%)` } },
+                stroke: { width: 2 },
+              };
+
+              // ApexCharts: day-of-week bar
+              const dowData    = analytics.byDayOfWeek ?? [];
+              const dowOptions: ApexOptions = {
+                chart: { type: "bar", toolbar: { show: false }, sparkline: { enabled: false } },
+                plotOptions: { bar: { borderRadius: 4, columnWidth: "55%",
+                  colors: { ranges: [{ from: 0, to: 0, color: "#e2e8f0" }] } } },
+                xaxis: { categories: dowData.map((d) => d.label), labels: { style: { fontSize: "11px" } } },
+                yaxis: { labels: { style: { fontSize: "10px" } }, allowDecimals: false },
+                colors: ["#8b5cf6"],
+                dataLabels: { enabled: false },
+                grid: { strokeDashArray: 3, borderColor: "#f1f5f9" },
+                tooltip: { y: { formatter: (v: number) => `${v} activities` } },
+              };
+
+              // ApexCharts: source conversion grouped bar
+              const srcLabels   = analytics.bySource.map((s) => s.label);
+              const srcOptions: ApexOptions = {
+                chart: { type: "bar", toolbar: { show: false } },
+                plotOptions: { bar: { columnWidth: "60%", borderRadius: 3, grouped: true } },
+                xaxis: { categories: srcLabels, labels: { style: { fontSize: "10px" }, rotate: -30 } },
+                yaxis: { labels: { style: { fontSize: "10px" } }, allowDecimals: false },
+                colors: ["#94a3b8", "#0ea5e9", "#10b981", "#6366f1"],
+                legend: { position: "top", fontSize: "11px", itemMargin: { horizontal: 8 } },
+                dataLabels: { enabled: false },
+                grid: { strokeDashArray: 3, borderColor: "#f1f5f9" },
+                tooltip: { shared: true, intersect: false },
+              };
+
+              // ApexCharts: gender donut
+              const genderData    = analytics.byGender ?? [];
+              const genderTotal   = genderData.reduce((a, b) => a + b.count, 0);
+              const genderOptions: ApexOptions = {
+                chart: { type: "donut", toolbar: { show: false }, animations: { enabled: true, speed: 500 } },
+                labels: genderData.map((g) => g.label),
+                colors: ["#3b82f6", "#ec4899", "#f59e0b", "#94a3b8", "#10b981"],
+                plotOptions: { pie: { donut: { size: "58%", labels: { show: true,
+                  total: { show: true, label: "Total", fontSize: "11px", fontWeight: 700, color: "#64748b",
+                    formatter: () => String(genderTotal) } } } } },
+                legend: { position: "bottom", fontSize: "11px" },
+                dataLabels: { enabled: true, formatter: (val: number) => `${Math.round(val)}%` },
+                stroke: { width: 2 },
+              };
+
+              return (
+                <>
+                  {/* ── KPI tiles ── */}
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <KpiTile label="Total Logged" value={totalLogged.toLocaleString()} color="border-slate-200" />
+                    <KpiTile label="Selection Rate" value={`${selPct}%`} sub={`${selCount.toLocaleString()} selected`} color="border-emerald-200" />
+                    <KpiTile label="Join Rate" value={`${joinPct}%`} sub={`${joinCount.toLocaleString()} joined`} color="border-sky-200" />
+                    <KpiTile
+                      label="Follow-ups Due"
+                      value={analytics.followupDue.length}
+                      sub="next 7 days"
+                      color={analytics.followupDue.length > 0 ? "border-amber-300" : "border-slate-200"}
+                    />
                   </div>
 
-                  <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <div className="mb-3 text-sm font-black text-slate-900">Outcome Distribution</div>
-                    {analytics.byOutcome.length === 0 ? (
-                      <div className="flex h-[220px] items-center justify-center text-sm text-slate-400">No data</div>
-                    ) : (
+                  {/* ── Row 1: Funnel + Outcome Donut ── */}
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {/* Funnel — fixed right margin, removed dead map */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                      <div className="mb-3 text-sm font-black text-slate-900">Hiring Funnel</div>
                       <ResponsiveContainer width="100%" height={220}>
-                        <PieChart>
-                          <Pie data={analytics.byOutcome} dataKey="count" nameKey="label" cx="50%" cy="50%" outerRadius={80} label={({ label }: any) => `${label}`}>
-                            {analytics.byOutcome.map((_, i) => (
-                              <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                        <BarChart data={analytics.funnel} layout="vertical" margin={{ left: 20, right: 80 }}>
+                          <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                          <XAxis type="number" tick={{ fontSize: 11 }} />
+                          <YAxis dataKey="stage" type="category" tick={{ fontSize: 11 }} width={80} />
+                          <Tooltip formatter={(v: number) => [v, "Count"]} />
+                          <Bar dataKey="count" radius={[0, 4, 4, 0]}
+                            label={{ position: "right", fontSize: 11, formatter: (v: number, entry: any) => `${v} (${entry?.pct ?? 0}%)` }}>
+                            {analytics.funnel.map((_, i) => (
+                              <Bar key={i} dataKey="count" fill={FUNNEL_COLORS[i] ?? "#64748b"} />
                             ))}
-                          </Pie>
-                          <Tooltip formatter={(v: number, name: string) => [v, name]} />
-                          <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                        </PieChart>
+                          </Bar>
+                        </BarChart>
                       </ResponsiveContainer>
+                    </div>
+
+                    {/* Outcome Donut — ApexCharts */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                      <div className="mb-3 text-sm font-black text-slate-900">Outcome Distribution</div>
+                      {analytics.byOutcome.length === 0 ? (
+                        <AnalyticsEmptyState label="No outcome data" />
+                      ) : (
+                        <ReactApexChart type="donut" series={donutSeries} options={donutOptions} height={280} />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* ── Row 2: Activity Trend + Day of Week ── */}
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {/* Trend — unchanged */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                      <div className="mb-3 flex items-center justify-between">
+                        <div className="text-sm font-black text-slate-900 flex items-center gap-2">
+                          <TrendingUp className="h-4 w-4 text-slate-500" />
+                          Activity Trend
+                        </div>
+                        <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+                          {(["daily", "weekly", "monthly"] as const).map((p) => (
+                            <button key={p} type="button" onClick={() => setTrendPeriod(p)}
+                              className={`px-2.5 py-1 text-[10px] font-bold uppercase ${trendPeriod === p ? "bg-slate-900 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
+                              {p}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <ResponsiveContainer width="100%" height={220}>
+                        {trendPeriod === "daily" ? (
+                          <LineChart data={aggregatedTrend} margin={{ left: -10, right: 10 }}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(v: string) => v.slice(5)} />
+                            <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+                            <Tooltip />
+                            <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+                            <Line type="monotone" dataKey="logged" stroke="#64748b" dot={false} name="Logged" strokeWidth={2} />
+                            <Line type="monotone" dataKey="walkins" stroke="#0ea5e9" dot={false} name="Walk-ins" strokeWidth={2} />
+                            <Line type="monotone" dataKey="selected" stroke="#10b981" dot={false} name="Selected" strokeWidth={2} />
+                          </LineChart>
+                        ) : (
+                          <BarChart data={aggregatedTrend} margin={{ left: -10, right: 10 }}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                            <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+                            <Tooltip />
+                            <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+                            <Bar dataKey="logged" fill="#64748b" name="Logged" radius={[2, 2, 0, 0]} />
+                            <Bar dataKey="walkins" fill="#0ea5e9" name="Walk-ins" radius={[2, 2, 0, 0]} />
+                            <Bar dataKey="selected" fill="#10b981" name="Selected" radius={[2, 2, 0, 0]} />
+                          </BarChart>
+                        )}
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* Day of Week — ApexCharts */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                      <div className="mb-3 text-sm font-black text-slate-900">Activity by Day of Week</div>
+                      {dowData.every((d) => d.count === 0) ? (
+                        <AnalyticsEmptyState label="No day-of-week data" />
+                      ) : (
+                        <ReactApexChart
+                          type="bar"
+                          series={[{ name: "Activities", data: dowData.map((d) => d.count) }]}
+                          options={dowOptions}
+                          height={220}
+                        />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* ── Row 3: Source Conversion — full width ── */}
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                    <div className="mb-1 text-sm font-black text-slate-900">Source Conversion</div>
+                    <div className="mb-3 text-xs text-slate-400">Logged → Walk-in → Selected → Joined per source</div>
+                    {analytics.bySource.length === 0 ? (
+                      <AnalyticsEmptyState label="No source data" />
+                    ) : (
+                      <ReactApexChart
+                        type="bar"
+                        series={[
+                          { name: "Logged",   data: analytics.bySource.map((s) => s.total) },
+                          { name: "Walk-in",  data: analytics.bySource.map((s) => s.walkins) },
+                          { name: "Selected", data: analytics.bySource.map((s) => s.selected) },
+                          { name: "Joined",   data: analytics.bySource.map((s) => s.joined) },
+                        ]}
+                        options={srcOptions}
+                        height={280}
+                      />
                     )}
                   </div>
-                </div>
 
-                {/* Recruiter Conversion Comparison */}
-                {analytics.byRecruiter.length > 1 && (
-                  <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <div className="mb-3 text-sm font-black text-slate-900">Recruiter Conversion Comparison</div>
-                    <ResponsiveContainer width="100%" height={Math.max(180, analytics.byRecruiter.length * 36)}>
-                      <BarChart data={analytics.byRecruiter} layout="vertical" margin={{ left: 10, right: 40 }}>
-                        <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                        <XAxis type="number" tick={{ fontSize: 10 }} />
-                        <YAxis dataKey="label" type="category" tick={{ fontSize: 10 }} width={100} />
-                        <Tooltip formatter={(v: number, name: string) => [v, name]} />
-                        <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                        <Bar dataKey="total" fill="#94a3b8" name="Logged" radius={[0, 2, 2, 0]} />
-                        <Bar dataKey="selected" fill="#10b981" name="Selected" radius={[0, 2, 2, 0]} />
-                        <Bar dataKey="joined" fill="#6366f1" name="Joined" radius={[0, 2, 2, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-
-                {/* Recruiter leaderboard */}
-                <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                  <div className="mb-3 text-sm font-black text-slate-900">Recruiter Leaderboard</div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[600px] text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-100">
-                          <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-400 w-8">Rank</th>
-                          <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-400">Recruiter</th>
-                          <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-400">Logged</th>
-                          <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-400">Walk-ins</th>
-                          <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-400">Selected</th>
-                          <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-400">Sel %</th>
-                          <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-400">Joined</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-50">
-                        {analytics.byRecruiter.map((r, i) => (
-                          <tr key={r.label} className="hover:bg-slate-50">
-                            <td className="px-3 py-2 text-xs text-slate-400">{i + 1}</td>
-                            <td className="px-3 py-2 font-semibold text-slate-800">{r.label}</td>
-                            <td className="px-3 py-2 text-right tabular-nums">{r.total}</td>
-                            <td className="px-3 py-2 text-right tabular-nums text-sky-600">{(analytics.byRecruiter as any)[i]?.walkins ?? "—"}</td>
-                            <td className="px-3 py-2 text-right tabular-nums text-emerald-700 font-bold">{r.selected}</td>
-                            <td className="px-3 py-2 text-right">
-                              <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${(r.selRate || 0) >= 30 ? "bg-emerald-50 text-emerald-700" : (r.selRate || 0) >= 15 ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"}`}>
-                                {r.selRate ?? 0}%
-                              </span>
-                            </td>
-                            <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.joined ?? 0}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* Follow-ups due */}
-                {analytics.followupDue.length > 0 && (
-                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
-                    <div className="mb-3 flex items-center gap-2 text-sm font-black text-amber-800">
-                      <Bell className="h-4 w-4" />
-                      Follow-ups Due (Next 7 Days) — {analytics.followupDue.length}
+                  {/* ── Row 4: Process + Branch ── */}
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {/* Process Breakdown */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                      <div className="mb-3 text-sm font-black text-slate-900">Process Breakdown</div>
+                      {analytics.byProcess.length === 0 ? (
+                        <AnalyticsEmptyState label="No process data" />
+                      ) : (
+                        <ResponsiveContainer width="100%" height={Math.max(180, analytics.byProcess.length * 36)}>
+                          <BarChart data={analytics.byProcess} layout="vertical" margin={{ left: 10, right: 40 }}>
+                            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                            <XAxis type="number" tick={{ fontSize: 10 }} />
+                            <YAxis dataKey="label" type="category" tick={{ fontSize: 10 }} width={110} />
+                            <Tooltip formatter={(v: number, name: string) => [v, name]} />
+                            <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+                            <Bar dataKey="total"    fill="#94a3b8" name="Logged"   radius={[0, 3, 3, 0]} />
+                            <Bar dataKey="selected" fill="#10b981" name="Selected" radius={[0, 3, 3, 0]} />
+                            <Bar dataKey="joined"   fill="#6366f1" name="Joined"   radius={[0, 3, 3, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      )}
                     </div>
+
+                    {/* Branch Breakdown */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                      <div className="mb-3 text-sm font-black text-slate-900">Branch Breakdown</div>
+                      {(analytics.byBranch ?? []).length === 0 ? (
+                        <AnalyticsEmptyState label="No branch data" />
+                      ) : (
+                        <ResponsiveContainer width="100%" height={Math.max(180, (analytics.byBranch ?? []).length * 36)}>
+                          <BarChart data={analytics.byBranch ?? []} layout="vertical" margin={{ left: 10, right: 40 }}>
+                            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                            <XAxis type="number" tick={{ fontSize: 10 }} />
+                            <YAxis dataKey="label" type="category" tick={{ fontSize: 10 }} width={110} />
+                            <Tooltip formatter={(v: number, name: string) => [v, name]} />
+                            <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+                            <Bar dataKey="total"    fill="#94a3b8" name="Logged"   radius={[0, 3, 3, 0]} />
+                            <Bar dataKey="selected" fill="#10b981" name="Selected" radius={[0, 3, 3, 0]} />
+                            <Bar dataKey="joined"   fill="#6366f1" name="Joined"   radius={[0, 3, 3, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* ── Row 5: Gender Donut + Recruiter Conversion ── */}
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {/* Gender Distribution — ApexCharts donut */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                      <div className="mb-3 text-sm font-black text-slate-900">Gender Distribution</div>
+                      {genderData.length === 0 ? (
+                        <AnalyticsEmptyState label="No gender data" />
+                      ) : (
+                        <ReactApexChart
+                          type="donut"
+                          series={genderData.map((g) => g.count)}
+                          options={genderOptions}
+                          height={240}
+                        />
+                      )}
+                    </div>
+
+                    {/* Recruiter Conversion */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                      <div className="mb-3 text-sm font-black text-slate-900">Recruiter Conversion</div>
+                      {analytics.byRecruiter.length === 0 ? (
+                        <AnalyticsEmptyState label="No recruiter data" />
+                      ) : (
+                        <ResponsiveContainer width="100%" height={Math.max(180, analytics.byRecruiter.length * 36)}>
+                          <BarChart data={analytics.byRecruiter} layout="vertical" margin={{ left: 10, right: 40 }}>
+                            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                            <XAxis type="number" tick={{ fontSize: 10 }} />
+                            <YAxis dataKey="label" type="category" tick={{ fontSize: 10 }} width={100} />
+                            <Tooltip formatter={(v: number, name: string) => [v, name]} />
+                            <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+                            <Bar dataKey="total"    fill="#94a3b8" name="Logged"   radius={[0, 2, 2, 0]} />
+                            <Bar dataKey="walkins"  fill="#0ea5e9" name="Walk-ins" radius={[0, 2, 2, 0]} />
+                            <Bar dataKey="selected" fill="#10b981" name="Selected" radius={[0, 2, 2, 0]} />
+                            <Bar dataKey="joined"   fill="#6366f1" name="Joined"   radius={[0, 2, 2, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* ── Recruiter Leaderboard ── */}
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                    <div className="mb-3 text-sm font-black text-slate-900">Recruiter Leaderboard</div>
                     <div className="overflow-x-auto">
-                      <table className="w-full min-w-[500px] text-sm">
+                      <table className="w-full min-w-[600px] text-sm">
                         <thead>
-                          <tr className="border-b border-amber-200">
-                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-amber-700">Candidate</th>
-                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-amber-700">Mobile</th>
-                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-amber-700">Due Date</th>
-                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-amber-700">Reason</th>
-                            <th className="px-3 py-2 text-[10px] font-bold uppercase text-amber-700"></th>
+                          <tr className="border-b border-slate-100">
+                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-400 w-8">Rank</th>
+                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-400">Recruiter</th>
+                            <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-400">Logged</th>
+                            <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-400">Walk-ins</th>
+                            <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-400">Selected</th>
+                            <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-400">Sel %</th>
+                            <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-400">Joined</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-amber-100">
-                          {analytics.followupDue.map((f) => (
-                            <tr key={f.id}>
-                              <td className="px-3 py-2 font-semibold text-slate-800">{f.candidate_name}</td>
-                              <td className="px-3 py-2 tabular-nums text-slate-600">{f.mobile}</td>
-                              <td className="px-3 py-2 tabular-nums text-amber-700 font-bold">{f.followup_date}</td>
-                              <td className="px-3 py-2 text-slate-600">{f.followup_reason || "—"}</td>
-                              <td className="px-3 py-2">
-                                <button
-                                  type="button"
-                                  onClick={() => { setFollowupModal({ id: f.id, candidateName: f.candidate_name }); setFollowupDate(f.followup_date); setFollowupReason(f.followup_reason); }}
-                                  className="rounded-lg border border-amber-300 bg-white px-2 py-1 text-xs font-bold text-amber-700 hover:bg-amber-50"
-                                >
-                                  Edit
-                                </button>
+                        <tbody className="divide-y divide-slate-50">
+                          {analytics.byRecruiter.map((r, i) => (
+                            <tr key={r.label} className="hover:bg-slate-50">
+                              <td className="px-3 py-2 text-xs text-slate-400">{i + 1}</td>
+                              <td className="px-3 py-2 font-semibold text-slate-800">{r.label}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{r.total}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-sky-600">{r.walkins ?? "—"}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-emerald-700 font-bold">{r.selected}</td>
+                              <td className="px-3 py-2 text-right">
+                                <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${(r.selRate || 0) >= 30 ? "bg-emerald-50 text-emerald-700" : (r.selRate || 0) >= 15 ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"}`}>
+                                  {r.selRate ?? 0}%
+                                </span>
                               </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.joined ?? 0}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
                   </div>
-                )}
-              </>
-            )}
+
+                  {/* ── Follow-ups due ── */}
+                  {analytics.followupDue.length > 0 && (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+                      <div className="mb-3 flex items-center gap-2 text-sm font-black text-amber-800">
+                        <Bell className="h-4 w-4" />
+                        Follow-ups Due (Next 7 Days) — {analytics.followupDue.length}
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[500px] text-sm">
+                          <thead>
+                            <tr className="border-b border-amber-200">
+                              <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-amber-700">Candidate</th>
+                              <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-amber-700">Mobile</th>
+                              <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-amber-700">Due Date</th>
+                              <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-amber-700">Reason</th>
+                              <th className="px-3 py-2 text-[10px] font-bold uppercase text-amber-700"></th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-amber-100">
+                            {analytics.followupDue.map((f) => (
+                              <tr key={f.id}>
+                                <td className="px-3 py-2 font-semibold text-slate-800">{f.candidate_name}</td>
+                                <td className="px-3 py-2 tabular-nums text-slate-600">{f.mobile}</td>
+                                <td className="px-3 py-2 tabular-nums text-amber-700 font-bold">{f.followup_date}</td>
+                                <td className="px-3 py-2 text-slate-600">{f.followup_reason || "—"}</td>
+                                <td className="px-3 py-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => { setFollowupModal({ id: f.id, candidateName: f.candidate_name }); setFollowupDate(f.followup_date); setFollowupReason(f.followup_reason); }}
+                                    className="rounded-lg border border-amber-300 bg-white px-2 py-1 text-xs font-bold text-amber-700 hover:bg-amber-50"
+                                  >
+                                    Edit
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </section>
         )}
 

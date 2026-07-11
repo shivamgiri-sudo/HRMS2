@@ -166,6 +166,35 @@ recruiterHiringRouter.post("/recruiter/hiring-activity", async (req: Authenticat
   }
 });
 
+// ── Analytics endpoint ────────────────────────────────────────────────────────
+// Must be registered BEFORE /:id to prevent "analytics" being matched as an ID
+recruiterHiringRouter.get("/recruiter/hiring-activity/analytics", async (req: AuthenticatedRequest, res) => {
+  try {
+    const filters = {
+      fromDate:     parseQueryBool(req.query.fromDate),
+      toDate:       parseQueryBool(req.query.toDate),
+      month:        parseQueryBool(req.query.month),
+      branch:       parseQueryBool(req.query.branch),
+      process:      parseQueryBool(req.query.process),
+      hiringSource: parseQueryBool(req.query.hiringSource),
+      recruiter:    parseQueryBool(req.query.recruiter),
+      gender:       parseQueryBool(req.query.gender),
+      education:    parseQueryBool(req.query.education),
+    };
+
+    console.log("[Analytics] Request from user:", req.authUser?.id, "role:", req.authUser?.role, "filters:", filters);
+
+    const data = await getHiringActivityAnalytics(req.authUser!.id, req.authUser?.role, filters);
+
+    console.log("[Analytics] Response data keys:", Object.keys(data), "funnel length:", data.funnel?.length);
+
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    console.error("[Analytics] Error:", error);
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
+  }
+});
+
 recruiterHiringRouter.get("/recruiter/hiring-activity/:id", async (req: AuthenticatedRequest, res) => {
   try {
     const access = await ensureRowAccess(req, req.params.id);
@@ -368,31 +397,6 @@ recruiterHiringRouter.post("/recruiter/hiring-activity/:id/send-onboarding", asy
     const data = await sendOnboardingFromActivity(req.params.id, req.authUser!.id);
     return res.status(201).json({ success: true, data });
   } catch (error: unknown) {
-    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
-  }
-});
-
-// ── Analytics endpoint ────────────────────────────────────────────────────────
-recruiterHiringRouter.get("/recruiter/hiring-activity/analytics", async (req: AuthenticatedRequest, res) => {
-  try {
-    const filters = {
-      fromDate: parseQueryBool(req.query.fromDate),
-      toDate: parseQueryBool(req.query.toDate),
-      month: parseQueryBool(req.query.month),
-      branch: parseQueryBool(req.query.branch),
-      process: parseQueryBool(req.query.process),
-      hiringSource: parseQueryBool(req.query.hiringSource),
-    };
-
-    console.log("[Analytics] Request from user:", req.authUser?.id, "role:", req.authUser?.role, "filters:", filters);
-
-    const data = await getHiringActivityAnalytics(req.authUser!.id, req.authUser?.role, filters);
-
-    console.log("[Analytics] Response data keys:", Object.keys(data), "funnel length:", data.funnel?.length);
-
-    return res.json({ success: true, data });
-  } catch (error: unknown) {
-    console.error("[Analytics] Error:", error);
     return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
 });

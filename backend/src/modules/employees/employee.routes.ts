@@ -579,6 +579,7 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
   const [[emp]] = await db.execute<RowDataPacket[]>(
     `SELECT e.*, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS full_name,
             d.designation_name, b.branch_name, b.call_centre_code,
+            b.address AS branch_address, b.city AS branch_city, b.state AS branch_state, b.hr_contact AS branch_hr_contact,
             p.process_name, dept.dept_name,
             DATEDIFF(NOW(), e.date_of_joining) AS days_employed,
             eec.name AS emergency_name,
