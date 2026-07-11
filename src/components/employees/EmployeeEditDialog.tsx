@@ -407,6 +407,8 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         structureId: selectedSalaryStructureId,
         ctcAnnual: Math.round(grossMonthly * 12 * 100) / 100,
         effectiveFrom: data.effective_from,
+        migrationMode: true,
+        reason: "Direct salary assignment via employee edit dialog by super admin",
       });
     },
     onSuccess: () => {

@@ -62,7 +62,9 @@ export const payrollController = {
     const parsed = assignSalarySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const authUser = (req as any).authUser;
-    const actorRoles: string[] = Array.isArray(authUser?.roles) ? authUser.roles : (authUser?.role ? [authUser.role] : []);
+    const actorRoles: string[] = Array.isArray((req as any).userRoles) && (req as any).userRoles.length
+      ? (req as any).userRoles
+      : (authUser?.role ? [authUser.role] : []);
     try {
       const data = await payrollService.assignSalary(parsed.data, authUser?.id ?? "system", actorRoles);
       res.status(201).json({ data });
@@ -201,7 +203,9 @@ export const payrollController = {
     const parsed = bulkAssignSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const authUser = (req as any).authUser;
-    const actorRoles: string[] = Array.isArray(authUser?.roles) ? authUser.roles : (authUser?.role ? [authUser.role] : []);
+    const actorRoles: string[] = Array.isArray((req as any).userRoles) && (req as any).userRoles.length
+      ? (req as any).userRoles
+      : (authUser?.role ? [authUser.role] : []);
     try {
       const data = await payrollService.bulkAssignSalary(parsed.data, authUser?.id ?? "system", actorRoles);
       res.json({ data });
