@@ -211,7 +211,6 @@ const NativeDocumentVerification    = lazy(() => import("./pages/NativeDocumentV
 const NativeRosterPreference        = lazy(() => import("./pages/NativeRosterPreference"));
 
 // Dashboards
-const Dashboard                     = lazy(() => import("./pages/Dashboard"));
 const SuperAdminDashboardV2         = lazy(() => import("./pages/SuperAdminDashboardV2"));
 const LMSProgressDashboard          = lazy(() => import("./pages/LMSProgressDashboard"));
 const LMSModuleLaunch               = lazy(() => import("./pages/LMSModuleLaunch"));
@@ -238,7 +237,6 @@ const NativeWFMPlanningRules        = lazy(() => import("./pages/NativeWFMPlanni
 const NativeSlotRequirementBuilder  = lazy(() => import("./pages/NativeSlotRequirementBuilder"));
 const NativeWeekOffDayRuleConfig    = lazy(() => import("./pages/NativeWeekOffDayRuleConfig"));
 const NativeAttendanceDisputes      = lazy(() => import("./pages/NativeAttendanceDisputes"));
-const NativePayrollAttendanceOverrides = lazy(() => import("./pages/NativePayrollAttendanceOverrides"));
 const NativeAttendanceExceptionEngine = lazy(() => import("./pages/NativeAttendanceExceptionEngine"));
 const NativeCosecSyncMonitoring     = lazy(() => import("./pages/NativeCosecSyncMonitoring"));
 const NativePayrollReadiness        = lazy(() => import("./pages/NativePayrollReadiness"));
