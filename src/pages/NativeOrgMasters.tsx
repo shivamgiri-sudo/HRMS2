@@ -147,12 +147,12 @@ function isActive(record: OrgRecord): boolean {
 }
 
 function getRecordName(record: OrgRecord, tab: TabConfig): string {
-  const nameField = tab.fields.find(f => f.label === "Name");
+  const nameField = tab.fields.find(f => f.label.toLowerCase().includes("name"));
   return nameField ? String(record[nameField.key] ?? "–") : "–";
 }
 
 function getRecordCode(record: OrgRecord, tab: TabConfig): string {
-  const codeField = tab.fields.find(f => f.label === "Code");
+  const codeField = tab.fields.find(f => f.label.toLowerCase().includes("code"));
   return codeField ? String(record[codeField.key] ?? "–") : "–";
 }
 
@@ -439,7 +439,23 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
               <tbody>
                 {records.map((rec) => (
                   <tr key={rec.id} className="border-t hover:bg-slate-50/80 transition-colors">
-                    <td className="p-4 font-semibold text-slate-900">{getRecordName(rec, tab)}</td>
+                    <td className="p-4">
+                      <span className="font-semibold text-slate-900">{getRecordName(rec, tab)}</span>
+                      {(rec.city || rec.state) && (
+                        <div className="text-xs text-slate-400 mt-0.5">
+                          {[rec.city, rec.state].filter(Boolean).join(", ")}
+                        </div>
+                      )}
+                      {rec.description && (
+                        <div className="text-xs text-slate-400 mt-0.5 truncate max-w-xs">{String(rec.description)}</div>
+                      )}
+                      {rec.grade && (
+                        <div className="text-xs text-slate-400 mt-0.5">Grade: {String(rec.grade)}</div>
+                      )}
+                      {rec.band && (
+                        <div className="text-xs text-slate-400 mt-0.5">Band: {String(rec.band)}</div>
+                      )}
+                    </td>
                     <td className="p-4 font-mono text-xs text-slate-500">{getRecordCode(rec, tab)}</td>
                     <td className="p-4">
                       {isActive(rec) ? (

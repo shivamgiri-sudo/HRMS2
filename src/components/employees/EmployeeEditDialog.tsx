@@ -347,7 +347,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         city: data.city || null,
         country: data.country || null,
         dateOfBirth: data.date_of_birth || undefined,
-        gender: data.gender,
+        gender: data.gender || undefined,
         designationId: data.designation_id || null,
         departmentId: data.department_id || null,
         reportingManagerId: data.manager_id || null,

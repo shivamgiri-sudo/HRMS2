@@ -643,7 +643,7 @@ export function mapSheetRow(row: HiringSheetRow): { normalized: NormalizedHiring
   const isRejectedOutcome = (r: string | undefined) =>
     ["rejected", "rejected (recruiter decision)", "not interested", "not interested (candidate declined)"]
       .includes(r?.toLowerCase() ?? "");
-  if (isRejectedOutcome(recruiterRemarks) && !recruiterRejectionReason) {
+  if (isRejectedOutcome(recruiterRemarks ?? undefined) && !recruiterRejectionReason) {
     errors.push("HR Recruiter_Rejection Reasons is mandatory when outcome is a rejection");
   }
   if (hrInterviewStatus?.toLowerCase() === "rejected" && !hrRejectionReason) {
@@ -793,6 +793,7 @@ export async function getHiringActivityBootstrap(userId: string): Promise<Hiring
       positionOptions,
       wpGroupOptions,
       callingOutcomeOptions,
+      rejectionReasonOptions: DEFAULT_HIRING_OPTION_LISTS.rejectionReasonOptions,
       genderOptions,
       educationOptions,
       experienceOptions,
