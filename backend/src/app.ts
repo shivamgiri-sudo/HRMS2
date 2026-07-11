@@ -171,6 +171,8 @@ import { digiLockerRouter } from "./modules/onboarding/digilocker.routes.js";
 import { employeeReactivationRouter } from "./modules/employees/employee-reactivation.routes.js";
 import { employeeVerifyRouter } from "./modules/employees/employee.verify.routes.js";
 import { salaryIncrementRouter } from "./modules/salary-increment/salaryIncrement.routes.js";
+import { breakDeskRouter } from "./modules/break-management/break-desk.routes.js";
+import { breakManagementRouter } from "./modules/break-management/break-management.routes.js";
 
 export const app = express();
 
@@ -229,6 +231,8 @@ app.get("/", (_req, res) => res.json({ success: true, service: "MCN HRMS Backend
 
 app.use("/api/auth", authRouter);
 app.use("/api/auth", passwordResetRouter);
+app.use("/api/break-desk", breakDeskRouter);
+app.use("/api/break-management", breakManagementRouter);
 if (process.env.NODE_ENV !== "production") {
   app.use("/api/mock-digilocker", mockDigilockerRouter);
 }
@@ -293,9 +297,9 @@ app.use("/api/exit", exitRouter);
 app.use("/api/migration", migrationRouter);
 app.use("/api/access", accessRouter);
 app.use("/api/audit", auditLogRouter);
-app.use("/api/org", orgRouter);
-app.use("/api/org/events", eventsRouter);
 app.use("/api/org/settings", orgSettingsRouter);
+app.use("/api/org/events", eventsRouter);
+app.use("/api/org", orgRouter);
 app.use("/api/onboarding/data", onboardingDataRouter);
 app.use("/api/onboarding/penny-drop", pennyDropRouter);
 app.use("/api/onboarding/name-validation", nameValidationRouter);

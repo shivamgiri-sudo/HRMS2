@@ -211,7 +211,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const fetchAutoLogoutSetting = async () => {
       try {
-        const res = await fetch(apiUrl('/api/org-settings/public/auto-logout-minutes'));
+        const res = await fetch(apiUrl('/api/org/settings/public/auto-logout-minutes'));
         if (res.ok) {
           const data = await res.json();
           setAutoLogoutMinutes(data.minutes || 0);

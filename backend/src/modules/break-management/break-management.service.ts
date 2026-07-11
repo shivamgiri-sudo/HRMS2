@@ -1,0 +1,1541 @@
+import { createHash, randomUUID } from "crypto";
+import type { Request } from "express";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { env } from "../../config/env.js";
+import { getNcosecPool } from "../../db/ncosecDb.js";
+import { emailService } from "../communication/email.service.js";
+import { writeAuditLog } from "../../shared/auditLog.js";
+import { getRealTimePunchesToday } from "../wfm/attendance-realtime-ncosec.service.js";
+
+type KioskDevice = {
+  id: string;
+  kiosk_code: string;
+  kiosk_name: string;
+  branch_id: string | null;
+  branch_name: string | null;
+  process_id: string | null;
+  process_name: string | null;
+  token_hash: string;
+  allowed_ip_list: string | null;
+  allowed_device_fingerprints: string | null;
+  is_active: number;
+};
+
+type BreakSettingsRow = {
+  id: string;
+  branch_id: string | null;
+  process_id: string | null;
+  mini_break_max_minutes: number;
+  long_break_min_minutes: number;
+  active_break_alert_minutes: number;
+  daily_total_allowed_minutes: number;
+  max_long_break_count: number;
+  escalation_after_minutes: number;
+  auto_close_on_biometric_punch_out: number;
+  allow_break_without_biometric: number;
+  require_exception_reason: number;
+  alert_reporting_manager: number;
+  alert_hr: number;
+  alert_wfm: number;
+  alert_cc_list_json: string | null;
+};
+
+type DeskFilters = {
+  search?: string;
+  branch_id?: string;
+  process_id?: string;
+  department_id?: string;
+  manager_id?: string;
+  shift?: string;
+  status?: string;
+  date?: string;
+  limit?: number;
+};
+
+type EmployeeContext = {
+  id: string;
+  employee_code: string;
+  branch_id: string | null;
+  process_id: string | null;
+  department_id: string | null;
+  manager_id: string | null;
+  employee_name: string;
+};
+
+const BREAK_REASONS = [
+  "Tea / Washroom",
+  "Lunch",
+  "Meeting",
+  "Training",
+  "Medical",
+  "System Issue",
+  "Manager Approved",
+  "Other",
+];
+
+const STATUS_OPTIONS = [
+  "On Duty",
+  "On Break",
+  "Break Exceeded",
+  "No Punch Found",
+  "W/O",
+  "Leave",
+  "Shift Completed",
+];
+
+function normalizeJsonArray(value: unknown): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean);
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed.map(String).map((item) => item.trim()).filter(Boolean);
+    } catch {
+      return value.split(",").map((item) => item.trim()).filter(Boolean);
+    }
+  }
+  return [];
+}
+
+function getIstParts(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return {
+    year: pick("year"),
+    month: pick("month"),
+    day: pick("day"),
+    hour: pick("hour"),
+    minute: pick("minute"),
+    second: pick("second"),
+  };
+}
+
+function currentIstDateTime() {
+  const parts = getIstParts();
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    dateTime: `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`,
+    hour: Number(parts.hour),
+  };
+}
+
+function resolveShiftDate(explicitDate?: string | null) {
+  if (explicitDate && /^\d{4}-\d{2}-\d{2}$/.test(explicitDate)) return explicitDate;
+  const now = currentIstDateTime();
+  if (now.hour >= 5) return now.date;
+  const previous = new Date(`${now.date}T00:00:00+05:30`);
+  previous.setUTCDate(previous.getUTCDate() - 1);
+  const parts = getIstParts(previous);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function hashToken(token: string) {
+  return createHash("sha256").update(token.trim()).digest("hex");
+}
+
+function requestIp(req: Request) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim()) return forwarded.split(",")[0]!.trim();
+  if (Array.isArray(forwarded) && forwarded[0]) return String(forwarded[0]).split(",")[0]!.trim();
+  return req.ip ?? "";
+}
+
+function requestFingerprint(req: Request) {
+  const raw = `${requestIp(req)}|${String(req.headers["user-agent"] ?? "")}`;
+  return createHash("sha256").update(raw).digest("hex");
+}
+
+function minutesBetween(start: string, end: string) {
+  const startMs = new Date(start.replace(" ", "T") + "+05:30").getTime();
+  const endMs = new Date(end.replace(" ", "T") + "+05:30").getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return { seconds: 0, minutes: 0 };
+  const seconds = Math.max(0, Math.round((endMs - startMs) / 1000));
+  return {
+    seconds,
+    minutes: Math.ceil(seconds / 60),
+  };
+}
+
+function safeLimit(value: unknown, fallback = 120) {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(Math.floor(parsed), 500);
+}
+
+function assertEmployeeWithinKioskScope(kiosk: KioskDevice, employee: EmployeeContext) {
+  if (kiosk.branch_id && employee.branch_id && kiosk.branch_id !== employee.branch_id) {
+    throw new Error("This kiosk cannot act on employees from another branch");
+  }
+  if (kiosk.process_id && employee.process_id && kiosk.process_id !== employee.process_id) {
+    throw new Error("This kiosk cannot act on employees from another process");
+  }
+}
+
+async function writeBreakAudit(params: {
+  entityType: string;
+  entityId: string;
+  action: string;
+  employeeId?: string | null;
+  performedByType: "KIOSK" | "ADMIN" | "SYSTEM";
+  performedById?: string | null;
+  kioskDeviceId?: string | null;
+  oldValue?: Record<string, unknown> | null;
+  newValue?: Record<string, unknown> | null;
+  req?: Request;
+}) {
+  try {
+    await db.execute(
+      `INSERT INTO break_audit_logs
+         (id, entity_type, entity_id, action, employee_id, performed_by_type, performed_by_id,
+          kiosk_device_id, old_value_json, new_value_json, ip_address, user_agent)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        randomUUID(),
+        params.entityType,
+        params.entityId,
+        params.action,
+        params.employeeId ?? null,
+        params.performedByType,
+        params.performedById ?? null,
+        params.kioskDeviceId ?? null,
+        params.oldValue ? JSON.stringify(params.oldValue) : null,
+        params.newValue ? JSON.stringify(params.newValue) : null,
+        params.req ? requestIp(params.req) : null,
+        params.req ? String(params.req.headers["user-agent"] ?? "").slice(0, 512) : null,
+      ],
+    );
+  } catch (error) {
+    console.error("[break-management] audit insert failed:", error);
+  }
+
+  if (params.performedById) {
+    await writeAuditLog({
+      actor_user_id: params.performedById,
+      action_type: params.action,
+      module_key: "break_management",
+      entity_type: params.entityType,
+      entity_id: params.entityId,
+      employee_id: params.employeeId ?? undefined,
+      metadata: params.newValue ?? undefined,
+      req: params.req,
+    });
+  }
+}
+
+async function getSettings(branchId: string | null, processId: string | null) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT *
+       FROM break_settings
+      WHERE (branch_id = ? OR branch_id IS NULL)
+        AND (process_id = ? OR process_id IS NULL)
+      ORDER BY (branch_id IS NOT NULL) DESC, (process_id IS NOT NULL) DESC
+      LIMIT 1`,
+    [branchId, processId],
+  );
+  return ((rows as unknown[]) as BreakSettingsRow[])[0] ?? {
+    mini_break_max_minutes: 10,
+    long_break_min_minutes: 10,
+    active_break_alert_minutes: 10,
+    daily_total_allowed_minutes: 60,
+    max_long_break_count: 2,
+    escalation_after_minutes: 10,
+    auto_close_on_biometric_punch_out: 1,
+    allow_break_without_biometric: 0,
+    require_exception_reason: 1,
+    alert_reporting_manager: 1,
+    alert_hr: 0,
+    alert_wfm: 0,
+    alert_cc_list_json: null,
+  };
+}
+
+async function getBiometricSnapshot(employeeId: string, employeeCode: string, shiftDate: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        COALESCE(ibd.first_punch, bal.first_punch_in) AS punch_in,
+        COALESCE(ibd.last_punch, bal.last_punch_out) AS punch_out,
+        COALESCE(ibd.biometric_minutes, bal.raw_minutes, 0) AS biometric_minutes
+       FROM employees e
+       LEFT JOIN integration_biometric_daily ibd
+         ON ibd.employee_code = ?
+        AND ibd.activity_date = ?
+       LEFT JOIN biometric_attendance_log bal
+         ON bal.employee_id = ?
+        AND bal.punch_date = ?
+      WHERE e.id = ?
+      LIMIT 1`,
+    [employeeCode, shiftDate, employeeId, shiftDate, employeeId],
+  );
+  const row = (rows as any[])[0] ?? {};
+  return {
+    punchIn: row.punch_in ?? null,
+    punchOut: row.punch_out ?? null,
+    biometricMinutes: Number(row.biometric_minutes ?? 0),
+  };
+}
+
+function classifyBreak(durationMinutes: number, settings: BreakSettingsRow) {
+  return durationMinutes >= Number(settings.long_break_min_minutes ?? 10) ? "LONG" : "MINI";
+}
+
+function deriveStatus(row: any, settings: BreakSettingsRow) {
+  const activeMinutes = row.active_break_start_time
+    ? minutesBetween(row.active_break_start_time, currentIstDateTime().dateTime).minutes
+    : 0;
+  const isExceeded = Boolean(row.active_break_id) && activeMinutes >= Number(settings.active_break_alert_minutes ?? 10);
+
+  if (row.leave_name) {
+    return { label: "Leave", tone: "leave", activeMinutes, isExceeded };
+  }
+  if (String(row.roster_status ?? "").toLowerCase().includes("week off")) {
+    return { label: "W/O", tone: "weekoff", activeMinutes, isExceeded };
+  }
+  if (row.active_break_id) {
+    return { label: isExceeded ? "Break Exceeded" : "On Break", tone: isExceeded ? "danger" : "warning", activeMinutes, isExceeded };
+  }
+  if (row.biometric_punch_in_time && row.biometric_punch_out_time) {
+    return { label: "Shift Completed", tone: "completed", activeMinutes, isExceeded };
+  }
+  if (row.biometric_punch_in_time) {
+    return { label: "On Duty", tone: "active", activeMinutes, isExceeded };
+  }
+  return { label: "No Punch Found", tone: "muted", activeMinutes, isExceeded };
+}
+
+async function rebuildDailySummary(employeeId: string, employeeCode: string, shiftDate: string, branchId: string | null, processId: string | null, managerId: string | null) {
+  const biometric = await getBiometricSnapshot(employeeId, employeeCode, shiftDate);
+  const [sessionRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        SUM(COALESCE(duration_seconds, 0)) AS total_break_seconds,
+        SUM(COALESCE(duration_minutes, 0)) AS total_break_minutes,
+        SUM(CASE WHEN break_type = 'MINI' THEN 1 ELSE 0 END) AS mini_break_count,
+        SUM(CASE WHEN break_type = 'LONG' THEN 1 ELSE 0 END) AS long_break_count,
+        SUM(CASE WHEN status IN ('COMPLETED','AUTO_CLOSED','EXCEPTION') AND break_type = 'LONG' THEN 1 ELSE 0 END) AS exceeded_break_count,
+        SUM(CASE WHEN no_biometric_punch_flag = 1 THEN 1 ELSE 0 END) AS exception_count,
+        MIN(break_start_time) AS first_break_start,
+        MAX(break_end_time) AS last_break_end,
+        MAX(CASE WHEN status = 'ACTIVE' THEN id ELSE NULL END) AS active_break_id
+       FROM break_sessions
+      WHERE employee_id = ?
+        AND shift_date = ?`,
+    [employeeId, shiftDate],
+  );
+
+  const [rosterRows] = await db.execute<RowDataPacket[]>(
+    `SELECT roster_status
+       FROM wfm_roster_assignment
+      WHERE employee_id = ?
+        AND roster_date = ?
+      LIMIT 1`,
+    [employeeId, shiftDate],
+  ).catch(() => [[] as RowDataPacket[], []]);
+
+  const [leaveRows] = await db.execute<RowDataPacket[]>(
+    `SELECT lt.leave_name
+       FROM leave_request lr
+       LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
+      WHERE lr.employee_id = ?
+        AND lr.status = 'approved'
+        AND ? BETWEEN lr.from_date AND lr.to_date
+      LIMIT 1`,
+    [employeeId, shiftDate],
+  ).catch(() => [[] as RowDataPacket[], []]);
+
+  const totals = (sessionRows as any[])[0] ?? {};
+  const rosterStatus = (rosterRows as any[])[0]?.roster_status ?? null;
+  const leaveName = (leaveRows as any[])[0]?.leave_name ?? null;
+  const attendanceStatus = leaveName
+    ? "Leave"
+    : String(rosterStatus ?? "").toLowerCase().includes("week off")
+      ? "W/O"
+      : biometric.punchIn && biometric.punchOut
+        ? "Shift Completed"
+        : biometric.punchIn
+          ? "On Duty"
+          : "No Punch Found";
+
+  await db.execute(
+    `INSERT INTO break_daily_summary
+       (id, employee_id, employee_code, shift_date, branch_id, process_id, manager_id,
+        biometric_punch_in_time, biometric_punch_out_time, roster_status, attendance_status,
+        total_break_seconds, total_break_minutes, mini_break_count, long_break_count,
+        exceeded_break_count, exception_count, first_break_start, last_break_end, active_break_id, final_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       branch_id = VALUES(branch_id),
+       process_id = VALUES(process_id),
+       manager_id = VALUES(manager_id),
+       biometric_punch_in_time = VALUES(biometric_punch_in_time),
+       biometric_punch_out_time = VALUES(biometric_punch_out_time),
+       roster_status = VALUES(roster_status),
+       attendance_status = VALUES(attendance_status),
+       total_break_seconds = VALUES(total_break_seconds),
+       total_break_minutes = VALUES(total_break_minutes),
+       mini_break_count = VALUES(mini_break_count),
+       long_break_count = VALUES(long_break_count),
+       exceeded_break_count = VALUES(exceeded_break_count),
+       exception_count = VALUES(exception_count),
+       first_break_start = VALUES(first_break_start),
+       last_break_end = VALUES(last_break_end),
+       active_break_id = VALUES(active_break_id),
+       final_status = VALUES(final_status),
+       updated_at = CURRENT_TIMESTAMP`,
+    [
+      randomUUID(),
+      employeeId,
+      employeeCode,
+      shiftDate,
+      branchId,
+      processId,
+      managerId,
+      biometric.punchIn,
+      biometric.punchOut,
+      rosterStatus,
+      attendanceStatus,
+      Number(totals.total_break_seconds ?? 0),
+      Number(totals.total_break_minutes ?? 0),
+      Number(totals.mini_break_count ?? 0),
+      Number(totals.long_break_count ?? 0),
+      Number(totals.exceeded_break_count ?? 0),
+      Number(totals.exception_count ?? 0),
+      totals.first_break_start ?? null,
+      totals.last_break_end ?? null,
+      totals.active_break_id ?? null,
+      attendanceStatus,
+    ],
+  );
+}
+
+async function sendBreakAlertIfNeeded(sessionId: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        bs.id,
+        bs.employee_id,
+        bs.employee_code,
+        bs.break_reason,
+        bs.break_start_time,
+        bs.break_end_time,
+        bs.duration_minutes,
+        bs.branch_id,
+        bs.process_id,
+        bs.department_id,
+        bs.manager_id,
+        bs.biometric_punch_in_time,
+        bs.biometric_punch_out_time,
+        COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name,
+        bm.branch_name,
+        pm.process_name,
+        dm.dept_name AS department_name,
+        COALESCE(NULLIF(TRIM(mgr.full_name), ''), TRIM(CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name, '')))) AS manager_name,
+        COALESCE(NULLIF(TRIM(mgr.official_email), ''), NULLIF(TRIM(mgr.email), '')) AS manager_email
+       FROM break_sessions bs
+       JOIN employees e ON e.id = bs.employee_id
+       LEFT JOIN branch_master bm ON bm.id = bs.branch_id
+       LEFT JOIN process_master pm ON pm.id = bs.process_id
+       LEFT JOIN department_master dm ON dm.id = bs.department_id
+       LEFT JOIN employees mgr ON mgr.id = bs.manager_id
+      WHERE bs.id = ?
+      LIMIT 1`,
+    [sessionId],
+  );
+  const session = (rows as any[])[0];
+  if (!session) return;
+
+  const settings = await getSettings(session.branch_id ?? null, session.process_id ?? null);
+  const threshold = Number(settings.active_break_alert_minutes ?? 10);
+  const actual = Number(session.duration_minutes ?? 0);
+  if (actual < threshold) return;
+
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM break_alert_logs WHERE break_session_id = ? AND alert_type = 'ACTIVE_BREAK_EXCEEDED' LIMIT 1`,
+    [sessionId],
+  );
+  if ((existing as any[]).length > 0) return;
+
+  const exceededBy = Math.max(0, actual - threshold);
+  const subject = `Break Alert: ${session.employee_name} exceeded break limit by ${exceededBy} mins`;
+  const ccList = normalizeJsonArray(settings.alert_cc_list_json);
+  let emailStatus = "SKIPPED";
+  let errorMessage: string | null = null;
+  let sentAt: string | null = null;
+
+  if (session.manager_email && settings.alert_reporting_manager) {
+    try {
+      if (emailService.isConfigured()) {
+        await emailService.send({
+          to: session.manager_email,
+          subject,
+          html: `
+            <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a">
+              <h2 style="margin:0 0 12px;color:#145da0">HRMS2 Break Management Alert</h2>
+              <p><strong>Employee:</strong> ${session.employee_name} (${session.employee_code})</p>
+              <p><strong>Branch / Process:</strong> ${session.branch_name ?? "—"} / ${session.process_name ?? "—"}</p>
+              <p><strong>Department:</strong> ${session.department_name ?? "—"}</p>
+              <p><strong>Manager:</strong> ${session.manager_name ?? "—"}</p>
+              <p><strong>Break reason:</strong> ${session.break_reason}</p>
+              <p><strong>Break start:</strong> ${session.break_start_time ?? "—"}</p>
+              <p><strong>Break end:</strong> ${session.break_end_time ?? "—"}</p>
+              <p><strong>Break duration:</strong> ${actual} mins</p>
+              <p><strong>Allowed threshold:</strong> ${threshold} mins</p>
+              <p><strong>Exceeded by:</strong> ${exceededBy} mins</p>
+              <p><strong>Biometric punch-in:</strong> ${session.biometric_punch_in_time ?? "—"}</p>
+              <p><strong>Biometric punch-out:</strong> ${session.biometric_punch_out_time ?? "—"}</p>
+              <p><strong>Kiosk/source:</strong> Break Management Desk</p>
+              <p style="margin-top:16px;color:#475569">This is an automated alert from HRMS2 Break Management.</p>
+            </div>
+          `,
+        });
+        emailStatus = "SENT";
+        sentAt = currentIstDateTime().dateTime;
+      } else {
+        errorMessage = "SMTP not configured";
+      }
+    } catch (error) {
+      emailStatus = "FAILED";
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  await db.execute(
+    `INSERT INTO break_alert_logs
+       (id, break_session_id, employee_id, manager_id, alert_type, alert_level, threshold_minutes,
+        actual_minutes, exceeded_by_minutes, email_to, email_cc, email_subject, email_status, sent_at, error_message)
+     VALUES (?, ?, ?, ?, 'ACTIVE_BREAK_EXCEEDED', 'WARNING', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      randomUUID(),
+      sessionId,
+      session.employee_id,
+      session.manager_id ?? null,
+      threshold,
+      actual,
+      exceededBy,
+      session.manager_email ?? null,
+      ccList.join(",") || null,
+      subject,
+      emailStatus,
+      sentAt,
+      errorMessage,
+    ],
+  );
+}
+
+async function autoCloseEligibleBreaks(shiftDate: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        bs.id,
+        bs.employee_id,
+        bs.employee_code,
+        bs.branch_id,
+        bs.process_id,
+        bs.manager_id,
+        bs.break_start_time,
+        COALESCE(ibd.last_punch, bal.last_punch_out) AS punch_out
+       FROM break_sessions bs
+       LEFT JOIN integration_biometric_daily ibd
+         ON ibd.employee_code = bs.employee_code
+        AND ibd.activity_date = bs.shift_date
+       LEFT JOIN biometric_attendance_log bal
+         ON bal.employee_id = bs.employee_id
+        AND bal.punch_date = bs.shift_date
+      WHERE bs.shift_date = ?
+        AND bs.status = 'ACTIVE'`,
+    [shiftDate],
+  );
+
+  for (const row of rows as any[]) {
+    if (!row.punch_out || !row.break_start_time) continue;
+    const start = new Date(String(row.break_start_time).replace(" ", "T") + "+05:30").getTime();
+    const end = new Date(String(row.punch_out).replace(" ", "T") + "+05:30").getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    const settings = await getSettings(row.branch_id ?? null, row.process_id ?? null);
+    if (!Number(settings.auto_close_on_biometric_punch_out ?? 1)) continue;
+    const duration = minutesBetween(String(row.break_start_time), String(row.punch_out));
+    await db.execute(
+      `UPDATE break_sessions
+          SET break_end_time = ?,
+              duration_seconds = ?,
+              duration_minutes = ?,
+              break_type = ?,
+              status = 'AUTO_CLOSED',
+              end_source = 'AUTO_BIOMETRIC_PUNCH_OUT',
+              biometric_punch_out_time = ?,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND status = 'ACTIVE'`,
+      [
+        row.punch_out,
+        duration.seconds,
+        duration.minutes,
+        classifyBreak(duration.minutes, settings),
+        row.punch_out,
+        row.id,
+      ],
+    );
+    await rebuildDailySummary(row.employee_id, row.employee_code, shiftDate, row.branch_id ?? null, row.process_id ?? null, row.manager_id ?? null);
+    await sendBreakAlertIfNeeded(row.id);
+    await writeBreakAudit({
+      entityType: "break_session",
+      entityId: row.id,
+      action: "AUTO_CLOSED_ON_PUNCH_OUT",
+      employeeId: row.employee_id,
+      performedByType: "SYSTEM",
+      newValue: { biometric_punch_out_time: row.punch_out },
+    });
+  }
+}
+
+async function recordManualDeskPunch(employee: EmployeeContext, shiftDate: string, mode: "IN" | "OUT") {
+  const now = currentIstDateTime().dateTime;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, employee_code, cosec_user_id, first_punch_in, last_punch_out, total_punches, raw_minutes, source_system
+       FROM biometric_attendance_log
+      WHERE employee_id = ?
+        AND punch_date = ?
+      ORDER BY migrated_at DESC
+      LIMIT 1`,
+    [employee.id, shiftDate],
+  );
+  const existing = (rows as any[])[0] ?? null;
+
+  if (mode === "IN") {
+    if (existing?.first_punch_in) {
+      throw new Error("Punch in is already available for this employee");
+    }
+
+    if (existing?.id) {
+      await db.execute(
+        `UPDATE biometric_attendance_log
+            SET employee_code = COALESCE(NULLIF(employee_code, ''), ?),
+                cosec_user_id = COALESCE(NULLIF(cosec_user_id, ''), ?),
+                first_punch_in = ?,
+                total_punches = GREATEST(COALESCE(total_punches, 0), 1),
+                source_system = COALESCE(NULLIF(source_system, ''), 'manual_kiosk'),
+                migrated_at = NOW(),
+                updated_at = NOW()
+          WHERE id = ?`,
+        [employee.employee_code, employee.employee_code, now, existing.id],
+      );
+    } else {
+      await db.execute(
+        `INSERT INTO biometric_attendance_log
+           (id, employee_id, employee_code, cosec_user_id, punch_date, first_punch_in, last_punch_out,
+            total_punches, raw_minutes, source_system, migrated_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, 1, 0, 'manual_kiosk', NOW(), NOW())`,
+        [randomUUID(), employee.id, employee.employee_code, employee.employee_code, shiftDate, now],
+      );
+    }
+    return { actionTime: now, action: "PUNCH_IN" as const };
+  }
+
+  const currentPunchIn = String(existing?.first_punch_in ?? "").trim();
+  if (!currentPunchIn) throw new Error("Punch in is not available for this employee");
+  if (existing?.last_punch_out) throw new Error("Punch out is already available for this employee");
+
+  const duration = minutesBetween(currentPunchIn, now);
+  await db.execute(
+    `UPDATE biometric_attendance_log
+        SET last_punch_out = ?,
+            total_punches = GREATEST(COALESCE(total_punches, 0), 2),
+            raw_minutes = ?,
+            updated_at = NOW()
+      WHERE id = ?`,
+    [now, duration.minutes, existing.id],
+  );
+  await autoCloseEligibleBreaks(shiftDate);
+  return { actionTime: now, action: "PUNCH_OUT" as const };
+}
+
+async function validateKiosk(kioskCode: string, token: string, req: Request) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        kd.*,
+        bm.branch_name,
+        pm.process_name
+       FROM break_kiosk_devices kd
+       LEFT JOIN branch_master bm ON bm.id = kd.branch_id
+       LEFT JOIN process_master pm ON pm.id = kd.process_id
+      WHERE kd.kiosk_code = ?
+      LIMIT 1`,
+    [kioskCode],
+  );
+  const device = ((rows as unknown[]) as KioskDevice[])[0];
+  if (!device || !device.is_active) {
+    throw new Error("Kiosk device is not active");
+  }
+  if (device.token_hash !== hashToken(token)) {
+    throw new Error("Invalid kiosk token");
+  }
+
+  const allowedIps = normalizeJsonArray(device.allowed_ip_list);
+  const ip = requestIp(req);
+  if (allowedIps.length > 0 && !allowedIps.includes(ip)) {
+    throw new Error("This IP is not allowed for the selected kiosk");
+  }
+
+  const allowedFingerprints = normalizeJsonArray(device.allowed_device_fingerprints);
+  const fingerprint = requestFingerprint(req);
+  if (allowedFingerprints.length > 0 && !allowedFingerprints.includes(fingerprint)) {
+    throw new Error("This device fingerprint is not allowed for the selected kiosk");
+  }
+
+  await db.execute(
+    `UPDATE break_kiosk_devices SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [device.id],
+  );
+
+  return device;
+}
+
+async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAll = false) {
+  const shiftDate = resolveShiftDate(filters.date ?? null);
+  await autoCloseEligibleBreaks(shiftDate);
+
+  const where: string[] = ["e.active_status = 1"];
+  const params: unknown[] = [shiftDate, shiftDate, shiftDate, shiftDate, shiftDate, shiftDate];
+
+  if (kiosk.branch_id) {
+    where.push("e.branch_id = ?");
+    params.push(kiosk.branch_id);
+  } else if (filters.branch_id) {
+    where.push("e.branch_id = ?");
+    params.push(filters.branch_id);
+  }
+
+  if (kiosk.process_id) {
+    where.push("e.process_id = ?");
+    params.push(kiosk.process_id);
+  } else if (filters.process_id) {
+    where.push("e.process_id = ?");
+    params.push(filters.process_id);
+  }
+
+  if (filters.department_id) {
+    where.push("e.department_id = ?");
+    params.push(filters.department_id);
+  }
+  if (filters.manager_id) {
+    where.push("e.reporting_manager_id = ?");
+    params.push(filters.manager_id);
+  }
+  if (filters.shift) {
+    where.push("COALESCE(NULLIF(sm.shift_name, ''), NULLIF(CONCAT(COALESCE(ra.shift_start_time, ''), CASE WHEN ra.shift_end_time IS NOT NULL AND ra.shift_end_time <> '' THEN CONCAT(' - ', ra.shift_end_time) ELSE '' END), ''), '') = ?");
+    params.push(filters.shift);
+  }
+  if (filters.search) {
+    const query = `%${filters.search.trim()}%`;
+    where.push(`(
+      COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) LIKE ?
+      OR e.employee_code LIKE ?
+      OR COALESCE(map.cosec_user_id, e.employee_code) LIKE ?
+    )`);
+    params.push(query, query, query);
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        e.id,
+        e.employee_code,
+        COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name,
+        COALESCE(NULLIF(e.avatar_url, ''), NULLIF(e.photo_url, '')) AS avatar_url,
+        e.branch_id,
+        e.process_id,
+        e.department_id,
+        e.designation_id,
+        e.reporting_manager_id,
+        bm.branch_name,
+        pm.process_name,
+        dm.dept_name AS department_name,
+        des.designation_name,
+        COALESCE(NULLIF(TRIM(mgr.full_name), ''), TRIM(CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name, '')))) AS manager_name,
+        COALESCE(NULLIF(TRIM(mgr.official_email), ''), NULLIF(TRIM(mgr.email), '')) AS manager_email,
+        COALESCE(ibd.first_punch, bal.first_punch_in) AS biometric_punch_in_time,
+        COALESCE(ibd.last_punch, bal.last_punch_out) AS biometric_punch_out_time,
+        COALESCE(ibd.biometric_minutes, bal.raw_minutes, 0) AS biometric_minutes,
+        bal.source_system AS attendance_source_system,
+        ra.shift_start_time,
+        ra.shift_end_time,
+        COALESCE(NULLIF(sm.shift_name, ''), NULLIF(CONCAT(COALESCE(ra.shift_start_time, ''), CASE WHEN ra.shift_end_time IS NOT NULL AND ra.shift_end_time <> '' THEN CONCAT(' - ', ra.shift_end_time) ELSE '' END), '')) AS shift_name,
+        ra.roster_status,
+        lt.leave_name,
+        agg.total_break_minutes,
+        agg.mini_break_count,
+        agg.long_break_count,
+        agg.last_break_reason,
+        active.id AS active_break_id,
+        active.break_start_time AS active_break_start_time,
+        active.break_reason AS active_break_reason,
+        active.no_biometric_punch_flag,
+        active.manager_approval_required,
+        active.kiosk_device_id,
+        map.cosec_user_id
+       FROM employees e
+       LEFT JOIN branch_master bm ON bm.id = e.branch_id
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN department_master dm ON dm.id = e.department_id
+       LEFT JOIN designation_master des ON des.id = e.designation_id
+       LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
+       LEFT JOIN employee_biometric_enrollment map ON map.employee_id = e.id AND map.is_active = 1
+       LEFT JOIN integration_biometric_daily ibd
+         ON ibd.employee_code = e.employee_code
+        AND ibd.activity_date = ?
+       LEFT JOIN biometric_attendance_log bal
+         ON bal.employee_id = e.id
+        AND bal.punch_date = ?
+       LEFT JOIN wfm_roster_assignment ra
+          ON ra.employee_id = e.id
+         AND ra.roster_date = ?
+       LEFT JOIN wfm_shift_master sm
+         ON sm.id = ra.shift_id
+       LEFT JOIN leave_request lr
+         ON lr.employee_id = e.id
+        AND lr.status = 'approved'
+        AND ? BETWEEN lr.from_date AND lr.to_date
+       LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
+       LEFT JOIN (
+         SELECT
+           bs.employee_id,
+           SUM(COALESCE(bs.duration_minutes, 0)) AS total_break_minutes,
+           SUM(CASE WHEN bs.break_type = 'MINI' THEN 1 ELSE 0 END) AS mini_break_count,
+           SUM(CASE WHEN bs.break_type = 'LONG' THEN 1 ELSE 0 END) AS long_break_count,
+           SUBSTRING_INDEX(GROUP_CONCAT(bs.break_reason ORDER BY bs.break_start_time DESC SEPARATOR '||'), '||', 1) AS last_break_reason
+         FROM break_sessions bs
+         WHERE bs.shift_date = ?
+           AND bs.status IN ('COMPLETED', 'AUTO_CLOSED', 'EXCEPTION')
+         GROUP BY bs.employee_id
+       ) agg ON agg.employee_id = e.id
+       LEFT JOIN break_sessions active
+         ON active.employee_id = e.id
+        AND active.shift_date = ?
+        AND active.status = 'ACTIVE'
+      WHERE ${where.join(" AND ")}
+      ORDER BY employee_name ASC
+      LIMIT ${includeAll ? 500 : safeLimit(filters.limit)}`,
+    params,
+  );
+
+  const employeeIds = (rows as any[]).map((row) => row.id).filter(Boolean);
+  const sessionsByEmployee = new Map<string, any[]>();
+  if (employeeIds.length > 0) {
+    const placeholders = employeeIds.map(() => "?").join(", ");
+    const [sessionRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+          id,
+          employee_id,
+          break_start_time,
+          break_end_time,
+          duration_minutes,
+          break_type,
+          break_reason,
+          status,
+          no_biometric_punch_flag,
+          exception_reason
+         FROM break_sessions
+        WHERE shift_date = ?
+          AND employee_id IN (${placeholders})
+        ORDER BY break_start_time DESC`,
+      [shiftDate, ...employeeIds],
+    );
+    for (const row of sessionRows as any[]) {
+      const bucket = sessionsByEmployee.get(String(row.employee_id)) ?? [];
+      bucket.push(row);
+      sessionsByEmployee.set(String(row.employee_id), bucket);
+    }
+  }
+
+  const settings = await getSettings(kiosk.branch_id, kiosk.process_id);
+  const mapped = (rows as any[]).map((row) => {
+    const status = deriveStatus(row, settings);
+    const shiftDurationMinutes = row.biometric_punch_in_time
+      ? minutesBetween(String(row.biometric_punch_in_time), String(row.biometric_punch_out_time ?? currentIstDateTime().dateTime)).minutes
+      : 0;
+    const todaySessions = sessionsByEmployee.get(String(row.id)) ?? [];
+    return {
+      employee_id: row.id,
+      employee_code: row.employee_code,
+      employee_name: row.employee_name,
+      avatar_url: row.avatar_url,
+      branch_name: row.branch_name,
+      process_name: row.process_name,
+      department_name: row.department_name,
+      designation_name: row.designation_name,
+      manager_name: row.manager_name,
+      manager_email: row.manager_email,
+      biometric_id: row.cosec_user_id ?? row.employee_code,
+      biometric_punch_in_time: row.biometric_punch_in_time,
+      biometric_punch_out_time: row.biometric_punch_out_time,
+      biometric_minutes: Number(row.biometric_minutes ?? 0),
+      attendance_source_system: row.attendance_source_system ?? null,
+      shift_name: row.shift_name,
+      shift_start_time: row.shift_start_time ?? null,
+      shift_end_time: row.shift_end_time ?? null,
+      shift_duration_minutes: shiftDurationMinutes,
+      roster_status: row.roster_status,
+      leave_name: row.leave_name,
+      total_break_minutes: Number(row.total_break_minutes ?? 0),
+      mini_break_count: Number(row.mini_break_count ?? 0),
+      long_break_count: Number(row.long_break_count ?? 0),
+      total_break_count: todaySessions.filter((session) => session?.status !== "CANCELLED").length,
+      last_break_reason: row.active_break_reason ?? row.last_break_reason ?? null,
+      active_break_id: row.active_break_id ?? null,
+      active_break_start_time: row.active_break_start_time ?? null,
+      active_break_minutes: status.activeMinutes,
+      no_biometric_punch_flag: Boolean(row.no_biometric_punch_flag ?? 0),
+      manager_approval_required: Boolean(row.manager_approval_required ?? 0),
+      current_status: status.label,
+      current_status_tone: status.tone,
+      exceeded_minutes: status.isExceeded
+        ? Math.max(0, status.activeMinutes - Number(settings.active_break_alert_minutes ?? 10))
+        : 0,
+      today_sessions: todaySessions,
+      safe_actions: {
+        can_punch_in: !row.biometric_punch_in_time,
+        can_punch_out: Boolean(row.biometric_punch_in_time) && !Boolean(row.biometric_punch_out_time),
+        can_start_break: status.label === "On Duty",
+        can_end_break: Boolean(row.active_break_id),
+        exception_start_allowed: !row.biometric_punch_in_time && Boolean(settings.allow_break_without_biometric),
+      },
+    };
+  });
+
+  const counters = {
+    entered: mapped.filter((row) => Boolean(row.biometric_punch_in_time)).length,
+    onDuty: mapped.filter((row) => row.current_status === "On Duty").length,
+    onBreak: mapped.filter((row) => row.current_status === "On Break").length,
+    breakExceeded: mapped.filter((row) => row.current_status === "Break Exceeded").length,
+    miniBreaksToday: mapped.reduce((sum, row) => sum + Number(row.mini_break_count ?? 0), 0),
+    longBreaksToday: mapped.reduce((sum, row) => sum + Number(row.long_break_count ?? 0), 0),
+    noPunchFound: mapped.filter((row) => row.current_status === "No Punch Found").length,
+    shiftCompleted: mapped.filter((row) => row.current_status === "Shift Completed").length,
+  };
+
+  const filteredByStatus = filters.status
+    ? mapped.filter((row) => row.current_status === filters.status)
+    : mapped;
+
+  const [syncRows] = await db.execute<RowDataPacket[]>(
+    `SELECT MAX(updated_at) AS last_sync_time FROM integration_biometric_daily`,
+  ).catch(() => [[] as RowDataPacket[], []]);
+
+  return {
+    shiftDate,
+    settings,
+    counters,
+    employees: filteredByStatus,
+    lastSyncTime: (syncRows as any[])[0]?.last_sync_time ?? null,
+  };
+}
+
+async function filterOptionsForKiosk(kiosk: KioskDevice, shiftDate: string) {
+  const branchWhere = kiosk.branch_id ? "AND e.branch_id = ?" : "";
+  const processWhere = kiosk.process_id ? "AND e.process_id = ?" : "";
+  const scopeParams = [kiosk.branch_id, kiosk.process_id].filter(Boolean);
+
+  const [branchRows, processRows, departmentRows, managerRows, shiftRows] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT e.branch_id AS value, bm.branch_name AS label
+         FROM employees e
+         LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        WHERE e.active_status = 1
+          ${branchWhere}
+          ${processWhere}
+          AND e.branch_id IS NOT NULL
+        ORDER BY bm.branch_name ASC`,
+      scopeParams,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT e.process_id AS value, pm.process_name AS label
+         FROM employees e
+         LEFT JOIN process_master pm ON pm.id = e.process_id
+        WHERE e.active_status = 1
+          ${branchWhere}
+          ${processWhere}
+          AND e.process_id IS NOT NULL
+        ORDER BY pm.process_name ASC`,
+      scopeParams,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT e.department_id AS value, dm.dept_name AS label
+         FROM employees e
+         LEFT JOIN department_master dm ON dm.id = e.department_id
+        WHERE e.active_status = 1
+          ${branchWhere}
+          ${processWhere}
+          AND e.department_id IS NOT NULL
+        ORDER BY dm.dept_name ASC`,
+      scopeParams,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT e.reporting_manager_id AS value,
+              COALESCE(NULLIF(TRIM(mgr.full_name), ''), TRIM(CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name, '')))) AS label
+         FROM employees e
+         LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
+        WHERE e.active_status = 1
+          ${branchWhere}
+          ${processWhere}
+          AND e.reporting_manager_id IS NOT NULL
+        ORDER BY label ASC`,
+      scopeParams,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT
+          COALESCE(NULLIF(sm.shift_name, ''), NULLIF(CONCAT(COALESCE(ra.shift_start_time, ''), CASE WHEN ra.shift_end_time IS NOT NULL AND ra.shift_end_time <> '' THEN CONCAT(' - ', ra.shift_end_time) ELSE '' END), '')) AS label,
+          COALESCE(NULLIF(sm.shift_name, ''), NULLIF(CONCAT(COALESCE(ra.shift_start_time, ''), CASE WHEN ra.shift_end_time IS NOT NULL AND ra.shift_end_time <> '' THEN CONCAT(' - ', ra.shift_end_time) ELSE '' END), '')) AS value
+         FROM wfm_roster_assignment ra
+         JOIN employees e ON e.id = ra.employee_id
+         LEFT JOIN wfm_shift_master sm ON sm.id = ra.shift_id
+         WHERE ra.roster_date = ?
+           ${branchWhere}
+           ${processWhere}
+           AND COALESCE(NULLIF(sm.shift_name, ''), NULLIF(CONCAT(COALESCE(ra.shift_start_time, ''), CASE WHEN ra.shift_end_time IS NOT NULL AND ra.shift_end_time <> '' THEN CONCAT(' - ', ra.shift_end_time) ELSE '' END), '')) <> ''
+         ORDER BY label ASC`,
+      [shiftDate, ...scopeParams],
+    ).catch(() => [[] as RowDataPacket[], []]),
+  ]);
+
+  const mapRows = (value: any) => (value[0] as any[]).filter((row) => row?.value && row?.label);
+  return {
+    branches: mapRows(branchRows),
+    processes: mapRows(processRows),
+    departments: mapRows(departmentRows),
+    managers: mapRows(managerRows),
+    shifts: mapRows(shiftRows),
+    statuses: STATUS_OPTIONS.map((status) => ({ value: status, label: status })),
+    breakReasons: BREAK_REASONS.map((reason) => ({ value: reason, label: reason })),
+  };
+}
+
+async function getEmployeeContext(employeeId: string): Promise<EmployeeContext | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        e.id,
+        e.employee_code,
+        e.branch_id,
+        e.process_id,
+        e.department_id,
+        e.reporting_manager_id AS manager_id,
+        COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name
+       FROM employees e
+      WHERE e.id = ?
+        AND e.active_status = 1
+      LIMIT 1`,
+    [employeeId],
+  );
+  return ((rows as any[])[0] ?? null) as EmployeeContext | null;
+}
+
+export const breakManagementService = {
+  async validatePublicKioskAccess(kioskCode: string, token: string, req: Request) {
+    return validateKiosk(kioskCode, token, req);
+  },
+
+  async getDeskBootstrap(kioskCode: string, token: string, req: Request, date?: string | null) {
+    const kiosk = await validateKiosk(kioskCode, token, req);
+    const rows = await fetchDeskRows(kiosk, { date: date ?? undefined, limit: 500 }, true);
+    return {
+      kiosk: {
+        kiosk_code: kiosk.kiosk_code,
+        kiosk_name: kiosk.kiosk_name,
+        branch_name: kiosk.branch_name,
+        process_name: kiosk.process_name,
+        branch_id: kiosk.branch_id,
+        process_id: kiosk.process_id,
+      },
+      shift_date: rows.shiftDate,
+      last_sync_time: rows.lastSyncTime,
+      counters: rows.counters,
+      settings: rows.settings,
+      filters: await filterOptionsForKiosk(kiosk, rows.shiftDate),
+    };
+  },
+
+  async listDeskEmployees(kioskCode: string, token: string, req: Request, filters: DeskFilters) {
+    const kiosk = await validateKiosk(kioskCode, token, req);
+    const data = await fetchDeskRows(kiosk, filters, false);
+    return {
+      shift_date: data.shiftDate,
+      last_sync_time: data.lastSyncTime,
+      counters: data.counters,
+      employees: data.employees,
+    };
+  },
+
+  async startBreak(kioskCode: string, token: string, req: Request, payload: {
+    employee_id: string;
+    break_reason: string;
+    exception_reason?: string | null;
+    manager_approval_required?: boolean;
+    date?: string | null;
+  }) {
+    const kiosk = await validateKiosk(kioskCode, token, req);
+    const employee = await getEmployeeContext(payload.employee_id);
+    if (!employee) throw new Error("Employee not found or inactive");
+    assertEmployeeWithinKioskScope(kiosk, employee);
+
+    const shiftDate = resolveShiftDate(payload.date ?? null);
+    const settings = await getSettings(employee.branch_id ?? kiosk.branch_id, employee.process_id ?? kiosk.process_id);
+    const [existingRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM break_sessions WHERE employee_id = ? AND shift_date = ? AND status = 'ACTIVE' LIMIT 1`,
+      [employee.id, shiftDate],
+    );
+    if ((existingRows as any[]).length > 0) throw new Error("This employee already has an active break");
+
+    const biometric = await getBiometricSnapshot(employee.id, employee.employee_code, shiftDate);
+    if (!biometric.punchIn && !Number(settings.allow_break_without_biometric ?? 0)) {
+      throw new Error("No biometric punch found. Exception start is disabled for this kiosk.");
+    }
+    if (!biometric.punchIn && Number(settings.require_exception_reason ?? 1) && !String(payload.exception_reason ?? "").trim()) {
+      throw new Error("Exception reason is required when biometric punch is missing");
+    }
+
+    const now = currentIstDateTime().dateTime;
+    const sessionId = randomUUID();
+    await db.execute(
+      `INSERT INTO break_sessions
+         (id, employee_id, employee_code, branch_id, process_id, department_id, manager_id,
+          shift_date, break_start_time, break_reason, status, start_source, kiosk_device_id,
+          biometric_punch_in_time, biometric_punch_out_time, no_biometric_punch_flag,
+          exception_reason, manager_approval_required)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'KIOSK', ?, ?, ?, ?, ?, ?)`,
+      [
+        sessionId,
+        employee.id,
+        employee.employee_code,
+        employee.branch_id ?? kiosk.branch_id,
+        employee.process_id ?? kiosk.process_id,
+        employee.department_id ?? null,
+        employee.manager_id ?? null,
+        shiftDate,
+        now,
+        payload.break_reason,
+        kiosk.id,
+        biometric.punchIn,
+        biometric.punchOut,
+        biometric.punchIn ? 0 : 1,
+        payload.exception_reason?.trim() || null,
+        payload.manager_approval_required || !biometric.punchIn ? 1 : 0,
+      ],
+    );
+
+    await rebuildDailySummary(
+      employee.id,
+      employee.employee_code,
+      shiftDate,
+      employee.branch_id ?? kiosk.branch_id,
+      employee.process_id ?? kiosk.process_id,
+      employee.manager_id ?? null,
+    );
+
+    await writeBreakAudit({
+      entityType: "break_session",
+      entityId: sessionId,
+      action: "START_BREAK",
+      employeeId: employee.id,
+      performedByType: "KIOSK",
+      kioskDeviceId: kiosk.id,
+      newValue: {
+        break_reason: payload.break_reason,
+        no_biometric_punch_flag: !biometric.punchIn,
+        exception_reason: payload.exception_reason ?? null,
+      },
+      req,
+    });
+
+    const result = await this.listDeskEmployees(kioskCode, token, req, { date: shiftDate, search: employee.employee_code, limit: 1 });
+    return {
+      session_id: sessionId,
+      shift_date: shiftDate,
+      employee: result.employees[0] ?? null,
+    };
+  },
+
+  async endBreak(kioskCode: string, token: string, req: Request, payload: {
+    break_session_id?: string | null;
+    employee_id: string;
+    date?: string | null;
+  }) {
+    const kiosk = await validateKiosk(kioskCode, token, req);
+    const shiftDate = resolveShiftDate(payload.date ?? null);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT *
+         FROM break_sessions
+        WHERE employee_id = ?
+          AND shift_date = ?
+          AND status = 'ACTIVE'
+          ${payload.break_session_id ? "AND id = ?" : ""}
+        ORDER BY break_start_time DESC
+        LIMIT 1`,
+      payload.break_session_id
+        ? [payload.employee_id, shiftDate, payload.break_session_id]
+        : [payload.employee_id, shiftDate],
+    );
+    const session = (rows as any[])[0];
+    if (!session) throw new Error("No active break found for this employee");
+
+    const employee = await getEmployeeContext(payload.employee_id);
+    if (!employee) throw new Error("Employee not found");
+    assertEmployeeWithinKioskScope(kiosk, employee);
+    const settings = await getSettings(employee.branch_id ?? kiosk.branch_id, employee.process_id ?? kiosk.process_id);
+    const endedAt = currentIstDateTime().dateTime;
+    const duration = minutesBetween(String(session.break_start_time), endedAt);
+    const breakType = classifyBreak(duration.minutes, settings);
+    const biometric = await getBiometricSnapshot(employee.id, employee.employee_code, shiftDate);
+
+    await db.execute(
+      `UPDATE break_sessions
+          SET break_end_time = ?,
+              duration_seconds = ?,
+              duration_minutes = ?,
+              break_type = ?,
+              status = ?,
+              end_source = 'KIOSK',
+              biometric_punch_out_time = ?,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?`,
+      [
+        endedAt,
+        duration.seconds,
+        duration.minutes,
+        breakType,
+        session.no_biometric_punch_flag ? "EXCEPTION" : "COMPLETED",
+        biometric.punchOut,
+        session.id,
+      ],
+    );
+
+    await rebuildDailySummary(
+      employee.id,
+      employee.employee_code,
+      shiftDate,
+      employee.branch_id ?? kiosk.branch_id,
+      employee.process_id ?? kiosk.process_id,
+      employee.manager_id ?? null,
+    );
+    await sendBreakAlertIfNeeded(session.id);
+
+    await writeBreakAudit({
+      entityType: "break_session",
+      entityId: session.id,
+      action: "END_BREAK",
+      employeeId: employee.id,
+      performedByType: "KIOSK",
+      kioskDeviceId: kiosk.id,
+      oldValue: { status: "ACTIVE" },
+      newValue: {
+        break_end_time: endedAt,
+        duration_minutes: duration.minutes,
+        break_type: breakType,
+      },
+      req,
+    });
+
+    const result = await this.listDeskEmployees(kioskCode, token, req, { date: shiftDate, search: employee.employee_code, limit: 1 });
+    return {
+      session_id: session.id,
+      shift_date: shiftDate,
+      duration_minutes: duration.minutes,
+      break_type: breakType,
+      employee: result.employees[0] ?? null,
+    };
+  },
+
+  async punchIn(kioskCode: string, token: string, req: Request, payload: {
+    employee_id: string;
+    date?: string | null;
+  }) {
+    const kiosk = await validateKiosk(kioskCode, token, req);
+    const employee = await getEmployeeContext(payload.employee_id);
+    if (!employee) throw new Error("Employee not found or inactive");
+    assertEmployeeWithinKioskScope(kiosk, employee);
+    const shiftDate = resolveShiftDate(payload.date ?? null);
+    const result = await recordManualDeskPunch(employee, shiftDate, "IN");
+    await rebuildDailySummary(
+      employee.id,
+      employee.employee_code,
+      shiftDate,
+      employee.branch_id ?? kiosk.branch_id,
+      employee.process_id ?? kiosk.process_id,
+      employee.manager_id ?? null,
+    );
+    await writeBreakAudit({
+      entityType: "attendance_manual_punch",
+      entityId: randomUUID(),
+      action: "PUNCH_IN",
+      employeeId: employee.id,
+      performedByType: "KIOSK",
+      kioskDeviceId: kiosk.id,
+      newValue: { punch_in_time: result.actionTime, source: "manual_kiosk" },
+      req,
+    });
+    const latest = await this.listDeskEmployees(kioskCode, token, req, { date: shiftDate, search: employee.employee_code, limit: 1 });
+    return {
+      shift_date: shiftDate,
+      action_time: result.actionTime,
+      employee: latest.employees[0] ?? null,
+    };
+  },
+
+  async punchOut(kioskCode: string, token: string, req: Request, payload: {
+    employee_id: string;
+    date?: string | null;
+  }) {
+    const kiosk = await validateKiosk(kioskCode, token, req);
+    const employee = await getEmployeeContext(payload.employee_id);
+    if (!employee) throw new Error("Employee not found or inactive");
+    assertEmployeeWithinKioskScope(kiosk, employee);
+    const shiftDate = resolveShiftDate(payload.date ?? null);
+    const result = await recordManualDeskPunch(employee, shiftDate, "OUT");
+    await rebuildDailySummary(
+      employee.id,
+      employee.employee_code,
+      shiftDate,
+      employee.branch_id ?? kiosk.branch_id,
+      employee.process_id ?? kiosk.process_id,
+      employee.manager_id ?? null,
+    );
+    await writeBreakAudit({
+      entityType: "attendance_manual_punch",
+      entityId: randomUUID(),
+      action: "PUNCH_OUT",
+      employeeId: employee.id,
+      performedByType: "KIOSK",
+      kioskDeviceId: kiosk.id,
+      newValue: { punch_out_time: result.actionTime, source: "manual_kiosk" },
+      req,
+    });
+    const latest = await this.listDeskEmployees(kioskCode, token, req, { date: shiftDate, search: employee.employee_code, limit: 1 });
+    return {
+      shift_date: shiftDate,
+      action_time: result.actionTime,
+      employee: latest.employees[0] ?? null,
+    };
+  },
+
+  async getLiveStatus(kioskCode: string, token: string, req: Request, filters: DeskFilters) {
+    return this.listDeskEmployees(kioskCode, token, req, filters);
+  },
+
+  async getDashboard(filters: { date?: string; branch_id?: string; process_id?: string }) {
+    const shiftDate = resolveShiftDate(filters.date ?? null);
+    const params: unknown[] = [shiftDate];
+    let where = "WHERE bds.shift_date = ?";
+    if (filters.branch_id) {
+      where += " AND bds.branch_id = ?";
+      params.push(filters.branch_id);
+    }
+    if (filters.process_id) {
+      where += " AND bds.process_id = ?";
+      params.push(filters.process_id);
+    }
+
+    const [summaryRows, topRows, managerRows] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT
+            COUNT(*) AS total_employees_on_duty,
+            SUM(final_status = 'On Break') AS currently_on_break,
+            SUM(final_status = 'Break Exceeded') AS break_exceeded_now,
+            SUM(mini_break_count) AS total_mini_breaks_today,
+            SUM(long_break_count) AS total_long_breaks_today,
+            SUM(total_break_minutes) AS total_break_minutes_today,
+            ROUND(AVG(NULLIF(total_break_minutes, 0)), 2) AS average_break_duration,
+            SUM(final_status = 'No Punch Found') AS no_biometric_punch_count,
+            SUM(final_status = 'Shift Completed') AS shift_completed
+           FROM break_daily_summary bds
+           ${where}`,
+        params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+            bds.employee_id,
+            bds.employee_code,
+            COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name,
+            bds.total_break_minutes,
+            bds.long_break_count
+           FROM break_daily_summary bds
+           JOIN employees e ON e.id = bds.employee_id
+           ${where}
+           ORDER BY bds.total_break_minutes DESC, bds.long_break_count DESC
+           LIMIT 10`,
+        params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), TRIM(CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name, '')))) AS manager_name,
+            COUNT(bal.id) AS alert_count
+           FROM break_alert_logs bal
+           LEFT JOIN employees mgr ON mgr.id = bal.manager_id
+           LEFT JOIN break_sessions bs ON bs.id = bal.break_session_id
+          WHERE bs.shift_date = ?
+          GROUP BY manager_name
+          ORDER BY alert_count DESC
+          LIMIT 10`,
+        [shiftDate],
+      ),
+    ]);
+
+    return {
+      shift_date: shiftDate,
+      summary: (summaryRows[0] as any[])[0] ?? {},
+      top_employees: topRows[0] ?? [],
+      manager_alerts: managerRows[0] ?? [],
+    };
+  },
+
+  async getReports(filters: {
+    date_from?: string;
+    date_to?: string;
+    branch_id?: string;
+    process_id?: string;
+    department_id?: string;
+    manager_id?: string;
+    employee_id?: string;
+    break_type?: string;
+    exception_status?: string;
+    status?: string;
+    limit?: number;
+  }) {
+    const where: string[] = ["bs.shift_date BETWEEN ? AND ?"];
+    const params: unknown[] = [
+      resolveShiftDate(filters.date_from ?? null),
+      resolveShiftDate(filters.date_to ?? filters.date_from ?? null),
+    ];
+    if (filters.branch_id) { where.push("bs.branch_id = ?"); params.push(filters.branch_id); }
+    if (filters.process_id) { where.push("bs.process_id = ?"); params.push(filters.process_id); }
+    if (filters.department_id) { where.push("bs.department_id = ?"); params.push(filters.department_id); }
+    if (filters.manager_id) { where.push("bs.manager_id = ?"); params.push(filters.manager_id); }
+    if (filters.employee_id) { where.push("bs.employee_id = ?"); params.push(filters.employee_id); }
+    if (filters.break_type) { where.push("bs.break_type = ?"); params.push(filters.break_type); }
+    if (filters.status) { where.push("bs.status = ?"); params.push(filters.status); }
+    if (filters.exception_status === "yes") where.push("bs.no_biometric_punch_flag = 1");
+    if (filters.exception_status === "no") where.push("bs.no_biometric_punch_flag = 0");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+          bs.*,
+          COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name,
+          bm.branch_name,
+          pm.process_name,
+          dm.dept_name AS department_name,
+          COALESCE(NULLIF(TRIM(mgr.full_name), ''), TRIM(CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name, '')))) AS manager_name
+         FROM break_sessions bs
+         JOIN employees e ON e.id = bs.employee_id
+         LEFT JOIN branch_master bm ON bm.id = bs.branch_id
+         LEFT JOIN process_master pm ON pm.id = bs.process_id
+         LEFT JOIN department_master dm ON dm.id = bs.department_id
+         LEFT JOIN employees mgr ON mgr.id = bs.manager_id
+        WHERE ${where.join(" AND ")}
+        ORDER BY bs.shift_date DESC, bs.break_start_time DESC
+        LIMIT ${safeLimit(filters.limit ?? 200, 200)}`,
+      params,
+    );
+    return { rows };
+  },
+
+  async getSettingsView() {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM break_settings ORDER BY (branch_id IS NULL) DESC, (process_id IS NULL) DESC, updated_at DESC`,
+    );
+    return { rows };
+  },
+
+  async saveSettings(input: Record<string, unknown>, performedById: string, req: Request) {
+    const id = String(input.id ?? randomUUID());
+    const branchId = String(input.branch_id ?? "") || null;
+    const processId = String(input.process_id ?? "") || null;
+    await db.execute(
+      `INSERT INTO break_settings
+         (id, branch_id, process_id, mini_break_max_minutes, long_break_min_minutes,
+          active_break_alert_minutes, daily_total_allowed_minutes, max_long_break_count,
+          escalation_after_minutes, auto_close_on_biometric_punch_out, allow_break_without_biometric,
+          require_exception_reason, alert_reporting_manager, alert_hr, alert_wfm, alert_cc_list_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         mini_break_max_minutes = VALUES(mini_break_max_minutes),
+         long_break_min_minutes = VALUES(long_break_min_minutes),
+         active_break_alert_minutes = VALUES(active_break_alert_minutes),
+         daily_total_allowed_minutes = VALUES(daily_total_allowed_minutes),
+         max_long_break_count = VALUES(max_long_break_count),
+         escalation_after_minutes = VALUES(escalation_after_minutes),
+         auto_close_on_biometric_punch_out = VALUES(auto_close_on_biometric_punch_out),
+         allow_break_without_biometric = VALUES(allow_break_without_biometric),
+         require_exception_reason = VALUES(require_exception_reason),
+         alert_reporting_manager = VALUES(alert_reporting_manager),
+         alert_hr = VALUES(alert_hr),
+         alert_wfm = VALUES(alert_wfm),
+         alert_cc_list_json = VALUES(alert_cc_list_json),
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        id,
+        branchId,
+        processId,
+        Number(input.mini_break_max_minutes ?? 10),
+        Number(input.long_break_min_minutes ?? 10),
+        Number(input.active_break_alert_minutes ?? 10),
+        Number(input.daily_total_allowed_minutes ?? 60),
+        Number(input.max_long_break_count ?? 2),
+        Number(input.escalation_after_minutes ?? 10),
+        input.auto_close_on_biometric_punch_out ? 1 : 0,
+        input.allow_break_without_biometric ? 1 : 0,
+        input.require_exception_reason !== false ? 1 : 0,
+        input.alert_reporting_manager !== false ? 1 : 0,
+        input.alert_hr ? 1 : 0,
+        input.alert_wfm ? 1 : 0,
+        JSON.stringify(Array.isArray(input.alert_cc_list) ? input.alert_cc_list : []),
+      ],
+    );
+
+    await writeBreakAudit({
+      entityType: "break_settings",
+      entityId: id,
+      action: "UPSERT_BREAK_SETTINGS",
+      performedByType: "ADMIN",
+      performedById,
+      newValue: input,
+      req,
+    });
+
+    return { id };
+  },
+
+  async getExceptions(filters: { date?: string; limit?: number }) {
+    const shiftDate = resolveShiftDate(filters.date ?? null);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+          bs.*,
+          COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name,
+          bm.branch_name,
+          pm.process_name
+         FROM break_sessions bs
+         JOIN employees e ON e.id = bs.employee_id
+         LEFT JOIN branch_master bm ON bm.id = bs.branch_id
+         LEFT JOIN process_master pm ON pm.id = bs.process_id
+        WHERE bs.shift_date = ?
+          AND (bs.no_biometric_punch_flag = 1 OR bs.status = 'EXCEPTION')
+        ORDER BY bs.break_start_time DESC
+        LIMIT ${safeLimit(filters.limit ?? 100, 100)}`,
+      [shiftDate],
+    );
+    return { shift_date: shiftDate, rows };
+  },
+
+  async syncBiometricNow() {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(updated_at) AS last_sync_time, COUNT(*) AS imported_days FROM integration_biometric_daily`,
+    ).catch(() => [[] as RowDataPacket[], []]);
+    return {
+      status: "accepted",
+      message: "Break module linked to existing biometric sync pipeline. Current page refreshed from the latest imported biometric snapshot.",
+      snapshot: (rows as any[])[0] ?? {},
+    };
+  },
+};
