@@ -468,6 +468,30 @@ router.get("/payslip/:runId/:employeeId", h(async (req: AuthenticatedRequest, re
   return res.json({ success: true, data });
 }));
 
+// GET /api/payroll/payslip/list/:employeeId — paginated payslip history for one employee (admin/HR view)
+router.get("/payslip/list/:employeeId", requireAuth, requireRole("super_admin", "admin", "hr", "finance", "payroll", "ceo"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId } = req.params;
+  const page = Math.max(1, Number(req.query.page ?? 1));
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 12)));
+  const offset = (page - 1) * limit;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT pr.id AS run_id, pr.run_label, pr.period_label, pr.pay_date,
+            pe.net_pay, pe.gross_pay, pe.total_deductions, pe.status
+       FROM payroll_employee pe
+       JOIN payroll_run pr ON pr.id = pe.run_id
+      WHERE pe.employee_id = ? AND pe.status != 'draft'
+      ORDER BY pr.pay_date DESC LIMIT ? OFFSET ?`,
+    [employeeId, limit, offset],
+  );
+  const [[countRow]] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM payroll_employee pe
+       JOIN payroll_run pr ON pr.id = pe.run_id
+      WHERE pe.employee_id = ? AND pe.status != 'draft'`,
+    [employeeId],
+  );
+  return res.json({ success: true, data: rows, total: Number(countRow.total), page, limit });
+}));
+
 // POST /api/payroll/payslip/:runId/generate — admin/hr/finance/payroll only
 router.post(
   "/payslip/:runId/generate",

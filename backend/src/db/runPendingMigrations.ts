@@ -268,6 +268,7 @@ const MIGRATION_MANIFEST: string[] = [
   "375_salary_prep_line_attendance_source.sql",
   "376_break_management_module.sql",
   "391_payroll_validation_freeze_columns.sql",
+  "393_break_kiosk_allowed_processes.sql",
   ];
 
 export type MigrationHealth = {

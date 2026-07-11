@@ -294,7 +294,7 @@ const Profile = () => {
                   <p className="text-sm font-black uppercase tracking-[0.2em] text-green-200">
                     Employee Profile
                   </p>
-                  <h1 className="mt-2 text-balance text-4xl font-black tracking-tight">
+                  <h1 className="mt-2 text-balance text-3xl font-black tracking-tight sm:text-4xl break-words">
                     {employee.first_name} {employee.last_name}
                   </h1>
                   <p className="mt-2 text-lg font-bold text-blue-100">

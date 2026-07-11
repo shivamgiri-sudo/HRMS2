@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Copy, KeyRound, Link2, Loader2, MonitorCog, Plus, RefreshCw, RotateCcw, Save, Search, ShieldCheck, SlidersHorizontal } from "lucide-react";
@@ -16,8 +16,10 @@ type KioskDevice = {
   kiosk_name: string;
   branch_id: string | null;
   process_id: string | null;
+  allowed_process_ids: string[];
   branch_name: string | null;
   process_name: string | null;
+  allowed_process_names: string | null;
   allowed_ip_list: string[];
   allowed_device_fingerprints: string[];
   is_active: number | boolean;
@@ -32,6 +34,7 @@ type KioskPayload = {
   kiosk_name: string;
   branch_id: string | null;
   process_id: string | null;
+  allowed_process_ids: string[];
   token?: string;
   allowed_ip_list: string[];
   allowed_device_fingerprints: string[];
@@ -50,6 +53,7 @@ const emptyForm: KioskPayload = {
   kiosk_name: "",
   branch_id: null,
   process_id: null,
+  allowed_process_ids: [],
   token: "",
   allowed_ip_list: [],
   allowed_device_fingerprints: [],
@@ -82,6 +86,7 @@ function formatDateTime(value: string | null) {
 
 export default function BreakDeskDevices() {
   const qc = useQueryClient();
+  const formRef = useRef<HTMLElement | null>(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"active" | "inactive" | "all">("active");
   const [selected, setSelected] = useState<KioskDevice | null>(null);
@@ -124,7 +129,8 @@ export default function BreakDeskDevices() {
         kiosk_code: form.kiosk_code.trim().toUpperCase(),
         kiosk_name: form.kiosk_name.trim(),
         branch_id: form.branch_id || null,
-        process_id: form.process_id || null,
+        process_id: form.allowed_process_ids[0] ?? null,
+        allowed_process_ids: form.allowed_process_ids,
         token: form.token?.trim() || undefined,
         allowed_ip_list: splitList(ipText),
         allowed_device_fingerprints: splitList(fingerprintText),
@@ -161,7 +167,7 @@ export default function BreakDeskDevices() {
 
   const rows = kiosks.data ?? [];
   const activeCount = rows.filter((row) => Boolean(row.is_active)).length;
-  const unmappedCount = rows.filter((row) => !row.branch_id || !row.process_id).length;
+  const unmappedCount = rows.filter((row) => !row.branch_id || !(row.allowed_process_ids?.length || row.process_id)).length;
 
   function resetForm() {
     setSelected(null);
@@ -170,19 +176,41 @@ export default function BreakDeskDevices() {
     setFingerprintText("");
   }
 
+  function startNewDesk() {
+    resetForm();
+    setTokenResult(null);
+    window.setTimeout(() => {
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      formRef.current?.querySelector<HTMLInputElement>("input")?.focus();
+    }, 50);
+  }
+
   function editDevice(device: KioskDevice) {
+    const mappedProcessIds = device.allowed_process_ids?.length ? device.allowed_process_ids : (device.process_id ? [device.process_id] : []);
     setSelected(device);
     setForm({
       kiosk_code: device.kiosk_code,
       kiosk_name: device.kiosk_name,
       branch_id: device.branch_id,
       process_id: device.process_id,
+      allowed_process_ids: mappedProcessIds,
       allowed_ip_list: device.allowed_ip_list ?? [],
       allowed_device_fingerprints: device.allowed_device_fingerprints ?? [],
       is_active: Boolean(device.is_active),
     });
     setIpText(joinList(device.allowed_ip_list ?? []));
     setFingerprintText(joinList(device.allowed_device_fingerprints ?? []));
+    window.setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  }
+
+  function toggleProcess(processId: string) {
+    setForm((current) => {
+      const exists = current.allowed_process_ids.includes(processId);
+      const nextIds = exists
+        ? current.allowed_process_ids.filter((id) => id !== processId)
+        : [...current.allowed_process_ids, processId];
+      return { ...current, allowed_process_ids: nextIds, process_id: nextIds[0] ?? null };
+    });
   }
 
   async function copyText(value: string, label: string) {
@@ -222,7 +250,7 @@ export default function BreakDeskDevices() {
                   Create guard desk IDs, lock each desk to a branch and process, and rotate tokens without exposing stored secrets.
                 </p>
               </div>
-              <button onClick={resetForm} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-bold text-[#145da0] shadow-sm transition hover:bg-slate-50">
+              <button onClick={startNewDesk} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-bold text-[#145da0] shadow-sm transition hover:bg-slate-50">
                 <Plus className="h-4 w-4" />
                 New desk ID
               </button>
@@ -292,7 +320,7 @@ export default function BreakDeskDevices() {
                     ) : rows.length === 0 ? (
                       <tr><td colSpan={6} className="px-3 py-10 text-center text-slate-500">No break desk IDs found.</td></tr>
                     ) : rows.map((device) => {
-                      const mapped = Boolean(device.branch_id && device.process_id);
+                      const mapped = Boolean(device.branch_id && (device.allowed_process_ids?.length || device.process_id));
                       return (
                         <tr key={device.id} className={cn("align-top transition hover:bg-slate-50", selected?.id === device.id && "bg-sky-50/60")}>
                           <td className="px-3 py-3">
@@ -314,7 +342,7 @@ export default function BreakDeskDevices() {
                               {mapped ? "Branch + Process locked" : "Mapping incomplete"}
                             </div>
                             <div className="mt-2 text-xs text-slate-600">{device.branch_name ?? "All branches"}</div>
-                            <div className="text-xs text-slate-500">{device.process_name ?? "All processes"}</div>
+                            <div className="text-xs text-slate-500">{device.allowed_process_names ?? device.process_name ?? "All processes"}</div>
                           </td>
                           <td className="px-3 py-3 text-center font-black text-slate-800">{Number(device.scoped_employee_count ?? 0)}</td>
                           <td className="px-3 py-3 text-xs text-slate-600">
@@ -341,7 +369,7 @@ export default function BreakDeskDevices() {
               </div>
             </section>
 
-            <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <section ref={formRef} className={cn("rounded-2xl border bg-white shadow-sm", selected ? "border-sky-200" : "border-[#145da0]/25")}>
               <div className="border-b border-slate-200 p-3">
                 <div className="flex items-center gap-2 text-base font-black">
                   <SlidersHorizontal className="h-4 w-4 text-[#145da0]" />
@@ -351,6 +379,20 @@ export default function BreakDeskDevices() {
               </div>
 
               <div className="space-y-3 p-3">
+                {!selected ? (
+                  <div className="rounded-2xl border border-[#145da0]/20 bg-[#145da0]/5 p-3 text-xs text-slate-700">
+                    <div className="mb-2 font-black text-[#145da0]">How to create a desk ID</div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <Step label="1. Kiosk code" text="Unique login ID for the guard desk, like NOIDA-SALES-FLOOR-1." />
+                      <Step label="2. Desk name" text="Human name shown in admin, like Noida Sales Floor 1 Security Desk." />
+                      <Step label="3. Branch" text="Select the physical branch. Do not leave All branches for production." />
+                      <Step label="4. Processes" text="Tick every process this guard desk can operate. Others stay blocked." />
+                      <Step label="5. Token" text="Leave blank to auto-generate. Copy it once after saving." />
+                      <Step label="6. IP/device" text="Optional restrictions for fixed security desk machines." />
+                    </div>
+                  </div>
+                ) : null}
+
                 <Field label="Kiosk code">
                   <input value={form.kiosk_code} onChange={(event) => setForm((current) => ({ ...current, kiosk_code: event.target.value.toUpperCase() }))} placeholder="NOIDA-SALES-FLOOR-1" className="input-desk" />
                 </Field>
@@ -358,24 +400,40 @@ export default function BreakDeskDevices() {
                   <input value={form.kiosk_name} onChange={(event) => setForm((current) => ({ ...current, kiosk_name: event.target.value }))} placeholder="Noida Sales Floor 1 Security Desk" className="input-desk" />
                 </Field>
 
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-3">
                   <Field label="Branch">
                     <select value={form.branch_id ?? ""} onChange={(event) => setForm((current) => ({ ...current, branch_id: event.target.value || null }))} className="input-desk">
                       <option value="">All branches</option>
                       {(branches.data ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name ?? branch.name ?? branch.id}</option>)}
                     </select>
                   </Field>
-                  <Field label="Process">
-                    <select value={form.process_id ?? ""} onChange={(event) => setForm((current) => ({ ...current, process_id: event.target.value || null }))} className="input-desk">
-                      <option value="">All processes</option>
-                      {(processes.data ?? []).map((process) => <option key={process.id} value={process.id}>{process.process_name ?? process.name ?? process.id}</option>)}
-                    </select>
-                  </Field>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Processes</span>
+                      <span className="text-[11px] font-bold text-slate-500">{form.allowed_process_ids.length} selected</span>
+                    </div>
+                    <div className="max-h-56 overflow-auto rounded-xl border border-slate-200 bg-white p-2">
+                      {processes.isLoading ? (
+                        <div className="flex items-center gap-2 px-2 py-3 text-xs text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading processes</div>
+                      ) : (processes.data ?? []).length === 0 ? (
+                        <div className="px-2 py-3 text-xs text-slate-500">No processes found.</div>
+                      ) : (processes.data ?? []).map((process) => {
+                        const label = process.process_name ?? process.name ?? process.id;
+                        const checked = form.allowed_process_ids.includes(process.id);
+                        return (
+                          <label key={process.id} className={cn("flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm transition hover:bg-slate-50", checked && "bg-[#145da0]/8 text-[#145da0]")}>
+                            <input type="checkbox" checked={checked} onChange={() => toggleProcess(process.id)} className="h-4 w-4 accent-[#145da0]" />
+                            <span className="font-semibold">{label}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
 
-                {!form.branch_id || !form.process_id ? (
+                {!form.branch_id || form.allowed_process_ids.length === 0 ? (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
-                    Production desks should be locked to both branch and process.
+                    Production desks should be locked to one branch and at least one process.
                   </div>
                 ) : (
                   <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
@@ -404,7 +462,7 @@ export default function BreakDeskDevices() {
                 </label>
 
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <button onClick={() => save.mutate()} disabled={save.isPending || !form.kiosk_code.trim() || !form.kiosk_name.trim()} className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-[#145da0] px-4 text-sm font-black text-white transition hover:bg-[#0a2c60] disabled:opacity-60">
+                  <button onClick={() => save.mutate()} disabled={save.isPending || !form.kiosk_code.trim() || !form.kiosk_name.trim() || !form.branch_id || form.allowed_process_ids.length === 0} className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-[#145da0] px-4 text-sm font-black text-white transition hover:bg-[#0a2c60] disabled:opacity-60">
                     {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                     {selected ? "Save mapping" : "Create desk ID"}
                   </button>
@@ -436,6 +494,15 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <span className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">{label}</span>
       {children}
     </label>
+  );
+}
+
+function Step({ label, text }: { label: string; text: string }) {
+  return (
+    <div className="rounded-xl bg-white/75 px-3 py-2">
+      <div className="font-black text-slate-800">{label}</div>
+      <div className="mt-0.5 leading-5 text-slate-600">{text}</div>
+    </div>
   );
 }
 

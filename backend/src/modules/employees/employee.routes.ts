@@ -436,7 +436,8 @@ router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*) AS total_employees,
-       COUNT(CASE WHEN employment_status = 'active' THEN 1 END) AS active_employees,
+       COUNT(CASE WHEN active_status = 1 AND LOWER(COALESCE(employment_status, 'active')) NOT IN ('inactive','terminated','offboarded','absconded','resigned','left','separated') THEN 1 END) AS active_employees,
+       COUNT(CASE WHEN LOWER(COALESCE(employment_status, '')) IN ('inactive','terminated','offboarded','absconded','resigned','left','separated') THEN 1 END) AS inactive_employees,
        COUNT(CASE WHEN DATEDIFF(NOW(), date_of_joining) <= 90 THEN 1 END) AS new_joiners_90d
      FROM employees WHERE active_status = 1`
   );
@@ -608,12 +609,13 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
   let leaveBalances: RowDataPacket[] = [];
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT lbl.leave_code, lt.leave_name,
-              lbl.opening_balance + lbl.accrued_days - lbl.used_days AS available_days,
-              lbl.used_days
+      `SELECT lt.leave_code, lt.leave_name,
+              COALESCE(lbl.allocated_days, 0) + COALESCE(lbl.adjusted_days, 0) - COALESCE(lbl.used_days, 0) AS available_days,
+              COALESCE(lbl.used_days, 0) AS used_days
          FROM leave_balance_ledger lbl
-         LEFT JOIN leave_type_master lt ON lt.leave_code = lbl.leave_code
-        WHERE lbl.employee_id = ? AND YEAR(lbl.valid_for) = YEAR(NOW())`,
+         JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
+        WHERE lbl.employee_id = ? AND lbl.balance_year = YEAR(NOW())
+        ORDER BY lt.leave_name`,
       [targetId]
     );
     leaveBalances = rows;
@@ -643,33 +645,38 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
     const [perfRows] = await db.execute<RowDataPacket[]>(
       `SELECT pfr.overall_score, pfc.period
          FROM performance_feedback_report pfr
-         JOIN performance_feedback_request pfq ON pfq.request_id = pfr.request_id
-         JOIN performance_feedback_cycle pfc ON pfc.cycle_id = pfq.cycle_id
-        WHERE pfq.employee_id = ?
-        ORDER BY pfr.created_at DESC LIMIT 1`,
+         JOIN performance_feedback_cycle pfc ON pfc.cycle_id = pfr.cycle_id
+        WHERE pfr.employee_id = ?
+        ORDER BY pfr.report_generated_at DESC LIMIT 1`,
       [targetId]
     );
     performance = perfRows[0] ?? null;
   } catch (_e) { /* table may not exist yet */ }
 
-  // Active assets
+  // Active assets — use returned_date (aligned with secure route)
   let activeAssets = 0;
   try {
     const [assetRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS active_assets FROM asset_assignment WHERE employee_id = ? AND return_date IS NULL`,
+      `SELECT COUNT(*) AS active_assets FROM asset_assignment WHERE employee_id = ? AND returned_date IS NULL`,
       [targetId]
     );
     activeAssets = Number(assetRows[0]?.active_assets ?? 0);
   } catch (_e) { /* table may not exist yet */ }
 
-  // Pending documents
-  let pendingDocs = 0;
+  // Documents — 3-way split: missing / awaiting verification / verified
+  let missingDocs = 0, awaitingVerification = 0, verifiedDocs = 0;
   try {
     const [docRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS pending_docs FROM employee_documents WHERE employee_id = ? AND verified = 0`,
+      `SELECT
+         SUM(CASE WHEN (file_url IS NULL OR file_url = '') THEN 1 ELSE 0 END) AS missing_docs,
+         SUM(CASE WHEN file_url IS NOT NULL AND file_url <> '' AND verified = 0 THEN 1 ELSE 0 END) AS awaiting_verification,
+         SUM(CASE WHEN verified = 1 THEN 1 ELSE 0 END) AS verified_docs
+         FROM employee_documents WHERE employee_id = ?`,
       [targetId]
     );
-    pendingDocs = Number(docRows[0]?.pending_docs ?? 0);
+    missingDocs = Number(docRows[0]?.missing_docs ?? 0);
+    awaitingVerification = Number(docRows[0]?.awaiting_verification ?? 0);
+    verifiedDocs = Number(docRows[0]?.verified_docs ?? 0);
   } catch (_e) { /* table may not exist yet */ }
 
   // Gamification tier
@@ -711,7 +718,10 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
       attendance,
       performance,
       active_assets: activeAssets,
-      pending_docs: pendingDocs,
+      missing_docs: missingDocs,
+      awaiting_verification: awaitingVerification,
+      verified_docs: verifiedDocs,
+      pending_docs: missingDocs,
       gamification_tier: gamificationTier,
       journey,
     }

@@ -17,6 +17,7 @@ type KioskDevice = {
   branch_name: string | null;
   process_id: string | null;
   process_name: string | null;
+  allowed_process_ids: string | null;
   token_hash: string;
   allowed_ip_list: string | null;
   allowed_device_fingerprints: string | null;
@@ -224,11 +225,17 @@ function normalizeStringArrayInput(value: unknown): string[] {
   return Array.from(new Set(value.map((item) => String(item).trim()).filter(Boolean)));
 }
 
+function kioskProcessIds(kiosk: Pick<KioskDevice, "allowed_process_ids" | "process_id">): string[] {
+  const mapped = normalizeJsonArray(kiosk.allowed_process_ids);
+  return mapped.length > 0 ? mapped : [kiosk.process_id].filter(Boolean).map(String);
+}
+
 function assertEmployeeWithinKioskScope(kiosk: KioskDevice, employee: EmployeeContext) {
   if (kiosk.branch_id && employee.branch_id && kiosk.branch_id !== employee.branch_id) {
     throw new Error("This kiosk cannot act on employees from another branch");
   }
-  if (kiosk.process_id && employee.process_id && kiosk.process_id !== employee.process_id) {
+  const allowedProcesses = kioskProcessIds(kiosk);
+  if (allowedProcesses.length > 0 && (!employee.process_id || !allowedProcesses.includes(employee.process_id))) {
     throw new Error("This kiosk cannot act on employees from another process");
   }
 }
@@ -861,9 +868,10 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
     params.push(filters.branch_id);
   }
 
-  if (kiosk.process_id) {
-    where.push("e.process_id = ?");
-    params.push(kiosk.process_id);
+  const allowedProcesses = kioskProcessIds(kiosk);
+  if (allowedProcesses.length > 0) {
+    where.push(`e.process_id IN (${allowedProcesses.map(() => "?").join(", ")})`);
+    params.push(...allowedProcesses);
   } else if (filters.process_id) {
     where.push("e.process_id = ?");
     params.push(filters.process_id);
@@ -1110,8 +1118,9 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
 
 async function filterOptionsForKiosk(kiosk: KioskDevice, shiftDate: string) {
   const branchWhere = kiosk.branch_id ? "AND e.branch_id = ?" : "";
-  const processWhere = kiosk.process_id ? "AND e.process_id = ?" : "";
-  const scopeParams = [kiosk.branch_id, kiosk.process_id].filter(Boolean);
+  const allowedProcesses = kioskProcessIds(kiosk);
+  const processWhere = allowedProcesses.length > 0 ? `AND e.process_id IN (${allowedProcesses.map(() => "?").join(", ")})` : "";
+  const scopeParams = [kiosk.branch_id, ...allowedProcesses].filter(Boolean);
 
   const [branchRows, processRows, departmentRows, managerRows, shiftRows] = await Promise.all([
     db.execute<RowDataPacket[]>(
@@ -1660,6 +1669,7 @@ export const breakManagementService = {
           kd.kiosk_name,
           kd.branch_id,
           kd.process_id,
+          kd.allowed_process_ids,
           kd.allowed_ip_list,
           kd.allowed_device_fingerprints,
           kd.is_active,
@@ -1669,13 +1679,21 @@ export const breakManagementService = {
           kd.updated_at,
           bm.branch_name,
           pm.process_name,
+          (
+            SELECT GROUP_CONCAT(pm2.process_name ORDER BY pm2.process_name SEPARATOR ', ')
+              FROM process_master pm2
+             WHERE JSON_CONTAINS(kd.allowed_process_ids, JSON_QUOTE(pm2.id))
+          ) AS allowed_process_names,
           COALESCE(NULLIF(TRIM(u.full_name), ''), NULLIF(TRIM(CONCAT(u.first_name, ' ', COALESCE(u.last_name, ''))), ''), au.email) AS created_by_name,
           (
             SELECT COUNT(*)
               FROM employees e
              WHERE e.active_status = 1
                AND (kd.branch_id IS NULL OR e.branch_id = kd.branch_id)
-               AND (kd.process_id IS NULL OR e.process_id = kd.process_id)
+               AND (
+                 JSON_LENGTH(COALESCE(kd.allowed_process_ids, JSON_ARRAY())) = 0
+                 OR JSON_CONTAINS(kd.allowed_process_ids, JSON_QUOTE(e.process_id))
+               )
           ) AS scoped_employee_count
          FROM break_kiosk_devices kd
          LEFT JOIN branch_master bm ON bm.id = kd.branch_id
@@ -1691,6 +1709,7 @@ export const breakManagementService = {
     return {
       rows: (rows as any[]).map((row) => ({
         ...row,
+        allowed_process_ids: normalizeJsonArray(row.allowed_process_ids),
         allowed_ip_list: normalizeJsonArray(row.allowed_ip_list),
         allowed_device_fingerprints: normalizeJsonArray(row.allowed_device_fingerprints),
         token_configured: true,
@@ -1703,15 +1722,16 @@ export const breakManagementService = {
     const id = randomUUID();
     const token = String(input.token ?? generateDeskToken()).trim();
     const branchId = String(input.branch_id ?? "") || null;
-    const processId = String(input.process_id ?? "") || null;
+    const allowedProcessIds = normalizeStringArrayInput(input.allowed_process_ids);
+    const processId = String(input.process_id ?? allowedProcessIds[0] ?? "") || null;
     const allowedIps = normalizeStringArrayInput(input.allowed_ip_list);
     const allowedFingerprints = normalizeStringArrayInput(input.allowed_device_fingerprints);
 
     await db.execute(
       `INSERT INTO break_kiosk_devices
          (id, kiosk_code, kiosk_name, branch_id, process_id, token_hash,
-          allowed_ip_list, allowed_device_fingerprints, is_active, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          allowed_process_ids, allowed_ip_list, allowed_device_fingerprints, is_active, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         String(input.kiosk_code).trim().toUpperCase(),
@@ -1719,6 +1739,7 @@ export const breakManagementService = {
         branchId,
         processId,
         hashToken(token),
+        JSON.stringify(allowedProcessIds.length > 0 ? allowedProcessIds : (processId ? [processId] : [])),
         JSON.stringify(allowedIps),
         JSON.stringify(allowedFingerprints),
         input.is_active === false ? 0 : 1,
@@ -1737,6 +1758,7 @@ export const breakManagementService = {
         kiosk_name: String(input.kiosk_name).trim(),
         branch_id: branchId,
         process_id: processId,
+        allowed_process_ids: allowedProcessIds.length > 0 ? allowedProcessIds : (processId ? [processId] : []),
         allowed_ip_list: allowedIps,
         allowed_device_fingerprints: allowedFingerprints,
         is_active: input.is_active !== false,
@@ -1761,7 +1783,8 @@ export const breakManagementService = {
     if (!existing) throw new Error("Break desk ID not found");
 
     const branchId = String(input.branch_id ?? "") || null;
-    const processId = String(input.process_id ?? "") || null;
+    const allowedProcessIds = normalizeStringArrayInput(input.allowed_process_ids);
+    const processId = String(input.process_id ?? allowedProcessIds[0] ?? "") || null;
     const allowedIps = normalizeStringArrayInput(input.allowed_ip_list);
     const allowedFingerprints = normalizeStringArrayInput(input.allowed_device_fingerprints);
 
@@ -1771,6 +1794,7 @@ export const breakManagementService = {
               kiosk_name = ?,
               branch_id = ?,
               process_id = ?,
+              allowed_process_ids = ?,
               allowed_ip_list = ?,
               allowed_device_fingerprints = ?,
               is_active = ?,
@@ -1781,6 +1805,7 @@ export const breakManagementService = {
         String(input.kiosk_name).trim(),
         branchId,
         processId,
+        JSON.stringify(allowedProcessIds.length > 0 ? allowedProcessIds : (processId ? [processId] : [])),
         JSON.stringify(allowedIps),
         JSON.stringify(allowedFingerprints),
         input.is_active === false ? 0 : 1,
@@ -1799,6 +1824,7 @@ export const breakManagementService = {
         kiosk_name: existing.kiosk_name,
         branch_id: existing.branch_id,
         process_id: existing.process_id,
+        allowed_process_ids: normalizeJsonArray(existing.allowed_process_ids),
         allowed_ip_list: normalizeJsonArray(existing.allowed_ip_list),
         allowed_device_fingerprints: normalizeJsonArray(existing.allowed_device_fingerprints),
         is_active: Boolean(existing.is_active),
@@ -1808,6 +1834,7 @@ export const breakManagementService = {
         kiosk_name: String(input.kiosk_name).trim(),
         branch_id: branchId,
         process_id: processId,
+        allowed_process_ids: allowedProcessIds.length > 0 ? allowedProcessIds : (processId ? [processId] : []),
         allowed_ip_list: allowedIps,
         allowed_device_fingerprints: allowedFingerprints,
         is_active: input.is_active !== false,

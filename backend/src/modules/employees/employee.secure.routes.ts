@@ -5,6 +5,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { buildScopeWhereClause, hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
 import { listComprehensiveJourney } from "./journeyLog.service.js";
+import { getBillPool } from "../../db/billDb.js";
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -289,6 +290,45 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
     [targetId],
   );
 
+  // db_bill attendance fallback when mas_hrms has no records for current month
+  let attendanceData: { present_days: number; working_days: number; attendance_pct: number | null; source?: string } =
+    (attendance as any) ?? { present_days: 0, working_days: 0, attendance_pct: null };
+  if (Number(attendanceData.present_days) === 0 && process.env.BILL_DB_HOST) {
+    try {
+      const billPool = await getBillPool();
+      const [[billAtt]] = await billPool.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS present_days
+           FROM db_bill.Attandence
+          WHERE EmpCode = ?
+            AND MONTH(AttDate) = MONTH(CURDATE())
+            AND YEAR(AttDate) = YEAR(CURDATE())
+            AND Status IN ('P','H','WO')`,
+        [emp.employee_code ?? ""],
+      );
+      const legacyDays = Number(billAtt?.present_days ?? 0);
+      if (legacyDays > 0) {
+        attendanceData = { present_days: legacyDays, working_days: 26, attendance_pct: Math.round(legacyDays / 26 * 100 * 10) / 10, source: "legacy" };
+      }
+    } catch (_) { /* db_bill unavailable — skip silently */ }
+  }
+
+  // db_bill leave fallback when mas_hrms has no leave balance records
+  let leaveBalancesData: RowDataPacket[] = leaveBalances;
+  if (leaveBalancesData.length === 0 && process.env.BILL_DB_HOST) {
+    try {
+      const billPool = await getBillPool();
+      const [billLeave] = await billPool.execute<RowDataPacket[]>(
+        `SELECT leave_type AS leave_code, leave_type AS leave_name,
+                (allocated - used) AS available_days, used AS used_days
+           FROM db_bill.leave_management
+          WHERE emp_code = ? AND YEAR(from_date) = YEAR(CURDATE())
+          GROUP BY leave_type`,
+        [emp.employee_code ?? ""],
+      );
+      if (billLeave.length > 0) leaveBalancesData = billLeave;
+    } catch (_) { /* db_bill unavailable — skip silently */ }
+  }
+
   const [performanceRows] = await db.execute<RowDataPacket[]>(
     `SELECT pfr.overall_score, pfc.period
        FROM performance_feedback_report pfr
@@ -308,10 +348,12 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
   );
 
   const [[docRow]] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS pending_docs
+    `SELECT
+       SUM(CASE WHEN (file_url IS NULL OR file_url = '') THEN 1 ELSE 0 END) AS missing_docs,
+       SUM(CASE WHEN file_url IS NOT NULL AND file_url <> '' AND verified = 0 THEN 1 ELSE 0 END) AS awaiting_verification,
+       SUM(CASE WHEN verified = 1 THEN 1 ELSE 0 END) AS verified_docs
        FROM employee_documents
-      WHERE employee_id = ?
-        AND verified = 0`,
+      WHERE employee_id = ?`,
     [targetId],
   );
 
@@ -345,11 +387,14 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
           address: emp.emergency_address,
         } : null,
       },
-      leave_balances: leaveBalances,
-      attendance: attendance ?? { present_days: 0, working_days: 0, attendance_pct: null },
+      leave_balances: leaveBalancesData,
+      attendance: attendanceData,
       performance: performanceRows[0] ?? null,
       active_assets: Number(assetRow?.active_assets ?? 0),
-      pending_docs: Number(docRow?.pending_docs ?? 0),
+      missing_docs: Number(docRow?.missing_docs ?? 0),
+      awaiting_verification: Number(docRow?.awaiting_verification ?? 0),
+      verified_docs: Number(docRow?.verified_docs ?? 0),
+      pending_docs: Number(docRow?.missing_docs ?? 0),
       gamification_tier: tierRows[0] ?? null,
       journey,
       salary,
