@@ -103,16 +103,28 @@ export async function resolveActualWeekoffCount(
 
 /**
  * Returns the number of eligible week-offs for payroll computation.
- * Applies the paid-base slab cap against the actual week-off count.
+ * If employee worked all available working days (calendar - actual weekoffs),
+ * they earn all weekoffs. Otherwise apply the paid-base slab cap.
  */
 export async function calculateWeekoffEligibility(
   employeeId: string,
   paidBase: number,
   runMonth: string
 ): Promise<number> {
-  const slabMax    = getSlabMaxWeekoffs(paidBase);
   const actualCount = await resolveActualWeekoffCount(employeeId, runMonth);
 
+  // Calculate available working days (total - actual weekoffs)
+  const [year, month] = runMonth.split("-").map(Number);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const availableWorkingDays = daysInMonth - actualCount;
+
+  // If employee worked all available working days, they get all weekoffs
+  if (paidBase >= availableWorkingDays) {
+    return actualCount;
+  }
+
+  // Otherwise apply the paid-base slab cap
+  const slabMax = getSlabMaxWeekoffs(paidBase);
   if (slabMax === Infinity) return actualCount;
   return Math.min(slabMax, actualCount);
 }
