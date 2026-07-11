@@ -312,6 +312,8 @@ SOURCE sql/373_create_candidate_onboarding_profile.sql;
 SOURCE sql/374_employees_missing_indexes.sql;
 -- PAY-005: attendance source column for validation UI fallback warning
 SOURCE sql/375_salary_prep_line_attendance_source.sql;
+SOURCE sql/376_break_management_module.sql;
+SOURCE sql/393_break_kiosk_allowed_processes.sql;
 
 -- ── Utility / engagement fixes (999, 1000) ────────────────────────────────────
 SOURCE sql/1000_fix_engagement_schema_columns.sql;
