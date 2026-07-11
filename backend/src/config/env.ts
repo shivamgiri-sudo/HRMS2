@@ -1,7 +1,22 @@
 import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { z } from "zod";
 
-dotenv.config();
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const envCandidates = [
+  path.resolve(process.cwd(), ".env"),
+  path.resolve(process.cwd(), "backend", ".env"),
+  path.resolve(moduleDir, "../../.env"),
+];
+
+const loadedEnvPaths = new Set<string>();
+for (const envPath of envCandidates) {
+  if (!fs.existsSync(envPath) || loadedEnvPaths.has(envPath)) continue;
+  dotenv.config({ path: envPath, override: true });
+  loadedEnvPaths.add(envPath);
+}
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
