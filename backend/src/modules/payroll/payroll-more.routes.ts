@@ -582,3 +582,51 @@ payrollMoreRouter.patch("/deductions/entry/:id", requireRole("admin", "hr_admin"
   await db.execute("UPDATE employee_deduction_entries SET status=? WHERE id=?", [status, req.params.id]);
   return res.json({ success: true });
 }));
+
+// ─── Holiday Work Auto-Generation Config ──────────────────────────────────────
+
+// GET /api/payroll/holiday-work/config/processes
+// List all processes with their auto-gen status
+payrollMoreRouter.get("/holiday-work/config/processes", requireRole("admin", "super_admin", "payroll_head"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const [processes] = await db.execute<RowDataPacket[]>(`
+    SELECT p.id, p.process_name,
+           COALESCE(pcf.config_value, 'false') AS auto_gen_enabled
+    FROM process_master p
+    LEFT JOIN payroll_config_flags pcf
+      ON pcf.process_id = p.id
+     AND pcf.config_key = 'holiday_work_extra_pay_enabled'
+    WHERE p.active_status = 1
+    ORDER BY p.process_name
+  `);
+  return res.json({ success: true, data: processes });
+}));
+
+// PATCH /api/payroll/holiday-work/config/process/:processId
+// Enable/disable auto-generation for a process
+payrollMoreRouter.patch("/holiday-work/config/process/:processId", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { processId } = req.params;
+  const { enabled } = req.body as { enabled: boolean };
+
+  await db.execute(`
+    INSERT INTO payroll_config_flags (id, process_id, config_key, config_value)
+    VALUES (UUID(), ?, 'holiday_work_extra_pay_enabled', ?)
+    ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_at = NOW()
+  `, [processId, enabled ? 'true' : 'false']);
+
+  return res.json({ success: true, message: 'Process configuration updated' });
+}));
+
+// PATCH /api/payroll/holidays/:holidayId/extra-pay-eligible
+// Mark holiday as eligible/ineligible for extra pay
+payrollMoreRouter.patch("/holidays/:holidayId/extra-pay-eligible", requireRole("admin", "super_admin", "hr_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { holidayId } = req.params;
+  const { eligible } = req.body as { eligible: boolean };
+
+  await db.execute(`
+    UPDATE leave_holiday_master
+    SET extra_pay_eligible = ?
+    WHERE id = ?
+  `, [eligible ? 1 : 0, holidayId]);
+
+  return res.json({ success: true, message: 'Holiday extra pay eligibility updated' });
+}));

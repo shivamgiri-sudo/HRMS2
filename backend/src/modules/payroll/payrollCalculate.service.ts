@@ -7,6 +7,7 @@ import { maternityService } from "../compliance/maternity.service.js";
 import { calculateWeekoffEligibility } from "./weekoff-eligibility.service.js";
 import { resolveHolidaysForEmployeeV2 } from "./holiday-work.service.js";
 import { checkAndReverseLeave } from "./leave-reversal.service.js";
+import { detectAndCalculateHolidayWork, isHolidayWorkAutoGenEnabled } from "./holiday-work-auto.service.js";
 
 interface TaxDeclarationRow {
   declared_hra: number;
@@ -163,6 +164,8 @@ interface EmployeeRow {
   hra_pct: number;
   state_code: string | null;
   salary_start_date: string | null;
+  process_id: string | null;
+  branch_id: string | null;
 }
 
 interface AttendanceRow {
@@ -231,6 +234,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     `SELECT e.id AS employee_id, e.employee_code,
             esa.ctc_annual, ss.basic_pct, ss.hra_pct,
             bm.state AS state_code,
+            e.process_id, e.branch_id,
             COALESCE(e.salary_start_date, e.date_of_joining) AS salary_start_date
        FROM employees e
        JOIN employee_salary_assignment esa ON esa.employee_id = e.id
@@ -418,7 +422,44 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
 
     // Step 4: Week-off eligibility and holiday resolution
     const eligibleWeekoffs = await calculateWeekoffEligibility(emp.employee_id, paidBase, run.run_month);
-    const { eligibleHolidayCount, holidayWorkExtraPayout } = await resolveHolidaysForEmployeeV2(emp.employee_id, run.run_month);
+
+    // Check if auto-generation of holiday work payouts is enabled
+    let holidayWorkExtraPayout = 0;
+    const autoGenEnabled = await isHolidayWorkAutoGenEnabled(emp.process_id, emp.branch_id);
+
+    if (autoGenEnabled) {
+      // Auto-detect and calculate holiday work payouts
+      const autoResult = await detectAndCalculateHolidayWork(emp.employee_id, run.run_month);
+      holidayWorkExtraPayout = autoResult.payout;
+
+      // Audit log each auto-generated payout
+      for (const hw of autoResult.holidaysWorked) {
+        await conn.execute(
+          `INSERT INTO holiday_work_auto_log (
+             id, employee_id, run_month, holiday_id, holiday_date,
+             worked_minutes, payout_unit, payout_amount, policy_id,
+             created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+          [
+            randomUUID(),
+            emp.employee_id,
+            run.run_month,
+            hw.holiday_id,
+            hw.holiday_date,
+            hw.worked_minutes,
+            hw.payout_unit,
+            hw.payout_amount,
+            hw.policy_id,
+          ]
+        );
+      }
+    } else {
+      // Legacy: use manual request system
+      const legacyResult = await resolveHolidaysForEmployeeV2(emp.employee_id, run.run_month);
+      holidayWorkExtraPayout = legacyResult.holidayWorkExtraPayout;
+    }
+
+    const { eligibleHolidayCount } = await resolveHolidaysForEmployeeV2(emp.employee_id, run.run_month);
 
     // Step 5: Leave reversal
     const reversalResult = await checkAndReverseLeave({
