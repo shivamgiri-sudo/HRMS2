@@ -11,6 +11,34 @@ const LEGACY_DOUBLE_DATA_PATHS = [
   "/api/clients-usage",
 ];
 
+let _refreshPromise: Promise<boolean> | null = null;
+
+async function refreshAccessToken(): Promise<boolean> {
+  if (_refreshPromise) return _refreshPromise;
+  _refreshPromise = (async () => {
+    const raw = localStorage.getItem("hrms_refresh_token");
+    if (!raw) return false;
+    try {
+      const res = await fetch(`${HRMS_API_URL}/api/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken: raw }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      const newToken = data?.data?.accessToken;
+      if (!newToken) return false;
+      localStorage.setItem("hrms_access_token", newToken);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      _refreshPromise = null;
+    }
+  })();
+  return _refreshPromise;
+}
+
 function getAuthHeader(): Record<string, string> {
   // Real JWT token always takes priority over demo session
   const mysqlToken = localStorage.getItem("hrms_access_token");
@@ -71,17 +99,12 @@ async function parseResponse(res: Response): Promise<unknown> {
   return text;
 }
 
-async function request<T>(method: string, path: string, body?: unknown, timeoutMs = 30000): Promise<T> {
+async function fetchOnce(normalizedPath: string, method: string, body: unknown, timeoutMs: number): Promise<Response> {
   const headers = getAuthHeader();
-
-  const normalizedPath = normalizeRequestPath(path);
-
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  let res: Response;
   try {
-    res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
+    return await fetch(`${HRMS_API_URL}${normalizedPath}`, {
       method,
       headers: { "Content-Type": "application/json", ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -94,6 +117,20 @@ async function request<T>(method: string, path: string, body?: unknown, timeoutM
     throw err;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function request<T>(method: string, path: string, body?: unknown, timeoutMs = 30000): Promise<T> {
+  const normalizedPath = normalizeRequestPath(path);
+
+  let res = await fetchOnce(normalizedPath, method, body, timeoutMs);
+
+  // On 401, try a silent token refresh once and retry the original request
+  if (res.status === 401 && !path.includes("/api/auth/")) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      res = await fetchOnce(normalizedPath, method, body, timeoutMs);
+    }
   }
 
   const payload = await parseResponse(res);

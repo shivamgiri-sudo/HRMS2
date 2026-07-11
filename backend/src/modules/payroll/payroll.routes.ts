@@ -89,7 +89,7 @@ router.post("/salary-assignments",
     // Resolve employee's branch/process from DB
     const [rows] = await db.execute(
       'SELECT branch_id, process_id, department_id FROM employees WHERE id = ? LIMIT 1',
-      [req.body.employee_id]
+      [req.body.employeeId ?? req.body.employee_id]
     ) as any[];
     const emp = rows[0];
     return {
