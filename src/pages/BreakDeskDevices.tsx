@@ -1,7 +1,7 @@
 import { useDeferredValue, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Copy, KeyRound, Link2, Loader2, MonitorCog, Plus, RefreshCw, RotateCcw, Save, Search, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { CheckCircle2, Copy, KeyRound, Link2, Loader2, MonitorCog, Plus, RefreshCw, RotateCcw, Save, Search, ShieldCheck, SlidersHorizontal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -162,6 +162,22 @@ export default function BreakDeskDevices() {
     onError: (error: any) => toast.error(error?.message ?? "Unable to rotate token"),
   });
 
+  const removeDesk = useMutation({
+    mutationFn: async (device: KioskDevice) => {
+      await hrmsApi.delete(`/api/break-management/kiosks/${device.id}`);
+      return device;
+    },
+    onSuccess: (device) => {
+      qc.invalidateQueries({ queryKey: ["break-kiosks"] });
+      if (selected?.id === device.id) {
+        resetForm();
+      }
+      setTokenResult(null);
+      toast.success("Break desk ID deleted");
+    },
+    onError: (error: any) => toast.error(error?.message ?? "Unable to delete break desk ID"),
+  });
+
   const rows = useMemo(() => {
     const sourceRows = kiosks.data ?? [];
     const normalizedSearch = deferredSearch.trim().toLocaleLowerCase();
@@ -225,6 +241,14 @@ export default function BreakDeskDevices() {
     setIpText(joinList(device.allowed_ip_list ?? []));
     setFingerprintText(joinList(device.allowed_device_fingerprints ?? []));
     window.setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  }
+
+  function confirmDelete(device: KioskDevice) {
+    const allow = window.confirm(
+      `Delete break desk ID ${device.kiosk_code}?\n\nThis removes the desk login. Old logs stay preserved, but active live breaks must be closed first.`,
+    );
+    if (!allow) return;
+    removeDesk.mutate(device);
   }
 
   function updateBranch(branchId: string | null) {
@@ -397,6 +421,10 @@ export default function BreakDeskDevices() {
                               <button onClick={() => rotate.mutate(device)} disabled={rotate.isPending} className="inline-flex items-center gap-1 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 transition hover:bg-amber-100 disabled:opacity-60">
                                 <RotateCcw className="h-3.5 w-3.5" />
                                 Token
+                              </button>
+                              <button onClick={() => confirmDelete(device)} disabled={removeDesk.isPending} className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-800 transition hover:bg-rose-100 disabled:opacity-60">
+                                <Trash2 className="h-3.5 w-3.5" />
+                                Delete
                               </button>
                             </div>
                           </td>

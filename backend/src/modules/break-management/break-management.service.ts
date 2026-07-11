@@ -2096,6 +2096,50 @@ export const breakManagementService = {
     };
   },
 
+  async deleteKioskDevice(id: string, performedById: string, req: Request) {
+    const [existingRows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM break_kiosk_devices WHERE id = ? LIMIT 1`,
+      [id],
+    );
+    const existing = (existingRows as any[])[0];
+    if (!existing) throw new Error("Break desk ID not found");
+
+    const [activeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS active_count
+         FROM break_sessions
+        WHERE kiosk_device_id = ?
+          AND status = 'ACTIVE'`,
+      [id],
+    );
+    const activeCount = Number((activeRows as any[])[0]?.active_count ?? 0);
+    if (activeCount > 0) {
+      throw new Error("This desk ID cannot be deleted while active break sessions are running");
+    }
+
+    await db.execute(`DELETE FROM break_kiosk_devices WHERE id = ?`, [id]);
+
+    await writeBreakAudit({
+      entityType: "break_kiosk_device",
+      entityId: id,
+      action: "DELETE_BREAK_KIOSK",
+      performedByType: "ADMIN",
+      performedById,
+      oldValue: {
+        kiosk_code: existing.kiosk_code,
+        kiosk_name: existing.kiosk_name,
+        branch_id: existing.branch_id,
+        process_id: existing.process_id,
+        is_active: existing.is_active,
+      },
+      req,
+    });
+
+    return {
+      id,
+      kiosk_code: existing.kiosk_code,
+    };
+  },
+
   async saveSettings(input: Record<string, unknown>, performedById: string, req: Request) {
     const id = String(input.id ?? randomUUID());
     const branchId = String(input.branch_id ?? "") || null;

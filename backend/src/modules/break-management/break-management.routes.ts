@@ -120,6 +120,12 @@ breakManagementRouter.post("/kiosks/:id/rotate-token", requireBreakAdmin, requir
   return res.json({ success: true, data, message: "Break desk token rotated" });
 }));
 
+breakManagementRouter.delete("/kiosks/:id", requireBreakAdmin, requireWriteAccess, h(async (req: any, res) => {
+  const params = z.object({ id: z.string().min(1) }).parse(req.params);
+  const data = await breakManagementService.deleteKioskDevice(params.id, req.authUser.id, req);
+  return res.json({ success: true, data, message: "Break desk ID deleted" });
+}));
+
 breakManagementRouter.get("/exceptions", h(async (req, res) => {
   const query = z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
