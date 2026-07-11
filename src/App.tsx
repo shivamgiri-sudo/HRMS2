@@ -276,6 +276,7 @@ const PortalLogin = lazy(() => import("./pages/portal/PortalLogin"));
 const PortalOverview = lazy(() => import("./pages/portal/PortalOverview"));
 const PortalProcessDashboard = lazy(() => import("./pages/portal/PortalProcessDashboard"));
 const BreakDesk = lazy(() => import("./pages/BreakDesk"));
+const BreakDeskDevices = lazy(() => import("./pages/BreakDeskDevices"));
 const WaitingRoomDisplay = lazy(() => import("./pages/WaitingRoomDisplay"));
 
 const queryClient = new QueryClient({
@@ -602,6 +603,8 @@ const App = () => (
               <Route path="/exit/resignation-command-center" element={<ProtectedRoute><Gate pageCode="RESIGNATION_COMMAND_CENTER"><NativePlaceholderPage title="Resignation Command Center" module="Exit Management" /></Gate></ProtectedRoute>} />
 
               {/* Public kiosk display — no auth required */}
+              <Route path="/break-management/devices" element={<ProtectedRoute roles={['super_admin', 'admin', 'wfm']}><BreakDeskDevices /></ProtectedRoute>} />
+              <Route path="/wfm/break-desk-devices" element={<ProtectedRoute roles={['super_admin', 'admin', 'wfm']}><BreakDeskDevices /></ProtectedRoute>} />
               <Route path="/break-desk" element={<BreakDesk />} />
               <Route path="/display/waiting-room" element={<WaitingRoomDisplay />} />
 

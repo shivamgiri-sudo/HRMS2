@@ -1,11 +1,12 @@
 import { Router } from "express";
 import { z } from "zod";
-import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireAuth, requireWriteAccess } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { breakManagementService } from "./break-management.service.js";
 
 export const breakManagementRouter = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const requireBreakAdmin = requireRole("admin", "super_admin", "wfm");
 
 breakManagementRouter.use(requireAuth);
 breakManagementRouter.use(requireRole("admin", "hr", "wfm", "manager", "process_manager", "team_leader", "tl", "ceo"));
@@ -38,12 +39,12 @@ breakManagementRouter.get("/reports", h(async (req, res) => {
   return res.json({ success: true, data });
 }));
 
-breakManagementRouter.get("/settings", h(async (_req, res) => {
+breakManagementRouter.get("/settings", requireBreakAdmin, h(async (_req, res) => {
   const data = await breakManagementService.getSettingsView();
   return res.json({ success: true, data });
 }));
 
-breakManagementRouter.post("/settings", h(async (req: any, res) => {
+breakManagementRouter.post("/settings", requireBreakAdmin, requireWriteAccess, h(async (req: any, res) => {
   const body = z.object({
     id: z.string().optional(),
     branch_id: z.string().optional().nullable(),
@@ -66,6 +67,57 @@ breakManagementRouter.post("/settings", h(async (req: any, res) => {
   return res.json({ success: true, data, message: "Break settings saved" });
 }));
 
+breakManagementRouter.get("/kiosks", requireBreakAdmin, h(async (req, res) => {
+  const query = z.object({
+    search: z.string().optional(),
+    branch_id: z.string().optional(),
+    process_id: z.string().optional(),
+    status: z.enum(["active", "inactive", "all"]).optional(),
+    limit: z.coerce.number().optional(),
+  }).parse(req.query);
+  const data = await breakManagementService.listKioskDevices(query);
+  return res.json({ success: true, data });
+}));
+
+breakManagementRouter.post("/kiosks", requireBreakAdmin, requireWriteAccess, h(async (req: any, res) => {
+  const body = z.object({
+    kiosk_code: z.string().min(3).max(100),
+    kiosk_name: z.string().min(3).max(255),
+    branch_id: z.string().optional().nullable(),
+    process_id: z.string().optional().nullable(),
+    token: z.string().min(12).max(128).optional(),
+    allowed_ip_list: z.array(z.string().min(1)).optional(),
+    allowed_device_fingerprints: z.array(z.string().min(1)).optional(),
+    is_active: z.boolean().optional(),
+  }).parse(req.body);
+  const data = await breakManagementService.createKioskDevice(body, req.authUser.id, req);
+  return res.status(201).json({ success: true, data, message: "Break desk ID created" });
+}));
+
+breakManagementRouter.put("/kiosks/:id", requireBreakAdmin, requireWriteAccess, h(async (req: any, res) => {
+  const params = z.object({ id: z.string().min(1) }).parse(req.params);
+  const body = z.object({
+    kiosk_code: z.string().min(3).max(100),
+    kiosk_name: z.string().min(3).max(255),
+    branch_id: z.string().optional().nullable(),
+    process_id: z.string().optional().nullable(),
+    allowed_ip_list: z.array(z.string().min(1)).optional(),
+    allowed_device_fingerprints: z.array(z.string().min(1)).optional(),
+    is_active: z.boolean(),
+  }).parse(req.body);
+  const data = await breakManagementService.updateKioskDevice(params.id, body, req.authUser.id, req);
+  return res.json({ success: true, data, message: "Break desk ID updated" });
+}));
+
+breakManagementRouter.post("/kiosks/:id/rotate-token", requireBreakAdmin, requireWriteAccess, h(async (req: any, res) => {
+  const params = z.object({ id: z.string().min(1) }).parse(req.params);
+  const body = z.object({
+    token: z.string().min(12).max(128).optional(),
+  }).parse(req.body);
+  const data = await breakManagementService.rotateKioskToken(params.id, body.token, req.authUser.id, req);
+  return res.json({ success: true, data, message: "Break desk token rotated" });
+}));
+
 breakManagementRouter.get("/exceptions", h(async (req, res) => {
   const query = z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -75,7 +127,7 @@ breakManagementRouter.get("/exceptions", h(async (req, res) => {
   return res.json({ success: true, data });
 }));
 
-breakManagementRouter.post("/sync-biometric-now", h(async (_req, res) => {
+breakManagementRouter.post("/sync-biometric-now", requireBreakAdmin, requireWriteAccess, h(async (_req, res) => {
   const data = await breakManagementService.syncBiometricNow();
   return res.json({ success: true, data });
 }));

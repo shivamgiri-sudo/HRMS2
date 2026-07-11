@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "crypto";
+import { createHash, randomBytes, randomUUID } from "crypto";
 import type { Request } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -186,6 +186,10 @@ function hashToken(token: string) {
   return createHash("sha256").update(token.trim()).digest("hex");
 }
 
+function generateDeskToken() {
+  return `bd_${randomBytes(24).toString("base64url")}`;
+}
+
 function requestIp(req: Request) {
   const forwarded = req.headers["x-forwarded-for"];
   if (typeof forwarded === "string" && forwarded.trim()) return forwarded.split(",")[0]!.trim();
@@ -213,6 +217,11 @@ function safeLimit(value: unknown, fallback = 120) {
   const parsed = Number(value ?? fallback);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.min(Math.floor(parsed), 500);
+}
+
+function normalizeStringArrayInput(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.map((item) => String(item).trim()).filter(Boolean)));
 }
 
 function assertEmployeeWithinKioskScope(kiosk: KioskDevice, employee: EmployeeContext) {
@@ -1616,6 +1625,232 @@ export const breakManagementService = {
       `SELECT * FROM break_settings ORDER BY (branch_id IS NULL) DESC, (process_id IS NULL) DESC, updated_at DESC`,
     );
     return { rows };
+  },
+
+  async listKioskDevices(filters: {
+    search?: string;
+    branch_id?: string;
+    process_id?: string;
+    status?: "active" | "inactive" | "all";
+    limit?: number;
+  }) {
+    const where: string[] = ["1 = 1"];
+    const params: unknown[] = [];
+
+    if (filters.search?.trim()) {
+      const query = `%${filters.search.trim()}%`;
+      where.push("(kd.kiosk_code LIKE ? OR kd.kiosk_name LIKE ? OR bm.branch_name LIKE ? OR pm.process_name LIKE ?)");
+      params.push(query, query, query, query);
+    }
+    if (filters.branch_id) {
+      where.push("kd.branch_id = ?");
+      params.push(filters.branch_id);
+    }
+    if (filters.process_id) {
+      where.push("kd.process_id = ?");
+      params.push(filters.process_id);
+    }
+    if (filters.status === "active") where.push("kd.is_active = 1");
+    if (filters.status === "inactive") where.push("kd.is_active = 0");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+          kd.id,
+          kd.kiosk_code,
+          kd.kiosk_name,
+          kd.branch_id,
+          kd.process_id,
+          kd.allowed_ip_list,
+          kd.allowed_device_fingerprints,
+          kd.is_active,
+          kd.last_used_at,
+          kd.created_by,
+          kd.created_at,
+          kd.updated_at,
+          bm.branch_name,
+          pm.process_name,
+          COALESCE(NULLIF(TRIM(u.full_name), ''), NULLIF(TRIM(CONCAT(u.first_name, ' ', COALESCE(u.last_name, ''))), ''), au.email) AS created_by_name,
+          (
+            SELECT COUNT(*)
+              FROM employees e
+             WHERE e.active_status = 1
+               AND (kd.branch_id IS NULL OR e.branch_id = kd.branch_id)
+               AND (kd.process_id IS NULL OR e.process_id = kd.process_id)
+          ) AS scoped_employee_count
+         FROM break_kiosk_devices kd
+         LEFT JOIN branch_master bm ON bm.id = kd.branch_id
+         LEFT JOIN process_master pm ON pm.id = kd.process_id
+         LEFT JOIN auth_user au ON au.id = kd.created_by
+         LEFT JOIN employees u ON u.user_id = au.id
+        WHERE ${where.join(" AND ")}
+        ORDER BY kd.is_active DESC, kd.updated_at DESC
+        LIMIT ${safeLimit(filters.limit ?? 100, 100)}`,
+      params,
+    );
+
+    return {
+      rows: (rows as any[]).map((row) => ({
+        ...row,
+        allowed_ip_list: normalizeJsonArray(row.allowed_ip_list),
+        allowed_device_fingerprints: normalizeJsonArray(row.allowed_device_fingerprints),
+        token_configured: true,
+        desk_url: `/break-desk?kiosk=${encodeURIComponent(String(row.kiosk_code ?? ""))}`,
+      })),
+    };
+  },
+
+  async createKioskDevice(input: Record<string, unknown>, performedById: string, req: Request) {
+    const id = randomUUID();
+    const token = String(input.token ?? generateDeskToken()).trim();
+    const branchId = String(input.branch_id ?? "") || null;
+    const processId = String(input.process_id ?? "") || null;
+    const allowedIps = normalizeStringArrayInput(input.allowed_ip_list);
+    const allowedFingerprints = normalizeStringArrayInput(input.allowed_device_fingerprints);
+
+    await db.execute(
+      `INSERT INTO break_kiosk_devices
+         (id, kiosk_code, kiosk_name, branch_id, process_id, token_hash,
+          allowed_ip_list, allowed_device_fingerprints, is_active, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        String(input.kiosk_code).trim().toUpperCase(),
+        String(input.kiosk_name).trim(),
+        branchId,
+        processId,
+        hashToken(token),
+        JSON.stringify(allowedIps),
+        JSON.stringify(allowedFingerprints),
+        input.is_active === false ? 0 : 1,
+        performedById,
+      ],
+    );
+
+    await writeBreakAudit({
+      entityType: "break_kiosk_device",
+      entityId: id,
+      action: "CREATE_BREAK_KIOSK",
+      performedByType: "ADMIN",
+      performedById,
+      newValue: {
+        kiosk_code: String(input.kiosk_code).trim().toUpperCase(),
+        kiosk_name: String(input.kiosk_name).trim(),
+        branch_id: branchId,
+        process_id: processId,
+        allowed_ip_list: allowedIps,
+        allowed_device_fingerprints: allowedFingerprints,
+        is_active: input.is_active !== false,
+      },
+      req,
+    });
+
+    return {
+      id,
+      kiosk_code: String(input.kiosk_code).trim().toUpperCase(),
+      token,
+      desk_url: `/break-desk?kiosk=${encodeURIComponent(String(input.kiosk_code).trim().toUpperCase())}&token=${encodeURIComponent(token)}`,
+    };
+  },
+
+  async updateKioskDevice(id: string, input: Record<string, unknown>, performedById: string, req: Request) {
+    const [existingRows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM break_kiosk_devices WHERE id = ? LIMIT 1`,
+      [id],
+    );
+    const existing = (existingRows as any[])[0];
+    if (!existing) throw new Error("Break desk ID not found");
+
+    const branchId = String(input.branch_id ?? "") || null;
+    const processId = String(input.process_id ?? "") || null;
+    const allowedIps = normalizeStringArrayInput(input.allowed_ip_list);
+    const allowedFingerprints = normalizeStringArrayInput(input.allowed_device_fingerprints);
+
+    await db.execute(
+      `UPDATE break_kiosk_devices
+          SET kiosk_code = ?,
+              kiosk_name = ?,
+              branch_id = ?,
+              process_id = ?,
+              allowed_ip_list = ?,
+              allowed_device_fingerprints = ?,
+              is_active = ?,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?`,
+      [
+        String(input.kiosk_code).trim().toUpperCase(),
+        String(input.kiosk_name).trim(),
+        branchId,
+        processId,
+        JSON.stringify(allowedIps),
+        JSON.stringify(allowedFingerprints),
+        input.is_active === false ? 0 : 1,
+        id,
+      ],
+    );
+
+    await writeBreakAudit({
+      entityType: "break_kiosk_device",
+      entityId: id,
+      action: "UPDATE_BREAK_KIOSK",
+      performedByType: "ADMIN",
+      performedById,
+      oldValue: {
+        kiosk_code: existing.kiosk_code,
+        kiosk_name: existing.kiosk_name,
+        branch_id: existing.branch_id,
+        process_id: existing.process_id,
+        allowed_ip_list: normalizeJsonArray(existing.allowed_ip_list),
+        allowed_device_fingerprints: normalizeJsonArray(existing.allowed_device_fingerprints),
+        is_active: Boolean(existing.is_active),
+      },
+      newValue: {
+        kiosk_code: String(input.kiosk_code).trim().toUpperCase(),
+        kiosk_name: String(input.kiosk_name).trim(),
+        branch_id: branchId,
+        process_id: processId,
+        allowed_ip_list: allowedIps,
+        allowed_device_fingerprints: allowedFingerprints,
+        is_active: input.is_active !== false,
+      },
+      req,
+    });
+
+    return { id };
+  },
+
+  async rotateKioskToken(id: string, tokenInput: string | undefined, performedById: string, req: Request) {
+    const [existingRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, kiosk_code FROM break_kiosk_devices WHERE id = ? LIMIT 1`,
+      [id],
+    );
+    const existing = (existingRows as any[])[0];
+    if (!existing) throw new Error("Break desk ID not found");
+
+    const token = String(tokenInput ?? generateDeskToken()).trim();
+    await db.execute(
+      `UPDATE break_kiosk_devices
+          SET token_hash = ?,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?`,
+      [hashToken(token), id],
+    );
+
+    await writeBreakAudit({
+      entityType: "break_kiosk_device",
+      entityId: id,
+      action: "ROTATE_BREAK_KIOSK_TOKEN",
+      performedByType: "ADMIN",
+      performedById,
+      newValue: { kiosk_code: existing.kiosk_code, token_rotated: true },
+      req,
+    });
+
+    return {
+      id,
+      kiosk_code: existing.kiosk_code,
+      token,
+      desk_url: `/break-desk?kiosk=${encodeURIComponent(String(existing.kiosk_code ?? ""))}&token=${encodeURIComponent(token)}`,
+    };
   },
 
   async saveSettings(input: Record<string, unknown>, performedById: string, req: Request) {
