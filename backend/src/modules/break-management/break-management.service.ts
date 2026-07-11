@@ -949,7 +949,7 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
          SELECT
            ebe.employee_id,
            SUBSTRING_INDEX(
-             GROUP_CONCAT(ebe.cosec_user_id ORDER BY COALESCE(ebe.last_sync_at, ebe.updated_at, ebe.created_at) DESC, ebe.id DESC SEPARATOR '||'),
+             GROUP_CONCAT(ebe.cosec_user_id ORDER BY COALESCE(ebe.last_sync_at, ebe.enrolled_at) DESC, ebe.id DESC SEPARATOR '||'),
              '||',
              1
            ) AS cosec_user_id
@@ -978,7 +978,7 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
            MAX(last_punch_out) AS last_punch_out,
            MAX(COALESCE(raw_minutes, 0)) AS raw_minutes,
            SUBSTRING_INDEX(
-             GROUP_CONCAT(source_system ORDER BY COALESCE(updated_at, migrated_at, created_at) DESC, id DESC SEPARATOR '||'),
+             GROUP_CONCAT(source_system ORDER BY migrated_at DESC, id DESC SEPARATOR '||'),
              '||',
              1
            ) AS source_system
@@ -1011,7 +1011,7 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
          SELECT
            lr0.employee_id,
            SUBSTRING_INDEX(
-             GROUP_CONCAT(lr0.leave_type_id ORDER BY COALESCE(lr0.updated_at, lr0.created_at) DESC, lr0.id DESC SEPARATOR '||'),
+             GROUP_CONCAT(lr0.leave_type_id ORDER BY COALESCE(lr0.applied_at, lr0.created_at) DESC, lr0.id DESC SEPARATOR '||'),
              '||',
              1
            ) AS leave_type_id
