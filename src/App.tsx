@@ -172,6 +172,7 @@ const NativeMobilityManagement      = lazy(() => import("./pages/NativeMobilityM
 const NativeSalaryIncrement         = lazy(() => import("./pages/NativeSalaryIncrement"));
 const NativeStatutoryCompliance     = lazy(() => import("./pages/NativeStatutoryCompliance"));
 const NativeLabourCompliance        = lazy(() => import("./pages/NativeLabourCompliance"));
+const NativeComplianceAuditReport   = lazy(() => import("./pages/NativeComplianceAuditReport"));
 const NativeDPDPCompliance          = lazy(() => import("./pages/NativeDPDPCompliance"));
 const NativeDPDPWithdrawal          = lazy(() => import("./pages/NativeDPDPWithdrawal"));
 const NativeDPDPWithdrawalAdmin     = lazy(() => import("./pages/NativeDPDPWithdrawalAdmin"));
@@ -503,6 +504,7 @@ const App = () => (
               <Route path="/compliance/statutory" element={<ProtectedRoute><Gate pageCode="STATUTORY_COMPLIANCE"><NativeStatutoryCompliance /></Gate></ProtectedRoute>} />
               <Route path="/compliance/labour" element={<ProtectedRoute><Gate pageCode="LABOUR_COMPLIANCE"><NativeLabourCompliance /></Gate></ProtectedRoute>} />
               <Route path="/compliance/dpdp" element={<ProtectedRoute><Gate pageCode="DPDP_COMPLIANCE"><NativeDPDPCompliance /></Gate></ProtectedRoute>} />
+              <Route path="/compliance/audit-report" element={<ProtectedRoute roles={["admin","hr","super_admin"]}><NativeComplianceAuditReport /></ProtectedRoute>} />
               <Route path="/integration-hub" element={<ProtectedRoute><Gate pageCode="INTEGRATION_HUB"><NativeIntegrationHub /></Gate></ProtectedRoute>} />
               <Route path="/client-master" element={<ProtectedRoute><Gate pageCode="CLIENT_MASTER"><EnhancedClientMaster /></Gate></ProtectedRoute>} />
               <Route path="/customization" element={<ProtectedRoute><Gate pageCode="CUSTOMIZATION_MANAGER"><NativeCustomizationManager /></Gate></ProtectedRoute>} />
