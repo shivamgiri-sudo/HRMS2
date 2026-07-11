@@ -1,5 +1,5 @@
 /**
- * PhotoUpload — click-to-upload employee avatar with preview,
+ * PhotoUpload — click-to-upload employee avatar with circular crop modal,
  * progress indication, and 15 MB / jpg+png+webp validation.
  *
  * Usage:
@@ -9,10 +9,13 @@
  *     onSuccess={(url) => setAvatarUrl(url)}
  *   />
  */
-import { useRef, useState } from "react";
-import { Camera, Loader2, Trash2, Upload } from "lucide-react";
+import { useRef, useState, useCallback } from "react";
+import { Camera, Loader2, Trash2, Upload, Check, X } from "lucide-react";
+import ReactCrop, { type Crop, centerCrop, makeAspectCrop } from "react-image-crop";
+import "react-image-crop/dist/ReactCrop.css";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { apiBaseUrl } from "@/lib/apiBase";
@@ -20,6 +23,7 @@ import { apiBaseUrl } from "@/lib/apiBase";
 const MAX_BYTES = 15 * 1024 * 1024; // 15 MB
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const API_BASE = apiBaseUrl();
+const CROP_OUTPUT_SIZE = 300; // px — output cropped square
 
 // normalizeMediaUrl is imported from @/lib/mediaUrl — kept local alias for internal use
 const normalizeFileUrl = normalizeMediaUrl;
@@ -75,12 +79,40 @@ function getToken(): string | null {
   );
 }
 
-
 async function readJsonSafely(res: Response): Promise<any> {
   const contentType = res.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) return res.json();
   const text = await res.text();
   return { success: false, error: text || res.statusText };
+}
+
+function getCroppedBlob(
+  image: HTMLImageElement,
+  crop: Crop,
+): Promise<Blob | null> {
+  const canvas = document.createElement("canvas");
+  const scaleX = image.naturalWidth / image.width;
+  const scaleY = image.naturalHeight / image.height;
+  canvas.width = CROP_OUTPUT_SIZE;
+  canvas.height = CROP_OUTPUT_SIZE;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return Promise.resolve(null);
+
+  ctx.drawImage(
+    image,
+    (crop.x ?? 0) * scaleX,
+    (crop.y ?? 0) * scaleY,
+    (crop.width ?? 0) * scaleX,
+    (crop.height ?? 0) * scaleY,
+    0,
+    0,
+    CROP_OUTPUT_SIZE,
+    CROP_OUTPUT_SIZE,
+  );
+
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.92);
+  });
 }
 
 export function PhotoUpload({
@@ -92,9 +124,16 @@ export function PhotoUpload({
   size = "lg",
 }: PhotoUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Crop modal state
+  const [cropModalOpen, setCropModalOpen] = useState(false);
+  const [pendingSrc, setPendingSrc] = useState<string | null>(null);
+  const [pendingFileName, setPendingFileName] = useState("");
+  const [crop, setCrop] = useState<Crop>();
 
   const endpoint = employeeId
     ? `${API_BASE}/api/employees/${employeeId}/photo`
@@ -106,10 +145,20 @@ export function PhotoUpload({
 
   const displayUrl = preview ?? normalizeFileUrl(currentUrl);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onImageLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+    const { width, height } = e.currentTarget;
+    const initialCrop = centerCrop(
+      makeAspectCrop({ unit: "%", width: 80 }, 1, width, height),
+      width,
+      height,
+    );
+    setCrop(initialCrop);
+  }, []);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!inputRef.current) return;
-    inputRef.current.value = ""; // reset so same file re-triggers
+    inputRef.current.value = "";
     if (!file) return;
 
     setError(null);
@@ -123,16 +172,37 @@ export function PhotoUpload({
       return;
     }
 
-    // Show local preview immediately
     const reader = new FileReader();
-    reader.onload = () => setPreview(reader.result as string);
+    reader.onload = () => {
+      setPendingSrc(reader.result as string);
+      setPendingFileName(file.name);
+      setCropModalOpen(true);
+    };
     reader.readAsDataURL(file);
+  };
+
+  const handleCropConfirm = async () => {
+    if (!imgRef.current || !crop) return;
+
+    const blob = await getCroppedBlob(imgRef.current, crop);
+    if (!blob) {
+      setError("Failed to crop image — please try again.");
+      setCropModalOpen(false);
+      return;
+    }
+
+    setCropModalOpen(false);
+
+    // Show cropped preview immediately
+    const croppedUrl = URL.createObjectURL(blob);
+    setPreview(croppedUrl);
 
     // Upload
     setUploading(true);
     try {
       const form = new FormData();
-      form.append("photo", file);
+      const ext = pendingFileName.split(".").pop() ?? "jpg";
+      form.append("photo", blob, `cropped-photo.${ext}`);
 
       const token = getToken();
       const res = await fetch(endpoint, {
@@ -147,7 +217,6 @@ export function PhotoUpload({
         console.error("[PhotoUpload Error]", { status: res.status, data, endpoint });
         throw new Error(data.error ?? data.message ?? `Upload failed with status ${res.status}`);
       }
-      // Keep showing the uploaded URL directly (Facebook pattern - optimistic)
       const uploadedUrl = data.avatarUrl ?? data.photoUrl ?? data.url ?? "";
       setPreview(normalizeFileUrl(uploadedUrl) ?? uploadedUrl);
       onSuccess?.(uploadedUrl);
@@ -157,6 +226,12 @@ export function PhotoUpload({
     } finally {
       setUploading(false);
     }
+  };
+
+  const handleCropCancel = () => {
+    setCropModalOpen(false);
+    setPendingSrc(null);
+    setCrop(undefined);
   };
 
   const handleDelete = async () => {
@@ -219,7 +294,7 @@ export function PhotoUpload({
         aria-label="Upload employee photo"
       />
 
-      {/* Action buttons (shown only when there's a photo or on hover-intent) */}
+      {/* Action buttons */}
       <div className="flex items-center gap-1.5">
         <Button
           type="button"
@@ -259,6 +334,58 @@ export function PhotoUpload({
       <p className="text-center text-[11px] text-slate-400">
         JPG, PNG or WebP · max 15 MB
       </p>
+
+      {/* ── Circular Crop Modal ── */}
+      <Dialog open={cropModalOpen} onOpenChange={(open) => { if (!open) handleCropCancel(); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-center">Adjust Photo</DialogTitle>
+          </DialogHeader>
+          <p className="text-center text-xs text-slate-500 -mt-2">
+            Position your face inside the circle, then confirm.
+          </p>
+          <div className="flex justify-center py-3">
+            {pendingSrc && (
+              <ReactCrop
+                crop={crop}
+                onChange={(c) => setCrop(c)}
+                aspect={1}
+                circularCrop
+                className="max-h-[320px] rounded-lg"
+              >
+                <img
+                  ref={imgRef}
+                  src={pendingSrc}
+                  alt="Crop preview"
+                  onLoad={onImageLoad}
+                  style={{ maxHeight: 320, maxWidth: "100%" }}
+                />
+              </ReactCrop>
+            )}
+          </div>
+          <div className="flex justify-center gap-3 pt-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={handleCropCancel}
+            >
+              <X className="h-3.5 w-3.5" />
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="gap-1.5 bg-[#1B6AB5] hover:bg-[#155a9a]"
+              onClick={handleCropConfirm}
+            >
+              <Check className="h-3.5 w-3.5" />
+              Confirm & Upload
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -22,6 +22,12 @@ import {
   Phone,
   Mail,
   Clock,
+  CheckCircle,
+  AlertCircle,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Eye,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -35,6 +41,13 @@ import { formatISTDate } from "@/lib/utils";
 import { EmployeeIDCard } from "@/components/employees/EmployeeIDCard";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
+
+interface EmergencyContact {
+  name: string;
+  relationship: string;
+  mobile: string;
+  address?: string;
+}
 
 interface Employee {
   id: string;
@@ -62,12 +75,7 @@ interface Employee {
   branch_city?: string | null;
   branch_state?: string | null;
   branch_hr_contact?: string | null;
-}
-
-interface EmergencyContact {
-  name: string;
-  relationship: string;
-  mobile: string;
+  emergency_contact?: EmergencyContact | null;
 }
 
 interface LeaveBalance {
@@ -81,6 +89,7 @@ interface AttendanceSummary {
   present_days: number;
   working_days: number;
   attendance_pct: number | null;
+  source?: string;
 }
 
 interface PerformanceSummary {
@@ -107,9 +116,14 @@ interface StatCardData {
   performance: PerformanceSummary | null;
   active_assets: number;
   pending_docs: number;
+  missing_docs: number;
+  awaiting_verification: number;
+  verified_docs: number;
   gamification_tier: GamificationTier | null;
   journey: JourneyEvent[];
 }
+
+type StatTab = "overview" | "documents" | "attendance" | "leave" | "payslips" | "assets" | "journey";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -130,6 +144,13 @@ function fmtDate(dateStr: string): string {
   return formatISTDate(dateStr);
 }
 
+function currentMonthRange() {
+  const now = new Date();
+  const y = now.getFullYear(), m = String(now.getMonth() + 1).padStart(2, "0");
+  const lastDay = new Date(y, now.getMonth() + 1, 0).getDate();
+  return { fromDate: `${y}-${m}-01`, toDate: `${y}-${m}-${lastDay}` };
+}
+
 // ── Journey config ─────────────────────────────────────────────────────────────
 
 const JOURNEY_CONFIG: Record<string, { icon: React.ReactNode; gradient: string; dotColor: string; label: string }> = {
@@ -147,7 +168,7 @@ function journeyConfig(eventType: string) {
   return JOURNEY_CONFIG[key] ?? JOURNEY_CONFIG.default;
 }
 
-// ── Animated number ────────────────────────────────────────────────────────────
+// ── Sub-components ─────────────────────────────────────────────────────────────
 
 function AnimatedNumber({ value, suffix = "" }: { value: number; suffix?: string }) {
   const [display, setDisplay] = useState(0);
@@ -166,8 +187,6 @@ function AnimatedNumber({ value, suffix = "" }: { value: number; suffix?: string
   return <>{display}{suffix}</>;
 }
 
-// ── Circular progress ──────────────────────────────────────────────────────────
-
 function CircularProgress({ pct, color }: { pct: number; color: string }) {
   const r = 36;
   const circ = 2 * Math.PI * r;
@@ -175,33 +194,371 @@ function CircularProgress({ pct, color }: { pct: number; color: string }) {
   return (
     <svg width="90" height="90" className="rotate-[-90deg]">
       <circle cx="45" cy="45" r={r} fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="8" />
-      <circle
-        cx="45" cy="45" r={r} fill="none"
-        stroke="white" strokeWidth="8"
-        strokeDasharray={`${dash} ${circ}`}
-        strokeLinecap="round"
-        style={{ transition: "stroke-dasharray 1s ease" }}
-      />
+      <circle cx="45" cy="45" r={r} fill="none" stroke="white" strokeWidth="8"
+        strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
+        style={{ transition: "stroke-dasharray 1s ease" }} />
     </svg>
   );
 }
-
-// ── Star rating ────────────────────────────────────────────────────────────────
 
 function StarRating({ score, max = 5 }: { score: number; max?: number }) {
   return (
     <div className="flex items-center gap-1">
       {Array.from({ length: max }).map((_, i) => (
-        <Star
-          key={i}
-          className={cn("h-5 w-5 drop-shadow-sm", i < Math.round(score) ? "fill-white text-white" : "fill-white/20 text-white/20")}
-        />
+        <Star key={i} className={cn("h-5 w-5 drop-shadow-sm", i < Math.round(score) ? "fill-white text-white" : "fill-white/20 text-white/20")} />
       ))}
     </div>
   );
 }
 
+function StatusChip({ status }: { status: string }) {
+  const s = status?.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    present: "bg-emerald-100 text-emerald-700",
+    absent: "bg-red-100 text-red-700",
+    week_off: "bg-slate-100 text-slate-500",
+    holiday: "bg-blue-100 text-blue-700",
+    half_day: "bg-yellow-100 text-yellow-700",
+    late: "bg-orange-100 text-orange-700",
+  };
+  return (
+    <span className={cn("px-2 py-0.5 rounded-full text-xs font-semibold capitalize", map[s] ?? "bg-slate-100 text-slate-600")}>
+      {status?.replace(/_/g, " ") ?? "—"}
+    </span>
+  );
+}
+
+// ── Tab: Documents ─────────────────────────────────────────────────────────────
+
+function DocumentsTab({ employeeId }: { employeeId: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["emp-docs", employeeId],
+    queryFn: () => hrmsApi.get<{ data: Array<{ id: string; document_type: string; file_url: string | null; verified: number; created_at: string; original_filename?: string }> }>(`/api/employee-docs/${employeeId}`),
+  });
+  const docs = data?.data ?? [];
+  if (isLoading) return <TabLoader />;
+  if (docs.length === 0) return <TabEmpty icon={<FileText className="h-10 w-10 opacity-20" />} message="No documents found for this employee." />;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-slate-50 border-b border-slate-200">
+            <th className="text-left px-4 py-3 font-semibold text-slate-600">Document</th>
+            <th className="text-left px-4 py-3 font-semibold text-slate-600">Uploaded</th>
+            <th className="text-left px-4 py-3 font-semibold text-slate-600">Status</th>
+            <th className="text-left px-4 py-3 font-semibold text-slate-600">Action</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {docs.map((doc) => (
+            <tr key={doc.id} className="hover:bg-slate-50 transition-colors">
+              <td className="px-4 py-3 font-medium text-slate-900">{doc.document_type?.replace(/_/g, " ")}</td>
+              <td className="px-4 py-3 text-slate-500">{doc.created_at ? fmtDate(doc.created_at) : "—"}</td>
+              <td className="px-4 py-3">
+                {!doc.file_url ? (
+                  <span className="flex items-center gap-1.5 text-orange-600 font-semibold text-xs"><AlertCircle className="h-3.5 w-3.5" />Not Uploaded</span>
+                ) : doc.verified ? (
+                  <span className="flex items-center gap-1.5 text-emerald-600 font-semibold text-xs"><CheckCircle className="h-3.5 w-3.5" />Verified</span>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-amber-600 font-semibold text-xs"><Clock className="h-3.5 w-3.5" />Awaiting Verification</span>
+                )}
+              </td>
+              <td className="px-4 py-3">
+                {doc.file_url && (
+                  <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800">
+                    <Eye className="h-3.5 w-3.5" /> View
+                  </a>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Tab: Attendance ────────────────────────────────────────────────────────────
+
+function AttendanceTab({ employeeId }: { employeeId: string }) {
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+
+  const fromDate = `${year}-${String(month).padStart(2, "0")}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const toDate = `${year}-${String(month).padStart(2, "0")}-${lastDay}`;
+  const monthLabel = new Date(year, month - 1).toLocaleString("default", { month: "long", year: "numeric" });
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["emp-attendance", employeeId, fromDate, toDate],
+    queryFn: () => hrmsApi.get<{ data: Array<{ record_date: string; clock_in: string | null; clock_out: string | null; attendance_status: string; total_hours: number | null }> }>(
+      `/api/wfm/attendance/daily?employeeId=${employeeId}&fromDate=${fromDate}&toDate=${toDate}`
+    ),
+  });
+
+  const records = data?.data ?? [];
+
+  function prevMonth() {
+    if (month === 1) { setMonth(12); setYear(y => y - 1); } else setMonth(m => m - 1);
+  }
+  function nextMonth() {
+    if (month === 12) { setMonth(1); setYear(y => y + 1); } else setMonth(m => m + 1);
+  }
+
+  const presentCount = records.filter(r => r.attendance_status?.toLowerCase() === "present").length;
+  const absentCount = records.filter(r => r.attendance_status?.toLowerCase() === "absent").length;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={prevMonth} className="h-8 w-8 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-50">
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <span className="font-bold text-slate-900 min-w-[160px] text-center">{monthLabel}</span>
+          <button onClick={nextMonth} className="h-8 w-8 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-50">
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex gap-4 text-sm">
+          <span className="text-emerald-700 font-bold">{presentCount} Present</span>
+          <span className="text-red-600 font-bold">{absentCount} Absent</span>
+        </div>
+      </div>
+      {isLoading ? <TabLoader /> : records.length === 0 ? (
+        <TabEmpty icon={<CalendarDays className="h-10 w-10 opacity-20" />} message="No attendance records for this period." />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200">
+                <th className="text-left px-4 py-3 font-semibold text-slate-600">Date</th>
+                <th className="text-left px-4 py-3 font-semibold text-slate-600">Clock In</th>
+                <th className="text-left px-4 py-3 font-semibold text-slate-600">Clock Out</th>
+                <th className="text-left px-4 py-3 font-semibold text-slate-600">Hours</th>
+                <th className="text-left px-4 py-3 font-semibold text-slate-600">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {records.map((r, i) => (
+                <tr key={i} className="hover:bg-slate-50">
+                  <td className="px-4 py-3 font-medium text-slate-900">{fmtDate(r.record_date)}</td>
+                  <td className="px-4 py-3 text-slate-600 font-mono text-xs">{r.clock_in ?? "—"}</td>
+                  <td className="px-4 py-3 text-slate-600 font-mono text-xs">{r.clock_out ?? "—"}</td>
+                  <td className="px-4 py-3 text-slate-600">{r.total_hours != null ? `${r.total_hours}h` : "—"}</td>
+                  <td className="px-4 py-3"><StatusChip status={r.attendance_status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Tab: Leave ─────────────────────────────────────────────────────────────────
+
+function LeaveTab({ employeeId, leaveBalances }: { employeeId: string; leaveBalances: LeaveBalance[] }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["emp-leave-history", employeeId],
+    queryFn: () => hrmsApi.get<{ data: Array<{ id: string; leave_type_code: string; leave_type_name: string; from_date: string; to_date: string; days_requested: number; status: string; remarks: string | null }> }>(
+      `/api/leave/requests?employeeId=${employeeId}&limit=50`
+    ),
+  });
+  const requests = data?.data ?? [];
+  const statusColor: Record<string, string> = {
+    approved: "bg-emerald-100 text-emerald-700",
+    rejected: "bg-red-100 text-red-700",
+    pending: "bg-yellow-100 text-yellow-700",
+    cancelled: "bg-slate-100 text-slate-500",
+  };
+  return (
+    <div className="space-y-6">
+      {leaveBalances.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {leaveBalances.map(lb => (
+            <div key={lb.leave_code} className="rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-100 p-4 text-center">
+              <p className="text-xs font-semibold text-emerald-700 truncate">{lb.leave_name ?? lb.leave_code}</p>
+              <p className="text-2xl font-extrabold text-emerald-800 mt-1">{Number(lb.available_days).toFixed(1)}</p>
+              <p className="text-xs text-emerald-500">{Number(lb.used_days).toFixed(1)} used</p>
+            </div>
+          ))}
+        </div>
+      )}
+      <div>
+        <h4 className="text-sm font-bold text-slate-700 mb-3">Leave Request History</h4>
+        {isLoading ? <TabLoader /> : requests.length === 0 ? (
+          <TabEmpty icon={<CalendarDays className="h-8 w-8 opacity-20" />} message="No leave requests found." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="text-left px-4 py-3 font-semibold text-slate-600">Type</th>
+                  <th className="text-left px-4 py-3 font-semibold text-slate-600">From</th>
+                  <th className="text-left px-4 py-3 font-semibold text-slate-600">To</th>
+                  <th className="text-left px-4 py-3 font-semibold text-slate-600">Days</th>
+                  <th className="text-left px-4 py-3 font-semibold text-slate-600">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {requests.map(r => (
+                  <tr key={r.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 font-medium text-slate-900">{r.leave_type_name ?? r.leave_type_code}</td>
+                    <td className="px-4 py-3 text-slate-600">{fmtDate(r.from_date)}</td>
+                    <td className="px-4 py-3 text-slate-600">{fmtDate(r.to_date)}</td>
+                    <td className="px-4 py-3 font-bold text-slate-900">{r.days_requested}</td>
+                    <td className="px-4 py-3">
+                      <span className={cn("px-2 py-0.5 rounded-full text-xs font-semibold capitalize", statusColor[r.status?.toLowerCase()] ?? "bg-slate-100 text-slate-600")}>
+                        {r.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Tab: Payslips ──────────────────────────────────────────────────────────────
+
+function PayslipsTab({ employeeId, isSelf }: { employeeId: string; isSelf: boolean }) {
+  const endpoint = isSelf
+    ? "/api/payroll/payslip/my"
+    : `/api/payroll/payslip/list/${employeeId}`;
+  const { data, isLoading } = useQuery({
+    queryKey: ["emp-payslips", employeeId],
+    queryFn: () => hrmsApi.get<{ data: Array<{ run_id: string; run_label: string; period_label: string; pay_date: string; net_pay: number; gross_pay: number; total_deductions: number; status: string }> }>(endpoint),
+  });
+  const payslips = data?.data ?? [];
+  if (isLoading) return <TabLoader />;
+  if (payslips.length === 0) return <TabEmpty icon={<FileText className="h-10 w-10 opacity-20" />} message="No payslips found." />;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-slate-50 border-b border-slate-200">
+            <th className="text-left px-4 py-3 font-semibold text-slate-600">Period</th>
+            <th className="text-right px-4 py-3 font-semibold text-slate-600">Gross</th>
+            <th className="text-right px-4 py-3 font-semibold text-slate-600">Deductions</th>
+            <th className="text-right px-4 py-3 font-semibold text-slate-600">Net Pay</th>
+            <th className="text-left px-4 py-3 font-semibold text-slate-600">Status</th>
+            <th className="text-left px-4 py-3 font-semibold text-slate-600">Action</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {payslips.map(p => (
+            <tr key={p.run_id} className="hover:bg-slate-50">
+              <td className="px-4 py-3 font-medium text-slate-900">{p.period_label ?? p.run_label}</td>
+              <td className="px-4 py-3 text-right text-slate-600">₹{Number(p.gross_pay ?? 0).toLocaleString()}</td>
+              <td className="px-4 py-3 text-right text-red-500">-₹{Number(p.total_deductions ?? 0).toLocaleString()}</td>
+              <td className="px-4 py-3 text-right font-extrabold text-emerald-700">₹{Number(p.net_pay ?? 0).toLocaleString()}</td>
+              <td className="px-4 py-3">
+                <span className={cn("px-2 py-0.5 rounded-full text-xs font-semibold capitalize",
+                  p.status === "paid" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600")}>
+                  {p.status}
+                </span>
+              </td>
+              <td className="px-4 py-3">
+                <Link to={`/payslip/${p.run_id}/${employeeId}`}
+                  className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800">
+                  <Download className="h-3.5 w-3.5" /> View
+                </Link>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Tab: Assets ────────────────────────────────────────────────────────────────
+
+function AssetsTab({ employeeId }: { employeeId: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["emp-assets", employeeId],
+    queryFn: () => hrmsApi.get<{ data: Array<{ id: string; asset_name: string; asset_code: string; category: string; assigned_date: string; condition_at_assignment: string; returned_date: string | null }> }>(
+      `/api/assets/employee/${employeeId}`
+    ),
+  });
+  const assets = data?.data ?? [];
+  if (isLoading) return <TabLoader />;
+  if (assets.length === 0) return <TabEmpty icon={<Package className="h-10 w-10 opacity-20" />} message="No assets assigned to this employee." />;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-slate-50 border-b border-slate-200">
+            <th className="text-left px-4 py-3 font-semibold text-slate-600">Asset</th>
+            <th className="text-left px-4 py-3 font-semibold text-slate-600">Code</th>
+            <th className="text-left px-4 py-3 font-semibold text-slate-600">Category</th>
+            <th className="text-left px-4 py-3 font-semibold text-slate-600">Assigned</th>
+            <th className="text-left px-4 py-3 font-semibold text-slate-600">Condition</th>
+            <th className="text-left px-4 py-3 font-semibold text-slate-600">Status</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {assets.map(a => (
+            <tr key={a.id} className="hover:bg-slate-50">
+              <td className="px-4 py-3 font-medium text-slate-900">{a.asset_name}</td>
+              <td className="px-4 py-3 font-mono text-xs text-slate-500">{a.asset_code}</td>
+              <td className="px-4 py-3 text-slate-600">{a.category}</td>
+              <td className="px-4 py-3 text-slate-600">{a.assigned_date ? fmtDate(a.assigned_date) : "—"}</td>
+              <td className="px-4 py-3 text-slate-600 capitalize">{a.condition_at_assignment?.replace(/_/g, " ") ?? "—"}</td>
+              <td className="px-4 py-3">
+                {a.returned_date ? (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-500">Returned</span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-violet-100 text-violet-700">Active</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Tab helpers ────────────────────────────────────────────────────────────────
+
+function TabLoader() {
+  return (
+    <div className="flex items-center justify-center py-16 gap-3">
+      <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600" />
+      <span className="text-slate-400 text-sm">Loading…</span>
+    </div>
+  );
+}
+
+function TabEmpty({ icon, message }: { icon: React.ReactNode; message: string }) {
+  return (
+    <div className="flex flex-col items-center py-16 gap-3 text-slate-400">
+      {icon}
+      <p className="text-sm">{message}</p>
+    </div>
+  );
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────────
+
+const TABS: { key: StatTab; label: string; icon: React.ReactNode }[] = [
+  { key: "overview",   label: "Overview",   icon: <Zap className="h-4 w-4" /> },
+  { key: "documents",  label: "Documents",  icon: <FileText className="h-4 w-4" /> },
+  { key: "attendance", label: "Attendance", icon: <CalendarDays className="h-4 w-4" /> },
+  { key: "leave",      label: "Leave",      icon: <Clock className="h-4 w-4" /> },
+  { key: "payslips",   label: "Payslips",   icon: <CreditCard className="h-4 w-4" /> },
+  { key: "assets",     label: "Assets",     icon: <Package className="h-4 w-4" /> },
+  { key: "journey",    label: "Journey",    icon: <TrendingUp className="h-4 w-4" /> },
+];
 
 export default function NativeEmployeeStatCard() {
   const { id: urlId } = useParams<{ id?: string }>();
@@ -213,6 +570,7 @@ export default function NativeEmployeeStatCard() {
   const [showResults, setShowResults] = useState(false);
   const [showIdCard, setShowIdCard] = useState(false);
   const [targetId, setTargetId] = useState<string | null>(urlId ?? null);
+  const [activeTab, setActiveTab] = useState<StatTab>("overview");
   const searchRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -232,6 +590,7 @@ export default function NativeEmployeeStatCard() {
   });
 
   const resolvedId = targetId ?? meData?.data?.id ?? null;
+  const isSelf = !targetId && !!meData?.data?.id;
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["employee-stat-card", resolvedId],
@@ -261,26 +620,21 @@ export default function NativeEmployeeStatCard() {
     setTargetId(id);
     setShowResults(false);
     setSearchInput("");
+    setActiveTab("overview");
     navigate(`/employee-stat-card/${id}`, { replace: true });
   }
 
   return (
     <DashboardLayout>
-      {/* ── Full-bleed page background ─────────────────────────────────────── */}
       <div className="min-h-screen" style={{ background: "linear-gradient(135deg, #f0f4ff 0%, #faf5ff 40%, #fff1f0 100%)" }}>
 
         {/* ── Hero Banner ──────────────────────────────────────────────────── */}
-        <div
-          className="relative overflow-hidden px-8 pt-8 pb-10"
-          style={{ background: "linear-gradient(135deg, #1B6AB5 0%, #1557A0 35%, #2d1b8e 65%, #E8231A 100%)" }}
-        >
-          {/* Decorative circles */}
+        <div className="relative overflow-hidden px-8 pt-8 pb-10"
+          style={{ background: "linear-gradient(135deg, #1B6AB5 0%, #1557A0 35%, #2d1b8e 65%, #E8231A 100%)" }}>
           <div className="absolute -top-16 -right-16 h-64 w-64 rounded-full opacity-10" style={{ background: "radial-gradient(circle, white, transparent)" }} />
           <div className="absolute -bottom-20 -left-10 h-72 w-72 rounded-full opacity-10" style={{ background: "radial-gradient(circle, white, transparent)" }} />
-          <div className="absolute top-8 right-1/3 h-32 w-32 rounded-full opacity-5" style={{ background: "radial-gradient(circle, white, transparent)" }} />
 
           <div className="relative z-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            {/* Logo + title */}
             <div className="flex items-center gap-4">
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/15 ring-2 ring-white/30 backdrop-blur-sm shadow-xl">
                 <img src="/mcn-logo.png" alt="MCN" className="h-10 w-10 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
@@ -291,27 +645,20 @@ export default function NativeEmployeeStatCard() {
               </div>
             </div>
 
-            {/* Search */}
             {canSearchEmployees && (
               <div ref={searchRef} className="relative w-72">
                 <div className="relative">
-                  <Input
-                    placeholder="Search employee name or code…"
-                    value={searchInput}
+                  <Input placeholder="Search employee name or code…" value={searchInput}
                     onChange={(e) => handleSearchInput(e.target.value)}
                     onFocus={() => searchResults.length > 0 && setShowResults(true)}
-                    className="pr-10 bg-white/15 border-white/30 text-white placeholder:text-white/50 backdrop-blur-sm focus:bg-white/25 focus:border-white/60"
-                  />
+                    className="pr-10 bg-white/15 border-white/30 text-white placeholder:text-white/50 backdrop-blur-sm focus:bg-white/25 focus:border-white/60" />
                   <Search className="absolute right-3 top-2.5 h-4 w-4 text-white/60 pointer-events-none" />
                 </div>
                 {showResults && searchResults.length > 0 && (
                   <div className="absolute top-full left-0 right-0 mt-2 z-50 rounded-xl bg-white shadow-2xl border border-slate-100 overflow-hidden max-h-72 overflow-y-auto">
                     {searchResults.map((emp) => (
-                      <button
-                        key={emp.id}
-                        onClick={() => selectEmployee(emp.id)}
-                        className="w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors border-b border-slate-100 last:border-0 group"
-                      >
+                      <button key={emp.id} onClick={() => selectEmployee(emp.id)}
+                        className="w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors border-b border-slate-100 last:border-0 group">
                         <div className="font-semibold text-sm text-slate-900 group-hover:text-blue-700">{emp.name}</div>
                         <div className="text-xs text-slate-400 font-mono">{emp.code}</div>
                       </button>
@@ -326,7 +673,6 @@ export default function NativeEmployeeStatCard() {
         {/* ── Page body ─────────────────────────────────────────────────────── */}
         <div className="px-6 py-6 space-y-6">
 
-          {/* Empty / loading / error states */}
           {!resolvedId && !isLoading && (
             <div className="flex flex-col items-center justify-center py-24 gap-4">
               <div className="h-20 w-20 rounded-full flex items-center justify-center" style={{ background: "linear-gradient(135deg, #1B6AB5, #E8231A)" }}>
@@ -348,9 +694,7 @@ export default function NativeEmployeeStatCard() {
           {error && (
             <div className="rounded-2xl bg-red-50 border border-red-200 p-6 text-center">
               <p className="text-red-700 font-medium">{(error as Error).message ?? "Failed to load employee data."}</p>
-              <Button variant="ghost" size="sm" className="mt-3 text-red-600 hover:text-red-700" onClick={() => refetch()}>
-                Retry
-              </Button>
+              <Button variant="ghost" size="sm" className="mt-3 text-red-600 hover:text-red-700" onClick={() => refetch()}>Retry</Button>
             </div>
           )}
 
@@ -358,34 +702,25 @@ export default function NativeEmployeeStatCard() {
             <div className="space-y-6 animate-fadeIn">
 
               {/* ── Identity Hero Card ──────────────────────────────────────── */}
-              <div
-                className="relative rounded-3xl overflow-hidden shadow-2xl"
-                style={{ background: "linear-gradient(135deg, #1B6AB5 0%, #1050a0 50%, #0d3d85 100%)" }}
-              >
-                {/* Background pattern */}
+              <div className="relative rounded-3xl overflow-hidden shadow-2xl"
+                style={{ background: "linear-gradient(135deg, #1B6AB5 0%, #1050a0 50%, #0d3d85 100%)" }}>
                 <div className="absolute inset-0 opacity-5" style={{
                   backgroundImage: "radial-gradient(circle at 20% 50%, white 1px, transparent 1px), radial-gradient(circle at 80% 20%, white 1px, transparent 1px)",
                   backgroundSize: "40px 40px",
                 }} />
                 <div className="absolute top-0 right-0 w-72 h-72 rounded-full opacity-10 translate-x-20 -translate-y-20" style={{ background: "radial-gradient(circle, #E8231A, transparent)" }} />
-
                 <div className="relative z-10 p-6 sm:p-8">
                   <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:gap-8">
-
-                    {/* Avatar */}
                     <div className="shrink-0 relative">
                       <div className="h-24 w-24 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center text-white text-3xl font-extrabold shadow-2xl ring-4 ring-white/30">
                         {card.employee.first_name?.[0]?.toUpperCase() ?? "?"}
                         {card.employee.last_name?.[0]?.toUpperCase() ?? ""}
                       </div>
-                      {/* Status dot */}
                       <span className={cn(
                         "absolute -bottom-1 -right-1 h-5 w-5 rounded-full border-2 border-white shadow",
                         card.employee.employment_status?.toLowerCase() === "active" ? "bg-emerald-400" : "bg-red-400"
                       )} />
                     </div>
-
-                    {/* Info */}
                     <div className="flex-1 min-w-0 space-y-3">
                       <div className="flex flex-wrap items-center gap-3">
                         <h2 className="text-2xl font-extrabold text-white tracking-tight">{card.employee.full_name}</h2>
@@ -398,29 +733,21 @@ export default function NativeEmployeeStatCard() {
                           {card.employee.employment_status ?? "Unknown"}
                         </span>
                       </div>
-
                       <div className="flex flex-wrap gap-2 text-white/80 text-sm">
                         <span className="flex items-center gap-1.5">
                           <Briefcase className="h-3.5 w-3.5 opacity-70" />
                           <span className="font-mono font-bold text-white">{card.employee.employee_code}</span>
                         </span>
                         {card.employee.designation_name && (
-                          <span className="flex items-center gap-1.5">
-                            <span className="opacity-40">·</span>
-                            {card.employee.designation_name}
-                          </span>
+                          <span className="flex items-center gap-1.5"><span className="opacity-40">·</span>{card.employee.designation_name}</span>
                         )}
                         {card.employee.employment_type && (
                           <span className="px-2 py-0.5 rounded-full bg-white/10 text-xs font-medium">{card.employee.employment_type}</span>
                         )}
                       </div>
-
-                      {/* Tags row */}
                       <div className="flex flex-wrap gap-2">
                         {card.employee.call_centre_code && (
-                          <span className="px-3 py-1 rounded-full bg-white/10 ring-1 ring-white/20 text-xs font-mono text-white/90">
-                            {card.employee.call_centre_code}
-                          </span>
+                          <span className="px-3 py-1 rounded-full bg-white/10 ring-1 ring-white/20 text-xs font-mono text-white/90">{card.employee.call_centre_code}</span>
                         )}
                         {card.employee.branch_name && (
                           <span className="px-3 py-1 rounded-full bg-white/10 ring-1 ring-white/20 text-xs text-white/90 flex items-center gap-1">
@@ -434,19 +761,11 @@ export default function NativeEmployeeStatCard() {
                           <span className="px-3 py-1 rounded-full bg-white/10 ring-1 ring-white/20 text-xs text-white/90">{card.employee.dept_name}</span>
                         )}
                       </div>
-
-                      {/* Contact row */}
                       <div className="flex flex-wrap gap-4 text-xs text-white/60">
-                        {card.employee.email && (
-                          <span className="flex items-center gap-1"><Mail className="h-3 w-3" />{card.employee.email}</span>
-                        )}
-                        {card.employee.mobile && (
-                          <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{card.employee.mobile}</span>
-                        )}
+                        {card.employee.email && <span className="flex items-center gap-1"><Mail className="h-3 w-3" />{card.employee.email}</span>}
+                        {card.employee.mobile && <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{card.employee.mobile}</span>}
                       </div>
                     </div>
-
-                    {/* Tenure chip */}
                     <div className="shrink-0 text-center px-6 py-4 rounded-2xl bg-white/10 ring-1 ring-white/20 backdrop-blur-sm">
                       <Clock className="h-5 w-5 text-white/60 mx-auto mb-1" />
                       <p className="text-2xl font-extrabold text-white">{calcTenure(card.employee.date_of_joining)}</p>
@@ -457,260 +776,279 @@ export default function NativeEmployeeStatCard() {
                 </div>
               </div>
 
-              {/* ── ID Card Button ───────────────────────────────────────── */}
+              {/* ── Quick actions ────────────────────────────────────────── */}
               <div className="flex flex-wrap gap-3">
-                <button
-                  onClick={() => setShowIdCard(true)}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors"
-                >
+                <button onClick={() => setShowIdCard(true)}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors">
                   <CreditCard className="h-4 w-4" /> View ID Card
                 </button>
                 {resolvedId && (
                   <>
-                    <Link
-                      to={`/employees/${resolvedId}/joining-documents`}
-                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors"
-                    >
+                    <Link to={`/employees/${resolvedId}/joining-documents`}
+                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors">
                       <FileText className="h-4 w-4" /> Joining Documents
                     </Link>
-                    <Link
-                      to={`/employees/${resolvedId}/epf-compliance`}
-                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors"
-                    >
+                    <Link to={`/employees/${resolvedId}/epf-compliance`}
+                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors">
                       <Briefcase className="h-4 w-4" /> EPF Compliance
                     </Link>
                   </>
                 )}
               </div>
 
-              {/* ── 6-Stat Grid ────────────────────────────────────────────── */}
-              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-
-                {/* 1. Attendance */}
-                <div className="relative rounded-2xl overflow-hidden shadow-lg group hover:shadow-xl transition-all hover:-translate-y-0.5"
-                  style={{ background: "linear-gradient(135deg, #0ea5e9 0%, #0284c7 50%, #0369a1 100%)" }}>
-                  <div className="absolute top-0 right-0 w-32 h-32 rounded-full opacity-15 translate-x-8 -translate-y-8" style={{ background: "radial-gradient(circle, white, transparent)" }} />
-                  <div className="relative z-10 p-5 flex items-center gap-5">
-                    <div className="relative">
-                      <CircularProgress pct={card.attendance.attendance_pct ?? 0} color="#0ea5e9" />
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <span className="text-sm font-extrabold text-white leading-none">
-                          {card.attendance.attendance_pct != null ? `${card.attendance.attendance_pct}%` : "—"}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-white/60 uppercase tracking-widest">Attendance</p>
-                      <p className="text-3xl font-extrabold text-white mt-0.5">
-                        <AnimatedNumber value={card.attendance.present_days} />
-                        <span className="text-lg text-white/60">/{card.attendance.working_days}</span>
-                      </p>
-                      <p className="text-xs text-white/50 mt-1">days present this month</p>
-                    </div>
-                    <TrendingUp className="h-8 w-8 text-white/20 shrink-0" />
-                  </div>
-                </div>
-
-                {/* 2. Leave Balances */}
-                <div className="relative rounded-2xl overflow-hidden shadow-lg group hover:shadow-xl transition-all hover:-translate-y-0.5"
-                  style={{ background: "linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%)" }}>
-                  <div className="absolute top-0 right-0 w-32 h-32 rounded-full opacity-15 translate-x-8 -translate-y-8" style={{ background: "radial-gradient(circle, white, transparent)" }} />
-                  <div className="relative z-10 p-5">
-                    <div className="flex items-center gap-2 mb-3">
-                      <CalendarDays className="h-5 w-5 text-white/70" />
-                      <p className="text-xs font-semibold text-white/60 uppercase tracking-widest">Leave Balances</p>
-                    </div>
-                    {card.leave_balances.length === 0 ? (
-                      <p className="text-sm text-white/50 py-2">No leave data for this year.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {card.leave_balances.slice(0, 4).map((lb) => (
-                          <div key={lb.leave_code} className="flex items-center justify-between">
-                            <span className="text-sm text-white/80 font-medium truncate max-w-[120px]">
-                              {lb.leave_name ?? lb.leave_code}
-                            </span>
-                            <span className="text-sm font-extrabold text-white bg-white/15 px-2 py-0.5 rounded-lg">
-                              {Number(lb.available_days).toFixed(1)}d
-                            </span>
-                          </div>
-                        ))}
-                        {card.leave_balances.length > 4 && (
-                          <p className="text-xs text-white/40">+{card.leave_balances.length - 4} more</p>
-                        )}
-                      </div>
+              {/* ── Tab Bar ──────────────────────────────────────────────── */}
+              <div className="flex overflow-x-auto gap-1 rounded-2xl bg-white p-1 shadow border border-slate-100 no-scrollbar">
+                {TABS.map(tab => (
+                  <button key={tab.key} onClick={() => setActiveTab(tab.key)}
+                    className={cn(
+                      "flex items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2 text-sm font-semibold transition-all",
+                      activeTab === tab.key
+                        ? "bg-gradient-to-br from-blue-600 to-blue-700 text-white shadow-md"
+                        : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+                    )}>
+                    {tab.icon} {tab.label}
+                    {tab.key === "documents" && card.missing_docs > 0 && (
+                      <span className="ml-1 h-5 w-5 rounded-full bg-orange-500 text-white text-[10px] font-extrabold flex items-center justify-center">
+                        {card.missing_docs}
+                      </span>
                     )}
-                  </div>
-                </div>
-
-                {/* 3. Performance */}
-                <div className="relative rounded-2xl overflow-hidden shadow-lg group hover:shadow-xl transition-all hover:-translate-y-0.5"
-                  style={{ background: "linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #b45309 100%)" }}>
-                  <div className="absolute top-0 right-0 w-32 h-32 rounded-full opacity-15 translate-x-8 -translate-y-8" style={{ background: "radial-gradient(circle, white, transparent)" }} />
-                  <div className="relative z-10 p-5">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Star className="h-5 w-5 text-white/70" />
-                      <p className="text-xs font-semibold text-white/60 uppercase tracking-widest">Performance</p>
-                    </div>
-                    {card.performance ? (
-                      <div className="space-y-2">
-                        <div className="text-4xl font-extrabold text-white">
-                          {card.performance.overall_score.toFixed(1)}
-                          <span className="text-lg text-white/50">/5</span>
-                        </div>
-                        <StarRating score={card.performance.overall_score} />
-                        <p className="text-xs text-white/50 mt-1">Period: {card.performance.period}</p>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-white/50 py-2">No performance data yet.</p>
-                    )}
-                  </div>
-                  <Star className="absolute bottom-3 right-4 h-16 w-16 text-white/5" />
-                </div>
-
-                {/* 4. Active Assets */}
-                <div className="relative rounded-2xl overflow-hidden shadow-lg group hover:shadow-xl transition-all hover:-translate-y-0.5"
-                  style={{ background: "linear-gradient(135deg, #8b5cf6 0%, #7c3aed 50%, #6d28d9 100%)" }}>
-                  <div className="absolute top-0 right-0 w-32 h-32 rounded-full opacity-15 translate-x-8 -translate-y-8" style={{ background: "radial-gradient(circle, white, transparent)" }} />
-                  <div className="relative z-10 p-5">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Package className="h-5 w-5 text-white/70" />
-                      <p className="text-xs font-semibold text-white/60 uppercase tracking-widest">Active Assets</p>
-                    </div>
-                    <div className="text-6xl font-extrabold text-white">
-                      <AnimatedNumber value={card.active_assets} />
-                    </div>
-                    <p className="text-sm text-white/50 mt-2">
-                      {card.active_assets === 0 ? "No assets assigned." : `Asset${card.active_assets !== 1 ? "s" : ""} currently assigned`}
-                    </p>
-                  </div>
-                  <Package className="absolute bottom-3 right-4 h-16 w-16 text-white/5" />
-                </div>
-
-                {/* 5. Gamification */}
-                <div className="relative rounded-2xl overflow-hidden shadow-lg group hover:shadow-xl transition-all hover:-translate-y-0.5"
-                  style={{ background: "linear-gradient(135deg, #E8231A 0%, #c41d15 50%, #991b1b 100%)" }}>
-                  <div className="absolute top-0 right-0 w-32 h-32 rounded-full opacity-15 translate-x-8 -translate-y-8" style={{ background: "radial-gradient(circle, white, transparent)" }} />
-                  <div className="relative z-10 p-5">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Award className="h-5 w-5 text-white/70" />
-                      <p className="text-xs font-semibold text-white/60 uppercase tracking-widest">Engagement Tier</p>
-                    </div>
-                    {card.gamification_tier ? (
-                      <div className="space-y-1">
-                        <div className="text-3xl font-extrabold text-white leading-tight">{card.gamification_tier.tier_name}</div>
-                        <div className="text-lg font-bold text-white/80">
-                          <AnimatedNumber value={card.gamification_tier.total_points} />
-                          <span className="text-sm text-white/50 ml-1">pts</span>
-                        </div>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-white/50 py-2">Not enrolled in gamification.</p>
-                    )}
-                  </div>
-                  <Award className="absolute bottom-3 right-4 h-16 w-16 text-white/5" />
-                </div>
-
-                {/* 6. Pending Docs */}
-                <div className={cn(
-                  "relative rounded-2xl overflow-hidden shadow-lg group hover:shadow-xl transition-all hover:-translate-y-0.5"
-                )}
-                  style={{
-                    background: card.pending_docs > 0
-                      ? "linear-gradient(135deg, #f97316 0%, #ea580c 50%, #c2410c 100%)"
-                      : "linear-gradient(135deg, #1B6AB5 0%, #1557a0 50%, #1040a0 100%)"
-                  }}>
-                  <div className="absolute top-0 right-0 w-32 h-32 rounded-full opacity-15 translate-x-8 -translate-y-8" style={{ background: "radial-gradient(circle, white, transparent)" }} />
-                  <div className="relative z-10 p-5">
-                    <div className="flex items-center gap-2 mb-3">
-                      <FileText className="h-5 w-5 text-white/70" />
-                      <p className="text-xs font-semibold text-white/60 uppercase tracking-widest">Pending Docs</p>
-                    </div>
-                    <div className="text-6xl font-extrabold text-white">
-                      <AnimatedNumber value={card.pending_docs} />
-                    </div>
-                    <p className="text-sm text-white/50 mt-2">
-                      {card.pending_docs > 0 ? "Documents awaiting verification" : "All documents verified ✓"}
-                    </p>
-                  </div>
-                  <FileText className="absolute bottom-3 right-4 h-16 w-16 text-white/5" />
-                </div>
+                  </button>
+                ))}
               </div>
 
-              {/* ── Journey Timeline ───────────────────────────────────────── */}
-              <div className="rounded-3xl overflow-hidden shadow-xl bg-white">
-                {/* Timeline header */}
-                <div className="px-6 py-5 flex items-center gap-3" style={{ background: "linear-gradient(135deg, #1B6AB5, #1040a0)" }}>
-                  <div className="h-8 w-8 rounded-xl bg-white/20 flex items-center justify-center">
-                    <Zap className="h-4 w-4 text-white" />
-                  </div>
-                  <h3 className="text-base font-extrabold text-white tracking-tight">Employee Journey Timeline</h3>
-                  {card.journey.length > 0 && (
-                    <span className="ml-auto px-3 py-0.5 rounded-full bg-white/15 text-xs font-bold text-white">
-                      {card.journey.length} event{card.journey.length !== 1 ? "s" : ""}
-                    </span>
-                  )}
-                </div>
+              {/* ── Tab Content ──────────────────────────────────────────── */}
+              <div className="rounded-3xl bg-white shadow border border-slate-100 overflow-hidden">
 
-                <div className="p-6">
-                  {card.journey.length === 0 ? (
-                    <div className="flex flex-col items-center py-12 gap-3 text-slate-400">
-                      <Zap className="h-10 w-10 opacity-20" />
-                      <p className="text-sm">No journey events recorded yet.</p>
-                    </div>
-                  ) : (
-                    <ol className="relative space-y-0">
-                      {/* Vertical line */}
-                      <div className="absolute left-[19px] top-5 bottom-5 w-0.5 bg-gradient-to-b from-blue-500 via-violet-400 to-slate-200" />
+                {/* Overview */}
+                {activeTab === "overview" && (
+                  <div className="p-6 space-y-5">
+                    <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
 
-                      {card.journey.map((evt, idx) => {
-                        const cfg = journeyConfig(evt.event_type);
-                        return (
-                          <li key={idx} className="relative flex gap-5 pb-6 last:pb-0">
-                            {/* Colored dot */}
-                            <div className={cn(
-                              "relative z-10 shrink-0 h-10 w-10 rounded-xl flex items-center justify-center text-white shadow-lg",
-                              `bg-gradient-to-br ${cfg.gradient}`
-                            )}>
-                              {cfg.icon}
+                      {/* Attendance */}
+                      <div className="relative rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-all hover:-translate-y-0.5"
+                        style={{ background: "linear-gradient(135deg, #0ea5e9 0%, #0284c7 50%, #0369a1 100%)" }}>
+                        <div className="absolute top-0 right-0 w-32 h-32 rounded-full opacity-15 translate-x-8 -translate-y-8" style={{ background: "radial-gradient(circle, white, transparent)" }} />
+                        <div className="relative z-10 p-5 flex items-center gap-5">
+                          <div className="relative">
+                            <CircularProgress pct={card.attendance.attendance_pct ?? 0} color="#0ea5e9" />
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <span className="text-sm font-extrabold text-white leading-none">
+                                {card.attendance.attendance_pct != null ? `${card.attendance.attendance_pct}%` : "—"}
+                              </span>
                             </div>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-white/60 uppercase tracking-widest">Attendance</p>
+                            <p className="text-3xl font-extrabold text-white mt-0.5">
+                              <AnimatedNumber value={card.attendance.present_days} />
+                              <span className="text-lg text-white/60">/{card.attendance.working_days}</span>
+                            </p>
+                            <p className="text-xs text-white/50 mt-1">days present this month</p>
+                            {card.attendance.source === "legacy" && (
+                              <span className="mt-1 inline-block px-2 py-0.5 rounded-full bg-white/20 text-white/70 text-[10px] font-semibold">legacy data</span>
+                            )}
+                          </div>
+                          <TrendingUp className="h-8 w-8 text-white/20 shrink-0" />
+                        </div>
+                      </div>
 
-                            {/* Content */}
-                            <div className="flex-1 min-w-0 bg-slate-50 rounded-xl p-4 border border-slate-100 hover:border-slate-200 transition-colors">
-                              <div className="flex flex-wrap items-center gap-2 mb-1">
-                                <span className="font-bold text-sm text-slate-900 capitalize">
-                                  {cfg.label !== "Event" ? cfg.label : (evt.event_type ?? "Event")}
-                                </span>
-                                {evt.module && (
-                                  <span className="px-2 py-0.5 rounded-md bg-slate-200 text-slate-600 text-[10px] font-semibold uppercase tracking-wide">
-                                    {evt.module}
-                                  </span>
-                                )}
+                      {/* Leave Balances */}
+                      <div className="relative rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-all hover:-translate-y-0.5"
+                        style={{ background: "linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%)" }}>
+                        <div className="absolute top-0 right-0 w-32 h-32 rounded-full opacity-15 translate-x-8 -translate-y-8" style={{ background: "radial-gradient(circle, white, transparent)" }} />
+                        <div className="relative z-10 p-5">
+                          <div className="flex items-center gap-2 mb-3">
+                            <CalendarDays className="h-5 w-5 text-white/70" />
+                            <p className="text-xs font-semibold text-white/60 uppercase tracking-widest">Leave Balances</p>
+                          </div>
+                          {card.leave_balances.length === 0 ? (
+                            <p className="text-sm text-white/50 py-2">No leave data for this year.</p>
+                          ) : (
+                            <div className="space-y-2">
+                              {card.leave_balances.slice(0, 4).map((lb) => (
+                                <div key={lb.leave_code} className="flex items-center justify-between">
+                                  <span className="text-sm text-white/80 font-medium truncate max-w-[120px]">{lb.leave_name ?? lb.leave_code}</span>
+                                  <span className="text-sm font-extrabold text-white bg-white/15 px-2 py-0.5 rounded-lg">{Number(lb.available_days).toFixed(1)}d</span>
+                                </div>
+                              ))}
+                              {card.leave_balances.length > 4 && <p className="text-xs text-white/40">+{card.leave_balances.length - 4} more</p>}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Performance */}
+                      <div className="relative rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-all hover:-translate-y-0.5"
+                        style={{ background: "linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #b45309 100%)" }}>
+                        <div className="absolute top-0 right-0 w-32 h-32 rounded-full opacity-15 translate-x-8 -translate-y-8" style={{ background: "radial-gradient(circle, white, transparent)" }} />
+                        <div className="relative z-10 p-5">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Star className="h-5 w-5 text-white/70" />
+                            <p className="text-xs font-semibold text-white/60 uppercase tracking-widest">Performance</p>
+                          </div>
+                          {card.performance ? (
+                            <div className="space-y-2">
+                              <div className="text-4xl font-extrabold text-white">
+                                {card.performance.overall_score.toFixed(1)}<span className="text-lg text-white/50">/5</span>
                               </div>
-                              <p className="text-xs text-slate-400 font-mono">{fmtDate(evt.event_date)}</p>
-                              {evt.description && (
-                                <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">{evt.description}</p>
-                              )}
+                              <StarRating score={card.performance.overall_score} />
+                              <p className="text-xs text-white/50 mt-1">Period: {card.performance.period}</p>
                             </div>
-                          </li>
-                        );
-                      })}
-                    </ol>
-                  )}
-                </div>
+                          ) : (
+                            <p className="text-sm text-white/50 py-2">No performance data yet.</p>
+                          )}
+                        </div>
+                        <Star className="absolute bottom-3 right-4 h-16 w-16 text-white/5" />
+                      </div>
+
+                      {/* Active Assets */}
+                      <div className="relative rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-all hover:-translate-y-0.5"
+                        style={{ background: "linear-gradient(135deg, #8b5cf6 0%, #7c3aed 50%, #6d28d9 100%)" }}>
+                        <div className="absolute top-0 right-0 w-32 h-32 rounded-full opacity-15 translate-x-8 -translate-y-8" style={{ background: "radial-gradient(circle, white, transparent)" }} />
+                        <div className="relative z-10 p-5">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Package className="h-5 w-5 text-white/70" />
+                            <p className="text-xs font-semibold text-white/60 uppercase tracking-widest">Active Assets</p>
+                          </div>
+                          <div className="text-6xl font-extrabold text-white"><AnimatedNumber value={card.active_assets} /></div>
+                          <p className="text-sm text-white/50 mt-2">
+                            {card.active_assets === 0 ? "No assets assigned." : `Asset${card.active_assets !== 1 ? "s" : ""} currently assigned`}
+                          </p>
+                        </div>
+                        <Package className="absolute bottom-3 right-4 h-16 w-16 text-white/5" />
+                      </div>
+
+                      {/* Gamification */}
+                      <div className="relative rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-all hover:-translate-y-0.5"
+                        style={{ background: "linear-gradient(135deg, #E8231A 0%, #c41d15 50%, #991b1b 100%)" }}>
+                        <div className="absolute top-0 right-0 w-32 h-32 rounded-full opacity-15 translate-x-8 -translate-y-8" style={{ background: "radial-gradient(circle, white, transparent)" }} />
+                        <div className="relative z-10 p-5">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Award className="h-5 w-5 text-white/70" />
+                            <p className="text-xs font-semibold text-white/60 uppercase tracking-widest">Engagement Tier</p>
+                          </div>
+                          {card.gamification_tier ? (
+                            <div className="space-y-1">
+                              <div className="text-3xl font-extrabold text-white leading-tight">{card.gamification_tier.tier_name}</div>
+                              <div className="text-lg font-bold text-white/80">
+                                <AnimatedNumber value={card.gamification_tier.total_points} />
+                                <span className="text-sm text-white/50 ml-1">pts</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-white/50 py-2">Not enrolled in gamification.</p>
+                          )}
+                        </div>
+                        <Award className="absolute bottom-3 right-4 h-16 w-16 text-white/5" />
+                      </div>
+
+                      {/* Pending Docs — fixed: shows missing_docs not all unverified */}
+                      <button onClick={() => setActiveTab("documents")}
+                        className={cn(
+                          "relative rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-all hover:-translate-y-0.5 text-left w-full"
+                        )}
+                        style={{
+                          background: card.missing_docs > 0
+                            ? "linear-gradient(135deg, #f97316 0%, #ea580c 50%, #c2410c 100%)"
+                            : "linear-gradient(135deg, #1B6AB5 0%, #1557a0 50%, #1040a0 100%)"
+                        }}>
+                        <div className="absolute top-0 right-0 w-32 h-32 rounded-full opacity-15 translate-x-8 -translate-y-8" style={{ background: "radial-gradient(circle, white, transparent)" }} />
+                        <div className="relative z-10 p-5">
+                          <div className="flex items-center gap-2 mb-3">
+                            <FileText className="h-5 w-5 text-white/70" />
+                            <p className="text-xs font-semibold text-white/60 uppercase tracking-widest">Documents</p>
+                          </div>
+                          <div className="text-6xl font-extrabold text-white">
+                            <AnimatedNumber value={card.missing_docs} />
+                          </div>
+                          <p className="text-sm text-white/50 mt-2">
+                            {card.missing_docs > 0 ? "Documents not yet uploaded" : "All documents uploaded ✓"}
+                          </p>
+                          {card.awaiting_verification > 0 && (
+                            <p className="text-xs text-white/40 mt-1">{card.awaiting_verification} awaiting HR verification</p>
+                          )}
+                        </div>
+                        <FileText className="absolute bottom-3 right-4 h-16 w-16 text-white/5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Documents */}
+                {activeTab === "documents" && resolvedId && (
+                  <div className="p-6"><DocumentsTab employeeId={resolvedId} /></div>
+                )}
+
+                {/* Attendance */}
+                {activeTab === "attendance" && resolvedId && (
+                  <div className="p-6"><AttendanceTab employeeId={resolvedId} /></div>
+                )}
+
+                {/* Leave */}
+                {activeTab === "leave" && resolvedId && (
+                  <div className="p-6">
+                    <LeaveTab employeeId={resolvedId} leaveBalances={card.leave_balances} />
+                  </div>
+                )}
+
+                {/* Payslips */}
+                {activeTab === "payslips" && resolvedId && (
+                  <div className="p-6"><PayslipsTab employeeId={resolvedId} isSelf={isSelf} /></div>
+                )}
+
+                {/* Assets */}
+                {activeTab === "assets" && resolvedId && (
+                  <div className="p-6"><AssetsTab employeeId={resolvedId} /></div>
+                )}
+
+                {/* Journey */}
+                {activeTab === "journey" && (
+                  <div className="p-6">
+                    {card.journey.length === 0 ? (
+                      <TabEmpty icon={<Zap className="h-10 w-10 opacity-20" />} message="No journey events recorded yet." />
+                    ) : (
+                      <ol className="relative space-y-0">
+                        <div className="absolute left-[19px] top-5 bottom-5 w-0.5 bg-gradient-to-b from-blue-500 via-violet-400 to-slate-200" />
+                        {card.journey.map((evt, idx) => {
+                          const cfg = journeyConfig(evt.event_type);
+                          return (
+                            <li key={idx} className="relative flex gap-5 pb-6 last:pb-0">
+                              <div className={cn("relative z-10 shrink-0 h-10 w-10 rounded-xl flex items-center justify-center text-white shadow-lg", `bg-gradient-to-br ${cfg.gradient}`)}>
+                                {cfg.icon}
+                              </div>
+                              <div className="flex-1 min-w-0 bg-slate-50 rounded-xl p-4 border border-slate-100 hover:border-slate-200 transition-colors">
+                                <div className="flex flex-wrap items-center gap-2 mb-1">
+                                  <span className="font-bold text-sm text-slate-900 capitalize">
+                                    {cfg.label !== "Event" ? cfg.label : (evt.event_type ?? "Event")}
+                                  </span>
+                                  {evt.module && (
+                                    <span className="px-2 py-0.5 rounded-md bg-slate-200 text-slate-600 text-[10px] font-semibold uppercase tracking-wide">{evt.module}</span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-slate-400 font-mono">{fmtDate(evt.event_date)}</p>
+                                {evt.description && <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">{evt.description}</p>}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    )}
+                  </div>
+                )}
               </div>
 
             </div>
           )}
         </div>
       </div>
-      {/* ── ID Card Modal ───────────────────────────────────────────── */}
+
+      {/* ── ID Card Modal — id-card-print-root ensures only card prints ── */}
       {showIdCard && card && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4" onClick={() => setShowIdCard(false)}>
-          <div className="relative" onClick={(e) => e.stopPropagation()}>
-            <button
-              onClick={() => setShowIdCard(false)}
-              className="absolute -top-3 -right-3 z-10 h-8 w-8 flex items-center justify-center rounded-full bg-white shadow-lg border text-slate-500 hover:text-slate-900"
-            >
+        <div id="id-card-print-root" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4" onClick={() => setShowIdCard(false)}>
+          {/* Screen only — interactive flip card */}
+          <div className="id-card-screen-only relative" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setShowIdCard(false)}
+              className="absolute -top-3 -right-3 z-10 h-8 w-8 flex items-center justify-center rounded-full bg-white shadow-lg border text-slate-500 hover:text-slate-900 id-card-flip-btn">
               <X className="h-4 w-4" />
             </button>
             <EmployeeIDCard
@@ -729,13 +1067,30 @@ export default function NativeEmployeeStatCard() {
               bloodGroup={card.employee.blood_group ?? "—"}
             />
             <div className="mt-3 flex justify-center">
-              <button
-                onClick={() => window.print()}
-                className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white shadow-lg hover:bg-slate-800"
-              >
+              <button onClick={() => window.print()}
+                className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white shadow-lg hover:bg-slate-800 id-card-flip-btn">
                 <Printer className="h-4 w-4" /> Print ID Card
               </button>
             </div>
+          </div>
+          {/* Print only — flat front + back, hidden on screen */}
+          <div id="id-card-print-flat">
+            <EmployeeIDCard
+              employeeId={card.employee.id}
+              employeeCode={card.employee.employee_code}
+              fullName={card.employee.full_name}
+              designation={card.employee.designation_name ?? "—"}
+              department={card.employee.dept_name ?? undefined}
+              branchName={card.employee.branch_name ?? undefined}
+              branchAddress={card.employee.branch_address ?? undefined}
+              branchCity={card.employee.branch_city ?? undefined}
+              branchState={card.employee.branch_state ?? undefined}
+              hrContact={card.employee.branch_hr_contact ?? "hr@teammas.in"}
+              photoUrl={card.employee.avatar_url ?? card.employee.photo_url ?? undefined}
+              emergencyContact={card.employee.emergency_contact?.mobile ?? "Contact HR"}
+              bloodGroup={card.employee.blood_group ?? "—"}
+              printMode={true}
+            />
           </div>
         </div>
       )}
