@@ -152,7 +152,7 @@ export async function computeRunningSalary(
   }
 
   const earnedPayableDays = presentTillDate + paidLeaveTillDate + eligibleWeekoffTillDate +
-    eligibleHolidaysTillDate - lwpTillDate;
+    eligibleHolidaysTillDate;
   const cappedEarned = Math.min(Math.max(0, earnedPayableDays), activeCalDays);
 
   const earnedSalaryTillDate = (monthlyGross / activeCalDays) * cappedEarned;
@@ -212,7 +212,7 @@ export async function computeRunningSalary(
 
   const projectedPayableDaysRaw = presentTillDate + paidLeaveTillDate +
     projectedEligibleWeekoffs + eligibleHolidaysTillDate + futureHolidays +
-    futurePresent - lwpTillDate;
+    futurePresent;
   const projectedPayableDays = Math.min(Math.max(0, projectedPayableDaysRaw), activeCalDays);
   const projectedSalary = (monthlyGross / activeCalDays) * projectedPayableDays;
 
