@@ -20,6 +20,7 @@ import {
   Save,
   Search,
   Target,
+  Trash2,
   TrendingUp,
   Upload,
   UserRound,
@@ -287,6 +288,8 @@ export default function NativeATSHiringEntry() {
   const analyticsLoadedRef = useRef(false);
   const [trendPeriod, setTrendPeriod] = useState<"daily" | "weekly" | "monthly">("daily");
 
+  const tabBarRef = useRef<HTMLDivElement>(null);
+
   // Followup modal state
   const [followupModal, setFollowupModal] = useState<{ id: string; candidateName: string } | null>(null);
   const [followupDate, setFollowupDate] = useState("");
@@ -478,6 +481,23 @@ export default function NativeATSHiringEntry() {
       saveSessionContext(context);
       setSessionLocked(true);
       window.setTimeout(() => focusField("candidate_name"), 100);
+    }
+  };
+
+  const switchTab = (tab: typeof activeTab) => {
+    setActiveTab(tab);
+    setTimeout(() => tabBarRef.current?.scrollIntoView({ behavior: "instant", block: "nearest" }), 0);
+  };
+
+  const deleteEntry = async (id: string, candidateName: string) => {
+    if (!window.confirm(`Delete entry for "${candidateName}"? This cannot be undone.`)) return;
+    try {
+      await hrmsApi.delete(`/api/ats/recruiter/hiring-activity/${id}`);
+      setRows((prev) => prev.filter((r) => r.id !== id));
+      setRowsTotal((t) => Math.max(0, t - 1));
+      toast.success("Entry deleted");
+    } catch (err: unknown) {
+      toast.error((err as { message?: string })?.message || "Could not delete entry");
     }
   };
 
@@ -696,10 +716,10 @@ export default function NativeATSHiringEntry() {
     return (
       <DashboardLayout>
         <EmptyState
-          icon={AlertCircle}
+          icon={<AlertCircle className="h-8 w-8" />}
           title="Could not load hiring entry"
           description={loadError}
-          action={{ label: "Retry", onClick: () => void loadPageData() }}
+          action={<button type="button" onClick={() => void loadPageData()} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-700">Retry</button>}
         />
       </DashboardLayout>
     );
@@ -802,10 +822,10 @@ export default function NativeATSHiringEntry() {
         )}
 
         {/* ── Tab bar ── */}
-        <div className="flex gap-0 border-b border-slate-200">
+        <div ref={tabBarRef} className="flex gap-0 border-b border-slate-200">
           <button
             type="button"
-            onClick={() => setActiveTab("entry")}
+            onClick={() => switchTab("entry")}
             className={`flex items-center gap-2 px-5 py-2.5 text-sm font-bold border-b-2 transition-colors ${
               activeTab === "entry"
                 ? "border-slate-900 text-slate-900"
@@ -817,7 +837,7 @@ export default function NativeATSHiringEntry() {
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab("bulk")}
+            onClick={() => switchTab("bulk")}
             className={`flex items-center gap-2 px-5 py-2.5 text-sm font-bold border-b-2 transition-colors ${
               activeTab === "bulk"
                 ? "border-emerald-600 text-emerald-700"
@@ -829,7 +849,7 @@ export default function NativeATSHiringEntry() {
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab("progress")}
+            onClick={() => switchTab("progress")}
             className={`flex items-center gap-2 px-5 py-2.5 text-sm font-bold border-b-2 transition-colors ${
               activeTab === "progress"
                 ? "border-slate-900 text-slate-900"
@@ -844,7 +864,7 @@ export default function NativeATSHiringEntry() {
           </button>
           <button
             type="button"
-            onClick={() => { setActiveTab("analytics"); if (!analyticsLoadedRef.current) void loadAnalytics(); }}
+            onClick={() => { switchTab("analytics"); if (!analyticsLoadedRef.current) void loadAnalytics(); }}
             className={`flex items-center gap-2 px-5 py-2.5 text-sm font-bold border-b-2 transition-colors ${
               activeTab === "analytics"
                 ? "border-violet-600 text-violet-700"
@@ -1460,6 +1480,7 @@ export default function NativeATSHiringEntry() {
                         <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Joined</th>
                         <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Date</th>
                         <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Follow-up</th>
+                        <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500 w-10"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1515,6 +1536,18 @@ export default function NativeATSHiringEntry() {
                               >
                                 <Plus className="h-2.5 w-2.5" />
                                 Set
+                              </button>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            {(row.created_by === bootstrap?.actor.userId || row.recruiter_id === bootstrap?.actor.userId) && (
+                              <button
+                                type="button"
+                                onClick={() => void deleteEntry(row.id, row.candidate_name || "entry")}
+                                className="inline-flex items-center justify-center h-7 w-7 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                                title="Delete this entry"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
                               </button>
                             )}
                           </td>

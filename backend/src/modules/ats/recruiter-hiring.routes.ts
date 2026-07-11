@@ -67,7 +67,7 @@ function getRequester(req: AuthenticatedRequest) {
 
 async function ensureRowAccess(req: AuthenticatedRequest, id: string) {
   const { role, id: userId } = getRequester(req);
-  const privileged = ["admin", "hr", "super_admin"].includes(role);
+  const privileged = ["admin", "hr", "super_admin", "branch_hr", "branch_head", "ho_hr"].includes(role);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, created_by, recruiter_id, branch_name FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
     [id]
@@ -75,7 +75,7 @@ async function ensureRowAccess(req: AuthenticatedRequest, id: string) {
   const row = rows[0];
   if (!row) return { allowed: false, row: null };
   if (privileged || row.created_by === userId || row.recruiter_id === userId) return { allowed: true, row };
-  // Branch-scoped access: same branch as the actor
+  // Branch-scoped access: same branch as the actor (recruiters, managers, etc.)
   const [branchRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(bm.branch_name, bm.branch_code) AS branch_name
        FROM employees e LEFT JOIN branch_master bm ON bm.id = e.branch_id
@@ -205,9 +205,19 @@ recruiterHiringRouter.put("/recruiter/hiring-activity/:id", async (req: Authenti
 
 recruiterHiringRouter.delete("/recruiter/hiring-activity/:id", async (req: AuthenticatedRequest, res) => {
   try {
-    const access = await ensureRowAccess(req, req.params.id);
-    if (!access.allowed) {
+    const { role, id: userId } = getRequester(req);
+    const isAdmin = ["admin", "hr", "super_admin", "ho_hr"].includes(role);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, created_by, recruiter_id FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
+      [req.params.id]
+    );
+    const row = rows[0];
+    if (!row) {
       return res.status(404).json({ success: false, message: "Hiring activity not found" });
+    }
+    const isOwner = row.created_by === userId || row.recruiter_id === userId;
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ success: false, message: "You can only delete your own entries" });
     }
     await db.execute(`DELETE FROM ats_recruiter_hiring_activity WHERE id = ?`, [req.params.id]);
     return res.json({ success: true, message: "Hiring activity deleted" });
