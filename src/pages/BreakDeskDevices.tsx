@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useDeferredValue, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Copy, KeyRound, Link2, Loader2, MonitorCog, Plus, RefreshCw, RotateCcw, Save, Search, ShieldCheck, SlidersHorizontal } from "lucide-react";
@@ -8,7 +8,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { cn } from "@/lib/utils";
 
 type ApiResponse<T> = { success: boolean; data: T; message?: string };
-type OptionRow = { id: string; branch_name?: string; process_name?: string; name?: string };
+type OptionRow = { id: string; branch_id?: string | null; branch_name?: string; process_name?: string; name?: string; active_status?: number | boolean };
 
 type KioskDevice = {
   id: string;
@@ -94,12 +94,9 @@ export default function BreakDeskDevices() {
   const [ipText, setIpText] = useState("");
   const [fingerprintText, setFingerprintText] = useState("");
   const [tokenResult, setTokenResult] = useState<TokenResult | null>(null);
+  const deferredSearch = useDeferredValue(search);
 
-  const kioskQuery = useMemo(() => {
-    const params = new URLSearchParams({ status, limit: "150" });
-    if (search.trim()) params.set("search", search.trim());
-    return params.toString();
-  }, [search, status]);
+  const kioskQuery = useMemo(() => new URLSearchParams({ status: "all", limit: "250" }).toString(), []);
 
   const kiosks = useQuery({
     queryKey: ["break-kiosks", kioskQuery],
@@ -109,7 +106,7 @@ export default function BreakDeskDevices() {
   const branches = useQuery({
     queryKey: ["org-branches"],
     queryFn: async () => {
-      const payload = unwrap<any>(await hrmsApi.get("/api/org/branches"));
+      const payload = unwrap<any>(await hrmsApi.get("/api/org/branches?active_status=1&limit=500"));
       return Array.isArray(payload) ? payload as OptionRow[] : payload?.rows ?? [];
     },
   });
@@ -117,7 +114,7 @@ export default function BreakDeskDevices() {
   const processes = useQuery({
     queryKey: ["org-processes"],
     queryFn: async () => {
-      const payload = unwrap<any>(await hrmsApi.get("/api/org/processes"));
+      const payload = unwrap<any>(await hrmsApi.get("/api/org/processes?active_status=1&limit=500"));
       return Array.isArray(payload) ? payload as OptionRow[] : payload?.rows ?? [];
     },
   });
@@ -165,9 +162,36 @@ export default function BreakDeskDevices() {
     onError: (error: any) => toast.error(error?.message ?? "Unable to rotate token"),
   });
 
-  const rows = kiosks.data ?? [];
+  const rows = useMemo(() => {
+    const sourceRows = kiosks.data ?? [];
+    const normalizedSearch = deferredSearch.trim().toLocaleLowerCase();
+    return sourceRows.filter((row) => {
+      if (status === "active" && !row.is_active) return false;
+      if (status === "inactive" && row.is_active) return false;
+      if (!normalizedSearch) return true;
+      const haystack = [
+        row.kiosk_code,
+        row.kiosk_name,
+        row.branch_name,
+        row.allowed_process_names,
+        row.process_name,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLocaleLowerCase();
+      return haystack.includes(normalizedSearch);
+    });
+  }, [deferredSearch, kiosks.data, status]);
   const activeCount = rows.filter((row) => Boolean(row.is_active)).length;
   const unmappedCount = rows.filter((row) => !row.branch_id || !(row.allowed_process_ids?.length || row.process_id)).length;
+  const availableProcesses = useMemo(() => {
+    const source = (processes.data ?? []).filter((process) => Boolean(process.id));
+    if (!form.branch_id) return source;
+    return source.filter((process) => {
+      if (!process.branch_id) return false;
+      return process.branch_id === form.branch_id;
+    });
+  }, [form.branch_id, processes.data]);
 
   function resetForm() {
     setSelected(null);
@@ -201,6 +225,21 @@ export default function BreakDeskDevices() {
     setIpText(joinList(device.allowed_ip_list ?? []));
     setFingerprintText(joinList(device.allowed_device_fingerprints ?? []));
     window.setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  }
+
+  function updateBranch(branchId: string | null) {
+    setForm((current) => {
+      const allowedForBranch = (processes.data ?? [])
+        .filter((process) => !branchId || process.branch_id === branchId)
+        .map((process) => process.id);
+      const nextIds = current.allowed_process_ids.filter((processId) => allowedForBranch.includes(processId));
+      return {
+        ...current,
+        branch_id: branchId,
+        allowed_process_ids: nextIds,
+        process_id: nextIds[0] ?? null,
+      };
+    });
   }
 
   function toggleProcess(processId: string) {
@@ -402,8 +441,8 @@ export default function BreakDeskDevices() {
 
                 <div className="grid gap-3">
                   <Field label="Branch">
-                    <select value={form.branch_id ?? ""} onChange={(event) => setForm((current) => ({ ...current, branch_id: event.target.value || null }))} className="input-desk">
-                      <option value="">All branches</option>
+                    <select value={form.branch_id ?? ""} onChange={(event) => updateBranch(event.target.value || null)} className="input-desk">
+                      <option value="">Select branch</option>
                       {(branches.data ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name ?? branch.name ?? branch.id}</option>)}
                     </select>
                   </Field>
@@ -415,9 +454,11 @@ export default function BreakDeskDevices() {
                     <div className="max-h-56 overflow-auto rounded-xl border border-slate-200 bg-white p-2">
                       {processes.isLoading ? (
                         <div className="flex items-center gap-2 px-2 py-3 text-xs text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading processes</div>
-                      ) : (processes.data ?? []).length === 0 ? (
-                        <div className="px-2 py-3 text-xs text-slate-500">No processes found.</div>
-                      ) : (processes.data ?? []).map((process) => {
+                      ) : !form.branch_id ? (
+                        <div className="px-2 py-3 text-xs text-slate-500">Select a branch to load only that branch's active processes.</div>
+                      ) : availableProcesses.length === 0 ? (
+                        <div className="px-2 py-3 text-xs text-slate-500">No active processes found for this branch.</div>
+                      ) : availableProcesses.map((process) => {
                         const label = process.process_name ?? process.name ?? process.id;
                         const checked = form.allowed_process_ids.includes(process.id);
                         return (

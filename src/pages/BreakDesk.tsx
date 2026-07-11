@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Clock3, Coffee, Filter, LogIn, LogOut, RefreshCw, Search, ShieldCheck, TimerReset, UserRound } from "lucide-react";
@@ -34,6 +34,10 @@ type DeskEmployee = {
   employee_code: string;
   employee_name: string;
   avatar_url: string | null;
+  branch_id?: string | null;
+  process_id?: string | null;
+  department_id?: string | null;
+  manager_id?: string | null;
   branch_name: string | null;
   process_name: string | null;
   department_name: string | null;
@@ -202,21 +206,69 @@ function metricTone(index: number) {
   ][index % 5];
 }
 
-function buildQuery(access: { kiosk: string; token: string }, filters: FiltersState, deferredSearch: string) {
+function buildQuery(access: { kiosk: string; token: string }) {
   const params = new URLSearchParams({
     kiosk: access.kiosk,
     token: access.token,
-    limit: "120",
+    limit: "500",
   });
-
-  if (deferredSearch.trim()) params.set("search", deferredSearch.trim());
-  if (filters.branch_id) params.set("branch_id", filters.branch_id);
-  if (filters.process_id) params.set("process_id", filters.process_id);
-  if (filters.department_id) params.set("department_id", filters.department_id);
-  if (filters.manager_id) params.set("manager_id", filters.manager_id);
-  if (filters.shift) params.set("shift", filters.shift);
-  if (filters.status) params.set("status", filters.status);
   return params.toString();
+}
+
+function filterDeskEmployees(employees: DeskEmployee[], filters: FiltersState, searchText: string) {
+  const normalizedSearch = searchText.trim().toLocaleLowerCase();
+  return employees.filter((employee) => {
+    if (filters.branch_id && employee.branch_id !== filters.branch_id) {
+      return false;
+    }
+    if (filters.process_id && employee.process_id !== filters.process_id) {
+      return false;
+    }
+    if (filters.department_id && employee.department_id !== filters.department_id) {
+      return false;
+    }
+    if (filters.manager_id && employee.manager_id !== filters.manager_id) {
+      return false;
+    }
+    if (filters.shift && employee.shift_name !== filters.shift) {
+      return false;
+    }
+    if (filters.status && employee.current_status !== filters.status) {
+      return false;
+    }
+    if (!normalizedSearch) {
+      return true;
+    }
+
+    const haystack = [
+      employee.employee_name,
+      employee.employee_code,
+      employee.biometric_id,
+      employee.process_name,
+      employee.department_name,
+      employee.branch_name,
+      employee.manager_name,
+      employee.designation_name,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLocaleLowerCase();
+
+    return haystack.includes(normalizedSearch);
+  });
+}
+
+function buildCounters(employees: DeskEmployee[]) {
+  return {
+    entered: employees.filter((row) => Boolean(row.biometric_punch_in_time)).length,
+    onDuty: employees.filter((row) => row.current_status === "On Duty").length,
+    onBreak: employees.filter((row) => row.current_status === "On Break").length,
+    breakExceeded: employees.filter((row) => row.current_status === "Break Exceeded").length,
+    miniBreaksToday: employees.reduce((sum, row) => sum + Number(row.mini_break_count ?? 0), 0),
+    longBreaksToday: employees.reduce((sum, row) => sum + Number(row.long_break_count ?? 0), 0),
+    noPunchFound: employees.filter((row) => row.current_status === "No Punch Found").length,
+    shiftCompleted: employees.filter((row) => row.current_status === "Shift Completed").length,
+  };
 }
 
 function Modal({
@@ -253,6 +305,7 @@ function Modal({
 
 export default function BreakDesk() {
   const [searchParams] = useSearchParams();
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const savedAccess = useMemo(() => {
     try {
       return JSON.parse(localStorage.getItem(ACCESS_KEY) ?? "null") as { kiosk?: string; token?: string } | null;
@@ -304,7 +357,7 @@ export default function BreakDesk() {
     if (live) setRefreshing(true);
     else setLoading(true);
     try {
-      const query = buildQuery(access, filters, deferredSearch);
+      const query = buildQuery(access);
       const endpoint = live ? "/api/break-desk/live-status" : "/api/break-desk/employees";
       const response = await fetch(apiUrl(`${endpoint}?${query}`));
       const payload = await response.json();
@@ -319,7 +372,7 @@ export default function BreakDesk() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [access, bootstrap, deferredSearch, filters]);
+  }, [access, bootstrap]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(new Date()), 1000);
@@ -340,8 +393,22 @@ export default function BreakDesk() {
     return () => window.clearInterval(timer);
   }, [bootstrap, fetchEmployees]);
 
-  const counters = deskData?.counters ?? bootstrap?.counters ?? {};
-  const employees = deskData?.employees ?? [];
+  useEffect(() => {
+    if (!bootstrap) return;
+    window.setTimeout(() => searchInputRef.current?.focus(), 80);
+  }, [bootstrap]);
+
+  const allEmployees = deskData?.employees ?? [];
+  const employees = useMemo(
+    () => filterDeskEmployees(allEmployees, filters, deferredSearch),
+    [allEmployees, deferredSearch, filters],
+  );
+  const counters = useMemo(
+    () => (employees.length > 0 || filters.status || deferredSearch.trim() || filters.branch_id || filters.process_id || filters.department_id || filters.manager_id || filters.shift
+      ? buildCounters(employees)
+      : (deskData?.counters ?? bootstrap?.counters ?? {})),
+    [bootstrap?.counters, deferredSearch, deskData?.counters, employees, filters],
+  );
   const metrics = [
     { label: "Entered", value: counters.entered ?? 0, icon: LogIn },
     { label: "On Duty", value: counters.onDuty ?? 0, icon: ShieldCheck },
@@ -352,6 +419,16 @@ export default function BreakDesk() {
 
   const activeDeskName = bootstrap?.kiosk.kiosk_name ?? "Break Management Desk";
   const scopeLabel = [bootstrap?.kiosk.branch_name, bootstrap?.kiosk.process_name].filter(Boolean).join(" | ");
+
+  useEffect(() => {
+    if (!selectedEmployee) return;
+    const fresh = allEmployees.find((employee) => employee.employee_id === selectedEmployee.employee_id);
+    if (fresh) {
+      setSelectedEmployee(fresh);
+      return;
+    }
+    setSelectedEmployee(null);
+  }, [allEmployees, selectedEmployee]);
 
   const resetAccess = () => {
     localStorage.removeItem(ACCESS_KEY);
@@ -388,6 +465,26 @@ export default function BreakDesk() {
 
   const kioskProcessLocked = Boolean(bootstrap?.kiosk.process_name);
   const kioskBranchLocked = Boolean(bootstrap?.kiosk.branch_name);
+  const branchOptions = useMemo(
+    () => bootstrap?.filters.branches.map((option) => ({ ...option, value: option.value, label: option.label })) ?? [],
+    [bootstrap?.filters.branches],
+  );
+  const processOptions = useMemo(
+    () => bootstrap?.filters.processes.map((option) => ({ ...option, value: option.value, label: option.label })) ?? [],
+    [bootstrap?.filters.processes],
+  );
+  const departmentOptions = useMemo(
+    () => bootstrap?.filters.departments.map((option) => ({ ...option, value: option.value, label: option.label })) ?? [],
+    [bootstrap?.filters.departments],
+  );
+  const managerOptions = useMemo(
+    () => bootstrap?.filters.managers.map((option) => ({ ...option, value: option.value, label: option.label })) ?? [],
+    [bootstrap?.filters.managers],
+  );
+  const shiftOptions = useMemo(
+    () => bootstrap?.filters.shifts.map((option) => ({ ...option, value: option.value, label: option.label })) ?? [],
+    [bootstrap?.filters.shifts],
+  );
 
   return (
     <>
@@ -495,13 +592,13 @@ export default function BreakDesk() {
                   <div className="grid gap-2 xl:grid-cols-[1.35fr_repeat(5,minmax(0,1fr))]">
                     <label className="flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3">
                       <Search className="h-4 w-4 text-slate-400" />
-                      <input value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Search name, code, biometric ID" className="h-full w-full bg-transparent text-sm outline-none placeholder:text-slate-400" />
+                      <input ref={searchInputRef} value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Search name, code, biometric ID" className="h-full w-full bg-transparent text-sm outline-none placeholder:text-slate-400" />
                     </label>
-                    <SelectBox label="Branch" value={filters.branch_id} options={bootstrap.filters.branches} onChange={(value) => setFilters((current) => ({ ...current, branch_id: value }))} disabled={kioskBranchLocked} />
-                    <SelectBox label="Process" value={filters.process_id} options={bootstrap.filters.processes} onChange={(value) => setFilters((current) => ({ ...current, process_id: value }))} disabled={kioskProcessLocked} />
-                    <SelectBox label="Department" value={filters.department_id} options={bootstrap.filters.departments} onChange={(value) => setFilters((current) => ({ ...current, department_id: value }))} />
-                    <SelectBox label="Manager" value={filters.manager_id} options={bootstrap.filters.managers} onChange={(value) => setFilters((current) => ({ ...current, manager_id: value }))} />
-                    <SelectBox label="Shift" value={filters.shift} options={bootstrap.filters.shifts} onChange={(value) => setFilters((current) => ({ ...current, shift: value }))} />
+                    <SelectBox label="Branch" value={filters.branch_id} options={branchOptions} onChange={(value) => setFilters((current) => ({ ...current, branch_id: value }))} disabled={kioskBranchLocked} />
+                    <SelectBox label="Process" value={filters.process_id} options={processOptions} onChange={(value) => setFilters((current) => ({ ...current, process_id: value }))} disabled={kioskProcessLocked} />
+                    <SelectBox label="Department" value={filters.department_id} options={departmentOptions} onChange={(value) => setFilters((current) => ({ ...current, department_id: value }))} />
+                    <SelectBox label="Manager" value={filters.manager_id} options={managerOptions} onChange={(value) => setFilters((current) => ({ ...current, manager_id: value }))} />
+                    <SelectBox label="Shift" value={filters.shift} options={shiftOptions} onChange={(value) => setFilters((current) => ({ ...current, shift: value }))} />
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500"><Filter className="h-3.5 w-3.5" />Status</div>

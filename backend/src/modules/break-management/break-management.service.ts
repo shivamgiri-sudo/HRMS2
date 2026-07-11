@@ -857,8 +857,11 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
   const shiftDate = resolveShiftDate(filters.date ?? null);
   await autoCloseEligibleBreaks(shiftDate);
 
-  const where: string[] = ["e.active_status = 1"];
-  const params: unknown[] = [shiftDate, shiftDate, shiftDate, shiftDate, shiftDate, shiftDate];
+  const where: string[] = [
+    "e.active_status = 1",
+    "LOWER(COALESCE(e.employment_status, 'active')) = 'active'",
+  ];
+  const params: unknown[] = [shiftDate, shiftDate, shiftDate, shiftDate, shiftDate, shiftDate, shiftDate, shiftDate, shiftDate];
 
   if (kiosk.branch_id) {
     where.push("e.branch_id = ?");
@@ -942,22 +945,82 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
        LEFT JOIN department_master dm ON dm.id = e.department_id
        LEFT JOIN designation_master des ON des.id = e.designation_id
        LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
-       LEFT JOIN employee_biometric_enrollment map ON map.employee_id = e.id AND map.is_active = 1
-       LEFT JOIN integration_biometric_daily ibd
+       LEFT JOIN (
+         SELECT
+           ebe.employee_id,
+           SUBSTRING_INDEX(
+             GROUP_CONCAT(ebe.cosec_user_id ORDER BY COALESCE(ebe.last_sync_at, ebe.updated_at, ebe.created_at) DESC, ebe.id DESC SEPARATOR '||'),
+             '||',
+             1
+           ) AS cosec_user_id
+         FROM employee_biometric_enrollment ebe
+         WHERE ebe.is_active = 1
+         GROUP BY ebe.employee_id
+       ) map ON map.employee_id = e.id
+       LEFT JOIN (
+         SELECT
+           employee_code,
+           activity_date,
+           MIN(first_punch) AS first_punch,
+           MAX(last_punch) AS last_punch,
+           MAX(COALESCE(biometric_minutes, 0)) AS biometric_minutes
+         FROM integration_biometric_daily
+         WHERE activity_date = ?
+         GROUP BY employee_code, activity_date
+       ) ibd
          ON ibd.employee_code = e.employee_code
         AND ibd.activity_date = ?
-       LEFT JOIN biometric_attendance_log bal
+       LEFT JOIN (
+         SELECT
+           employee_id,
+           punch_date,
+           MIN(first_punch_in) AS first_punch_in,
+           MAX(last_punch_out) AS last_punch_out,
+           MAX(COALESCE(raw_minutes, 0)) AS raw_minutes,
+           SUBSTRING_INDEX(
+             GROUP_CONCAT(source_system ORDER BY COALESCE(updated_at, migrated_at, created_at) DESC, id DESC SEPARATOR '||'),
+             '||',
+             1
+           ) AS source_system
+         FROM biometric_attendance_log
+         WHERE punch_date = ?
+         GROUP BY employee_id, punch_date
+       ) bal
          ON bal.employee_id = e.id
         AND bal.punch_date = ?
+       LEFT JOIN (
+         SELECT
+           ra0.employee_id,
+           ra0.roster_date,
+           SUBSTRING_INDEX(
+             GROUP_CONCAT(ra0.id ORDER BY COALESCE(ra0.updated_at, ra0.created_at) DESC, ra0.id DESC SEPARATOR '||'),
+             '||',
+             1
+           ) AS roster_id
+         FROM wfm_roster_assignment ra0
+         WHERE ra0.roster_date = ?
+         GROUP BY ra0.employee_id, ra0.roster_date
+       ) ra_pick
+         ON ra_pick.employee_id = e.id
+        AND ra_pick.roster_date = ?
        LEFT JOIN wfm_roster_assignment ra
-          ON ra.employee_id = e.id
-         AND ra.roster_date = ?
+          ON ra.id = ra_pick.roster_id
        LEFT JOIN wfm_shift_master sm
          ON sm.id = ra.shift_id
-       LEFT JOIN leave_request lr
+       LEFT JOIN (
+         SELECT
+           lr0.employee_id,
+           SUBSTRING_INDEX(
+             GROUP_CONCAT(lr0.leave_type_id ORDER BY COALESCE(lr0.updated_at, lr0.created_at) DESC, lr0.id DESC SEPARATOR '||'),
+             '||',
+             1
+           ) AS leave_type_id
+         FROM leave_request lr0
+         WHERE lr0.status = 'approved'
+           AND ? BETWEEN lr0.from_date AND lr0.to_date
+         GROUP BY lr0.employee_id
+       ) lr
          ON lr.employee_id = e.id
-        AND lr.status = 'approved'
-        AND ? BETWEEN lr.from_date AND lr.to_date
        LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
        LEFT JOIN (
          SELECT
@@ -971,10 +1034,22 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
            AND bs.status IN ('COMPLETED', 'AUTO_CLOSED', 'EXCEPTION')
          GROUP BY bs.employee_id
        ) agg ON agg.employee_id = e.id
+       LEFT JOIN (
+         SELECT
+           bs0.employee_id,
+           SUBSTRING_INDEX(
+             GROUP_CONCAT(bs0.id ORDER BY bs0.break_start_time DESC, COALESCE(bs0.updated_at, bs0.created_at) DESC, bs0.id DESC SEPARATOR '||'),
+             '||',
+             1
+           ) AS active_break_id
+         FROM break_sessions bs0
+         WHERE bs0.shift_date = ?
+           AND bs0.status = 'ACTIVE'
+         GROUP BY bs0.employee_id
+       ) active_pick
+         ON active_pick.employee_id = e.id
        LEFT JOIN break_sessions active
-         ON active.employee_id = e.id
-        AND active.shift_date = ?
-        AND active.status = 'ACTIVE'
+         ON active.id = active_pick.active_break_id
       WHERE ${where.join(" AND ")}
       ORDER BY employee_name ASC
       LIMIT ${includeAll ? 500 : safeLimit(filters.limit)}`,
@@ -1045,6 +1120,10 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
       employee_code: row.employee_code,
       employee_name: row.employee_name,
       avatar_url: row.avatar_url,
+      branch_id: row.branch_id ?? null,
+      process_id: row.process_id ?? null,
+      department_id: row.department_id ?? null,
+      manager_id: row.reporting_manager_id ?? null,
       branch_name: row.branch_name,
       process_name: row.process_name,
       department_name: row.department_name,
@@ -1128,6 +1207,7 @@ async function filterOptionsForKiosk(kiosk: KioskDevice, shiftDate: string) {
          FROM employees e
          LEFT JOIN branch_master bm ON bm.id = e.branch_id
         WHERE e.active_status = 1
+          AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
           ${branchWhere}
           ${processWhere}
           AND e.branch_id IS NOT NULL
@@ -1139,6 +1219,8 @@ async function filterOptionsForKiosk(kiosk: KioskDevice, shiftDate: string) {
          FROM employees e
          LEFT JOIN process_master pm ON pm.id = e.process_id
         WHERE e.active_status = 1
+          AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+          AND COALESCE(pm.active_status, 1) = 1
           ${branchWhere}
           ${processWhere}
           AND e.process_id IS NOT NULL
@@ -1150,6 +1232,7 @@ async function filterOptionsForKiosk(kiosk: KioskDevice, shiftDate: string) {
          FROM employees e
          LEFT JOIN department_master dm ON dm.id = e.department_id
         WHERE e.active_status = 1
+          AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
           ${branchWhere}
           ${processWhere}
           AND e.department_id IS NOT NULL
@@ -1162,6 +1245,7 @@ async function filterOptionsForKiosk(kiosk: KioskDevice, shiftDate: string) {
          FROM employees e
          LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
         WHERE e.active_status = 1
+          AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
           ${branchWhere}
           ${processWhere}
           AND e.reporting_manager_id IS NOT NULL
@@ -1176,6 +1260,8 @@ async function filterOptionsForKiosk(kiosk: KioskDevice, shiftDate: string) {
          JOIN employees e ON e.id = ra.employee_id
          LEFT JOIN wfm_shift_master sm ON sm.id = ra.shift_id
          WHERE ra.roster_date = ?
+           AND e.active_status = 1
+           AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
            ${branchWhere}
            ${processWhere}
            AND COALESCE(NULLIF(sm.shift_name, ''), NULLIF(CONCAT(COALESCE(ra.shift_start_time, ''), CASE WHEN ra.shift_end_time IS NOT NULL AND ra.shift_end_time <> '' THEN CONCAT(' - ', ra.shift_end_time) ELSE '' END), '')) <> ''
@@ -1206,9 +1292,10 @@ async function getEmployeeContext(employeeId: string): Promise<EmployeeContext |
         e.department_id,
         e.reporting_manager_id AS manager_id,
         COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name
-       FROM employees e
+      FROM employees e
       WHERE e.id = ?
         AND e.active_status = 1
+        AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
       LIMIT 1`,
     [employeeId],
   );
@@ -1656,8 +1743,8 @@ export const breakManagementService = {
       params.push(filters.branch_id);
     }
     if (filters.process_id) {
-      where.push("kd.process_id = ?");
-      params.push(filters.process_id);
+      where.push("(kd.process_id = ? OR JSON_CONTAINS(COALESCE(kd.allowed_process_ids, JSON_ARRAY()), JSON_QUOTE(?)))");
+      params.push(filters.process_id, filters.process_id);
     }
     if (filters.status === "active") where.push("kd.is_active = 1");
     if (filters.status === "inactive") where.push("kd.is_active = 0");
@@ -1682,13 +1769,15 @@ export const breakManagementService = {
           (
             SELECT GROUP_CONCAT(pm2.process_name ORDER BY pm2.process_name SEPARATOR ', ')
               FROM process_master pm2
-             WHERE JSON_CONTAINS(kd.allowed_process_ids, JSON_QUOTE(pm2.id))
+             WHERE COALESCE(pm2.active_status, 1) = 1
+               AND JSON_CONTAINS(kd.allowed_process_ids, JSON_QUOTE(pm2.id))
           ) AS allowed_process_names,
           COALESCE(NULLIF(TRIM(u.full_name), ''), NULLIF(TRIM(CONCAT(u.first_name, ' ', COALESCE(u.last_name, ''))), ''), au.email) AS created_by_name,
           (
             SELECT COUNT(*)
               FROM employees e
              WHERE e.active_status = 1
+               AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
                AND (kd.branch_id IS NULL OR e.branch_id = kd.branch_id)
                AND (
                  JSON_LENGTH(COALESCE(kd.allowed_process_ids, JSON_ARRAY())) = 0

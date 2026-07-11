@@ -9,7 +9,7 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 const requireBreakAdmin = requireRole("admin", "super_admin", "wfm");
 
 breakManagementRouter.use(requireAuth);
-breakManagementRouter.use(requireRole("admin", "hr", "wfm", "manager", "process_manager", "team_leader", "tl", "ceo"));
+breakManagementRouter.use(requireRole("admin", "super_admin", "hr", "wfm", "manager", "process_manager", "team_leader", "tl", "ceo"));
 
 breakManagementRouter.get("/dashboard", h(async (req, res) => {
   const query = z.object({
