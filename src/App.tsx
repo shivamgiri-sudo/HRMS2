@@ -57,6 +57,7 @@ const NativePayrollHOQueues         = lazy(() => import("./pages/NativePayrollHO
 const NativeChequeNameValidation    = lazy(() => import("./pages/NativeChequeNameValidation"));
 const NativeSalaryPackageAdmin      = lazy(() => import("./pages/NativeSalaryPackageAdmin"));
 const NativeGRNManagement           = lazy(() => import("./pages/NativeGRNManagement"));
+const NativeJoiningControlRoom      = lazy(() => import("./pages/NativeJoiningControlRoom"));
 
 const NativeATSDashboardReplica = lazy(() => import("./pages/NativeATSDashboardReplica"));
 const NativeATSCandidateRegistration = lazy(() => import("./pages/NativeATSCandidateRegistration"));
@@ -75,10 +76,8 @@ const NativeATSFullParityCommandCenter = lazy(() => import("./pages/NativeATSFul
 const NativeRecruiterPortal = lazy(() => import("./pages/NativeRecruiterPortal"));
 
 const CandidatePortalLogin = lazy(() => import("./pages/CandidatePortalLogin"));
-const CandidatePortalDashboard = lazy(() => import("./pages/CandidatePortalDashboard"));
 const BranchHeadApproval = lazy(() => import("./pages/BranchHeadApproval"));
 const SuperAdminModuleAccess = lazy(() => import("./pages/SuperAdminModuleAccess"));
-const SuperAdminDashboardV2 = lazy(() => import("./pages/SuperAdminDashboardV2"));
 const ATSCommandCentre = lazy(() => import("./pages/ATSCommandCentre"));
 const NativeBGVEnhanced = lazy(() => import("./pages/NativeBGVEnhanced"));
 const NativeBGVReport = lazy(() => import("./pages/NativeBGVReport"));
@@ -100,11 +99,6 @@ const NativeMyResignation = lazy(() => import("./pages/NativeMyResignation"));
 const NativeWFMRoster = lazy(() => import("./pages/NativeWFMRoster"));
 const NativeWFMExtensions = lazy(() => import("./pages/NativeWFMExtensions"));
 const NativeWFMManagerApproval = lazy(() => import("./pages/NativeWFMManagerApproval"));
-const NativeBiometricCommandCenter = lazy(() => import("./pages/NativeBiometricCommandCenter"));
-const NativeWeekOffDayRuleConfig = lazy(() => import("./pages/NativeWeekOffDayRuleConfig"));
-const NativeWFMPlanningRules = lazy(() => import("./pages/NativeWFMPlanningRules"));
-const NativeSlotRequirementBuilder = lazy(() => import("./pages/NativeSlotRequirementBuilder"));
-const NativeAttendanceDisputes = lazy(() => import("./pages/NativeAttendanceDisputes"));
 const NativeBusinessCommandCenter = lazy(() => import("./pages/NativeBusinessCommandCenter"));
 const NativeBusinessActionQueue = lazy(() => import("./pages/NativeBusinessActionQueue"));
 
@@ -164,6 +158,7 @@ const NativeHelpdesk                = lazy(() => import("./pages/NativeHelpdesk"
 const NativeSupportCommandCenter    = lazy(() => import("./pages/NativeSupportCommandCenter"));
 const NativeGrievanceCommandCenter  = lazy(() => import("./pages/NativeGrievanceCommandCenter"));
 const NativeLetters                 = lazy(() => import("./pages/NativeLetters"));
+const NativeLetterPreview           = lazy(() => import("./pages/NativeLetterPreview"));
 const NativeLifecycle               = lazy(() => import("./pages/NativeLifecycle"));
 const NativeEmployeeLifecycle       = lazy(() => import("./pages/NativeEmployeeLifecycle"));
 const NativeOrgMasters              = lazy(() => import("./pages/NativeOrgMasters"));
@@ -210,39 +205,57 @@ const NativeEmailTemplateBulkImport     = lazy(() => import("./pages/NativeEmail
 const NativeDispatchCenter          = lazy(() => import("./pages/NativeDispatchCenter"));
 const NativeDispatchHistory         = lazy(() => import("./pages/NativeDispatchHistory"));
 const NativeNotificationPreferences = lazy(() => import("./pages/NativeNotificationPreferences"));
-const NativeCommunicationConfig = lazy(() => import("./pages/NativeCommunicationConfig"));
-const NativeCallCentreConfig = lazy(() => import("./pages/NativeCallCentreConfig"));
-const NativeDocumentVerification = lazy(() => import("./pages/NativeDocumentVerification"));
-const NativeRosterPreference = lazy(() => import("./pages/NativeRosterPreference"));
+const NativeCommunicationConfig     = lazy(() => import("./pages/NativeCommunicationConfig"));
+const NativeCallCentreConfig        = lazy(() => import("./pages/NativeCallCentreConfig"));
+const NativeDocumentVerification    = lazy(() => import("./pages/NativeDocumentVerification"));
+const NativeRosterPreference        = lazy(() => import("./pages/NativeRosterPreference"));
 
-const NativeMigrationConsole = lazy(() => import("./pages/NativeMigrationConsole"));
-const NativeAuditLog = lazy(() => import("./pages/NativeAuditLog"));
-const NativeExitManagement = lazy(() => import("./pages/NativeExitManagement"));
-const NativeKPIConfiguration = lazy(() => import("./pages/NativeKPIConfiguration"));
-const NativeProcessConfig = lazy(() => import("./pages/NativeProcessConfig"));
-const NativeOperationsKPI = lazy(() => import("./pages/NativeOperationsKPI"));
-const KpiMasterConfig = lazy(() => import("./pages/KpiMasterConfig"));
-const MyKpiDashboard = lazy(() => import("./pages/MyKpiDashboard"));
-const NativePortalDataManager = lazy(() => import("./pages/NativePortalDataManager"));
-const NativeLeaveTypeConfig = lazy(() => import("./pages/NativeLeaveTypeConfig"));
-const NativeMyRoster = lazy(() => import("./pages/NativeMyRoster"));
-const NativeRosterMasterBuilder = lazy(() => import("./pages/NativeRosterMasterBuilder"));
-const NativeWeekOffPreferences = lazy(() => import("./pages/NativeWeekOffPreferences"));
-const NativeRosterCapacityConfig = lazy(() => import("./pages/NativeRosterCapacityConfig"));
-const NativeWFMAutoRoster = lazy(() => import("./pages/NativeWFMAutoRoster"));
+// Dashboards
+const Dashboard                     = lazy(() => import("./pages/Dashboard"));
+const SuperAdminDashboardV2         = lazy(() => import("./pages/SuperAdminDashboardV2"));
+const LMSProgressDashboard          = lazy(() => import("./pages/LMSProgressDashboard"));
+const LMSModuleLaunch               = lazy(() => import("./pages/LMSModuleLaunch"));
+const CandidatePortalDashboard      = lazy(() => import("./pages/CandidatePortalDashboard"));
+
+// System
+const NativeMigrationConsole        = lazy(() => import("./pages/NativeMigrationConsole"));
+const NativeAuditLog                = lazy(() => import("./pages/NativeAuditLog"));
+const NativeExitManagement          = lazy(() => import("./pages/NativeExitManagement"));
+const NativeKPIConfiguration        = lazy(() => import("./pages/NativeKPIConfiguration"));
+const NativeProcessConfig           = lazy(() => import("./pages/NativeProcessConfig"));
+const NativeOperationsKPI           = lazy(() => import("./pages/NativeOperationsKPI"));
+const KpiMasterConfig               = lazy(() => import("./pages/KpiMasterConfig"));
+const MyKpiDashboard                = lazy(() => import("./pages/MyKpiDashboard"));
+const NativePortalDataManager       = lazy(() => import("./pages/NativePortalDataManager"));
+const NativeLeaveTypeConfig         = lazy(() => import("./pages/NativeLeaveTypeConfig"));
+const NativeMyRoster                = lazy(() => import("./pages/NativeMyRoster"));
+const NativeRosterManagerQueue      = lazy(() => import("./pages/NativeRosterManagerQueue"));
+const NativeRosterMasterBuilder     = lazy(() => import("./pages/NativeRosterMasterBuilder"));
+const NativeWeekOffPreferences      = lazy(() => import("./pages/NativeWeekOffPreferences"));
+const NativeRosterCapacityConfig    = lazy(() => import("./pages/NativeRosterCapacityConfig"));
+const NativeWFMAutoRoster           = lazy(() => import("./pages/NativeWFMAutoRoster"));
+const NativeWFMPlanningRules        = lazy(() => import("./pages/NativeWFMPlanningRules"));
+const NativeSlotRequirementBuilder  = lazy(() => import("./pages/NativeSlotRequirementBuilder"));
+const NativeWeekOffDayRuleConfig    = lazy(() => import("./pages/NativeWeekOffDayRuleConfig"));
+const NativeAttendanceDisputes      = lazy(() => import("./pages/NativeAttendanceDisputes"));
+const NativePayrollAttendanceOverrides = lazy(() => import("./pages/NativePayrollAttendanceOverrides"));
 const NativeAttendanceExceptionEngine = lazy(() => import("./pages/NativeAttendanceExceptionEngine"));
-const NativeCosecSyncMonitoring = lazy(() => import("./pages/NativeCosecSyncMonitoring"));
-const NativePayrollReadiness = lazy(() => import("./pages/NativePayrollReadiness"));
-const NativeWorkforcePlanning = lazy(() => import("./pages/NativeWorkforcePlanning"));
-const NativeITProvisioningTracker = lazy(() => import("./pages/NativeITProvisioningTracker"));
-const NativeRTABoard = lazy(() => import("./pages/NativeRTABoard"));
-const NativeWalkinQueue = lazy(() => import("./pages/NativeWalkinQueueEnhanced"));
+const NativeCosecSyncMonitoring     = lazy(() => import("./pages/NativeCosecSyncMonitoring"));
+const NativePayrollReadiness        = lazy(() => import("./pages/NativePayrollReadiness"));
+const NativeWorkforcePlanning       = lazy(() => import("./pages/NativeWorkforcePlanning"));
+const NativeITProvisioningTracker   = lazy(() => import("./pages/NativeITProvisioningTracker"));
+const NativeControlTower            = lazy(() => import("./pages/NativeControlTower"));
+const NativeBiometricCommandCenter  = lazy(() => import("./pages/NativeBiometricCommandCenter"));
+const NativeRTABoard                = lazy(() => import("./pages/NativeRTABoard"));
+const NativeWalkinQueue             = lazy(() => import("./pages/NativeWalkinQueueEnhanced"));
+const NativeAttendanceRulesMaster   = lazy(() => import("./pages/NativeAttendanceRulesMaster"));
+const NativeAttendanceMismatchQueue = lazy(() => import("./pages/NativeAttendanceMismatchQueue"));
+const NativeAttendanceBillingConfig = lazy(() => import("./pages/NativeAttendanceBillingConfig"));
 
 // AI & PeopleOS
 const AIProviderSettings = lazy(() => import("./pages/AIProviderSettings"));
 const PeopleOSCopilot = lazy(() => import("./pages/PeopleOSCopilot"));
-const NativeAttendanceRulesMaster = lazy(() => import("./pages/NativeAttendanceRulesMaster"));
-const NativeCustomizationManager = lazy(() => import("./pages/customization/NativeCustomizationManager"));
+const NativeCustomizationManager    = lazy(() => import("./pages/customization/NativeCustomizationManager"));
 const NativeCustomizationRuleEditor = lazy(() => import("./pages/customization/NativeCustomizationRuleEditor"));
 const EmployeeJourney = lazy(() => import("./pages/EmployeeJourney"));
 
@@ -364,11 +377,13 @@ const App = () => (
               <Route path="/ats/branch-head-approval" element={<ProtectedRoute><Gate pageCode="ATS_BRANCH_HEAD_APPROVAL"><BranchHeadApproval /></Gate></ProtectedRoute>} />
               <Route path="/ats/payroll-hr" element={<ProtectedRoute roles={['admin', 'hr', 'payroll_hr']}><Gate pageCode="ATS_PAYROLL_HR"><NativePayrollHRValidation /></Gate></ProtectedRoute>} />
               <Route path="/ats/payroll-hr-validation" element={<ProtectedRoute><Gate pageCode="ATS_PAYROLL_HR"><NativePayrollHRValidation /></Gate></ProtectedRoute>} />
+              <Route path="/ats/joining-control-room" element={<ProtectedRoute roles={['admin', 'hr', 'payroll_hr', 'super_admin']}><Gate pageCode="ATS_JOINING_CONTROL_ROOM"><NativeJoiningControlRoom /></Gate></ProtectedRoute>} />
               {/* CANONICAL: /onboard-full is the active 10-step onboarding form. All new send-token links use this route. */}
               <Route path="/onboard-full" element={<CandidateOnboardingFullPage />} />
               <Route path="/candidate-onboarding-full" element={<CandidateOnboardingFullPage />} />
               {/* DEPRECATED: /onboard-full-legacy (CandidateOnboardingV2). Kept for existing tokens. Do not generate new links to this route. */}
               <Route path="/onboard-full-legacy" element={<CandidateOnboardingV2 />} />
+              <Route path="/onboard-v1" element={<CandidateOnboardingFullPage />} />
               <Route path="/ats/bgv" element={<ProtectedRoute><Gate pageCode="ATS_BGV"><NativeBGVVerificationCenter /></Gate></ProtectedRoute>} />
               <Route path="/ats/bgv-enhanced" element={<ProtectedRoute roles={['admin', 'hr']}><NativeBGVEnhanced /></ProtectedRoute>} />
               <Route path="/ats/bgv-report" element={<ProtectedRoute><Gate pageCode="ATS_BGV_REPORT"><NativeBGVReport /></Gate></ProtectedRoute>} />
@@ -399,6 +414,10 @@ const App = () => (
               <Route path="/lms/admin" element={<ProtectedRoute><Gate pageCode="LMS_ADMIN"><LMSIntegrationAdmin /></Gate></ProtectedRoute>} />
               <Route path="/lms/management-dashboard" element={<Navigate to="/lms/admin" replace />} />
               <Route path="/lms/integration" element={<ProtectedRoute><Gate pageCode="LMS_INTEGRATION"><NativeLMSIntegration /></Gate></ProtectedRoute>} />
+              <Route path="/lms/progress-dashboard" element={<ProtectedRoute><Gate pageCode="LMS_PROGRESS_DASHBOARD"><LMSProgressDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/lms/module-launch" element={<ProtectedRoute><Gate pageCode="LMS_MODULE_LAUNCH"><LMSModuleLaunch /></Gate></ProtectedRoute>} />
+
+              {/* WFM */}
               <Route path="/wfm/roster" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMRoster /></Gate></ProtectedRoute>} />
               <Route path="/wfm-roster" element={<Navigate to="/wfm/roster" replace />} />
               <Route path="/wfm/live-tracker" element={<ProtectedRoute><Gate pageCode="WFM_LIVE_TRACKER"><NativeBiometricCommandCenter /></Gate></ProtectedRoute>} />
@@ -458,6 +477,7 @@ const App = () => (
               <Route path="/support/command-center" element={<ProtectedRoute><Gate pageCode="SUPPORT_COMMAND_CENTER"><NativeSupportCommandCenter /></Gate></ProtectedRoute>} />
               <Route path="/support/grievance-command-center" element={<ProtectedRoute><Gate pageCode="GRIEVANCE_COMMAND_CENTER"><NativeGrievanceCommandCenter /></Gate></ProtectedRoute>} />
               <Route path="/letters" element={<ProtectedRoute><Gate pageCode="LETTERS"><NativeLetters /></Gate></ProtectedRoute>} />
+              <Route path="/letters/:id/preview" element={<ProtectedRoute><NativeLetterPreview /></ProtectedRoute>} />
               <Route path="/maternity-leave" element={<ProtectedRoute roles={['admin', 'hr']}><NativeMaternityLeave /></ProtectedRoute>} />
               <Route path="/employee-lifecycle" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_LIFECYCLE"><NativeLifecycle /></Gate></ProtectedRoute>} />
               <Route path="/employee-lifecycle-v2" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_LIFECYCLE"><NativeEmployeeLifecycle /></Gate></ProtectedRoute>} />
@@ -540,7 +560,10 @@ const App = () => (
               <Route path="/workforce-planning" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWorkforcePlanning /></Gate></ProtectedRoute>} />
               <Route path="/control-tower" element={<Navigate to="/dashboard" replace />} />
               <Route path="/rta-board" element={<ProtectedRoute><Gate pageCode="RTA_BOARD"><NativeRTABoard /></Gate></ProtectedRoute>} />
+              <Route path="/ats/walkin-queue" element={<ProtectedRoute><Gate pageCode="ATS_WALKIN_QUEUE"><NativeWalkinQueue /></Gate></ProtectedRoute>} />
               <Route path="/attendance-rules-master" element={<ProtectedRoute roles={['admin', 'hr']}><NativeAttendanceRulesMaster /></ProtectedRoute>} />
+              <Route path="/wfm/mismatch-queue" element={<ProtectedRoute><NativeAttendanceMismatchQueue /></ProtectedRoute>} />
+              <Route path="/attendance/billing-config" element={<ProtectedRoute><NativeAttendanceBillingConfig /></ProtectedRoute>} />
               <Route path="/changelog" element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
 
               {/* Expenses */}

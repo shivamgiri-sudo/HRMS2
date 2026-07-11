@@ -100,6 +100,8 @@ import { cosecSyncRouter } from "./modules/wfm/cosec-sync.routes.js";
 import { biometricSummaryRouter } from "./modules/wfm/biometric-summary.routes.js";
 import { attendanceDisputeRouter } from "./modules/attendance/attendance.dispute.routes.js";
 import { attendanceManualOverrideRouter } from "./modules/attendance/attendance.manual-override.routes.js";
+import { mismatchReviewRouter } from "./modules/wfm/mismatch-review.routes.js";
+import { billingConfigRouter } from "./modules/attendance/billing-config.routes.js";
 import customizationRouter from "./modules/customization/customization.routes.js";
 import { rosterMasterRouter } from "./modules/roster/roster-master.routes.js";
 import rosterCapacityRouter from "./modules/roster/roster-capacity.routes.js";
@@ -174,6 +176,7 @@ import { employeeVerifyRouter } from "./modules/employees/employee.verify.routes
 import { salaryIncrementRouter } from "./modules/salary-increment/salaryIncrement.routes.js";
 import { breakDeskRouter } from "./modules/break-management/break-desk.routes.js";
 import { breakManagementRouter } from "./modules/break-management/break-management.routes.js";
+import { candidateOnboardingRouter } from "./modules/candidate-onboarding/candidate-onboarding.routes.js";
 
 export const app = express();
 
@@ -238,6 +241,7 @@ if (process.env.NODE_ENV !== "production") {
   app.use("/api/mock-digilocker", mockDigilockerRouter);
 }
 app.use("/api/auth/launch", authLaunchRouter);
+app.use("/api/candidate/onboarding", candidateOnboardingRouter);
 app.use("/api/health", healthRouter);
 app.use("/api/admin", roleAssignmentRouter);
 app.use("/api/processes", processRouter);
@@ -366,6 +370,8 @@ app.use('/api/wfm/biometric-summary', biometricSummaryRouter);
 app.use("/api/attendance/exception-engine", attendanceExceptionRouter);
 app.use("/api/attendance", attendanceDisputeRouter);
 app.use("/api/attendance", attendanceManualOverrideRouter);
+app.use("/api/wfm/mismatches", mismatchReviewRouter);
+app.use("/api/attendance/billing-config", billingConfigRouter);
 app.use("/api/integrations/cosec", cosecMonitoringRouter);
 app.use("/api/workforce-planning", workforcePlanningRouter);
 app.use("/api/customization", customizationRouter);

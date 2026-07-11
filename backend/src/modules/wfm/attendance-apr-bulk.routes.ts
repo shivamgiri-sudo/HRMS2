@@ -5,7 +5,7 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
-import { isOperationsExecutive, classifyOperationsNetLogin } from './attendance-engine.service.js';
+import { isOperationsExecutiveByRegex as isOperationsExecutive, classifyOperationsNetLogin } from './attendance-engine.service.js';
 
 const router = Router();
 router.use(requireAuth);

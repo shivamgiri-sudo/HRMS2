@@ -1,64 +1,77 @@
-import { runFullSync } from '../modules/lms/lms.sync.service.js';
+import { db } from "../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
+import { runFullSync } from "../modules/lms/lms.sync.service.js";
 
 // ── Configuration ──────────────────────────────────────────────────────────
-// Run every hour at :05 (5 minutes past each hour)
-const HOURLY_INTERVAL_MS = 60 * 60 * 1000;
 
-function msUntilNextHourFive(): number {
-  const now = new Date();
-  const next = new Date(now);
-  next.setHours(next.getHours(), 5, 0, 0);
-  if (next <= now) {
-    next.setHours(next.getHours() + 1);
+const INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+// ── Schedule helpers ───────────────────────────────────────────────────────
+
+async function isScheduleEnabled(): Promise<boolean> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT enabled FROM integration_schedule WHERE schedule_key = 'lms_sync' LIMIT 1`
+    );
+    if (!(rows as any[]).length) return true; // default enabled if no row
+    return Boolean((rows as any[])[0].enabled);
+  } catch {
+    return true; // fail-open: run sync if we can't check
   }
-  return next.getTime() - now.getTime();
+}
+
+async function updateLastRun(): Promise<void> {
+  try {
+    await db.execute(
+      `INSERT INTO integration_schedule (schedule_key, enabled, last_run_at)
+       VALUES ('lms_sync', 1, NOW())
+       ON DUPLICATE KEY UPDATE last_run_at = NOW()`
+    );
+  } catch (e) {
+    console.warn("[lms-worker] failed to update last_run_at:", e);
+  }
 }
 
 // ── Worker Logic ───────────────────────────────────────────────────────────
 
-async function runLmsSync(): Promise<void> {
-  console.log('[LMS Sync] Starting full LMS synchronization...');
+async function tick(): Promise<void> {
+  if (!(await isScheduleEnabled())) {
+    console.log("[lms-worker] skipped — schedule disabled");
+    return;
+  }
 
   try {
     const result = await runFullSync();
-    console.log(
-      `[LMS Sync] Complete — mapped: ${result.mapped}, progress: ${result.progress}, certifications: ${result.certifications}, errors: ${result.errors.length}`
-    );
+    await updateLastRun();
+    console.log("[lms-worker] sync complete:", result);
 
-    if (result.errors.length > 0) {
-      console.warn('[LMS Sync] Errors encountered:');
-      result.errors.slice(0, 5).forEach((err) => console.warn(`  - ${err}`));
+    if (result.errors && result.errors.length > 0) {
+      console.warn("[lms-worker] errors encountered:");
+      result.errors.slice(0, 5).forEach((err: string) => console.warn(`  - ${err}`));
       if (result.errors.length > 5) {
         console.warn(`  ... and ${result.errors.length - 5} more errors`);
       }
     }
-  } catch (err: any) {
-    console.error('[LMS Sync] Sync failed:', err.message);
+  } catch (e) {
+    console.error("[lms-worker] sync error:", e);
   }
 }
 
 // ── Scheduler ──────────────────────────────────────────────────────────────
 
 async function startWorker(): Promise<void> {
-  console.log('[LMS Sync] Worker starting — will run hourly at :05');
-
-  const delay = msUntilNextHourFive();
-  console.log(`[LMS Sync] First run in ${Math.round(delay / 60000)} minutes`);
-
-  setTimeout(async () => {
-    await runLmsSync();
-    // Then repeat every 60 minutes
-    setInterval(runLmsSync, HOURLY_INTERVAL_MS);
-  }, delay);
+  console.log("[lms-worker] starting — will run every hour");
+  tick(); // run immediately on startup
+  setInterval(tick, INTERVAL_MS);
 }
 
 // ── Entry Point ────────────────────────────────────────────────────────────
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   startWorker().catch((err) => {
-    console.error('[LMS Sync] Fatal error:', err);
+    console.error("[lms-worker] fatal error:", err);
     process.exit(1);
   });
 }
 
-export { startWorker as startLmsSyncWorker, runLmsSync };
+export { startWorker as startLmsSyncWorker, tick as runLmsSync };

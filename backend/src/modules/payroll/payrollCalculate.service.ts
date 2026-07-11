@@ -260,6 +260,38 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   // Per MBA 1961 s.5(1) these employees receive full pay — no LWP deduction.
   const maternityExemptIds = await maternityService.getActiveEmployeeIdsForMonth(run.run_month);
 
+  // G11: Payroll gate — if feature flag is on, build set of employee IDs that have
+  // unresolved mismatch or missing_punch records for the payroll month.
+  const payrollLockOnUnresolved = await (async () => {
+    try {
+      const [flagRows] = await db.execute<RowDataPacket[]>(
+        `SELECT config_value FROM attendance_feature_config
+         WHERE config_key = 'payroll_lock_on_unresolved_mismatch' LIMIT 1`
+      );
+      return ((flagRows[0] as any)?.config_value ?? '0') === '1';
+    } catch { return false; }
+  })();
+
+  const blockedEmployeeIds = new Set<string>();
+  if (payrollLockOnUnresolved) {
+    const monthStart = `${run.run_month}-01`;
+    const [y, m] = run.run_month.split('-').map(Number);
+    const di = new Date(y, m, 0).getDate();
+    const monthEnd = `${run.run_month}-${String(di).padStart(2, '0')}`;
+    const [blockedRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT employee_id FROM attendance_daily_record
+       WHERE record_date BETWEEN ? AND ?
+         AND (
+           (mismatch_flag = 1 AND mismatch_resolved_at IS NULL)
+           OR attendance_status = 'missing_punch'
+         )`,
+      [monthStart, monthEnd]
+    );
+    for (const r of blockedRows as RowDataPacket[]) {
+      blockedEmployeeIds.add((r as any).employee_id as string);
+    }
+  }
+
   // All DB writes go through a single connection wrapped in a transaction so
   // that a crash mid-loop leaves the run fully rolled back rather than partially written.
   const conn = await db.getConnection();
@@ -269,6 +301,11 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   for (const emp of employees) {
     const monthStart = `${run.run_month}-01`;
     const monthEnd   = `${run.run_month}-${String(daysInMonth).padStart(2, "0")}`;
+
+    // G11: Skip employees with unresolved attendance issues when payroll gate is enabled
+    if (blockedEmployeeIds.has(emp.employee_id)) {
+      continue;
+    }
 
     // salary_start_date gate: skip employees whose salary hasn't started yet this month
     if (emp.salary_start_date) {
@@ -428,6 +465,45 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     // No separate LWP deduction needed — absent days just reduce finalPayableDays
     const lwpDeduction = 0;  // absorbed into days-based calculation
     const grossAfterLwp = grossMonthly;
+
+    // G6/G13: Check attendance_billing_config — if extra_day_salary_allowed=0 for this
+    // employee/designation/branch/process, cap payable days to calendar month days.
+    // Scope precedence: employee > designation > branch > process > global.
+    const billingAllowed = await (async () => {
+      try {
+        const [bRows] = await db.execute<RowDataPacket[]>(
+          `SELECT extra_day_salary_allowed FROM attendance_billing_config
+           WHERE active_status = 1
+             AND (effective_from <= ? OR effective_from IS NULL)
+             AND (effective_to IS NULL OR effective_to >= ?)
+             AND (
+               (scope_type = 'employee'     AND employee_id    = ?) OR
+               (scope_type = 'designation'  AND designation_id = (SELECT designation_id FROM employees WHERE id = ? LIMIT 1)) OR
+               (scope_type = 'branch'       AND branch_id      = (SELECT branch_id      FROM employees WHERE id = ? LIMIT 1)) OR
+               (scope_type = 'process'      AND process_id     = (SELECT process_id     FROM employees WHERE id = ? LIMIT 1)) OR
+               (scope_type = 'global'       AND employee_id IS NULL AND designation_id IS NULL
+                                            AND branch_id IS NULL   AND process_id IS NULL)
+             )
+           ORDER BY
+             CASE scope_type
+               WHEN 'employee'    THEN 1
+               WHEN 'designation' THEN 2
+               WHEN 'branch'      THEN 3
+               WHEN 'process'     THEN 4
+               ELSE 5
+             END
+           LIMIT 1`,
+          [monthStart, monthEnd, emp.employee_id, emp.employee_id, emp.employee_id, emp.employee_id]
+        );
+        if (!(bRows as RowDataPacket[]).length) return true;
+        return Number((bRows[0] as any).extra_day_salary_allowed) === 1;
+      } catch { return true; }
+    })();
+
+    // If billing not allowed and payable days would exceed calendar days, cap it
+    const effectiveWorkingDays = (!billingAllowed && att.working_days > daysInMonth)
+      ? daysInMonth
+      : att.working_days;
 
     // 5a. Fetch tax declaration for this employee / financial year
     const [declRows] = await db.execute<RowDataPacket[]>(

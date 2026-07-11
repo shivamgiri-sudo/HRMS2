@@ -31,6 +31,7 @@ import {
   useTodayLivePunch,
 } from "@/hooks/useAttendance";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useActiveBreak, useBreaksForRecord } from "@/hooks/useAttendanceBreaks";
 import { usePagination } from "@/hooks/usePagination";
 import { useSorting } from "@/hooks/useSorting";
 
@@ -208,7 +209,7 @@ const getStatusBadge = (status: string) => {
     );
   }
 
-  if (normalized === "half-day") {
+  if (normalized === "half-day" || normalized === "half_day") {
     return (
       <Badge className="bg-sky-50 text-sky-700 hover:bg-sky-50">
         Half Day
@@ -220,6 +221,54 @@ const getStatusBadge = (status: string) => {
     return (
       <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100">
         Absent
+      </Badge>
+    );
+  }
+
+  if (normalized === "missing_punch") {
+    return (
+      <Badge className="bg-rose-50 text-rose-700 hover:bg-rose-50">
+        Missing Punch
+      </Badge>
+    );
+  }
+
+  if (normalized === "week_off_worked") {
+    return (
+      <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100">
+        Worked on WO
+      </Badge>
+    );
+  }
+
+  if (normalized === "week_off") {
+    return (
+      <Badge className="bg-violet-50 text-violet-700 hover:bg-violet-50">
+        Week Off
+      </Badge>
+    );
+  }
+
+  if (normalized === "leave_approved") {
+    return (
+      <Badge className="bg-blue-50 text-blue-700 hover:bg-blue-50">
+        On Leave
+      </Badge>
+    );
+  }
+
+  if (normalized === "holiday") {
+    return (
+      <Badge className="bg-teal-50 text-teal-700 hover:bg-teal-50">
+        Holiday
+      </Badge>
+    );
+  }
+
+  if (normalized === "unreconciled") {
+    return (
+      <Badge className="bg-orange-50 text-orange-700 hover:bg-orange-50">
+        Unreconciled
       </Badge>
     );
   }
@@ -279,6 +328,9 @@ const Attendance = () => {
 
   const { data: summaryData, isLoading: reportLoading, error: summaryError } =
     useMyAttendanceSummary(currentEmployee?.id, targetDate);
+
+  const { data: activeBreak } = useActiveBreak(todayRecord?.id);
+  const { data: todayBreaks } = useBreaksForRecord(todayRecord?.id);
 
   const attendanceList = (attendanceRecords || []) as AttendanceRecord[];
   const historySorting = useSorting<AttendanceRecord>(attendanceList);
