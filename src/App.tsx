@@ -249,6 +249,7 @@ const NativeWalkinQueue             = lazy(() => import("./pages/NativeWalkinQue
 const NativeAttendanceRulesMaster   = lazy(() => import("./pages/NativeAttendanceRulesMaster"));
 const NativeAttendanceMismatchQueue = lazy(() => import("./pages/NativeAttendanceMismatchQueue"));
 const NativeAttendanceBillingConfig = lazy(() => import("./pages/NativeAttendanceBillingConfig"));
+const AdminAttendanceView           = lazy(() => import("./pages/AdminAttendanceView"));
 
 // AI & PeopleOS
 const AIProviderSettings = lazy(() => import("./pages/AIProviderSettings"));
@@ -563,6 +564,7 @@ const App = () => (
               <Route path="/attendance-rules-master" element={<ProtectedRoute roles={['admin', 'hr']}><NativeAttendanceRulesMaster /></ProtectedRoute>} />
               <Route path="/wfm/mismatch-queue" element={<ProtectedRoute><NativeAttendanceMismatchQueue /></ProtectedRoute>} />
               <Route path="/attendance/billing-config" element={<ProtectedRoute><NativeAttendanceBillingConfig /></ProtectedRoute>} />
+              <Route path="/hr/attendance-lookup" element={<ProtectedRoute roles={['super_admin', 'admin', 'hr', 'payroll_head', 'payroll_admin', 'wfm']}><AdminAttendanceView /></ProtectedRoute>} />
               <Route path="/changelog" element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
 
               {/* Expenses */}

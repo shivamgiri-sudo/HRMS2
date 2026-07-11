@@ -514,7 +514,7 @@ router.post('/process', requireRole('admin', 'hr', 'wfm'), h(async (req, res) =>
 // GET /daily — list records with filters
 router.get('/daily', h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  const isPrivileged = await hasRole(userId, 'admin', 'hr', 'wfm', 'manager');
+  const isPrivileged = await hasRole(userId, 'super_admin', 'admin', 'hr', 'wfm', 'manager', 'payroll_head', 'payroll_admin');
   // Validate pagination parameters to prevent NaN/negative values
   const rawPage = req.query.page ? Number(req.query.page) : 1;
   const rawLimit = req.query.limit ? Number(req.query.limit) : 50;
@@ -737,7 +737,7 @@ router.patch('/daily/:employeeId/:date', requireRole('admin', 'hr', 'wfm'), h(as
 router.get('/summary/:employeeId/:month', h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const targetId = req.params.employeeId;
-  const isPrivileged = await hasRole(userId, 'admin', 'hr', 'wfm', 'manager');
+  const isPrivileged = await hasRole(userId, 'super_admin', 'admin', 'hr', 'wfm', 'manager', 'payroll_head', 'payroll_admin');
   if (!isPrivileged) {
     const emp = await getEmployeeForUser(userId);
     if (!emp || emp.id !== targetId) {
