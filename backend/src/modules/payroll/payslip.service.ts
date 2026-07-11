@@ -148,14 +148,21 @@ export const payslipService = {
               spl.special_allowance AS other_allowances,
               spl.lwp_deduction,
               spl.advance_recovery,
+              spl.pf_employer,
+              spl.esic_employer,
               spl.working_days,
               spl.present_days,
               spl.lwp_days,
               e.first_name, e.last_name,
               e.ctc              AS ctc_annual,
               e.ctc,
-              COALESCE(eu.member_id, e.epf_number) AS epf_number,
+              e.pan_number,
+              COALESCE(eu.uan_number, eu.member_id, e.epf_number) AS epf_number,
+              eu.uan_number,
               e.esic_number      AS esi_number,
+              CASE WHEN e.bank_account_number IS NOT NULL
+                THEN CONCAT('XXXX', RIGHT(e.bank_account_number, 4))
+                ELSE NULL END    AS bank_account_masked,
               CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
               d.designation_name  AS designation,
               dept.dept_name      AS department,
@@ -211,10 +218,10 @@ export const payslipService = {
       [rec.prep_line_id]
     );
     rec.earnings = (components as any[])
-      .filter((component) => component.component_type === "earning")
+      .filter((component) => (component.component_type || "").toLowerCase() === "earning")
       .map((component) => ({ ...component, amount: Number(component.amount ?? 0) }));
     rec.deductions = (components as any[])
-      .filter((component) => component.component_type === "deduction")
+      .filter((component) => (component.component_type || "").toLowerCase() === "deduction")
       .map((component) => ({ ...component, amount: Number(component.amount ?? 0) }));
     return rec;
   },

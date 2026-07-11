@@ -83,13 +83,21 @@ interface PayslipRecord {
   esic_employee?: number | string;
   professional_tax?: number | string;
   tds?: number | string;
+  lwp_deduction?: number | string;
+  advance_recovery?: number | string;
+  pf_employer?: number | string;
+  esic_employer?: number | string;
   working_days?: number | string;
   present_days?: number | string;
+  lwp_days?: number | string;
   designation_name?: string | null;
   dept_name?: string | null;
   branch_name?: string | null;
   location_name?: string | null;
   epf_number?: string | null;
+  uan_number?: string | null;
+  pan_number?: string | null;
+  bank_account_masked?: string | null;
   esi_number?: string | null;
   payslip_ref?: string | null;
   cheque_no?: string | null;
@@ -289,68 +297,63 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     const [recYear, recMonthNum] = (record.run_month || "").split("-");
     const monthName = MONTHS.find((m) => m.value === String(Number(recMonthNum)))?.label || record.run_month || "";
 
-    // Helper to get component amount by code from earnings array
+    // Helper to get component amount by code (case-insensitive)
     const getEarning = (code: string) => {
-      const comp = (record.earnings || []).find((earning) => earning.component_code === code);
+      const comp = (record.earnings || []).find((e) => e.component_code.toUpperCase() === code.toUpperCase());
+      return Number(comp?.amount ?? 0);
+    };
+    const getDeduction = (code: string) => {
+      const comp = (record.deductions || []).find((d) => d.component_code.toUpperCase() === code.toUpperCase());
       return Number(comp?.amount ?? 0);
     };
 
-    // Helper to get deduction amount by code
-    const getDeduction = (code: string) => {
-      const comp = (record.deductions || []).find((deduction) => deduction.component_code === code);
-      return Number(comp?.amount ?? 0);
-    };
+    // Earnings — component array with flat-field fallback
+    const basic = getEarning('BASIC') || Number(record.basic ?? record.basic_salary ?? 0);
+    const hra = getEarning('HRA') || Number(record.hra ?? 0);
+    const bonus = getEarning('BONUS');
+    const conv = getEarning('CONVEYANCE') || getEarning('CONV');
+    const pa = getEarning('PA') || getEarning('PERSONAL_ALLOWANCE');
+    const ma = getEarning('MA') || getEarning('MEDICAL_ALLOWANCE');
+    const sa = getEarning('SPECIAL') || getEarning('SPECIAL_ALLOWANCE');
+    const arrear = getEarning('ARREAR');
+    const incentive = getEarning('INCENTIVE');
+    const knownEarnings = basic + hra + bonus + conv + pa + ma + sa + arrear + incentive;
+    const oa = Math.max(Number(record.gross_salary ?? 0) - knownEarnings, 0);
+
+    // Deductions — component array with flat-field fallback
+    const pf = getDeduction('PF_EMPLOYEE') || getDeduction('PF_EMP') || Number(record.pf_employee ?? 0);
+    const esic = getDeduction('ESIC_EMPLOYEE') || getDeduction('ESIC_EMP') || Number(record.esic_employee ?? 0);
+    const pt = getDeduction('PROFESSIONAL_TAX') || getDeduction('PT') || Number(record.professional_tax ?? 0);
+    const tds = getDeduction('TDS') || Number(record.tds ?? 0);
+    const lwpDed = getDeduction('LWP_DEDUCTION') || Number(record.lwp_deduction ?? 0);
+    const loan = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY');
+    const adDed = getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY') || Number(record.advance_recovery ?? 0);
+    const knownDeductions = pf + esic + pt + tds + lwpDed + loan + adDed;
+    const otherDed = Math.max(Number(record.total_deductions ?? 0) - knownDeductions, 0);
 
     await downloadMasCallnetPayslip({
-      // Header
       companyName: "Mas Callnet India Pvt Ltd",
       monthYear: `${monthName} - ${recYear}`,
-
-      // Employee details - now from actual database
       empName: employeeName,
       empCode: employeeCode,
       designation: record.designation_name || "N/A",
       department: record.dept_name || "N/A",
       epfNo: record.epf_number || "",
+      uanNo: record.uan_number || "",
+      panNo: record.pan_number || "",
+      bankAccount: record.bank_account_masked || "",
       location: record.branch_name || record.location_name || "N/A",
       esiNo: record.esi_number || "",
       wDays: Number(record.working_days ?? 30),
       earnedDays: Number(record.present_days ?? record.working_days ?? 30),
-
-      // Earnings - from component breakdown
-      basic: getEarning('BASIC'),
-      hra: getEarning('HRA'),
-      bonus: getEarning('BONUS'),
-      conv: getEarning('CONVEYANCE') || getEarning('CONV'),
-      pa: getEarning('PA') || getEarning('PERSONAL_ALLOWANCE'),
-      ma: getEarning('MA') || getEarning('MEDICAL_ALLOWANCE'),
-      sa: getEarning('SPECIAL') || getEarning('SPECIAL_ALLOWANCE'),
-      oa: getEarning('OTHER') || getEarning('OTHER_ALLOWANCE'),
-      arrear: getEarning('ARREAR'),
-      incentive: getEarning('INCENTIVE'),
-
-      // Deductions - from component breakdown
-      pf: getDeduction('PF_EMP') || getDeduction('PF_EMPLOYEE'),
-      esic: getDeduction('ESIC_EMP') || getDeduction('ESIC_EMPLOYEE'),
-      loan: getDeduction('LOAN') || getDeduction('LOAN_RECOVERY'),
-      adDed: getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY'),
-      otherDed:
-        (getDeduction('PT') || getDeduction('PROFESSIONAL_TAX')) +
-        getDeduction('TDS'),
-
-      // Form 16 Summary (optional - set to 0 for now)
+      lwpDays: Number(record.lwp_days ?? 0),
+      totalDaysInMonth: Number(record.working_days ?? 30),
+      basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive,
+      pf, esic, pt, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,
+      employerPf: Number(record.pf_employer ?? 0),
+      employerEsic: Number(record.esic_employer ?? 0),
       grossSalary: Number(record.gross_salary ?? 0),
-      exemptionUs10: 0,
-      balance: 0,
-      deductionUs24: 0,
-      grossTotalIncome: 0,
-      aggOffChapVi: 0,
-      totalIncome: 0,
-      taxOnTotal: 0,
-      taxPayableEduCess: 0,
-      incomeTax: getDeduction('TDS'),
-
-      // Payment details — from disbursal upload (real cheque/UTR number)
+      incomeTax: tds,
       chequeNo: record.cheque_no || "",
       paymentMode: record.payment_mode || "",
       paymentDate: record.payment_date || "",

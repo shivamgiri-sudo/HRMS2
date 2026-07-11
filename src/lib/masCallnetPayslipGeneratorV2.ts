@@ -19,9 +19,14 @@ interface MasCallnetPayslipData {
   designation: string;
   department: string;
   epfNo?: string;
+  uanNo?: string;
+  panNo?: string;
+  bankAccount?: string;
   location: string;
   wDays: number;
   earnedDays: number;
+  lwpDays?: number;
+  totalDaysInMonth?: number;
   basic: number;
   hra: number;
   bonus: number;
@@ -34,9 +39,14 @@ interface MasCallnetPayslipData {
   incentive: number;
   pf: number;
   esic: number;
+  pt: number;
+  tds: number;
+  lwpDeduction: number;
   loan: number;
   adDed: number;
   otherDed: number;
+  employerPf?: number;
+  employerEsic?: number;
   grossSalary?: number;
   exemptionUs10?: number;
   balance?: number;
@@ -134,13 +144,18 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
       ],
       [
         lbl("Emp Code"), data.empCode,
-        lbl("EPF No"), data.epfNo || "",
+        lbl("UAN / EPF No"), data.uanNo || data.epfNo || "",
         lbl("Location"), data.location || "",
       ],
       [
         lbl("ESI No"), data.esiNo || "",
-        lbl("Working Days"), String(data.wDays),
-        lbl("Earned Days"), String(data.earnedDays),
+        lbl("PAN"), data.panNo || "",
+        lbl("Bank A/c"), data.bankAccount || "",
+      ],
+      [
+        lbl("Days in Month"), String(data.totalDaysInMonth ?? data.wDays),
+        lbl("Paid Days"), String(data.earnedDays),
+        lbl("LWP Days"), String(data.lwpDays ?? 0),
       ],
     ],
     theme: "grid",
@@ -223,7 +238,7 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
   currentY = (doc as any).lastAutoTable.finalY + 2;
 
   // ── DEDUCTIONS SECTION ────────────────────────────────────────────────────────
-  const totalDeductions = data.pf + data.esic + data.loan + data.adDed + data.otherDed;
+  const totalDeductions = data.pf + data.esic + data.pt + data.tds + data.lwpDeduction + data.loan + data.adDed + data.otherDed;
 
   const dedHeaderStyle = { fontStyle: "bold" as const, fillColor: MCN_BLUE, textColor: WHITE as [number, number, number], halign: "center" as const };
   const dedValueStyle = { fillColor: [240, 245, 255] as [number, number, number], halign: "center" as const };
@@ -235,14 +250,12 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
         { content: "DEDUCTIONS", styles: { ...dedHeaderStyle, halign: "left" as const } },
         { content: "PF", styles: dedHeaderStyle },
         { content: "ESIC", styles: dedHeaderStyle },
+        { content: "PT", styles: dedHeaderStyle },
+        { content: "TDS", styles: dedHeaderStyle },
+        { content: "LWP", styles: dedHeaderStyle },
         { content: "Loan", styles: dedHeaderStyle },
         { content: "Advance", styles: dedHeaderStyle },
         { content: "Other", styles: dedHeaderStyle },
-        { content: "", styles: { fillColor: MCN_BLUE, textColor: WHITE as [number, number, number] } },
-        { content: "", styles: { fillColor: MCN_BLUE, textColor: WHITE as [number, number, number] } },
-        { content: "", styles: { fillColor: MCN_BLUE, textColor: WHITE as [number, number, number] } },
-        { content: "", styles: { fillColor: MCN_BLUE, textColor: WHITE as [number, number, number] } },
-        { content: "", styles: { fillColor: MCN_BLUE, textColor: WHITE as [number, number, number] } },
         { content: "Total", styles: { ...dedHeaderStyle, fillColor: [5, 50, 100] as [number, number, number] } },
       ],
     ],
@@ -251,14 +264,12 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
         { content: "", styles: { fillColor: [240, 245, 255] as [number, number, number] } },
         { content: formatINR(data.pf), styles: dedValueStyle },
         { content: formatINR(data.esic), styles: dedValueStyle },
+        { content: formatINR(data.pt), styles: dedValueStyle },
+        { content: formatINR(data.tds), styles: dedValueStyle },
+        { content: formatINR(data.lwpDeduction), styles: dedValueStyle },
         { content: formatINR(data.loan), styles: dedValueStyle },
         { content: formatINR(data.adDed), styles: dedValueStyle },
         { content: formatINR(data.otherDed), styles: dedValueStyle },
-        { content: "", styles: { fillColor: LIGHT_GRAY } },
-        { content: "", styles: { fillColor: LIGHT_GRAY } },
-        { content: "", styles: { fillColor: LIGHT_GRAY } },
-        { content: "", styles: { fillColor: LIGHT_GRAY } },
-        { content: "", styles: { fillColor: LIGHT_GRAY } },
         { content: formatINR(totalDeductions), styles: { fontStyle: "bold" as const, halign: "center" as const, fillColor: [220, 230, 255] as [number, number, number] } },
       ],
     ],
@@ -275,7 +286,20 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
     bodyStyles: { minCellHeight: 7 },
   });
 
-  currentY = (doc as any).lastAutoTable.finalY + 3;
+  // ── EMPLOYER CONTRIBUTION (informational) ─────────────────────────────────────
+  if (data.employerPf || data.employerEsic) {
+    currentY = (doc as any).lastAutoTable.finalY + 2;
+    doc.setFontSize(7.5);
+    doc.setFont("helvetica", "italic");
+    doc.setTextColor(80, 80, 80);
+    const parts: string[] = [];
+    if (data.employerPf) parts.push(`Employer PF: ₹${formatINR(data.employerPf)}`);
+    if (data.employerEsic) parts.push(`Employer ESI: ₹${formatINR(data.employerEsic)}`);
+    doc.text(`Employer Contributions (not deducted from salary): ${parts.join("  |  ")}`, 14, currentY + 3);
+    currentY += 6;
+  } else {
+    currentY = (doc as any).lastAutoTable.finalY + 3;
+  }
 
   // ── FORM 16 COMPACT SUMMARY ───────────────────────────────────────────────────
   const form16Entries: [string, string][] = [];

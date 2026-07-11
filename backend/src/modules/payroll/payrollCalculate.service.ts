@@ -667,7 +667,27 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       );
     }
 
-    // Insert per-type deduction components for payslip breakdown
+    // Insert statutory deduction components for payslip display
+    const statutoryDeductions = [
+      { code: "PF_EMPLOYEE", name: "Provident Fund (Employee)", amount: calc.pf_employee },
+      { code: "ESIC_EMPLOYEE", name: "ESI (Employee)", amount: calc.esic_employee },
+      { code: "PROFESSIONAL_TAX", name: "Professional Tax", amount: calc.professional_tax },
+      { code: "TDS", name: "Income Tax (TDS)", amount: tdsMonthly },
+      { code: "LWP_DEDUCTION", name: "LWP / Leave Without Pay", amount: lwpDeduction },
+      { code: "ADVANCE_RECOVERY", name: "Advance Recovery", amount: advanceRecovery },
+    ];
+    for (const ded of statutoryDeductions) {
+      if (ded.amount <= 0) continue;
+      await conn.execute(
+        `INSERT INTO salary_prep_line_component
+           (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
+         VALUES (?, ?, ?, ?, ?, ?, 'deduction', ?, 'statutory', 0)
+         ON DUPLICATE KEY UPDATE amount = VALUES(amount)`,
+        [randomUUID(), runId, prepLineId, emp.employee_id, ded.code, ded.name, ded.amount]
+      );
+    }
+
+    // Insert per-type custom deduction components for payslip breakdown
     for (const ded of miscComponents) {
       await conn.execute(
         `INSERT INTO salary_prep_line_component

@@ -23,8 +23,8 @@ function expectedNet(line: PayrollLine) { return Number(line.gross_pay ?? 0) - N
 function lineRisks(line: PayrollLine) { const risks: string[] = []; if (Number(line.gross_pay ?? 0) <= 0) risks.push("Zero gross"); if (Number(line.net_pay ?? 0) < 0) risks.push("Negative net"); if (Math.abs(expectedNet(line) - Number(line.net_pay ?? 0)) > 1) risks.push("Net mismatch"); if (!line.payslip_id) risks.push("Not generated"); if (line.payslip_id && line.payslip_status !== "acknowledged") risks.push("Not acknowledged"); return risks; }
 
 async function downloadPayslipPdf(payslip: Payslip): Promise<void> {
-  const earning = (code: string) => Number(payslip.earnings?.find((component) => component.component_code.toUpperCase() === code)?.amount ?? 0);
-  const deduction = (code: string) => Number(payslip.deductions?.find((component) => component.component_code.toUpperCase() === code)?.amount ?? 0);
+  const earning = (code: string) => Number(payslip.earnings?.find((c) => c.component_code.toUpperCase() === code)?.amount ?? 0);
+  const deduction = (code: string) => Number(payslip.deductions?.find((c) => c.component_code.toUpperCase() === code)?.amount ?? 0);
   const basic = earning("BASIC") || Number(payslip.basic ?? 0);
   const hra = earning("HRA") || Number(payslip.hra ?? 0);
   const bonus = earning("BONUS");
@@ -36,12 +36,39 @@ async function downloadPayslipPdf(payslip: Payslip): Promise<void> {
   const incentive = earning("INCENTIVE");
   const knownEarnings = basic + hra + bonus + conv + pa + ma + sa + arrear + incentive;
   const oa = Math.max(Number(payslip.gross_pay ?? 0) - knownEarnings, 0);
-  const pf = deduction("PF_EMP") || deduction("PF_EMPLOYEE") || Number(payslip.pf_employee ?? 0);
-  const esic = deduction("ESIC_EMP") || deduction("ESIC_EMPLOYEE") || Number(payslip.esic_employee ?? 0);
+  const pf = deduction("PF_EMPLOYEE") || deduction("PF_EMP") || Number(payslip.pf_employee ?? 0);
+  const esic = deduction("ESIC_EMPLOYEE") || deduction("ESIC_EMP") || Number(payslip.esic_employee ?? 0);
+  const pt = deduction("PROFESSIONAL_TAX") || deduction("PT") || Number(payslip.pt_amount ?? 0);
+  const tds = deduction("TDS") || Number(payslip.tds_amount ?? 0);
+  const lwpDed = deduction("LWP_DEDUCTION") || Number(payslip.lwp_deduction ?? 0);
   const loan = deduction("LOAN") || deduction("LOAN_RECOVERY");
   const adDed = deduction("ADVANCE") || deduction("ADVANCE_RECOVERY") || Number(payslip.advance_recovery ?? 0);
-  const otherDed = Math.max(Number(payslip.total_deductions ?? 0) - pf - esic - loan - adDed, 0);
-  await downloadMasCallnetPayslip({ companyName: "Mas Callnet India Pvt Ltd", monthYear: `${MONTH_NAMES[payslip.month]} - ${payslip.year}`, empName: payslip.employee_name, empCode: payslip.employee_code ?? payslip.employee_id, designation: payslip.designation || "N/A", department: payslip.department || "N/A", epfNo: payslip.epf_number || "", esiNo: payslip.esi_number || "", location: payslip.branch_name || payslip.location_name || "N/A", wDays: Number(payslip.working_days ?? 0), earnedDays: Number(payslip.present_days ?? 0), basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive, pf, esic, loan, adDed, otherDed, grossSalary: Number(payslip.gross_pay ?? 0), exemptionUs10: 0, balance: 0, deductionUs24: 0, grossTotalIncome: 0, aggOffChapVi: 0, totalIncome: 0, taxOnTotal: 0, taxPayableEduCess: 0, incomeTax: Number(payslip.tds_amount ?? 0), chequeNo: payslip.cheque_no || "", paymentMode: payslip.payment_mode || "", paymentDate: payslip.payment_date || "", netSalary: Number(payslip.net_pay ?? 0), netSalaryWords: numberToWords(Math.floor(Number(payslip.net_pay ?? 0))) }, `Payslip_${payslip.employee_code ?? payslip.employee_id}_${MONTH_NAMES[payslip.month]}_${payslip.year}.pdf`);
+  const knownDed = pf + esic + pt + tds + lwpDed + loan + adDed;
+  const otherDed = Math.max(Number(payslip.total_deductions ?? 0) - knownDed, 0);
+  await downloadMasCallnetPayslip({
+    companyName: "Mas Callnet India Pvt Ltd",
+    monthYear: `${MONTH_NAMES[payslip.month]} - ${payslip.year}`,
+    empName: payslip.employee_name,
+    empCode: payslip.employee_code ?? payslip.employee_id,
+    designation: payslip.designation || "N/A",
+    department: payslip.department || "N/A",
+    epfNo: payslip.epf_number || "",
+    esiNo: payslip.esi_number || "",
+    location: payslip.branch_name || payslip.location_name || "N/A",
+    wDays: Number(payslip.working_days ?? 0),
+    earnedDays: Number(payslip.present_days ?? 0),
+    lwpDays: Number(payslip.lwp_deduction ?? 0) > 0 ? Math.round((Number(payslip.working_days ?? 0) - Number(payslip.present_days ?? 0))) : 0,
+    totalDaysInMonth: Number(payslip.working_days ?? 30),
+    basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive,
+    pf, esic, pt, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,
+    grossSalary: Number(payslip.gross_pay ?? 0),
+    incomeTax: tds,
+    chequeNo: payslip.cheque_no || "",
+    paymentMode: payslip.payment_mode || "",
+    paymentDate: payslip.payment_date || "",
+    netSalary: Number(payslip.net_pay ?? 0),
+    netSalaryWords: numberToWords(Math.floor(Number(payslip.net_pay ?? 0))),
+  }, `Payslip_${payslip.employee_code ?? payslip.employee_id}_${MONTH_NAMES[payslip.month]}_${payslip.year}.pdf`);
 }
 
 function Form16Modal({ data, onClose }: { data: Form16Data; onClose: () => void }) {
