@@ -12,6 +12,7 @@ import {
   actionProvisioningRequest,
   waiveProvisioningRequest,
   confirmAndLockRequest,
+  OFFICIAL_EMAIL_REGEX,
 } from './it-provisioning.service.js';
 
 const router = Router();
@@ -306,6 +307,9 @@ router.post('/tasks/:id/complete', requireRole(...PROVISIONING_ROLES), h(async (
     if (!officialEmail || !domainAccount) {
       return res.status(400).json({ success: false, message: 'official_email and domain_account are required for IT tasks' });
     }
+    if (!OFFICIAL_EMAIL_REGEX.test(officialEmail)) {
+      return res.status(400).json({ success: false, message: 'official_email must end with @teammas.in or @teammas.co.in' });
+    }
   }
   await persistStructuredFields(req.params.id, req.body);
   await actionProvisioningRequest({ requestId: req.params.id, actionedBy: req.authUser!.id, evidenceNote: req.body.evidence_note ?? 'Completed from provisioning queue' });
@@ -385,11 +389,11 @@ router.get('/tasks/:id/candidate-report', requireRole(...PROVISIONING_ROLES), h(
        ipr.requested_at, ipr.actioned_at,
        e.id AS employee_id, e.employee_code, e.first_name, e.last_name,
        e.personal_email, e.mobile, e.designation, e.date_of_joining,
-       b.name AS branch_name, p.name AS process_name
+       b.branch_name AS branch_name, p.process_name AS process_name
      FROM it_provisioning_request ipr
      JOIN employees e ON e.id = ipr.employee_id
-     LEFT JOIN branches b ON b.id = e.branch_id
-     LEFT JOIN processes p ON p.id = e.process_id
+     LEFT JOIN branch_master b ON b.id = e.branch_id
+     LEFT JOIN process_master p ON p.id = e.process_id
      WHERE ipr.id = ?
      LIMIT 1`,
     [req.params.id],

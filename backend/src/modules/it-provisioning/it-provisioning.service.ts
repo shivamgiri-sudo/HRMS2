@@ -408,7 +408,10 @@ export async function actionProvisioningRequest(params: {
 }): Promise<void> {
   const { requestId, actionedBy, evidenceNote } = params;
   const rec = await getRequest(requestId);
-  if (rec.status === 'actioned') return; // idempotent
+  if (rec.status === 'actioned') return;
+  if (rec.status === 'waived' || rec.status === 'confirmed') {
+    throw Object.assign(new Error(`Cannot action a ${rec.status} request`), { statusCode: 400 });
+  }
 
   await db.execute(
     `UPDATE it_provisioning_request
@@ -461,6 +464,9 @@ export async function confirmAndLockRequest(requestId: string, actionedBy: strin
   const rec = (rows as any[])[0];
   if (!rec) throw Object.assign(new Error('Not found'), { statusCode: 404 });
   if (rec.locked) return;
+  if (rec.status !== 'actioned') {
+    throw Object.assign(new Error('Only actioned requests can be locked'), { statusCode: 400 });
+  }
 
   await db.execute(
     `UPDATE it_provisioning_request SET status = 'confirmed', locked = 1, updated_at = NOW() WHERE id = ?`,

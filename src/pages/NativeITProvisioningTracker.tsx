@@ -27,7 +27,7 @@ import { HrmsBentoTile, HrmsModernShell } from "@/components/ui/hrms-modern";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {
   Server, Lock, CheckCircle, Clock, AlertTriangle, Search, XCircle,
-  ShieldCheck, RefreshCw, Upload, Download, User, ChevronRight,
+  ShieldCheck, RefreshCw, Upload, Download, User, ChevronRight, Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -154,7 +154,7 @@ function CandidateReportSheet({ taskId, open, onClose }: { taskId: string | null
     queryKey: ["candidate-report", taskId],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: CandidateReport }>(`/api/it-provisioning/tasks/${taskId}/candidate-report`);
-      return res.data;
+      return res;
     },
     enabled: !!taskId && open,
   });
@@ -241,7 +241,7 @@ function BulkUploadDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const [csvRows, setCsvRows] = useState<Array<{ employee_code: string; official_email: string; domain_account: string; asset_tag: string }>>([]);
   const [parseError, setParseError] = useState("");
 
-  const CSV_TEMPLATE = "employee_code,official_email,domain_account,asset_tag\nEMP001,firstname.lastname@masgroup.in,firstname.l,LAP-0042";
+  const CSV_TEMPLATE = "employee_code,official_email,domain_account,asset_tag\nEMP001,firstname.lastname@teammas.in,firstname.l,LAP-0042";
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -287,7 +287,7 @@ function BulkUploadDialog({ open, onClose }: { open: boolean; onClose: () => voi
       queryClient.invalidateQueries({ queryKey: ["it-provisioning"] });
       onClose();
     },
-    onError: (err: any) => toast.error(err?.response?.data?.message ?? "Bulk upload failed"),
+    onError: (err: any) => toast.error(err?.message ?? "Bulk upload failed"),
   });
 
   return (
@@ -366,7 +366,7 @@ function ITTaskForm({ form, setForm, disabled }: {
           id="it-official-email"
           value={form.officialEmail}
           onChange={e => setForm(f => ({ ...f, officialEmail: e.target.value }))}
-          placeholder="firstname.lastname@masgroup.in"
+          placeholder="firstname.lastname@teammas.in"
           disabled={disabled}
           className="mt-1 min-h-[44px]"
         />
@@ -456,6 +456,19 @@ export default function NativeITProvisioningTracker() {
   const location = useLocation();
   const preset = QUEUE_PRESETS[location.pathname];
 
+  // Detect current user role from JWT for conditional UI
+  const currentUserRole = useMemo(() => {
+    try {
+      const raw = localStorage.getItem("hrms_access_token");
+      if (raw) {
+        const payload = JSON.parse(atob(raw.split(".")[1]));
+        return (payload?.role as string) ?? "";
+      }
+    } catch { /* ignore */ }
+    return "";
+  }, []);
+  const canLock = ["admin", "hr", "super_admin"].includes(currentUserRole);
+
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter]     = useState("all");
   const [roleFilter, setRoleFilter]     = useState(preset?.role ?? "all");
@@ -487,11 +500,13 @@ export default function NativeITProvisioningTracker() {
   const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ["it-provisioning", queryParams],
     queryFn: async () => {
+      const qs = new URLSearchParams(
+        Object.entries(queryParams).filter(([, v]) => v != null && v !== "") as [string, string][]
+      ).toString();
       const res = await hrmsApi.get<{ success: boolean; data: ProvisioningRequest[]; total: number }>(
-        "/api/onboarding-provisioning/tasks",
-        { params: queryParams },
+        `/api/onboarding-provisioning/tasks${qs ? `?${qs}` : ""}`,
       );
-      return res.data;
+      return res;
     },
   });
 
@@ -534,7 +549,7 @@ export default function NativeITProvisioningTracker() {
       resetForms();
     },
     onError: (err: any) => {
-      toast.error(err?.response?.data?.message ?? err?.response?.data?.error ?? "Failed to update request");
+      toast.error(err?.message ?? "Failed to update request");
     },
   });
 
@@ -570,6 +585,10 @@ export default function NativeITProvisioningTracker() {
       if (request.task_code === "IT_EMAIL_DOMAIN_ASSET") {
         if (!itForm.officialEmail.trim() || !itForm.domainAccount.trim()) {
           toast.error("Official Email and Domain Account are required");
+          return;
+        }
+        if (!/^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/.test(itForm.officialEmail.trim())) {
+          toast.error("Email must end with @teammas.in or @teammas.co.in");
           return;
         }
         body = {
@@ -809,7 +828,7 @@ export default function NativeITProvisioningTracker() {
                                 Waive
                               </Button>
                             )}
-                            {req.status === "actioned" && (
+                            {req.status === "actioned" && canLock && (
                               <Button
                                 variant="ghost"
                                 onClick={() => openDialog(req, "confirm")}
