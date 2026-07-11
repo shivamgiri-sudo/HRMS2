@@ -45,6 +45,7 @@ type BreakSettingsRow = {
 
 type DeskFilters = {
   search?: string;
+  employee_id?: string;
   branch_id?: string;
   process_id?: string;
   department_id?: string;
@@ -92,6 +93,9 @@ const STATUS_OPTIONS = [
   "Leave",
   "Shift Completed",
 ];
+
+const AUTO_CLOSE_CHECK_INTERVAL_MS = 15_000;
+const autoCloseState = new Map<string, { lastRunAt: number; promise: Promise<void> | null }>();
 
 function normalizeJsonArray(value: unknown): string[] {
   if (!value) return [];
@@ -686,68 +690,88 @@ async function sendBreakAlertIfNeeded(sessionId: string) {
   );
 }
 
-async function autoCloseEligibleBreaks(shiftDate: string) {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-        bs.id,
-        bs.employee_id,
-        bs.employee_code,
-        bs.branch_id,
-        bs.process_id,
-        bs.manager_id,
-        bs.break_start_time,
-        COALESCE(ibd.last_punch, bal.last_punch_out) AS punch_out
-       FROM break_sessions bs
-       LEFT JOIN integration_biometric_daily ibd
-         ON ibd.employee_code = bs.employee_code
-        AND ibd.activity_date = bs.shift_date
-       LEFT JOIN biometric_attendance_log bal
-         ON bal.employee_id = bs.employee_id
-        AND bal.punch_date = bs.shift_date
-      WHERE bs.shift_date = ?
-        AND bs.status = 'ACTIVE'`,
-    [shiftDate],
-  );
+async function autoCloseEligibleBreaks(shiftDate: string, force = false) {
+  const currentState = autoCloseState.get(shiftDate);
+  if (currentState?.promise) {
+    await currentState.promise;
+    return;
+  }
 
-  for (const row of rows as any[]) {
-    if (!row.punch_out || !row.break_start_time) continue;
-    const start = new Date(String(row.break_start_time).replace(" ", "T") + "+05:30").getTime();
-    const end = new Date(String(row.punch_out).replace(" ", "T") + "+05:30").getTime();
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
-    const settings = await getSettings(row.branch_id ?? null, row.process_id ?? null);
-    if (!Number(settings.auto_close_on_biometric_punch_out ?? 1)) continue;
-    const duration = minutesBetween(String(row.break_start_time), String(row.punch_out));
-    await db.execute(
-      `UPDATE break_sessions
-          SET break_end_time = ?,
-              duration_seconds = ?,
-              duration_minutes = ?,
-              break_type = ?,
-              status = 'AUTO_CLOSED',
-              end_source = 'AUTO_BIOMETRIC_PUNCH_OUT',
-              biometric_punch_out_time = ?,
-              updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-          AND status = 'ACTIVE'`,
-      [
-        row.punch_out,
-        duration.seconds,
-        duration.minutes,
-        classifyBreak(duration.minutes, settings),
-        row.punch_out,
-        row.id,
-      ],
+  const now = Date.now();
+  if (!force && currentState && now - currentState.lastRunAt < AUTO_CLOSE_CHECK_INTERVAL_MS) {
+    return;
+  }
+
+  const task = (async () => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+          bs.id,
+          bs.employee_id,
+          bs.employee_code,
+          bs.branch_id,
+          bs.process_id,
+          bs.manager_id,
+          bs.break_start_time,
+          COALESCE(ibd.last_punch, bal.last_punch_out) AS punch_out
+         FROM break_sessions bs
+         LEFT JOIN integration_biometric_daily ibd
+           ON ibd.employee_code = bs.employee_code
+          AND ibd.activity_date = bs.shift_date
+         LEFT JOIN biometric_attendance_log bal
+           ON bal.employee_id = bs.employee_id
+          AND bal.punch_date = bs.shift_date
+        WHERE bs.shift_date = ?
+          AND bs.status = 'ACTIVE'`,
+      [shiftDate],
     );
-    await rebuildDailySummary(row.employee_id, row.employee_code, shiftDate, row.branch_id ?? null, row.process_id ?? null, row.manager_id ?? null);
-    await sendBreakAlertIfNeeded(row.id);
-    await writeBreakAudit({
-      entityType: "break_session",
-      entityId: row.id,
-      action: "AUTO_CLOSED_ON_PUNCH_OUT",
-      employeeId: row.employee_id,
-      performedByType: "SYSTEM",
-      newValue: { biometric_punch_out_time: row.punch_out },
-    });
+
+    for (const row of rows as any[]) {
+      if (!row.punch_out || !row.break_start_time) continue;
+      const start = new Date(String(row.break_start_time).replace(" ", "T") + "+05:30").getTime();
+      const end = new Date(String(row.punch_out).replace(" ", "T") + "+05:30").getTime();
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+      const settings = await getSettings(row.branch_id ?? null, row.process_id ?? null);
+      if (!Number(settings.auto_close_on_biometric_punch_out ?? 1)) continue;
+      const duration = minutesBetween(String(row.break_start_time), String(row.punch_out));
+      await db.execute(
+        `UPDATE break_sessions
+            SET break_end_time = ?,
+                duration_seconds = ?,
+                duration_minutes = ?,
+                break_type = ?,
+                status = 'AUTO_CLOSED',
+                end_source = 'AUTO_BIOMETRIC_PUNCH_OUT',
+                biometric_punch_out_time = ?,
+                updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+            AND status = 'ACTIVE'`,
+        [
+          row.punch_out,
+          duration.seconds,
+          duration.minutes,
+          classifyBreak(duration.minutes, settings),
+          row.punch_out,
+          row.id,
+        ],
+      );
+      await rebuildDailySummary(row.employee_id, row.employee_code, shiftDate, row.branch_id ?? null, row.process_id ?? null, row.manager_id ?? null);
+      await sendBreakAlertIfNeeded(row.id);
+      await writeBreakAudit({
+        entityType: "break_session",
+        entityId: row.id,
+        action: "AUTO_CLOSED_ON_PUNCH_OUT",
+        employeeId: row.employee_id,
+        performedByType: "SYSTEM",
+        newValue: { biometric_punch_out_time: row.punch_out },
+      });
+    }
+  })();
+
+  autoCloseState.set(shiftDate, { lastRunAt: currentState?.lastRunAt ?? 0, promise: task });
+  try {
+    await task;
+  } finally {
+    autoCloseState.set(shiftDate, { lastRunAt: Date.now(), promise: null });
   }
 }
 
@@ -808,7 +832,7 @@ async function recordManualDeskPunch(employee: EmployeeContext, shiftDate: strin
       WHERE id = ?`,
     [now, duration.minutes, existing.id],
   );
-  await autoCloseEligibleBreaks(shiftDate);
+  await autoCloseEligibleBreaks(shiftDate, true);
   return { actionTime: now, action: "PUNCH_OUT" as const };
 }
 
@@ -846,7 +870,10 @@ async function validateKiosk(kioskCode: string, token: string, req: Request) {
   }
 
   await db.execute(
-    `UPDATE break_kiosk_devices SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    `UPDATE break_kiosk_devices
+        SET last_used_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND (last_used_at IS NULL OR last_used_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 1 MINUTE))`,
     [device.id],
   );
 
@@ -900,6 +927,10 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
       OR COALESCE(map.cosec_user_id, e.employee_code) LIKE ?
     )`);
     params.push(query, query, query);
+  }
+  if (filters.employee_id) {
+    where.push("e.id = ?");
+    params.push(filters.employee_id);
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -1195,6 +1226,11 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
   };
 }
 
+async function fetchSingleDeskEmployee(kiosk: KioskDevice, employeeId: string, shiftDate: string, includeRealtime = true) {
+  const data = await fetchDeskRows(kiosk, { date: shiftDate, employee_id: employeeId, limit: 1 }, false, includeRealtime);
+  return data.employees.find((row) => row.employee_id === employeeId) ?? null;
+}
+
 async function filterOptionsForKiosk(kiosk: KioskDevice, shiftDate: string) {
   const branchWhere = kiosk.branch_id ? "AND e.branch_id = ?" : "";
   const allowedProcesses = kioskProcessIds(kiosk);
@@ -1419,11 +1455,11 @@ export const breakManagementService = {
       req,
     });
 
-    const result = await this.listDeskEmployees(kioskCode, token, req, { date: shiftDate, search: employee.employee_code, limit: 1 });
+    const latestEmployee = await fetchSingleDeskEmployee(kiosk, employee.id, shiftDate, true);
     return {
       session_id: sessionId,
       shift_date: shiftDate,
-      employee: result.employees[0] ?? null,
+      employee: latestEmployee,
     };
   },
 
@@ -1507,13 +1543,13 @@ export const breakManagementService = {
       req,
     });
 
-    const result = await this.listDeskEmployees(kioskCode, token, req, { date: shiftDate, search: employee.employee_code, limit: 1 });
+    const latestEmployee = await fetchSingleDeskEmployee(kiosk, employee.id, shiftDate, true);
     return {
       session_id: session.id,
       shift_date: shiftDate,
       duration_minutes: duration.minutes,
       break_type: breakType,
-      employee: result.employees[0] ?? null,
+      employee: latestEmployee,
     };
   },
 
@@ -1545,11 +1581,11 @@ export const breakManagementService = {
       newValue: { punch_in_time: result.actionTime, source: "manual_kiosk" },
       req,
     });
-    const latest = await this.listDeskEmployees(kioskCode, token, req, { date: shiftDate, search: employee.employee_code, limit: 1 });
+    const latestEmployee = await fetchSingleDeskEmployee(kiosk, employee.id, shiftDate, true);
     return {
       shift_date: shiftDate,
       action_time: result.actionTime,
-      employee: latest.employees[0] ?? null,
+      employee: latestEmployee,
     };
   },
 
@@ -1581,11 +1617,11 @@ export const breakManagementService = {
       newValue: { punch_out_time: result.actionTime, source: "manual_kiosk" },
       req,
     });
-    const latest = await this.listDeskEmployees(kioskCode, token, req, { date: shiftDate, search: employee.employee_code, limit: 1 });
+    const latestEmployee = await fetchSingleDeskEmployee(kiosk, employee.id, shiftDate, true);
     return {
       shift_date: shiftDate,
       action_time: result.actionTime,
-      employee: latest.employees[0] ?? null,
+      employee: latestEmployee,
     };
   },
 

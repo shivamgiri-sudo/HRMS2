@@ -110,6 +110,10 @@ type DeskEmployeesResponse = {
   employees: DeskEmployee[];
 };
 
+type DeskActionResponse = {
+  employee?: DeskEmployee | null;
+};
+
 const ACCESS_KEY = "hrms-break-desk-access";
 const DEFAULT_FILTERS: FiltersState = {
   search: "",
@@ -271,6 +275,24 @@ function buildCounters(employees: DeskEmployee[]) {
   };
 }
 
+function totalBreakMinutesForDisplay(employee: DeskEmployee) {
+  return Number(employee.total_break_minutes ?? 0) + (employee.active_break_id ? liveMinutes(employee.active_break_start_time) : 0);
+}
+
+function shiftLabelForDisplay(employee: DeskEmployee) {
+  return employee.shift_name?.trim() || "Shift not mapped";
+}
+
+function mergeDeskEmployee(current: DeskEmployeesResponse | null, employee: DeskEmployee) {
+  if (!current) return current;
+  const nextEmployees = current.employees.map((row) => (row.employee_id === employee.employee_id ? employee : row));
+  return {
+    ...current,
+    employees: nextEmployees,
+    counters: buildCounters(nextEmployees),
+  };
+}
+
 function Modal({
   open,
   title,
@@ -328,6 +350,7 @@ export default function BreakDesk() {
   const [error, setError] = useState<string | null>(null);
   const [clock, setClock] = useState(new Date());
   const [selectedEmployee, setSelectedEmployee] = useState<DeskEmployee | null>(null);
+  const requestSequenceRef = useRef(0);
 
   const deferredSearch = useDeferredValue(filters.search);
 
@@ -356,21 +379,26 @@ export default function BreakDesk() {
     if (!access.kiosk || !access.token || !bootstrap) return;
     if (live) setRefreshing(true);
     else setLoading(true);
+    const requestId = ++requestSequenceRef.current;
     try {
       const query = buildQuery(access);
       const endpoint = live ? "/api/break-desk/live-status" : "/api/break-desk/employees";
       const response = await fetch(apiUrl(`${endpoint}?${query}`));
       const payload = await response.json();
       if (!response.ok || !payload?.success) throw new Error(payload?.message || payload?.error || "Failed to load break desk");
+      if (requestId !== requestSequenceRef.current) return;
       setDeskData(payload.data);
       setError(null);
     } catch (err) {
+      if (requestId !== requestSequenceRef.current) return;
       const message = err instanceof Error ? err.message : "Failed to refresh break desk";
       setError(message);
       if (!live) toast.error(message);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === requestSequenceRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [access, bootstrap]);
 
@@ -454,8 +482,14 @@ export default function BreakDesk() {
       });
       const payload = await response.json();
       if (!response.ok || !payload?.success) throw new Error(payload?.message || payload?.error || "Action failed");
+      const nextEmployee = (payload?.data as DeskActionResponse | undefined)?.employee ?? null;
+      requestSequenceRef.current += 1;
+      if (nextEmployee) {
+        setDeskData((current) => mergeDeskEmployee(current, nextEmployee));
+      }
+      setError(null);
       toast.success(successMessage);
-      await fetchEmployees(false);
+      void fetchEmployees(true);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Action failed");
     } finally {
@@ -671,7 +705,7 @@ export default function BreakDesk() {
                               </td>
                               <td className="px-3 py-3">
                                 <div className="space-y-1 text-xs text-slate-600">
-                                  <div className="font-semibold text-slate-800">{employee.shift_name ?? "-"}</div>
+                                  <div className="font-semibold text-slate-800">{shiftLabelForDisplay(employee)}</div>
                                   <div>In: {formatStamp(employee.biometric_punch_in_time)}</div>
                                   <div>Out: {formatStamp(employee.biometric_punch_out_time)}</div>
                                   <div className="text-slate-500">Source: {employee.attendance_source_system ?? "biometric / sync"}</div>
@@ -687,7 +721,7 @@ export default function BreakDesk() {
                               <td className="px-3 py-3 text-center font-semibold text-slate-800">{employee.total_break_count}</td>
                               <td className="px-3 py-3 text-center font-semibold text-sky-700">{employee.mini_break_count}</td>
                               <td className="px-3 py-3 text-center font-semibold text-violet-700">{employee.long_break_count}</td>
-                              <td className="px-3 py-3 text-center font-semibold text-slate-800">{employee.total_break_minutes}</td>
+                              <td className="px-3 py-3 text-center font-semibold text-slate-800">{formatMinutes(totalBreakMinutesForDisplay(employee))}</td>
                               <td className="px-3 py-3 text-center font-semibold text-slate-800">{formatMinutes(employee.shift_duration_minutes)}</td>
                               <td className="px-3 py-3">
                                 <button
@@ -784,7 +818,7 @@ export default function BreakDesk() {
               <MiniData label="Total Breaks" value={String(selectedEmployee.total_break_count)} />
               <MiniData label="Mini Break" value={String(selectedEmployee.mini_break_count)} />
               <MiniData label="Long Break" value={String(selectedEmployee.long_break_count)} />
-              <MiniData label="Break Min" value={String(selectedEmployee.total_break_minutes)} />
+              <MiniData label="Break Min" value={formatMinutes(totalBreakMinutesForDisplay(selectedEmployee))} />
             </div>
             <div className="rounded-[22px] border border-slate-200">
               <div className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">Today Break Timeline</div>
