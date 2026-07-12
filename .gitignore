@@ -37,12 +37,13 @@ backend/uploads/
 backend/private-storage/
 
 # Backend env files with credentials — never commit
+backend/.env
 backend/.env.production
 backend/.env.test
+backend/.env.backup
 backups/
 .env
 .claude/settings.json
-backend/.env.backup
 
 # Playwright test output — never commit
 playwright-report/
