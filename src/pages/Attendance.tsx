@@ -728,8 +728,7 @@ const Attendance = () => {
                     </div>
                   </div>
 
-                  {(totalBreakCount > 0 || breakSummary?.active_break || displayClockIn) && (
-                    <div className="mt-4 rounded-2xl border border-[#d9e9f9] bg-gradient-to-r from-[#f4f9ff] via-white to-[#eef8f1] p-4">
+                  <div className="mt-4 rounded-2xl border border-[#d9e9f9] bg-gradient-to-r from-[#f4f9ff] via-white to-[#eef8f1] p-4">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                           <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#1B6AB5]">
@@ -764,7 +763,6 @@ const Attendance = () => {
                         ))}
                       </div>
                     </div>
-                  )}
 
                   {displayClockOut && (
                     <div className="mt-5 flex items-center gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-700">
