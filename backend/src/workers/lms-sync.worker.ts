@@ -11,7 +11,7 @@ const INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 async function isScheduleEnabled(): Promise<boolean> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT enabled FROM integration_schedule WHERE schedule_key = 'lms_sync' LIMIT 1`
+      `SELECT enabled FROM integration_schedule WHERE integration_key = 'lms_sync' LIMIT 1`
     );
     if (!(rows as any[]).length) return true; // default enabled if no row
     return Boolean((rows as any[])[0].enabled);
@@ -23,8 +23,8 @@ async function isScheduleEnabled(): Promise<boolean> {
 async function updateLastRun(): Promise<void> {
   try {
     await db.execute(
-      `INSERT INTO integration_schedule (schedule_key, enabled, last_run_at)
-       VALUES ('lms_sync', 1, NOW())
+      `INSERT INTO integration_schedule (id, integration_key, cron_expression, enabled, last_run_at)
+       VALUES (UUID(), 'lms_sync', '0 0 * * * *', 1, NOW())
        ON DUPLICATE KEY UPDATE last_run_at = NOW()`
     );
   } catch (e) {
