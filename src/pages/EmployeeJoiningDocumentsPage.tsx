@@ -31,6 +31,7 @@ type ChecklistItem = {
   public_token_expires_at: string | null;
   verification_status: string | null;
   verification_remarks: string | null;
+  linked_doc?: { doc_type: string; doc_name: string | null; file_url: string; verified: number } | null;
 };
 
 type Pack = {
@@ -68,18 +69,19 @@ function statusText(value?: string | null) {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  verified:               "bg-emerald-50 text-emerald-700",
-  completed:              "bg-emerald-50 text-emerald-700",
-  signed_verified:        "bg-emerald-50 text-emerald-700",
-  esign_completed:        "bg-emerald-50 text-emerald-700",
-  employee_confirmed:     "bg-emerald-50 text-emerald-700",
-  needs_correction:       "bg-red-50 text-red-700",
-  esign_failed:           "bg-red-50 text-red-700",
-  pending_candidate_esign:"bg-amber-50 text-amber-700",
-  uploaded_pending_review:"bg-blue-50 text-blue-700",
-  esign_initiated:        "bg-blue-50 text-blue-700",
-  not_started:            "bg-slate-100 text-slate-500",
-  pending:                "bg-slate-100 text-slate-500",
+  verified:                  "bg-emerald-50 text-emerald-700",
+  completed:                 "bg-emerald-50 text-emerald-700",
+  signed_verified:           "bg-emerald-50 text-emerald-700",
+  esign_completed:           "bg-emerald-50 text-emerald-700",
+  employee_confirmed:        "bg-emerald-50 text-emerald-700",
+  needs_correction:          "bg-red-50 text-red-700",
+  esign_failed:              "bg-red-50 text-red-700",
+  pending_candidate_esign:   "bg-amber-50 text-amber-700",
+  uploaded_pending_review:   "bg-blue-50 text-blue-700",
+  esign_initiated:           "bg-blue-50 text-blue-700",
+  linked_from_general_docs:  "bg-indigo-50 text-indigo-700",
+  not_started:               "bg-slate-100 text-slate-500",
+  pending:                   "bg-slate-100 text-slate-500",
 };
 
 function StatusChip({ value }: { value: string }) {
@@ -400,11 +402,30 @@ export default function EmployeeJoiningDocumentsPage() {
                               )}
                             </td>
                             <td className="px-4 py-3 text-xs capitalize text-slate-600">{item.owner_type}</td>
-                            <td className="px-4 py-3"><StatusChip value={item.status} /></td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap items-center gap-1">
+                                <StatusChip value={item.linked_doc && !item.latest_file_id ? "linked_from_general_docs" : item.status} />
+                                {item.linked_doc && !item.latest_file_id && (
+                                  <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 uppercase">Linked</span>
+                                )}
+                              </div>
+                            </td>
                             <td className="px-4 py-3"><StatusChip value={item.verification_status || "pending"} /></td>
                             <td className="px-4 py-3"><StatusChip value={item.latest_esign_status || "not_started"} /></td>
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-0.5">
+                                {item.linked_doc && !item.latest_file_id ? (
+                                  <a
+                                    href={item.linked_doc.file_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    title="View linked document"
+                                    onClick={e => e.stopPropagation()}
+                                    className="rounded-lg p-1.5 text-indigo-500 transition-colors hover:bg-indigo-50 hover:text-indigo-700"
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                  </a>
+                                ) : (
                                 <button
                                   title="Preview document"
                                   aria-label="Preview document"
@@ -414,6 +435,7 @@ export default function EmployeeJoiningDocumentsPage() {
                                 >
                                   <Eye className="h-4 w-4" />
                                 </button>
+                                )}
                                 <button
                                   title="Download document"
                                   aria-label="Download document"

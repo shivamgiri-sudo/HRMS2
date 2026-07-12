@@ -23,6 +23,13 @@ const PAYROLL_DOCUMENT_CODES = new Set(["EPF_DECLARATION", "EMPLOYMENT_CONTRACT"
 type ActorType = "hr" | "candidate" | "system" | "employee" | "public_token";
 type FileRole = "template" | "hr_uploaded" | "generated" | "sent_for_esign" | "signed" | "supporting";
 
+export type LinkedGeneralDoc = {
+  doc_type: string;
+  doc_name: string | null;
+  file_url: string;
+  verified: number;
+};
+
 export type JoiningChecklistItem = {
   id: string;
   document_code: string;
@@ -46,6 +53,7 @@ export type JoiningChecklistItem = {
   public_token_expires_at: string | null;
   publicTokenIssued: number;
   analysis_result_json: unknown;
+  linked_doc?: LinkedGeneralDoc | null;
 };
 
 type EmployeeDocumentTarget = {
@@ -733,11 +741,47 @@ async function getChecklistBundle(employeeId: string): Promise<JoiningChecklistI
   }));
 }
 
+// Maps joining document codes → employee_documents doc_type values that represent the same document
+const JOINING_TO_GENERAL_DOC_TYPE: Record<string, string[]> = {
+  EMPLOYMENT_CONTRACT: ["contract", "offer_letter"],
+  EPF_DECLARATION: ["epf_declaration"],
+  OTHER_JOINING_DOCUMENT: ["other"],
+};
+
 export async function getJoiningDocumentPack(employeeId: string, userId: string) {
   const access = await resolveEmployeeDocumentAccessContext(userId, employeeId);
   await ensureChecklistRows(access.target, userId);
   await recalculateDocumentProgress(employeeId);
   const checklist = await getChecklistBundle(employeeId);
+
+  // Cross-reference: fetch general employee_documents and attach matching ones to checklist items
+  let generalDocs: RowDataPacket[] = [];
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT doc_type, doc_name, file_url, verified
+         FROM employee_documents
+        WHERE employee_id = ? AND file_url IS NOT NULL AND file_url <> ''`,
+      [employeeId],
+    );
+    generalDocs = rows;
+  } catch (_e) { /* table may not exist */ }
+
+  const checklistWithLinks = checklist.map((item) => {
+    if (item.latest_file_id) return item; // already has its own file
+    const mappedTypes = JOINING_TO_GENERAL_DOC_TYPE[item.document_code];
+    if (!mappedTypes) return item;
+    const match = generalDocs.find((d) => mappedTypes.includes(String(d.doc_type ?? "").toLowerCase()));
+    if (!match) return item;
+    return {
+      ...item,
+      linked_doc: {
+        doc_type: String(match.doc_type),
+        doc_name: match.doc_name ? String(match.doc_name) : null,
+        file_url: String(match.file_url),
+        verified: Number(match.verified),
+      } as LinkedGeneralDoc,
+    };
+  });
 
   const [auditRows] = await db.execute<RowDataPacket[]>(
     `SELECT action_type, remarks, actor_type, created_at, document_code
@@ -765,7 +809,7 @@ export async function getJoiningDocumentPack(employeeId: string, userId: string)
       can_payroll_view: access.canPayroll,
       is_self: access.isSelf,
     },
-    checklist,
+    checklist: checklistWithLinks,
     audit: auditRows,
   };
 }

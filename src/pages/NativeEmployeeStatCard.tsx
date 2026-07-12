@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -230,51 +231,154 @@ function StatusChip({ status }: { status: string }) {
 
 // ── Tab: Documents ─────────────────────────────────────────────────────────────
 
+type JoiningChecklistItem = {
+  id: string;
+  document_code: string;
+  document_name?: string;
+  mandatory: number;
+  status: string;
+  verification_status?: string;
+  owner_type: string;
+  linked_doc?: { doc_type: string; doc_name?: string; file_url: string; verified: number } | null;
+};
+
 function DocumentsTab({ employeeId }: { employeeId: string }) {
+  const [showJoining, setShowJoining] = useState(true);
+
   const { data, isLoading } = useQuery({
     queryKey: ["emp-docs", employeeId],
-    queryFn: () => hrmsApi.get<{ data: Array<{ id: string; document_type: string; file_url: string | null; verified: number; created_at: string; original_filename?: string }> }>(`/api/employee-docs/${employeeId}`),
+    queryFn: () => hrmsApi.get<{ data: Array<{ id: string; document_type: string; file_url: string | null; verified: number; uploaded_at: string; original_filename?: string }> }>(`/api/employee-docs/${employeeId}`),
   });
+
+  const { data: joiningData, isLoading: joiningLoading } = useQuery({
+    queryKey: ["joining-docs-tab", employeeId],
+    queryFn: () => hrmsApi.get<{ data: { checklist: JoiningChecklistItem[] } }>(`/api/employees/${employeeId}/joining-documents`),
+    retry: false,
+  });
+
   const docs = data?.data ?? [];
+  const joiningItems: JoiningChecklistItem[] = joiningData?.data?.checklist ?? [];
+
+  const getJoiningStatusChip = (item: JoiningChecklistItem) => {
+    const s = item.status?.toLowerCase() ?? "";
+    if (item.verification_status === "verified" || s === "verified")
+      return <span className="flex items-center gap-1.5 text-emerald-600 font-semibold text-xs"><CheckCircle className="h-3.5 w-3.5" />Verified</span>;
+    if (item.linked_doc)
+      return <span className="flex items-center gap-1.5 text-blue-600 font-semibold text-xs"><Eye className="h-3.5 w-3.5" />Linked</span>;
+    if (s.includes("needs_correction") || s.includes("pushback"))
+      return <span className="flex items-center gap-1.5 text-red-600 font-semibold text-xs"><AlertCircle className="h-3.5 w-3.5" />Needs Correction</span>;
+    if (s.includes("uploaded") || s.includes("awaiting"))
+      return <span className="flex items-center gap-1.5 text-amber-600 font-semibold text-xs"><Clock className="h-3.5 w-3.5" />Awaiting Review</span>;
+    return <span className="flex items-center gap-1.5 text-orange-600 font-semibold text-xs"><AlertCircle className="h-3.5 w-3.5" />Pending</span>;
+  };
+
   if (isLoading) return <TabLoader />;
-  if (docs.length === 0) return <TabEmpty icon={<FileText className="h-10 w-10 opacity-20" />} message="No documents found for this employee." />;
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-slate-50 border-b border-slate-200">
-            <th className="text-left px-4 py-3 font-semibold text-slate-600">Document</th>
-            <th className="text-left px-4 py-3 font-semibold text-slate-600">Uploaded</th>
-            <th className="text-left px-4 py-3 font-semibold text-slate-600">Status</th>
-            <th className="text-left px-4 py-3 font-semibold text-slate-600">Action</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {docs.map((doc) => (
-            <tr key={doc.id} className="hover:bg-slate-50 transition-colors">
-              <td className="px-4 py-3 font-medium text-slate-900">{doc.document_type?.replace(/_/g, " ")}</td>
-              <td className="px-4 py-3 text-slate-500">{doc.created_at ? fmtDate(doc.created_at) : "—"}</td>
-              <td className="px-4 py-3">
-                {!doc.file_url ? (
-                  <span className="flex items-center gap-1.5 text-orange-600 font-semibold text-xs"><AlertCircle className="h-3.5 w-3.5" />Not Uploaded</span>
-                ) : doc.verified ? (
-                  <span className="flex items-center gap-1.5 text-emerald-600 font-semibold text-xs"><CheckCircle className="h-3.5 w-3.5" />Verified</span>
-                ) : (
-                  <span className="flex items-center gap-1.5 text-amber-600 font-semibold text-xs"><Clock className="h-3.5 w-3.5" />Awaiting Verification</span>
-                )}
-              </td>
-              <td className="px-4 py-3">
-                {doc.file_url && (
-                  <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800">
-                    <Eye className="h-3.5 w-3.5" /> View
-                  </a>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="space-y-6">
+      {/* General Documents */}
+      <div>
+        <h3 className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 border-b border-slate-200">Uploaded Documents</h3>
+        {docs.length === 0 ? (
+          <div className="px-4 py-6 text-center text-sm text-slate-400">No documents uploaded yet.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="text-left px-4 py-3 font-semibold text-slate-600">Document</th>
+                  <th className="text-left px-4 py-3 font-semibold text-slate-600">Uploaded</th>
+                  <th className="text-left px-4 py-3 font-semibold text-slate-600">Status</th>
+                  <th className="text-left px-4 py-3 font-semibold text-slate-600">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {docs.map((doc) => (
+                  <tr key={doc.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-3 font-medium text-slate-900">{doc.document_type?.replace(/_/g, " ")}</td>
+                    <td className="px-4 py-3 text-slate-500">{doc.uploaded_at ? fmtDate(doc.uploaded_at) : "—"}</td>
+                    <td className="px-4 py-3">
+                      {!doc.file_url ? (
+                        <span className="flex items-center gap-1.5 text-orange-600 font-semibold text-xs"><AlertCircle className="h-3.5 w-3.5" />Not Uploaded</span>
+                      ) : doc.verified ? (
+                        <span className="flex items-center gap-1.5 text-emerald-600 font-semibold text-xs"><CheckCircle className="h-3.5 w-3.5" />Verified</span>
+                      ) : (
+                        <span className="flex items-center gap-1.5 text-amber-600 font-semibold text-xs"><Clock className="h-3.5 w-3.5" />Awaiting Verification</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {doc.file_url && (
+                        <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800">
+                          <Eye className="h-3.5 w-3.5" /> View
+                        </a>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Joining Documents Checklist */}
+      <div>
+        <button
+          className="w-full flex items-center justify-between px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 border-b border-slate-200 hover:bg-slate-100 transition-colors"
+          onClick={() => setShowJoining((v) => !v)}
+        >
+          <span>Joining Documents Checklist</span>
+          <ChevronRight className={cn("h-4 w-4 transition-transform", showJoining && "rotate-90")} />
+        </button>
+        {showJoining && (
+          joiningLoading ? (
+            <div className="px-4 py-4 text-sm text-slate-400">Loading checklist…</div>
+          ) : joiningItems.length === 0 ? (
+            <div className="px-4 py-6 text-center text-sm text-slate-400">No joining document checklist generated yet.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="text-left px-4 py-3 font-semibold text-slate-600">Document</th>
+                    <th className="text-left px-4 py-3 font-semibold text-slate-600">Owner</th>
+                    <th className="text-left px-4 py-3 font-semibold text-slate-600">Mandatory</th>
+                    <th className="text-left px-4 py-3 font-semibold text-slate-600">Status</th>
+                    <th className="text-left px-4 py-3 font-semibold text-slate-600">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {joiningItems.map((item) => (
+                    <tr key={item.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-3 font-medium text-slate-900">
+                        {item.document_name ?? item.document_code.replace(/_/g, " ")}
+                      </td>
+                      <td className="px-4 py-3 text-slate-500 capitalize">{item.owner_type}</td>
+                      <td className="px-4 py-3">
+                        {item.mandatory ? (
+                          <span className="text-xs font-semibold text-red-500">Required</span>
+                        ) : (
+                          <span className="text-xs text-slate-400">Optional</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">{getJoiningStatusChip(item)}</td>
+                      <td className="px-4 py-3">
+                        {item.linked_doc?.file_url && (
+                          <a href={item.linked_doc.file_url} target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800">
+                            <Eye className="h-3.5 w-3.5" /> View
+                          </a>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+      </div>
     </div>
   );
 }
@@ -1042,8 +1146,8 @@ export default function NativeEmployeeStatCard() {
         </div>
       </div>
 
-      {/* ── ID Card Modal — id-card-print-root ensures only card prints ── */}
-      {showIdCard && card && (
+      {/* ── ID Card Modal — portalled to body so print CSS selector works ── */}
+      {showIdCard && card && createPortal(
         <div id="id-card-print-root" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4" onClick={() => setShowIdCard(false)}>
           {/* Screen only — interactive flip card */}
           <div className="id-card-screen-only relative" onClick={(e) => e.stopPropagation()}>
@@ -1093,7 +1197,7 @@ export default function NativeEmployeeStatCard() {
             />
           </div>
         </div>
-      )}
+      , document.body)}
     </DashboardLayout>
   );
 }
